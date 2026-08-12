@@ -210,6 +210,10 @@ function registerIpcHandlers(
     assertTrustedSender(event.senderFrame);
     return browser.listTabs();
   });
+  ipcMain.handle(IPC_CHANNELS.browserGetControlState, (event) => {
+    assertTrustedSender(event.senderFrame);
+    return browser.getControlState();
+  });
   ipcMain.handle(IPC_CHANNELS.browserSetVisible, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame);
     const parsed = parseVisibility(input);
@@ -390,7 +394,37 @@ function parseUpdateBot(value: unknown): UpdateBotInput {
     if (typeof value.notifications !== "boolean") throw new Error("Invalid notifications value.");
     result.notifications = value.notifications;
   }
+  if (value.avatarShape !== undefined) {
+    if (!isAvatarShape(value.avatarShape)) throw new Error("Invalid avatar shape.");
+    result.avatarShape = value.avatarShape;
+  }
+  if (value.avatarColor !== undefined) {
+    if (!isAvatarColor(value.avatarColor)) throw new Error("Invalid avatar color.");
+    result.avatarColor = value.avatarColor;
+  }
   return result;
+}
+
+function isAvatarShape(value: unknown): value is NonNullable<UpdateBotInput["avatarShape"]> {
+  return ["blob", "pebble", "squircle", "tablet", "wedge", "hex", "cloud", "teardrop"].includes(
+    value as string,
+  );
+}
+
+function isAvatarColor(value: unknown): value is NonNullable<UpdateBotInput["avatarColor"]> {
+  return [
+    "black",
+    "brown",
+    "red",
+    "orange",
+    "yellow",
+    "green",
+    "cyan",
+    "blue",
+    "violet",
+    "magenta",
+    "gray",
+  ].includes(value as string);
 }
 
 function parseImportAttachments(value: unknown): ImportAttachmentsInput {

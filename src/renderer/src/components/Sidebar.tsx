@@ -1,18 +1,58 @@
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import type { AgentStatus, AppInfo } from "../../../shared/ipc";
 import type { BotProfile } from "../data";
-import { GrokMark } from "./GrokMark";
+import { AgentAvatar } from "./AgentAvatar";
 
 interface SidebarProps {
   bots: BotProfile[];
   activeBotId: string;
   appInfo: AppInfo | null;
   agentStatus: AgentStatus;
+  agentStates: Record<string, SidebarAgentState>;
   onSelectBot: (botId: string) => void;
   onCreateBot: () => void;
   onEditBot: (botId: string) => void;
   onDeleteBot: (botId: string) => Promise<void>;
+  onCollapse: () => void;
+}
+
+export type SidebarAgentState =
+  | { kind: "working" }
+  | { kind: "responded" }
+  | { kind: "unread"; count: number };
+
+function sidebarAgentStateLabel(state: SidebarAgentState): string {
+  if (state.kind === "working") return "Thinking";
+  if (state.kind === "responded") return "Responded";
+  return `${state.count} new ${state.count === 1 ? "reply" : "replies"}`;
+}
+
+function SidebarAgentIndicator(props: { state: SidebarAgentState }) {
+  const unreadCount = () => (props.state.kind === "unread" ? props.state.count : 0);
+  return (
+    <span
+      class={`bot-row-agent-status bot-row-agent-status-${props.state.kind}`}
+      aria-hidden="true"
+    >
+      <Show when={props.state.kind === "working"}>
+        <span class="bot-row-thinking-dots">
+          <i />
+          <i />
+          <i />
+        </span>
+      </Show>
+      <Show when={props.state.kind === "responded"}>
+        <svg viewBox="0 0 12 12">
+          <title>Responded</title>
+          <path d="m3 6.2 1.8 1.8L9 3.8" />
+        </svg>
+      </Show>
+      <Show when={props.state.kind === "unread"}>
+        <span>{unreadCount()}</span>
+      </Show>
+    </span>
+  );
 }
 
 interface BotContextMenu {
@@ -34,6 +74,15 @@ function PlusIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20" class="size-[18px] fill-none stroke-current">
       <path d="M10 4v12M4 10h12" stroke-width="1.5" stroke-linecap="round" />
+    </svg>
+  );
+}
+
+export function SidebarToggleIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="sidebar-toggle-icon">
+      <rect x="2.75" y="3.25" width="14.5" height="13.5" rx="2.25" />
+      <path d="M7.25 3.75v12.5" />
     </svg>
   );
 }
@@ -74,7 +123,10 @@ export function Sidebar(props: SidebarProps) {
   const [deleteTargetId, setDeleteTargetId] = createSignal<string | null>(null);
   const [deleting, setDeleting] = createSignal(false);
   const [deleteError, setDeleteError] = createSignal<string | null>(null);
+  const [fadeAtTop, setFadeAtTop] = createSignal(false);
+  const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
   let firstMenuItem: HTMLButtonElement | undefined;
+  let botList: HTMLElement | undefined;
   const filteredBots = createMemo(() => {
     const normalizedQuery = query().trim().toLowerCase();
     return normalizedQuery
@@ -94,6 +146,18 @@ export function Sidebar(props: SidebarProps) {
   });
   const deleteTarget = createMemo(() => props.bots.find((bot) => bot.id === deleteTargetId()));
 
+  function updateScrollFade() {
+    if (!botList) return;
+    const remaining = botList.scrollHeight - botList.scrollTop - botList.clientHeight;
+    setFadeAtTop(botList.scrollTop > 2);
+    setFadeAtBottom(remaining > 2);
+  }
+
+  createEffect(() => {
+    filteredBots();
+    requestAnimationFrame(updateScrollFade);
+  });
+
   onMount(() => {
     const closeMenu = () => setContextMenu(null);
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -105,7 +169,11 @@ export function Sidebar(props: SidebarProps) {
     window.addEventListener("blur", closeMenu);
     window.addEventListener("resize", closeMenu);
     window.addEventListener("keydown", closeOnEscape);
+    const resizeObserver = new ResizeObserver(updateScrollFade);
+    if (botList) resizeObserver.observe(botList);
+    requestAnimationFrame(updateScrollFade);
     onCleanup(() => {
+      resizeObserver.disconnect();
       window.removeEventListener("pointerdown", closeMenu);
       window.removeEventListener("blur", closeMenu);
       window.removeEventListener("resize", closeMenu);
@@ -139,11 +207,22 @@ export function Sidebar(props: SidebarProps) {
   }
 
   return (
-    <aside aria-label="Bot navigation" class="sidebar panel-edge">
+    <aside id="bot-sidebar" aria-label="Bot navigation" class="sidebar panel-edge">
       <div class="window-drag sidebar-topbar">
         <button
           type="button"
-          class="sidebar-new-button no-drag"
+          class="sidebar-icon-button sidebar-toggle-button no-drag"
+          onClick={props.onCollapse}
+          aria-label="Hide sidebar"
+          aria-controls="bot-sidebar"
+          aria-expanded="true"
+          title="Hide sidebar"
+        >
+          <SidebarToggleIcon />
+        </button>
+        <button
+          type="button"
+          class="sidebar-icon-button sidebar-new-button no-drag"
           onClick={props.onCreateBot}
           aria-label="New agent"
         >
@@ -165,7 +244,16 @@ export function Sidebar(props: SidebarProps) {
         </label>
       </div>
 
-      <nav aria-label="Bot list" class="bot-list">
+      <nav
+        ref={(element) => (botList = element)}
+        aria-label="Bot list"
+        class="bot-list"
+        classList={{
+          "scroll-fade-top": fadeAtTop(),
+          "scroll-fade-bottom": fadeAtBottom(),
+        }}
+        onScroll={() => updateScrollFade()}
+      >
         <Show when={filteredBots().length > 0} fallback={<p class="empty-search">No matches</p>}>
           <For each={filteredBots()}>
             {(bot) => (
@@ -191,8 +279,11 @@ export function Sidebar(props: SidebarProps) {
                   openContextMenu(bot.id, bounds.left + 28, bounds.top + 32);
                 }}
               >
-                <span class={`bot-avatar bot-avatar-${bot.accent}`}>
-                  <GrokMark />
+                <span class="bot-row-avatar">
+                  <AgentAvatar bot={bot} />
+                  <Show when={props.agentStates[bot.id]}>
+                    {(state) => <SidebarAgentIndicator state={state()} />}
+                  </Show>
                 </span>
                 <span class="bot-row-copy">
                   <span class="bot-row-heading">
@@ -201,6 +292,9 @@ export function Sidebar(props: SidebarProps) {
                   </span>
                   <span class="bot-row-preview">{bot.preview}</span>
                 </span>
+                <Show when={props.agentStates[bot.id]}>
+                  {(state) => <span class="sr-only">{sidebarAgentStateLabel(state())}</span>}
+                </Show>
               </button>
             )}
           </For>
@@ -283,12 +377,10 @@ export function Sidebar(props: SidebarProps) {
                 aria-labelledby="bot-delete-title"
                 aria-describedby="bot-delete-description"
               >
-                <span
-                  class={`bot-avatar bot-avatar-${bot().accent}`}
+                <AgentAvatar
+                  bot={bot()}
                   style={{ width: "44px", height: "44px", "margin-bottom": "15px" }}
-                >
-                  <GrokMark />
-                </span>
+                />
                 <h2 id="bot-delete-title">Delete {bot().name}?</h2>
                 <p id="bot-delete-description">
                   This removes the agent and conversation from Infeld. Its local workspace stays on

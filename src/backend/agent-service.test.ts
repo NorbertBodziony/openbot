@@ -29,6 +29,7 @@ afterEach(async () => {
   else process.env.INFELD_CODEX_PATH = originalCodexPath;
   delete process.env.INFELD_FAKE_CODEX_LOG;
   delete process.env.INFELD_FAKE_AGENT_TOOL;
+  delete process.env.INFELD_FAKE_THREAD_READ_DELAY;
   await rm(root, { recursive: true, force: true });
 });
 
@@ -77,6 +78,35 @@ describe.sequential("AgentService", () => {
     );
   });
 
+  it("starts a new thread with the persisted onboarding remit", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await service.updateBot({
+      botId: "chief",
+      role: "Research & writing",
+      description: "Researches topics and turns findings into clear writing.",
+    });
+
+    await service.sendMessage({
+      botId: "chief",
+      text: "Focus on research and writing.",
+    });
+    await waitFor(async () =>
+      (await protocolMessages()).some((message) => message.method === "thread/start"),
+    );
+
+    const start = (await protocolMessages()).find((message) => message.method === "thread/start");
+    const instructions = String(
+      (start?.params as Record<string, unknown> | undefined)?.developerInstructions ?? "",
+    );
+    expect(instructions).toContain('"title": "Research & writing"');
+    expect(instructions).toContain(
+      '"description": "Researches topics and turns findings into clear writing."',
+    );
+    expect(instructions).toContain("standing remit");
+  });
+
   it("queues FIFO instead of steering and pause/resume controls draining", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
@@ -108,6 +138,21 @@ describe.sequential("AgentService", () => {
         (await protocolMessages()).filter((item) => item.method === "turn/start").length === 2,
     );
     expect(service.listQueue("chief").deliveries[1]?.status).toBe("running");
+
+    const conversationSignatures = events
+      .filter((event) => event.type === "conversation" && event.snapshot.botId === "chief")
+      .map((event) =>
+        event.type === "conversation"
+          ? JSON.stringify({
+              threadId: event.snapshot.threadId,
+              activeTurnId: event.snapshot.activeTurnId,
+              messages: event.snapshot.messages,
+            })
+          : "",
+      );
+    for (let index = 1; index < conversationSignatures.length; index += 1) {
+      expect(conversationSignatures[index]).not.toBe(conversationSignatures[index - 1]);
+    }
   });
 
   it("fans out an idempotent agent tool message to other persistent bots", async () => {
@@ -130,11 +175,15 @@ describe.sequential("AgentService", () => {
     expect(sales.sender).toEqual({ kind: "bot", botId: "chief" });
     expect(sales.text).toBe("Please prepare your reports.");
 
-    expect((await service.readConversation("chief")).messages).toEqual(
+    const chiefMessages = (await service.readConversation("chief")).messages;
+    expect(chiefMessages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ exchange: expect.objectContaining({ direction: "outgoing" }) }),
       ]),
     );
+    expect(
+      chiefMessages.findIndex((message) => message.exchange?.direction === "outgoing"),
+    ).toBeLessThan(chiefMessages.findIndex((message) => message.author === "assistant"));
     expect((await service.readConversation("sales-outbound")).messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -142,6 +191,50 @@ describe.sequential("AgentService", () => {
           exchange: expect.objectContaining({ direction: "incoming" }),
         }),
       ]),
+    );
+
+    const starts = (await protocolMessages()).filter((message) => message.method === "turn/start");
+    const salesStart = starts.find((message) =>
+      String((message.params as Record<string, unknown>).cwd).endsWith("/sales-outbound"),
+    );
+    const salesInput = (salesStart?.params as Record<string, unknown> | undefined)?.input as
+      | Array<Record<string, unknown>>
+      | undefined;
+    expect(salesInput?.[0]?.text).toContain(
+      "After completing the request, send a concise result back to Chief",
+    );
+    expect(salesInput?.[0]?.text).toContain(`replyToMessageId "${sales.messageId}"`);
+  });
+
+  it("merges a late thread read with a newer active stream", async () => {
+    process.env.INFELD_FAKE_THREAD_READ_DELAY = "80";
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "First turn" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    const firstTurnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!firstTurnId) throw new Error("First turn did not start.");
+    await service.interrupt("chief", firstTurnId);
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
+    await service.setQueuePaused("chief", false);
+
+    const readsBefore = (await protocolMessages()).filter(
+      (message) => message.method === "thread/read",
+    ).length;
+    const refresh = service.readConversation("chief");
+    await waitFor(
+      async () =>
+        (await protocolMessages()).filter((message) => message.method === "thread/read").length >
+        readsBefore,
+    );
+    await service.sendMessage({ botId: "chief", text: "New live turn" });
+    await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "running");
+
+    const snapshot = await refresh;
+    expect(snapshot.activeTurnId).toBe(service.listQueue("chief").deliveries[1]?.turnId);
+    expect(snapshot.messages).toEqual(
+      expect.arrayContaining([expect.objectContaining({ text: "Streaming", status: "streaming" })]),
     );
   });
 
@@ -196,6 +289,9 @@ function stores(): { store: BotStore; mailbox: MailboxStore } {
 function fakeBrowser(): BrowserHost {
   return {
     onChanged: () => () => undefined,
+    onControlChanged: () => () => undefined,
+    clearControls: () => undefined,
+    endControl: () => undefined,
     handleDynamicTool: async () => ({ success: true, contentItems: [] }),
   } as unknown as BrowserHost;
 }
@@ -257,7 +353,13 @@ process.stdin.on("data", (chunk) => {
         write({ id: message.id, result: { thread: { id: threadId, turns: [] } } });
       }
       if (message.method === "thread/resume") write({ id: message.id, result: { thread: { id: message.params.threadId, turns: [] } } });
-      if (message.method === "thread/read") write({ id: message.id, result: { thread: { id: message.params.threadId, turns: [...turns.values()] } } });
+      if (message.method === "thread/read") {
+        const capturedTurns = JSON.parse(JSON.stringify([...turns.values()]));
+        const respond = () => write({ id: message.id, result: { thread: { id: message.params.threadId, turns: capturedTurns } } });
+        const delay = Number(process.env.INFELD_FAKE_THREAD_READ_DELAY || 0);
+        if (delay > 0) setTimeout(respond, delay);
+        else respond();
+      }
       if (message.method === "turn/start") {
         const turnId = "turn-" + (++turnCounter);
         turns.set(turnId, { id: turnId, status: "inProgress", items: [] });

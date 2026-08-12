@@ -1,17 +1,21 @@
-import { createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { batch, createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createMutable } from "solid-js/store";
 import type {
   AgentEvent,
   AgentStatus,
   AppInfo,
   BotSummary,
+  BrowserControlState,
   BrowserTab,
   ConversationMessage,
+  ConversationSnapshot,
   QueueSnapshot,
   UpdateBotInput,
 } from "../../shared/ipc";
 import { Conversation } from "./components/Conversation";
-import { Sidebar } from "./components/Sidebar";
-import { accentForBot, type BotMessage, type BotProfile } from "./data";
+import { PanelResizer, readPanelWidth, savePanelWidth } from "./components/PanelResizer";
+import { Sidebar, type SidebarAgentState } from "./components/Sidebar";
+import { accentForAvatarColor, accentForBot, type BotMessage, type BotProfile } from "./data";
 
 const FALLBACK_STATUS: AgentStatus = {
   phase: "blocked",
@@ -24,16 +28,57 @@ const FALLBACK_STATUS: AgentStatus = {
 
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 
+const LEFT_PANEL_STORAGE_KEY = "infeld:left-panel-width";
+const LEFT_PANEL_COLLAPSED_STORAGE_KEY = "infeld:left-panel-collapsed";
+const LEFT_PANEL_DEFAULT = 275;
+const LEFT_PANEL_MIN = 220;
+const LEFT_PANEL_MAX = 360;
+
+const ONBOARDING_PROFILES: Record<
+  string,
+  { role: string; description: string; firstMessage: string }
+> = {
+  "Work & projects": {
+    role: "Work & projects",
+    description:
+      "Helps plan, organize, and execute ongoing work and projects while keeping priorities, next steps, and deliverables clear.",
+    firstMessage:
+      "Focus on my work and projects. Help me plan, organize, and execute them proactively.",
+  },
+  "Research & writing": {
+    role: "Research & writing",
+    description:
+      "Researches topics, synthesizes reliable sources, and helps draft, edit, and refine clear writing.",
+    firstMessage:
+      "Focus on research and writing. Help me investigate topics and turn the findings into clear, useful writing.",
+  },
+  "Sales & outreach": {
+    role: "Sales & outreach",
+    description:
+      "Supports prospect research, sales preparation, personalized outreach, and organized follow-up work.",
+    firstMessage:
+      "Focus on sales and outreach. Help me research prospects, prepare personalized outreach, and manage follow-ups.",
+  },
+};
+
 export function App() {
   const [botList, setBotList] = createSignal<BotProfile[]>([]);
   const [activeBotId, setActiveBotId] = createSignal("");
   const [liveMessages, setLiveMessages] = createSignal<Record<string, BotMessage[]>>({});
   const [uiErrors, setUiErrors] = createSignal<Record<string, BotMessage[]>>({});
   const [conversationLoaded, setConversationLoaded] = createSignal<Record<string, boolean>>({});
+  const [conversationRevisions, setConversationRevisions] = createSignal<Record<string, number>>(
+    {},
+  );
   const [activeTurns, setActiveTurns] = createSignal<Record<string, string | null>>({});
+  const [unreadReplies, setUnreadReplies] = createSignal<Record<string, number>>({});
+  const [recentReplies, setRecentReplies] = createSignal<Record<string, boolean>>({});
   const [queues, setQueues] = createSignal<Record<string, QueueSnapshot>>({});
   const [browserTabs, setBrowserTabs] = createSignal<BrowserTab[]>([]);
   const [activeBrowserTabId, setActiveBrowserTabId] = createSignal<string | null>(null);
+  const [browserControlState, setBrowserControlState] = createSignal<BrowserControlState>({
+    sessions: [],
+  });
   const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
   const [creatingAgent, setCreatingAgent] = createSignal(false);
   const [settingsRequest, setSettingsRequest] = createSignal<{
@@ -45,6 +90,15 @@ export function App() {
   );
   const [appInfo, setAppInfo] = createSignal<AppInfo | null>(null);
   const [agentStatus, setAgentStatus] = createSignal<AgentStatus>(FALLBACK_STATUS);
+  const [leftPanelWidth, setLeftPanelWidth] = createSignal(
+    readPanelWidth(LEFT_PANEL_STORAGE_KEY, LEFT_PANEL_DEFAULT, LEFT_PANEL_MIN, LEFT_PANEL_MAX),
+  );
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = createSignal(
+    window.localStorage.getItem(LEFT_PANEL_COLLAPSED_STORAGE_KEY) === "true",
+  );
+  const pendingConversationSnapshots = new Map<string, ConversationSnapshot>();
+  const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  let conversationFrame: number | undefined;
 
   const activeBot = createMemo(
     () => botList().find((bot) => bot.id === activeBotId()) ?? botList()[0],
@@ -56,7 +110,12 @@ export function App() {
 
   onMount(() => {
     const unsubscribe = window.infeld.agent.onEvent(handleAgentEvent);
-    onCleanup(unsubscribe);
+    onCleanup(() => {
+      unsubscribe();
+      if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
+      for (const timer of recentReplyTimers.values()) clearTimeout(timer);
+      recentReplyTimers.clear();
+    });
 
     void Promise.all([
       window.infeld
@@ -76,10 +135,22 @@ export function App() {
           setAgentStatus((current) => ({ ...current, message: String(error) }));
         }),
     ]);
+    void window.infeld.browser
+      .listTabs()
+      .then((tabs) => {
+        setBrowserTabs(tabs);
+        setActiveBrowserTabId((current) => current ?? tabs[0]?.id ?? null);
+      })
+      .catch(() => undefined);
+    void window.infeld.browser
+      .getControlState()
+      .then(setBrowserControlState)
+      .catch(() => undefined);
   });
 
   createEffect(() => {
-    const botId = activeBot()?.id;
+    const botId = activeBotId();
+    agentStatus().phase;
     if (!botId) return;
     void Promise.all([
       window.infeld.agent.readConversation(botId),
@@ -87,7 +158,7 @@ export function App() {
     ])
       .then(([snapshot, queue]) => {
         setQueues((current) => ({ ...current, [botId]: queue }));
-        applyConversation(snapshot.botId, snapshot.messages, snapshot.activeTurnId);
+        scheduleConversation(snapshot);
       })
       .catch((error) => appendUiError(botId, error, "Load failed"));
   });
@@ -101,11 +172,7 @@ export function App() {
         applyStoredBots(event.bots);
         return;
       case "conversation":
-        applyConversation(
-          event.snapshot.botId,
-          event.snapshot.messages,
-          event.snapshot.activeTurnId,
-        );
+        scheduleConversation(event.snapshot);
         return;
       case "queue-changed":
         setQueues((current) => ({ ...current, [event.snapshot.botId]: event.snapshot }));
@@ -114,11 +181,16 @@ export function App() {
         setBrowserTabs(event.tabs);
         setActiveBrowserTabId(event.activeTabId);
         return;
+      case "browser-control-changed":
+        setBrowserControlState(event.state);
+        return;
       case "turn-started":
+        clearRecentReply(event.botId);
         setActiveTurns((current) => ({ ...current, [event.botId]: event.turnId }));
         return;
       case "turn-completed":
         setActiveTurns((current) => ({ ...current, [event.botId]: null }));
+        if (event.status === "completed") markReplyCompleted(event.botId);
         return;
       case "prompt":
         setPendingPrompts((current) => ({ ...current, [event.botId]: event }));
@@ -136,17 +208,47 @@ export function App() {
     );
   }
 
-  function applyConversation(
-    botId: string,
-    messages: ConversationMessage[],
-    activeTurnId: string | null,
-  ) {
-    setLiveMessages((current) => ({
-      ...current,
-      [botId]: messages.map((message) => toBotMessage(message, botList())),
-    }));
+  function scheduleConversation(snapshot: ConversationSnapshot) {
+    const botId = snapshot.botId;
+    const appliedRevision = conversationRevisions()[botId] ?? -1;
+    const pendingRevision = pendingConversationSnapshots.get(botId)?.revision ?? -1;
+    if (snapshot.revision < Math.max(appliedRevision, pendingRevision)) return;
+    pendingConversationSnapshots.set(botId, snapshot);
+    if (conversationFrame !== undefined) return;
+    conversationFrame = requestAnimationFrame(() => {
+      conversationFrame = undefined;
+      const snapshots = [...pendingConversationSnapshots.values()];
+      pendingConversationSnapshots.clear();
+      batch(() => {
+        for (const pending of snapshots) applyConversation(pending);
+      });
+    });
+  }
+
+  function applyConversation(snapshot: ConversationSnapshot) {
+    const botId = snapshot.botId;
+    if (snapshot.revision < (conversationRevisions()[botId] ?? -1)) return;
+    setConversationRevisions((current) => ({ ...current, [botId]: snapshot.revision }));
+    setLiveMessages((current) => {
+      const previous = current[botId] ?? [];
+      const previousById = new Map(previous.map((message) => [message.id, message]));
+      const next = snapshot.messages.map((message) => {
+        const mapped = toBotMessage(message, botList());
+        const existing = previousById.get(mapped.id);
+        if (!existing) return createMutable(mapped);
+        if (!botMessagesEqual(existing, mapped)) Object.assign(existing, mapped);
+        return existing;
+      });
+      if (
+        previous.length === next.length &&
+        previous.every((message, index) => message === next[index])
+      ) {
+        return current;
+      }
+      return { ...current, [botId]: next };
+    });
     setConversationLoaded((current) => ({ ...current, [botId]: true }));
-    setActiveTurns((current) => ({ ...current, [botId]: activeTurnId }));
+    setActiveTurns((current) => ({ ...current, [botId]: snapshot.activeTurnId }));
   }
 
   async function createAgent() {
@@ -170,7 +272,39 @@ export function App() {
 
   function selectBot(botId: string) {
     setAgentPickerOpen(false);
+    clearReplyIndicators(botId);
     setActiveBotId(botId);
+  }
+
+  function markReplyCompleted(botId: string) {
+    if (activeBotId() !== botId) {
+      setUnreadReplies((current) => ({
+        ...current,
+        [botId]: Math.min(99, (current[botId] ?? 0) + 1),
+      }));
+      return;
+    }
+    clearRecentReply(botId);
+    setRecentReplies((current) => ({ ...current, [botId]: true }));
+    recentReplyTimers.set(
+      botId,
+      setTimeout(() => {
+        recentReplyTimers.delete(botId);
+        setRecentReplies((current) => ({ ...current, [botId]: false }));
+      }, 4000),
+    );
+  }
+
+  function clearRecentReply(botId: string) {
+    const timer = recentReplyTimers.get(botId);
+    if (timer) clearTimeout(timer);
+    recentReplyTimers.delete(botId);
+    setRecentReplies((current) => (current[botId] ? { ...current, [botId]: false } : current));
+  }
+
+  function clearReplyIndicators(botId: string) {
+    clearRecentReply(botId);
+    setUnreadReplies((current) => (current[botId] ? { ...current, [botId]: 0 } : current));
   }
 
   function activateBrowserTab(tabId: string) {
@@ -213,9 +347,15 @@ export function App() {
       setLiveMessages((current) => withoutBot(current, botId));
       setUiErrors((current) => withoutBot(current, botId));
       setConversationLoaded((current) => withoutBot(current, botId));
+      setConversationRevisions((current) => withoutBot(current, botId));
       setActiveTurns((current) => withoutBot(current, botId));
+      setUnreadReplies((current) => withoutBot(current, botId));
+      setRecentReplies((current) => withoutBot(current, botId));
       setQueues((current) => withoutBot(current, botId));
       setPendingPrompts((current) => withoutBot(current, botId));
+      const replyTimer = recentReplyTimers.get(botId);
+      if (replyTimer) clearTimeout(replyTimer);
+      recentReplyTimers.delete(botId);
     } catch (error) {
       appendUiError(botId, error, "Delete failed");
       throw error;
@@ -225,18 +365,44 @@ export function App() {
   async function sendMessage(body: string, attachmentDraftIds: string[]): Promise<boolean> {
     const bot = activeBot();
     if (!bot || (!body.trim() && attachmentDraftIds.length === 0)) return false;
+    return sendMessageToBot(bot.id, body, attachmentDraftIds);
+  }
+
+  async function sendMessageToBot(
+    botId: string,
+    body: string,
+    attachmentDraftIds: string[],
+  ): Promise<boolean> {
     try {
       await window.infeld.agent.sendMessage({
-        botId: bot.id,
+        botId,
         text: body.trim(),
         attachmentDraftIds,
       });
-      setUiErrors((current) => ({ ...current, [bot.id]: [] }));
+      setUiErrors((current) => ({ ...current, [botId]: [] }));
       return true;
     } catch (error) {
-      appendUiError(bot.id, error, "Send failed");
+      appendUiError(botId, error, "Send failed");
       return false;
     }
+  }
+
+  async function completeOnboarding(answer: string): Promise<boolean> {
+    const bot = activeBot();
+    const topic = answer.trim();
+    if (!bot || !topic) return false;
+    const predefined = ONBOARDING_PROFILES[topic];
+    const profile = predefined ?? {
+      role: topic.length <= 60 ? topic : "Custom focus",
+      description: `Primary focus: ${topic.slice(0, 1_900)}.`,
+      firstMessage: `My main focus for you is: ${topic}. Treat this as your ongoing specialty.`,
+    };
+    try {
+      await updateBot(bot.id, { role: profile.role, description: profile.description });
+    } catch {
+      return false;
+    }
+    return sendMessageToBot(bot.id, profile.firstMessage, []);
   }
 
   async function answerPrompt(answers: Record<string, string[]>): Promise<boolean> {
@@ -299,19 +465,65 @@ export function App() {
     const bot = activeBot();
     return bot ? queues()[bot.id] : undefined;
   });
+  const sidebarAgentStates = createMemo<Record<string, SidebarAgentState>>(() => {
+    const turns = activeTurns();
+    const queueSnapshots = queues();
+    const unread = unreadReplies();
+    const recent = recentReplies();
+    const states: Record<string, SidebarAgentState> = {};
+    for (const bot of botList()) {
+      const isWorking =
+        Boolean(turns[bot.id]) ||
+        Boolean(
+          queueSnapshots[bot.id]?.deliveries.some(
+            (delivery) => delivery.status === "starting" || delivery.status === "running",
+          ),
+        );
+      if (isWorking) states[bot.id] = { kind: "working" };
+      else if ((unread[bot.id] ?? 0) > 0) {
+        states[bot.id] = { kind: "unread", count: unread[bot.id] ?? 1 };
+      } else if (recent[bot.id]) states[bot.id] = { kind: "responded" };
+    }
+    return states;
+  });
+
+  function setSidebarCollapsed(collapsed: boolean) {
+    setLeftPanelCollapsed(collapsed);
+    window.localStorage.setItem(LEFT_PANEL_COLLAPSED_STORAGE_KEY, String(collapsed));
+  }
 
   return (
-    <div class="app-frame">
-      <Sidebar
-        bots={botList()}
-        activeBotId={activeBot()?.id ?? ""}
-        appInfo={appInfo()}
-        agentStatus={agentStatus()}
-        onSelectBot={selectBot}
-        onCreateBot={() => setAgentPickerOpen(true)}
-        onEditBot={editBot}
-        onDeleteBot={deleteBot}
-      />
+    <div
+      class="app-frame"
+      classList={{ "app-frame-sidebar-collapsed": leftPanelCollapsed() }}
+      style={`--left-panel-width: ${leftPanelCollapsed() ? 0 : leftPanelWidth()}px`}
+    >
+      <Show when={!leftPanelCollapsed()}>
+        <Sidebar
+          bots={botList()}
+          activeBotId={activeBot()?.id ?? ""}
+          appInfo={appInfo()}
+          agentStatus={agentStatus()}
+          agentStates={sidebarAgentStates()}
+          onSelectBot={selectBot}
+          onCreateBot={() => setAgentPickerOpen(true)}
+          onEditBot={editBot}
+          onDeleteBot={deleteBot}
+          onCollapse={() => setSidebarCollapsed(true)}
+        />
+        <PanelResizer
+          class="left-panel-resizer"
+          label="Resize left sidebar"
+          controls="bot-sidebar"
+          direction="left"
+          value={leftPanelWidth()}
+          defaultValue={LEFT_PANEL_DEFAULT}
+          min={LEFT_PANEL_MIN}
+          max={LEFT_PANEL_MAX}
+          onResize={setLeftPanelWidth}
+          onResizeEnd={(value) => savePanelWidth(LEFT_PANEL_STORAGE_KEY, value)}
+        />
+      </Show>
       <Conversation
         bot={activeBot()}
         bots={botList()}
@@ -320,6 +532,8 @@ export function App() {
         queue={activeQueue()}
         browserTabs={browserTabs()}
         activeBrowserTabId={activeBrowserTabId()}
+        browserControlState={browserControlState()}
+        leftSidebarCollapsed={leftPanelCollapsed()}
         prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
         activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
         agentPickerOpen={agentPickerOpen()}
@@ -330,11 +544,13 @@ export function App() {
         onSelectAgent={selectBot}
         onUpdateBot={updateBot}
         onSendMessage={sendMessage}
+        onCompleteOnboarding={completeOnboarding}
         onAnswerPrompt={answerPrompt}
         onCancelQueuedMessage={cancelQueuedMessage}
         onResumeQueue={resumeQueue}
         onActivateBrowserTab={activateBrowserTab}
         onCloseBrowserTab={closeBrowserTab}
+        onToggleLeftSidebar={() => setSidebarCollapsed(false)}
         onStop={stopActiveTurn}
       />
     </div>
@@ -350,7 +566,14 @@ function toBotProfile(stored: BotSummary): BotProfile {
     notifications: stored.notifications,
     threadId: stored.threadId,
     initials: stored.name.slice(0, 1).toUpperCase(),
-    accent: stored.name.toLowerCase() === "new agent" ? "neutral" : accentForBot(stored.id),
+    accent:
+      stored.name.toLowerCase() === "new agent"
+        ? "neutral"
+        : stored.avatarColor
+          ? accentForAvatarColor(stored.avatarColor)
+          : accentForBot(stored.id),
+    avatarShape: stored.avatarShape ?? "blob",
+    avatarColor: stored.avatarColor ?? "orange",
     time: stored.updatedAt ? formatTime(stored.updatedAt) : "now",
     preview: cleanPreview(stored.preview),
   };
@@ -366,6 +589,7 @@ function toBotMessage(message: ConversationMessage, bots: BotProfile[]): BotMess
     author: message.author === "user" ? "you" : "bot",
     body: message.text,
     time: formatTime(message.createdAt),
+    streaming: message.status === "streaming",
     kind: message.exchange ? "exchange" : "text",
     senderBotId: exchangeSenderId,
     senderLabel: sender ? `Message from ${sender}` : undefined,
@@ -376,19 +600,13 @@ function toBotMessage(message: ConversationMessage, bots: BotProfile[]): BotMess
       ? undefined
       : message.delivery?.status === "queued"
         ? `Queued #${message.delivery.position}`
-        : message.delivery?.status === "starting"
-          ? "Starting…"
-          : message.delivery?.status === "running"
-            ? "Working…"
-            : message.delivery?.status === "cancelled"
-              ? "Cancelled"
-              : message.status === "streaming"
-                ? "Typing…"
-                : message.status === "failed"
-                  ? "Failed"
-                  : message.status === "interrupted"
-                    ? "Stopped"
-                    : undefined,
+        : message.delivery?.status === "cancelled"
+          ? "Cancelled"
+          : message.status === "failed"
+            ? "Failed"
+            : message.status === "interrupted"
+              ? "Stopped"
+              : undefined,
   };
 }
 
@@ -398,6 +616,23 @@ function cleanPreview(preview: string): string {
     .replace(/\s{2,}/g, " ")
     .trim();
   return cleaned || "No messages yet";
+}
+
+function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
+  return (
+    left.id === right.id &&
+    left.author === right.author &&
+    left.body === right.body &&
+    left.time === right.time &&
+    left.kind === right.kind &&
+    left.streaming === right.streaming &&
+    left.status === right.status &&
+    left.senderBotId === right.senderBotId &&
+    left.senderLabel === right.senderLabel &&
+    left.replyToMessageId === right.replyToMessageId &&
+    JSON.stringify(left.attachments) === JSON.stringify(right.attachments) &&
+    JSON.stringify(left.exchange) === JSON.stringify(right.exchange)
+  );
 }
 
 function formatTime(value: string): string {

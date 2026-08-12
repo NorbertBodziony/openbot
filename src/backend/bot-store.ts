@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type { BotSummary, UpdateBotInput } from "../shared/ipc";
+import type { BotAvatarColor, BotAvatarShape, BotSummary, UpdateBotInput } from "../shared/ipc";
 import { isRecord } from "./protocol";
 
 type StoredBot = BotSummary;
@@ -112,6 +112,8 @@ export class BotStore {
     if (input.role !== undefined) bot.role = input.role.trim().slice(0, 120);
     if (input.description !== undefined) bot.description = input.description.trim().slice(0, 2_000);
     if (input.notifications !== undefined) bot.notifications = input.notifications;
+    if (input.avatarShape !== undefined) bot.avatarShape = input.avatarShape;
+    if (input.avatarColor !== undefined) bot.avatarColor = input.avatarColor;
     bot.updatedAt = new Date().toISOString();
     await this.#persist();
     return { ...bot };
@@ -178,6 +180,12 @@ export class BotStore {
               : bot.preview,
           // MVP migration: old App Server threads do not contain the new dynamic tools.
           threadId: typeof parsed.version === "number" && parsed.version >= 2 ? bot.threadId : null,
+          avatarShape: isAvatarShape(bot.avatarShape)
+            ? bot.avatarShape
+            : defaultAvatarShape(bot.id),
+          avatarColor: isAvatarColor(bot.avatarColor)
+            ? bot.avatarColor
+            : defaultAvatarColor(bot.id),
         };
       });
       return { version: 5, examplesInitialized: true, bots };
@@ -212,6 +220,8 @@ export class BotStore {
       workspacePath: join(this.#botsRoot, id),
       preview: "No messages yet",
       updatedAt: null,
+      avatarShape: defaultAvatarShape(id),
+      avatarColor: defaultAvatarColor(id),
     };
   }
 
@@ -252,4 +262,50 @@ function isStoredBot(value: unknown): value is StoredBot {
     typeof value.preview === "string" &&
     (typeof value.updatedAt === "string" || value.updatedAt === null)
   );
+}
+
+const AVATAR_SHAPES: BotAvatarShape[] = [
+  "blob",
+  "pebble",
+  "squircle",
+  "tablet",
+  "wedge",
+  "hex",
+  "cloud",
+  "teardrop",
+];
+const AVATAR_COLORS: BotAvatarColor[] = [
+  "black",
+  "brown",
+  "red",
+  "orange",
+  "yellow",
+  "green",
+  "cyan",
+  "blue",
+  "violet",
+  "magenta",
+  "gray",
+];
+
+function isAvatarShape(value: unknown): value is BotAvatarShape {
+  return typeof value === "string" && AVATAR_SHAPES.includes(value as BotAvatarShape);
+}
+
+function isAvatarColor(value: unknown): value is BotAvatarColor {
+  return typeof value === "string" && AVATAR_COLORS.includes(value as BotAvatarColor);
+}
+
+function avatarIndex(id: string): number {
+  let hash = 0;
+  for (const character of id) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return hash;
+}
+
+function defaultAvatarShape(id: string): BotAvatarShape {
+  return AVATAR_SHAPES[avatarIndex(id) % AVATAR_SHAPES.length] ?? "blob";
+}
+
+function defaultAvatarColor(id: string): BotAvatarColor {
+  return AVATAR_COLORS[avatarIndex(`${id}:color`) % AVATAR_COLORS.length] ?? "orange";
 }

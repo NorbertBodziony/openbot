@@ -21,6 +21,7 @@ export const IPC_CHANNELS = {
   browserActivate: "browser:activate",
   browserClose: "browser:close",
   browserListTabs: "browser:list-tabs",
+  browserGetControlState: "browser:get-control-state",
   browserSetVisible: "browser:set-visible",
 } as const;
 
@@ -65,7 +66,32 @@ export interface BotSummary {
   workspacePath: string;
   preview: string;
   updatedAt: string | null;
+  avatarShape: BotAvatarShape;
+  avatarColor: BotAvatarColor;
 }
+
+export type BotAvatarShape =
+  | "blob"
+  | "pebble"
+  | "squircle"
+  | "tablet"
+  | "wedge"
+  | "hex"
+  | "cloud"
+  | "teardrop";
+
+export type BotAvatarColor =
+  | "black"
+  | "brown"
+  | "red"
+  | "orange"
+  | "yellow"
+  | "green"
+  | "cyan"
+  | "blue"
+  | "violet"
+  | "magenta"
+  | "gray";
 
 export interface UpdateBotInput {
   botId: string;
@@ -73,6 +99,8 @@ export interface UpdateBotInput {
   role?: string;
   description?: string;
   notifications?: boolean;
+  avatarShape?: BotAvatarShape;
+  avatarColor?: BotAvatarColor;
 }
 
 export type ConversationMessageAuthor = "user" | "assistant" | "agent" | "system";
@@ -145,6 +173,7 @@ export interface QueueSnapshot {
 
 export interface ConversationMessage {
   id: string;
+  turnId?: string;
   author: ConversationMessageAuthor;
   text: string;
   createdAt: string;
@@ -171,6 +200,7 @@ export interface ConversationSnapshot {
   botId: string;
   threadId: string | null;
   activeTurnId: string | null;
+  revision: number;
   messages: ConversationMessage[];
 }
 
@@ -256,6 +286,7 @@ export type AgentEvent =
       questions: AgentPromptQuestion[];
     }
   | { type: "browser-changed"; tabs: BrowserTab[]; activeTabId: string | null }
+  | { type: "browser-control-changed"; state: BrowserControlState }
   | { type: "error"; botId?: string; code: string; message: string };
 
 export interface BrowserTab {
@@ -264,6 +295,37 @@ export interface BrowserTab {
   url: string;
   loading: boolean;
   ownerThreadId: string | null;
+}
+
+export type BrowserControlPhase = "acting" | "waiting";
+
+export type BrowserControlAction =
+  | "open"
+  | "list-tabs"
+  | "snapshot"
+  | "click"
+  | "type"
+  | "key"
+  | "scroll"
+  | "back"
+  | "forward"
+  | "reload"
+  | "screenshot"
+  | "close-tab";
+
+export interface BrowserControlSession {
+  id: string;
+  threadId: string;
+  turnId: string;
+  callId: string;
+  tabId: string | null;
+  action: BrowserControlAction;
+  phase: BrowserControlPhase;
+  startedAt: string;
+}
+
+export interface BrowserControlState {
+  sessions: BrowserControlSession[];
 }
 
 export interface BrowserBounds {
@@ -308,6 +370,7 @@ export interface BrowserDesktopApi {
   activate: (tabId: string) => Promise<void>;
   close: (tabId: string) => Promise<void>;
   listTabs: () => Promise<BrowserTab[]>;
+  getControlState: () => Promise<BrowserControlState>;
   setVisible: (input: BrowserVisibilityInput) => Promise<void>;
 }
 

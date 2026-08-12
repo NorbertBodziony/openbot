@@ -3,13 +3,21 @@ import type {
   AgentEvent,
   AgentPromptQuestion,
   AttachmentSummary,
+  BotAvatarColor,
+  BotAvatarShape,
+  BrowserControlAction,
+  BrowserControlState,
   BrowserTab,
   DraftAttachment,
   QueueSnapshot,
   UpdateBotInput,
 } from "../../../shared/ipc";
 import type { BotMessage, BotProfile } from "../data";
-import { GrokMark } from "./GrokMark";
+import { AVATAR_COLORS, AVATAR_SHAPES } from "../data";
+import { AgentAvatar } from "./AgentAvatar";
+import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
+import { PanelResizer, readPanelWidth, savePanelWidth } from "./PanelResizer";
+import { SidebarToggleIcon } from "./Sidebar";
 
 interface ConversationProps {
   bot: BotProfile | undefined;
@@ -23,17 +31,21 @@ interface ConversationProps {
   queue: QueueSnapshot | undefined;
   browserTabs: BrowserTab[];
   activeBrowserTabId: string | null;
+  browserControlState: BrowserControlState;
+  leftSidebarCollapsed: boolean;
   prompt: Extract<AgentEvent, { type: "prompt" }> | undefined;
   onCloseAgentPicker: () => void;
   onCreateAgent: () => void;
   onSelectAgent: (botId: string) => void;
   onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
   onSendMessage: (body: string, attachmentDraftIds: string[]) => Promise<boolean>;
+  onCompleteOnboarding: (answer: string) => Promise<boolean>;
   onAnswerPrompt: (answers: Record<string, string[]>) => Promise<boolean>;
   onCancelQueuedMessage: (deliveryId: string) => void;
   onResumeQueue: () => void;
   onActivateBrowserTab: (tabId: string) => void;
   onCloseBrowserTab: (tabId: string) => void;
+  onToggleLeftSidebar: () => void;
   onStop: () => void;
 }
 
@@ -56,11 +68,67 @@ const ONBOARDING_CHOICES = [
   "Sales & outreach",
   "Something else",
 ];
+const SETTINGS_PANEL_STORAGE_KEY = "infeld:settings-panel-width";
+const SETTINGS_PANEL_DEFAULT = 296;
+const SETTINGS_PANEL_MIN = 260;
+const SETTINGS_PANEL_MAX = 520;
+const BROWSER_PANEL_STORAGE_KEY = "infeld:browser-panel-width";
+const BROWSER_PANEL_DEFAULT = 380;
+const BROWSER_PANEL_MIN = 300;
+const BROWSER_PANEL_MAX = 680;
+
+const BROWSER_ACTION_LABELS: Record<BrowserControlAction, string> = {
+  open: "Opening a page…",
+  "list-tabs": "Checking tabs…",
+  snapshot: "Reading the page…",
+  click: "Clicking…",
+  type: "Typing…",
+  key: "Using the keyboard…",
+  scroll: "Scrolling…",
+  back: "Going back…",
+  forward: "Going forward…",
+  reload: "Reloading…",
+  screenshot: "Taking a screenshot…",
+  "close-tab": "Closing a tab…",
+};
+
+const AVATAR_COLOR_LABELS: Record<BotAvatarColor, string> = {
+  black: "Black",
+  brown: "Brown",
+  red: "Red",
+  orange: "Orange",
+  yellow: "Yellow",
+  green: "Green",
+  cyan: "Cyan",
+  blue: "Blue",
+  violet: "Violet",
+  magenta: "Magenta",
+  gray: "Gray",
+};
+
+const AVATAR_SHAPE_LABELS: Record<BotAvatarShape, string> = {
+  blob: "blob",
+  pebble: "pebble",
+  squircle: "squircle",
+  tablet: "tablet",
+  wedge: "wedge",
+  hex: "hex",
+  cloud: "cloud",
+  teardrop: "teardrop",
+};
 
 function CloseIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20" class="size-[14px] fill-none stroke-current">
       <path d="m5 5 10 10M15 5 5 15" stroke-width="1.4" stroke-linecap="round" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="size-[14px] fill-current">
+      <rect x="6" y="6" width="8" height="8" rx="1.5" />
     </svg>
   );
 }
@@ -95,6 +163,15 @@ function ComputerIcon() {
     <svg aria-hidden="true" viewBox="0 0 20 20" class="size-[14px] fill-none stroke-current">
       <rect x="2.5" y="3" width="15" height="10" rx="1.5" stroke-width="1.3" />
       <path d="M7 17h6M10 13v4" stroke-width="1.3" stroke-linecap="round" />
+    </svg>
+  );
+}
+
+function BrowserControlIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" class="browser-tab-control-icon">
+      <path d="M3.25 2.5 11 8.2 7.55 9.3l-1.5 3.45z" />
+      <circle cx="11.75" cy="3.75" r="1.45" />
     </svg>
   );
 }
@@ -140,13 +217,16 @@ function ChoiceCard(props: {
   title: string;
   hint?: string;
   choices: string[];
+  customChoice?: string;
   pending?: boolean;
-  onSubmit: (answer: string) => void;
+  onSubmit: (answer: string) => Promise<boolean>;
 }) {
   const [answer, setAnswer] = createSignal("");
-  const submit = () => {
+  const [customSelected, setCustomSelected] = createSignal(false);
+  let customInput: HTMLInputElement | undefined;
+  const submit = async () => {
     const value = answer().trim();
-    if (value && !props.pending) props.onSubmit(value);
+    if (value && !props.pending) await props.onSubmit(value);
   };
   return (
     <div class="choice-card">
@@ -162,13 +242,23 @@ function ChoiceCard(props: {
             <button
               type="button"
               role="option"
-              aria-selected={answer() === choice}
+              aria-selected={choice === props.customChoice ? customSelected() : answer() === choice}
               class="choice-option"
-              classList={{ "choice-option-selected": answer() === choice }}
+              classList={{
+                "choice-option-selected":
+                  choice === props.customChoice ? customSelected() : answer() === choice,
+              }}
               disabled={props.pending}
               onClick={() => {
+                if (choice === props.customChoice) {
+                  setAnswer("");
+                  setCustomSelected(true);
+                  customInput?.focus();
+                  return;
+                }
+                setCustomSelected(false);
                 setAnswer(choice);
-                props.onSubmit(choice);
+                void props.onSubmit(choice);
               }}
             >
               <span class="choice-key">{String.fromCharCode(65 + index())}</span>
@@ -178,14 +268,18 @@ function ChoiceCard(props: {
         </For>
       </div>
       <input
+        ref={(element) => (customInput = element)}
         class="choice-input"
         value={answer()}
         placeholder="Type your own answer"
         aria-label="Custom answer"
         disabled={props.pending}
-        onInput={(event) => setAnswer(event.currentTarget.value)}
+        onInput={(event) => {
+          setCustomSelected(true);
+          setAnswer(event.currentTarget.value);
+        }}
         onKeyDown={(event) => {
-          if (event.key === "Enter") submit();
+          if (event.key === "Enter") void submit();
         }}
       />
     </div>
@@ -307,14 +401,7 @@ function AttachmentCards(props: {
 }
 
 function ExchangeAgentAvatar(props: { bot: BotProfile | undefined }) {
-  return (
-    <span
-      class={`bot-avatar exchange-agent-avatar bot-avatar-${props.bot?.accent ?? "neutral"}`}
-      aria-hidden="true"
-    >
-      <GrokMark />
-    </span>
-  );
+  return <AgentAvatar bot={props.bot} class="exchange-agent-avatar" />;
 }
 
 function ExchangeSystemRow(props: {
@@ -329,8 +416,11 @@ function ExchangeSystemRow(props: {
     const senderId = exchange()?.senderBotId;
     return props.bots.find((bot) => bot.id === senderId);
   };
-  const agentCountLabel = () =>
-    `${recipients().length} agent${recipients().length === 1 ? "" : "s"}`;
+  const singleRecipient = () => {
+    const recipientId = recipients()[0];
+    return recipientId ? props.bots.find((bot) => bot.id === recipientId) : undefined;
+  };
+  const agentCountLabel = () => `${recipients().length} agents`;
 
   return (
     <div class="exchange-system-row">
@@ -355,48 +445,67 @@ function ExchangeSystemRow(props: {
         }
       >
         <span class="exchange-system-label">Messaged</span>
-        <div class="exchange-agent-picker">
+        <Show
+          when={recipients().length === 1}
+          fallback={
+            <div class="exchange-agent-picker">
+              <button
+                type="button"
+                class="exchange-agent-trigger exchange-agent-trigger-outgoing"
+                aria-haspopup="menu"
+                aria-expanded={agentsOpen()}
+                aria-label={`${agentCountLabel()}, show list`}
+                onClick={() => setAgentsOpen((open) => !open)}
+              >
+                <span class="exchange-avatar-stack" aria-hidden="true">
+                  <For each={recipients().slice(0, 3)}>
+                    {(recipientId) => (
+                      <ExchangeAgentAvatar bot={props.bots.find((bot) => bot.id === recipientId)} />
+                    )}
+                  </For>
+                </span>
+                <span>{agentCountLabel()}</span>
+              </button>
+              <Show when={agentsOpen()}>
+                <div class="exchange-agent-menu" role="menu">
+                  <For each={recipients()}>
+                    {(recipientId) => {
+                      const recipient = () => props.bots.find((bot) => bot.id === recipientId);
+                      return (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          class="exchange-agent-menu-item"
+                          onClick={() => {
+                            setAgentsOpen(false);
+                            props.onSelectAgent(recipientId);
+                          }}
+                        >
+                          <ExchangeAgentAvatar bot={recipient()} />
+                          <span>{recipient()?.name ?? recipientId}</span>
+                        </button>
+                      );
+                    }}
+                  </For>
+                </div>
+              </Show>
+            </div>
+          }
+        >
           <button
             type="button"
-            class="exchange-agent-trigger"
-            aria-haspopup="menu"
-            aria-expanded={agentsOpen()}
-            aria-label={`${agentCountLabel()}, show list`}
-            onClick={() => setAgentsOpen((open) => !open)}
+            class="exchange-agent-trigger exchange-agent-trigger-single"
+            aria-label={`Open exchange with ${singleRecipient()?.name ?? recipients()[0] ?? "agent"}`}
+            title={singleRecipient()?.name ?? recipients()[0] ?? "Agent"}
+            onClick={() => {
+              const recipientId = recipients()[0];
+              if (recipientId) props.onSelectAgent(recipientId);
+            }}
           >
-            <span class="exchange-avatar-stack" aria-hidden="true">
-              <For each={recipients().slice(0, 3)}>
-                {(recipientId) => (
-                  <ExchangeAgentAvatar bot={props.bots.find((bot) => bot.id === recipientId)} />
-                )}
-              </For>
-            </span>
-            <span>{agentCountLabel()}</span>
+            <ExchangeAgentAvatar bot={singleRecipient()} />
+            <span>{singleRecipient()?.name ?? recipients()[0] ?? "Agent"}</span>
           </button>
-          <Show when={agentsOpen()}>
-            <div class="exchange-agent-menu" role="menu">
-              <For each={recipients()}>
-                {(recipientId) => {
-                  const recipient = () => props.bots.find((bot) => bot.id === recipientId);
-                  return (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      class="exchange-agent-menu-item"
-                      onClick={() => {
-                        setAgentsOpen(false);
-                        props.onSelectAgent(recipientId);
-                      }}
-                    >
-                      <ExchangeAgentAvatar bot={recipient()} />
-                      <span>{recipient()?.name ?? recipientId}</span>
-                    </button>
-                  );
-                }}
-              </For>
-            </div>
-          </Show>
-        </div>
+        </Show>
       </Show>
       <time dateTime={props.message.time}>{props.message.time}</time>
     </div>
@@ -405,13 +514,21 @@ function ExchangeSystemRow(props: {
 
 function MessageBody(props: {
   message: BotMessage;
+  bots: BotProfile[];
+  onSelectAgent: (botId: string) => void;
   onPreview: (attachment: AttachmentSummary) => void;
   onAttachmentAction: (attachment: AttachmentSummary, action: "open" | "reveal") => void;
 }) {
   return (
     <>
       <Show when={props.message.body}>
-        <p class="message-copy">{props.message.body}</p>
+        <p class="message-copy">
+          <TaggedMessageText
+            body={props.message.body}
+            bots={props.bots}
+            onSelectAgent={props.onSelectAgent}
+          />
+        </p>
       </Show>
       <Show when={props.message.replyToMessageId}>
         <small class="reply-reference">Reply to {props.message.replyToMessageId}</small>
@@ -433,6 +550,82 @@ function MessageBody(props: {
   );
 }
 
+function TaggedMessageText(props: {
+  body: string;
+  bots: BotProfile[];
+  onSelectAgent: (botId: string) => void;
+}) {
+  const parts = createMemo(() => taggedMessageParts(props.body, props.bots));
+  return (
+    <For each={parts()}>
+      {(part) => (
+        <Show when={part.bot} fallback={part.text}>
+          {(bot) => (
+            <button
+              type="button"
+              class="message-agent-tag"
+              aria-label={`Open agent ${bot().name}`}
+              onClick={() => props.onSelectAgent(bot().id)}
+            >
+              <AgentAvatar bot={bot()} />
+              <span>{bot().name}</span>
+            </button>
+          )}
+        </Show>
+      )}
+    </For>
+  );
+}
+
+function taggedMessageParts(body: string, bots: BotProfile[]) {
+  const orderedBots = [...bots].sort((left, right) => right.name.length - left.name.length);
+  if (orderedBots.length === 0) return [{ text: body, bot: undefined }];
+  const botsByName = new Map(orderedBots.map((bot) => [bot.name.toLocaleLowerCase(), bot]));
+  const expression = new RegExp(
+    `@(${orderedBots.map((bot) => escapeExpression(bot.name)).join("|")})(?=$|[\\s.,!?;:()\\[\\]{}])`,
+    "giu",
+  );
+  const parts: Array<{ text: string; bot: BotProfile | undefined }> = [];
+  let cursor = 0;
+  for (const match of body.matchAll(expression)) {
+    const index = match.index ?? 0;
+    if (index > cursor) parts.push({ text: body.slice(cursor, index), bot: undefined });
+    const name = match[1] ?? "";
+    const bot = botsByName.get(name.toLocaleLowerCase());
+    parts.push({ text: match[0], bot });
+    cursor = index + match[0].length;
+  }
+  if (cursor < body.length) parts.push({ text: body.slice(cursor), bot: undefined });
+  return parts.length > 0 ? parts : [{ text: body, bot: undefined }];
+}
+
+function escapeExpression(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function AgentActivityIndicator(props: {
+  bot: BotProfile | undefined;
+  state: "Queued" | "Working";
+}) {
+  return (
+    <div
+      class="agent-activity-entry"
+      role="status"
+      aria-label={`${props.bot?.name ?? "Agent"} is ${props.state.toLowerCase()}`}
+    >
+      <AgentAvatar bot={props.bot} class="agent-activity-avatar" />
+      <div class="agent-activity-bubble" aria-hidden="true">
+        <span>{props.state}</span>
+        <span class="agent-activity-dots">
+          <i />
+          <i />
+          <i />
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function Conversation(props: ConversationProps) {
   const [drafts, setDrafts] = createSignal<Record<string, ComposerDraft>>({});
   const [showAttachments, setShowAttachments] = createSignal(false);
@@ -447,10 +640,29 @@ export function Conversation(props: ConversationProps) {
   const [settingsTitle, setSettingsTitle] = createSignal("");
   const [settingsDescription, setSettingsDescription] = createSignal("");
   const [settingsNotifications, setSettingsNotifications] = createSignal(true);
+  const [avatarPickerOpen, setAvatarPickerOpen] = createSignal(false);
+  const [avatarShape, setAvatarShape] = createSignal<BotAvatarShape>("blob");
+  const [avatarColor, setAvatarColor] = createSignal<BotAvatarColor>("orange");
   const [browserAddress, setBrowserAddress] = createSignal("https://www.google.com");
   const [mediaPreview, setMediaPreview] = createSignal<MediaPreview | null>(null);
   const [pickerQuery, setPickerQuery] = createSignal("");
   const [activePickerOption, setActivePickerOption] = createSignal(0);
+  const [settingsPanelWidth, setSettingsPanelWidth] = createSignal(
+    readPanelWidth(
+      SETTINGS_PANEL_STORAGE_KEY,
+      SETTINGS_PANEL_DEFAULT,
+      SETTINGS_PANEL_MIN,
+      SETTINGS_PANEL_MAX,
+    ),
+  );
+  const [browserPanelWidth, setBrowserPanelWidth] = createSignal(
+    readPanelWidth(
+      BROWSER_PANEL_STORAGE_KEY,
+      BROWSER_PANEL_DEFAULT,
+      BROWSER_PANEL_MIN,
+      BROWSER_PANEL_MAX,
+    ),
+  );
   const currentDraft = createMemo(() => {
     const id = props.bot?.id;
     return id ? (drafts()[id] ?? EMPTY_DRAFT) : EMPTY_DRAFT;
@@ -461,10 +673,80 @@ export function Conversation(props: ConversationProps) {
       ? props.bots.filter((bot) => `${bot.name} ${bot.role}`.toLowerCase().includes(query))
       : props.bots;
   });
+  const activeBrowserControl = createMemo(() => {
+    const sessions = props.browserControlState.sessions;
+    const activeTab = props.browserTabs.find((tab) => tab.id === props.activeBrowserTabId);
+    const forActiveTab = activeTab?.ownerThreadId
+      ? sessions.filter((session) => session.threadId === activeTab.ownerThreadId)
+      : [];
+    const candidates = forActiveTab.length > 0 ? forActiveTab : sessions;
+    return (
+      [...candidates]
+        .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
+        .find((session) => session.phase === "acting") ?? candidates.at(-1)
+    );
+  });
+  const browserControlBot = createMemo(() => {
+    const control = activeBrowserControl();
+    return control ? props.bots.find((bot) => bot.threadId === control.threadId) : undefined;
+  });
+  const browserControlForTab = (tab: BrowserTab) => {
+    const sessions = props.browserControlState.sessions;
+    return (
+      sessions.find((session) => session.tabId === tab.id) ??
+      sessions.find(
+        (session) =>
+          session.tabId === null &&
+          tab.id === props.activeBrowserTabId &&
+          session.threadId === tab.ownerThreadId,
+      )
+    );
+  };
+  const browserControllerForTab = (tab: BrowserTab) => {
+    const control = browserControlForTab(tab);
+    return control ? props.bots.find((bot) => bot.threadId === control.threadId) : undefined;
+  };
+  const agentActivity = createMemo<"Queued" | "Working" | null>(() => {
+    if (
+      props.activeTurnId ||
+      props.queue?.deliveries.some(
+        (delivery) => delivery.status === "starting" || delivery.status === "running",
+      )
+    ) {
+      return "Working";
+    }
+    if (
+      !props.queue?.paused &&
+      props.queue?.deliveries.some((delivery) => delivery.status === "queued")
+    ) {
+      return "Queued";
+    }
+    return null;
+  });
+  const seenMessageIds = new Set<string>();
+  const [fadeAtTop, setFadeAtTop] = createSignal(false);
+  const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
   let scrollElement: HTMLDivElement | undefined;
+  let conversationPanel: HTMLElement | undefined;
   let browserSurface: HTMLDivElement | undefined;
   let browserResizeObserver: ResizeObserver | undefined;
   let pickerInput: HTMLInputElement | undefined;
+  let stickToLatest = true;
+  let lastConversationBotId: string | undefined;
+
+  function updateScrollFade(element = scrollElement) {
+    if (!element) return;
+    const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
+    setFadeAtTop(element.scrollTop > 2);
+    setFadeAtBottom(remaining > 2);
+  }
+
+  const markMessageSeen = (messageId: string): boolean => {
+    const key = `${props.bot?.id ?? "none"}:${messageId}`;
+    if (seenMessageIds.has(key)) return false;
+    seenMessageIds.add(key);
+    return true;
+  };
 
   const updateCurrentDraft = (patch: Partial<ComposerDraft>) => {
     const id = props.bot?.id;
@@ -490,19 +772,41 @@ export function Conversation(props: ConversationProps) {
       hideBrowserPanel();
       setMediaPreview(null);
       setSettingsOpen(false);
+      setAvatarPickerOpen(false);
       props.onCloseAgentPicker();
     };
     window.addEventListener("keydown", closeOnEscape);
+    const scrollResizeObserver = new ResizeObserver(() => updateScrollFade());
+    if (scrollElement) scrollResizeObserver.observe(scrollElement);
+    requestAnimationFrame(() => updateScrollFade());
     onCleanup(() => {
+      scrollResizeObserver.disconnect();
       unsubscribeImport();
       window.removeEventListener("keydown", closeOnEscape);
     });
   });
 
   createEffect(() => {
-    props.messages.length;
+    const botId = props.bot?.id;
+    const lastMessage = props.messages[props.messages.length - 1];
+    props.activeTurnId;
+    props.queue?.deliveries.map((delivery) => `${delivery.id}:${delivery.status}`).join("|");
+    lastMessage?.body;
+    lastMessage?.status;
+    lastMessage?.exchange?.deliveries
+      .map((delivery) => `${delivery.id}:${delivery.status}:${delivery.position}`)
+      .join("|");
+    props.loaded;
+    props.agentPickerOpen;
+    props.prompt;
+    if (botId !== lastConversationBotId) {
+      lastConversationBotId = botId;
+      stickToLatest = true;
+    }
     requestAnimationFrame(() => {
-      if (scrollElement) scrollElement.scrollTop = scrollElement.scrollHeight;
+      if (!scrollElement) return;
+      if (stickToLatest) scrollElement.scrollTop = scrollElement.scrollHeight;
+      updateScrollFade(scrollElement);
     });
   });
 
@@ -513,6 +817,9 @@ export function Conversation(props: ConversationProps) {
     setSettingsTitle(bot.role);
     setSettingsDescription(bot.description);
     setSettingsNotifications(bot.notifications);
+    setAvatarShape(bot.avatarShape);
+    setAvatarColor(bot.avatarColor);
+    setAvatarPickerOpen(false);
   });
 
   createEffect(() => {
@@ -594,7 +901,7 @@ export function Conversation(props: ConversationProps) {
   async function submitMessage(override?: string) {
     const botId = props.bot?.id;
     const draft = currentDraft();
-    const text = override ?? draft.text;
+    const text = override ?? expandComposerMentions(draft.text);
     const attachments = override ? [] : draft.attachments;
     if (!botId || submitting() || (!text.trim() && attachments.length === 0)) return;
     setSubmitting(true);
@@ -696,12 +1003,14 @@ export function Conversation(props: ConversationProps) {
 
   return (
     <main
+      ref={(element) => (conversationPanel = element)}
       aria-label="Conversation"
       class="conversation-panel"
       classList={{
         "conversation-drop-active": dropActive(),
         "browser-panel-active": screenOpen(),
       }}
+      style={`--settings-panel-width: ${settingsPanelWidth()}px; --browser-panel-width: ${browserPanelWidth()}px`}
       onDragEnter={(event) => {
         if (event.dataTransfer?.types.includes("Files")) setDropActive(true);
       }}
@@ -720,6 +1029,19 @@ export function Conversation(props: ConversationProps) {
         <div class="attachment-drop-overlay">Drop files to attach</div>
       </Show>
       <header class="window-drag conversation-header">
+        <Show when={props.leftSidebarCollapsed}>
+          <button
+            type="button"
+            class="sidebar-icon-button sidebar-restore-button no-drag"
+            aria-label="Show sidebar"
+            aria-controls="bot-sidebar"
+            aria-expanded="false"
+            title="Show sidebar"
+            onClick={props.onToggleLeftSidebar}
+          >
+            <SidebarToggleIcon />
+          </button>
+        </Show>
         <Show
           when={props.agentPickerOpen}
           fallback={
@@ -735,17 +1057,22 @@ export function Conversation(props: ConversationProps) {
                       setSettingsOpen(true);
                     }}
                   >
-                    <span class={`bot-avatar bot-avatar-${bot().accent}`}>
-                      <GrokMark />
-                    </span>
+                    <AgentAvatar bot={bot()} />
                     <h1>{bot().name}</h1>
                   </button>
                 )}
               </Show>
               <button
                 type="button"
-                class="computer-button no-drag"
-                aria-label={screenOpen() ? "Hide computer" : "Open computer"}
+                class="header-panel-toggle computer-button no-drag"
+                classList={{ "computer-button-agent-active": Boolean(activeBrowserControl()) }}
+                aria-label={
+                  activeBrowserControl()
+                    ? `${browserControlBot()?.name ?? "Agent"} is controlling the browser`
+                    : screenOpen()
+                      ? "Hide computer"
+                      : "Open computer"
+                }
                 aria-expanded={screenOpen()}
                 onClick={() => {
                   setSettingsOpen(false);
@@ -754,6 +1081,9 @@ export function Conversation(props: ConversationProps) {
                 }}
               >
                 <ComputerIcon />
+                <Show when={activeBrowserControl()}>
+                  <span class="computer-control-dot" aria-hidden="true" />
+                </Show>
               </button>
             </>
           }
@@ -798,9 +1128,7 @@ export function Conversation(props: ConversationProps) {
                     class="agent-picker-option"
                     onClick={() => props.onSelectAgent(bot.id)}
                   >
-                    <span class={`bot-avatar bot-avatar-${bot.accent}`}>
-                      <GrokMark />
-                    </span>
+                    <AgentAvatar bot={bot} />
                     <span>{bot.name}</span>
                   </button>
                 )}
@@ -810,7 +1138,19 @@ export function Conversation(props: ConversationProps) {
         </Show>
       </header>
 
-      <div class="conversation-scroll" ref={(element) => (scrollElement = element)}>
+      <div
+        class="conversation-scroll"
+        classList={{
+          "scroll-fade-top": fadeAtTop(),
+          "scroll-fade-bottom": fadeAtBottom(),
+        }}
+        ref={(element) => (scrollElement = element)}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          stickToLatest = element.scrollHeight - element.scrollTop - element.clientHeight <= 80;
+          updateScrollFade(element);
+        }}
+      >
         <Show when={!props.agentPickerOpen && props.loaded}>
           <Show when={props.messages.length > 0}>
             <div class="time-marker">
@@ -818,67 +1158,92 @@ export function Conversation(props: ConversationProps) {
             </div>
           </Show>
           <Show when={props.messages.length === 0 && !props.activeTurnId}>
-            <article class="message-entry message-entry-bot onboarding-message">
+            <article class="message-entry message-entry-animated message-entry-bot onboarding-message">
               <div class="bot-bubble">
                 <p class="message-copy">Hey — good to meet you.</p>
               </div>
               <ChoiceCard
                 title="What do you want me helping with most?"
+                hint="This becomes my ongoing specialty. You can change it later in Settings."
                 choices={ONBOARDING_CHOICES}
+                customChoice="Something else"
                 pending={submitting()}
-                onSubmit={(answer) => void submitMessage(answer)}
+                onSubmit={async (answer) => {
+                  if (submitting()) return false;
+                  setSubmitting(true);
+                  setComposerError(null);
+                  const completed = await props.onCompleteOnboarding(answer);
+                  setSubmitting(false);
+                  return completed;
+                }}
               />
             </article>
           </Show>
           <For each={props.messages}>
-            {(message, index) => (
-              <Show
-                when={message.exchange}
-                fallback={
-                  <article
-                    class="message-entry"
-                    classList={{
-                      "message-entry-user": message.author === "you",
-                      "message-entry-bot": message.author === "bot",
-                    }}
-                    style={{ "animation-delay": `${Math.min(index() * 35, 350)}ms` }}
-                  >
-                    <div class={message.author === "you" ? "user-bubble" : "bot-bubble"}>
-                      <MessageBody
+            {(message, index) => {
+              const animateEntrance = markMessageSeen(message.id);
+              return (
+                <Show
+                  when={message.exchange}
+                  fallback={
+                    <article
+                      class="message-entry"
+                      classList={{
+                        "message-entry-animated": animateEntrance,
+                        "message-entry-user": message.author === "you",
+                        "message-entry-bot": message.author === "bot",
+                      }}
+                      style={{ "animation-delay": `${Math.min(index() * 35, 350)}ms` }}
+                    >
+                      <div
+                        class={message.author === "you" ? "user-bubble" : "bot-bubble"}
+                        classList={{ "bot-bubble-streaming": message.streaming === true }}
+                      >
+                        <MessageBody
+                          message={message}
+                          bots={props.bots}
+                          onSelectAgent={props.onSelectAgent}
+                          onPreview={(attachment) => void previewAttachment(attachment)}
+                          onAttachmentAction={attachmentAction}
+                        />
+                      </div>
+                    </article>
+                  }
+                >
+                  {(exchange) => (
+                    <article
+                      class="exchange-message-entry"
+                      classList={{ "exchange-message-entry-animated": animateEntrance }}
+                      style={{ "animation-delay": `${Math.min(index() * 35, 350)}ms` }}
+                    >
+                      <ExchangeSystemRow
                         message={message}
-                        onPreview={(attachment) => void previewAttachment(attachment)}
-                        onAttachmentAction={attachmentAction}
+                        bots={props.bots}
+                        onSelectAgent={props.onSelectAgent}
                       />
-                    </div>
-                  </article>
-                }
-              >
-                {(exchange) => (
-                  <article
-                    class="exchange-message-entry"
-                    style={{ "animation-delay": `${Math.min(index() * 35, 350)}ms` }}
-                  >
-                    <ExchangeSystemRow
-                      message={message}
-                      bots={props.bots}
-                      onSelectAgent={props.onSelectAgent}
-                    />
-                    <Show when={exchange().direction === "incoming"}>
-                      <div class="message-entry message-entry-bot exchange-agent-message">
-                        <div class="bot-bubble">
-                          <MessageBody
-                            message={message}
+                      <Show
+                        when={
+                          exchange().direction === "incoming" &&
+                          (message.attachments?.length ?? 0) > 0
+                        }
+                      >
+                        <div class="exchange-agent-attachments">
+                          <AttachmentCards
+                            attachments={message.attachments ?? []}
                             onPreview={(attachment) => void previewAttachment(attachment)}
-                            onAttachmentAction={attachmentAction}
+                            onAction={attachmentAction}
                           />
                         </div>
-                      </div>
-                    </Show>
-                  </article>
-                )}
-              </Show>
-            )}
+                      </Show>
+                    </article>
+                  )}
+                </Show>
+              );
+            }}
           </For>
+          <Show when={agentActivity()}>
+            {(state) => <AgentActivityIndicator bot={props.bot} state={state()} />}
+          </Show>
           <Show when={props.prompt}>
             {(prompt) => (
               <PromptCard questions={prompt().questions} onSubmit={props.onAnswerPrompt} />
@@ -965,23 +1330,18 @@ export function Conversation(props: ConversationProps) {
           >
             <PlusIcon />
           </button>
-          <label class="composer-input-label">
-            <span class="sr-only">Message {props.bot?.name}</span>
-            <textarea
-              rows="1"
+          <div class="composer-input-label">
+            <ComposerEditor
+              botId={props.bot?.id}
+              bots={props.bots}
               value={currentDraft().text}
               disabled={props.agentPickerOpen || submitting()}
               placeholder={`Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`}
-              aria-label={`Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`}
-              onInput={(event) => updateCurrentDraft({ text: event.currentTarget.value })}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void submitMessage();
-                }
-              }}
+              ariaLabel={`Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`}
+              onValueChange={(text) => updateCurrentDraft({ text })}
+              onSubmit={() => void submitMessage()}
             />
-          </label>
+          </div>
           <Show
             when={props.activeTurnId}
             fallback={
@@ -1002,7 +1362,7 @@ export function Conversation(props: ConversationProps) {
               aria-label="Stop agent"
               onClick={props.onStop}
             >
-              <CloseIcon />
+              <StopIcon />
             </button>
           </Show>
         </div>
@@ -1071,53 +1431,100 @@ export function Conversation(props: ConversationProps) {
       </Show>
 
       <Show when={screenOpen()}>
-        <aside class="browser-panel" aria-label="Browser">
+        <aside
+          id="browser-side-panel"
+          class="browser-panel"
+          classList={{ "browser-panel-controlled": Boolean(activeBrowserControl()) }}
+          aria-label="Browser"
+        >
+          <PanelResizer
+            class="right-panel-resizer"
+            label="Resize right panel"
+            controls="browser-side-panel"
+            direction="right"
+            value={browserPanelWidth()}
+            defaultValue={BROWSER_PANEL_DEFAULT}
+            min={BROWSER_PANEL_MIN}
+            max={() =>
+              Math.min(
+                BROWSER_PANEL_MAX,
+                Math.max(
+                  BROWSER_PANEL_MIN,
+                  (conversationPanel?.clientWidth || window.innerWidth) - 300,
+                ),
+              )
+            }
+            onResize={setBrowserPanelWidth}
+            onResizeEnd={(value) => savePanelWidth(BROWSER_PANEL_STORAGE_KEY, value)}
+          />
           <header class="browser-panel-header">
-            <div class="browser-tabs" role="tablist" aria-label="Browser tabs">
-              <For each={props.browserTabs}>
-                {(tab) => (
-                  <div class="browser-tab-wrap">
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={props.activeBrowserTabId === tab.id}
-                      class="browser-tab"
-                      classList={{ "browser-tab-active": props.activeBrowserTabId === tab.id }}
-                      onClick={() => props.onActivateBrowserTab(tab.id)}
-                    >
-                      <span>{tab.loading ? "Loading…" : tab.title || tab.url}</span>
-                    </button>
-                    <button
-                      type="button"
-                      class="browser-tab-close"
-                      aria-label={`Close ${tab.title || "browser tab"}`}
-                      onClick={() => props.onCloseBrowserTab(tab.id)}
-                    >
-                      <CloseIcon />
-                    </button>
-                  </div>
-                )}
-              </For>
-              <button
-                type="button"
-                class="browser-new-tab"
-                aria-label="New browser tab"
-                onClick={() => {
-                  setBrowserAddress("https://www.google.com");
-                  void openBrowserAddress();
-                }}
-              >
-                <PlusIcon />
-              </button>
+            <div class="browser-tabs">
+              <div class="browser-tab-strip" role="tablist" aria-label="Browser tabs">
+                <For each={props.browserTabs}>
+                  {(tab) => {
+                    const control = () => browserControlForTab(tab);
+                    const controller = () => browserControllerForTab(tab);
+                    const title = () => (tab.loading ? "Loading…" : tab.title || tab.url);
+                    return (
+                      <div
+                        class="browser-tab-wrap"
+                        classList={{ "browser-tab-controlled": Boolean(control()) }}
+                      >
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-label={
+                            control()
+                              ? `${title()}, controlled by ${controller()?.name ?? "agent"}`
+                              : title()
+                          }
+                          aria-selected={props.activeBrowserTabId === tab.id}
+                          class="browser-tab"
+                          classList={{
+                            "browser-tab-active": props.activeBrowserTabId === tab.id,
+                          }}
+                          onClick={() => props.onActivateBrowserTab(tab.id)}
+                        >
+                          <Show when={control()}>
+                            {(session) => (
+                              <span
+                                class="browser-tab-control"
+                                classList={{
+                                  "browser-tab-control-acting": session().phase === "acting",
+                                }}
+                                title={`${controller()?.name ?? "Agent"}: ${BROWSER_ACTION_LABELS[session().action]}`}
+                              >
+                                <BrowserControlIcon />
+                              </span>
+                            )}
+                          </Show>
+                          <span class="browser-tab-title">{title()}</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="browser-tab-close"
+                          aria-label={`Close ${tab.title || "browser tab"}`}
+                          onClick={() => props.onCloseBrowserTab(tab.id)}
+                        >
+                          <CloseIcon />
+                        </button>
+                      </div>
+                    );
+                  }}
+                </For>
+                <button
+                  type="button"
+                  class="browser-new-tab"
+                  aria-label="New browser tab"
+                  onClick={() => {
+                    setBrowserAddress("https://www.google.com");
+                    void openBrowserAddress();
+                  }}
+                >
+                  <PlusIcon />
+                </button>
+              </div>
             </div>
-            <button
-              type="button"
-              class="browser-panel-close"
-              aria-label="Hide browser panel"
-              onClick={hideBrowserPanel}
-            >
-              <CloseIcon />
-            </button>
           </header>
           <div class="browser-toolbar">
             <button type="button" aria-label="Go back" class="browser-toolbar-button" disabled>
@@ -1163,7 +1570,27 @@ export function Conversation(props: ConversationProps) {
       </Show>
 
       <Show when={settingsOpen() && props.bot}>
-        <aside class="agent-settings-panel" aria-label="Agent settings">
+        <aside id="settings-side-panel" class="agent-settings-panel" aria-label="Agent settings">
+          <PanelResizer
+            class="right-panel-resizer"
+            label="Resize right panel"
+            controls="settings-side-panel"
+            direction="right"
+            value={settingsPanelWidth()}
+            defaultValue={SETTINGS_PANEL_DEFAULT}
+            min={SETTINGS_PANEL_MIN}
+            max={() =>
+              Math.min(
+                SETTINGS_PANEL_MAX,
+                Math.max(
+                  SETTINGS_PANEL_MIN,
+                  (conversationPanel?.clientWidth || window.innerWidth) - 300,
+                ),
+              )
+            }
+            onResize={setSettingsPanelWidth}
+            onResizeEnd={(value) => savePanelWidth(SETTINGS_PANEL_STORAGE_KEY, value)}
+          />
           <header class="agent-settings-header">
             <button
               type="button"
@@ -1184,11 +1611,60 @@ export function Conversation(props: ConversationProps) {
             </button>
           </header>
           <div class="agent-settings-content">
-            <button type="button" class="agent-settings-avatar" aria-label="Edit agent avatar">
-              <span class={`bot-avatar bot-avatar-${props.bot?.accent ?? "neutral"}`}>
-                <GrokMark />
-              </span>
+            <button
+              type="button"
+              class="agent-settings-avatar"
+              aria-label="Edit agent avatar"
+              aria-expanded={avatarPickerOpen()}
+              onClick={() => setAvatarPickerOpen((open) => !open)}
+            >
+              <AgentAvatar shape={avatarShape()} color={avatarColor()} bot={props.bot} />
             </button>
+            <Show when={avatarPickerOpen()}>
+              <section class="avatar-editor" aria-label="Avatar editor">
+                <fieldset class="avatar-shape-grid" aria-label="Character shape">
+                  <For each={AVATAR_SHAPES}>
+                    {(shape) => (
+                      <button
+                        type="button"
+                        class="avatar-shape-choice"
+                        classList={{ "avatar-choice-selected": avatarShape() === shape }}
+                        aria-label={`${AVATAR_SHAPE_LABELS[shape]} character shape`}
+                        aria-pressed={avatarShape() === shape}
+                        onClick={() => {
+                          setAvatarShape(shape);
+                          if (props.bot)
+                            void props.onUpdateBot(props.bot.id, { avatarShape: shape });
+                        }}
+                      >
+                        <AgentAvatar shape={shape} color={avatarColor()} bot={props.bot} />
+                      </button>
+                    )}
+                  </For>
+                </fieldset>
+                <div class="avatar-editor-divider" />
+                <fieldset class="avatar-color-grid" aria-label="Character color">
+                  <For each={AVATAR_COLORS}>
+                    {(color) => (
+                      <button
+                        type="button"
+                        class="avatar-color-choice"
+                        classList={{ "avatar-choice-selected": avatarColor() === color }}
+                        aria-label={`${AVATAR_COLOR_LABELS[color]} character color`}
+                        aria-pressed={avatarColor() === color}
+                        onClick={() => {
+                          setAvatarColor(color);
+                          if (props.bot)
+                            void props.onUpdateBot(props.bot.id, { avatarColor: color });
+                        }}
+                      >
+                        <span class={`avatar-color-swatch avatar-color-swatch-${color}`} />
+                      </button>
+                    )}
+                  </For>
+                </fieldset>
+              </section>
+            </Show>
             <label class="agent-settings-field">
               <span>Name</span>
               <input

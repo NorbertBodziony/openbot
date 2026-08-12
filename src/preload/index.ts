@@ -90,6 +90,7 @@ const infeldApi: InfeldDesktopApi = {
     activate: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserActivate, tabId),
     close: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserClose, tabId),
     listTabs: () => ipcRenderer.invoke(IPC_CHANNELS.browserListTabs),
+    getControlState: () => ipcRenderer.invoke(IPC_CHANNELS.browserGetControlState),
     setVisible: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserSetVisible, input),
   },
 };

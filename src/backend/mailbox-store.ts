@@ -262,6 +262,7 @@ export class MailboxStore {
       if (message.sender.kind === "bot" && message.sender.botId === botId) {
         messages.push({
           id: `outbox-${message.id}`,
+          turnId: this.#sourceTurnId(message.id),
           author: "system",
           source: "system",
           text: message.text,
@@ -295,6 +296,7 @@ export class MailboxStore {
         const delivery = this.#publicDelivery(storedDelivery);
         messages.push({
           id: delivery.id,
+          turnId: storedDelivery.turnId ?? undefined,
           author: message.sender.kind === "bot" ? "agent" : "user",
           source: message.sender.kind === "bot" ? "agent" : "user",
           text: message.text,
@@ -333,6 +335,15 @@ export class MailboxStore {
       }
     }
     return messages;
+  }
+
+  #sourceTurnId(messageId: string): string | undefined {
+    const key = Object.entries(this.#state.idempotency).find(
+      ([, value]) => value === messageId,
+    )?.[0];
+    if (!key) return undefined;
+    const parts = key.split(":");
+    return parts.length >= 3 ? parts.at(-2) : undefined;
   }
 
   senderBotIdsForRecipient(botId: string): string[] {

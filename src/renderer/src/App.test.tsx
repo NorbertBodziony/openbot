@@ -1,6 +1,11 @@
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentEvent, AttachmentImportEvent, BotSummary } from "../../shared/ipc";
+import type {
+  AgentEvent,
+  AttachmentImportEvent,
+  BotSummary,
+  ConversationSnapshot,
+} from "../../shared/ipc";
 import { App } from "./App";
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
@@ -13,7 +18,9 @@ const BOTS: BotSummary[] = [
     role: "Chief of staff",
     description: "Coordinates work",
     notifications: true,
-    threadId: null,
+    avatarShape: "blob",
+    avatarColor: "orange",
+    threadId: "thread-chief",
     workspacePath: "/tmp/Infeld/Bots/chief",
     preview: "No messages yet",
     updatedAt: null,
@@ -24,6 +31,8 @@ const BOTS: BotSummary[] = [
     role: "Outbound specialist",
     description: "",
     notifications: true,
+    avatarShape: "cloud",
+    avatarColor: "violet",
     threadId: null,
     workspacePath: "/tmp/Infeld/Bots/sales-outbound",
     preview: "No messages yet",
@@ -35,6 +44,7 @@ describe("Infeld connected desktop shell", () => {
   beforeEach(() => {
     emitAgentEvent = undefined;
     emitAttachmentImport = undefined;
+    window.localStorage.clear();
     Object.defineProperty(window, "infeld", {
       configurable: true,
       value: {
@@ -61,6 +71,7 @@ describe("Infeld connected desktop shell", () => {
             botId,
             threadId: null,
             activeTurnId: null,
+            revision: 0,
             messages: [],
           })),
           chooseAttachments: vi.fn().mockResolvedValue([]),
@@ -93,6 +104,7 @@ describe("Infeld connected desktop shell", () => {
           activate: vi.fn().mockResolvedValue(undefined),
           close: vi.fn().mockResolvedValue(undefined),
           listTabs: vi.fn().mockResolvedValue([]),
+          getControlState: vi.fn().mockResolvedValue({ sessions: [] }),
           setVisible: vi.fn().mockResolvedValue(undefined),
         },
       },
@@ -108,6 +120,57 @@ describe("Infeld connected desktop shell", () => {
     expect(screen.queryByText(/Salesforce account queue/i)).not.toBeInTheDocument();
   });
 
+  it("refreshes stored history when Codex becomes ready after the window opens", async () => {
+    vi.mocked(window.infeld.agent.getStatus).mockResolvedValue({
+      phase: "starting",
+      cliVersion: "0.144.1",
+      auth: { kind: "unknown" },
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Starting local Codex…",
+      fullAccess: true,
+    });
+    vi.mocked(window.infeld.agent.readConversation)
+      .mockResolvedValueOnce({
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 0,
+        messages: [],
+      })
+      .mockResolvedValueOnce({
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "restored-answer",
+            author: "assistant",
+            text: "Restored after Codex became ready",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      });
+
+    render(() => <App />);
+    await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
+    emitAgentEvent?.({
+      type: "status",
+      status: {
+        phase: "ready",
+        cliVersion: "0.144.1",
+        auth: { kind: "chatgpt", planType: "pro" },
+        capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+        message: null,
+        fullAccess: true,
+      },
+    });
+
+    expect(await screen.findByText("Restored after Codex became ready")).toBeInTheDocument();
+    expect(window.infeld.agent.readConversation).toHaveBeenCalledTimes(2);
+  });
+
   it("filters and switches backend bots", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -118,10 +181,178 @@ describe("Infeld connected desktop shell", () => {
     expect(screen.getByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
   });
 
+  it("resizes and persists the left and right side panels", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    const leftResizer = screen.getByRole("separator", { name: "Resize left sidebar" });
+    await fireEvent.keyDown(leftResizer, { key: "ArrowRight" });
+    expect(leftResizer).toHaveAttribute("aria-valuenow", "287");
+    expect(leftResizer.closest(".app-frame")).toHaveStyle("--left-panel-width: 287px");
+    expect(window.localStorage.getItem("infeld:left-panel-width")).toBe("287");
+
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    const rightResizer = screen.getByRole("separator", { name: "Resize right panel" });
+    await fireEvent.keyDown(rightResizer, { key: "ArrowLeft" });
+    expect(rightResizer).toHaveAttribute("aria-valuenow", "308");
+    expect(screen.getByRole("main", { name: "Conversation" })).toHaveStyle(
+      "--settings-panel-width: 308px",
+    );
+    expect(window.localStorage.getItem("infeld:settings-panel-width")).toBe("308");
+
+    await fireEvent.dblClick(rightResizer);
+    expect(rightResizer).toHaveAttribute("aria-valuenow", "296");
+  });
+
+  it("fully hides and restores the left sidebar without losing its width", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    const frame = screen.getByRole("main", { name: "Conversation" }).closest(".app-frame");
+    const sidebarToggle = screen.getByRole("button", { name: "Hide sidebar" });
+    expect(sidebarToggle).toHaveClass("sidebar-icon-button");
+    expect(sidebarToggle).toHaveAttribute("aria-expanded", "true");
+    await fireEvent.click(sidebarToggle);
+
+    expect(screen.queryByRole("complementary", { name: "Bot navigation" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("separator", { name: "Resize left sidebar" }),
+    ).not.toBeInTheDocument();
+    expect(frame).toHaveClass("app-frame-sidebar-collapsed");
+    expect(frame).toHaveStyle("--left-panel-width: 0px");
+    expect(window.localStorage.getItem("infeld:left-panel-collapsed")).toBe("true");
+    const restoreSidebar = screen.getByRole("button", { name: "Show sidebar" });
+    expect(restoreSidebar).toHaveClass("sidebar-icon-button");
+    expect(restoreSidebar).toHaveAttribute("aria-expanded", "false");
+
+    await fireEvent.click(restoreSidebar);
+
+    expect(screen.getByRole("complementary", { name: "Bot navigation" })).toBeInTheDocument();
+    expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute(
+      "aria-valuenow",
+      "275",
+    );
+    expect(frame).not.toHaveClass("app-frame-sidebar-collapsed");
+    expect(window.localStorage.getItem("infeld:left-panel-collapsed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("shows a stable indicator while an agent controls the embedded browser", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-1",
+          title: "Local smoke page",
+          url: "http://127.0.0.1:4321",
+          loading: false,
+          ownerThreadId: "thread-chief",
+        },
+        {
+          id: "tab-2",
+          title: "Second page",
+          url: "https://example.com/second",
+          loading: false,
+          ownerThreadId: null,
+        },
+        {
+          id: "tab-3",
+          title: "Third page",
+          url: "https://example.com/third",
+          loading: false,
+          ownerThreadId: null,
+        },
+      ],
+      activeTabId: "tab-1",
+    });
+    emitAgentEvent?.({
+      type: "browser-control-changed",
+      state: {
+        sessions: [
+          {
+            id: "thread-chief:turn-1",
+            threadId: "thread-chief",
+            turnId: "turn-1",
+            callId: "call-1",
+            tabId: null,
+            action: "type",
+            phase: "acting",
+            startedAt: "2026-08-12T10:00:00.000Z",
+          },
+        ],
+      },
+    });
+
+    const controlledTab = await screen.findByRole("tab", {
+      name: "Local smoke page, controlled by Chief",
+    });
+    expect(controlledTab.closest(".browser-tab-wrap")).toHaveClass("browser-tab-controlled");
+    expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass(
+      "browser-panel-controlled",
+    );
+    const browserTabStrip = document.querySelector(".browser-tab-strip");
+    expect(browserTabStrip?.querySelectorAll(".browser-tab-wrap")).toHaveLength(3);
+    expect(browserTabStrip?.lastElementChild).toBe(
+      screen.getByRole("button", { name: "New browser tab" }),
+    );
+    expect(screen.queryByRole("button", { name: "Hide browser panel" })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "New browser tab" }));
+    expect(window.infeld.browser.open).toHaveBeenCalledWith({
+      url: "https://www.google.com",
+      ownerThreadId: "thread-chief",
+    });
+    expect(screen.queryByText("Typing…")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Chief is controlling the browser" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Chief is controlling the browser" })).toHaveClass(
+      "header-panel-toggle",
+    );
+
+    emitAgentEvent?.({
+      type: "browser-control-changed",
+      state: {
+        sessions: [
+          {
+            id: "thread-chief:turn-1",
+            threadId: "thread-chief",
+            turnId: "turn-1",
+            callId: "call-1",
+            tabId: "tab-1",
+            action: "type",
+            phase: "waiting",
+            startedAt: "2026-08-12T10:00:00.000Z",
+          },
+        ],
+      },
+    });
+    expect(screen.getByRole("tab", { name: "Local smoke page, controlled by Chief" })).toBe(
+      controlledTab,
+    );
+
+    emitAgentEvent?.({ type: "browser-control-changed", state: { sessions: [] } });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("tab", { name: "Local smoke page, controlled by Chief" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
+    expect(controlledTab.closest(".browser-tab-wrap")).not.toHaveClass("browser-tab-controlled");
+    expect(screen.getByRole("complementary", { name: "Browser" })).not.toHaveClass(
+      "browser-panel-controlled",
+    );
+  });
+
   it("queues from the composer and clears only after success", async () => {
     render(() => <App />);
     const composer = await screen.findByRole("textbox", { name: "Message Chief" });
-    await fireEvent.input(composer, { target: { value: "Run this Monday" } });
+    composer.textContent = "Run this Monday";
+    await fireEvent.input(composer);
     await fireEvent.keyDown(composer, { key: "Enter" });
     await waitFor(() =>
       expect(window.infeld.agent.sendMessage).toHaveBeenCalledWith({
@@ -130,7 +361,176 @@ describe("Infeld connected desktop shell", () => {
         attachmentDraftIds: [],
       }),
     );
-    await waitFor(() => expect(composer).toHaveValue(""));
+    await waitFor(() => expect(composer).toHaveTextContent(""));
+  });
+
+  it("shows agent activity without replaying existing message entrances", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const createdAt = "2026-08-12T10:00:00.000Z";
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "delivery-live",
+            author: "user",
+            text: "Do the work",
+            createdAt,
+            status: "completed",
+            delivery: { id: "delivery-live", status: "queued", position: 1 },
+          },
+        ],
+      },
+    });
+    const firstMessage = await screen.findByText("Do the work");
+    const firstMessageEntry = firstMessage.closest(".message-entry");
+    expect(firstMessageEntry).toHaveClass("message-entry-animated");
+
+    emitAgentEvent?.({
+      type: "turn-started",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live",
+    });
+    const workingIndicator = await screen.findByRole("status", { name: "Chief is working" });
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: "turn-live",
+        revision: 2,
+        messages: [
+          {
+            id: "delivery-live",
+            author: "user",
+            text: "Do the work",
+            createdAt,
+            status: "completed",
+            delivery: { id: "delivery-live", status: "running", position: null },
+          },
+        ],
+      },
+    });
+    expect(screen.getByText("Do the work").closest(".message-entry")).toBe(firstMessageEntry);
+    expect(screen.getByText("Do the work").closest(".user-bubble")).not.toHaveTextContent(
+      "Working",
+    );
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: "turn-live",
+        revision: 3,
+        messages: [
+          {
+            id: "delivery-live",
+            author: "user",
+            text: "Do the work",
+            createdAt,
+            status: "completed",
+            delivery: { id: "delivery-live", status: "running", position: null },
+          },
+          {
+            id: "assistant-live",
+            author: "assistant",
+            text: "I am on it",
+            createdAt: "2026-08-12T10:00:01.000Z",
+            status: "streaming",
+          },
+        ],
+      },
+    });
+    const streamingAnswer = await screen.findByText("I am on it");
+    const streamingBubble = streamingAnswer.closest(".bot-bubble");
+    expect(streamingBubble).toHaveClass("bot-bubble-streaming");
+    expect(screen.queryByText("Typing…")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Chief is working" })).toBe(workingIndicator);
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: "turn-live",
+        revision: 4,
+        messages: [
+          {
+            id: "delivery-live",
+            author: "user",
+            text: "Do the work",
+            createdAt,
+            status: "completed",
+            delivery: { id: "delivery-live", status: "running", position: null },
+          },
+          {
+            id: "assistant-live",
+            author: "assistant",
+            text: "I am on it now",
+            createdAt: "2026-08-12T10:00:01.000Z",
+            status: "streaming",
+          },
+        ],
+      },
+    });
+    const updatedStreamingAnswer = await screen.findByText("I am on it now");
+    expect(updatedStreamingAnswer.closest(".bot-bubble")).toBe(streamingBubble);
+    expect(screen.getByText("Do the work").closest(".message-entry")).toBe(firstMessageEntry);
+    expect(screen.getByRole("status", { name: "Chief is working" })).toBe(workingIndicator);
+
+    for (const [revision, text] of [
+      [5, "I am on it now, first buffered delta"],
+      [6, "I am on it now, final buffered delta"],
+    ] as const) {
+      emitAgentEvent?.({
+        type: "conversation",
+        snapshot: {
+          botId: "chief",
+          threadId: "thread-chief",
+          activeTurnId: "turn-live",
+          revision,
+          messages: [
+            {
+              id: "delivery-live",
+              author: "user",
+              text: "Do the work",
+              createdAt,
+              status: "completed",
+              delivery: { id: "delivery-live", status: "running", position: null },
+            },
+            {
+              id: "assistant-live",
+              author: "assistant",
+              text,
+              createdAt: "2026-08-12T10:00:01.000Z",
+              status: "streaming",
+            },
+          ],
+        },
+      });
+    }
+    const bufferedAnswer = await screen.findByText("I am on it now, final buffered delta");
+    expect(bufferedAnswer.closest(".bot-bubble")).toBe(streamingBubble);
+    expect(screen.queryByText("I am on it now, first buffered delta")).not.toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live",
+      status: "completed",
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument(),
+    );
   });
 
   it("keeps text and attachments when enqueue fails", async () => {
@@ -139,10 +539,11 @@ describe("Infeld connected desktop shell", () => {
     );
     render(() => <App />);
     const composer = await screen.findByRole("textbox", { name: "Message Chief" });
-    await fireEvent.input(composer, { target: { value: "Retry me" } });
+    composer.textContent = "Retry me";
+    await fireEvent.input(composer);
     await fireEvent.keyDown(composer, { key: "Enter" });
     expect(await screen.findByText("Mailbox unavailable")).toBeInTheDocument();
-    expect(composer).toHaveValue("Retry me");
+    expect(composer).toHaveTextContent("Retry me");
   });
 
   it("supports picker and attachment-only messages", async () => {
@@ -233,18 +634,54 @@ describe("Infeld connected desktop shell", () => {
     });
   });
 
-  it("submits onboarding as the first queued user message", async () => {
+  it("persists the onboarding focus before queuing the first user message", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
     await fireEvent.click(screen.getByRole("option", { name: /Work & projects/ }));
     await waitFor(() =>
+      expect(window.infeld.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        role: "Work & projects",
+        description:
+          "Helps plan, organize, and execute ongoing work and projects while keeping priorities, next steps, and deliverables clear.",
+      }),
+    );
+    await waitFor(() =>
       expect(window.infeld.agent.sendMessage).toHaveBeenCalledWith({
         botId: "chief",
-        text: "Work & projects",
+        text: "Focus on my work and projects. Help me plan, organize, and execute them proactively.",
         attachmentDraftIds: [],
       }),
     );
+    expect(vi.mocked(window.infeld.agent.updateBot).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(window.infeld.agent.sendMessage).mock.invocationCallOrder[0] ?? Number.MAX_VALUE,
+    );
+  });
+
+  it("uses a custom onboarding answer as the persistent agent remit", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(await screen.findByRole("option", { name: /Something else/ }));
+    expect(window.infeld.agent.sendMessage).not.toHaveBeenCalled();
+
+    const customAnswer = screen.getByRole("textbox", { name: "Custom answer" });
+    expect(customAnswer).toHaveFocus();
+    await fireEvent.input(customAnswer, { target: { value: "Plan product launches" } });
+    await fireEvent.keyDown(customAnswer, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(window.infeld.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        role: "Plan product launches",
+        description: "Primary focus: Plan product launches.",
+      }),
+    );
+    expect(window.infeld.agent.sendMessage).toHaveBeenCalledWith({
+      botId: "chief",
+      text: "My main focus for you is: Plan product launches. Treat this as your ongoing specialty.",
+      attachmentDraftIds: [],
+    });
   });
 
   it("answers model prompts from a separate card while composer remains a queue", async () => {
@@ -283,6 +720,7 @@ describe("Infeld connected desktop shell", () => {
       botId,
       threadId: "thread-1",
       activeTurnId: null,
+      revision: 1,
       messages:
         botId === "chief"
           ? [
@@ -316,7 +754,118 @@ describe("Infeld connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     expect(await screen.findByText("Messaged")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "1 agent, show list" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open exchange with Sales Outbound" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an incoming Grok-style marker without duplicating raw collaborator input", async () => {
+    vi.mocked(window.infeld.agent.readConversation).mockImplementation(async (botId) => ({
+      botId,
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 1,
+      messages:
+        botId === "chief"
+          ? [
+              {
+                id: "delivery-reply-1",
+                author: "agent",
+                source: "agent",
+                senderBotId: "sales-outbound",
+                text: "RAW_COLLABORATOR_RESULT",
+                createdAt: "2026-08-12T10:00:00.000Z",
+                status: "completed",
+                exchange: {
+                  direction: "incoming",
+                  messageId: "reply-1",
+                  senderBotId: "sales-outbound",
+                  recipientBotIds: ["chief"],
+                  replyToMessageId: "request-1",
+                  deliveries: [
+                    {
+                      id: "delivery-reply-1",
+                      recipientBotId: "chief",
+                      status: "completed",
+                      position: null,
+                      error: null,
+                    },
+                  ],
+                },
+              },
+              {
+                id: "assistant-summary-1",
+                author: "assistant",
+                text: "Sales Outbound reports that the pipeline is ready.",
+                createdAt: "2026-08-12T10:00:01.000Z",
+                status: "completed",
+              },
+            ]
+          : [],
+    }));
+
+    render(() => <App />);
+    expect(
+      await screen.findByRole("button", { name: "Open exchange with Sales Outbound" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("RAW_COLLABORATOR_RESULT")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Sales Outbound reports that the pipeline is ready."),
+    ).toBeInTheDocument();
+  });
+
+  it("does not let a late history refresh overwrite a newer streamed snapshot", async () => {
+    let resolveHistory: ((snapshot: ConversationSnapshot) => void) | undefined;
+    vi.mocked(window.infeld.agent.readConversation).mockImplementation(
+      (botId) =>
+        new Promise<ConversationSnapshot>((resolve) => {
+          resolveHistory = resolve;
+          expect(botId).toBe("chief");
+        }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: "turn-live",
+        revision: 2,
+        messages: [
+          {
+            id: "live-message",
+            author: "assistant",
+            text: "Newest streamed answer",
+            createdAt: "2026-08-12T10:00:01.000Z",
+            status: "streaming",
+          },
+        ],
+      },
+    });
+    expect(await screen.findByText("Newest streamed answer")).toBeInTheDocument();
+
+    resolveHistory?.({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 1,
+      messages: [
+        {
+          id: "old-message",
+          author: "assistant",
+          text: "Stale history answer",
+          createdAt: "2026-08-12T09:59:59.000Z",
+          status: "completed",
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Newest streamed answer")).toBeInTheDocument();
+      expect(screen.queryByText("Stale history answer")).not.toBeInTheDocument();
+    });
   });
 
   it("persists settings and opens managed attachment actions", async () => {
@@ -340,6 +889,7 @@ describe("Infeld connected desktop shell", () => {
         botId: "chief",
         threadId: null,
         activeTurnId: null,
+        revision: 1,
         messages: [
           {
             id: "file-message",
@@ -381,7 +931,9 @@ describe("Infeld connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("menuitem", { name: "Delete agent" }));
     expect(screen.getByRole("alertdialog", { name: "Delete Sales Outbound?" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(window.infeld.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"));
+    await waitFor(() =>
+      expect(window.infeld.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"),
+    );
     await waitFor(() => expect(sales).not.toBeInTheDocument());
   });
 });

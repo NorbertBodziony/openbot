@@ -7,12 +7,20 @@ import {
   type WebContents,
   WebContentsView,
 } from "electron";
-import type { BrowserBounds, BrowserTab, BrowserVisibilityInput } from "../shared/ipc";
+import type {
+  BrowserBounds,
+  BrowserControlAction,
+  BrowserControlSession,
+  BrowserControlState,
+  BrowserTab,
+  BrowserVisibilityInput,
+} from "../shared/ipc";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
 
 interface BrowserHostEvents {
   changed: [tabs: BrowserTab[], activeTabId: string | null];
+  controlChanged: [state: BrowserControlState];
 }
 
 interface InternalTab {
@@ -110,11 +118,15 @@ export const BROWSER_DYNAMIC_TOOLS = [
 ] as const;
 
 export class BrowserHost {
+  static readonly CONTROL_IDLE_GRACE_MS = 1_200;
   readonly #window: BrowserWindow;
   readonly #session: Session;
   readonly #downloadsRoot: string;
   readonly #tabs = new Map<string, InternalTab>();
   readonly #listeners = new Set<(...args: BrowserHostEvents["changed"]) => void>();
+  readonly #controlListeners = new Set<(...args: BrowserHostEvents["controlChanged"]) => void>();
+  readonly #controlSessions = new Map<string, BrowserControlSession>();
+  readonly #controlTimers = new Map<string, NodeJS.Timeout>();
   #activeTabId: string | null = null;
   #visible = false;
   #bounds: BrowserBounds | null = null;
@@ -130,6 +142,36 @@ export class BrowserHost {
   onChanged(listener: (...args: BrowserHostEvents["changed"]) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
+  }
+
+  onControlChanged(listener: (...args: BrowserHostEvents["controlChanged"]) => void): () => void {
+    this.#controlListeners.add(listener);
+    return () => this.#controlListeners.delete(listener);
+  }
+
+  getControlState(): BrowserControlState {
+    return {
+      sessions: [...this.#controlSessions.values()]
+        .sort((left, right) => left.startedAt.localeCompare(right.startedAt))
+        .map((session) => ({ ...session })),
+    };
+  }
+
+  endControl(threadId: string, turnId: string): void {
+    const id = controlSessionId(threadId, turnId);
+    const timer = this.#controlTimers.get(id);
+    if (timer) clearTimeout(timer);
+    this.#controlTimers.delete(id);
+    if (!this.#controlSessions.delete(id)) return;
+    this.#emitControlChanged();
+  }
+
+  clearControls(): void {
+    for (const timer of this.#controlTimers.values()) clearTimeout(timer);
+    this.#controlTimers.clear();
+    if (this.#controlSessions.size === 0) return;
+    this.#controlSessions.clear();
+    this.#emitControlChanged();
   }
 
   listTabs(): BrowserTab[] {
@@ -258,12 +300,14 @@ export class BrowserHost {
   }
 
   async handleDynamicTool(params: DynamicToolCallParams): Promise<DynamicToolResult> {
+    const args = isRecord(params.arguments) ? params.arguments : {};
+    this.#beginControl(params, args);
     try {
-      const args = isRecord(params.arguments) ? params.arguments : {};
       switch (params.tool) {
         case "open": {
           const url = requiredString(args, "url");
           const tab = await this.open(url, params.threadId);
+          this.#updateControlTab(params, tab.id);
           return textResult({ tab });
         }
         case "list_tabs":
@@ -294,6 +338,8 @@ export class BrowserHost {
         success: false,
         contentItems: [{ type: "inputText", text: String(error) }],
       };
+    } finally {
+      this.#finishControl(params);
     }
   }
 
@@ -302,6 +348,8 @@ export class BrowserHost {
     for (const tab of this.#tabs.values()) tab.view.webContents.close();
     this.#tabs.clear();
     this.#listeners.clear();
+    this.clearControls();
+    this.#controlListeners.clear();
   }
 
   #createView(): WebContentsView {
@@ -393,6 +441,91 @@ export class BrowserHost {
   #emitChanged(): void {
     const tabs = this.listTabs();
     for (const listener of this.#listeners) listener(tabs, this.#activeTabId);
+  }
+
+  #beginControl(params: DynamicToolCallParams, args: Record<string, unknown>): void {
+    const id = controlSessionId(params.threadId, params.turnId);
+    const timer = this.#controlTimers.get(id);
+    if (timer) clearTimeout(timer);
+    this.#controlTimers.delete(id);
+    const previous = this.#controlSessions.get(id);
+    this.#controlSessions.set(id, {
+      id,
+      threadId: params.threadId,
+      turnId: params.turnId,
+      callId: params.callId,
+      tabId: typeof args.tabId === "string" ? args.tabId : null,
+      action: browserControlAction(params.tool, args),
+      phase: "acting",
+      startedAt: previous?.startedAt ?? new Date().toISOString(),
+    });
+    this.#emitControlChanged();
+  }
+
+  #finishControl(params: DynamicToolCallParams): void {
+    const id = controlSessionId(params.threadId, params.turnId);
+    const current = this.#controlSessions.get(id);
+    if (!current || current.callId !== params.callId) return;
+    this.#controlSessions.set(id, { ...current, phase: "waiting" });
+    this.#emitControlChanged();
+    const timer = setTimeout(() => {
+      this.#controlTimers.delete(id);
+      const latest = this.#controlSessions.get(id);
+      if (!latest || latest.callId !== params.callId || latest.phase !== "waiting") return;
+      this.#controlSessions.delete(id);
+      this.#emitControlChanged();
+    }, BrowserHost.CONTROL_IDLE_GRACE_MS);
+    timer.unref();
+    this.#controlTimers.set(id, timer);
+  }
+
+  #updateControlTab(params: DynamicToolCallParams, tabId: string): void {
+    const id = controlSessionId(params.threadId, params.turnId);
+    const current = this.#controlSessions.get(id);
+    if (!current || current.callId !== params.callId) return;
+    this.#controlSessions.set(id, { ...current, tabId });
+    this.#emitControlChanged();
+  }
+
+  #emitControlChanged(): void {
+    const state = this.getControlState();
+    for (const listener of this.#controlListeners) listener(state);
+  }
+}
+
+function controlSessionId(threadId: string, turnId: string): string {
+  return `${threadId}:${turnId}`;
+}
+
+function browserControlAction(tool: string, args: Record<string, unknown>): BrowserControlAction {
+  switch (tool) {
+    case "open":
+      return "open";
+    case "list_tabs":
+      return "list-tabs";
+    case "snapshot":
+      return "snapshot";
+    case "screenshot":
+      return "screenshot";
+    case "close_tab":
+      return "close-tab";
+    case "act": {
+      const action = isRecord(args.action) ? args.action.type : null;
+      if (
+        action === "click" ||
+        action === "type" ||
+        action === "key" ||
+        action === "scroll" ||
+        action === "back" ||
+        action === "forward" ||
+        action === "reload"
+      ) {
+        return action;
+      }
+      return "snapshot";
+    }
+    default:
+      return "snapshot";
   }
 }
 

@@ -58,6 +58,16 @@ async function main(): Promise<void> {
     const downloadsRoot = join(temporaryRoot, "downloads");
     const browser = new BrowserHost(window, downloadsRoot);
 
+    const controlPhases: string[] = [];
+    const controlledTabIds: Array<string | null> = [];
+    browser.onControlChanged((state) => {
+      const session = state.sessions.find((item) => item.turnId === "browser-smoke-turn");
+      if (session) {
+        controlPhases.push(`${session.action}:${session.phase}`);
+        controlledTabIds.push(session.tabId);
+      } else if (controlPhases.length > 0) controlPhases.push("ended");
+    });
+
     const tab = await browser.open(origin, "smoke-thread");
     process.stdout.write("BrowserHost: local tab opened.\n");
     const first = await browser.snapshot(tab.id);
@@ -103,6 +113,27 @@ async function main(): Promise<void> {
     const downloadPath = join(downloadsRoot, "infeld-smoke.txt");
     await waitFor(async () => (await readFile(downloadPath, "utf8")) === "local download");
     process.stdout.write("BrowserHost: download passed.\n");
+
+    const toolResult = await browser.handleDynamicTool({
+      threadId: "smoke-thread",
+      turnId: "browser-smoke-turn",
+      callId: "browser-smoke-call",
+      namespace: "infeld_browser",
+      tool: "open",
+      arguments: { url: `${origin}/cookie` },
+    });
+    if (!toolResult.success) throw new Error("Dynamic browser tool failed.");
+    if (!controlPhases.includes("open:acting") || !controlPhases.includes("open:waiting")) {
+      throw new Error(`Browser control lifecycle was not reported: ${controlPhases.join(", ")}`);
+    }
+    if (!controlledTabIds.some(Boolean)) {
+      throw new Error("Opening a page did not bind browser control to the new tab.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, BrowserHost.CONTROL_IDLE_GRACE_MS + 100));
+    if (browser.getControlState().sessions.length !== 0 || !controlPhases.includes("ended")) {
+      throw new Error("Browser control indicator did not clear after the idle grace period.");
+    }
+    process.stdout.write("BrowserHost: agent control lifecycle passed.\n");
 
     browser.destroy();
     window.destroy();

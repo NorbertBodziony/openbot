@@ -73,6 +73,7 @@ export interface ThreadItem {
 export interface TurnRecord {
   id: string;
   status?: string;
+  startedAt?: number;
   items?: ThreadItem[];
 }
 
