@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Infeld Bot will be documented here. The project follows
+All notable changes to Openbot will be documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
@@ -17,4 +17,4 @@ All notable changes to Infeld Bot will be documented here. The project follows
 
 ### Changed
 
-- Replaced the remaining third-party-inspired avatar SVG with an original Infeld placeholder mark.
+- Replaced the remaining third-party-inspired avatar SVG with an original Openbot placeholder mark.

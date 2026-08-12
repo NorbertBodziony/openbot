@@ -29,7 +29,7 @@ export const DEFAULT_AGENT_MODEL: AgentModelId = "gpt-5.6-luna";
 export const DEFAULT_REASONING_EFFORT: AgentReasoningEffort = "medium";
 
 const DEFAULT_BOTS = [
-  ["chief", "Chief", "Chief of staff", "Coordinates work across your local Infeld agents."],
+  ["chief", "Chief", "Chief of staff", "Coordinates work across your local Openbot agents."],
   [
     "sales-outbound",
     "Sales Outbound",
@@ -77,11 +77,11 @@ export class BotStore {
   #writeQueue: Promise<void> = Promise.resolve();
 
   constructor(userDataPath: string, homePath: string) {
-    const infeldRoot = join(homePath, "Infeld");
+    const openbotRoot = join(homePath, "Openbot");
     this.#statePath = join(userDataPath, "agent-state.json");
-    this.#botsRoot = join(infeldRoot, "Bots");
-    this.#sharedRoot = join(infeldRoot, "Shared");
-    this.#downloadsRoot = join(infeldRoot, "Downloads");
+    this.#botsRoot = join(openbotRoot, "Bots");
+    this.#sharedRoot = join(openbotRoot, "Shared");
+    this.#downloadsRoot = join(openbotRoot, "Downloads");
   }
 
   get sharedRoot(): string {
@@ -184,7 +184,7 @@ export class BotStore {
         !parsed.bots.every(isStoredBot)
       ) {
         throw new Error(
-          "Agent state is corrupt or from a newer Infeld version; refusing to overwrite it.",
+          "Agent state is corrupt or from a newer Openbot version; refusing to overwrite it.",
         );
       }
 

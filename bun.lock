@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "infeld-bot",
+      "name": "openbot",
       "dependencies": {
         "solid-js": "1.9.14",
       },

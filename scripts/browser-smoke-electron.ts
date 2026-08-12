@@ -10,13 +10,13 @@ const server = createServer((request, response) => {
   if (url.pathname === "/download") {
     response.writeHead(200, {
       "content-type": "text/plain",
-      "content-disposition": 'attachment; filename="infeld-smoke.txt"',
+      "content-disposition": 'attachment; filename="openbot-smoke.txt"',
     });
     response.end("local download");
     return;
   }
   if (url.pathname === "/cookie") {
-    if (url.searchParams.has("set")) response.setHeader("set-cookie", "infeld=shared; Path=/");
+    if (url.searchParams.has("set")) response.setHeader("set-cookie", "openbot=shared; Path=/");
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(`<main>cookie:${request.headers.cookie ?? "none"}</main>`);
     return;
@@ -41,7 +41,7 @@ void main().catch((error) => {
 });
 
 async function main(): Promise<void> {
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "infeld-browser-smoke-"));
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "openbot-browser-smoke-"));
   app.setPath("userData", join(temporaryRoot, "user-data"));
   const hardTimeout = setTimeout(() => {
     process.stderr.write("BrowserHost smoke test timed out.\n");
@@ -118,7 +118,8 @@ async function main(): Promise<void> {
     await browser.open(`${origin}/cookie?set=1`, "smoke-thread");
     const cookieTab = await browser.open(`${origin}/cookie`, "other-thread");
     const cookieSnapshot = await browser.snapshot(cookieTab.id);
-    if (!cookieSnapshot.text.includes("infeld=shared")) throw new Error("Cookies were not shared.");
+    if (!cookieSnapshot.text.includes("openbot=shared"))
+      throw new Error("Cookies were not shared.");
     process.stdout.write("BrowserHost: shared cookies passed.\n");
 
     await expectFailure(() => browser.open("file:///etc/passwd"));
@@ -136,7 +137,7 @@ async function main(): Promise<void> {
       type: "click",
       ref: download.ref,
     });
-    const downloadPath = join(downloadsRoot, "infeld-smoke.txt");
+    const downloadPath = join(downloadsRoot, "openbot-smoke.txt");
     await waitFor(async () => (await readFile(downloadPath, "utf8")) === "local download");
     process.stdout.write("BrowserHost: download passed.\n");
 
@@ -144,7 +145,7 @@ async function main(): Promise<void> {
       threadId: "smoke-thread",
       turnId: "browser-smoke-turn",
       callId: "browser-smoke-call",
-      namespace: "infeld_browser",
+      namespace: "openbot_browser",
       tool: "open",
       arguments: { url: `${origin}/cookie` },
     });

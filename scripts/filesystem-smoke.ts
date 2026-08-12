@@ -5,7 +5,7 @@ import { CodexAppServerClient } from "../src/backend/app-server-client";
 import { resolveCodexCli } from "../src/backend/cli";
 import { isRecord, type RequestId } from "../src/backend/protocol";
 
-const temporaryRoot = await mkdtemp(join(tmpdir(), "infeld-filesystem-smoke-"));
+const temporaryRoot = await mkdtemp(join(tmpdir(), "openbot-filesystem-smoke-"));
 const textPath = join(temporaryRoot, "smoke-note.txt");
 const imagePath = join(temporaryRoot, "smoke-image.png");
 const useImagegen = process.argv.includes("--imagegen");
@@ -18,8 +18,8 @@ try {
   client.start();
   await client.request("initialize", {
     clientInfo: {
-      name: "infeld_filesystem_smoke",
-      title: "Infeld Filesystem Smoke",
+      name: "openbot_filesystem_smoke",
+      title: "Openbot Filesystem Smoke",
       version: "0.1.0",
     },
     capabilities: { experimentalApi: true },
@@ -32,7 +32,7 @@ try {
     approvalPolicy: "never",
     sandbox: "danger-full-access",
     ephemeral: true,
-    serviceName: "infeld_filesystem_smoke",
+    serviceName: "openbot_filesystem_smoke",
     developerInstructions: [
       "This is an isolated local filesystem smoke test.",
       `Only create files inside ${temporaryRoot}.`,
@@ -62,7 +62,7 @@ try {
               "Verify the PNG exists, then finish with a short confirmation.",
             ].join("\n")
           : [
-              `Create ${textPath} containing exactly INFELD_FILE_OK followed by one newline.`,
+              `Create ${textPath} containing exactly OPENBOT_FILE_OK followed by one newline.`,
               `Create a valid 256 by 256 PNG at ${imagePath}.`,
               "The PNG must have a transparent background and a solid red circle in the center.",
               "Use only local command-line tools or code already available on this Mac.",
@@ -75,7 +75,7 @@ try {
 
   if (!useImagegen) {
     const text = await readFile(textPath, "utf8");
-    if (text !== "INFELD_FILE_OK\n")
+    if (text !== "OPENBOT_FILE_OK\n")
       throw new Error("The generated text file has invalid contents.");
   }
 

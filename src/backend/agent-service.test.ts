@@ -13,30 +13,30 @@ import { MailboxStore } from "./mailbox-store";
 let root: string;
 let logPath: string;
 let service: AgentService | null = null;
-const originalCodexPath = process.env.INFELD_CODEX_PATH;
+const originalCodexPath = process.env.OPENBOT_CODEX_PATH;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "infeld-agent-test-"));
+  root = await mkdtemp(join(tmpdir(), "openbot-agent-test-"));
   logPath = join(root, "protocol.jsonl");
-  process.env.INFELD_FAKE_CODEX_LOG = logPath;
-  process.env.INFELD_CODEX_PATH = await createFakeCodex(root);
+  process.env.OPENBOT_FAKE_CODEX_LOG = logPath;
+  process.env.OPENBOT_CODEX_PATH = await createFakeCodex(root);
 });
 
 afterEach(async () => {
   await service?.stop();
   service = null;
-  if (originalCodexPath === undefined) delete process.env.INFELD_CODEX_PATH;
-  else process.env.INFELD_CODEX_PATH = originalCodexPath;
-  delete process.env.INFELD_FAKE_CODEX_LOG;
-  delete process.env.INFELD_FAKE_AGENT_TOOL;
-  delete process.env.INFELD_FAKE_AGENT_TOOL_PATHS;
-  delete process.env.INFELD_FAKE_THREAD_READ_DELAY;
-  delete process.env.INFELD_FAKE_AUTO_COMPLETE;
+  if (originalCodexPath === undefined) delete process.env.OPENBOT_CODEX_PATH;
+  else process.env.OPENBOT_CODEX_PATH = originalCodexPath;
+  delete process.env.OPENBOT_FAKE_CODEX_LOG;
+  delete process.env.OPENBOT_FAKE_AGENT_TOOL;
+  delete process.env.OPENBOT_FAKE_AGENT_TOOL_PATHS;
+  delete process.env.OPENBOT_FAKE_THREAD_READ_DELAY;
+  delete process.env.OPENBOT_FAKE_AUTO_COMPLETE;
   await rm(root, { recursive: true, force: true });
 });
 
 describe.sequential("AgentService", () => {
-  it("creates independent full-access threads with browser and Infeld tools", async () => {
+  it("creates independent full-access threads with browser and Openbot tools", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser(), () => ({
       screenRecording: true,
@@ -75,12 +75,12 @@ describe.sequential("AgentService", () => {
         approvalPolicy: "never",
         sandbox: "danger-full-access",
         ephemeral: false,
-        serviceName: "infeld_bot",
+        serviceName: "openbot",
       });
       expect(params.dynamicTools).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ type: "namespace", name: "infeld_browser" }),
-          expect.objectContaining({ type: "namespace", name: "infeld" }),
+          expect.objectContaining({ type: "namespace", name: "openbot_browser" }),
+          expect.objectContaining({ type: "namespace", name: "openbot" }),
         ]),
       );
     }
@@ -170,14 +170,14 @@ describe.sequential("AgentService", () => {
   });
 
   it("fans out an idempotent agent tool message with referenced files", async () => {
-    process.env.INFELD_FAKE_AGENT_TOOL = "1";
+    process.env.OPENBOT_FAKE_AGENT_TOOL = "1";
     const notePath = join(root, "generated-note.txt");
     const imagePath = join(root, "generated-image.png");
     await Promise.all([
-      writeFile(notePath, "INFELD_SHARED_FILE_OK\n"),
+      writeFile(notePath, "OPENBOT_SHARED_FILE_OK\n"),
       writeFile(imagePath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
     ]);
-    process.env.INFELD_FAKE_AGENT_TOOL_PATHS = JSON.stringify([notePath, imagePath]);
+    process.env.OPENBOT_FAKE_AGENT_TOOL_PATHS = JSON.stringify([notePath, imagePath]);
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
@@ -204,7 +204,7 @@ describe.sequential("AgentService", () => {
     expect(managedNote?.path).not.toBe(notePath);
     expect(managedImage?.path).not.toBe(imagePath);
     await expect(readFile(managedNote?.path ?? "", "utf8")).resolves.toBe(
-      "INFELD_SHARED_FILE_OK\n",
+      "OPENBOT_SHARED_FILE_OK\n",
     );
 
     const chiefMessages = (await service.readConversation("chief")).messages;
@@ -252,7 +252,7 @@ describe.sequential("AgentService", () => {
   });
 
   it("reliably relays a completed teammate result back through a reply chain without loops", async () => {
-    process.env.INFELD_FAKE_AUTO_COMPLETE = "AUTO_WEATHER_RESULT";
+    process.env.OPENBOT_FAKE_AUTO_COMPLETE = "AUTO_WEATHER_RESULT";
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
@@ -307,7 +307,7 @@ describe.sequential("AgentService", () => {
   });
 
   it("merges a late thread read with a newer active stream", async () => {
-    process.env.INFELD_FAKE_THREAD_READ_DELAY = "80";
+    process.env.OPENBOT_FAKE_THREAD_READ_DELAY = "80";
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
@@ -357,8 +357,8 @@ describe.sequential("AgentService", () => {
     const resume = (await protocolMessages()).find((message) => message.method === "thread/resume");
     expect(resume?.params).toMatchObject({
       dynamicTools: expect.arrayContaining([
-        expect.objectContaining({ type: "namespace", name: "infeld_browser" }),
-        expect.objectContaining({ type: "namespace", name: "infeld" }),
+        expect.objectContaining({ type: "namespace", name: "openbot_browser" }),
+        expect.objectContaining({ type: "namespace", name: "openbot" }),
       ]),
     });
     expect((await store.getOrCreate("chief")).threadId).toBe(threadId);
@@ -429,7 +429,7 @@ if (process.argv.includes("--version")) {
   process.stdout.write("codex-cli 0.144.1\\n");
   process.exit(0);
 }
-const log = process.env.INFELD_FAKE_CODEX_LOG;
+const log = process.env.OPENBOT_FAKE_CODEX_LOG;
 let buffer = "";
 let threadCounter = 0;
 let turnCounter = 0;
@@ -462,7 +462,7 @@ process.stdin.on("data", (chunk) => {
       if (message.method === "thread/read") {
         const capturedTurns = JSON.parse(JSON.stringify([...turns.values()]));
         const respond = () => write({ id: message.id, result: { thread: { id: message.params.threadId, turns: capturedTurns } } });
-        const delay = Number(process.env.INFELD_FAKE_THREAD_READ_DELAY || 0);
+        const delay = Number(process.env.OPENBOT_FAKE_THREAD_READ_DELAY || 0);
         if (delay > 0) setTimeout(respond, delay);
         else respond();
       }
@@ -472,12 +472,12 @@ process.stdin.on("data", (chunk) => {
         write({ id: message.id, result: { turn: { id: turnId, status: "inProgress", items: [] } } });
         write({ method: "turn/started", params: { threadId: message.params.threadId, turn: { id: turnId } } });
         write({ method: "item/agentMessage/delta", params: { threadId: message.params.threadId, turnId, itemId: "message-" + turnId, delta: "Streaming" } });
-        if (process.env.INFELD_FAKE_AGENT_TOOL === "1" && turnCounter === 1) {
-          setTimeout(() => write({ id: "agent-tool-1", method: "item/tool/call", params: { threadId: message.params.threadId, turnId, callId: "call-1", namespace: "infeld", tool: "send_message", arguments: { recipientBotIds: ["sales-outbound", "inbox-manager"], text: "Please prepare your reports.", paths: JSON.parse(process.env.INFELD_FAKE_AGENT_TOOL_PATHS || "[]") } } }), 30);
+        if (process.env.OPENBOT_FAKE_AGENT_TOOL === "1" && turnCounter === 1) {
+          setTimeout(() => write({ id: "agent-tool-1", method: "item/tool/call", params: { threadId: message.params.threadId, turnId, callId: "call-1", namespace: "openbot", tool: "send_message", arguments: { recipientBotIds: ["sales-outbound", "inbox-manager"], text: "Please prepare your reports.", paths: JSON.parse(process.env.OPENBOT_FAKE_AGENT_TOOL_PATHS || "[]") } } }), 30);
         }
-        if (process.env.INFELD_FAKE_AUTO_COMPLETE) {
+        if (process.env.OPENBOT_FAKE_AUTO_COMPLETE) {
           setTimeout(() => {
-            const text = process.env.INFELD_FAKE_AUTO_COMPLETE;
+            const text = process.env.OPENBOT_FAKE_AUTO_COMPLETE;
             const item = { type: "agentMessage", id: "message-" + turnId, text, phase: "final_answer" };
             const turn = turns.get(turnId);
             if (turn) {

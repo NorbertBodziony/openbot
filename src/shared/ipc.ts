@@ -445,7 +445,7 @@ export interface BrowserDesktopApi {
   setVisible: (input: BrowserVisibilityInput) => Promise<void>;
 }
 
-export interface InfeldDesktopApi {
+export interface OpenbotDesktopApi {
   getAppInfo: () => Promise<AppInfo>;
   openExternal: (destination: ExternalDestination) => Promise<void>;
   agent: AgentDesktopApi;

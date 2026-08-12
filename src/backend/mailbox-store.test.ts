@@ -10,7 +10,7 @@ let root: string;
 let store: MailboxStore;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "infeld-mailbox-test-"));
+  root = await mkdtemp(join(tmpdir(), "openbot-mailbox-test-"));
   store = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
   await store.initialize();
 });

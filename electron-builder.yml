@@ -1,5 +1,5 @@
-appId: app.infeld.bot
-productName: Infeld Bot
+appId: app.openbot.desktop
+productName: Openbot
 asar: true
 artifactName: ${productName}-${version}-${arch}.${ext}
 files:

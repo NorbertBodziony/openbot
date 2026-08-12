@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Infeld Bot is currently a development preview. Security fixes are made on `main` and included in the
+Openbot is currently a development preview. Security fixes are made on `main` and included in the
 next release. No older release line is guaranteed to receive backports.
 
 | Version | Supported |
@@ -13,8 +13,8 @@ next release. No older release line is guaranteed to receive backports.
 ## Reporting a vulnerability
 
 Do not open a public issue. Use GitHub's **Security → Report a vulnerability** flow to submit a private
-security advisory. If private vulnerability reporting is unavailable, contact `hello@infeld.ai` with
-the subject `Infeld security report`.
+security advisory. If private vulnerability reporting is unavailable, contact the maintainer through
+[their GitHub profile](https://github.com/NorbertBodziony) without publishing technical details.
 
 Include:
 
@@ -30,7 +30,7 @@ public disclosure.
 
 ## Current security model
 
-Infeld is local-first but not sandboxed from the host on behalf of the user. Agents currently run with
+Openbot is local-first but not sandboxed from the host on behalf of the user. Agents currently run with
 `danger-full-access` and `approvalPolicy: never`; they may access local files, execute commands, use
 the network, and control the embedded browser. This documented behavior alone is not a vulnerability.
 
@@ -39,7 +39,7 @@ Security boundaries that should hold include:
 - remote pages cannot access Node.js, the preload bridge, managed attachments, or privileged IPC;
 - IPC calls are accepted only from the trusted application renderer;
 - managed attachment IDs cannot escape their canonical storage roots;
-- Codex credentials remain owned by Codex CLI and are not copied into Infeld storage;
+- Codex credentials remain owned by Codex CLI and are not copied into Openbot storage;
 - diagnostics do not expose tokens or raw sensitive stderr;
 - a browser tab is scoped to its owning agent/thread in the application UI.
 

@@ -44,7 +44,7 @@ import {
 app.enableSandbox();
 protocol.registerSchemesAsPrivileged([
   {
-    scheme: "infeld-attachment",
+    scheme: "openbot-attachment",
     privileges: { standard: true, secure: true, supportFetchAPI: true },
   },
 ]);
@@ -57,8 +57,7 @@ let isQuitting = false;
 let shutdownStarted = false;
 
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
-  feedback:
-    "https://x.com/intent/post?text=Feedback%20for%20Infeld%20Bot%20%40norbertbodziony%3A%20",
+  feedback: "https://x.com/intent/post?text=Feedback%20for%20Openbot%20%40norbertbodziony%3A%20",
   message: "https://x.com/norbertbodziony",
 };
 
@@ -91,11 +90,11 @@ function configureContentSecurityPolicy(): void {
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: infeld-attachment:",
+    "img-src 'self' data: openbot-attachment:",
     "font-src 'self' data:",
     `connect-src 'self'${developmentSources}`,
     "object-src 'none'",
-    "frame-src 'self' infeld-attachment:",
+    "frame-src 'self' openbot-attachment:",
     "base-uri 'none'",
   ].join("; ");
 
@@ -260,7 +259,7 @@ function createWindow(): BrowserWindow {
     minHeight: 640,
     show: false,
     backgroundColor: "#0b0d0e",
-    title: "Infeld Bot",
+    title: "Openbot",
     titleBarStyle: "hidden",
     trafficLightPosition: { x: 13, y: 14 },
     webPreferences: {
@@ -515,7 +514,7 @@ function parseSetQueuePaused(value: unknown): SetQueuePausedInput {
 }
 
 function configureAttachmentProtocol(mailbox: MailboxStore): void {
-  session.defaultSession.protocol.handle("infeld-attachment", async (request) => {
+  session.defaultSession.protocol.handle("openbot-attachment", async (request) => {
     try {
       const url = new URL(request.url);
       const id = url.pathname.split("/").filter(Boolean).at(-1);

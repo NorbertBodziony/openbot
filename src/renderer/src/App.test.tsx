@@ -23,7 +23,7 @@ const BOTS: BotSummary[] = [
     avatarShape: "blob",
     avatarColor: "orange",
     threadId: "thread-chief",
-    workspacePath: "/tmp/Infeld/Bots/chief",
+    workspacePath: "/tmp/Openbot/Bots/chief",
     preview: "No messages yet",
     updatedAt: null,
   },
@@ -38,23 +38,23 @@ const BOTS: BotSummary[] = [
     avatarShape: "cloud",
     avatarColor: "violet",
     threadId: null,
-    workspacePath: "/tmp/Infeld/Bots/sales-outbound",
+    workspacePath: "/tmp/Openbot/Bots/sales-outbound",
     preview: "No messages yet",
     updatedAt: null,
   },
 ];
 
-describe("Infeld connected desktop shell", () => {
+describe("Openbot connected desktop shell", () => {
   beforeEach(() => {
     emitAgentEvent = undefined;
     emitAttachmentImport = undefined;
     window.localStorage.clear();
-    Object.defineProperty(window, "infeld", {
+    Object.defineProperty(window, "openbot", {
       configurable: true,
       value: {
         getAppInfo: vi
           .fn()
-          .mockResolvedValue({ name: "Infeld Bot", version: "0.1.0", platform: "darwin" }),
+          .mockResolvedValue({ name: "Openbot", version: "0.1.0", platform: "darwin" }),
         openExternal: vi.fn().mockResolvedValue(undefined),
         agent: {
           getStatus: vi.fn().mockResolvedValue({
@@ -168,7 +168,7 @@ describe("Infeld connected desktop shell", () => {
     expect(accountButton).toHaveTextContent("norbert@example.com");
 
     fireEvent.click(accountButton);
-    await waitFor(() => expect(window.infeld.agent.getUsage).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("Weekly usage")).toBeInTheDocument();
     expect(screen.getByText("59%")).toBeInTheDocument();
     expect(screen.queryByText(/ChatGPT Pro/i)).not.toBeInTheDocument();
@@ -176,15 +176,15 @@ describe("Infeld connected desktop shell", () => {
     expect(screen.queryByText(/Lifetime/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Send feedback" }));
-    await waitFor(() => expect(window.infeld.openExternal).toHaveBeenCalledWith("feedback"));
+    await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("feedback"));
 
     fireEvent.click(accountButton);
     fireEvent.click(screen.getByRole("menuitem", { name: "Message" }));
-    await waitFor(() => expect(window.infeld.openExternal).toHaveBeenCalledWith("message"));
+    await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("message"));
   });
 
   it("renders loaded history without replaying entrance animations", async () => {
-    vi.mocked(window.infeld.agent.readConversation).mockResolvedValueOnce({
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValueOnce({
       botId: "chief",
       threadId: "thread-chief",
       activeTurnId: null,
@@ -205,7 +205,7 @@ describe("Infeld connected desktop shell", () => {
   });
 
   it("refreshes stored history when Codex becomes ready after the window opens", async () => {
-    vi.mocked(window.infeld.agent.getStatus).mockResolvedValue({
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValue({
       phase: "starting",
       cliVersion: "0.144.1",
       auth: { kind: "unknown" },
@@ -213,7 +213,7 @@ describe("Infeld connected desktop shell", () => {
       message: "Starting local Codex…",
       fullAccess: true,
     });
-    vi.mocked(window.infeld.agent.readConversation)
+    vi.mocked(window.openbot.agent.readConversation)
       .mockResolvedValueOnce({
         botId: "chief",
         threadId: "thread-chief",
@@ -252,7 +252,7 @@ describe("Infeld connected desktop shell", () => {
     });
 
     expect(await screen.findByText("Restored after Codex became ready")).toBeInTheDocument();
-    expect(window.infeld.agent.readConversation).toHaveBeenCalledTimes(2);
+    expect(window.openbot.agent.readConversation).toHaveBeenCalledTimes(2);
   });
 
   it("filters and switches backend bots", async () => {
@@ -273,7 +273,7 @@ describe("Infeld connected desktop shell", () => {
     await fireEvent.keyDown(leftResizer, { key: "ArrowRight" });
     expect(leftResizer).toHaveAttribute("aria-valuenow", "287");
     expect(leftResizer.closest(".app-frame")).toHaveStyle("--left-panel-width: 287px");
-    expect(window.localStorage.getItem("infeld:left-panel-width")).toBe("287");
+    expect(window.localStorage.getItem("openbot:left-panel-width")).toBe("287");
 
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
     const rightResizer = screen.getByRole("separator", { name: "Resize right panel" });
@@ -282,7 +282,7 @@ describe("Infeld connected desktop shell", () => {
     expect(screen.getByRole("main", { name: "Conversation" })).toHaveStyle(
       "--settings-panel-width: 308px",
     );
-    expect(window.localStorage.getItem("infeld:settings-panel-width")).toBe("308");
+    expect(window.localStorage.getItem("openbot:settings-panel-width")).toBe("308");
 
     await fireEvent.dblClick(rightResizer);
     expect(rightResizer).toHaveAttribute("aria-valuenow", "296");
@@ -301,7 +301,7 @@ describe("Infeld connected desktop shell", () => {
     await fireEvent.change(model, { target: { value: "gpt-5.6-sol" } });
     await fireEvent.change(thinking, { target: { value: "xhigh" } });
     await waitFor(() =>
-      expect(window.infeld.agent.updateBot).toHaveBeenLastCalledWith({
+      expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
         botId: "chief",
         reasoningEffort: "xhigh",
       }),
@@ -343,7 +343,7 @@ describe("Infeld connected desktop shell", () => {
     ).not.toBeInTheDocument();
     expect(frame).toHaveClass("app-frame-sidebar-collapsed");
     expect(frame).toHaveStyle("--left-panel-width: 0px");
-    expect(window.localStorage.getItem("infeld:left-panel-collapsed")).toBe("true");
+    expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBe("true");
     const restoreSidebar = screen.getByRole("button", { name: "Show sidebar" });
     expect(restoreSidebar).toHaveClass("sidebar-icon-button");
     expect(restoreSidebar).toHaveAttribute("aria-expanded", "false");
@@ -356,7 +356,7 @@ describe("Infeld connected desktop shell", () => {
       "275",
     );
     expect(frame).not.toHaveClass("app-frame-sidebar-collapsed");
-    expect(window.localStorage.getItem("infeld:left-panel-collapsed")).toBe("false");
+    expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBe("false");
     expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute(
       "aria-expanded",
       "true",
@@ -428,7 +428,7 @@ describe("Infeld connected desktop shell", () => {
     );
     expect(screen.queryByRole("button", { name: "Hide browser panel" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "New browser tab" }));
-    expect(window.infeld.browser.open).toHaveBeenCalledWith({
+    expect(window.openbot.browser.open).toHaveBeenCalledWith({
       url: "https://www.google.com",
       ownerThreadId: "thread-chief",
       ownerBotId: "chief",
@@ -504,7 +504,7 @@ describe("Infeld connected desktop shell", () => {
     await fireEvent.input(composer);
     await fireEvent.keyDown(composer, { key: "Enter" });
     await waitFor(() =>
-      expect(window.infeld.agent.sendMessage).toHaveBeenCalledWith({
+      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
         botId: "chief",
         text: "Run this Monday",
         attachmentDraftIds: [],
@@ -544,7 +544,7 @@ describe("Infeld connected desktop shell", () => {
     await fireEvent.input(composer);
     await fireEvent.keyDown(composer, { key: "Enter" });
     await waitFor(() =>
-      expect(window.infeld.agent.sendMessage).toHaveBeenCalledWith({
+      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
         botId: "chief",
         text: "Yes, today please",
         attachmentDraftIds: [],
@@ -584,7 +584,7 @@ describe("Infeld connected desktop shell", () => {
     await screen.findByText("Ready to ship.");
     await fireEvent.click(screen.getByRole("button", { name: "Add reaction" }));
     await fireEvent.click(screen.getByRole("menuitemradio", { name: "React with ❤️" }));
-    expect(window.infeld.agent.setMessageReaction).toHaveBeenCalledWith({
+    expect(window.openbot.agent.setMessageReaction).toHaveBeenCalledWith({
       botId: "chief",
       messageId: "assistant-actions",
       emoji: "❤️",
@@ -790,7 +790,7 @@ describe("Infeld connected desktop shell", () => {
             id: "commentary-open",
             turnId: "turn-open",
             author: "assistant",
-            text: "I’ll open x.com in the Infeld browser.",
+            text: "I’ll open x.com in the Openbot browser.",
             createdAt: "2026-08-12T10:00:01.000Z",
             status: "completed",
             itemType: "commentary",
@@ -819,14 +819,14 @@ describe("Infeld connected desktop shell", () => {
 
     const thinkingLabel = await screen.findByText("Thinking");
     const details = thinkingLabel.closest("details");
-    expect(screen.getByText("I’ll open x.com in the Infeld browser.")).not.toBeVisible();
+    expect(screen.getByText("I’ll open x.com in the Openbot browser.")).not.toBeVisible();
     expect(screen.getByText("Checking that the page loaded.")).not.toBeVisible();
     expect(screen.getByText("Opened x.com.")).toBeVisible();
     expect(screen.getAllByText("Thinking")).toHaveLength(1);
 
     await fireEvent.click(thinkingLabel);
     expect(details).toHaveAttribute("open");
-    expect(screen.getByText("I’ll open x.com in the Infeld browser.")).toBeVisible();
+    expect(screen.getByText("I’ll open x.com in the Openbot browser.")).toBeVisible();
 
     emitAgentEvent?.({
       type: "conversation",
@@ -857,11 +857,11 @@ describe("Infeld connected desktop shell", () => {
       },
     });
     await waitFor(() => expect(screen.getByText("Thinking").closest("details")).toBe(details));
-    expect(screen.getByText("I’ll open x.com in the Infeld browser.")).toBeVisible();
+    expect(screen.getByText("I’ll open x.com in the Openbot browser.")).toBeVisible();
   });
 
   it("keeps text and attachments when enqueue fails", async () => {
-    vi.mocked(window.infeld.agent.sendMessage).mockRejectedValueOnce(
+    vi.mocked(window.openbot.agent.sendMessage).mockRejectedValueOnce(
       new Error("Mailbox unavailable"),
     );
     render(() => <App />);
@@ -874,7 +874,7 @@ describe("Infeld connected desktop shell", () => {
   });
 
   it("supports picker and attachment-only messages", async () => {
-    vi.mocked(window.infeld.agent.chooseAttachments).mockResolvedValueOnce([
+    vi.mocked(window.openbot.agent.chooseAttachments).mockResolvedValueOnce([
       attachment("draft-1", "brief.pdf", "pdf"),
     ]);
     render(() => <App />);
@@ -884,7 +884,7 @@ describe("Infeld connected desktop shell", () => {
     expect(await screen.findByText("brief.pdf")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() =>
-      expect(window.infeld.agent.sendMessage).toHaveBeenCalledWith({
+      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
         botId: "chief",
         text: "",
         attachmentDraftIds: ["draft-1"],
@@ -971,8 +971,8 @@ describe("Infeld connected desktop shell", () => {
       },
     });
     await fireEvent.click(screen.getByRole("button", { name: "Cancel queued message 1" }));
-    expect(window.infeld.agent.cancelQueuedMessage).toHaveBeenCalled();
-    expect(window.infeld.agent.setQueuePaused).toHaveBeenCalledWith({
+    expect(window.openbot.agent.cancelQueuedMessage).toHaveBeenCalled();
+    expect(window.openbot.agent.setQueuePaused).toHaveBeenCalledWith({
       botId: "chief",
       paused: false,
     });
@@ -984,7 +984,7 @@ describe("Infeld connected desktop shell", () => {
     await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
     await fireEvent.click(screen.getByRole("option", { name: /Work & projects/ }));
     await waitFor(() =>
-      expect(window.infeld.agent.updateBot).toHaveBeenCalledWith({
+      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
         role: "Work & projects",
         description:
@@ -992,14 +992,14 @@ describe("Infeld connected desktop shell", () => {
       }),
     );
     await waitFor(() =>
-      expect(window.infeld.agent.sendMessage).toHaveBeenCalledWith({
+      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
         botId: "chief",
         text: "Focus on my work and projects. Help me plan, organize, and execute them proactively.",
         attachmentDraftIds: [],
       }),
     );
-    expect(vi.mocked(window.infeld.agent.updateBot).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(window.infeld.agent.sendMessage).mock.invocationCallOrder[0] ?? Number.MAX_VALUE,
+    expect(vi.mocked(window.openbot.agent.updateBot).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(window.openbot.agent.sendMessage).mock.invocationCallOrder[0] ?? Number.MAX_VALUE,
     );
   });
 
@@ -1007,7 +1007,7 @@ describe("Infeld connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.click(await screen.findByRole("option", { name: /Something else/ }));
-    expect(window.infeld.agent.sendMessage).not.toHaveBeenCalled();
+    expect(window.openbot.agent.sendMessage).not.toHaveBeenCalled();
 
     const customAnswer = screen.getByRole("textbox", { name: "Custom answer" });
     expect(customAnswer).toHaveFocus();
@@ -1015,13 +1015,13 @@ describe("Infeld connected desktop shell", () => {
     await fireEvent.keyDown(customAnswer, { key: "Enter" });
 
     await waitFor(() =>
-      expect(window.infeld.agent.updateBot).toHaveBeenCalledWith({
+      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
         role: "Plan product launches",
         description: "Primary focus: Plan product launches.",
       }),
     );
-    expect(window.infeld.agent.sendMessage).toHaveBeenCalledWith({
+    expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
       botId: "chief",
       text: "My main focus for you is: Plan product launches. Treat this as your ongoing specialty.",
       attachmentDraftIds: [],
@@ -1052,7 +1052,7 @@ describe("Infeld connected desktop shell", () => {
     await fireEvent.input(answer, { target: { value: "Acme" } });
     await fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
     await waitFor(() =>
-      expect(window.infeld.agent.respondToPrompt).toHaveBeenCalledWith({
+      expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledWith({
         requestId: "prompt-1",
         answers: { account: ["Acme"] },
       }),
@@ -1060,7 +1060,7 @@ describe("Infeld connected desktop shell", () => {
   });
 
   it("renders persistent outgoing and incoming agent exchanges", async () => {
-    vi.mocked(window.infeld.agent.readConversation).mockImplementation(async (botId) => ({
+    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) => ({
       botId,
       threadId: "thread-1",
       activeTurnId: null,
@@ -1104,7 +1104,7 @@ describe("Infeld connected desktop shell", () => {
   });
 
   it("shows an incoming agent marker without duplicating raw collaborator input", async () => {
-    vi.mocked(window.infeld.agent.readConversation).mockImplementation(async (botId) => ({
+    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) => ({
       botId,
       threadId: "thread-chief",
       activeTurnId: null,
@@ -1160,7 +1160,7 @@ describe("Infeld connected desktop shell", () => {
 
   it("does not let a late history refresh overwrite a newer streamed snapshot", async () => {
     let resolveHistory: ((snapshot: ConversationSnapshot) => void) | undefined;
-    vi.mocked(window.infeld.agent.readConversation).mockImplementation(
+    vi.mocked(window.openbot.agent.readConversation).mockImplementation(
       (botId) =>
         new Promise<ConversationSnapshot>((resolve) => {
           resolveHistory = resolve;
@@ -1220,7 +1220,7 @@ describe("Infeld connected desktop shell", () => {
     await fireEvent.input(name, { target: { value: "Coordinator" } });
     await fireEvent.blur(name);
     await waitFor(() =>
-      expect(window.infeld.agent.updateBot).toHaveBeenCalledWith({
+      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
         name: "Coordinator",
       }),
@@ -1249,7 +1249,7 @@ describe("Infeld connected desktop shell", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Preview brief.pdf" }));
     expect(screen.getByRole("dialog", { name: "brief.pdf" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Show in Finder" }));
-    expect(window.infeld.agent.openAttachment).toHaveBeenCalledWith({
+    expect(window.openbot.agent.openAttachment).toHaveBeenCalledWith({
       attachmentId: "file-1",
       action: "reveal",
     });
@@ -1276,7 +1276,7 @@ describe("Infeld connected desktop shell", () => {
     expect(screen.getByRole("alertdialog", { name: "Delete Sales Outbound?" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() =>
-      expect(window.infeld.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"),
+      expect(window.openbot.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"),
     );
     await waitFor(() => expect(sales).not.toBeInTheDocument());
   });
@@ -1290,6 +1290,6 @@ function attachment(id: string, name: string, kind: "image" | "pdf") {
     kind: kind === "image" ? ("image" as const) : ("file" as const),
     mimeType: kind === "image" ? "image/png" : "application/pdf",
     previewKind: kind,
-    previewUrl: `infeld-attachment://file/${id}`,
+    previewUrl: `openbot-attachment://file/${id}`,
   };
 }

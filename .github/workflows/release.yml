@@ -72,5 +72,5 @@ jobs:
               dist/SHA256SUMS.txt \
               --draft \
               --generate-notes \
-              --title "Infeld Bot $GITHUB_REF_NAME"
+              --title "Openbot $GITHUB_REF_NAME"
           fi

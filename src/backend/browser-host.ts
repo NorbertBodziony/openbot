@@ -56,13 +56,13 @@ type BrowserAction =
   | { type: "forward" }
   | { type: "reload" };
 
-export const INFELD_BROWSER_NAMESPACE = "infeld_browser";
+export const OPENBOT_BROWSER_NAMESPACE = "openbot_browser";
 
 export const BROWSER_DYNAMIC_TOOLS = [
   {
     type: "namespace",
-    name: INFELD_BROWSER_NAMESPACE,
-    description: "Operate Infeld's private, persistent local browser.",
+    name: OPENBOT_BROWSER_NAMESPACE,
+    description: "Operate Openbot's private, persistent local browser.",
     tools: [
       functionTool("open", "Open an HTTP(S) URL in a new tab.", {
         type: "object",
@@ -137,7 +137,7 @@ export class BrowserHost {
   constructor(window: BrowserWindow, downloadsRoot: string) {
     this.#window = window;
     this.#downloadsRoot = downloadsRoot;
-    this.#session = session.fromPartition("persist:infeld-browser", { cache: true });
+    this.#session = session.fromPartition("persist:openbot-browser", { cache: true });
     this.#configureSession();
   }
 
@@ -602,10 +602,10 @@ function snapshotScript(revision: number): string {
         return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
       })
       .slice(0, 500);
-    document.querySelectorAll('[data-infeld-ref]').forEach((node) => node.removeAttribute('data-infeld-ref'));
+    document.querySelectorAll('[data-openbot-ref]').forEach((node) => node.removeAttribute('data-openbot-ref'));
     const elements = nodes.map((node, index) => {
       const ref = revision + ':' + index;
-      node.setAttribute('data-infeld-ref', ref);
+      node.setAttribute('data-openbot-ref', ref);
       const name = (node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('placeholder') || node.innerText || node.value || '').trim().slice(0, 500);
       return {
         ref,
@@ -629,7 +629,7 @@ async function performAction(contents: WebContents, action: BrowserAction): Prom
     case "click": {
       await contents.executeJavaScript(
         `(() => {
-          const node = document.querySelector('[data-infeld-ref=${JSON.stringify(action.ref)}]');
+          const node = document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]');
           if (!(node instanceof HTMLElement)) throw new Error('Element reference is no longer available.');
           node.focus();
           node.click();
@@ -641,7 +641,7 @@ async function performAction(contents: WebContents, action: BrowserAction): Prom
     case "type": {
       await contents.executeJavaScript(
         `(() => {
-          const node = document.querySelector('[data-infeld-ref=${JSON.stringify(action.ref)}]');
+          const node = document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]');
           if (!(node instanceof HTMLElement)) throw new Error('Element reference is no longer available.');
           node.focus();
           const text = ${JSON.stringify(action.text.slice(0, 50_000))};

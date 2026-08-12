@@ -3,8 +3,8 @@ import {
   type AgentEvent,
   type AttachmentImportEvent,
   type ImportAttachmentsInput,
-  type InfeldDesktopApi,
   IPC_CHANNELS,
+  type OpenbotDesktopApi,
 } from "../shared/ipc";
 
 const attachmentImportListeners = new Set<(event: AttachmentImportEvent) => void>();
@@ -60,7 +60,7 @@ window.addEventListener("paste", (event) => {
   }
 });
 
-const infeldApi: InfeldDesktopApi = {
+const openbotApi: OpenbotDesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC_CHANNELS.getAppInfo),
   openExternal: (destination) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, destination),
   agent: {
@@ -104,4 +104,4 @@ const infeldApi: InfeldDesktopApi = {
   },
 };
 
-contextBridge.exposeInMainWorld("infeld", infeldApi);
+contextBridge.exposeInMainWorld("openbot", openbotApi);

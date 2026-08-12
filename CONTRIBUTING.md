@@ -1,6 +1,6 @@
-# Contributing to Infeld Bot
+# Contributing to Openbot
 
-Thanks for helping improve Infeld Bot. Small, focused pull requests with clear verification are the
+Thanks for helping improve Openbot. Small, focused pull requests with clear verification are the
 easiest to review.
 
 ## Before opening an issue
@@ -8,13 +8,13 @@ easiest to review.
 - Search existing issues first.
 - Use the security process in `SECURITY.md` for vulnerabilities.
 - Remove credentials, private file paths, conversation contents, and personal data from diagnostics.
-- Include the Infeld version, macOS version, Mac architecture, Codex CLI version, and reproduction
+- Include the Openbot version, macOS version, Mac architecture, Codex CLI version, and reproduction
   steps for bugs.
 
 ## Development setup
 
 ```bash
-git clone https://github.com/nightly-labs/openbot.git
+git clone https://github.com/NorbertBodziony/openbot.git
 cd openbot
 bun install --frozen-lockfile
 bun run check
@@ -43,7 +43,7 @@ Preserve the following boundaries and their tests:
 - Electron sandboxing, context isolation, navigation policy, and IPC sender validation.
 - Attachment realpath, MIME, size, quota, and managed-protocol checks.
 - Queue serialization, idempotency, crash reconciliation, and atomic persistence.
-- The remote browser session's lack of preload and `window.infeld` access.
+- The remote browser session's lack of preload and `window.openbot` access.
 - Secret redaction and Codex child-process cleanup.
 
 Full agent access is intentional today, but new privileges or network surfaces still require an

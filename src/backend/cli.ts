@@ -37,7 +37,7 @@ export async function resolveCodexCli(): Promise<CodexCliInfo> {
       const version = parseCodexVersion(stdout);
       if (!isMinimumVersion(version)) {
         throw new CodexCliError(
-          `Codex CLI ${version} is too old. Infeld requires 0.144.1 or newer.`,
+          `Codex CLI ${version} is too old. Openbot requires 0.144.1 or newer.`,
           "outdated",
         );
       }
@@ -49,7 +49,7 @@ export async function resolveCodexCli(): Promise<CodexCliInfo> {
   }
 
   throw new CodexCliError(
-    "Codex CLI was not found. Install Codex, run `codex login`, then restart Infeld Bot.",
+    "Codex CLI was not found. Install Codex, run `codex login`, then restart Openbot.",
     "missing",
   );
 }
@@ -71,7 +71,7 @@ function isMinimumVersion(version: string): boolean {
 
 async function collectCandidates(): Promise<string[]> {
   const candidates: string[] = [];
-  const override = process.env.INFELD_CODEX_PATH?.trim();
+  const override = process.env.OPENBOT_CODEX_PATH?.trim();
   if (override) candidates.push(override);
 
   try {

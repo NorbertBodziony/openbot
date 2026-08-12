@@ -1,15 +1,15 @@
-# Infeld Bot
+# Openbot
 
-[![CI](https://github.com/nightly-labs/openbot/actions/workflows/ci.yml/badge.svg)](https://github.com/nightly-labs/openbot/actions/workflows/ci.yml)
+[![CI](https://github.com/NorbertBodziony/openbot/actions/workflows/ci.yml/badge.svg)](https://github.com/NorbertBodziony/openbot/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Infeld Bot is a local-first desktop workspace for persistent AI teammates. It embeds the local
+Openbot is a local-first desktop workspace for persistent AI teammates. It embeds the local
 [Codex App Server](https://learn.chatgpt.com/docs/app-server), gives every agent its own workspace
 and conversation, and provides local queues, file transfers, an embedded browser, and agent-to-agent
 messaging in one macOS app.
 
 > [!WARNING]
-> Infeld Bot is a development preview. Agents currently run with `danger-full-access` and
+> Openbot is a development preview. Agents currently run with `danger-full-access` and
 > `approvalPolicy: never`. They can read and modify files, run commands, use the network, and control
 > the embedded browser without a confirmation dialog. Run only agents and tasks you trust, keep
 > backups, and review [Security](#security) before use.
@@ -22,9 +22,9 @@ messaging in one macOS app.
 - A persistent embedded browser that agents can open, inspect, and control.
 - Optional Computer Use integration for macOS through a locally installed Codex plugin.
 - Per-agent model, reasoning, profile, notification, browser, and panel state.
-- No Infeld cloud backend, account system, telemetry service, or copied Codex credentials.
+- No Openbot cloud backend, account system, telemetry service, or copied Codex credentials.
 
-Infeld Bot is local-first, not offline-only. Codex connects to OpenAI, visited pages use the network,
+Openbot is local-first, not offline-only. Codex connects to OpenAI, visited pages use the network,
 and installed plugins may connect to their own services.
 
 ## Requirements
@@ -35,14 +35,14 @@ and installed plugins may connect to their own services.
 - Codex CLI 0.144.1 or newer, signed in with ChatGPT using `codex login`.
 - Screen Recording and Accessibility permissions when using Computer Use.
 
-Infeld uses the existing local Codex login. It does not accept an API key or copy tokens from
+Openbot uses the existing local Codex login. It does not accept an API key or copy tokens from
 `~/.codex`. See the official [Codex authentication documentation](https://learn.chatgpt.com/docs/auth)
 for account setup.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/nightly-labs/openbot.git
+git clone https://github.com/NorbertBodziony/openbot.git
 cd openbot
 bun install --frozen-lockfile
 bun run codex:doctor
@@ -83,21 +83,21 @@ SolidJS renderer
 
 - `src/main` owns the Electron lifecycle, window security, local protocol, and IPC registration.
 - `src/backend` owns Codex, persistence, message scheduling, transfers, and the browser host.
-- `src/preload` exposes only the typed `window.infeld` API.
+- `src/preload` exposes only the typed `window.openbot` API.
 - `src/renderer` contains the SolidJS interface.
 - `src/shared` contains process-boundary contracts.
 
 ## Local data and network boundaries
 
-- `~/Infeld/Bots/<bot-id>` — one working directory per agent.
-- `~/Infeld/Shared` — files intentionally shared between agents.
-- `~/Infeld/Downloads` — embedded-browser downloads.
+- `~/Openbot/Bots/<bot-id>` — one working directory per agent.
+- `~/Openbot/Shared` — files intentionally shared between agents.
+- `~/Openbot/Downloads` — embedded-browser downloads.
 - Electron `userData` — bot metadata, queues, drafts, and attachment indexes.
 - `~/.codex` — login and thread history managed exclusively by Codex CLI.
 
-Infeld does not open an application HTTP port. Electron communicates with `codex app-server` over
+Openbot does not open an application HTTP port. Electron communicates with `codex app-server` over
 stdio. The embedded browser uses a separate sandboxed Electron session and cannot access
-`window.infeld` or managed local attachments.
+`window.openbot` or managed local attachments.
 
 ## Security
 
@@ -130,6 +130,6 @@ Copyright 2026 Norbert Bodziony.
 Licensed under the [Apache License 2.0](LICENSE). You may use, modify, and distribute the code under
 that license, provided its license and attribution notices are preserved. See [NOTICE](NOTICE).
 
-Infeld Bot is an independent open-source project and is not affiliated with, endorsed by, or
+Openbot is an independent open-source project and is not affiliated with, endorsed by, or
 sponsored by OpenAI. OpenAI, ChatGPT, and Codex are used only to describe compatibility with their
 respective products and services.

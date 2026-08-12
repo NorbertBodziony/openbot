@@ -81,11 +81,11 @@ const ONBOARDING_CHOICES = [
   "Sales & outreach",
   "Something else",
 ];
-const SETTINGS_PANEL_STORAGE_KEY = "infeld:settings-panel-width";
+const SETTINGS_PANEL_STORAGE_KEY = "openbot:settings-panel-width";
 const SETTINGS_PANEL_DEFAULT = 296;
 const SETTINGS_PANEL_MIN = 260;
 const SETTINGS_PANEL_MAX = 520;
-const BROWSER_PANEL_STORAGE_KEY = "infeld:browser-panel-width";
+const BROWSER_PANEL_STORAGE_KEY = "openbot:browser-panel-width";
 const BROWSER_PANEL_DEFAULT = 380;
 const BROWSER_PANEL_MIN = 300;
 const BROWSER_PANEL_MAX = 680;
@@ -1012,7 +1012,7 @@ export function Conversation(props: ConversationProps) {
   };
 
   onMount(() => {
-    const unsubscribeImport = window.infeld.agent.onAttachmentImport((event) => {
+    const unsubscribeImport = window.openbot.agent.onAttachmentImport((event) => {
       if (event.type === "started") {
         const botId = props.bot?.id;
         if (botId) importTargetBots.set(event.requestId, botId);
@@ -1030,7 +1030,7 @@ export function Conversation(props: ConversationProps) {
           addAttachments(event.attachments, botId);
         } else {
           for (const attachment of event.attachments) {
-            void window.infeld.agent.discardDraftAttachment(attachment.id);
+            void window.openbot.agent.discardDraftAttachment(attachment.id);
           }
         }
       }
@@ -1164,7 +1164,7 @@ export function Conversation(props: ConversationProps) {
     browserResizeObserver?.disconnect();
     browserResizeObserver = undefined;
     if (!visible) {
-      void window.infeld.browser.setVisible({ visible: false });
+      void window.openbot.browser.setVisible({ visible: false });
       return;
     }
     browserVisibilityFrame = requestAnimationFrame(() => {
@@ -1187,7 +1187,7 @@ export function Conversation(props: ConversationProps) {
           return;
         }
         const bounds = browserSurface.getBoundingClientRect();
-        void window.infeld.browser.setVisible({
+        void window.openbot.browser.setVisible({
           visible: true,
           bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
         });
@@ -1202,7 +1202,7 @@ export function Conversation(props: ConversationProps) {
     browserVisibilityGeneration += 1;
     if (browserVisibilityFrame !== undefined) cancelAnimationFrame(browserVisibilityFrame);
     browserResizeObserver?.disconnect();
-    void window.infeld.browser.setVisible({ visible: false });
+    void window.openbot.browser.setVisible({ visible: false });
   });
 
   function addAttachments(selected: DraftAttachment[], botId = props.bot?.id) {
@@ -1211,7 +1211,7 @@ export function Conversation(props: ConversationProps) {
     const available = Math.max(0, 10 - draft.attachments.length);
     const accepted = selected.slice(0, available);
     for (const attachment of selected.slice(available)) {
-      void window.infeld.agent.discardDraftAttachment(attachment.id);
+      void window.openbot.agent.discardDraftAttachment(attachment.id);
     }
     setDrafts((current) => ({
       ...current,
@@ -1229,7 +1229,7 @@ export function Conversation(props: ConversationProps) {
     setAttachmentBusy(true);
     setComposerError(null);
     try {
-      addAttachments(await window.infeld.agent.chooseAttachments());
+      addAttachments(await window.openbot.agent.chooseAttachments());
     } catch (error) {
       setComposerError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1266,7 +1266,7 @@ export function Conversation(props: ConversationProps) {
     setOpenReactionMessageId(null);
     setExpandedEmojiMessageId(null);
     try {
-      await window.infeld.agent.setMessageReaction({ botId, messageId: message.id, emoji });
+      await window.openbot.agent.setMessageReaction({ botId, messageId: message.id, emoji });
     } catch (error) {
       setComposerError(error instanceof Error ? error.message : String(error));
     }
@@ -1301,7 +1301,7 @@ export function Conversation(props: ConversationProps) {
     updateCurrentDraft({
       attachments: currentDraft().attachments.filter((attachment) => attachment.id !== id),
     });
-    void window.infeld.agent.discardDraftAttachment(id);
+    void window.openbot.agent.discardDraftAttachment(id);
   }
 
   async function openBrowserAddress() {
@@ -1309,7 +1309,7 @@ export function Conversation(props: ConversationProps) {
     if (!value) return;
     const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
     try {
-      const tab = await window.infeld.browser.open({
+      const tab = await window.openbot.browser.open({
         url,
         ownerThreadId: props.bot?.threadId ?? null,
         ownerBotId: props.bot?.id ?? null,
@@ -1328,7 +1328,7 @@ export function Conversation(props: ConversationProps) {
 
   function hideBrowserPanel() {
     setActiveRightPanel("none");
-    void window.infeld.browser.setVisible({ visible: false });
+    void window.openbot.browser.setVisible({ visible: false });
   }
 
   function setActiveRightPanel(mode: RightPanelMode) {
@@ -1371,7 +1371,7 @@ export function Conversation(props: ConversationProps) {
   }
 
   function attachmentAction(attachment: AttachmentSummary, action: "open" | "reveal") {
-    void window.infeld.agent
+    void window.openbot.agent
       .openAttachment({ attachmentId: attachment.id, action })
       .catch((error) => setComposerError(error instanceof Error ? error.message : String(error)));
   }

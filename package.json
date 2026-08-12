@@ -1,6 +1,6 @@
 {
-  "name": "infeld-bot",
-  "productName": "Infeld Bot",
+  "name": "openbot",
+  "productName": "Openbot",
   "version": "0.1.0",
   "description": "A local-first multi-agent desktop workspace powered by Codex App Server.",
   "author": {
@@ -10,12 +10,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nightly-labs/openbot.git"
+    "url": "git+https://github.com/NorbertBodziony/openbot.git"
   },
   "bugs": {
-    "url": "https://github.com/nightly-labs/openbot/issues"
+    "url": "https://github.com/NorbertBodziony/openbot/issues"
   },
-  "homepage": "https://github.com/nightly-labs/openbot#readme",
+  "homepage": "https://github.com/NorbertBodziony/openbot#readme",
   "keywords": [
     "ai-agents",
     "bun",

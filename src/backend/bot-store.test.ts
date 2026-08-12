@@ -14,7 +14,7 @@ afterEach(async () => {
 
 describe("BotStore", () => {
   it("creates separate bot workspaces and a shared directory", async () => {
-    const root = await mkdtemp(join(tmpdir(), "infeld-store-"));
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const home = join(root, "home");
@@ -24,18 +24,18 @@ describe("BotStore", () => {
     const chief = await store.getOrCreate("chief");
     const sales = await store.getOrCreate("sales-outbound");
 
-    expect(chief.workspacePath).toBe(join(home, "Infeld", "Bots", "chief"));
-    expect(chief.description).toBe("Coordinates work across your local Infeld agents.");
+    expect(chief.workspacePath).toBe(join(home, "Openbot", "Bots", "chief"));
+    expect(chief.description).toBe("Coordinates work across your local Openbot agents.");
     expect(chief.preview).toBe("No messages yet");
     expect(chief.model).toBe("gpt-5.6-luna");
     expect(chief.reasoningEffort).toBe("medium");
-    expect(sales.workspacePath).toBe(join(home, "Infeld", "Bots", "sales-outbound"));
-    expect(store.sharedRoot).toBe(join(home, "Infeld", "Shared"));
+    expect(sales.workspacePath).toBe(join(home, "Openbot", "Bots", "sales-outbound"));
+    expect(store.sharedRoot).toBe(join(home, "Openbot", "Shared"));
     expect(chief.workspacePath).not.toBe(sales.workspacePath);
   });
 
   it("persists thread ids with a complete JSON state file", async () => {
-    const root = await mkdtemp(join(tmpdir(), "infeld-store-"));
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const store = new BotStore(userData, join(root, "home"));
@@ -51,7 +51,7 @@ describe("BotStore", () => {
   });
 
   it("creates unique new agents at the top of the persistent list", async () => {
-    const root = await mkdtemp(join(tmpdir(), "infeld-store-"));
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const store = new BotStore(userData, join(root, "home"));
@@ -81,7 +81,7 @@ describe("BotStore", () => {
   });
 
   it("rejects path traversal bot ids", async () => {
-    const root = await mkdtemp(join(tmpdir(), "infeld-store-"));
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const store = new BotStore(join(root, "data"), join(root, "home"));
     await store.initialize();
@@ -90,7 +90,7 @@ describe("BotStore", () => {
   });
 
   it("fails closed instead of overwriting agent state from a newer version", async () => {
-    const root = await mkdtemp(join(tmpdir(), "infeld-store-"));
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const statePath = join(userData, "agent-state.json");
@@ -104,7 +104,7 @@ describe("BotStore", () => {
   });
 
   it("persists editable agent settings", async () => {
-    const root = await mkdtemp(join(tmpdir(), "infeld-store-"));
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const store = new BotStore(userData, join(root, "home"));
@@ -132,7 +132,7 @@ describe("BotStore", () => {
   });
 
   it("deletes agents persistently without reseeding examples", async () => {
-    const root = await mkdtemp(join(tmpdir(), "infeld-store-"));
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const home = join(root, "home");

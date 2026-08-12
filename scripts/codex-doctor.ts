@@ -10,7 +10,7 @@ try {
   client = new CodexAppServerClient(cli.executable, 10_000);
   client.start();
   await client.request("initialize", {
-    clientInfo: { name: "infeld_bot_doctor", title: "Infeld Bot Doctor", version: "0.1.0" },
+    clientInfo: { name: "openbot_doctor", title: "Openbot Doctor", version: "0.1.0" },
     capabilities: { experimentalApi: true },
   });
   client.notify("initialized");

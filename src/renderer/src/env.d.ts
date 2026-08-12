@@ -1,9 +1,9 @@
 /// <reference types="vite/client" />
 
-import type { InfeldDesktopApi } from "../../shared/ipc";
+import type { OpenbotDesktopApi } from "../../shared/ipc";
 
 declare global {
   interface Window {
-    infeld: InfeldDesktopApi;
+    openbot: OpenbotDesktopApi;
   }
 }

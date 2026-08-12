@@ -2,30 +2,30 @@
 
 :root {
   color-scheme: dark;
-  --infeld-black: #050505;
-  --infeld-sidebar: #111111;
-  --infeld-main: #080808;
-  --infeld-main-deep: #080808;
-  --infeld-hover: rgba(255, 255, 255, 0.05);
-  --infeld-active: rgba(255, 255, 255, 0.075);
-  --infeld-line: rgba(255, 255, 255, 0.08);
-  --infeld-line-strong: rgba(255, 255, 255, 0.12);
-  --infeld-white: rgb(242, 242, 242);
-  --infeld-muted: rgba(255, 255, 255, 0.58);
-  --infeld-dim: rgba(255, 255, 255, 0.32);
-  --infeld-teal: #54b9a6;
-  --infeld-orange: #f19d38;
-  --infeld-purple: #885cf5;
-  --infeld-blue: #3c82f6;
-  --infeld-violet: #6464ef;
-  --infeld-coral: #ed712e;
-  --background: var(--infeld-main);
+  --openbot-black: #050505;
+  --openbot-sidebar: #111111;
+  --openbot-main: #080808;
+  --openbot-main-deep: #080808;
+  --openbot-hover: rgba(255, 255, 255, 0.05);
+  --openbot-active: rgba(255, 255, 255, 0.075);
+  --openbot-line: rgba(255, 255, 255, 0.08);
+  --openbot-line-strong: rgba(255, 255, 255, 0.12);
+  --openbot-white: rgb(242, 242, 242);
+  --openbot-muted: rgba(255, 255, 255, 0.58);
+  --openbot-dim: rgba(255, 255, 255, 0.32);
+  --openbot-teal: #54b9a6;
+  --openbot-orange: #f19d38;
+  --openbot-purple: #885cf5;
+  --openbot-blue: #3c82f6;
+  --openbot-violet: #6464ef;
+  --openbot-coral: #ed712e;
+  --background: var(--openbot-main);
   --surface: #171717;
-  --border: var(--infeld-line);
-  --text-primary: var(--infeld-white);
+  --border: var(--openbot-line);
+  --text-primary: var(--openbot-white);
   --text-secondary: rgba(255, 255, 255, 0.72);
-  --text-muted: var(--infeld-muted);
-  --accent: var(--infeld-teal);
+  --text-muted: var(--openbot-muted);
+  --accent: var(--openbot-teal);
   --danger: #bd554c;
   font-family: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   font-synthesis: none;
@@ -48,7 +48,7 @@ body,
 
 body {
   background: #050505;
-  color: var(--infeld-white);
+  color: var(--openbot-white);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -65,7 +65,7 @@ button {
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--infeld-orange) 76%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--openbot-orange) 76%, transparent);
   outline-offset: 2px;
 }
 
@@ -143,7 +143,7 @@ textarea:focus-visible {
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: var(--infeld-main);
+  background: var(--openbot-main);
   box-shadow: none;
 }
 
@@ -232,7 +232,7 @@ textarea {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  background: var(--infeld-sidebar);
+  background: var(--openbot-sidebar);
   color: rgba(255, 255, 255, 0.9);
 }
 
@@ -257,7 +257,7 @@ textarea {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--infeld-muted);
+  color: var(--openbot-muted);
   pointer-events: auto;
   cursor: pointer;
   -webkit-app-region: no-drag;
@@ -269,7 +269,7 @@ textarea {
 
 .sidebar-icon-button:hover {
   background: rgba(255, 255, 255, 0.08);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .sidebar-icon-button:active {
@@ -304,9 +304,9 @@ textarea {
 }
 
 .header-panel-toggle:hover {
-  border-color: var(--infeld-line-strong);
+  border-color: var(--openbot-line-strong);
   background: rgba(255, 255, 255, 0.06);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .header-panel-toggle:active {
@@ -334,7 +334,7 @@ textarea {
   z-index: 100;
   top: 6px;
   left: 74px;
-  color: var(--infeld-muted);
+  color: var(--openbot-muted);
 }
 
 .sidebar-search-wrap {
@@ -414,7 +414,7 @@ textarea {
 }
 
 .bot-row-active {
-  background: var(--infeld-active);
+  background: var(--openbot-active);
 }
 
 .bot-row-menu-open {
@@ -481,7 +481,7 @@ textarea {
   width: 16px;
   height: 16px;
   border-radius: 999px;
-  background: var(--infeld-teal);
+  background: var(--openbot-teal);
   color: #10241f;
   animation: sidebar-reply-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -736,22 +736,22 @@ textarea {
 }
 
 .bot-avatar-teal {
-  color: var(--infeld-teal);
+  color: var(--openbot-teal);
 }
 .bot-avatar-orange {
-  color: var(--infeld-orange);
+  color: var(--openbot-orange);
 }
 .bot-avatar-purple {
-  color: var(--infeld-purple);
+  color: var(--openbot-purple);
 }
 .bot-avatar-blue {
-  color: var(--infeld-blue);
+  color: var(--openbot-blue);
 }
 .bot-avatar-violet {
-  color: var(--infeld-violet);
+  color: var(--openbot-violet);
 }
 .bot-avatar-coral {
-  color: var(--infeld-coral);
+  color: var(--openbot-coral);
 }
 .bot-avatar-neutral {
   color: #f1f1ef;
@@ -985,7 +985,7 @@ textarea {
 
 .empty-search {
   margin: 32px 0;
-  color: var(--infeld-dim);
+  color: var(--openbot-dim);
   font-size: 13px;
   text-align: center;
 }
@@ -1041,7 +1041,7 @@ textarea {
   border-radius: 999px;
   background: rgba(86, 192, 176, 0.16);
   padding: 2px 7px;
-  color: var(--infeld-teal);
+  color: var(--openbot-teal);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 10px;
 }
@@ -1159,7 +1159,7 @@ textarea {
   grid-row: 1;
   min-width: 0;
   flex-direction: column;
-  background: var(--infeld-main);
+  background: var(--openbot-main);
   transition: padding-right var(--panel-resize-duration, 260ms) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -1179,7 +1179,7 @@ textarea {
 }
 
 .conversation-title[aria-label="View agent settings"]:hover {
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .agent-settings-panel {
@@ -1191,9 +1191,9 @@ textarea {
   display: flex;
   width: var(--settings-panel-width, 296px);
   flex-direction: column;
-  border-left: 1px solid var(--infeld-line);
+  border-left: 1px solid var(--openbot-line);
   background: #080808;
-  color: var(--infeld-white);
+  color: var(--openbot-white);
   animation: settings-panel-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
@@ -1206,9 +1206,9 @@ textarea {
   display: flex;
   width: var(--browser-panel-width, 380px);
   flex-direction: column;
-  border-left: 1px solid var(--infeld-line);
+  border-left: 1px solid var(--openbot-line);
   background: #0b0b0b;
-  color: var(--infeld-white);
+  color: var(--openbot-white);
   transition:
     border-color 180ms ease,
     box-shadow 180ms ease;
@@ -1230,7 +1230,7 @@ textarea {
   height: 34px;
   flex: 0 0 auto;
   align-items: flex-end;
-  border-bottom: 1px solid var(--infeld-line);
+  border-bottom: 1px solid var(--openbot-line);
   padding: 0 8px;
 }
 
@@ -1296,7 +1296,7 @@ textarea {
 .browser-tab:hover,
 .browser-tab-active {
   background: rgba(255, 255, 255, 0.08);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .browser-tab-controlled {
@@ -1384,7 +1384,7 @@ textarea {
 .browser-new-tab:hover,
 .browser-toolbar-button:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.08);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .browser-toolbar {
@@ -1482,13 +1482,13 @@ textarea {
   flex: 0 0 auto;
   grid-template-columns: 32px 1fr 32px;
   align-items: center;
-  border-bottom: 1px solid var(--infeld-line);
+  border-bottom: 1px solid var(--openbot-line);
   padding: 0 10px;
 }
 
 .agent-settings-header h2 {
   margin: 0;
-  color: var(--infeld-white);
+  color: var(--openbot-white);
   font-size: 13px;
   font-weight: 600;
   line-height: 18px;
@@ -1508,7 +1508,7 @@ textarea {
 
 .agent-settings-nav-button:hover {
   background: rgba(255, 255, 255, 0.07);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .settings-back-icon {
@@ -1570,8 +1570,8 @@ textarea {
   outline: 0;
   background: rgba(0, 0, 0, 0.22);
   padding: 10px 11px;
-  color: var(--infeld-white);
-  caret-color: var(--infeld-white);
+  color: var(--openbot-white);
+  caret-color: var(--openbot-white);
   font-size: 14px;
   line-height: 19px;
   transition:
@@ -1602,7 +1602,7 @@ textarea {
 
 .agent-settings-field select option {
   background: #202020;
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .agent-settings-field textarea {
@@ -1691,7 +1691,7 @@ textarea {
 }
 
 .agent-settings-notifications strong {
-  color: var(--infeld-white);
+  color: var(--openbot-white);
   font-size: 13px;
   font-weight: 500;
   line-height: 18px;
@@ -1824,12 +1824,12 @@ textarea {
 
 .agent-picker-option:hover {
   background: rgba(255, 255, 255, 0.065);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .agent-picker-option-active {
   background: rgba(255, 255, 255, 0.025);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .agent-picker-option:disabled {
@@ -1887,7 +1887,7 @@ textarea {
 
 .conversation-title h1 {
   margin: 0;
-  color: var(--infeld-white);
+  color: var(--openbot-white);
   font-size: 13px;
   font-weight: 400;
   line-height: 18px;
@@ -1901,9 +1901,9 @@ textarea {
 }
 
 .computer-button[aria-expanded="true"] {
-  border-color: var(--infeld-line-strong);
+  border-color: var(--openbot-line-strong);
   background: rgba(255, 255, 255, 0.08);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .computer-control-dot {
@@ -2467,7 +2467,7 @@ textarea {
 .exchange-agent-trigger:focus-visible,
 .exchange-agent-trigger[aria-expanded="true"] {
   background: rgba(119, 119, 119, 0.09);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .exchange-agent-trigger:active,
@@ -2534,7 +2534,7 @@ textarea {
   min-width: 170px;
   gap: 2px;
   transform: translateX(-50%);
-  border: 1px solid var(--infeld-line-strong);
+  border: 1px solid var(--openbot-line-strong);
   border-radius: 12px;
   background: #1a1a1a;
   padding: 5px;
@@ -2550,7 +2550,7 @@ textarea {
   border-radius: 8px;
   background: transparent;
   padding: 6px 8px;
-  color: var(--infeld-white);
+  color: var(--openbot-white);
   font-size: 12px;
   text-align: left;
 }
@@ -2581,7 +2581,7 @@ textarea {
   width: fit-content;
   max-width: min(720px, 82%);
   background: rgba(255, 255, 255, 0.12);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .bot-bubble:has(.choice-card) {
@@ -2776,7 +2776,7 @@ textarea {
 .choice-dismiss:hover,
 .media-close:hover {
   background: rgba(255, 255, 255, 0.08);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .choice-options {
@@ -2807,7 +2807,7 @@ textarea {
 .choice-option:hover,
 .choice-option-selected {
   background: rgba(255, 255, 255, 0.1);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .choice-key {
@@ -2833,7 +2833,7 @@ textarea {
   outline: 0;
   background: #080808;
   padding: 0 9px;
-  color: var(--infeld-white);
+  color: var(--openbot-white);
   font-size: 12px;
 }
 
@@ -2952,7 +2952,7 @@ textarea {
 
 .composer-button:hover {
   background: rgba(255, 255, 255, 0.1);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .voice-button {
@@ -2998,7 +2998,7 @@ textarea {
   outline: 0;
   background: transparent;
   padding: 5px 0;
-  color: var(--infeld-white);
+  color: var(--openbot-white);
   font-size: 14px;
   line-height: 20px;
   white-space: pre-wrap;
@@ -3170,7 +3170,7 @@ textarea {
   display: grid;
   gap: 3px;
   width: 190px;
-  border: 1px solid var(--infeld-line-strong);
+  border: 1px solid var(--openbot-line-strong);
   border-radius: 13px;
   background: #292929;
   padding: 6px;
@@ -3189,7 +3189,7 @@ textarea {
 
 .attachment-menu button:hover {
   background: rgba(255, 255, 255, 0.08);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .attachment-menu button {
@@ -3256,7 +3256,7 @@ textarea {
 
 .composer-attachment > button:hover {
   background: rgba(255, 255, 255, 0.1);
-  color: var(--infeld-white);
+  color: var(--openbot-white);
 }
 
 .attachment-thumb {

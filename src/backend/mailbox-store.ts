@@ -653,7 +653,7 @@ export class MailboxStore {
       const value: unknown = JSON.parse(await readFile(this.#statePath, "utf8"));
       if (!isStoredState(value)) {
         throw new Error(
-          "Mailbox state is corrupt or from a newer Infeld version; refusing to overwrite it.",
+          "Mailbox state is corrupt or from a newer Openbot version; refusing to overwrite it.",
         );
       }
       return {
@@ -767,7 +767,7 @@ function attachmentMetadata(
 }
 
 function attachmentPreviewUrl(id: string): string {
-  return `infeld-attachment://file/${id}`;
+  return `openbot-attachment://file/${id}`;
 }
 
 function toAttachmentSummary(attachment: StoredAttachment): AttachmentSummary {
