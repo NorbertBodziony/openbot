@@ -69,24 +69,13 @@ export interface AccountRateLimitWindowResult {
 
 export interface AccountRateLimitResult {
   limitId?: string | null;
-  limitName?: string | null;
   primary?: AccountRateLimitWindowResult | null;
   secondary?: AccountRateLimitWindowResult | null;
-  planType?: string | null;
 }
 
 export interface AccountRateLimitsReadResult {
   rateLimits?: AccountRateLimitResult | null;
   rateLimitsByLimitId?: Record<string, AccountRateLimitResult | undefined> | null;
-}
-
-export interface AccountUsageReadResult {
-  summary?: {
-    lifetimeTokens?: number | null;
-    peakDailyTokens?: number | null;
-    currentStreakDays?: number | null;
-    longestStreakDays?: number | null;
-  } | null;
 }
 
 export interface ThreadItem {

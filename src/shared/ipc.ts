@@ -45,7 +45,7 @@ export type AgentAuthState =
   | { kind: "unknown" }
   | { kind: "signed-out" }
   | { kind: "unsupported"; accountType: string }
-  | { kind: "chatgpt"; email: string | null; planType: string | null };
+  | { kind: "chatgpt"; email: string | null };
 
 export interface AccountUsageWindow {
   usedPercent: number;
@@ -55,23 +55,12 @@ export interface AccountUsageWindow {
 
 export interface AccountUsageLimit {
   id: string;
-  name: string | null;
   primary: AccountUsageWindow | null;
   secondary: AccountUsageWindow | null;
 }
 
-export interface AccountTokenUsageSummary {
-  lifetimeTokens: number | null;
-  peakDailyTokens: number | null;
-  currentStreakDays: number | null;
-  longestStreakDays: number | null;
-}
-
 export interface AccountUsage {
-  planType: string | null;
   limits: AccountUsageLimit[];
-  tokens: AccountTokenUsageSummary | null;
-  fetchedAt: string;
 }
 
 export type ExternalDestination = "feedback" | "message";

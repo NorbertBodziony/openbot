@@ -30,7 +30,6 @@ import {
   type AccountRateLimitResult,
   type AccountRateLimitsReadResult,
   type AccountReadResult,
-  type AccountUsageReadResult,
   type AppServerNotification,
   type AppServerRequest,
   type DynamicToolCallParams,
@@ -436,7 +435,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         auth: {
           kind: "chatgpt",
           email: account.account.email ?? null,
-          planType: account.account.planType ?? null,
         },
         capabilities: { chat: "ready", browser: "ready", computerUse },
         message: null,
@@ -1203,19 +1201,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #refreshUsage(client: CodexAppServerClient): Promise<AccountUsage> {
-    const [rateLimits, tokenUsage] = await Promise.allSettled([
-      client.request<AccountRateLimitsReadResult>("account/rateLimits/read", undefined),
-      client.request<AccountUsageReadResult>("account/usage/read", undefined),
-    ]);
-    if (rateLimits.status === "rejected" && tokenUsage.status === "rejected") {
-      throw rateLimits.reason;
-    }
-
-    const usage = normalizeAccountUsage(
-      rateLimits.status === "fulfilled" ? rateLimits.value : null,
-      tokenUsage.status === "fulfilled" ? tokenUsage.value : null,
-      this.#status.auth.kind === "chatgpt" ? this.#status.auth.planType : null,
+    const rateLimits = await client.request<AccountRateLimitsReadResult>(
+      "account/rateLimits/read",
+      undefined,
     );
+    const usage = normalizeAccountUsage(rateLimits);
     this.#emit({ type: "usage-changed", usage: structuredClone(usage) });
     return structuredClone(usage);
   }
@@ -1256,11 +1246,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 }
 
-function normalizeAccountUsage(
-  rateLimits: AccountRateLimitsReadResult | null,
-  tokenUsage: AccountUsageReadResult | null,
-  fallbackPlanType: string | null,
-): AccountUsage {
+function normalizeAccountUsage(rateLimits: AccountRateLimitsReadResult | null): AccountUsage {
   const entries = rateLimits?.rateLimitsByLimitId
     ? Object.entries(rateLimits.rateLimitsByLimitId).filter(
         (entry): entry is [string, AccountRateLimitResult] => Boolean(entry[1]),
@@ -1270,28 +1256,13 @@ function normalizeAccountUsage(
     entries.push([rateLimits.rateLimits.limitId ?? "codex", rateLimits.rateLimits]);
   }
   const limits = entries.map(([id, limit]) => normalizeAccountLimit(id, limit));
-  const summary = tokenUsage?.summary;
-  const tokens = summary
-    ? {
-        lifetimeTokens: finiteNumberOrNull(summary.lifetimeTokens),
-        peakDailyTokens: finiteNumberOrNull(summary.peakDailyTokens),
-        currentStreakDays: finiteNumberOrNull(summary.currentStreakDays),
-        longestStreakDays: finiteNumberOrNull(summary.longestStreakDays),
-      }
-    : null;
 
-  return {
-    planType: entries.find(([, limit]) => limit.planType)?.[1].planType ?? fallbackPlanType,
-    limits,
-    tokens,
-    fetchedAt: new Date().toISOString(),
-  };
+  return { limits };
 }
 
 function normalizeAccountLimit(id: string, limit: AccountRateLimitResult): AccountUsageLimit {
   return {
     id: limit.limitId ?? id,
-    name: limit.limitName ?? null,
     primary: normalizeUsageWindow(limit.primary),
     secondary: normalizeUsageWindow(limit.secondary),
   };

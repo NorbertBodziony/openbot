@@ -1,12 +1,6 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
-import type {
-  AccountUsage,
-  AccountUsageWindow,
-  AgentStatus,
-  AppInfo,
-  ExternalDestination,
-} from "../../../shared/ipc";
+import type { AccountUsage, AgentStatus, AppInfo, ExternalDestination } from "../../../shared/ipc";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 
@@ -154,58 +148,6 @@ function MessageIcon() {
   );
 }
 
-function ChevronIcon(props: { direction?: "left" | "right" }) {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 16 16"
-      class={`account-chevron account-chevron-${props.direction ?? "right"}`}
-    >
-      <path d="m6 3.5 4.5 4.5L6 12.5" />
-    </svg>
-  );
-}
-
-function planLabel(status: AgentStatus): string {
-  if (status.auth.kind !== "chatgpt") return "Local Codex account";
-  const plan = status.auth.planType?.replaceAll("_", " ") ?? "subscription";
-  return `ChatGPT ${plan.replace(/\b\w/g, (letter) => letter.toUpperCase())}`;
-}
-
-function usageWindowLabel(durationMins: number | null, index: number): string {
-  if (durationMins === null) return index === 0 ? "Session limit" : "Secondary limit";
-  if (durationMins === 60) return "Hourly limit";
-  if (durationMins === 1_440) return "Daily limit";
-  if (durationMins === 10_080) return "Weekly limit";
-  if (durationMins % 1_440 === 0) return `${durationMins / 1_440}-day limit`;
-  if (durationMins % 60 === 0) return `${durationMins / 60}-hour limit`;
-  return `${durationMins}-minute limit`;
-}
-
-function formatUsageReset(resetsAt: number | null): string {
-  if (resetsAt === null) return "Reset time unavailable";
-  const reset = new Date(resetsAt * 1_000);
-  if (Number.isNaN(reset.valueOf())) return "Reset time unavailable";
-  const sameDay = reset.toDateString() === new Date().toDateString();
-  return `Resets ${sameDay ? "at " : ""}${new Intl.DateTimeFormat(undefined, {
-    ...(sameDay ? {} : { month: "short", day: "numeric" }),
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(reset)}`;
-}
-
-function formatTokenCount(value: number | null): string {
-  if (value === null) return "—";
-  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(
-    value,
-  );
-}
-
-function formatStreak(value: number | null): string {
-  if (value === null) return "—";
-  return `${value} ${value === 1 ? "day" : "days"}`;
-}
-
 export function Sidebar(props: SidebarProps) {
   const [query, setQuery] = createSignal("");
   const [contextMenu, setContextMenu] = createSignal<BotContextMenu | null>(null);
@@ -215,7 +157,6 @@ export function Sidebar(props: SidebarProps) {
   const [fadeAtTop, setFadeAtTop] = createSignal(false);
   const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
   const [accountMenuOpen, setAccountMenuOpen] = createSignal(false);
-  const [accountView, setAccountView] = createSignal<"menu" | "usage">("menu");
   const [usageLoading, setUsageLoading] = createSignal(false);
   const [accountError, setAccountError] = createSignal<string | null>(null);
   let firstMenuItem: HTMLButtonElement | undefined;
@@ -227,15 +168,6 @@ export function Sidebar(props: SidebarProps) {
           `${bot.name} ${bot.role} ${bot.preview}`.toLowerCase().includes(normalizedQuery),
         )
       : props.bots;
-  });
-  const accountLabel = createMemo(() => {
-    const auth = props.agentStatus.auth;
-    if (auth.kind === "chatgpt") {
-      return `ChatGPT${auth.planType ? ` ${auth.planType}` : " subscription"} · Codex ${props.agentStatus.phase}`;
-    }
-    if (auth.kind === "signed-out") return "ChatGPT sign-in required";
-    if (auth.kind === "unsupported") return `Unsupported ${auth.accountType} login`;
-    return props.agentStatus.message ?? `Codex ${props.agentStatus.phase}`;
   });
   const accountEmail = createMemo(() => {
     const auth = props.agentStatus.auth;
@@ -249,33 +181,21 @@ export function Sidebar(props: SidebarProps) {
       parts.length > 1 ? `${parts[0]?.[0]}${parts[1]?.[0]}` : localPart.slice(0, 2)
     ).toUpperCase();
   });
-  const usageWindows = createMemo(() => {
-    const rows: Array<{
-      key: string;
-      label: string;
-      window: AccountUsageWindow;
-    }> = [];
-    for (const limit of props.accountUsage?.limits ?? []) {
-      const prefix =
-        (props.accountUsage?.limits.length ?? 0) > 1 && limit.name ? `${limit.name} · ` : "";
-      if (limit.primary) {
-        rows.push({
-          key: `${limit.id}:primary`,
-          label: `${prefix}${usageWindowLabel(limit.primary.windowDurationMins, 0)}`,
-          window: limit.primary,
-        });
-      }
-      if (limit.secondary) {
-        rows.push({
-          key: `${limit.id}:secondary`,
-          label: `${prefix}${usageWindowLabel(limit.secondary.windowDurationMins, 1)}`,
-          window: limit.secondary,
-        });
-      }
-    }
-    return rows;
+  const weeklyUsage = createMemo(() => {
+    const limit =
+      props.accountUsage?.limits.find((candidate) => candidate.id === "codex") ??
+      props.accountUsage?.limits[0];
+    if (!limit) return null;
+    return (
+      [limit.primary, limit.secondary].find((window) => window?.windowDurationMins === 10_080) ??
+      limit.secondary ??
+      limit.primary
+    );
   });
-  const primaryUsage = createMemo(() => usageWindows()[0]?.window ?? null);
+  const weeklyUsageRemaining = createMemo(() => {
+    const usage = weeklyUsage();
+    return usage ? Math.max(0, Math.round(100 - usage.usedPercent)) : null;
+  });
   const deleteTarget = createMemo(() => props.bots.find((bot) => bot.id === deleteTargetId()));
 
   function updateScrollFade() {
@@ -358,7 +278,6 @@ export function Sidebar(props: SidebarProps) {
   function toggleAccountMenu() {
     const opening = !accountMenuOpen();
     setAccountMenuOpen(opening);
-    setAccountView("menu");
     setAccountError(null);
     if (opening) void refreshUsage();
   }
@@ -470,130 +389,45 @@ export function Sidebar(props: SidebarProps) {
 
       <div class="sidebar-account">
         <Show when={accountMenuOpen()}>
-          <section
+          <div
             class="account-popover"
-            role="dialog"
-            aria-label={accountView() === "usage" ? "Codex usage" : "Account menu"}
+            role="menu"
+            aria-label="Account menu"
             onPointerDown={(event) => event.stopPropagation()}
           >
-            <Show
-              when={accountView() === "menu"}
-              fallback={
-                <div class="account-usage-view">
-                  <header class="account-popover-header">
-                    <button
-                      type="button"
-                      class="account-back-button"
-                      onClick={() => setAccountView("menu")}
-                      aria-label="Back to account menu"
-                    >
-                      <ChevronIcon direction="left" />
-                    </button>
-                    <strong>Usage</strong>
-                    <button
-                      type="button"
-                      class="account-refresh-button"
-                      onClick={() => void refreshUsage()}
-                      disabled={usageLoading()}
-                    >
-                      {usageLoading() ? "Refreshing…" : "Refresh"}
-                    </button>
-                  </header>
-
-                  <Show when={usageWindows().length > 0}>
-                    <div class="account-usage-list">
-                      <For each={usageWindows()}>
-                        {(row) => {
-                          const remaining = () =>
-                            Math.max(0, Math.round(100 - row.window.usedPercent));
-                          return (
-                            <div class="account-usage-row">
-                              <div class="account-usage-heading">
-                                <span>{row.label}</span>
-                                <strong>{remaining()}% left</strong>
-                              </div>
-                              <div class="account-usage-track" aria-hidden="true">
-                                <i style={{ width: `${row.window.usedPercent}%` }} />
-                              </div>
-                              <span class="account-usage-reset">
-                                {formatUsageReset(row.window.resetsAt)}
-                              </span>
-                            </div>
-                          );
-                        }}
-                      </For>
-                    </div>
-                  </Show>
-
-                  <Show when={!usageLoading() && usageWindows().length === 0 && !accountError()}>
-                    <p class="account-usage-empty">
-                      No rate-limit data is available for this account.
-                    </p>
-                  </Show>
-
-                  <Show when={props.accountUsage?.tokens}>
-                    {(tokens) => (
-                      <div class="account-token-stats">
-                        <span>
-                          <small>Lifetime</small>
-                          <strong>{formatTokenCount(tokens().lifetimeTokens)}</strong>
-                        </span>
-                        <span>
-                          <small>Current streak</small>
-                          <strong>{formatStreak(tokens().currentStreakDays)}</strong>
-                        </span>
-                      </div>
-                    )}
-                  </Show>
-                </div>
-              }
+            <button
+              type="button"
+              role="menuitem"
+              class="account-menu-row"
+              onClick={() => void refreshUsage()}
+              disabled={usageLoading() || props.agentStatus.phase !== "ready"}
             >
-              <div class="account-popover-identity">
-                <span class="profile-dot">{accountInitials()}</span>
-                <span>
-                  <strong>{accountName()}</strong>
-                  <small>{planLabel(props.agentStatus)}</small>
-                </span>
-              </div>
-              <div class="account-popover-separator" />
-              <button
-                type="button"
-                class="account-menu-row"
-                onClick={() => setAccountView("usage")}
-              >
-                <UsageIcon />
-                <span>Usage</span>
-                <small>
-                  {primaryUsage()
-                    ? `${Math.max(0, Math.round(100 - (primaryUsage()?.usedPercent ?? 0)))}% left`
-                    : ""}
-                </small>
-                <ChevronIcon />
-              </button>
-              <button
-                type="button"
-                class="account-menu-row"
-                onClick={() => openExternal("feedback")}
-              >
-                <FeedbackIcon />
-                <span>Send feedback</span>
-              </button>
-              <button
-                type="button"
-                class="account-menu-row"
-                onClick={() => openExternal("message")}
-              >
-                <MessageIcon />
-                <span>Message</span>
-                <small>@norbertbodziony</small>
-              </button>
-              <div class="account-popover-separator" />
-              <span class="account-dev-label">Developer preview</span>
-            </Show>
+              <UsageIcon />
+              <span>{usageLoading() ? "Updating usage…" : "Weekly usage"}</span>
+              <small>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</small>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              class="account-menu-row"
+              onClick={() => openExternal("feedback")}
+            >
+              <FeedbackIcon />
+              <span>Send feedback</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              class="account-menu-row"
+              onClick={() => openExternal("message")}
+            >
+              <MessageIcon />
+              <span>Message</span>
+            </button>
             <Show when={accountError()}>
               {(message) => <p class="account-popover-error">{message()}</p>}
             </Show>
-          </section>
+          </div>
         </Show>
 
         <button
@@ -607,9 +441,6 @@ export function Sidebar(props: SidebarProps) {
           <span class="profile-dot">{accountInitials()}</span>
           <span class="profile-copy">
             <strong>{accountName()}</strong>
-            <span data-testid="agent-status" title={props.agentStatus.message ?? undefined}>
-              {accountLabel()}
-            </span>
             <Show when={props.appInfo}>
               {(info) => (
                 <span class="sr-only" data-testid="app-version">
@@ -618,7 +449,6 @@ export function Sidebar(props: SidebarProps) {
               )}
             </Show>
           </span>
-          <ChevronIcon />
         </button>
       </div>
 
