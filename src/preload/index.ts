@@ -5,6 +5,7 @@ import {
   type ImportAttachmentsInput,
   IPC_CHANNELS,
   type OpenbotDesktopApi,
+  type UpdateStatus,
 } from "../shared/ipc";
 
 const attachmentImportListeners = new Set<(event: AttachmentImportEvent) => void>();
@@ -101,6 +102,17 @@ const openbotApi: OpenbotDesktopApi = {
     listTabs: () => ipcRenderer.invoke(IPC_CHANNELS.browserListTabs),
     getControlState: () => ipcRenderer.invoke(IPC_CHANNELS.browserGetControlState),
     setVisible: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserSetVisible, input),
+  },
+  update: {
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.updateGetStatus),
+    check: () => ipcRenderer.invoke(IPC_CHANNELS.updateCheck),
+    download: () => ipcRenderer.invoke(IPC_CHANNELS.updateDownload),
+    install: () => ipcRenderer.invoke(IPC_CHANNELS.updateInstall),
+    onEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: UpdateStatus) => listener(status);
+      ipcRenderer.on(IPC_CHANNELS.updateEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.updateEvent, handler);
+    },
   },
 };
 

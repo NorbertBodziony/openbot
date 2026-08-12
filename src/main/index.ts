@@ -14,6 +14,7 @@ import {
   systemPreferences,
   type WebFrameMain,
 } from "electron";
+import electronUpdater from "electron-updater";
 import { AgentService } from "../backend/agent-service";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
@@ -40,6 +41,7 @@ import {
   type SetQueuePausedInput,
   type UpdateBotInput,
 } from "../shared/ipc";
+import { UpdateService } from "./update-service";
 
 app.enableSandbox();
 protocol.registerSchemesAsPrivileged([
@@ -53,6 +55,7 @@ let mainWindow: BrowserWindow | null = null;
 let browserHost: BrowserHost | null = null;
 let agentService: AgentService | null = null;
 let mailboxStore: MailboxStore | null = null;
+let updateService: UpdateService | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
 
@@ -112,6 +115,7 @@ function registerIpcHandlers(
   service: AgentService,
   mailbox: MailboxStore,
   browser: BrowserHost,
+  updater: UpdateService,
 ): void {
   ipcMain.handle(IPC_CHANNELS.getAppInfo, (event): AppInfo => {
     assertTrustedSender(event.senderFrame);
@@ -127,6 +131,22 @@ function registerIpcHandlers(
       throw new Error("Unknown external destination.");
     }
     return shell.openExternal(EXTERNAL_DESTINATIONS[destination]);
+  });
+  ipcMain.handle(IPC_CHANNELS.updateGetStatus, (event) => {
+    assertTrustedSender(event.senderFrame);
+    return updater.getStatus();
+  });
+  ipcMain.handle(IPC_CHANNELS.updateCheck, (event) => {
+    assertTrustedSender(event.senderFrame);
+    return updater.checkForUpdates();
+  });
+  ipcMain.handle(IPC_CHANNELS.updateDownload, (event) => {
+    assertTrustedSender(event.senderFrame);
+    return updater.downloadUpdate();
+  });
+  ipcMain.handle(IPC_CHANNELS.updateInstall, (event) => {
+    assertTrustedSender(event.senderFrame);
+    return updater.installUpdate();
   });
 
   ipcMain.handle(IPC_CHANNELS.agentGetStatus, (event) => {
@@ -297,7 +317,7 @@ function loadRenderer(window: BrowserWindow): Promise<void> {
     : window.loadFile(join(__dirname, "../renderer/index.html"));
 }
 
-function configureApplicationMenu(service: AgentService): void {
+function configureApplicationMenu(service: AgentService, updater: UpdateService): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
@@ -307,6 +327,11 @@ function configureApplicationMenu(service: AgentService): void {
             label: "Stop all agents",
             accelerator: "CommandOrControl+.",
             click: () => void service.interruptAll(),
+          },
+          { type: "separator" },
+          {
+            label: "Check for Updates…",
+            click: () => void updater.checkForUpdates(),
           },
           { type: "separator" },
           { role: "hide" },
@@ -328,6 +353,11 @@ function forwardAgentEvent(event: AgentEvent): void {
   mainWindow.webContents.send(IPC_CHANNELS.agentEvent, event);
 }
 
+function forwardUpdateStatus(status: import("../shared/ipc").UpdateStatus): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_CHANNELS.updateEvent, status);
+}
+
 app.whenReady().then(async () => {
   configureContentSecurityPolicy();
   mainWindow = createWindow();
@@ -338,9 +368,17 @@ app.whenReady().then(async () => {
   configureAttachmentProtocol(mailboxStore);
   browserHost = new BrowserHost(mainWindow, store.downloadsRoot);
   agentService = new AgentService(store, mailboxStore, browserHost, readComputerUsePrerequisites);
+  const { autoUpdater } = electronUpdater;
+  updateService = new UpdateService(autoUpdater, {
+    currentVersion: app.getVersion(),
+    enabled: app.isPackaged && process.platform === "darwin",
+    beforeInstall: prepareForShutdown,
+  });
   agentService.on("event", forwardAgentEvent);
-  registerIpcHandlers(agentService, mailboxStore, browserHost);
-  configureApplicationMenu(agentService);
+  updateService.on("status", forwardUpdateStatus);
+  updateService.start();
+  registerIpcHandlers(agentService, mailboxStore, browserHost, updateService);
+  configureApplicationMenu(agentService, updateService);
   await loadRenderer(mainWindow);
   void agentService.initialize().catch((error) => {
     console.error("Unable to initialize the local Codex backend:", error);
@@ -376,20 +414,17 @@ app.on("window-all-closed", () => {
 app.on("before-quit", (event) => {
   isQuitting = true;
   if (shutdownStarted) return;
-  shutdownStarted = true;
   event.preventDefault();
-
-  browserHost?.destroy();
-  void (agentService?.stop() ?? Promise.resolve()).finally(() => {
-    removeIpcHandlers();
-    app.quit();
-  });
+  void prepareForShutdown().finally(() => app.quit());
 });
 
-function removeIpcHandlers(): void {
-  for (const channel of Object.values(IPC_CHANNELS)) {
-    if (channel !== IPC_CHANNELS.agentEvent) ipcMain.removeHandler(channel);
-  }
+async function prepareForShutdown(): Promise<void> {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  isQuitting = true;
+  updateService?.stop();
+  browserHost?.destroy();
+  await (agentService?.stop() ?? Promise.resolve());
 }
 
 function requireString(value: unknown, field: string): string {

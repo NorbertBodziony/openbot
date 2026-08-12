@@ -7,6 +7,7 @@ All notable changes to Openbot will be documented here. The project follows
 
 ### Added
 
+- Signed GitHub Releases update pipeline with in-app availability, download progress, and restart-to-install controls.
 - Public repository documentation, community health files, CI, and draft release automation.
 - Apache-2.0 licensing and an attribution notice for Norbert Bodziony.
 - Local Codex App Server lifecycle and ChatGPT subscription authentication.

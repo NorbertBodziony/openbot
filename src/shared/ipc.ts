@@ -1,6 +1,11 @@
 export const IPC_CHANNELS = {
   getAppInfo: "app:get-info",
   openExternal: "app:open-external",
+  updateGetStatus: "update:get-status",
+  updateCheck: "update:check",
+  updateDownload: "update:download",
+  updateInstall: "update:install",
+  updateEvent: "update:event",
   agentGetStatus: "agent:get-status",
   agentGetUsage: "agent:get-usage",
   agentListModels: "agent:list-models",
@@ -35,6 +40,26 @@ export interface AppInfo {
   name: string;
   version: string;
   platform: DesktopPlatform;
+}
+
+export type UpdatePhase =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "ready"
+  | "installing"
+  | "up-to-date"
+  | "error"
+  | "unsupported";
+
+export interface UpdateStatus {
+  phase: UpdatePhase;
+  currentVersion: string;
+  availableVersion: string | null;
+  progress: number | null;
+  checkedAt: string | null;
+  message: string | null;
 }
 
 export type AgentPhase = "idle" | "starting" | "ready" | "restarting" | "blocked" | "stopped";
@@ -445,9 +470,18 @@ export interface BrowserDesktopApi {
   setVisible: (input: BrowserVisibilityInput) => Promise<void>;
 }
 
+export interface UpdateDesktopApi {
+  getStatus: () => Promise<UpdateStatus>;
+  check: () => Promise<UpdateStatus>;
+  download: () => Promise<UpdateStatus>;
+  install: () => Promise<void>;
+  onEvent: (listener: (status: UpdateStatus) => void) => () => void;
+}
+
 export interface OpenbotDesktopApi {
   getAppInfo: () => Promise<AppInfo>;
   openExternal: (destination: ExternalDestination) => Promise<void>;
   agent: AgentDesktopApi;
   browser: BrowserDesktopApi;
+  update: UpdateDesktopApi;
 }

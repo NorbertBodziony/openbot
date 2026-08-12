@@ -13,6 +13,7 @@ import type {
   ConversationSnapshot,
   QueueSnapshot,
   UpdateBotInput,
+  UpdateStatus,
 } from "../../shared/ipc";
 import { Conversation } from "./components/Conversation";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./components/PanelResizer";
@@ -26,6 +27,15 @@ const FALLBACK_STATUS: AgentStatus = {
   capabilities: { chat: "unavailable", browser: "unavailable", computerUse: "unavailable" },
   message: "Local Codex is unavailable.",
   fullAccess: true,
+};
+
+const FALLBACK_UPDATE_STATUS: UpdateStatus = {
+  phase: "unsupported",
+  currentVersion: "",
+  availableVersion: null,
+  progress: null,
+  checkedAt: null,
+  message: null,
 };
 
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
@@ -94,6 +104,7 @@ export function App() {
   const [appInfo, setAppInfo] = createSignal<AppInfo | null>(null);
   const [agentStatus, setAgentStatus] = createSignal<AgentStatus>(FALLBACK_STATUS);
   const [accountUsage, setAccountUsage] = createSignal<AccountUsage | null>(null);
+  const [updateStatus, setUpdateStatus] = createSignal<UpdateStatus>(FALLBACK_UPDATE_STATUS);
   const [leftPanelWidth, setLeftPanelWidth] = createSignal(
     readPanelWidth(LEFT_PANEL_STORAGE_KEY, LEFT_PANEL_DEFAULT, LEFT_PANEL_MIN, LEFT_PANEL_MAX),
   );
@@ -114,12 +125,18 @@ export function App() {
 
   onMount(() => {
     const unsubscribe = window.openbot.agent.onEvent(handleAgentEvent);
+    const unsubscribeUpdate = window.openbot.update.onEvent(setUpdateStatus);
     onCleanup(() => {
       unsubscribe();
+      unsubscribeUpdate();
       if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
       for (const timer of recentReplyTimers.values()) clearTimeout(timer);
       recentReplyTimers.clear();
     });
+    void window.openbot.update
+      .getStatus()
+      .then(setUpdateStatus)
+      .catch(() => undefined);
 
     void Promise.all([
       window.openbot
@@ -525,6 +542,19 @@ export function App() {
     window.localStorage.setItem(LEFT_PANEL_COLLAPSED_STORAGE_KEY, String(collapsed));
   }
 
+  async function runUpdateAction(): Promise<void> {
+    const phase = updateStatus().phase;
+    if (phase === "ready") {
+      await window.openbot.update.install();
+      return;
+    }
+    const status =
+      phase === "available"
+        ? await window.openbot.update.download()
+        : await window.openbot.update.check();
+    setUpdateStatus(status);
+  }
+
   return (
     <div
       class="app-frame"
@@ -538,12 +568,14 @@ export function App() {
           appInfo={appInfo()}
           agentStatus={agentStatus()}
           accountUsage={accountUsage()}
+          updateStatus={updateStatus()}
           agentStates={sidebarAgentStates()}
           onSelectBot={selectBot}
           onCreateBot={() => setAgentPickerOpen(true)}
           onEditBot={editBot}
           onDeleteBot={deleteBot}
           onRefreshUsage={refreshAccountUsage}
+          onUpdateAction={runUpdateAction}
           onOpenExternal={(destination) => window.openbot.openExternal(destination)}
           onCollapse={() => setSidebarCollapsed(true)}
         />

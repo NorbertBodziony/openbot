@@ -62,7 +62,8 @@ without starting a model turn.
 | `bun run test:browser` | Run the local embedded-browser smoke test. |
 | `bun run test:codex` | Probe the real CLI handshake and account without starting a paid turn. |
 | `bun run package` | Build an unpacked local ARM64 application. |
-| `bun run dist:mac` | Build an unsigned ARM64 DMG. |
+| `bun run dist:mac` | Build unsigned local ARM64 DMG and ZIP update artifacts. |
+| `bun run release:patch` | Create the next patch version commit and tag. |
 | `bun run test:filesystem` | **Online/manual:** run a real full-access Codex filesystem turn. |
 | `bun run test:imagegen` | **Online/manual:** run a real full-access image-generation turn. |
 
@@ -111,12 +112,11 @@ described above.
 
 ## Releases
 
-Releases use semantic version tags. A tag such as `v0.2.0` must match the version in `package.json`.
-Pushing the tag runs the macOS release workflow, performs the full check, builds an unsigned ARM64
-DMG, generates a SHA-256 checksum, and creates a **draft** GitHub Release for manual smoke testing.
-
-Unsigned builds are expected to trigger macOS Gatekeeper warnings. Code signing, notarization,
-auto-update, Intel builds, and bundled Codex CLI distribution are not implemented yet.
+Releases are tag-driven. `bun run release:patch`, `release:minor`, or `release:major` creates the
+version commit and tag; pushing `main` with `--follow-tags` builds a signed and notarized ARM64 release.
+Installed builds check GitHub Releases for updates and expose download/restart controls in the account
+popover. Release signing secrets and the complete procedure are documented in
+[docs/RELEASING.md](docs/RELEASING.md).
 
 ## Contributing
 

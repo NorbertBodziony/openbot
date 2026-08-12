@@ -1069,6 +1069,18 @@ textarea {
   font-weight: 500;
 }
 
+.sidebar-update-pill {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: rgba(84, 185, 166, 0.14);
+  padding: 2px 7px;
+  color: #74cbbb;
+  font-size: 10px;
+  line-height: 16px;
+  letter-spacing: 0.01em;
+  font-weight: 600;
+}
+
 .account-popover {
   position: fixed;
   bottom: 56px;
@@ -1116,6 +1128,20 @@ textarea {
   cursor: default;
 }
 
+.account-menu-row:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+.account-update-row {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.account-menu-separator {
+  height: 1px;
+  margin: 4px 8px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .account-menu-row small {
   color: rgba(255, 255, 255, 0.42);
   font-size: 12px;
@@ -1138,6 +1164,16 @@ textarea {
   stroke: none;
 }
 
+.account-menu-icon-spinning {
+  animation: account-update-spin 800ms linear infinite;
+}
+
+@keyframes account-update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .account-popover-error {
   margin: 3px 7px 5px;
   color: #df8982;
@@ -1149,6 +1185,12 @@ textarea {
   from {
     opacity: 0;
     transform: translateY(5px) scale(0.975);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-menu-icon-spinning {
+    animation-duration: 1.6s;
   }
 }
 

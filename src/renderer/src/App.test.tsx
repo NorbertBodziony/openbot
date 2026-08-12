@@ -5,11 +5,13 @@ import type {
   AttachmentImportEvent,
   BotSummary,
   ConversationSnapshot,
+  UpdateStatus,
 } from "../../shared/ipc";
 import { App } from "./App";
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
 let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
+let emitUpdateStatus: ((status: UpdateStatus) => void) | undefined;
 
 const BOTS: BotSummary[] = [
   {
@@ -48,6 +50,7 @@ describe("Openbot connected desktop shell", () => {
   beforeEach(() => {
     emitAgentEvent = undefined;
     emitAttachmentImport = undefined;
+    emitUpdateStatus = undefined;
     window.localStorage.clear();
     Object.defineProperty(window, "openbot", {
       configurable: true,
@@ -149,6 +152,37 @@ describe("Openbot connected desktop shell", () => {
           getControlState: vi.fn().mockResolvedValue({ sessions: [] }),
           setVisible: vi.fn().mockResolvedValue(undefined),
         },
+        update: {
+          getStatus: vi.fn().mockResolvedValue({
+            phase: "idle",
+            currentVersion: "0.1.0",
+            availableVersion: null,
+            progress: null,
+            checkedAt: null,
+            message: null,
+          }),
+          check: vi.fn().mockResolvedValue({
+            phase: "up-to-date",
+            currentVersion: "0.1.0",
+            availableVersion: null,
+            progress: null,
+            checkedAt: "2026-08-12T22:00:00.000Z",
+            message: null,
+          }),
+          download: vi.fn().mockResolvedValue({
+            phase: "downloading",
+            currentVersion: "0.1.0",
+            availableVersion: "0.2.0",
+            progress: 0,
+            checkedAt: "2026-08-12T22:00:00.000Z",
+            message: null,
+          }),
+          install: vi.fn().mockResolvedValue(undefined),
+          onEvent: vi.fn((listener) => {
+            emitUpdateStatus = listener;
+            return () => undefined;
+          }),
+        },
       },
     });
   });
@@ -181,6 +215,34 @@ describe("Openbot connected desktop shell", () => {
     fireEvent.click(accountButton);
     fireEvent.click(screen.getByRole("menuitem", { name: "Message" }));
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("message"));
+  });
+
+  it("shows an available update, downloads it, and exposes restart to install", async () => {
+    vi.mocked(window.openbot.update.getStatus).mockResolvedValueOnce({
+      phase: "available",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: null,
+      checkedAt: "2026-08-12T22:00:00.000Z",
+      message: null,
+    });
+    render(() => <App />);
+
+    expect(await screen.findByText("Update")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open account menu" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Download update/ }));
+    await waitFor(() => expect(window.openbot.update.download).toHaveBeenCalledOnce());
+
+    emitUpdateStatus?.({
+      phase: "ready",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: 100,
+      checkedAt: "2026-08-12T22:00:00.000Z",
+      message: null,
+    });
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Restart to update/ }));
+    await waitFor(() => expect(window.openbot.update.install).toHaveBeenCalledOnce());
   });
 
   it("renders loaded history without replaying entrance animations", async () => {

@@ -2,6 +2,11 @@ appId: app.openbot.desktop
 productName: Openbot
 asar: true
 artifactName: ${productName}-${version}-${arch}.${ext}
+electronUpdaterCompatibility: ">=2.16"
+publish:
+  provider: github
+  owner: NorbertBodziony
+  repo: openbot
 files:
   - out/**/*
   - package.json
@@ -12,10 +17,13 @@ directories:
 mac:
   category: public.app-category.productivity
   minimumSystemVersion: "12.0"
-  identity: null
+  notarize: true
   darkModeSupport: true
   target:
     - target: dmg
+      arch:
+        - arm64
+    - target: zip
       arch:
         - arm64
 dmg:

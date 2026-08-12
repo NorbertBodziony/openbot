@@ -1,6 +1,12 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
-import type { AccountUsage, AgentStatus, AppInfo, ExternalDestination } from "../../../shared/ipc";
+import type {
+  AccountUsage,
+  AgentStatus,
+  AppInfo,
+  ExternalDestination,
+  UpdateStatus,
+} from "../../../shared/ipc";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 
@@ -10,12 +16,14 @@ interface SidebarProps {
   appInfo: AppInfo | null;
   agentStatus: AgentStatus;
   accountUsage: AccountUsage | null;
+  updateStatus: UpdateStatus;
   agentStates: Record<string, SidebarAgentState>;
   onSelectBot: (botId: string) => void;
   onCreateBot: () => void;
   onEditBot: (botId: string) => void;
   onDeleteBot: (botId: string) => Promise<void>;
   onRefreshUsage: () => Promise<AccountUsage>;
+  onUpdateAction: () => Promise<void>;
   onOpenExternal: (destination: ExternalDestination) => Promise<void>;
   onCollapse: () => void;
 }
@@ -148,6 +156,20 @@ function MessageIcon() {
   );
 }
 
+function UpdateIcon(props: { active: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      class="account-menu-icon"
+      classList={{ "account-menu-icon-spinning": props.active }}
+    >
+      <path d="M15.4 6.8A6 6 0 1 0 16 10" />
+      <path d="M15.4 3.8v3h-3" />
+    </svg>
+  );
+}
+
 export function Sidebar(props: SidebarProps) {
   const [query, setQuery] = createSignal("");
   const [contextMenu, setContextMenu] = createSignal<BotContextMenu | null>(null);
@@ -197,6 +219,45 @@ export function Sidebar(props: SidebarProps) {
     return usage ? Math.max(0, Math.round(100 - usage.usedPercent)) : null;
   });
   const deleteTarget = createMemo(() => props.bots.find((bot) => bot.id === deleteTargetId()));
+  const updateAvailable = createMemo(() =>
+    ["available", "downloading", "ready", "installing"].includes(props.updateStatus.phase),
+  );
+  const updateBusy = createMemo(() =>
+    ["checking", "downloading", "installing"].includes(props.updateStatus.phase),
+  );
+  const updateLabel = createMemo(() => {
+    switch (props.updateStatus.phase) {
+      case "checking":
+        return "Checking for updates…";
+      case "available":
+        return "Download update";
+      case "downloading":
+        return "Downloading update…";
+      case "ready":
+        return "Restart to update";
+      case "installing":
+        return "Restarting…";
+      case "up-to-date":
+        return "Check for updates";
+      case "error":
+        return "Check for updates";
+      default:
+        return "Check for updates";
+    }
+  });
+  const updateDetail = createMemo(() => {
+    const status = props.updateStatus;
+    if (status.phase === "downloading" && status.progress !== null) {
+      return `${Math.round(status.progress)}%`;
+    }
+    if (status.availableVersion) return `v${status.availableVersion}`;
+    if (status.phase === "up-to-date") return "Up to date";
+    return status.currentVersion ? `v${status.currentVersion}` : "";
+  });
+  const popoverError = createMemo(
+    () =>
+      accountError() ?? (props.updateStatus.phase === "error" ? props.updateStatus.message : null),
+  );
 
   function updateScrollFade() {
     if (!botList) return;
@@ -289,6 +350,15 @@ export function Sidebar(props: SidebarProps) {
       .then(() => setAccountMenuOpen(false))
       .catch((error) =>
         setAccountError(error instanceof Error ? error.message : "Could not open the link."),
+      );
+  }
+
+  function runUpdateAction() {
+    setAccountError(null);
+    void props
+      .onUpdateAction()
+      .catch((error) =>
+        setAccountError(error instanceof Error ? error.message : "Could not update Openbot."),
       );
   }
 
@@ -395,6 +465,20 @@ export function Sidebar(props: SidebarProps) {
             aria-label="Account menu"
             onPointerDown={(event) => event.stopPropagation()}
           >
+            <Show when={props.updateStatus.phase !== "unsupported"}>
+              <button
+                type="button"
+                role="menuitem"
+                class="account-menu-row account-update-row"
+                onClick={runUpdateAction}
+                disabled={updateBusy()}
+              >
+                <UpdateIcon active={updateBusy()} />
+                <span>{updateLabel()}</span>
+                <small>{updateDetail()}</small>
+              </button>
+              <div class="account-menu-separator" />
+            </Show>
             <button
               type="button"
               role="menuitem"
@@ -424,7 +508,7 @@ export function Sidebar(props: SidebarProps) {
               <MessageIcon />
               <span>Message</span>
             </button>
-            <Show when={accountError()}>
+            <Show when={popoverError()}>
               {(message) => <p class="account-popover-error">{message()}</p>}
             </Show>
           </div>
@@ -449,6 +533,10 @@ export function Sidebar(props: SidebarProps) {
               )}
             </Show>
           </span>
+          <Show when={updateAvailable()}>
+            <span class="sidebar-update-pill">Update</span>
+            <span class="sr-only">Openbot update available</span>
+          </Show>
         </button>
       </div>
 
