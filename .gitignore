@@ -5,4 +5,14 @@ coverage/
 .DS_Store
 *.log
 *.local
+.env
+.env.*
+!.env.example
+*.key
+*.p12
+*.pem
+.idea/
+.vscode/
+playwright-report/
+test-results/
 .infeld-browser-test/

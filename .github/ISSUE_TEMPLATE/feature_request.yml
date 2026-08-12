@@ -1,0 +1,33 @@
+name: Feature request
+description: Propose a focused improvement to Infeld Bot.
+title: "[Feature]: "
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem should this solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful behavior and how a user would interact with it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and local-data impact
+      description: Note any new permissions, network access, persistence, files, or external services.
+    validations:
+      required: true

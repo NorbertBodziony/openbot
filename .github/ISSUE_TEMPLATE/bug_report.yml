@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a reproducible problem in Infeld Bot.
+title: "[Bug]: "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Do not include credentials, private files, conversation contents, or sensitive diagnostics. Use the private security process for vulnerabilities.
+
+  - type: input
+    id: version
+    attributes:
+      label: Infeld version or commit
+      placeholder: v0.1.0 or commit SHA
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include macOS version, Mac model/architecture, Bun version, and Codex CLI version.
+      placeholder: macOS 15.6, Apple M2, Bun 1.3.11, Codex CLI 0.144.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem and the expected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Start the app with ...
+        2. Open ...
+        3. Send ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Add only the minimum relevant, reviewed output from codex:doctor or the terminal.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I removed secrets, tokens, private paths, and personal data.
+          required: true
+        - label: This is not a vulnerability report.
+          required: true

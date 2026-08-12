@@ -5,6 +5,8 @@ artifactName: ${productName}-${version}-${arch}.${ext}
 files:
   - out/**/*
   - package.json
+  - LICENSE
+  - NOTICE
 directories:
   output: dist
 mac:

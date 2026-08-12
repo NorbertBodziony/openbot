@@ -1,6 +1,6 @@
 import type { BotAvatarColor, BotAvatarShape } from "../../../shared/ipc";
 import type { BotProfile } from "../data";
-import { GrokMark } from "./GrokMark";
+import { AgentMark } from "./AgentMark";
 
 interface AgentAvatarProps {
   bot?: Pick<BotProfile, "avatarShape" | "avatarColor" | "accent">;
@@ -19,7 +19,7 @@ export function AgentAvatar(props: AgentAvatarProps) {
       style={props.style}
       aria-hidden="true"
     >
-      <GrokMark shape={shape()} />
+      <AgentMark shape={shape()} />
     </span>
   );
 }

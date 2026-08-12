@@ -554,7 +554,7 @@ describe("Infeld connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByText("Replying to Agent")).not.toBeInTheDocument());
   });
 
-  it("reacts and copies from Grok-style hover actions", async () => {
+  it("reacts and copies from agent hover actions", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -1103,7 +1103,7 @@ describe("Infeld connected desktop shell", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows an incoming Grok-style marker without duplicating raw collaborator input", async () => {
+  it("shows an incoming agent marker without duplicating raw collaborator input", async () => {
     vi.mocked(window.infeld.agent.readConversation).mockImplementation(async (botId) => ({
       botId,
       threadId: "thread-chief",

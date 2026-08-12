@@ -2,8 +2,28 @@
   "name": "infeld-bot",
   "productName": "Infeld Bot",
   "version": "0.1.0",
-  "description": "A focused desktop workspace for AI teammates.",
-  "author": "Infeld",
+  "description": "A local-first multi-agent desktop workspace powered by Codex App Server.",
+  "author": {
+    "name": "Norbert Bodziony",
+    "url": "https://x.com/norbertbodziony"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nightly-labs/openbot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nightly-labs/openbot/issues"
+  },
+  "homepage": "https://github.com/nightly-labs/openbot#readme",
+  "keywords": [
+    "ai-agents",
+    "bun",
+    "codex",
+    "electron",
+    "local-first",
+    "solidjs"
+  ],
   "private": true,
   "type": "module",
   "main": "./out/main/index.js",

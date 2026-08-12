@@ -2,30 +2,30 @@
 
 :root {
   color-scheme: dark;
-  --grok-black: #050505;
-  --grok-sidebar: #111111;
-  --grok-main: #080808;
-  --grok-main-deep: #080808;
-  --grok-hover: rgba(255, 255, 255, 0.05);
-  --grok-active: rgba(255, 255, 255, 0.075);
-  --grok-line: rgba(255, 255, 255, 0.08);
-  --grok-line-strong: rgba(255, 255, 255, 0.12);
-  --grok-white: rgb(242, 242, 242);
-  --grok-muted: rgba(255, 255, 255, 0.58);
-  --grok-dim: rgba(255, 255, 255, 0.32);
-  --grok-teal: #54b9a6;
-  --grok-orange: #f19d38;
-  --grok-purple: #885cf5;
-  --grok-blue: #3c82f6;
-  --grok-violet: #6464ef;
-  --grok-coral: #ed712e;
-  --background: var(--grok-main);
+  --infeld-black: #050505;
+  --infeld-sidebar: #111111;
+  --infeld-main: #080808;
+  --infeld-main-deep: #080808;
+  --infeld-hover: rgba(255, 255, 255, 0.05);
+  --infeld-active: rgba(255, 255, 255, 0.075);
+  --infeld-line: rgba(255, 255, 255, 0.08);
+  --infeld-line-strong: rgba(255, 255, 255, 0.12);
+  --infeld-white: rgb(242, 242, 242);
+  --infeld-muted: rgba(255, 255, 255, 0.58);
+  --infeld-dim: rgba(255, 255, 255, 0.32);
+  --infeld-teal: #54b9a6;
+  --infeld-orange: #f19d38;
+  --infeld-purple: #885cf5;
+  --infeld-blue: #3c82f6;
+  --infeld-violet: #6464ef;
+  --infeld-coral: #ed712e;
+  --background: var(--infeld-main);
   --surface: #171717;
-  --border: var(--grok-line);
-  --text-primary: var(--grok-white);
+  --border: var(--infeld-line);
+  --text-primary: var(--infeld-white);
   --text-secondary: rgba(255, 255, 255, 0.72);
-  --text-muted: var(--grok-muted);
-  --accent: var(--grok-teal);
+  --text-muted: var(--infeld-muted);
+  --accent: var(--infeld-teal);
   --danger: #bd554c;
   font-family: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   font-synthesis: none;
@@ -48,7 +48,7 @@ body,
 
 body {
   background: #050505;
-  color: var(--grok-white);
+  color: var(--infeld-white);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -65,7 +65,7 @@ button {
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--grok-orange) 76%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--infeld-orange) 76%, transparent);
   outline-offset: 2px;
 }
 
@@ -143,7 +143,7 @@ textarea:focus-visible {
   overflow: hidden;
   border: 0;
   border-radius: 0;
-  background: var(--grok-main);
+  background: var(--infeld-main);
   box-shadow: none;
 }
 
@@ -232,7 +232,7 @@ textarea {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  background: var(--grok-sidebar);
+  background: var(--infeld-sidebar);
   color: rgba(255, 255, 255, 0.9);
 }
 
@@ -257,7 +257,7 @@ textarea {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--grok-muted);
+  color: var(--infeld-muted);
   pointer-events: auto;
   cursor: pointer;
   -webkit-app-region: no-drag;
@@ -269,7 +269,7 @@ textarea {
 
 .sidebar-icon-button:hover {
   background: rgba(255, 255, 255, 0.08);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .sidebar-icon-button:active {
@@ -304,9 +304,9 @@ textarea {
 }
 
 .header-panel-toggle:hover {
-  border-color: var(--grok-line-strong);
+  border-color: var(--infeld-line-strong);
   background: rgba(255, 255, 255, 0.06);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .header-panel-toggle:active {
@@ -334,7 +334,7 @@ textarea {
   z-index: 100;
   top: 6px;
   left: 74px;
-  color: var(--grok-muted);
+  color: var(--infeld-muted);
 }
 
 .sidebar-search-wrap {
@@ -414,7 +414,7 @@ textarea {
 }
 
 .bot-row-active {
-  background: var(--grok-active);
+  background: var(--infeld-active);
 }
 
 .bot-row-menu-open {
@@ -481,7 +481,7 @@ textarea {
   width: 16px;
   height: 16px;
   border-radius: 999px;
-  background: var(--grok-teal);
+  background: var(--infeld-teal);
   color: #10241f;
   animation: sidebar-reply-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -718,37 +718,40 @@ textarea {
   overflow: visible;
 }
 
-.grok-bot-mark {
+.agent-mark {
   width: 36.2px;
   height: 36.2px;
   overflow: visible;
 }
 
-.grok-bot-mark__head {
+.agent-mark__head {
   fill: currentColor;
 }
 
-.grok-bot-mark__eye {
-  fill: #1c1c1c;
+.agent-mark__face {
+  fill: none;
+  stroke: #1c1c1c;
+  stroke-linecap: round;
+  stroke-width: 5.5;
 }
 
 .bot-avatar-teal {
-  color: var(--grok-teal);
+  color: var(--infeld-teal);
 }
 .bot-avatar-orange {
-  color: var(--grok-orange);
+  color: var(--infeld-orange);
 }
 .bot-avatar-purple {
-  color: var(--grok-purple);
+  color: var(--infeld-purple);
 }
 .bot-avatar-blue {
-  color: var(--grok-blue);
+  color: var(--infeld-blue);
 }
 .bot-avatar-violet {
-  color: var(--grok-violet);
+  color: var(--infeld-violet);
 }
 .bot-avatar-coral {
-  color: var(--grok-coral);
+  color: var(--infeld-coral);
 }
 .bot-avatar-neutral {
   color: #f1f1ef;
@@ -759,12 +762,12 @@ textarea {
   height: 32px;
 }
 
-.bot-row .grok-bot-mark {
+.bot-row .agent-mark {
   width: 36.2px;
   height: 36.2px;
 }
 
-/* Grok's avatar editor uses the same face mark with a selectable silhouette and palette. */
+/* The avatar editor reuses the same face mark with selectable silhouettes and colors. */
 .bot-avatar-color-black {
   color: #f1f1ef;
 }
@@ -867,7 +870,7 @@ textarea {
   height: 29px;
 }
 
-.avatar-shape-choice .grok-bot-mark {
+.avatar-shape-choice .agent-mark {
   width: 32px;
   height: 32px;
 }
@@ -934,7 +937,7 @@ textarea {
   height: 18px;
 }
 
-.conversation-title .grok-bot-mark {
+.conversation-title .agent-mark {
   width: 20.3px;
   height: 20.3px;
 }
@@ -982,7 +985,7 @@ textarea {
 
 .empty-search {
   margin: 32px 0;
-  color: var(--grok-dim);
+  color: var(--infeld-dim);
   font-size: 13px;
   text-align: center;
 }
@@ -1038,7 +1041,7 @@ textarea {
   border-radius: 999px;
   background: rgba(86, 192, 176, 0.16);
   padding: 2px 7px;
-  color: var(--grok-teal);
+  color: var(--infeld-teal);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 10px;
 }
@@ -1156,7 +1159,7 @@ textarea {
   grid-row: 1;
   min-width: 0;
   flex-direction: column;
-  background: var(--grok-main);
+  background: var(--infeld-main);
   transition: padding-right var(--panel-resize-duration, 260ms) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -1176,7 +1179,7 @@ textarea {
 }
 
 .conversation-title[aria-label="View agent settings"]:hover {
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .agent-settings-panel {
@@ -1188,9 +1191,9 @@ textarea {
   display: flex;
   width: var(--settings-panel-width, 296px);
   flex-direction: column;
-  border-left: 1px solid var(--grok-line);
+  border-left: 1px solid var(--infeld-line);
   background: #080808;
-  color: var(--grok-white);
+  color: var(--infeld-white);
   animation: settings-panel-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
@@ -1203,9 +1206,9 @@ textarea {
   display: flex;
   width: var(--browser-panel-width, 380px);
   flex-direction: column;
-  border-left: 1px solid var(--grok-line);
+  border-left: 1px solid var(--infeld-line);
   background: #0b0b0b;
-  color: var(--grok-white);
+  color: var(--infeld-white);
   transition:
     border-color 180ms ease,
     box-shadow 180ms ease;
@@ -1227,7 +1230,7 @@ textarea {
   height: 34px;
   flex: 0 0 auto;
   align-items: flex-end;
-  border-bottom: 1px solid var(--grok-line);
+  border-bottom: 1px solid var(--infeld-line);
   padding: 0 8px;
 }
 
@@ -1293,7 +1296,7 @@ textarea {
 .browser-tab:hover,
 .browser-tab-active {
   background: rgba(255, 255, 255, 0.08);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .browser-tab-controlled {
@@ -1381,7 +1384,7 @@ textarea {
 .browser-new-tab:hover,
 .browser-toolbar-button:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.08);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .browser-toolbar {
@@ -1479,13 +1482,13 @@ textarea {
   flex: 0 0 auto;
   grid-template-columns: 32px 1fr 32px;
   align-items: center;
-  border-bottom: 1px solid var(--grok-line);
+  border-bottom: 1px solid var(--infeld-line);
   padding: 0 10px;
 }
 
 .agent-settings-header h2 {
   margin: 0;
-  color: var(--grok-white);
+  color: var(--infeld-white);
   font-size: 13px;
   font-weight: 600;
   line-height: 18px;
@@ -1505,7 +1508,7 @@ textarea {
 
 .agent-settings-nav-button:hover {
   background: rgba(255, 255, 255, 0.07);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .settings-back-icon {
@@ -1535,7 +1538,7 @@ textarea {
   height: 62px;
 }
 
-.agent-settings-avatar .grok-bot-mark {
+.agent-settings-avatar .agent-mark {
   width: 62px;
   height: 62px;
 }
@@ -1567,8 +1570,8 @@ textarea {
   outline: 0;
   background: rgba(0, 0, 0, 0.22);
   padding: 10px 11px;
-  color: var(--grok-white);
-  caret-color: var(--grok-white);
+  color: var(--infeld-white);
+  caret-color: var(--infeld-white);
   font-size: 14px;
   line-height: 19px;
   transition:
@@ -1599,7 +1602,7 @@ textarea {
 
 .agent-settings-field select option {
   background: #202020;
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .agent-settings-field textarea {
@@ -1688,7 +1691,7 @@ textarea {
 }
 
 .agent-settings-notifications strong {
-  color: var(--grok-white);
+  color: var(--infeld-white);
   font-size: 13px;
   font-weight: 500;
   line-height: 18px;
@@ -1821,12 +1824,12 @@ textarea {
 
 .agent-picker-option:hover {
   background: rgba(255, 255, 255, 0.065);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .agent-picker-option-active {
   background: rgba(255, 255, 255, 0.025);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .agent-picker-option:disabled {
@@ -1839,7 +1842,7 @@ textarea {
   height: 24px;
 }
 
-.agent-picker-option .grok-bot-mark {
+.agent-picker-option .agent-mark {
   width: 27px;
   height: 27px;
 }
@@ -1884,7 +1887,7 @@ textarea {
 
 .conversation-title h1 {
   margin: 0;
-  color: var(--grok-white);
+  color: var(--infeld-white);
   font-size: 13px;
   font-weight: 400;
   line-height: 18px;
@@ -1898,9 +1901,9 @@ textarea {
 }
 
 .computer-button[aria-expanded="true"] {
-  border-color: var(--grok-line-strong);
+  border-color: var(--infeld-line-strong);
   background: rgba(255, 255, 255, 0.08);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .computer-control-dot {
@@ -2356,7 +2359,7 @@ textarea {
   align-self: center;
 }
 
-.agent-activity-avatar .grok-bot-mark {
+.agent-activity-avatar .agent-mark {
   width: 32px;
   height: 32px;
 }
@@ -2464,7 +2467,7 @@ textarea {
 .exchange-agent-trigger:focus-visible,
 .exchange-agent-trigger[aria-expanded="true"] {
   background: rgba(119, 119, 119, 0.09);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .exchange-agent-trigger:active,
@@ -2496,7 +2499,7 @@ textarea {
   margin-left: -6px;
 }
 
-.exchange-agent-avatar .grok-bot-mark {
+.exchange-agent-avatar .agent-mark {
   width: 16px;
   height: 16px;
 }
@@ -2506,7 +2509,7 @@ textarea {
   height: 16px;
 }
 
-.exchange-agent-trigger-incoming .exchange-agent-avatar .grok-bot-mark {
+.exchange-agent-trigger-incoming .exchange-agent-avatar .agent-mark {
   width: 16px;
   height: 16px;
 }
@@ -2517,7 +2520,7 @@ textarea {
   flex-basis: 18px;
 }
 
-.exchange-agent-menu-item .exchange-agent-avatar .grok-bot-mark {
+.exchange-agent-menu-item .exchange-agent-avatar .agent-mark {
   width: 18px;
   height: 18px;
 }
@@ -2531,7 +2534,7 @@ textarea {
   min-width: 170px;
   gap: 2px;
   transform: translateX(-50%);
-  border: 1px solid var(--grok-line-strong);
+  border: 1px solid var(--infeld-line-strong);
   border-radius: 12px;
   background: #1a1a1a;
   padding: 5px;
@@ -2547,7 +2550,7 @@ textarea {
   border-radius: 8px;
   background: transparent;
   padding: 6px 8px;
-  color: var(--grok-white);
+  color: var(--infeld-white);
   font-size: 12px;
   text-align: left;
 }
@@ -2578,7 +2581,7 @@ textarea {
   width: fit-content;
   max-width: min(720px, 82%);
   background: rgba(255, 255, 255, 0.12);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .bot-bubble:has(.choice-card) {
@@ -2671,7 +2674,7 @@ textarea {
   height: 16px;
 }
 
-.message-agent-tag .grok-bot-mark {
+.message-agent-tag .agent-mark {
   width: 18px;
   height: 18px;
 }
@@ -2773,7 +2776,7 @@ textarea {
 .choice-dismiss:hover,
 .media-close:hover {
   background: rgba(255, 255, 255, 0.08);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .choice-options {
@@ -2804,7 +2807,7 @@ textarea {
 .choice-option:hover,
 .choice-option-selected {
   background: rgba(255, 255, 255, 0.1);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .choice-key {
@@ -2830,7 +2833,7 @@ textarea {
   outline: 0;
   background: #080808;
   padding: 0 9px;
-  color: var(--grok-white);
+  color: var(--infeld-white);
   font-size: 12px;
 }
 
@@ -2949,7 +2952,7 @@ textarea {
 
 .composer-button:hover {
   background: rgba(255, 255, 255, 0.1);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .voice-button {
@@ -2995,7 +2998,7 @@ textarea {
   outline: 0;
   background: transparent;
   padding: 5px 0;
-  color: var(--grok-white);
+  color: var(--infeld-white);
   font-size: 14px;
   line-height: 20px;
   white-space: pre-wrap;
@@ -3138,7 +3141,7 @@ textarea {
   height: 23px;
 }
 
-.mention-picker-option .grok-bot-mark {
+.mention-picker-option .agent-mark {
   width: 26px;
   height: 26px;
 }
@@ -3167,7 +3170,7 @@ textarea {
   display: grid;
   gap: 3px;
   width: 190px;
-  border: 1px solid var(--grok-line-strong);
+  border: 1px solid var(--infeld-line-strong);
   border-radius: 13px;
   background: #292929;
   padding: 6px;
@@ -3186,7 +3189,7 @@ textarea {
 
 .attachment-menu button:hover {
   background: rgba(255, 255, 255, 0.08);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .attachment-menu button {
@@ -3253,7 +3256,7 @@ textarea {
 
 .composer-attachment > button:hover {
   background: rgba(255, 255, 255, 0.1);
-  color: var(--grok-white);
+  color: var(--infeld-white);
 }
 
 .attachment-thumb {
