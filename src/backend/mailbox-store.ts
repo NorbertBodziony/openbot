@@ -8,11 +8,13 @@ import type {
   AttachmentSummary,
   ConversationMessage,
   DraftAttachment,
+  MessageReaction,
   QueueDelivery,
   QueueDeliveryStatus,
   QueuedMessageReceipt,
   QueueSnapshot,
 } from "../shared/ipc";
+import { isMessageReaction } from "../shared/ipc";
 import { isRecord } from "./protocol";
 
 const MAX_ATTACHMENTS = 10;
@@ -48,12 +50,20 @@ interface StoredDelivery {
 }
 
 interface StoredState {
-  version: 1;
+  version: 2;
   messages: StoredMessage[];
   deliveries: StoredDelivery[];
   drafts: StoredDraft[];
   pausedBotIds: string[];
   idempotency: Record<string, string>;
+  reactions: StoredReaction[];
+}
+
+interface StoredReaction {
+  botId: string;
+  messageId: string;
+  emoji: MessageReaction;
+  updatedAt: string;
 }
 
 interface EnqueueInput {
@@ -72,12 +82,13 @@ export interface DeliveryContext {
 }
 
 const EMPTY_STATE: StoredState = {
-  version: 1,
+  version: 2,
   messages: [],
   deliveries: [],
   drafts: [],
   pausedBotIds: [],
   idempotency: {},
+  reactions: [],
 };
 
 export class MailboxStore {
@@ -246,19 +257,27 @@ export class MailboxStore {
   }
 
   listQueue(botId: string): QueueSnapshot {
+    const positions = this.#queuedPositions();
     return {
       botId,
       paused: this.#state.pausedBotIds.includes(botId),
       deliveries: this.#state.deliveries
         .filter((delivery) => delivery.recipientBotId === botId)
-        .map((delivery) => this.#publicDelivery(delivery)),
+        .map((delivery) => this.#publicDelivery(delivery, positions)),
     };
   }
 
   conversationMessages(botId: string): ConversationMessage[] {
     const messages: ConversationMessage[] = [];
+    const deliveriesByMessage = new Map<string, StoredDelivery[]>();
+    const positions = this.#queuedPositions();
+    for (const delivery of this.#state.deliveries) {
+      const deliveries = deliveriesByMessage.get(delivery.messageId) ?? [];
+      deliveries.push(delivery);
+      deliveriesByMessage.set(delivery.messageId, deliveries);
+    }
     for (const message of this.#state.messages) {
-      const deliveries = this.#state.deliveries.filter((item) => item.messageId === message.id);
+      const deliveries = deliveriesByMessage.get(message.id) ?? [];
       if (message.sender.kind === "bot" && message.sender.botId === botId) {
         messages.push({
           id: `outbox-${message.id}`,
@@ -275,7 +294,7 @@ export class MailboxStore {
             recipientBotIds: deliveries.map((item) => item.recipientBotId),
             replyToMessageId: message.replyToMessageId,
             deliveries: deliveries.map((item) => {
-              const delivery = this.#publicDelivery(item);
+              const delivery = this.#publicDelivery(item, positions);
               return {
                 id: delivery.id,
                 recipientBotId: delivery.recipientBotId,
@@ -293,7 +312,7 @@ export class MailboxStore {
 
       for (const storedDelivery of deliveries) {
         if (storedDelivery.recipientBotId !== botId) continue;
-        const delivery = this.#publicDelivery(storedDelivery);
+        const delivery = this.#publicDelivery(storedDelivery, positions);
         messages.push({
           id: delivery.id,
           turnId: storedDelivery.turnId ?? undefined,
@@ -317,7 +336,7 @@ export class MailboxStore {
                   recipientBotIds: deliveries.map((item) => item.recipientBotId),
                   replyToMessageId: message.replyToMessageId,
                   deliveries: deliveries.map((item) => {
-                    const publicItem = this.#publicDelivery(item);
+                    const publicItem = this.#publicDelivery(item, positions);
                     return {
                       id: publicItem.id,
                       recipientBotId: publicItem.recipientBotId,
@@ -335,6 +354,51 @@ export class MailboxStore {
       }
     }
     return messages;
+  }
+
+  reactionFor(botId: string, messageId: string): MessageReaction | null {
+    return (
+      this.#state.reactions.find(
+        (reaction) => reaction.botId === botId && reaction.messageId === messageId,
+      )?.emoji ?? null
+    );
+  }
+
+  reactionsFor(botId: string): Map<string, MessageReaction> {
+    return new Map(
+      this.#state.reactions
+        .filter((reaction) => reaction.botId === botId)
+        .map((reaction) => [reaction.messageId, reaction.emoji]),
+    );
+  }
+
+  async setReaction(
+    botId: string,
+    messageId: string,
+    emoji: MessageReaction | null,
+  ): Promise<void> {
+    const index = this.#state.reactions.findIndex(
+      (reaction) => reaction.botId === botId && reaction.messageId === messageId,
+    );
+    if (emoji === null) {
+      if (index < 0) return;
+      this.#state.reactions.splice(index, 1);
+    } else if (index >= 0) {
+      this.#state.reactions[index] = {
+        botId,
+        messageId,
+        emoji,
+        updatedAt: new Date().toISOString(),
+      };
+    } else {
+      this.#state.reactions.push({
+        botId,
+        messageId,
+        emoji,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    await this.#persist();
   }
 
   #sourceTurnId(messageId: string): string | undefined {
@@ -381,6 +445,40 @@ export class MailboxStore {
   findDeliveryByTurn(turnId: string): DeliveryContext | null {
     const delivery = this.#state.deliveries.find((candidate) => candidate.turnId === turnId);
     return delivery ? this.#context(delivery) : null;
+  }
+
+  chainOriginBotId(messageId: string): string | null {
+    const visited = new Set<string>();
+    let message = this.#state.messages.find((candidate) => candidate.id === messageId);
+    while (message && !visited.has(message.id)) {
+      visited.add(message.id);
+      const parent = message.replyToMessageId
+        ? this.#state.messages.find((candidate) => candidate.id === message?.replyToMessageId)
+        : undefined;
+      if (!parent) return message.sender.kind === "bot" ? message.sender.botId : null;
+      message = parent;
+    }
+    return null;
+  }
+
+  hasReplyFrom(botId: string, messageId: string): boolean {
+    return this.#state.messages.some(
+      (message) =>
+        message.sender.kind === "bot" &&
+        message.sender.botId === botId &&
+        message.replyToMessageId === messageId,
+    );
+  }
+
+  hasBotMessageFromTurnTo(botId: string, turnId: string, recipientBotId: string): boolean {
+    return this.#state.messages.some((message) => {
+      if (message.sender.kind !== "bot" || message.sender.botId !== botId) return false;
+      if (this.#sourceTurnId(message.id) !== turnId) return false;
+      return this.#state.deliveries.some(
+        (delivery) =>
+          delivery.messageId === message.id && delivery.recipientBotId === recipientBotId,
+      );
+    });
   }
 
   async markStarting(deliveryId: string): Promise<void> {
@@ -434,12 +532,12 @@ export class MailboxStore {
     });
   }
 
-  resolveAttachmentPath(id: string): string | null {
+  async resolveAttachment(id: string): Promise<{ path: string; mimeType: string } | null> {
     const draft = this.#state.drafts.find((candidate) => candidate.id === id);
-    if (draft && isWithin(this.#draftsRoot, draft.path)) return draft.path;
+    if (draft) return resolveManagedAttachment(this.#draftsRoot, draft);
     for (const message of this.#state.messages) {
       const attachment = message.attachments.find((candidate) => candidate.id === id);
-      if (attachment && isWithin(this.#transfersRoot, attachment.path)) return attachment.path;
+      if (attachment) return resolveManagedAttachment(this.#transfersRoot, attachment);
     }
     return null;
   }
@@ -455,31 +553,38 @@ export class MailboxStore {
     };
   }
 
-  #publicDelivery(delivery: StoredDelivery): QueueDelivery {
+  #publicDelivery(delivery: StoredDelivery, positions = this.#queuedPositions()): QueueDelivery {
     const message = this.#requireMessage(delivery.messageId);
-    const queued = this.#state.deliveries.filter(
-      (candidate) =>
-        candidate.recipientBotId === delivery.recipientBotId && candidate.status === "queued",
-    );
-    const position =
-      delivery.status === "queued" ? queued.findIndex((item) => item.id === delivery.id) + 1 : null;
     return {
       ...delivery,
       sender: structuredClone(message.sender),
       text: message.text,
       attachments: message.attachments.map(toAttachmentSummary),
       replyToMessageId: message.replyToMessageId,
-      position,
+      position: delivery.status === "queued" ? (positions.get(delivery.id) ?? null) : null,
     };
   }
 
+  #queuedPositions(): Map<string, number> {
+    const counts = new Map<string, number>();
+    const positions = new Map<string, number>();
+    for (const delivery of this.#state.deliveries) {
+      if (delivery.status !== "queued") continue;
+      const position = (counts.get(delivery.recipientBotId) ?? 0) + 1;
+      counts.set(delivery.recipientBotId, position);
+      positions.set(delivery.id, position);
+    }
+    return positions;
+  }
+
   #receipt(messageId: string): QueuedMessageReceipt {
+    const positions = this.#queuedPositions();
     return {
       messageId,
       deliveries: this.#state.deliveries
         .filter((delivery) => delivery.messageId === messageId)
         .map((delivery) => {
-          const item = this.#publicDelivery(delivery);
+          const item = this.#publicDelivery(delivery, positions);
           return {
             id: item.id,
             recipientBotId: item.recipientBotId,
@@ -546,8 +651,16 @@ export class MailboxStore {
   async #readState(): Promise<StoredState> {
     try {
       const value: unknown = JSON.parse(await readFile(this.#statePath, "utf8"));
-      if (!isStoredState(value)) return structuredClone(EMPTY_STATE);
-      return value;
+      if (!isStoredState(value)) {
+        throw new Error(
+          "Mailbox state is corrupt or from a newer Infeld version; refusing to overwrite it.",
+        );
+      }
+      return {
+        ...value,
+        version: 2,
+        reactions: Array.isArray(value.reactions) ? value.reactions.filter(isStoredReaction) : [],
+      };
     } catch (error) {
       if (isRecord(error) && error.code === "ENOENT") return structuredClone(EMPTY_STATE);
       throw error;
@@ -557,11 +670,30 @@ export class MailboxStore {
   async #persist(): Promise<void> {
     const serialized = `${JSON.stringify(this.#state, null, 2)}\n`;
     const temporaryPath = `${this.#statePath}.${process.pid}.${randomUUID()}.tmp`;
-    this.#writeQueue = this.#writeQueue.then(async () => {
-      await writeFile(temporaryPath, serialized, { encoding: "utf8", mode: 0o600 });
-      await rename(temporaryPath, this.#statePath);
-    });
+    this.#writeQueue = this.#writeQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await writeFile(temporaryPath, serialized, { encoding: "utf8", mode: 0o600 });
+        await rename(temporaryPath, this.#statePath);
+      });
     await this.#writeQueue;
+  }
+}
+
+async function resolveManagedAttachment(
+  root: string,
+  attachment: StoredAttachment,
+): Promise<{ path: string; mimeType: string } | null> {
+  try {
+    const [canonicalRoot, canonicalPath] = await Promise.all([
+      realpath(root),
+      realpath(attachment.path),
+    ]);
+    if (!isWithin(canonicalRoot, canonicalPath)) return null;
+    if (!(await stat(canonicalPath)).isFile()) return null;
+    return { path: canonicalPath, mimeType: attachment.mimeType };
+  } catch {
+    return null;
   }
 }
 
@@ -654,15 +786,28 @@ function normalizeBytes(value: Uint8Array): Uint8Array {
   throw new Error("Attachment data is invalid.");
 }
 
-function isStoredState(value: unknown): value is StoredState {
+function isStoredState(value: unknown): value is Omit<StoredState, "version" | "reactions"> & {
+  version: 1 | 2;
+  reactions?: unknown;
+} {
   return (
     isRecord(value) &&
-    value.version === 1 &&
+    (value.version === 1 || value.version === 2) &&
     Array.isArray(value.messages) &&
     Array.isArray(value.deliveries) &&
     Array.isArray(value.drafts) &&
     Array.isArray(value.pausedBotIds) &&
     isRecord(value.idempotency)
+  );
+}
+
+function isStoredReaction(value: unknown): value is StoredReaction {
+  return (
+    isRecord(value) &&
+    typeof value.botId === "string" &&
+    typeof value.messageId === "string" &&
+    isMessageReaction(value.emoji) &&
+    typeof value.updatedAt === "string"
   );
 }
 

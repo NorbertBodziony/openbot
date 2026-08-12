@@ -37,7 +37,7 @@ export class AppServerError extends Error {
 export class CodexAppServerClient extends EventEmitter<ClientEvents> {
   readonly #executable: string;
   readonly #requestTimeoutMs: number;
-  readonly #decoder = new JsonLineDecoder();
+  #decoder = new JsonLineDecoder();
   readonly #pending = new Map<RequestId, PendingRequest>();
   #process: ChildProcessWithoutNullStreams | null = null;
   #nextId = 1;
@@ -57,6 +57,7 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
     if (this.running) return;
 
     this.#stopping = false;
+    this.#decoder = new JsonLineDecoder();
     const child = spawn(this.#executable, ["app-server", "--listen", "stdio://"], {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
@@ -67,7 +68,7 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
       try {
         for (const message of this.#decoder.push(chunk)) this.#handleMessage(message);
       } catch (error) {
-        this.#fail(new Error(`Codex protocol error: ${String(error)}`));
+        this.#fail(new Error(`Codex protocol error: ${String(error)}`), child);
       }
     });
 
@@ -76,10 +77,10 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
       if (diagnostic) this.emit("diagnostic", redactDiagnostic(diagnostic));
     });
 
-    child.once("error", (error) => this.#fail(error));
+    child.once("error", (error) => this.#fail(error, child));
     child.once("exit", (code, signal) => {
       const suffix = signal ? `signal ${signal}` : `code ${code ?? "unknown"}`;
-      this.#fail(new Error(`Codex App Server exited with ${suffix}.`));
+      this.#fail(new Error(`Codex App Server exited with ${suffix}.`), child);
     });
   }
 
@@ -185,8 +186,8 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
     pending.resolve(message.result);
   }
 
-  #fail(error: Error): void {
-    const wasRunning = this.#process !== null;
+  #fail(error: Error, child: ChildProcessWithoutNullStreams): void {
+    if (this.#process !== child) return;
     this.#process = null;
 
     for (const pending of this.#pending.values()) {
@@ -195,7 +196,8 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
     }
     this.#pending.clear();
 
-    if (wasRunning && !this.#stopping) this.emit("exit", error);
+    if (child.exitCode === null) child.kill("SIGTERM");
+    if (!this.#stopping) this.emit("exit", error);
   }
 }
 

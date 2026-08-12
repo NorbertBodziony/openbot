@@ -8,19 +8,19 @@ const scriptsRoot = dirname(fileURLToPath(import.meta.url));
 const projectRoot = dirname(scriptsRoot);
 const outputRoot = await mkdtemp(join(tmpdir(), "infeld-browser-build-"));
 try {
-  const esbuild = join(projectRoot, "node_modules", ".bin", "esbuild");
-  const buildCode = await run(esbuild, [
+  const outputPath = join(outputRoot, "browser-smoke.mjs");
+  const buildCode = await run(process.execPath, [
+    "build",
     join(scriptsRoot, "browser-smoke-electron.ts"),
-    "--bundle",
-    "--platform=node",
+    "--target=node",
     "--format=esm",
-    "--external:electron",
-    `--outfile=${join(outputRoot, "browser-smoke.mjs")}`,
+    "--external=electron",
+    `--outfile=${outputPath}`,
   ]);
   if (buildCode !== 0) throw new Error("Unable to build browser smoke test.");
 
   const electron = join(projectRoot, "node_modules", ".bin", "electron");
-  const exitCode = await run(electron, [join(outputRoot, "browser-smoke.mjs")]);
+  const exitCode = await run(electron, [outputPath]);
   if (exitCode !== 0) process.exitCode = exitCode;
 } finally {
   await rm(outputRoot, { recursive: true, force: true });

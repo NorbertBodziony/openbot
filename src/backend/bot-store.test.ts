@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -87,6 +87,20 @@ describe("BotStore", () => {
     await store.initialize();
 
     await expect(store.getOrCreate("../outside")).rejects.toThrow("Invalid bot id");
+  });
+
+  it("fails closed instead of overwriting agent state from a newer version", async () => {
+    const root = await mkdtemp(join(tmpdir(), "infeld-store-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const statePath = join(userData, "agent-state.json");
+    const unsupported = '{"version":999,"examplesInitialized":true,"bots":[]}\n';
+    await mkdir(userData, { recursive: true });
+    await writeFile(statePath, unsupported);
+
+    const store = new BotStore(userData, join(root, "home"));
+    await expect(store.initialize()).rejects.toThrow("refusing to overwrite");
+    await expect(readFile(statePath, "utf8")).resolves.toBe(unsupported);
   });
 
   it("persists editable agent settings", async () => {

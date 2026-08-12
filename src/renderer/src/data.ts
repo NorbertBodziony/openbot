@@ -1,50 +1,22 @@
-import type {
-  AgentExchangeSummary,
-  AgentModelId,
-  AgentReasoningEffort,
-  AttachmentSummary,
-  BotAvatarColor,
-  BotAvatarShape,
+import {
+  type AgentExchangeSummary,
+  type AgentModelId,
+  type AgentReasoningEffort,
+  type AttachmentSummary,
+  BOT_AVATAR_COLORS,
+  BOT_AVATAR_SHAPES,
+  type BotAvatarColor,
+  type BotAvatarShape,
+  type MessageReaction,
 } from "../../shared/ipc";
 
 export type BotAccent = "teal" | "orange" | "purple" | "blue" | "violet" | "coral" | "neutral";
 
-export const AVATAR_SHAPES: BotAvatarShape[] = [
-  "blob",
-  "pebble",
-  "squircle",
-  "tablet",
-  "wedge",
-  "hex",
-  "cloud",
-  "teardrop",
-];
+export const AVATAR_SHAPES: BotAvatarShape[] = [...BOT_AVATAR_SHAPES];
 
-export const AVATAR_COLORS: BotAvatarColor[] = [
-  "black",
-  "brown",
-  "red",
-  "orange",
-  "yellow",
-  "green",
-  "cyan",
-  "blue",
-  "violet",
-  "magenta",
-  "gray",
-];
+export const AVATAR_COLORS: BotAvatarColor[] = [...BOT_AVATAR_COLORS];
 
-export type MessageKind =
-  | "text"
-  | "thinking"
-  | "exchange"
-  | "checklist"
-  | "computer"
-  | "routine"
-  | "multi"
-  | "image"
-  | "file"
-  | "choice";
+export type MessageKind = "text" | "thinking" | "exchange";
 
 export interface BotMessage {
   id: string;
@@ -53,25 +25,16 @@ export interface BotMessage {
   body: string;
   time: string;
   streaming?: boolean;
+  animate?: boolean;
   itemType?: string;
   kind?: MessageKind;
   status?: string;
   senderBotId?: string;
-  senderLabel?: string;
   replyToMessageId?: string | null;
   attachments?: AttachmentSummary[];
   exchange?: AgentExchangeSummary;
+  reaction?: MessageReaction | null;
   items?: string[];
-  routine?: string;
-  mediaUrl?: string;
-  mediaAlt?: string;
-  fileName?: string;
-  fileSize?: string;
-  fileType?: string;
-  question?: string;
-  questionHint?: string;
-  choices?: string[];
-  inputPlaceholder?: string;
 }
 
 export interface BotProfile {
@@ -83,7 +46,6 @@ export interface BotProfile {
   model: AgentModelId;
   reasoningEffort: AgentReasoningEffort;
   threadId: string | null;
-  initials: string;
   accent: BotAccent;
   avatarShape: BotAvatarShape;
   avatarColor: BotAvatarColor;

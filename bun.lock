@@ -10,7 +10,6 @@
       "devDependencies": {
         "@biomejs/biome": "2.5.8",
         "@solidjs/testing-library": "0.8.10",
-        "@swc/core": "1.15.47",
         "@tailwindcss/vite": "4.3.3",
         "@testing-library/jest-dom": "7.0.1",
         "@types/node": "22.20.1",
@@ -26,9 +25,6 @@
       },
     },
   },
-  "trustedDependencies": [
-    "@swc/core",
-  ],
   "packages": {
     "@adobe/css-tools": ["@adobe/css-tools@4.5.0", "", {}, "sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q=="],
 

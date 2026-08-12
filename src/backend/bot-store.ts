@@ -1,13 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type {
-  AgentModelId,
-  AgentReasoningEffort,
-  BotAvatarColor,
-  BotAvatarShape,
-  BotSummary,
-  UpdateBotInput,
+import {
+  type AgentModelId,
+  type AgentReasoningEffort,
+  BOT_AVATAR_COLORS,
+  BOT_AVATAR_SHAPES,
+  type BotAvatarColor,
+  type BotAvatarShape,
+  type BotSummary,
+  isAgentModel,
+  isAvatarColor,
+  isAvatarShape,
+  isReasoningEffort,
+  type UpdateBotInput,
 } from "../shared/ipc";
 import { isRecord } from "./protocol";
 
@@ -170,11 +176,19 @@ export class BotStore {
   async #readState(): Promise<StoredState> {
     try {
       const parsed: unknown = JSON.parse(await readFile(this.#statePath, "utf8"));
-      if (!isRecord(parsed) || !Array.isArray(parsed.bots)) {
-        return { version: 6, examplesInitialized: false, bots: [] };
+      if (
+        !isRecord(parsed) ||
+        !Array.isArray(parsed.bots) ||
+        (parsed.version !== undefined &&
+          (typeof parsed.version !== "number" || parsed.version < 1 || parsed.version > 6)) ||
+        !parsed.bots.every(isStoredBot)
+      ) {
+        throw new Error(
+          "Agent state is corrupt or from a newer Infeld version; refusing to overwrite it.",
+        );
       }
 
-      const bots = parsed.bots.filter(isStoredBot).map((bot) => {
+      const bots = parsed.bots.map((bot) => {
         const example = DEFAULT_BOTS.find(([id]) => id === bot.id);
         const untouched = bot.threadId === null && bot.updatedAt === null;
         return {
@@ -204,6 +218,9 @@ export class BotStore {
             : defaultAvatarColor(bot.id),
         };
       });
+      if (new Set(bots.map((bot) => bot.id)).size !== bots.length) {
+        throw new Error("Agent state contains duplicate bot ids; refusing to overwrite it.");
+      }
       return { version: 6, examplesInitialized: true, bots };
     } catch (error) {
       if (isRecord(error) && error.code === "ENOENT") {
@@ -217,10 +234,12 @@ export class BotStore {
     const serialized = `${JSON.stringify(this.#state, null, 2)}\n`;
     const temporaryPath = `${this.#statePath}.${process.pid}.${randomUUID()}.tmp`;
 
-    this.#writeQueue = this.#writeQueue.then(async () => {
-      await writeFile(temporaryPath, serialized, { encoding: "utf8", mode: 0o600 });
-      await rename(temporaryPath, this.#statePath);
-    });
+    this.#writeQueue = this.#writeQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await writeFile(temporaryPath, serialized, { encoding: "utf8", mode: 0o600 });
+        await rename(temporaryPath, this.#statePath);
+      });
     await this.#writeQueue;
   }
 
@@ -257,9 +276,13 @@ function requiredText(value: string, label: string, maxLength: number): string {
 }
 
 function validateBotId(id: string): void {
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id) || basename(id) !== id) {
+  if (!isValidBotId(id)) {
     throw new Error("Invalid bot id.");
   }
+}
+
+function isValidBotId(id: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) && basename(id) === id;
 }
 
 function titleFromId(id: string): string {
@@ -273,6 +296,7 @@ function isStoredBot(value: unknown): value is StoredBot {
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
+    isValidBotId(value.id) &&
     typeof value.name === "string" &&
     typeof value.role === "string" &&
     (typeof value.threadId === "string" || value.threadId === null) &&
@@ -282,46 +306,6 @@ function isStoredBot(value: unknown): value is StoredBot {
   );
 }
 
-const AVATAR_SHAPES: BotAvatarShape[] = [
-  "blob",
-  "pebble",
-  "squircle",
-  "tablet",
-  "wedge",
-  "hex",
-  "cloud",
-  "teardrop",
-];
-const AVATAR_COLORS: BotAvatarColor[] = [
-  "black",
-  "brown",
-  "red",
-  "orange",
-  "yellow",
-  "green",
-  "cyan",
-  "blue",
-  "violet",
-  "magenta",
-  "gray",
-];
-
-function isAvatarShape(value: unknown): value is BotAvatarShape {
-  return typeof value === "string" && AVATAR_SHAPES.includes(value as BotAvatarShape);
-}
-
-function isAvatarColor(value: unknown): value is BotAvatarColor {
-  return typeof value === "string" && AVATAR_COLORS.includes(value as BotAvatarColor);
-}
-
-function isAgentModel(value: unknown): value is AgentModelId {
-  return ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"].includes(value as AgentModelId);
-}
-
-function isReasoningEffort(value: unknown): value is AgentReasoningEffort {
-  return ["low", "medium", "high", "xhigh", "max"].includes(value as AgentReasoningEffort);
-}
-
 function avatarIndex(id: string): number {
   let hash = 0;
   for (const character of id) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
@@ -329,9 +313,9 @@ function avatarIndex(id: string): number {
 }
 
 function defaultAvatarShape(id: string): BotAvatarShape {
-  return AVATAR_SHAPES[avatarIndex(id) % AVATAR_SHAPES.length] ?? "blob";
+  return BOT_AVATAR_SHAPES[avatarIndex(id) % BOT_AVATAR_SHAPES.length] ?? "blob";
 }
 
 function defaultAvatarColor(id: string): BotAvatarColor {
-  return AVATAR_COLORS[avatarIndex(`${id}:color`) % AVATAR_COLORS.length] ?? "orange";
+  return BOT_AVATAR_COLORS[avatarIndex(`${id}:color`) % BOT_AVATAR_COLORS.length] ?? "orange";
 }

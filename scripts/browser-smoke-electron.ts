@@ -21,11 +21,16 @@ const server = createServer((request, response) => {
     response.end(`<main>cookie:${request.headers.cookie ?? "none"}</main>`);
     return;
   }
+  if (url.pathname === "/abort") {
+    response.destroy();
+    return;
+  }
 
   response.setHeader("content-type", "text/html; charset=utf-8");
   response.end(`<!doctype html>
     <input aria-label="Task" />
     <button aria-label="Save" onclick="document.querySelector('output').textContent = document.querySelector('input').value">Save</button>
+    <a href="/child" target="_blank">Child</a>
     <a href="/download" download>Download</a>
     <output>empty</output>`);
 });
@@ -68,7 +73,7 @@ async function main(): Promise<void> {
       } else if (controlPhases.length > 0) controlPhases.push("ended");
     });
 
-    const tab = await browser.open(origin, "smoke-thread");
+    const tab = await browser.open(origin, "smoke-thread", "smoke-bot");
     process.stdout.write("BrowserHost: local tab opened.\n");
     const first = await browser.snapshot(tab.id);
     const input = first.elements.find((element) => element.name === "Task");
@@ -90,6 +95,22 @@ async function main(): Promise<void> {
       browser.act(tab.id, first.revision, { type: "click", ref: save.ref }),
     );
 
+    const child = result.elements.find((element) => element.name === "Child");
+    if (!child) throw new Error("Child-tab control is missing.");
+    await browser.act(tab.id, result.revision, { type: "click", ref: child.ref });
+    await waitForValue(() =>
+      browser
+        .listTabs()
+        .find((candidate) => candidate.id !== tab.id && candidate.url.includes("/child")),
+    );
+    const childTab = browser
+      .listTabs()
+      .find((candidate) => candidate.id !== tab.id && candidate.url.includes("/child"));
+    if (childTab?.ownerThreadId !== "smoke-thread" || childTab.ownerBotId !== "smoke-bot") {
+      throw new Error("A target=_blank tab did not preserve agent ownership.");
+    }
+    process.stdout.write("BrowserHost: child-tab ownership passed.\n");
+
     const screenshot = await browser.screenshot(tab.id);
     if (!screenshot.startsWith("data:image/png;base64,")) throw new Error("Screenshot failed.");
     process.stdout.write("BrowserHost: screenshot passed.\n");
@@ -101,6 +122,11 @@ async function main(): Promise<void> {
     process.stdout.write("BrowserHost: shared cookies passed.\n");
 
     await expectFailure(() => browser.open("file:///etc/passwd"));
+    const tabCountBeforeAbort = browser.listTabs().length;
+    await expectFailure(() => browser.open(`${origin}/abort`));
+    if (browser.listTabs().length !== tabCountBeforeAbort) {
+      throw new Error("A failed navigation leaked a browser tab.");
+    }
 
     const downloadPage = await browser.open(origin, "smoke-thread");
     const downloadSnapshot = await browser.snapshot(downloadPage.id);
@@ -166,4 +192,14 @@ async function waitFor(check: () => Promise<boolean>): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("Timed out waiting for a browser download.");
+}
+
+async function waitForValue<T>(check: () => T | undefined): Promise<T> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const value = check();
+    if (value !== undefined) return value;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Timed out waiting for a browser state change.");
 }

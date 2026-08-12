@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -65,6 +65,75 @@ describe("MailboxStore", () => {
     });
   });
 
+  it("fails closed instead of overwriting an unsupported mailbox state", async () => {
+    const statePath = join(root, "user-data", "mailbox-state.json");
+    const unsupported = '{"version":999,"messages":[{"important":true}]}\n';
+    await writeFile(statePath, unsupported);
+
+    const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await expect(restored.initialize()).rejects.toThrow("refusing to overwrite");
+    await expect(readFile(statePath, "utf8")).resolves.toBe(unsupported);
+  });
+
+  it("persists reply metadata and one local reaction per conversation message", async () => {
+    const receipt = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Yes, continue",
+      replyToMessageId: "assistant-1",
+    });
+    const deliveryId = receipt.deliveries[0].id;
+    expect(store.conversationMessages("chief")[0]).toMatchObject({
+      id: deliveryId,
+      replyToMessageId: "assistant-1",
+    });
+
+    await store.setReaction("chief", "assistant-1", "❤️");
+    const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    expect(restored.reactionFor("chief", "assistant-1")).toBe("❤️");
+    await restored.setReaction("chief", "assistant-1", null);
+    expect(restored.reactionFor("chief", "assistant-1")).toBeNull();
+  });
+
+  it("tracks the initiating bot through a reply chain and detects explicit replies", async () => {
+    const rootMessage = await store.enqueue({
+      sender: { kind: "bot", botId: "researcher" },
+      recipientBotIds: ["weather"],
+      text: "Check tomorrow's weather.",
+    });
+    const weatherQuestion = await store.enqueue({
+      sender: { kind: "bot", botId: "weather" },
+      recipientBotIds: ["researcher"],
+      text: "Which city?",
+      replyToMessageId: rootMessage.messageId,
+    });
+    const locationReply = await store.enqueue({
+      sender: { kind: "bot", botId: "researcher" },
+      recipientBotIds: ["weather"],
+      text: "Kraków.",
+      replyToMessageId: weatherQuestion.messageId,
+    });
+
+    expect(store.chainOriginBotId(locationReply.messageId)).toBe("researcher");
+    expect(store.hasReplyFrom("weather", locationReply.messageId)).toBe(false);
+    await store.enqueue({
+      sender: { kind: "bot", botId: "weather" },
+      recipientBotIds: ["researcher"],
+      text: "It will be sunny.",
+      replyToMessageId: locationReply.messageId,
+    });
+    expect(store.hasReplyFrom("weather", locationReply.messageId)).toBe(true);
+    await store.enqueue({
+      sender: { kind: "bot", botId: "weather" },
+      recipientBotIds: ["researcher"],
+      text: "A second explicit update.",
+      idempotencyKey: "thread-weather:turn-weather:call-1",
+    });
+    expect(store.hasBotMessageFromTurnTo("weather", "turn-weather", "researcher")).toBe(true);
+    expect(store.hasBotMessageFromTurnTo("weather", "turn-weather", "other-agent")).toBe(false);
+  });
+
   it("rejects directories and oversized recipient lists", async () => {
     const directory = join(root, "folder");
     await mkdir(directory);
@@ -103,6 +172,43 @@ describe("MailboxStore", () => {
     expect(store.getDelivery(receipt.deliveries[0].id)?.delivery).toMatchObject({
       text: "",
       attachments: [{ name: "clipboard.png" }],
+    });
+  });
+
+  it("rejects managed attachments replaced by symlinks outside the transfer root", async () => {
+    const source = join(root, "inside.txt");
+    const outside = join(root, "outside.txt");
+    await writeFile(source, "original");
+    await writeFile(outside, "secret");
+    const [draft] = await store.prepareAttachments([source]);
+    const receipt = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Review",
+      draftIds: [draft.id],
+    });
+    const attachment = store.getDelivery(receipt.deliveries[0].id)?.managedAttachments[0];
+    expect(attachment).toBeDefined();
+    await rm(attachment?.path ?? "missing");
+    await symlink(outside, attachment?.path ?? "missing");
+
+    await expect(store.resolveAttachment(attachment?.id ?? "")).resolves.toBeNull();
+  });
+
+  it("keeps the persisted MIME type as the single source for attachment serving", async () => {
+    const [draft] = await store.prepareImportedAttachments(
+      [],
+      [
+        {
+          name: "clipboard.bin",
+          mimeType: "image/png",
+          bytes: new Uint8Array([137, 80, 78, 71]),
+        },
+      ],
+    );
+
+    await expect(store.resolveAttachment(draft.id)).resolves.toMatchObject({
+      mimeType: "image/png",
     });
   });
 

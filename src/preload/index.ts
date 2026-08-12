@@ -15,7 +15,8 @@ function emitAttachmentImport(event: AttachmentImportEvent): void {
 
 async function importFiles(files: File[]): Promise<void> {
   if (files.length === 0) return;
-  emitAttachmentImport({ type: "started" });
+  const requestId = crypto.randomUUID();
+  emitAttachmentImport({ type: "started", requestId });
   try {
     const input: ImportAttachmentsInput = { paths: [], data: [] };
     for (const file of files) {
@@ -30,10 +31,11 @@ async function importFiles(files: File[]): Promise<void> {
       }
     }
     const attachments = await ipcRenderer.invoke(IPC_CHANNELS.agentImportAttachments, input);
-    emitAttachmentImport({ type: "completed", attachments });
+    emitAttachmentImport({ type: "completed", requestId, attachments });
   } catch (error) {
     emitAttachmentImport({
       type: "error",
+      requestId,
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -52,7 +54,10 @@ window.addEventListener("drop", (event) => {
 });
 window.addEventListener("paste", (event) => {
   const files = [...(event.clipboardData?.files ?? [])];
-  if (files.length) void importFiles(files);
+  if (files.length) {
+    event.preventDefault();
+    void importFiles(files);
+  }
 });
 
 const infeldApi: InfeldDesktopApi = {
@@ -74,6 +79,7 @@ const infeldApi: InfeldDesktopApi = {
       ipcRenderer.invoke(IPC_CHANNELS.agentDiscardDraftAttachment, attachmentId),
     openAttachment: (input) => ipcRenderer.invoke(IPC_CHANNELS.agentOpenAttachment, input),
     sendMessage: (input) => ipcRenderer.invoke(IPC_CHANNELS.agentSendMessage, input),
+    setMessageReaction: (input) => ipcRenderer.invoke(IPC_CHANNELS.agentSetMessageReaction, input),
     listQueue: (botId) => ipcRenderer.invoke(IPC_CHANNELS.agentListQueue, botId),
     cancelQueuedMessage: (input) =>
       ipcRenderer.invoke(IPC_CHANNELS.agentCancelQueuedMessage, input),

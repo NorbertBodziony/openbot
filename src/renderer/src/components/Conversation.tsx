@@ -12,9 +12,11 @@ import type {
   BrowserControlState,
   BrowserTab,
   DraftAttachment,
+  MessageReaction,
   QueueSnapshot,
   UpdateBotInput,
 } from "../../../shared/ipc";
+import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "../../../shared/ipc";
 import type { BotMessage, BotProfile } from "../data";
 import { AVATAR_COLORS, AVATAR_SHAPES } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
@@ -42,7 +44,11 @@ interface ConversationProps {
   onCreateAgent: () => void;
   onSelectAgent: (botId: string) => void;
   onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
-  onSendMessage: (body: string, attachmentDraftIds: string[]) => Promise<boolean>;
+  onSendMessage: (
+    body: string,
+    attachmentDraftIds: string[],
+    replyToMessageId: string | null,
+  ) => Promise<boolean>;
   onCompleteOnboarding: (answer: string) => Promise<boolean>;
   onAnswerPrompt: (answers: Record<string, string[]>) => Promise<boolean>;
   onCancelQueuedMessage: (deliveryId: string) => void;
@@ -56,6 +62,7 @@ interface ConversationProps {
 interface ComposerDraft {
   text: string;
   attachments: DraftAttachment[];
+  replyToMessageId: string | null;
 }
 
 interface MediaPreview {
@@ -67,7 +74,7 @@ interface MediaPreview {
 
 type RightPanelMode = "none" | "browser" | "settings";
 
-const EMPTY_DRAFT: ComposerDraft = { text: "", attachments: [] };
+const EMPTY_DRAFT: ComposerDraft = { text: "", attachments: [], replyToMessageId: null };
 const ONBOARDING_CHOICES = [
   "Work & projects",
   "Research & writing",
@@ -160,6 +167,50 @@ function FileIcon() {
     <svg aria-hidden="true" viewBox="0 0 20 20" class="file-icon fill-none stroke-current">
       <path d="M5 2.5h6l4 4V17.5H5z" stroke-width="1.2" stroke-linejoin="round" />
       <path d="M11 2.5v4h4M7.5 11h5M7.5 14h5" stroke-width="1.2" stroke-linecap="round" />
+    </svg>
+  );
+}
+
+function ReactionIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20">
+      <circle cx="10" cy="10" r="7.25" />
+      <path d="M7.25 8h.01M12.75 8h.01M6.9 11.5c.85 1.25 1.88 1.85 3.1 1.85s2.25-.6 3.1-1.85" />
+    </svg>
+  );
+}
+
+function ReplyIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20">
+      <path d="m8.25 5-4.5 4.1 4.5 4.1V10c4.1 0 6.45 1.35 8 4.35-.25-5.2-2.9-7.65-8-7.65z" />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20">
+      <circle cx="5" cy="10" r="1" />
+      <circle cx="10" cy="10" r="1" />
+      <circle cx="15" cy="10" r="1" />
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20">
+      <rect x="6.5" y="6.5" width="9" height="9" rx="1.5" />
+      <path d="M13 6.5V5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v6.5A1.5 1.5 0 0 0 5 13h1.5" />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20">
+      <path d="m4.5 10.5 3.25 3.25L15.5 6" />
     </svg>
   );
 }
@@ -520,6 +571,7 @@ function ExchangeSystemRow(props: {
 
 function MessageBody(props: {
   message: BotMessage;
+  referencedMessage?: BotMessage;
   bots: BotProfile[];
   onSelectAgent: (botId: string) => void;
   onPreview: (attachment: AttachmentSummary) => void;
@@ -527,6 +579,14 @@ function MessageBody(props: {
 }) {
   return (
     <>
+      <Show when={props.referencedMessage}>
+        {(referenced) => (
+          <div class="message-reply-context">
+            <span>{referenced().author === "you" ? "You" : "Agent"}</span>
+            <p>{referenced().body || "Attachment"}</p>
+          </div>
+        )}
+      </Show>
       <Show when={props.message.body}>
         <p class="message-copy">
           <TaggedMessageText
@@ -535,9 +595,6 @@ function MessageBody(props: {
             onSelectAgent={props.onSelectAgent}
           />
         </p>
-      </Show>
-      <Show when={props.message.replyToMessageId}>
-        <small class="reply-reference">Reply to {props.message.replyToMessageId}</small>
       </Show>
       <Show when={props.message.status}>
         <div class="message-status">
@@ -553,6 +610,113 @@ function MessageBody(props: {
         />
       </Show>
     </>
+  );
+}
+
+function MessageActions(props: {
+  message: BotMessage;
+  pickerOpen: boolean;
+  moreOpen: boolean;
+  expandedEmoji: boolean;
+  copied: boolean;
+  onTogglePicker: () => void;
+  onToggleMore: () => void;
+  onExpandEmoji: () => void;
+  onReact: (emoji: MessageReaction | null) => void;
+  onReply: () => void;
+  onCopy: () => void;
+}) {
+  return (
+    <div
+      class="message-actions"
+      classList={{ "message-actions-open": props.pickerOpen || props.moreOpen }}
+      role="toolbar"
+      aria-label={`${props.message.author === "you" ? "User" : "Agent"} message actions`}
+    >
+      <div class="message-action-popover-anchor">
+        <button
+          type="button"
+          class="message-action-button"
+          aria-label="Add reaction"
+          aria-expanded={props.pickerOpen}
+          onClick={props.onTogglePicker}
+        >
+          <ReactionIcon />
+        </button>
+        <Show when={props.pickerOpen}>
+          <div class="reaction-picker" role="menu" aria-label="Choose a reaction">
+            <div class="reaction-picker-row">
+              <For each={MESSAGE_REACTIONS}>
+                {(emoji) => (
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={props.message.reaction === emoji}
+                    aria-label={`React with ${emoji}`}
+                    onClick={() => props.onReact(props.message.reaction === emoji ? null : emoji)}
+                  >
+                    {emoji}
+                  </button>
+                )}
+              </For>
+              <button
+                type="button"
+                class="reaction-more-button"
+                aria-label="More emoji"
+                aria-expanded={props.expandedEmoji}
+                onClick={props.onExpandEmoji}
+              >
+                <PlusIcon />
+              </button>
+            </div>
+            <Show when={props.expandedEmoji}>
+              <div class="reaction-picker-row reaction-picker-more">
+                <For each={MORE_MESSAGE_REACTIONS}>
+                  {(emoji) => (
+                    <button
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={props.message.reaction === emoji}
+                      aria-label={`React with ${emoji}`}
+                      onClick={() => props.onReact(props.message.reaction === emoji ? null : emoji)}
+                    >
+                      {emoji}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+        </Show>
+      </div>
+      <button
+        type="button"
+        class="message-action-button"
+        aria-label={`Reply to ${props.message.author === "you" ? "User" : "Agent"} message`}
+        onClick={props.onReply}
+      >
+        <ReplyIcon />
+      </button>
+      <div class="message-action-popover-anchor">
+        <button
+          type="button"
+          class="message-action-button"
+          aria-label="More message actions"
+          aria-expanded={props.moreOpen}
+          onClick={props.onToggleMore}
+        >
+          <MoreIcon />
+        </button>
+        <Show when={props.moreOpen}>
+          <div class="message-more-menu" role="menu">
+            <button type="button" role="menuitem" onClick={props.onCopy}>
+              {props.copied ? <CheckIcon /> : <CopyIcon />}
+              <span>{props.copied ? "Copied" : "Copy"}</span>
+            </button>
+          </div>
+        </Show>
+      </div>
+    </div>
   );
 }
 
@@ -611,17 +775,21 @@ function escapeExpression(value: string): string {
 
 function AgentActivityIndicator(props: {
   bot: BotProfile | undefined;
-  state: "Queued" | "Working";
+  state: "Queued" | "Working" | null;
 }) {
   return (
     <div
       class="agent-activity-entry"
+      classList={{ "agent-activity-entry-visible": props.state !== null }}
       role="status"
-      aria-label={`${props.bot?.name ?? "Agent"} is ${props.state.toLowerCase()}`}
+      aria-hidden={props.state === null}
+      aria-label={
+        props.state ? `${props.bot?.name ?? "Agent"} is ${props.state.toLowerCase()}` : undefined
+      }
     >
       <AgentAvatar bot={props.bot} class="agent-activity-avatar" />
       <div class="agent-activity-bubble" aria-hidden="true">
-        <span>{props.state}</span>
+        <span>{props.state ?? "Working"}</span>
         <span class="agent-activity-dots">
           <i />
           <i />
@@ -685,6 +853,10 @@ export function Conversation(props: ConversationProps) {
   const [mediaPreview, setMediaPreview] = createSignal<MediaPreview | null>(null);
   const [pickerQuery, setPickerQuery] = createSignal("");
   const [activePickerOption, setActivePickerOption] = createSignal(0);
+  const [openReactionMessageId, setOpenReactionMessageId] = createSignal<string | null>(null);
+  const [openMoreMessageId, setOpenMoreMessageId] = createSignal<string | null>(null);
+  const [expandedEmojiMessageId, setExpandedEmojiMessageId] = createSignal<string | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = createSignal<string | null>(null);
   const [settingsPanelWidth, setSettingsPanelWidth] = createSignal(
     readPanelWidth(
       SETTINGS_PANEL_STORAGE_KEY,
@@ -710,6 +882,10 @@ export function Conversation(props: ConversationProps) {
   const currentDraft = createMemo(() => {
     const id = props.bot?.id;
     return id ? (drafts()[id] ?? EMPTY_DRAFT) : EMPTY_DRAFT;
+  });
+  const replyTarget = createMemo(() => {
+    const id = currentDraft().replyToMessageId;
+    return id ? props.messages.find((message) => message.id === id) : undefined;
   });
   const filteredPickerBots = createMemo(() => {
     const query = pickerQuery().trim().toLowerCase();
@@ -789,6 +965,11 @@ export function Conversation(props: ConversationProps) {
     }
     return null;
   });
+  const queueBarVisible = createMemo(
+    () =>
+      Boolean(props.queue?.paused) ||
+      Boolean(props.queue?.deliveries.some((item) => item.status === "queued")),
+  );
   const seenMessageIds = new Set<string>();
   const [fadeAtTop, setFadeAtTop] = createSignal(false);
   const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
@@ -796,9 +977,19 @@ export function Conversation(props: ConversationProps) {
   let conversationPanel: HTMLElement | undefined;
   let browserSurface: HTMLDivElement | undefined;
   let browserResizeObserver: ResizeObserver | undefined;
+  let browserVisibilityFrame: number | undefined;
+  let browserVisibilityGeneration = 0;
   let pickerInput: HTMLInputElement | undefined;
   let stickToLatest = true;
   let lastConversationBotId: string | undefined;
+  let lastSettingsSignature: string | undefined;
+  const importTargetBots = new Map<string, string>();
+
+  function saveBotPatch(updates: Omit<UpdateBotInput, "botId">): void {
+    const botId = props.bot?.id;
+    if (!botId) return;
+    void props.onUpdateBot(botId, updates).catch(() => undefined);
+  }
 
   function updateScrollFade(element = scrollElement) {
     if (!element) return;
@@ -823,24 +1014,45 @@ export function Conversation(props: ConversationProps) {
   onMount(() => {
     const unsubscribeImport = window.infeld.agent.onAttachmentImport((event) => {
       if (event.type === "started") {
+        const botId = props.bot?.id;
+        if (botId) importTargetBots.set(event.requestId, botId);
         setAttachmentBusy(true);
         setComposerError(null);
       } else if (event.type === "error") {
+        importTargetBots.delete(event.requestId);
         setAttachmentBusy(false);
         setComposerError(event.message);
       } else {
         setAttachmentBusy(false);
-        addAttachments(event.attachments);
+        const botId = importTargetBots.get(event.requestId);
+        importTargetBots.delete(event.requestId);
+        if (botId && props.bots.some((bot) => bot.id === botId)) {
+          addAttachments(event.attachments, botId);
+        } else {
+          for (const attachment of event.attachments) {
+            void window.infeld.agent.discardDraftAttachment(attachment.id);
+          }
+        }
       }
     });
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      setOpenReactionMessageId(null);
+      setOpenMoreMessageId(null);
+      setExpandedEmojiMessageId(null);
       hideBrowserPanel();
       setMediaPreview(null);
       setAvatarPickerOpen(false);
       props.onCloseAgentPicker();
     };
+    const closeMessageMenus = (event: MouseEvent) => {
+      if ((event.target as Element | null)?.closest(".message-actions")) return;
+      setOpenReactionMessageId(null);
+      setOpenMoreMessageId(null);
+      setExpandedEmojiMessageId(null);
+    };
     window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("pointerdown", closeMessageMenus);
     const scrollResizeObserver = new ResizeObserver(() => updateScrollFade());
     if (scrollElement) scrollResizeObserver.observe(scrollElement);
     requestAnimationFrame(() => updateScrollFade());
@@ -848,6 +1060,7 @@ export function Conversation(props: ConversationProps) {
       scrollResizeObserver.disconnect();
       unsubscribeImport();
       window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("pointerdown", closeMessageMenus);
     });
   });
 
@@ -878,6 +1091,19 @@ export function Conversation(props: ConversationProps) {
   createEffect(() => {
     const bot = props.bot;
     if (!bot) return;
+    const signature = [
+      bot.id,
+      bot.name,
+      bot.role,
+      bot.description,
+      String(bot.notifications),
+      bot.model,
+      bot.reasoningEffort,
+      bot.avatarShape,
+      bot.avatarColor,
+    ].join("\u0000");
+    if (signature === lastSettingsSignature) return;
+    lastSettingsSignature = signature;
     setSettingsName(bot.name);
     setSettingsTitle(bot.role);
     setSettingsDescription(bot.description);
@@ -931,17 +1157,35 @@ export function Conversation(props: ConversationProps) {
   });
 
   createEffect(() => {
-    props.bot?.id;
+    const botId = props.bot?.id;
     const visible = screenOpen();
+    const generation = ++browserVisibilityGeneration;
+    if (browserVisibilityFrame !== undefined) cancelAnimationFrame(browserVisibilityFrame);
     browserResizeObserver?.disconnect();
+    browserResizeObserver = undefined;
     if (!visible) {
       void window.infeld.browser.setVisible({ visible: false });
       return;
     }
-    requestAnimationFrame(() => {
-      if (!browserSurface) return;
+    browserVisibilityFrame = requestAnimationFrame(() => {
+      browserVisibilityFrame = undefined;
+      if (
+        generation !== browserVisibilityGeneration ||
+        props.bot?.id !== botId ||
+        !screenOpen() ||
+        !browserSurface
+      ) {
+        return;
+      }
       const syncBounds = () => {
-        if (!browserSurface) return;
+        if (
+          generation !== browserVisibilityGeneration ||
+          props.bot?.id !== botId ||
+          !screenOpen() ||
+          !browserSurface
+        ) {
+          return;
+        }
         const bounds = browserSurface.getBoundingClientRect();
         void window.infeld.browser.setVisible({
           visible: true,
@@ -955,17 +1199,27 @@ export function Conversation(props: ConversationProps) {
   });
 
   onCleanup(() => {
+    browserVisibilityGeneration += 1;
+    if (browserVisibilityFrame !== undefined) cancelAnimationFrame(browserVisibilityFrame);
     browserResizeObserver?.disconnect();
     void window.infeld.browser.setVisible({ visible: false });
   });
 
-  function addAttachments(selected: DraftAttachment[]) {
-    const available = Math.max(0, 10 - currentDraft().attachments.length);
+  function addAttachments(selected: DraftAttachment[], botId = props.bot?.id) {
+    if (!botId) return;
+    const draft = drafts()[botId] ?? EMPTY_DRAFT;
+    const available = Math.max(0, 10 - draft.attachments.length);
     const accepted = selected.slice(0, available);
     for (const attachment of selected.slice(available)) {
       void window.infeld.agent.discardDraftAttachment(attachment.id);
     }
-    updateCurrentDraft({ attachments: [...currentDraft().attachments, ...accepted] });
+    setDrafts((current) => ({
+      ...current,
+      [botId]: {
+        ...(current[botId] ?? EMPTY_DRAFT),
+        attachments: [...draft.attachments, ...accepted],
+      },
+    }));
     if (selected.length > accepted.length) setComposerError("You can attach at most 10 files.");
     setShowAttachments(false);
   }
@@ -994,9 +1248,53 @@ export function Conversation(props: ConversationProps) {
     const sent = await props.onSendMessage(
       text,
       attachments.map((item) => item.id),
+      override ? null : draft.replyToMessageId,
     );
     setSubmitting(false);
     if (sent) setDrafts((current) => ({ ...current, [botId]: EMPTY_DRAFT }));
+  }
+
+  function replyToMessage(message: BotMessage) {
+    updateCurrentDraft({ replyToMessageId: message.id });
+    setOpenReactionMessageId(null);
+    setOpenMoreMessageId(null);
+  }
+
+  async function reactToMessage(message: BotMessage, emoji: MessageReaction | null) {
+    const botId = props.bot?.id;
+    if (!botId) return;
+    setOpenReactionMessageId(null);
+    setExpandedEmojiMessageId(null);
+    try {
+      await window.infeld.agent.setMessageReaction({ botId, messageId: message.id, emoji });
+    } catch (error) {
+      setComposerError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function copyMessage(message: BotMessage) {
+    const text = message.body;
+    if (!text) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const input = document.createElement("textarea");
+        input.value = text;
+        input.style.position = "fixed";
+        input.style.opacity = "0";
+        document.body.append(input);
+        input.select();
+        document.execCommand("copy");
+        input.remove();
+      }
+      setCopiedMessageId(message.id);
+      window.setTimeout(() => {
+        if (copiedMessageId() === message.id) setCopiedMessageId(null);
+      }, 1_400);
+    } catch (error) {
+      setComposerError(error instanceof Error ? error.message : "Could not copy the message.");
+    }
   }
 
   function removeAttachment(id: string) {
@@ -1271,8 +1569,8 @@ export function Conversation(props: ConversationProps) {
             </article>
           </Show>
           <For each={props.messages}>
-            {(message, index) => {
-              const animateEntrance = markMessageSeen(message.id);
+            {(message) => {
+              const animateEntrance = message.animate === true && markMessageSeen(message.id);
               return (
                 <Show
                   when={message.exchange}
@@ -1287,27 +1585,69 @@ export function Conversation(props: ConversationProps) {
                             "message-entry-user": message.author === "you",
                             "message-entry-bot": message.author === "bot",
                           }}
-                          style={{ "animation-delay": `${Math.min(index() * 35, 350)}ms` }}
                         >
-                          <div
-                            class={message.author === "you" ? "user-bubble" : "bot-bubble"}
-                            classList={{ "bot-bubble-streaming": message.streaming === true }}
-                          >
-                            <MessageBody
+                          <div class="message-shell">
+                            <div
+                              class={message.author === "you" ? "user-bubble" : "bot-bubble"}
+                              classList={{ "bot-bubble-streaming": message.streaming === true }}
+                            >
+                              <MessageBody
+                                message={message}
+                                referencedMessage={props.messages.find(
+                                  (candidate) => candidate.id === message.replyToMessageId,
+                                )}
+                                bots={props.bots}
+                                onSelectAgent={props.onSelectAgent}
+                                onPreview={(attachment) => void previewAttachment(attachment)}
+                                onAttachmentAction={attachmentAction}
+                              />
+                            </div>
+                            <MessageActions
                               message={message}
-                              bots={props.bots}
-                              onSelectAgent={props.onSelectAgent}
-                              onPreview={(attachment) => void previewAttachment(attachment)}
-                              onAttachmentAction={attachmentAction}
+                              pickerOpen={openReactionMessageId() === message.id}
+                              moreOpen={openMoreMessageId() === message.id}
+                              expandedEmoji={expandedEmojiMessageId() === message.id}
+                              copied={copiedMessageId() === message.id}
+                              onTogglePicker={() => {
+                                setOpenReactionMessageId((current) =>
+                                  current === message.id ? null : message.id,
+                                );
+                                setOpenMoreMessageId(null);
+                                setExpandedEmojiMessageId(null);
+                              }}
+                              onToggleMore={() => {
+                                setOpenMoreMessageId((current) =>
+                                  current === message.id ? null : message.id,
+                                );
+                                setOpenReactionMessageId(null);
+                                setExpandedEmojiMessageId(null);
+                              }}
+                              onExpandEmoji={() =>
+                                setExpandedEmojiMessageId((current) =>
+                                  current === message.id ? null : message.id,
+                                )
+                              }
+                              onReact={(emoji) => void reactToMessage(message, emoji)}
+                              onReply={() => replyToMessage(message)}
+                              onCopy={() => void copyMessage(message)}
                             />
                           </div>
+                          <Show when={message.reaction}>
+                            {(reaction) => (
+                              <button
+                                type="button"
+                                class="message-reaction-pill"
+                                aria-label={`Remove reaction ${reaction()}`}
+                                onClick={() => void reactToMessage(message, null)}
+                              >
+                                {reaction()}
+                              </button>
+                            )}
+                          </Show>
                         </article>
                       }
                     >
-                      <div
-                        classList={{ "thinking-entry-animated": animateEntrance }}
-                        style={{ "animation-delay": `${Math.min(index() * 35, 350)}ms` }}
-                      >
+                      <div classList={{ "thinking-entry-animated": animateEntrance }}>
                         <ThinkingDisclosure message={message} />
                       </div>
                     </Show>
@@ -1317,7 +1657,6 @@ export function Conversation(props: ConversationProps) {
                     <article
                       class="exchange-message-entry"
                       classList={{ "exchange-message-entry-animated": animateEntrance }}
-                      style={{ "animation-delay": `${Math.min(index() * 35, 350)}ms` }}
                     >
                       <ExchangeSystemRow
                         message={message}
@@ -1344,9 +1683,7 @@ export function Conversation(props: ConversationProps) {
               );
             }}
           </For>
-          <Show when={agentActivity()}>
-            {(state) => <AgentActivityIndicator bot={props.bot} state={state()} />}
-          </Show>
+          <AgentActivityIndicator bot={props.bot} state={agentActivity()} />
           <Show when={props.prompt}>
             {(prompt) => (
               <PromptCard questions={prompt().questions} onSubmit={props.onAnswerPrompt} />
@@ -1391,38 +1728,53 @@ export function Conversation(props: ConversationProps) {
             </div>
           )}
         </For>
+        <Show when={replyTarget()}>
+          {(message) => (
+            <div class="composer-reply-preview">
+              <div>
+                <span>Replying to {message().author === "you" ? "your message" : "Agent"}</span>
+                <p>{message().body || "Attachment"}</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Cancel reply"
+                onClick={() => updateCurrentDraft({ replyToMessageId: null })}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+          )}
+        </Show>
         <Show when={composerError()}>
           <div class="composer-error" role="alert">
             {composerError()}
           </div>
         </Show>
-        <Show
-          when={
-            props.queue?.paused || props.queue?.deliveries.some((item) => item.status === "queued")
-          }
+        <div
+          class="agent-queue-bar"
+          classList={{ "agent-queue-bar-visible": queueBarVisible() }}
+          aria-hidden={!queueBarVisible()}
         >
-          <div class="agent-queue-bar">
-            <Show when={props.queue?.paused}>
-              <button type="button" onClick={props.onResumeQueue}>
-                Resume queue
-              </button>
-            </Show>
-            <For each={props.queue?.deliveries.filter((item) => item.status === "queued") ?? []}>
-              {(delivery) => (
-                <span>
-                  Queued #{delivery.position}
-                  <button
-                    type="button"
-                    aria-label={`Cancel queued message ${delivery.position}`}
-                    onClick={() => props.onCancelQueuedMessage(delivery.id)}
-                  >
-                    <CloseIcon />
-                  </button>
-                </span>
-              )}
-            </For>
-          </div>
-        </Show>
+          <Show when={props.queue?.paused}>
+            <button type="button" onClick={props.onResumeQueue}>
+              Resume queue
+            </button>
+          </Show>
+          <For each={props.queue?.deliveries.filter((item) => item.status === "queued") ?? []}>
+            {(delivery) => (
+              <span>
+                Queued #{delivery.position}
+                <button
+                  type="button"
+                  aria-label={`Cancel queued message ${delivery.position}`}
+                  onClick={() => props.onCancelQueuedMessage(delivery.id)}
+                >
+                  <CloseIcon />
+                </button>
+              </span>
+            )}
+          </For>
+        </div>
         <div class="composer">
           <button
             type="button"
@@ -1439,7 +1791,11 @@ export function Conversation(props: ConversationProps) {
               bots={props.bots}
               value={currentDraft().text}
               disabled={props.agentPickerOpen || submitting()}
-              placeholder={`Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`}
+              placeholder={
+                replyTarget()
+                  ? "Reply…"
+                  : `Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`
+              }
               ariaLabel={`Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`}
               onValueChange={(text) => updateCurrentDraft({ text })}
               onSubmit={() => void submitMessage()}
@@ -1736,8 +2092,7 @@ export function Conversation(props: ConversationProps) {
                         aria-pressed={avatarShape() === shape}
                         onClick={() => {
                           setAvatarShape(shape);
-                          if (props.bot)
-                            void props.onUpdateBot(props.bot.id, { avatarShape: shape });
+                          saveBotPatch({ avatarShape: shape });
                         }}
                       >
                         <AgentAvatar shape={shape} color={avatarColor()} bot={props.bot} />
@@ -1757,8 +2112,7 @@ export function Conversation(props: ConversationProps) {
                         aria-pressed={avatarColor() === color}
                         onClick={() => {
                           setAvatarColor(color);
-                          if (props.bot)
-                            void props.onUpdateBot(props.bot.id, { avatarColor: color });
+                          saveBotPatch({ avatarColor: color });
                         }}
                       >
                         <span class={`avatar-color-swatch avatar-color-swatch-${color}`} />
@@ -1774,11 +2128,7 @@ export function Conversation(props: ConversationProps) {
                 value={settingsName()}
                 aria-label="Agent name"
                 onInput={(event) => setSettingsName(event.currentTarget.value)}
-                onBlur={() =>
-                  void props.onUpdateBot(props.bot?.id ?? "", {
-                    name: settingsName().trim() || "New agent",
-                  })
-                }
+                onBlur={() => saveBotPatch({ name: settingsName().trim() || "New agent" })}
               />
             </label>
             <label class="agent-settings-field">
@@ -1788,9 +2138,7 @@ export function Conversation(props: ConversationProps) {
                 aria-label="Agent title"
                 placeholder="Describe what your agent does"
                 onInput={(event) => setSettingsTitle(event.currentTarget.value)}
-                onBlur={() =>
-                  void props.onUpdateBot(props.bot?.id ?? "", { role: settingsTitle().trim() })
-                }
+                onBlur={() => saveBotPatch({ role: settingsTitle().trim() })}
               />
             </label>
             <label class="agent-settings-field agent-settings-description">
@@ -1801,11 +2149,7 @@ export function Conversation(props: ConversationProps) {
                 aria-label="Agent description"
                 placeholder="What this agent is for"
                 onInput={(event) => setSettingsDescription(event.currentTarget.value)}
-                onBlur={() =>
-                  void props.onUpdateBot(props.bot?.id ?? "", {
-                    description: settingsDescription(),
-                  })
-                }
+                onBlur={() => saveBotPatch({ description: settingsDescription() })}
               />
             </label>
             <section class="agent-settings-model" aria-labelledby="agent-model-heading">
@@ -1828,7 +2172,7 @@ export function Conversation(props: ConversationProps) {
                       : (option?.defaultReasoningEffort ?? "medium");
                     setSettingsModel(model);
                     setSettingsReasoning(reasoningEffort);
-                    void props.onUpdateBot(props.bot?.id ?? "", { model, reasoningEffort });
+                    saveBotPatch({ model, reasoningEffort });
                   }}
                 >
                   <For each={props.modelOptions}>
@@ -1847,7 +2191,7 @@ export function Conversation(props: ConversationProps) {
                   onChange={(event) => {
                     const reasoningEffort = event.currentTarget.value as AgentReasoningEffort;
                     setSettingsReasoning(reasoningEffort);
-                    void props.onUpdateBot(props.bot?.id ?? "", { reasoningEffort });
+                    saveBotPatch({ reasoningEffort });
                   }}
                 >
                   <For each={reasoningOptions()}>
@@ -1871,7 +2215,7 @@ export function Conversation(props: ConversationProps) {
                 onClick={() => {
                   const next = !settingsNotifications();
                   setSettingsNotifications(next);
-                  void props.onUpdateBot(props.bot?.id ?? "", { notifications: next });
+                  saveBotPatch({ notifications: next });
                 }}
               >
                 <span />

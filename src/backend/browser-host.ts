@@ -208,6 +208,15 @@ export class BrowserHost {
     try {
       await tab.view.webContents.loadURL(normalizedUrl);
     } catch (error) {
+      if (this.#tabs.get(tab.id) === tab) {
+        this.#unmountView(tab.view);
+        this.#tabs.delete(tab.id);
+        tab.view.webContents.close();
+        if (this.#activeTabId === tab.id) {
+          this.#activeTabId = this.#tabs.keys().next().value ?? null;
+        }
+        this.#syncAttachedView();
+      }
       this.#emitChanged();
       throw new Error(`Unable to open ${normalizedUrl}: ${String(error)}`);
     }
@@ -244,25 +253,7 @@ export class BrowserHost {
   async snapshot(tabId: string): Promise<BrowserSnapshot> {
     return this.#enqueue(tabId, async (tab) => {
       const revision = tab.revision + 1;
-      const raw = await withTimeout(
-        tab.view.webContents.executeJavaScript(snapshotScript(revision), true),
-        10_000,
-        "Browser snapshot timed out.",
-      );
-      if (!isRecord(raw)) throw new Error("Browser returned an invalid snapshot.");
-      tab.revision = revision;
-
-      const elements = Array.isArray(raw.elements)
-        ? raw.elements.filter(isSnapshotElement).slice(0, 500)
-        : [];
-      return {
-        tabId,
-        revision,
-        title: typeof raw.title === "string" ? raw.title.slice(0, 500) : "",
-        url: typeof raw.url === "string" ? raw.url : tab.view.webContents.getURL(),
-        text: typeof raw.text === "string" ? raw.text.slice(0, 100_000) : "",
-        elements,
-      };
+      return this.#readSnapshot(tab, revision);
     });
   }
 
@@ -272,23 +263,14 @@ export class BrowserHost {
         throw new Error("Stale browser references. Take a fresh snapshot before acting.");
       }
 
-      await performAction(tab.view.webContents, action);
+      await withTimeout(
+        performAction(tab.view.webContents, action),
+        10_000,
+        "Browser action timed out.",
+      );
       await delay(250);
       const nextRevision = tab.revision + 1;
-      const raw = await tab.view.webContents.executeJavaScript(snapshotScript(nextRevision), true);
-      if (!isRecord(raw)) throw new Error("Browser returned an invalid snapshot.");
-      tab.revision = nextRevision;
-
-      return {
-        tabId,
-        revision: nextRevision,
-        title: typeof raw.title === "string" ? raw.title.slice(0, 500) : "",
-        url: typeof raw.url === "string" ? raw.url : tab.view.webContents.getURL(),
-        text: typeof raw.text === "string" ? raw.text.slice(0, 100_000) : "",
-        elements: Array.isArray(raw.elements)
-          ? raw.elements.filter(isSnapshotElement).slice(0, 500)
-          : [],
-      };
+      return this.#readSnapshot(tab, nextRevision);
     });
   }
 
@@ -402,9 +384,29 @@ export class BrowserHost {
       if (!isAllowedMainUrl(url)) event.preventDefault();
     });
     contents.setWindowOpenHandler(({ url }) => {
-      if (isAllowedMainUrl(url)) void this.open(url, tab.ownerThreadId);
+      if (isAllowedMainUrl(url)) void this.open(url, tab.ownerThreadId, tab.ownerBotId);
       return { action: "deny" };
     });
+  }
+
+  async #readSnapshot(tab: InternalTab, revision: number): Promise<BrowserSnapshot> {
+    const raw = await withTimeout(
+      tab.view.webContents.executeJavaScript(snapshotScript(revision), true),
+      10_000,
+      "Browser snapshot timed out.",
+    );
+    if (!isRecord(raw)) throw new Error("Browser returned an invalid snapshot.");
+    tab.revision = revision;
+    return {
+      tabId: tab.id,
+      revision,
+      title: typeof raw.title === "string" ? raw.title.slice(0, 500) : "",
+      url: typeof raw.url === "string" ? raw.url : tab.view.webContents.getURL(),
+      text: typeof raw.text === "string" ? raw.text.slice(0, 100_000) : "",
+      elements: Array.isArray(raw.elements)
+        ? raw.elements.filter(isSnapshotElement).slice(0, 500)
+        : [],
+    };
   }
 
   #syncAttachedView(): void {

@@ -213,8 +213,18 @@ export function App() {
   }
 
   function applyStoredBots(storedBots: BotSummary[]) {
-    const profiles = storedBots.map(toBotProfile);
-    setBotList(profiles);
+    let profiles: BotProfile[] = [];
+    setBotList((current) => {
+      const currentById = new Map(current.map((bot) => [bot.id, bot]));
+      profiles = storedBots.map((stored) => {
+        const next = toBotProfile(stored);
+        const existing = currentById.get(next.id);
+        if (!existing) return createMutable(next);
+        Object.assign(existing, next);
+        return existing;
+      });
+      return profiles;
+    });
     setActiveBotId((current) =>
       profiles.some((bot) => bot.id === current) ? current : (profiles[0]?.id ?? ""),
     );
@@ -240,13 +250,15 @@ export function App() {
   function applyConversation(snapshot: ConversationSnapshot) {
     const botId = snapshot.botId;
     if (snapshot.revision < (conversationRevisions()[botId] ?? -1)) return;
+    const initialLoad = conversationLoaded()[botId] !== true;
     setConversationRevisions((current) => ({ ...current, [botId]: snapshot.revision }));
     setLiveMessages((current) => {
       const previous = current[botId] ?? [];
       const previousById = new Map(previous.map((message) => [message.id, message]));
-      const next = toBotMessages(snapshot.messages, botList()).map((mapped) => {
+      const mappedMessages = retainThinkingMessages(previous, toBotMessages(snapshot.messages));
+      const next = mappedMessages.map((mapped) => {
         const existing = previousById.get(mapped.id);
-        if (!existing) return createMutable(mapped);
+        if (!existing) return createMutable({ ...mapped, animate: !initialLoad });
         if (!botMessagesEqual(existing, mapped)) Object.assign(existing, mapped);
         return existing;
       });
@@ -267,7 +279,7 @@ export function App() {
     setCreatingAgent(true);
     try {
       const stored = await window.infeld.agent.createBot();
-      const newAgent = toBotProfile(stored);
+      const newAgent = createMutable(toBotProfile(stored));
       setBotList((current) => [newAgent, ...current.filter((item) => item.id !== newAgent.id)]);
       setLiveMessages((current) => ({ ...current, [newAgent.id]: [] }));
       setConversationLoaded((current) => ({ ...current, [newAgent.id]: true }));
@@ -327,17 +339,12 @@ export function App() {
   }
 
   async function updateBot(botId: string, updates: Omit<UpdateBotInput, "botId">) {
-    const previous = botList();
-    setBotList((current) =>
-      current.map((bot) => (bot.id === botId ? { ...bot, ...updates } : bot)),
-    );
     try {
       const stored = await window.infeld.agent.updateBot({ botId, ...updates });
-      setBotList((current) =>
-        current.map((bot) => (bot.id === botId ? toBotProfile(stored) : bot)),
-      );
+      const existing = botList().find((bot) => bot.id === botId);
+      if (existing) Object.assign(existing, toBotProfile(stored));
+      else setBotList((current) => [...current, createMutable(toBotProfile(stored))]);
     } catch (error) {
-      setBotList(previous);
       appendUiError(botId, error, "Settings failed");
       throw error;
     }
@@ -373,22 +380,28 @@ export function App() {
     }
   }
 
-  async function sendMessage(body: string, attachmentDraftIds: string[]): Promise<boolean> {
+  async function sendMessage(
+    body: string,
+    attachmentDraftIds: string[],
+    replyToMessageId: string | null,
+  ): Promise<boolean> {
     const bot = activeBot();
     if (!bot || (!body.trim() && attachmentDraftIds.length === 0)) return false;
-    return sendMessageToBot(bot.id, body, attachmentDraftIds);
+    return sendMessageToBot(bot.id, body, attachmentDraftIds, replyToMessageId);
   }
 
   async function sendMessageToBot(
     botId: string,
     body: string,
     attachmentDraftIds: string[],
+    replyToMessageId: string | null = null,
   ): Promise<boolean> {
     try {
       await window.infeld.agent.sendMessage({
         botId,
         text: body.trim(),
         attachmentDraftIds,
+        ...(replyToMessageId ? { replyToMessageId } : {}),
       });
       setUiErrors((current) => ({ ...current, [botId]: [] }));
       return true;
@@ -579,7 +592,6 @@ function toBotProfile(stored: BotSummary): BotProfile {
     model: stored.model,
     reasoningEffort: stored.reasoningEffort,
     threadId: stored.threadId,
-    initials: stored.name.slice(0, 1).toUpperCase(),
     accent:
       stored.name.toLowerCase() === "new agent"
         ? "neutral"
@@ -593,10 +605,7 @@ function toBotProfile(stored: BotSummary): BotProfile {
   };
 }
 
-function toBotMessage(message: ConversationMessage, bots: BotProfile[]): BotMessage {
-  const sender = message.senderBotId
-    ? (bots.find((bot) => bot.id === message.senderBotId)?.name ?? message.senderBotId)
-    : null;
+function toBotMessage(message: ConversationMessage): BotMessage {
   const exchangeSenderId = message.senderBotId ?? message.exchange?.senderBotId;
   return {
     id: message.id,
@@ -608,10 +617,10 @@ function toBotMessage(message: ConversationMessage, bots: BotProfile[]): BotMess
     itemType: message.itemType,
     kind: message.exchange ? "exchange" : "text",
     senderBotId: exchangeSenderId,
-    senderLabel: sender ? `Message from ${sender}` : undefined,
     replyToMessageId: message.replyToMessageId,
     attachments: message.attachments,
     exchange: message.exchange,
+    reaction: message.reaction,
     status: message.exchange
       ? undefined
       : message.delivery?.status === "queued"
@@ -626,12 +635,12 @@ function toBotMessage(message: ConversationMessage, bots: BotProfile[]): BotMess
   };
 }
 
-function toBotMessages(messages: ConversationMessage[], bots: BotProfile[]): BotMessage[] {
+function toBotMessages(messages: ConversationMessage[]): BotMessage[] {
   const result: BotMessage[] = [];
   const thinkingByTurn = new Map<string, BotMessage>();
   for (const message of messages) {
     if (message.author !== "assistant" || message.itemType !== "commentary") {
-      result.push(toBotMessage(message, bots));
+      result.push(toBotMessage(message));
       continue;
     }
 
@@ -680,12 +689,35 @@ function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
     left.itemType === right.itemType &&
     left.status === right.status &&
     left.senderBotId === right.senderBotId &&
-    left.senderLabel === right.senderLabel &&
     left.replyToMessageId === right.replyToMessageId &&
+    left.reaction === right.reaction &&
     JSON.stringify(left.attachments) === JSON.stringify(right.attachments) &&
     JSON.stringify(left.exchange) === JSON.stringify(right.exchange) &&
     JSON.stringify(left.items) === JSON.stringify(right.items)
   );
+}
+
+function retainThinkingMessages(previous: BotMessage[], next: BotMessage[]): BotMessage[] {
+  const result = [...next];
+  const nextIds = new Set(result.map((message) => message.id));
+  for (const thinking of previous) {
+    if (thinking.kind !== "thinking" || nextIds.has(thinking.id) || !thinking.turnId) continue;
+    const sameTurnIndexes = result.flatMap((message, index) =>
+      message.turnId === thinking.turnId ? [index] : [],
+    );
+    if (sameTurnIndexes.length === 0) continue;
+    const finalAnswerIndex = result.findIndex(
+      (message) =>
+        message.turnId === thinking.turnId &&
+        message.author === "bot" &&
+        message.kind !== "thinking",
+    );
+    const insertionIndex =
+      finalAnswerIndex >= 0 ? finalAnswerIndex : (sameTurnIndexes.at(-1) ?? result.length - 1) + 1;
+    result.splice(insertionIndex, 0, { ...thinking, streaming: false });
+    nextIds.add(thinking.id);
+  }
+  return result;
 }
 
 function formatTime(value: string): string {

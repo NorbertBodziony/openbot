@@ -8,6 +8,7 @@ export const IPC_CHANNELS = {
   agentDeleteBot: "agent:delete-bot",
   agentReadConversation: "agent:read-conversation",
   agentSendMessage: "agent:send-message",
+  agentSetMessageReaction: "agent:set-message-reaction",
   agentChooseAttachments: "agent:choose-attachments",
   agentImportAttachments: "agent:import-attachments",
   agentDiscardDraftAttachment: "agent:discard-draft-attachment",
@@ -73,9 +74,11 @@ export interface BotSummary {
   avatarColor: BotAvatarColor;
 }
 
-export type AgentModelId = "gpt-5.6-luna" | "gpt-5.6-terra" | "gpt-5.6-sol";
+export const AGENT_MODELS = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"] as const;
+export type AgentModelId = (typeof AGENT_MODELS)[number];
 
-export type AgentReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export const AGENT_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type AgentReasoningEffort = (typeof AGENT_REASONING_EFFORTS)[number];
 
 export interface AgentModelOption {
   id: AgentModelId;
@@ -85,28 +88,50 @@ export interface AgentModelOption {
   supportedReasoningEfforts: AgentReasoningEffort[];
 }
 
-export type BotAvatarShape =
-  | "blob"
-  | "pebble"
-  | "squircle"
-  | "tablet"
-  | "wedge"
-  | "hex"
-  | "cloud"
-  | "teardrop";
+export const BOT_AVATAR_SHAPES = [
+  "blob",
+  "pebble",
+  "squircle",
+  "tablet",
+  "wedge",
+  "hex",
+  "cloud",
+  "teardrop",
+] as const;
+export type BotAvatarShape = (typeof BOT_AVATAR_SHAPES)[number];
 
-export type BotAvatarColor =
-  | "black"
-  | "brown"
-  | "red"
-  | "orange"
-  | "yellow"
-  | "green"
-  | "cyan"
-  | "blue"
-  | "violet"
-  | "magenta"
-  | "gray";
+export const BOT_AVATAR_COLORS = [
+  "black",
+  "brown",
+  "red",
+  "orange",
+  "yellow",
+  "green",
+  "cyan",
+  "blue",
+  "violet",
+  "magenta",
+  "gray",
+] as const;
+export type BotAvatarColor = (typeof BOT_AVATAR_COLORS)[number];
+
+export function isAgentModel(value: unknown): value is AgentModelId {
+  return typeof value === "string" && AGENT_MODELS.includes(value as AgentModelId);
+}
+
+export function isReasoningEffort(value: unknown): value is AgentReasoningEffort {
+  return (
+    typeof value === "string" && AGENT_REASONING_EFFORTS.includes(value as AgentReasoningEffort)
+  );
+}
+
+export function isAvatarShape(value: unknown): value is BotAvatarShape {
+  return typeof value === "string" && BOT_AVATAR_SHAPES.includes(value as BotAvatarShape);
+}
+
+export function isAvatarColor(value: unknown): value is BotAvatarColor {
+  return typeof value === "string" && BOT_AVATAR_COLORS.includes(value as BotAvatarColor);
+}
 
 export interface UpdateBotInput {
   botId: string;
@@ -135,7 +160,7 @@ export interface AttachmentSummary {
   previewUrl: string | null;
 }
 
-export interface DraftAttachment extends AttachmentSummary {}
+export type DraftAttachment = AttachmentSummary;
 
 export interface AttachmentDataInput {
   name: string;
@@ -149,9 +174,9 @@ export interface ImportAttachmentsInput {
 }
 
 export type AttachmentImportEvent =
-  | { type: "started" }
-  | { type: "completed"; attachments: DraftAttachment[] }
-  | { type: "error"; message: string };
+  | { type: "started"; requestId: string }
+  | { type: "completed"; requestId: string; attachments: DraftAttachment[] }
+  | { type: "error"; requestId: string; message: string };
 
 export interface OpenAttachmentInput {
   attachmentId: string;
@@ -202,6 +227,18 @@ export interface ConversationMessage {
   attachments?: AttachmentSummary[];
   delivery?: Pick<QueueDelivery, "id" | "status" | "position">;
   exchange?: AgentExchangeSummary;
+  reaction?: MessageReaction | null;
+}
+
+export const MESSAGE_REACTIONS = ["👍", "👎", "❤️", "😂", "🎉", "😮"] as const;
+export const MORE_MESSAGE_REACTIONS = ["🔥", "👏", "🙏", "🤔", "👀", "✅", "🚀", "💯"] as const;
+export const ALL_MESSAGE_REACTIONS = [...MESSAGE_REACTIONS, ...MORE_MESSAGE_REACTIONS] as const;
+export type MessageReaction =
+  | (typeof MESSAGE_REACTIONS)[number]
+  | (typeof MORE_MESSAGE_REACTIONS)[number];
+
+export function isMessageReaction(value: unknown): value is MessageReaction {
+  return typeof value === "string" && ALL_MESSAGE_REACTIONS.includes(value as MessageReaction);
 }
 
 export interface AgentExchangeSummary {
@@ -225,6 +262,13 @@ export interface SendMessageInput {
   botId: string;
   text: string;
   attachmentDraftIds?: string[];
+  replyToMessageId?: string | null;
+}
+
+export interface SetMessageReactionInput {
+  botId: string;
+  messageId: string;
+  emoji: MessageReaction | null;
 }
 
 export interface QueuedMessageReceipt {
@@ -271,22 +315,6 @@ export type AgentEvent =
   | { type: "conversation"; snapshot: ConversationSnapshot }
   | { type: "queue-changed"; snapshot: QueueSnapshot }
   | { type: "turn-started"; botId: string; threadId: string; turnId: string }
-  | {
-      type: "assistant-delta";
-      botId: string;
-      threadId: string;
-      turnId: string;
-      itemId: string;
-      delta: string;
-    }
-  | {
-      type: "item";
-      botId: string;
-      threadId: string;
-      turnId: string;
-      phase: "started" | "completed";
-      item: unknown;
-    }
   | {
       type: "turn-completed";
       botId: string;
@@ -377,6 +405,7 @@ export interface AgentDesktopApi {
   discardDraftAttachment: (attachmentId: string) => Promise<void>;
   openAttachment: (input: OpenAttachmentInput) => Promise<void>;
   sendMessage: (input: SendMessageInput) => Promise<QueuedMessageReceipt>;
+  setMessageReaction: (input: SetMessageReactionInput) => Promise<void>;
   listQueue: (botId: string) => Promise<QueueSnapshot>;
   cancelQueuedMessage: (input: CancelQueuedMessageInput) => Promise<void>;
   setQueuePaused: (input: SetQueuePausedInput) => Promise<void>;

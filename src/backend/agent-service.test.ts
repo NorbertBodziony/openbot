@@ -29,7 +29,9 @@ afterEach(async () => {
   else process.env.INFELD_CODEX_PATH = originalCodexPath;
   delete process.env.INFELD_FAKE_CODEX_LOG;
   delete process.env.INFELD_FAKE_AGENT_TOOL;
+  delete process.env.INFELD_FAKE_AGENT_TOOL_PATHS;
   delete process.env.INFELD_FAKE_THREAD_READ_DELAY;
+  delete process.env.INFELD_FAKE_AUTO_COMPLETE;
   await rm(root, { recursive: true, force: true });
 });
 
@@ -158,8 +160,15 @@ describe.sequential("AgentService", () => {
     }
   });
 
-  it("fans out an idempotent agent tool message to other persistent bots", async () => {
+  it("fans out an idempotent agent tool message with referenced files", async () => {
     process.env.INFELD_FAKE_AGENT_TOOL = "1";
+    const notePath = join(root, "generated-note.txt");
+    const imagePath = join(root, "generated-image.png");
+    await Promise.all([
+      writeFile(notePath, "INFELD_SHARED_FILE_OK\n"),
+      writeFile(imagePath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+    ]);
+    process.env.INFELD_FAKE_AGENT_TOOL_PATHS = JSON.stringify([notePath, imagePath]);
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
@@ -177,6 +186,17 @@ describe.sequential("AgentService", () => {
     expect(sales.messageId).toBe(inbox.messageId);
     expect(sales.sender).toEqual({ kind: "bot", botId: "chief" });
     expect(sales.text).toBe("Please prepare your reports.");
+    expect(sales.attachments.map((item) => item.name)).toEqual([
+      "generated-note.txt",
+      "generated-image.png",
+    ]);
+    const managedNote = await mailbox.resolveAttachment(sales.attachments[0]?.id ?? "");
+    const managedImage = await mailbox.resolveAttachment(sales.attachments[1]?.id ?? "");
+    expect(managedNote?.path).not.toBe(notePath);
+    expect(managedImage?.path).not.toBe(imagePath);
+    await expect(readFile(managedNote?.path ?? "", "utf8")).resolves.toBe(
+      "INFELD_SHARED_FILE_OK\n",
+    );
 
     const chiefMessages = (await service.readConversation("chief")).messages;
     expect(chiefMessages).toEqual(
@@ -207,6 +227,74 @@ describe.sequential("AgentService", () => {
       "After completing the request, send a concise result back to Chief",
     );
     expect(salesInput?.[0]?.text).toContain(`replyToMessageId "${sales.messageId}"`);
+    expect(salesInput).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "mention",
+          name: "generated-note.txt",
+          path: expect.stringContaining("generated-note.txt"),
+        }),
+        expect.objectContaining({
+          type: "localImage",
+          path: expect.stringContaining("generated-image.png"),
+        }),
+      ]),
+    );
+  });
+
+  it("reliably relays a completed teammate result back through a reply chain without loops", async () => {
+    process.env.INFELD_FAKE_AUTO_COMPLETE = "AUTO_WEATHER_RESULT";
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    const rootMessage = await mailbox.enqueue({
+      sender: { kind: "bot", botId: "chief" },
+      recipientBotIds: ["sales-outbound"],
+      text: "Check the weather.",
+    });
+    const clarification = await mailbox.enqueue({
+      sender: { kind: "bot", botId: "sales-outbound" },
+      recipientBotIds: ["chief"],
+      text: "Which city?",
+      replyToMessageId: rootMessage.messageId,
+    });
+    const location = await mailbox.enqueue({
+      sender: { kind: "bot", botId: "chief" },
+      recipientBotIds: ["sales-outbound"],
+      text: "Kraków.",
+      replyToMessageId: clarification.messageId,
+    });
+
+    await service.setQueuePaused("sales-outbound", false);
+    await waitFor(() =>
+      service
+        ?.listQueue("chief")
+        .deliveries.some(
+          (delivery) =>
+            delivery.sender.kind === "bot" &&
+            delivery.sender.botId === "sales-outbound" &&
+            delivery.replyToMessageId === location.messageId,
+        ),
+    );
+    await waitFor(() =>
+      (service?.listQueue("chief").deliveries ?? []).every(
+        (delivery) => delivery.status === "completed",
+      ),
+    );
+
+    expect(await service.readConversation("chief")).toMatchObject({
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          author: "agent",
+          senderBotId: "sales-outbound",
+          text: "AUTO_WEATHER_RESULT",
+          replyToMessageId: location.messageId,
+        }),
+      ]),
+    });
+    expect(service.listQueue("sales-outbound").deliveries).toHaveLength(2);
+    expect(service.listQueue("chief").deliveries).toHaveLength(2);
   });
 
   it("merges a late thread read with a newer active stream", async () => {
@@ -375,7 +463,20 @@ process.stdin.on("data", (chunk) => {
         write({ method: "turn/started", params: { threadId: message.params.threadId, turn: { id: turnId } } });
         write({ method: "item/agentMessage/delta", params: { threadId: message.params.threadId, turnId, itemId: "message-" + turnId, delta: "Streaming" } });
         if (process.env.INFELD_FAKE_AGENT_TOOL === "1" && turnCounter === 1) {
-          setTimeout(() => write({ id: "agent-tool-1", method: "item/tool/call", params: { threadId: message.params.threadId, turnId, callId: "call-1", namespace: "infeld", tool: "send_message", arguments: { recipientBotIds: ["sales-outbound", "inbox-manager"], text: "Please prepare your reports." } } }), 30);
+          setTimeout(() => write({ id: "agent-tool-1", method: "item/tool/call", params: { threadId: message.params.threadId, turnId, callId: "call-1", namespace: "infeld", tool: "send_message", arguments: { recipientBotIds: ["sales-outbound", "inbox-manager"], text: "Please prepare your reports.", paths: JSON.parse(process.env.INFELD_FAKE_AGENT_TOOL_PATHS || "[]") } } }), 30);
+        }
+        if (process.env.INFELD_FAKE_AUTO_COMPLETE) {
+          setTimeout(() => {
+            const text = process.env.INFELD_FAKE_AUTO_COMPLETE;
+            const item = { type: "agentMessage", id: "message-" + turnId, text, phase: "final_answer" };
+            const turn = turns.get(turnId);
+            if (turn) {
+              turn.status = "completed";
+              turn.items = [item];
+            }
+            write({ method: "item/completed", params: { threadId: message.params.threadId, turnId, item } });
+            write({ method: "turn/completed", params: { threadId: message.params.threadId, turn: { id: turnId, status: "completed" } } });
+          }, 20);
         }
       }
       if (message.method === "turn/interrupt") {

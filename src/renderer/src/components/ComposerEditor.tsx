@@ -262,7 +262,6 @@ function renderEditorValue(editor: HTMLDivElement, value: string, bots: BotProfi
           model: "gpt-5.6-luna",
           reasoningEffort: "medium",
           threadId: null,
-          initials: name.slice(0, 1),
           accent: "neutral",
           avatarShape: "blob",
           avatarColor: "gray",

@@ -28,6 +28,11 @@ import {
   type ImportAttachmentsInput,
   type InterruptTurnInput,
   IPC_CHANNELS,
+  isAgentModel,
+  isAvatarColor,
+  isAvatarShape,
+  isMessageReaction,
+  isReasoningEffort,
   type OpenAttachmentInput,
   type RespondToPromptInput,
   type SendMessageInput,
@@ -85,7 +90,6 @@ function configureContentSecurityPolicy(): void {
     "object-src 'none'",
     "frame-src 'self' infeld-attachment:",
     "base-uri 'none'",
-    "frame-src 'none'",
   ].join("; ");
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -144,6 +148,11 @@ function registerIpcHandlers(
     assertTrustedSender(event.senderFrame);
     return service.sendMessage(parseSendMessage(input));
   });
+  ipcMain.handle(IPC_CHANNELS.agentSetMessageReaction, (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame);
+    const parsed = parseMessageReaction(input);
+    return service.setMessageReaction(parsed);
+  });
   ipcMain.handle(IPC_CHANNELS.agentChooseAttachments, async (event) => {
     assertTrustedSender(event.senderFrame);
     const options: OpenDialogOptions = { properties: ["openFile", "multiSelections"] };
@@ -164,13 +173,13 @@ function registerIpcHandlers(
   ipcMain.handle(IPC_CHANNELS.agentOpenAttachment, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame);
     const parsed = parseOpenAttachment(input);
-    const path = mailbox.resolveAttachmentPath(parsed.attachmentId);
-    if (!path) throw new Error("Attachment was not found.");
+    const attachment = await mailbox.resolveAttachment(parsed.attachmentId);
+    if (!attachment) throw new Error("Attachment was not found.");
     if (parsed.action === "reveal") {
-      shell.showItemInFolder(path);
+      shell.showItemInFolder(attachment.path);
       return;
     }
-    const error = await shell.openPath(path);
+    const error = await shell.openPath(attachment.path);
     if (error) throw new Error(error);
   });
   ipcMain.handle(IPC_CHANNELS.agentListQueue, (event, botId: unknown) => {
@@ -261,11 +270,14 @@ function createWindow(): BrowserWindow {
     if (!isTrustedRenderer(targetUrl)) event.preventDefault();
   });
 
-  const developmentUrl = process.env.ELECTRON_RENDERER_URL;
-  if (developmentUrl) void window.loadURL(developmentUrl);
-  else void window.loadFile(join(__dirname, "../renderer/index.html"));
-
   return window;
+}
+
+function loadRenderer(window: BrowserWindow): Promise<void> {
+  const developmentUrl = process.env.ELECTRON_RENDERER_URL;
+  return developmentUrl
+    ? window.loadURL(developmentUrl)
+    : window.loadFile(join(__dirname, "../renderer/index.html"));
 }
 
 function configureApplicationMenu(service: AgentService): void {
@@ -312,6 +324,7 @@ app.whenReady().then(async () => {
   agentService.on("event", forwardAgentEvent);
   registerIpcHandlers(agentService, mailboxStore, browserHost);
   configureApplicationMenu(agentService);
+  await loadRenderer(mainWindow);
   void agentService.initialize().catch((error) => {
     console.error("Unable to initialize the local Codex backend:", error);
   });
@@ -322,6 +335,7 @@ app.whenReady().then(async () => {
       return;
     }
     mainWindow = createWindow();
+    void loadRenderer(mainWindow);
   });
 });
 
@@ -379,7 +393,29 @@ function parseSendMessage(value: unknown): SendMessageInput {
   if (!value.text.trim() && attachmentDraftIds.length === 0) {
     throw new Error("A message or attachment is required.");
   }
-  return { botId: requireString(value.botId, "botId"), text: value.text, attachmentDraftIds };
+  const replyToMessageId = value.replyToMessageId ?? null;
+  if (replyToMessageId !== null && typeof replyToMessageId !== "string") {
+    throw new Error("Invalid reply target.");
+  }
+  return {
+    botId: requireString(value.botId, "botId"),
+    text: value.text,
+    attachmentDraftIds,
+    replyToMessageId: replyToMessageId?.trim() || null,
+  };
+}
+
+function parseMessageReaction(value: unknown) {
+  if (!isObject(value)) throw new Error("Invalid message reaction request.");
+  const emoji = value.emoji;
+  if (emoji !== null && !isMessageReaction(emoji)) {
+    throw new Error("Invalid message reaction.");
+  }
+  return {
+    botId: requireString(value.botId, "botId"),
+    messageId: requireString(value.messageId, "messageId"),
+    emoji,
+  };
 }
 
 function parseUpdateBot(value: unknown): UpdateBotInput {
@@ -412,38 +448,6 @@ function parseUpdateBot(value: unknown): UpdateBotInput {
     result.avatarColor = value.avatarColor;
   }
   return result;
-}
-
-function isAgentModel(value: unknown): value is NonNullable<UpdateBotInput["model"]> {
-  return ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"].includes(value as string);
-}
-
-function isReasoningEffort(
-  value: unknown,
-): value is NonNullable<UpdateBotInput["reasoningEffort"]> {
-  return ["low", "medium", "high", "xhigh", "max"].includes(value as string);
-}
-
-function isAvatarShape(value: unknown): value is NonNullable<UpdateBotInput["avatarShape"]> {
-  return ["blob", "pebble", "squircle", "tablet", "wedge", "hex", "cloud", "teardrop"].includes(
-    value as string,
-  );
-}
-
-function isAvatarColor(value: unknown): value is NonNullable<UpdateBotInput["avatarColor"]> {
-  return [
-    "black",
-    "brown",
-    "red",
-    "orange",
-    "yellow",
-    "green",
-    "cyan",
-    "blue",
-    "violet",
-    "magenta",
-    "gray",
-  ].includes(value as string);
 }
 
 function parseImportAttachments(value: unknown): ImportAttachmentsInput {
@@ -497,11 +501,11 @@ function configureAttachmentProtocol(mailbox: MailboxStore): void {
     try {
       const url = new URL(request.url);
       const id = url.pathname.split("/").filter(Boolean).at(-1);
-      const path = id ? mailbox.resolveAttachmentPath(id) : null;
-      if (!path) return new Response("Not found", { status: 404 });
-      return new Response(await readFile(path), {
+      const attachment = id ? await mailbox.resolveAttachment(id) : null;
+      if (!attachment) return new Response("Not found", { status: 404 });
+      return new Response(await readFile(attachment.path), {
         headers: {
-          "Content-Type": attachmentContentType(path),
+          "Content-Type": attachment.mimeType,
           "Cache-Control": "no-store",
           "X-Content-Type-Options": "nosniff",
           "Content-Disposition": "inline",
@@ -511,19 +515,6 @@ function configureAttachmentProtocol(mailbox: MailboxStore): void {
       return new Response("Not found", { status: 404 });
     }
   });
-}
-
-function attachmentContentType(path: string): string {
-  if (/\.png$/i.test(path)) return "image/png";
-  if (/\.jpe?g$/i.test(path)) return "image/jpeg";
-  if (/\.gif$/i.test(path)) return "image/gif";
-  if (/\.webp$/i.test(path)) return "image/webp";
-  if (/\.avif$/i.test(path)) return "image/avif";
-  if (/\.pdf$/i.test(path)) return "application/pdf";
-  if (/\.(txt|md|markdown|csv|json|log|xml|ya?ml|tsx?|jsx?|css|html?)$/i.test(path)) {
-    return "text/plain; charset=utf-8";
-  }
-  return "application/octet-stream";
 }
 
 function parseInterrupt(value: unknown): InterruptTurnInput {

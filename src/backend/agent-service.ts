@@ -4,7 +4,6 @@ import type {
   AgentEvent,
   AgentModelOption,
   AgentPromptQuestion,
-  AgentReasoningEffort,
   AgentStatus,
   AttachmentDataInput,
   BotSummary,
@@ -15,8 +14,10 @@ import type {
   QueueSnapshot,
   RespondToPromptInput,
   SendMessageInput,
+  SetMessageReactionInput,
   UpdateBotInput,
 } from "../shared/ipc";
+import { isReasoningEffort } from "../shared/ipc";
 import { CodexAppServerClient } from "./app-server-client";
 import type { BotStore } from "./bot-store";
 import { BROWSER_DYNAMIC_TOOLS, type BrowserHost, INFELD_BROWSER_NAMESPACE } from "./browser-host";
@@ -109,6 +110,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingPrompts = new Map<RequestId, PendingPrompt>();
   readonly #itemTurns = new Map<string, string>();
   readonly #drainingBots = new Set<string>();
+  readonly #scheduledDrains = new Set<string>();
   readonly #lastConversationSignatures = new Map<string, string>();
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
   #client: CodexAppServerClient | null = null;
@@ -185,6 +187,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#snapshots.delete(botId);
     this.#lastConversationSignatures.delete(botId);
     this.#drainingBots.delete(botId);
+    this.#scheduledDrains.delete(botId);
     if (bot.threadId) {
       this.#threadToBot.delete(bot.threadId);
       this.#loadedThreads.delete(bot.threadId);
@@ -242,7 +245,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return structuredClone(snapshot);
     } catch (error) {
       this.#emitError("thread_read_failed", error, botId);
-      return structuredClone(this.#ensureSnapshot(botId, bot.threadId));
+      const snapshot = this.#ensureSnapshot(botId, bot.threadId);
+      this.#syncMailboxMessages(snapshot);
+      return structuredClone(snapshot);
     }
   }
 
@@ -284,6 +289,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       recipientBotIds: [bot.id],
       text: input.text,
       draftIds: input.attachmentDraftIds ?? [],
+      replyToMessageId: input.replyToMessageId ?? null,
     });
     const delivery = this.#mailbox.getDelivery(receipt.deliveries[0].id);
     if (!delivery) throw new Error("Unable to create queued message.");
@@ -298,6 +304,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#emitQueue(bot.id);
     this.#scheduleDrain(bot.id);
     return receipt;
+  }
+
+  async setMessageReaction(input: SetMessageReactionInput): Promise<void> {
+    const bot = await this.#store.getOrCreate(input.botId);
+    const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
+    if (!snapshot.messages.some((message) => message.id === input.messageId)) {
+      await this.readConversation(bot.id);
+    }
+    const current = this.#ensureSnapshot(bot.id, bot.threadId);
+    if (!current.messages.some((message) => message.id === input.messageId)) {
+      throw new Error("The message is no longer available.");
+    }
+    await this.#mailbox.setReaction(bot.id, input.messageId, input.emoji);
+    this.#syncMailboxMessages(current);
+    this.#emitConversation(current);
   }
 
   async interrupt(botId: string, turnId: string): Promise<void> {
@@ -346,9 +367,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       message: phase === "starting" ? "Starting local Codex…" : "Restarting local Codex…",
     });
 
+    let client: CodexAppServerClient | null = null;
     try {
       this.#cli = await resolveCodexCli();
-      const client = new CodexAppServerClient(this.#cli.executable);
+      client = new CodexAppServerClient(this.#cli.executable);
       this.#bindClient(client);
       client.start();
       this.#client = client;
@@ -377,6 +399,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           capabilities: { ...this.#status.capabilities, chat: "unavailable" },
           message: "Run `codex login`, then restart Infeld Bot.",
         });
+        this.#client = null;
+        await client.stop();
         return;
       }
       if (account.account.type !== "chatgpt") {
@@ -387,6 +411,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           capabilities: { ...this.#status.capabilities, chat: "unavailable" },
           message: "Infeld requires a ChatGPT subscription login. Run `codex login`.",
         });
+        this.#client = null;
+        await client.stop();
         return;
       }
 
@@ -404,6 +430,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.#reconcileUnresolvedDeliveries(client);
       for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
     } catch (error) {
+      if (this.#restartTimer) clearTimeout(this.#restartTimer);
+      this.#restartTimer = null;
+      if (client) {
+        if (this.#client === client) this.#client = null;
+        await client.stop().catch(() => undefined);
+      }
       const message = error instanceof Error ? error.message : String(error);
       this.#setStatus({
         phase: "blocked",
@@ -642,8 +674,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   #scheduleDrain(botId: string): void {
-    if (this.#status.phase !== "ready" || this.#drainingBots.has(botId)) return;
-    queueMicrotask(() => void this.#drainBot(botId));
+    if (
+      this.#status.phase !== "ready" ||
+      this.#drainingBots.has(botId) ||
+      this.#scheduledDrains.has(botId)
+    ) {
+      return;
+    }
+    this.#scheduledDrains.add(botId);
+    queueMicrotask(() => {
+      this.#scheduledDrains.delete(botId);
+      void this.#drainBot(botId);
+    });
   }
 
   async #drainBot(botId: string): Promise<void> {
@@ -681,6 +723,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
 
       let text = delivery.text || "The user shared attached local files.";
+      if (delivery.sender.kind === "user" && delivery.replyToMessageId) {
+        const referenced = snapshot.messages.find(
+          (message) => message.id === delivery.replyToMessageId,
+        );
+        text = [
+          `The user is replying to message ${delivery.replyToMessageId}.`,
+          "--- referenced message ---",
+          referenced?.text || "(The referenced message is unavailable.)",
+          "--- user reply ---",
+          delivery.text || "(The reply contains attachments only.)",
+        ].join("\n");
+      }
       if (delivery.sender.kind === "bot") {
         const senderBotId = delivery.sender.botId;
         const sender = this.#store.list().find((candidate) => candidate.id === senderBotId);
@@ -849,10 +903,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   #syncMailboxMessages(snapshot: ConversationSnapshot): void {
+    const indexes = new Map(snapshot.messages.map((message, index) => [message.id, index]));
     for (const mailboxMessage of this.#mailbox.conversationMessages(snapshot.botId)) {
-      const index = snapshot.messages.findIndex((message) => message.id === mailboxMessage.id);
-      if (index >= 0) snapshot.messages[index] = mailboxMessage;
-      else snapshot.messages.push(mailboxMessage);
+      const index = indexes.get(mailboxMessage.id);
+      if (index !== undefined) snapshot.messages[index] = mailboxMessage;
+      else {
+        indexes.set(mailboxMessage.id, snapshot.messages.length);
+        snapshot.messages.push(mailboxMessage);
+      }
+    }
+    const reactions = this.#mailbox.reactionsFor(snapshot.botId);
+    for (const message of snapshot.messages) {
+      message.reaction = reactions.get(message.id) ?? null;
     }
     sortConversationMessages(snapshot.messages);
   }
@@ -900,14 +962,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           item as ThreadItem,
           notification.method === "item/completed",
         );
-        this.#emit({
-          type: "item",
-          botId,
-          threadId,
-          turnId,
-          phase: notification.method === "item/completed" ? "completed" : "started",
-          item,
-        });
         return;
       }
       case "item/agentMessage/delta": {
@@ -925,7 +979,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         message.text += delta;
         message.status = "streaming";
-        this.#emit({ type: "assistant-delta", botId, threadId, turnId, itemId, delta });
         this.#emitConversation(snapshot);
         return;
       }
@@ -971,21 +1024,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       message.status = normalizeCompletionStatus(status);
     }
     const delivery = this.#mailbox.findDeliveryByTurn(turnId);
+    const latestAssistant = [...snapshot.messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.author === "assistant" &&
+          message.turnId === turnId &&
+          message.itemType !== "commentary" &&
+          message.text.trim(),
+      );
     if (delivery) {
       const terminal =
         status === "failed" ? "failed" : status === "interrupted" ? "interrupted" : "completed";
       await this.#mailbox.markTerminal(delivery.delivery.id, terminal);
       this.#syncDeliveryMessage(snapshot, delivery.delivery.id);
       this.#emitQueue(botId);
+      if (terminal === "completed" && latestAssistant && delivery.delivery.sender.kind === "bot") {
+        await this.#relayAgentResult(botId, turnId, delivery, latestAssistant.text);
+      }
     }
-    const latestAssistant = [...snapshot.messages]
-      .reverse()
-      .find(
-        (message) =>
-          message.author === "assistant" &&
-          message.itemType !== "commentary" &&
-          message.text.trim(),
-      );
     if (latestAssistant) {
       await this.#store.updatePreview(botId, latestAssistant.text);
       this.#emit({ type: "bots-changed", bots: this.#store.list() });
@@ -993,6 +1050,40 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#emit({ type: "turn-completed", botId, threadId, turnId, status });
     this.#emitConversation(snapshot);
     this.#scheduleDrain(botId);
+  }
+
+  async #relayAgentResult(
+    botId: string,
+    turnId: string,
+    delivery: DeliveryContext,
+    text: string,
+  ): Promise<void> {
+    if (delivery.delivery.sender.kind !== "bot") return;
+    const messageId = delivery.delivery.messageId;
+    const originBotId = this.#mailbox.chainOriginBotId(messageId);
+    const recipientBotId = delivery.delivery.sender.botId;
+    if (
+      !originBotId ||
+      originBotId === botId ||
+      this.#mailbox.hasReplyFrom(botId, messageId) ||
+      this.#mailbox.hasBotMessageFromTurnTo(botId, turnId, recipientBotId)
+    )
+      return;
+
+    await this.#mailbox.enqueue({
+      sender: { kind: "bot", botId },
+      recipientBotIds: [recipientBotId],
+      text,
+      replyToMessageId: messageId,
+      idempotencyKey: `auto-result:${turnId}:${messageId}`,
+    });
+    const senderSnapshot = this.#snapshots.get(botId);
+    if (senderSnapshot) {
+      this.#syncMailboxMessages(senderSnapshot);
+      this.#emitConversation(senderSnapshot);
+    }
+    this.#emitQueue(recipientBotId);
+    this.#scheduleDrain(recipientBotId);
   }
 
   #applyItem(
@@ -1324,10 +1415,6 @@ function isDynamicToolCall(value: unknown): value is DynamicToolCallParams {
     typeof value.tool === "string" &&
     "arguments" in value
   );
-}
-
-function isReasoningEffort(value: unknown): value is AgentReasoningEffort {
-  return ["low", "medium", "high", "xhigh", "max"].includes(value as AgentReasoningEffort);
 }
 
 function cleanModelName(value: string | undefined, fallback: string): string {
