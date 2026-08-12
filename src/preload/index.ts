@@ -4,7 +4,7 @@ import {
   type AttachmentImportEvent,
   type ImportAttachmentsInput,
   IPC_CHANNELS,
-  type OpenbotDesktopApi,
+  type OpenBotDesktopApi,
   type UpdateStatus,
 } from "../shared/ipc";
 
@@ -61,7 +61,7 @@ window.addEventListener("paste", (event) => {
   }
 });
 
-const openbotApi: OpenbotDesktopApi = {
+const openbotApi: OpenBotDesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC_CHANNELS.getAppInfo),
   openExternal: (destination) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, destination),
   agent: {

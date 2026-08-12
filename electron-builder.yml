@@ -1,5 +1,5 @@
 appId: app.openbot.desktop
-productName: Openbot
+productName: OpenBot
 asar: true
 artifactName: ${productName}-${version}-${arch}.${ext}
 electronUpdaterCompatibility: ">=2.16"

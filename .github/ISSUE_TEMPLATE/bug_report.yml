@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible problem in Openbot.
+description: Report a reproducible problem in OpenBot.
 title: "[Bug]: "
 labels: [bug, needs-triage]
 body:
@@ -11,7 +11,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Openbot version or commit
+      label: OpenBot version or commit
       placeholder: v0.1.0 or commit SHA
     validations:
       required: true

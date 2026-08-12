@@ -60,7 +60,7 @@ let isQuitting = false;
 let shutdownStarted = false;
 
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
-  feedback: "https://x.com/intent/post?text=Feedback%20for%20Openbot%20%40norbertbodziony%3A%20",
+  feedback: "https://x.com/intent/post?text=Feedback%20for%20OpenBot%20%40norbertbodziony%3A%20",
   message: "https://x.com/norbertbodziony",
 };
 
@@ -279,7 +279,7 @@ function createWindow(): BrowserWindow {
     minHeight: 640,
     show: false,
     backgroundColor: "#0b0d0e",
-    title: "Openbot",
+    title: "OpenBot",
     titleBarStyle: "hidden",
     trafficLightPosition: { x: 13, y: 14 },
     webPreferences: {

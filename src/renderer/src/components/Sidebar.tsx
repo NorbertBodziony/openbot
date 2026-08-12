@@ -195,9 +195,9 @@ export function Sidebar(props: SidebarProps) {
     const auth = props.agentStatus.auth;
     return auth.kind === "chatgpt" ? auth.email : null;
   });
-  const accountName = createMemo(() => accountEmail() ?? "Openbot");
+  const accountName = createMemo(() => accountEmail() ?? "OpenBot");
   const accountInitials = createMemo(() => {
-    const localPart = accountEmail()?.split("@")[0] ?? "Openbot";
+    const localPart = accountEmail()?.split("@")[0] ?? "OpenBot";
     const parts = localPart.split(/[._\-\s]+/).filter(Boolean);
     return (
       parts.length > 1 ? `${parts[0]?.[0]}${parts[1]?.[0]}` : localPart.slice(0, 2)
@@ -358,7 +358,7 @@ export function Sidebar(props: SidebarProps) {
     void props
       .onUpdateAction()
       .catch((error) =>
-        setAccountError(error instanceof Error ? error.message : "Could not update Openbot."),
+        setAccountError(error instanceof Error ? error.message : "Could not update OpenBot."),
       );
   }
 
@@ -535,7 +535,7 @@ export function Sidebar(props: SidebarProps) {
           </span>
           <Show when={updateAvailable()}>
             <span class="sidebar-update-pill">Update</span>
-            <span class="sr-only">Openbot update available</span>
+            <span class="sr-only">OpenBot update available</span>
           </Show>
         </button>
       </div>
@@ -605,7 +605,7 @@ export function Sidebar(props: SidebarProps) {
                 />
                 <h2 id="bot-delete-title">Delete {bot().name}?</h2>
                 <p id="bot-delete-description">
-                  This removes the agent and conversation from Openbot. Its local workspace stays on
+                  This removes the agent and conversation from OpenBot. Its local workspace stays on
                   your Mac.
                 </p>
                 <Show when={deleteError()}>

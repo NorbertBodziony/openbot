@@ -37,7 +37,7 @@ export async function resolveCodexCli(): Promise<CodexCliInfo> {
       const version = parseCodexVersion(stdout);
       if (!isMinimumVersion(version)) {
         throw new CodexCliError(
-          `Codex CLI ${version} is too old. Openbot requires 0.144.1 or newer.`,
+          `Codex CLI ${version} is too old. OpenBot requires 0.144.1 or newer.`,
           "outdated",
         );
       }
@@ -49,7 +49,7 @@ export async function resolveCodexCli(): Promise<CodexCliInfo> {
   }
 
   throw new CodexCliError(
-    "Codex CLI was not found. Install Codex, run `codex login`, then restart Openbot.",
+    "Codex CLI was not found. Install Codex, run `codex login`, then restart OpenBot.",
     "missing",
   );
 }

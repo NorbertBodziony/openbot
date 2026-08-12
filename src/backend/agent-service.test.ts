@@ -38,7 +38,7 @@ afterEach(async () => {
 });
 
 describe.sequential("AgentService", () => {
-  it("creates independent full-access threads with browser and Openbot tools", async () => {
+  it("creates independent full-access threads with browser and OpenBot tools", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser(), () => ({
       screenRecording: true,

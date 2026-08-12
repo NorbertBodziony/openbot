@@ -1,6 +1,6 @@
-# Releasing Openbot
+# Releasing OpenBot
 
-Openbot updates are published through GitHub Releases and installed with `electron-updater`.
+OpenBot updates are published through GitHub Releases and installed with `electron-updater`.
 macOS requires every auto-updatable build to be signed with a Developer ID Application certificate.
 The release workflow also notarizes and staples the application before publishing it.
 
@@ -39,7 +39,7 @@ The workflow:
 4. verifies the signature, notarization ticket, and `latest-mac.yml`;
 5. publishes a non-draft GitHub Release with checksums and update metadata.
 
-Installed Openbot builds check for updates shortly after launch and every four hours. Updates are
+Installed OpenBot builds check for updates shortly after launch and every four hours. Updates are
 never downloaded without a user action. The account popover shows the current state and lets the user
 download an available version, then restart into it.
 

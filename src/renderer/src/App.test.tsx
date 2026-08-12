@@ -25,7 +25,7 @@ const BOTS: BotSummary[] = [
     avatarShape: "blob",
     avatarColor: "orange",
     threadId: "thread-chief",
-    workspacePath: "/tmp/Openbot/Bots/chief",
+    workspacePath: "/tmp/OpenBot/Bots/chief",
     preview: "No messages yet",
     updatedAt: null,
   },
@@ -40,13 +40,13 @@ const BOTS: BotSummary[] = [
     avatarShape: "cloud",
     avatarColor: "violet",
     threadId: null,
-    workspacePath: "/tmp/Openbot/Bots/sales-outbound",
+    workspacePath: "/tmp/OpenBot/Bots/sales-outbound",
     preview: "No messages yet",
     updatedAt: null,
   },
 ];
 
-describe("Openbot connected desktop shell", () => {
+describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {
     emitAgentEvent = undefined;
     emitAttachmentImport = undefined;
@@ -57,7 +57,7 @@ describe("Openbot connected desktop shell", () => {
       value: {
         getAppInfo: vi
           .fn()
-          .mockResolvedValue({ name: "Openbot", version: "0.1.0", platform: "darwin" }),
+          .mockResolvedValue({ name: "OpenBot", version: "0.1.0", platform: "darwin" }),
         openExternal: vi.fn().mockResolvedValue(undefined),
         agent: {
           getStatus: vi.fn().mockResolvedValue({
@@ -852,7 +852,7 @@ describe("Openbot connected desktop shell", () => {
             id: "commentary-open",
             turnId: "turn-open",
             author: "assistant",
-            text: "I’ll open x.com in the Openbot browser.",
+            text: "I’ll open x.com in the OpenBot browser.",
             createdAt: "2026-08-12T10:00:01.000Z",
             status: "completed",
             itemType: "commentary",
@@ -881,14 +881,14 @@ describe("Openbot connected desktop shell", () => {
 
     const thinkingLabel = await screen.findByText("Thinking");
     const details = thinkingLabel.closest("details");
-    expect(screen.getByText("I’ll open x.com in the Openbot browser.")).not.toBeVisible();
+    expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).not.toBeVisible();
     expect(screen.getByText("Checking that the page loaded.")).not.toBeVisible();
     expect(screen.getByText("Opened x.com.")).toBeVisible();
     expect(screen.getAllByText("Thinking")).toHaveLength(1);
 
     await fireEvent.click(thinkingLabel);
     expect(details).toHaveAttribute("open");
-    expect(screen.getByText("I’ll open x.com in the Openbot browser.")).toBeVisible();
+    expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).toBeVisible();
 
     emitAgentEvent?.({
       type: "conversation",
@@ -919,7 +919,7 @@ describe("Openbot connected desktop shell", () => {
       },
     });
     await waitFor(() => expect(screen.getByText("Thinking").closest("details")).toBe(details));
-    expect(screen.getByText("I’ll open x.com in the Openbot browser.")).toBeVisible();
+    expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).toBeVisible();
   });
 
   it("keeps text and attachments when enqueue fails", async () => {

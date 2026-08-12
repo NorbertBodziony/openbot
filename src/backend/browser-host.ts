@@ -62,7 +62,7 @@ export const BROWSER_DYNAMIC_TOOLS = [
   {
     type: "namespace",
     name: OPENBOT_BROWSER_NAMESPACE,
-    description: "Operate Openbot's private, persistent local browser.",
+    description: "Operate OpenBot's private, persistent local browser.",
     tools: [
       functionTool("open", "Open an HTTP(S) URL in a new tab.", {
         type: "object",

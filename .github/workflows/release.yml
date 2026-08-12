@@ -82,7 +82,7 @@ jobs:
       - name: Verify application signature and notarization
         shell: bash
         run: |
-          app_path="dist/mac-arm64/Openbot.app"
+          app_path="dist/mac-arm64/OpenBot.app"
           test -d "$app_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
           spctl --assess --type execute --verbose=2 "$app_path"
@@ -123,5 +123,5 @@ jobs:
               "${artifacts[@]}" \
               --generate-notes \
               --latest \
-              --title "Openbot $RELEASE_TAG"
+              --title "OpenBot $RELEASE_TAG"
           fi

@@ -1,6 +1,6 @@
-# Contributing to Openbot
+# Contributing to OpenBot
 
-Thanks for helping improve Openbot. Small, focused pull requests with clear verification are the
+Thanks for helping improve OpenBot. Small, focused pull requests with clear verification are the
 easiest to review.
 
 ## Before opening an issue
@@ -8,7 +8,7 @@ easiest to review.
 - Search existing issues first.
 - Use the security process in `SECURITY.md` for vulnerabilities.
 - Remove credentials, private file paths, conversation contents, and personal data from diagnostics.
-- Include the Openbot version, macOS version, Mac architecture, Codex CLI version, and reproduction
+- Include the OpenBot version, macOS version, Mac architecture, Codex CLI version, and reproduction
   steps for bugs.
 
 ## Development setup

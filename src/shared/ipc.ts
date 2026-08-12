@@ -478,7 +478,7 @@ export interface UpdateDesktopApi {
   onEvent: (listener: (status: UpdateStatus) => void) => () => void;
 }
 
-export interface OpenbotDesktopApi {
+export interface OpenBotDesktopApi {
   getAppInfo: () => Promise<AppInfo>;
   openExternal: (destination: ExternalDestination) => Promise<void>;
   agent: AgentDesktopApi;

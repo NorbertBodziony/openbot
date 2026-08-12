@@ -142,7 +142,7 @@ export function App() {
       window.openbot
         .getAppInfo()
         .then(setAppInfo)
-        .catch(() => setAppInfo({ name: "Openbot", version: "unavailable", platform: "darwin" })),
+        .catch(() => setAppInfo({ name: "OpenBot", version: "unavailable", platform: "darwin" })),
       window.openbot.agent
         .getStatus()
         .then(setAgentStatus)

@@ -19,7 +19,7 @@ try {
   await client.request("initialize", {
     clientInfo: {
       name: "openbot_filesystem_smoke",
-      title: "Openbot Filesystem Smoke",
+      title: "OpenBot Filesystem Smoke",
       version: "0.1.0",
     },
     capabilities: { experimentalApi: true },

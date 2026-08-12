@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Openbot will be documented here. The project follows
+All notable changes to OpenBot will be documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
@@ -19,4 +19,5 @@ All notable changes to Openbot will be documented here. The project follows
 
 ### Changed
 
-- Replaced the remaining third-party-inspired avatar SVG with an original Openbot placeholder mark.
+- Standardized the product name and all user-facing branding as `OpenBot`.
+- Replaced the remaining third-party-inspired avatar SVG with an original OpenBot placeholder mark.

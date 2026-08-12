@@ -1,6 +1,6 @@
 {
   "name": "openbot",
-  "productName": "Openbot",
+  "productName": "OpenBot",
   "version": "0.1.0",
   "description": "A local-first multi-agent desktop workspace powered by Codex App Server.",
   "author": {
