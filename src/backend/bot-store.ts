@@ -20,7 +20,7 @@ import { isRecord } from "./protocol";
 type StoredBot = BotSummary;
 
 interface StoredState {
-  version: 6;
+  version: 1;
   examplesInitialized: boolean;
   bots: StoredBot[];
 }
@@ -73,12 +73,12 @@ export class BotStore {
   readonly #botsRoot: string;
   readonly #sharedRoot: string;
   readonly #downloadsRoot: string;
-  #state: StoredState = { version: 6, examplesInitialized: false, bots: [] };
+  #state: StoredState = { version: 1, examplesInitialized: false, bots: [] };
   #writeQueue: Promise<void> = Promise.resolve();
 
   constructor(userDataPath: string, homePath: string) {
     const openbotRoot = join(homePath, "OpenBot");
-    this.#statePath = join(userDataPath, "agent-state.json");
+    this.#statePath = join(userDataPath, "bots.json");
     this.#botsRoot = join(openbotRoot, "Bots");
     this.#sharedRoot = join(openbotRoot, "Shared");
     this.#downloadsRoot = join(openbotRoot, "Downloads");
@@ -178,9 +178,9 @@ export class BotStore {
       const parsed: unknown = JSON.parse(await readFile(this.#statePath, "utf8"));
       if (
         !isRecord(parsed) ||
+        parsed.version !== 1 ||
+        typeof parsed.examplesInitialized !== "boolean" ||
         !Array.isArray(parsed.bots) ||
-        (parsed.version !== undefined &&
-          (typeof parsed.version !== "number" || parsed.version < 1 || parsed.version > 6)) ||
         !parsed.bots.every(isStoredBot)
       ) {
         throw new Error(
@@ -188,43 +188,14 @@ export class BotStore {
         );
       }
 
-      const bots = parsed.bots.map((bot) => {
-        const example = DEFAULT_BOTS.find(([id]) => id === bot.id);
-        const untouched = bot.threadId === null && bot.updatedAt === null;
-        return {
-          ...bot,
-          description:
-            typeof bot.description === "string" && bot.description
-              ? bot.description
-              : untouched
-                ? (example?.[3] ?? "")
-                : "",
-          notifications: typeof bot.notifications === "boolean" ? bot.notifications : true,
-          model: isAgentModel(bot.model) ? bot.model : DEFAULT_AGENT_MODEL,
-          reasoningEffort: isReasoningEffort(bot.reasoningEffort)
-            ? bot.reasoningEffort
-            : DEFAULT_REASONING_EFFORT,
-          preview:
-            untouched && bot.preview === "Ready for a local task."
-              ? "No messages yet"
-              : bot.preview,
-          // MVP migration: old App Server threads do not contain the new dynamic tools.
-          threadId: typeof parsed.version === "number" && parsed.version >= 2 ? bot.threadId : null,
-          avatarShape: isAvatarShape(bot.avatarShape)
-            ? bot.avatarShape
-            : defaultAvatarShape(bot.id),
-          avatarColor: isAvatarColor(bot.avatarColor)
-            ? bot.avatarColor
-            : defaultAvatarColor(bot.id),
-        };
-      });
+      const bots = parsed.bots.map((bot) => ({ ...bot }));
       if (new Set(bots.map((bot) => bot.id)).size !== bots.length) {
         throw new Error("Agent state contains duplicate bot ids; refusing to overwrite it.");
       }
-      return { version: 6, examplesInitialized: true, bots };
+      return { version: 1, examplesInitialized: parsed.examplesInitialized, bots };
     } catch (error) {
       if (isRecord(error) && error.code === "ENOENT") {
-        return { version: 6, examplesInitialized: false, bots: [] };
+        return { version: 1, examplesInitialized: false, bots: [] };
       }
       throw error;
     }
@@ -299,10 +270,16 @@ function isStoredBot(value: unknown): value is StoredBot {
     isValidBotId(value.id) &&
     typeof value.name === "string" &&
     typeof value.role === "string" &&
+    typeof value.description === "string" &&
+    typeof value.notifications === "boolean" &&
+    isAgentModel(value.model) &&
+    isReasoningEffort(value.reasoningEffort) &&
     (typeof value.threadId === "string" || value.threadId === null) &&
     typeof value.workspacePath === "string" &&
     typeof value.preview === "string" &&
-    (typeof value.updatedAt === "string" || value.updatedAt === null)
+    (typeof value.updatedAt === "string" || value.updatedAt === null) &&
+    isAvatarShape(value.avatarShape) &&
+    isAvatarColor(value.avatarColor)
   );
 }
 

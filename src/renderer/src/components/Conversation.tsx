@@ -5,6 +5,7 @@ import type {
   AgentModelOption,
   AgentPromptQuestion,
   AgentReasoningEffort,
+  AgentStatus,
   AttachmentSummary,
   BotAvatarColor,
   BotAvatarShape,
@@ -25,6 +26,7 @@ import { PanelResizer, readPanelWidth, savePanelWidth } from "./PanelResizer";
 import { SidebarToggleIcon } from "./Sidebar";
 
 interface ConversationProps {
+  agentStatus: AgentStatus;
   bot: BotProfile | undefined;
   bots: BotProfile[];
   modelOptions: AgentModelOption[];
@@ -56,6 +58,7 @@ interface ConversationProps {
   onActivateBrowserTab: (tabId: string) => void;
   onCloseBrowserTab: (tabId: string) => void;
   onToggleLeftSidebar: () => void;
+  onOpenCodexSetup: () => Promise<void>;
   onStop: () => void;
 }
 
@@ -833,6 +836,7 @@ function ThinkingDisclosure(props: { message: BotMessage }) {
 }
 
 export function Conversation(props: ConversationProps) {
+  const agentReady = () => props.agentStatus.phase === "ready";
   const [drafts, setDrafts] = createSignal<Record<string, ComposerDraft>>({});
   const [showAttachments, setShowAttachments] = createSignal(false);
   const [attachmentBusy, setAttachmentBusy] = createSignal(false);
@@ -1541,12 +1545,46 @@ export function Conversation(props: ConversationProps) {
         }}
       >
         <Show when={!props.agentPickerOpen && props.loaded}>
+          <Show when={!agentReady()}>
+            <section class="agent-setup-card" role="status">
+              <div>
+                <strong>
+                  {props.agentStatus.phase === "starting" ||
+                  props.agentStatus.phase === "restarting"
+                    ? "Connecting to Codex…"
+                    : "Codex setup required"}
+                </strong>
+                <p>
+                  {props.agentStatus.message ??
+                    "Install the Codex CLI, sign in with ChatGPT, then restart OpenBot."}
+                </p>
+              </div>
+              <Show
+                when={
+                  props.agentStatus.phase !== "starting" && props.agentStatus.phase !== "restarting"
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() =>
+                    void props
+                      .onOpenCodexSetup()
+                      .catch((error) =>
+                        setComposerError(error instanceof Error ? error.message : String(error)),
+                      )
+                  }
+                >
+                  Setup guide
+                </button>
+              </Show>
+            </section>
+          </Show>
           <Show when={props.messages.length > 0}>
             <div class="time-marker">
               <span>{props.messages[0]?.time ?? "now"}</span>
             </div>
           </Show>
-          <Show when={props.messages.length === 0 && !props.activeTurnId}>
+          <Show when={agentReady() && props.messages.length === 0 && !props.activeTurnId}>
             <article class="message-entry message-entry-animated message-entry-bot onboarding-message">
               <div class="bot-bubble">
                 <p class="message-copy">Hey — good to meet you.</p>
@@ -1780,7 +1818,7 @@ export function Conversation(props: ConversationProps) {
             type="button"
             class="composer-button"
             aria-label="Attach a file"
-            disabled={props.agentPickerOpen || attachmentBusy()}
+            disabled={props.agentPickerOpen || attachmentBusy() || !agentReady()}
             onClick={() => setShowAttachments((value) => !value)}
           >
             <PlusIcon />
@@ -1790,11 +1828,13 @@ export function Conversation(props: ConversationProps) {
               botId={props.bot?.id}
               bots={props.bots}
               value={currentDraft().text}
-              disabled={props.agentPickerOpen || submitting()}
+              disabled={props.agentPickerOpen || submitting() || !agentReady()}
               placeholder={
-                replyTarget()
-                  ? "Reply…"
-                  : `Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`
+                !agentReady()
+                  ? "Complete Codex setup to start"
+                  : replyTarget()
+                    ? "Reply…"
+                    : `Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`
               }
               ariaLabel={`Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`}
               onValueChange={(text) => updateCurrentDraft({ text })}
@@ -1808,7 +1848,7 @@ export function Conversation(props: ConversationProps) {
                 type="button"
                 class="voice-button"
                 aria-label="Send message"
-                disabled={submitting()}
+                disabled={submitting() || !agentReady()}
                 onClick={() => void submitMessage()}
               >
                 {submitting() ? "…" : "↑"}

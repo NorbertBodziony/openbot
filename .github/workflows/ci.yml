@@ -33,3 +33,6 @@ jobs:
 
       - name: Run repository check
         run: bun run check
+
+      - name: Build and verify unsigned macOS application
+        run: bun run package:verify

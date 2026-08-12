@@ -20,8 +20,8 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Include macOS version, Mac model/architecture, Bun version, and Codex CLI version.
-      placeholder: macOS 15.6, Apple M2, Bun 1.3.11, Codex CLI 0.144.1
+      description: Include macOS version, Mac model/architecture, and Codex CLI version. Add Bun only when running from source.
+      placeholder: macOS 15.6, Apple M2, Codex CLI 0.144.1
     validations:
       required: true
 

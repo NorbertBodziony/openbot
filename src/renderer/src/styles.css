@@ -3643,6 +3643,50 @@ textarea {
   padding-top: 4px;
 }
 
+.agent-setup-card {
+  display: flex;
+  width: min(100%, 560px);
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 8px 0 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface);
+}
+
+.agent-setup-card div {
+  min-width: 0;
+}
+
+.agent-setup-card strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.agent-setup-card p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.agent-setup-card button {
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 7px 10px;
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.agent-setup-card button:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .prompt-card {
   display: grid;
   gap: 12px;

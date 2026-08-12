@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -65,8 +65,39 @@ describe("MailboxStore", () => {
     });
   });
 
+  it("rolls back a failed enqueue without losing its attachment draft", async () => {
+    const original = join(root, "retry.txt");
+    const userData = join(root, "user-data");
+    await writeFile(original, "retry me\n");
+    const [draft] = await store.prepareAttachments([original]);
+
+    await chmod(userData, 0o500);
+    try {
+      await expect(
+        store.enqueue({
+          sender: { kind: "user" },
+          recipientBotIds: ["chief"],
+          text: "",
+          draftIds: [draft.id],
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await chmod(userData, 0o700);
+    }
+
+    expect(store.listQueue("chief").deliveries).toEqual([]);
+    await expect(
+      store.enqueue({
+        sender: { kind: "user" },
+        recipientBotIds: ["chief"],
+        text: "",
+        draftIds: [draft.id],
+      }),
+    ).resolves.toMatchObject({ deliveries: [{ recipientBotId: "chief" }] });
+  });
+
   it("fails closed instead of overwriting an unsupported mailbox state", async () => {
-    const statePath = join(root, "user-data", "mailbox-state.json");
+    const statePath = join(root, "user-data", "mailbox.json");
     const unsupported = '{"version":999,"messages":[{"important":true}]}\n';
     await writeFile(statePath, unsupported);
 

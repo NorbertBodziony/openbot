@@ -3,6 +3,16 @@ productName: OpenBot
 asar: true
 artifactName: ${productName}-${version}-${arch}.${ext}
 electronUpdaterCompatibility: ">=2.16"
+electronFuses:
+  resetAdHocDarwinSignature: true
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  loadBrowserProcessSpecificV8Snapshot: false
+  grantFileProtocolExtraPrivileges: false
 publish:
   provider: github
   owner: NorbertBodziony
@@ -12,12 +22,21 @@ files:
   - package.json
   - LICENSE
   - NOTICE
+extraResources:
+  - from: node_modules/electron/dist/LICENSE
+    to: licenses/Electron-LICENSE
+  - from: node_modules/electron/dist/LICENSES.chromium.html
+    to: licenses/LICENSES.chromium.html
 directories:
   output: dist
 mac:
   category: public.app-category.productivity
   minimumSystemVersion: "12.0"
   notarize: true
+  hardenedRuntime: true
+  icon: build/icon.svg
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
   darkModeSupport: true
   target:
     - target: dmg

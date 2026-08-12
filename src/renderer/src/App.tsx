@@ -21,11 +21,11 @@ import { Sidebar, type SidebarAgentState } from "./components/Sidebar";
 import { accentForAvatarColor, accentForBot, type BotMessage, type BotProfile } from "./data";
 
 const FALLBACK_STATUS: AgentStatus = {
-  phase: "blocked",
+  phase: "starting",
   cliVersion: null,
   auth: { kind: "unknown" },
   capabilities: { chat: "unavailable", browser: "unavailable", computerUse: "unavailable" },
-  message: "Local Codex is unavailable.",
+  message: "Starting local Codex…",
   fullAccess: true,
 };
 
@@ -593,6 +593,7 @@ export function App() {
         />
       </Show>
       <Conversation
+        agentStatus={agentStatus()}
         bot={activeBot()}
         bots={botList()}
         modelOptions={modelOptions()}
@@ -620,6 +621,7 @@ export function App() {
         onActivateBrowserTab={activateBrowserTab}
         onCloseBrowserTab={closeBrowserTab}
         onToggleLeftSidebar={() => setSidebarCollapsed(false)}
+        onOpenCodexSetup={() => window.openbot.openExternal("codex-setup")}
         onStop={stopActiveTurn}
       />
     </div>

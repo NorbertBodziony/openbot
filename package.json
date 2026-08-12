@@ -53,6 +53,8 @@
     "release:major": "bun pm version major",
     "check": "bun run lint && bun run typecheck && bun run test && bun run build",
     "package": "bun run build && electron-builder --dir --mac --arm64 --config.mac.identity=null --config.mac.notarize=false",
+    "verify:package": "bun scripts/verify-macos-package.ts",
+    "package:verify": "bun run package && bun run verify:package",
     "dist:mac": "bun run build && electron-builder --mac --arm64 --config.mac.identity=null --config.mac.notarize=false",
     "dist:release": "bun run build && electron-builder --mac --arm64"
   },
@@ -62,6 +64,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.8",
+    "@electron/fuses": "1.8.0",
     "@solidjs/testing-library": "0.8.10",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/jest-dom": "7.0.1",

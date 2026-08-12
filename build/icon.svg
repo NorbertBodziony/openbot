@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>OpenBot</title>
+  <defs>
+    <linearGradient id="background" x1="160" y1="96" x2="864" y2="928" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#202426"/>
+      <stop offset="1" stop-color="#090b0c"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="300" y1="260" x2="742" y2="778" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffb04d"/>
+      <stop offset="1" stop-color="#e98427"/>
+    </linearGradient>
+    <filter id="shadow" x="190" y="190" width="660" height="680" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="34" stdDeviation="34" flood-color="#000" flood-opacity=".38"/>
+    </filter>
+  </defs>
+  <rect x="52" y="52" width="920" height="920" rx="214" fill="url(#background)"/>
+  <rect x="53" y="53" width="918" height="918" rx="213" fill="none" stroke="#fff" stroke-opacity=".08" stroke-width="2"/>
+  <g filter="url(#shadow)">
+    <path d="M494 238c133-6 249 83 271 220 25 152-77 288-230 310-156 22-288-80-295-231-7-145 104-292 254-299Z" fill="url(#mark)"/>
+  </g>
+  <path d="M398 415c25 25 38 51 44 83M568 398c25 25 38 51 44 83" fill="none" stroke="#1b1d1e" stroke-linecap="round" stroke-width="34"/>
+</svg>

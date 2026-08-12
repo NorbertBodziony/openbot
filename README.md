@@ -28,19 +28,36 @@ messaging in one macOS app.
 OpenBot is local-first, not offline-only. Codex connects to OpenAI, visited pages use the network,
 and installed plugins may connect to their own services.
 
-## Requirements
+## Install
 
-- macOS 12 or newer on Apple Silicon.
-- [Bun](https://bun.sh/) 1.3.11.
-- Node.js 22.12 or newer for the Electron/Vite toolchain.
-- Codex CLI 0.144.1 or newer, signed in with ChatGPT using `codex login`.
-- Screen Recording and Accessibility permissions when using Computer Use.
+OpenBot currently supports macOS 12 or newer on Apple Silicon.
+
+1. Download the latest `OpenBot-*.dmg` from [GitHub Releases](https://github.com/NorbertBodziony/openbot/releases).
+2. Drag OpenBot to Applications and open it.
+3. Install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) if it is not already available:
+
+   ```bash
+   curl -fsSL https://chatgpt.com/codex/install.sh | sh
+   ```
+
+4. Run `codex login` in Terminal and sign in with a ChatGPT account that has Codex access.
+5. Restart OpenBot. The setup card disappears when the local Codex App Server is ready.
+
+Bun and Node.js are not required when using an installed release. Screen Recording and Accessibility
+permissions are needed only for the optional Computer Use plugin.
 
 OpenBot uses the existing local Codex login. It does not accept an API key or copy tokens from
 `~/.codex`. See the official [Codex authentication documentation](https://learn.chatgpt.com/docs/auth)
 for account setup.
 
-## Quick start
+For setup problems, data reset, and uninstall instructions, see
+[Troubleshooting](docs/TROUBLESHOOTING.md). OpenBot's data and network behavior is documented in
+[Privacy](PRIVACY.md).
+
+## Development
+
+Development requires [Bun](https://bun.sh/) 1.3.11, Node.js 22.12 or newer, and Codex CLI 0.144.1
+or newer.
 
 ```bash
 git clone https://github.com/NorbertBodziony/openbot.git
@@ -63,6 +80,7 @@ without starting a model turn.
 | `bun run test:browser` | Run the local embedded-browser smoke test. |
 | `bun run test:codex` | Probe the real CLI handshake and account without starting a paid turn. |
 | `bun run package` | Build an unpacked local ARM64 application. |
+| `bun run package:verify` | Build and verify the real ARM64 app bundle, icon, metadata, ASAR, and fuses. |
 | `bun run dist:mac` | Build unsigned local ARM64 DMG and ZIP update artifacts. |
 | `bun run release:patch` | Create the next patch version commit and tag. |
 | `bun run test:filesystem` | **Online/manual:** run a real full-access Codex filesystem turn. |

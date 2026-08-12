@@ -1,6 +1,7 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   app,
   BrowserWindow,
@@ -46,6 +47,10 @@ import { UpdateService } from "./update-service";
 app.enableSandbox();
 protocol.registerSchemesAsPrivileged([
   {
+    scheme: "openbot-app",
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
+  {
     scheme: "openbot-attachment",
     privileges: { standard: true, secure: true, supportFetchAPI: true },
   },
@@ -60,6 +65,7 @@ let isQuitting = false;
 let shutdownStarted = false;
 
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
+  "codex-setup": "https://learn.chatgpt.com/docs/codex/cli",
   feedback: "https://x.com/intent/post?text=Feedback%20for%20OpenBot%20%40norbertbodziony%3A%20",
   message: "https://x.com/norbertbodziony",
 };
@@ -73,9 +79,7 @@ function isTrustedRenderer(frameUrl: string): boolean {
       return senderUrl.origin === new URL(developmentUrl).origin;
     }
 
-    return (
-      senderUrl.protocol === "file:" && senderUrl.pathname.endsWith("/out/renderer/index.html")
-    );
+    return senderUrl.protocol === "openbot-app:" && senderUrl.host === "app";
   } catch {
     return false;
   }
@@ -127,7 +131,7 @@ function registerIpcHandlers(
   });
   ipcMain.handle(IPC_CHANNELS.openExternal, (event, destination: unknown) => {
     assertTrustedSender(event.senderFrame);
-    if (destination !== "feedback" && destination !== "message") {
+    if (destination !== "codex-setup" && destination !== "feedback" && destination !== "message") {
       throw new Error("Unknown external destination.");
     }
     return shell.openExternal(EXTERNAL_DESTINATIONS[destination]);
@@ -314,7 +318,7 @@ function loadRenderer(window: BrowserWindow): Promise<void> {
   const developmentUrl = process.env.ELECTRON_RENDERER_URL;
   return developmentUrl
     ? window.loadURL(developmentUrl)
-    : window.loadFile(join(__dirname, "../renderer/index.html"));
+    : window.loadURL("openbot-app://app/index.html");
 }
 
 function configureApplicationMenu(service: AgentService, updater: UpdateService): void {
@@ -358,41 +362,56 @@ function forwardUpdateStatus(status: import("../shared/ipc").UpdateStatus): void
   mainWindow.webContents.send(IPC_CHANNELS.updateEvent, status);
 }
 
-app.whenReady().then(async () => {
-  configureContentSecurityPolicy();
-  mainWindow = createWindow();
-  const store = new BotStore(app.getPath("userData"), homedir());
-  await store.initialize();
-  mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot);
-  await mailboxStore.initialize();
-  configureAttachmentProtocol(mailboxStore);
-  browserHost = new BrowserHost(mainWindow, store.downloadsRoot);
-  agentService = new AgentService(store, mailboxStore, browserHost, readComputerUsePrerequisites);
-  const { autoUpdater } = electronUpdater;
-  updateService = new UpdateService(autoUpdater, {
-    currentVersion: app.getVersion(),
-    enabled: app.isPackaged && process.platform === "darwin",
-    beforeInstall: prepareForShutdown,
-  });
-  agentService.on("event", forwardAgentEvent);
-  updateService.on("status", forwardUpdateStatus);
-  updateService.start();
-  registerIpcHandlers(agentService, mailboxStore, browserHost, updateService);
-  configureApplicationMenu(agentService, updateService);
-  await loadRenderer(mainWindow);
-  void agentService.initialize().catch((error) => {
-    console.error("Unable to initialize the local Codex backend:", error);
-  });
-
-  app.on("activate", () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.show();
-      return;
-    }
+void app
+  .whenReady()
+  .then(async () => {
+    configureContentSecurityPolicy();
     mainWindow = createWindow();
-    void loadRenderer(mainWindow);
+    const store = new BotStore(app.getPath("userData"), homedir());
+    await store.initialize();
+    mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot);
+    await mailboxStore.initialize();
+    configureApplicationProtocol();
+    configureAttachmentProtocol(mailboxStore);
+    browserHost = new BrowserHost(mainWindow, store.downloadsRoot);
+    agentService = new AgentService(store, mailboxStore, browserHost, readComputerUsePrerequisites);
+    const { autoUpdater } = electronUpdater;
+    updateService = new UpdateService(autoUpdater, {
+      currentVersion: app.getVersion(),
+      enabled:
+        app.isPackaged &&
+        process.platform === "darwin" &&
+        existsSync(join(process.resourcesPath, "app-update.yml")),
+      beforeInstall: prepareForShutdown,
+    });
+    agentService.on("event", forwardAgentEvent);
+    updateService.on("status", forwardUpdateStatus);
+    updateService.start();
+    registerIpcHandlers(agentService, mailboxStore, browserHost, updateService);
+    configureApplicationMenu(agentService, updateService);
+    await loadRenderer(mainWindow);
+    void agentService.initialize().catch((error) => {
+      console.error("Unable to initialize the local Codex backend:", error);
+    });
+
+    app.on("activate", () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        return;
+      }
+      mainWindow = createWindow();
+      void loadRenderer(mainWindow);
+    });
+  })
+  .catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("OpenBot failed to start:", error);
+    dialog.showErrorBox(
+      "OpenBot couldn’t start",
+      `${message}\n\nYour local data was not reset or overwritten. See the troubleshooting guide for recovery steps.`,
+    );
+    app.quit();
   });
-});
 
 function readComputerUsePrerequisites(): {
   screenRecording: boolean;
@@ -567,6 +586,50 @@ function configureAttachmentProtocol(mailbox: MailboxStore): void {
       return new Response("Not found", { status: 404 });
     }
   });
+}
+
+function configureApplicationProtocol(): void {
+  const rendererRoot = resolve(__dirname, "../renderer");
+  session.defaultSession.protocol.handle("openbot-app", async (request) => {
+    try {
+      const url = new URL(request.url);
+      if (url.host !== "app") return new Response("Not found", { status: 404 });
+      const pathname = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+      const filePath = resolve(rendererRoot, `.${pathname}`);
+      const candidate = relative(rendererRoot, filePath);
+      if (candidate.startsWith("..") || isAbsolute(candidate)) {
+        return new Response("Not found", { status: 404 });
+      }
+      return new Response(await readFile(filePath), {
+        headers: {
+          "Content-Type": applicationContentType(filePath),
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+}
+
+function applicationContentType(path: string): string {
+  switch (extname(path).toLowerCase()) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".js":
+      return "text/javascript; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".svg":
+      return "image/svg+xml";
+    case ".png":
+      return "image/png";
+    case ".woff2":
+      return "font/woff2";
+    default:
+      return "application/octet-stream";
+  }
 }
 
 function parseInterrupt(value: unknown): InterruptTurnInput {

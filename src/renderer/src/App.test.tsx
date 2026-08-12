@@ -196,6 +196,24 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByText(/Salesforce account queue/i)).not.toBeInTheDocument();
   });
 
+  it("guides signed-out users before enabling chat", async () => {
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "blocked",
+      cliVersion: "0.144.1",
+      auth: { kind: "signed-out" },
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Run `codex login`, then restart OpenBot.",
+      fullAccess: true,
+    });
+    render(() => <App />);
+
+    expect(await screen.findByText("Codex setup required")).toBeInTheDocument();
+    expect(screen.queryByRole("listbox", { name: /helping with most/i })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Setup guide" }));
+    await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("codex-setup"));
+  });
+
   it("shows a compact account menu with weekly usage and contact actions", async () => {
     render(() => <App />);
     const accountButton = await screen.findByRole("button", { name: "Open account menu" });
@@ -300,7 +318,7 @@ describe("OpenBot connected desktop shell", () => {
       });
 
     render(() => <App />);
-    await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
+    await screen.findByText("Connecting to Codex…");
     emitAgentEvent?.({
       type: "status",
       status: {

@@ -50,7 +50,7 @@ interface StoredDelivery {
 }
 
 interface StoredState {
-  version: 2;
+  version: 1;
   messages: StoredMessage[];
   deliveries: StoredDelivery[];
   drafts: StoredDraft[];
@@ -82,7 +82,7 @@ export interface DeliveryContext {
 }
 
 const EMPTY_STATE: StoredState = {
-  version: 2,
+  version: 1,
   messages: [],
   deliveries: [],
   drafts: [],
@@ -99,7 +99,7 @@ export class MailboxStore {
   #writeQueue: Promise<void> = Promise.resolve();
 
   constructor(userDataPath: string, sharedRoot: string) {
-    this.#statePath = join(userDataPath, "mailbox-state.json");
+    this.#statePath = join(userDataPath, "mailbox.json");
     this.#draftsRoot = join(userDataPath, "attachment-drafts");
     this.#transfersRoot = join(sharedRoot, "Transfers");
   }
@@ -180,6 +180,8 @@ export class MailboxStore {
       await this.#persist();
       return prepared.map(toAttachmentSummary);
     } catch (error) {
+      const preparedIds = new Set(prepared.map((draft) => draft.id));
+      this.#state.drafts = this.#state.drafts.filter((draft) => !preparedIds.has(draft.id));
       await Promise.all(
         prepared.map((draft) => rm(dirname(draft.path), { recursive: true, force: true })),
       );
@@ -191,7 +193,12 @@ export class MailboxStore {
     const index = this.#state.drafts.findIndex((draft) => draft.id === id);
     if (index < 0) return;
     const [draft] = this.#state.drafts.splice(index, 1);
-    await this.#persist();
+    try {
+      await this.#persist();
+    } catch (error) {
+      this.#state.drafts.splice(index, 0, draft);
+      throw error;
+    }
     await rm(dirname(draft.path), { recursive: true, force: true });
   }
 
@@ -249,7 +256,25 @@ export class MailboxStore {
     this.#state.drafts = this.#state.drafts.filter(
       (draft) => !(input.draftIds ?? []).includes(draft.id),
     );
-    await this.#persist();
+    try {
+      await this.#persist();
+    } catch (error) {
+      const deliveryIds = new Set(deliveries.map((delivery) => delivery.id));
+      this.#state.messages = this.#state.messages.filter((candidate) => candidate.id !== messageId);
+      this.#state.deliveries = this.#state.deliveries.filter(
+        (candidate) => !deliveryIds.has(candidate.id),
+      );
+      if (input.idempotencyKey && this.#state.idempotency[input.idempotencyKey] === messageId) {
+        delete this.#state.idempotency[input.idempotencyKey];
+      }
+      for (const draft of drafts) {
+        if (!this.#state.drafts.some((candidate) => candidate.id === draft.id)) {
+          this.#state.drafts.push(draft);
+        }
+      }
+      await rm(join(this.#transfersRoot, messageId), { recursive: true, force: true });
+      throw error;
+    }
     await Promise.all(
       drafts.map((draft) => rm(dirname(draft.path), { recursive: true, force: true })),
     );
@@ -656,11 +681,7 @@ export class MailboxStore {
           "Mailbox state is corrupt or from a newer OpenBot version; refusing to overwrite it.",
         );
       }
-      return {
-        ...value,
-        version: 2,
-        reactions: Array.isArray(value.reactions) ? value.reactions.filter(isStoredReaction) : [],
-      };
+      return value;
     } catch (error) {
       if (isRecord(error) && error.code === "ENOENT") return structuredClone(EMPTY_STATE);
       throw error;
@@ -786,18 +807,81 @@ function normalizeBytes(value: Uint8Array): Uint8Array {
   throw new Error("Attachment data is invalid.");
 }
 
-function isStoredState(value: unknown): value is Omit<StoredState, "version" | "reactions"> & {
-  version: 1 | 2;
-  reactions?: unknown;
-} {
+function isStoredState(value: unknown): value is StoredState {
   return (
     isRecord(value) &&
-    (value.version === 1 || value.version === 2) &&
+    value.version === 1 &&
     Array.isArray(value.messages) &&
+    value.messages.every(isStoredMessage) &&
     Array.isArray(value.deliveries) &&
+    value.deliveries.every(isStoredDelivery) &&
     Array.isArray(value.drafts) &&
+    value.drafts.every(isStoredDraft) &&
     Array.isArray(value.pausedBotIds) &&
-    isRecord(value.idempotency)
+    value.pausedBotIds.every((item) => typeof item === "string") &&
+    isRecord(value.idempotency) &&
+    Object.values(value.idempotency).every((item) => typeof item === "string") &&
+    Array.isArray(value.reactions) &&
+    value.reactions.every(isStoredReaction)
+  );
+}
+
+function isStoredAttachment(value: unknown): value is StoredAttachment {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.size === "number" &&
+    (value.kind === "image" || value.kind === "file") &&
+    typeof value.mimeType === "string" &&
+    (value.previewKind === "image" ||
+      value.previewKind === "pdf" ||
+      value.previewKind === "text" ||
+      value.previewKind === "none") &&
+    (typeof value.previewUrl === "string" || value.previewUrl === undefined) &&
+    typeof value.path === "string" &&
+    typeof value.sha256 === "string"
+  );
+}
+
+function isStoredDraft(value: unknown): value is StoredDraft {
+  return (
+    isStoredAttachment(value) &&
+    typeof (value as StoredAttachment & { createdAt?: unknown }).createdAt === "string"
+  );
+}
+
+function isStoredMessage(value: unknown): value is StoredMessage {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    isRecord(value.sender) &&
+    (value.sender.kind === "user" ||
+      (value.sender.kind === "bot" && typeof value.sender.botId === "string")) &&
+    typeof value.text === "string" &&
+    Array.isArray(value.attachments) &&
+    value.attachments.every(isStoredAttachment) &&
+    (typeof value.replyToMessageId === "string" || value.replyToMessageId === null) &&
+    typeof value.createdAt === "string"
+  );
+}
+
+function isStoredDelivery(value: unknown): value is StoredDelivery {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.messageId === "string" &&
+    typeof value.recipientBotId === "string" &&
+    (value.status === "queued" ||
+      value.status === "starting" ||
+      value.status === "running" ||
+      value.status === "completed" ||
+      value.status === "failed" ||
+      value.status === "interrupted" ||
+      value.status === "cancelled") &&
+    (typeof value.turnId === "string" || value.turnId === null) &&
+    (typeof value.error === "string" || value.error === null) &&
+    typeof value.createdAt === "string"
   );
 }
 

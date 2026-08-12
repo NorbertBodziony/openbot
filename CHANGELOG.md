@@ -5,6 +5,8 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-13
+
 ### Added
 
 - Signed GitHub Releases update pipeline with in-app availability, download progress, and restart-to-install controls.

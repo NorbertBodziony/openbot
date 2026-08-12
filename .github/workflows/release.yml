@@ -4,10 +4,11 @@ on:
   push:
     tags:
       - "v*.*.*"
-  workflow_dispatch:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -70,6 +71,7 @@ jobs:
               exit 1
             fi
           fi
+          grep -F "## [$package_version]" CHANGELOG.md
           echo "RELEASE_VERSION=$package_version" >> "$GITHUB_ENV"
           echo "RELEASE_TAG=v$package_version" >> "$GITHUB_ENV"
 
@@ -78,6 +80,9 @@ jobs:
 
       - name: Build, sign, and notarize ARM64 update artifacts
         run: bun run dist:release
+
+      - name: Verify packaged application metadata and launch
+        run: bun run verify:package
 
       - name: Verify application signature and notarization
         shell: bash
@@ -109,6 +114,11 @@ jobs:
           shopt -s nullglob
           artifacts=(dist/*.dmg dist/*.zip)
           shasum -a 256 "${artifacts[@]}" > dist/SHA256SUMS.txt
+
+      - name: Attest release provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS.txt
 
       - name: Publish GitHub Release
         shell: bash

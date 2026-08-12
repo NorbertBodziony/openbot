@@ -88,7 +88,7 @@ export interface AccountUsage {
   limits: AccountUsageLimit[];
 }
 
-export type ExternalDestination = "feedback" | "message";
+export type ExternalDestination = "codex-setup" | "feedback" | "message";
 
 export interface AgentStatus {
   phase: AgentPhase;

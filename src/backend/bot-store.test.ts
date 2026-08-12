@@ -42,9 +42,9 @@ describe("BotStore", () => {
     await store.initialize();
 
     await store.setThreadId("chief", "thread-123");
-    const parsed = JSON.parse(await readFile(join(userData, "agent-state.json"), "utf8"));
+    const parsed = JSON.parse(await readFile(join(userData, "bots.json"), "utf8"));
 
-    expect(parsed.version).toBe(6);
+    expect(parsed.version).toBe(1);
     expect(parsed.bots.find((bot: { id: string }) => bot.id === "chief").threadId).toBe(
       "thread-123",
     );
@@ -93,7 +93,7 @@ describe("BotStore", () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
-    const statePath = join(userData, "agent-state.json");
+    const statePath = join(userData, "bots.json");
     const unsupported = '{"version":999,"examplesInitialized":true,"bots":[]}\n';
     await mkdir(userData, { recursive: true });
     await writeFile(statePath, unsupported);
