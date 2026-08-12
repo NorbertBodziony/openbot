@@ -56,7 +56,7 @@
     "verify:package": "bun scripts/verify-macos-package.ts",
     "package:verify": "bun run package && bun run verify:package",
     "dist:mac": "bun run build && electron-builder --mac --arm64 --config.mac.identity=null --config.mac.notarize=false",
-    "dist:release": "bun run build && electron-builder --mac --arm64"
+    "dist:release": "bun run build && electron-builder --mac --arm64 --publish never"
   },
   "dependencies": {
     "electron-updater": "6.8.9",

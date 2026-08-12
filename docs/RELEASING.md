@@ -19,7 +19,15 @@ Developer ID Application certificate. Never commit signing credentials to the re
 
 ## Publish a version
 
-Start from a clean, up-to-date `main` branch. Choose the appropriate semantic version bump:
+Start from a clean, up-to-date `main` branch. For the first release, `package.json` and
+`CHANGELOG.md` are already prepared as `0.1.0`; after CI passes, create its annotated tag directly:
+
+```bash
+git tag -a v0.1.0 -m "OpenBot v0.1.0"
+git push origin v0.1.0
+```
+
+For later releases, choose the appropriate semantic version bump:
 
 ```bash
 bun run release:patch
@@ -29,13 +37,13 @@ git push origin main --follow-tags
 ```
 
 `bun pm version` updates `package.json`, creates the version commit, and creates the matching `vX.Y.Z`
-tag. Pushing the tag runs `.github/workflows/release.yml`.
+tag. Pushing a version tag runs `.github/workflows/release.yml`.
 
 The workflow:
 
 1. verifies the tag matches `package.json`;
 2. runs the complete offline repository check;
-3. builds signed and notarized ARM64 DMG and ZIP artifacts;
+3. builds signed and notarized ARM64 DMG and ZIP artifacts without publishing them early;
 4. verifies the signature, notarization ticket, and `latest-mac.yml`;
 5. records GitHub build-provenance attestations for the DMG and ZIP;
 6. publishes a non-draft GitHub Release with checksums and update metadata.
