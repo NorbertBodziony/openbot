@@ -1,0 +1,138 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { app, BrowserWindow } from "electron";
+import { BrowserHost } from "../src/backend/browser-host";
+
+const server = createServer((request, response) => {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  if (url.pathname === "/download") {
+    response.writeHead(200, {
+      "content-type": "text/plain",
+      "content-disposition": 'attachment; filename="infeld-smoke.txt"',
+    });
+    response.end("local download");
+    return;
+  }
+  if (url.pathname === "/cookie") {
+    if (url.searchParams.has("set")) response.setHeader("set-cookie", "infeld=shared; Path=/");
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(`<main>cookie:${request.headers.cookie ?? "none"}</main>`);
+    return;
+  }
+
+  response.setHeader("content-type", "text/html; charset=utf-8");
+  response.end(`<!doctype html>
+    <input aria-label="Task" />
+    <button aria-label="Save" onclick="document.querySelector('output').textContent = document.querySelector('input').value">Save</button>
+    <a href="/download" download>Download</a>
+    <output>empty</output>`);
+});
+
+void main().catch((error) => {
+  process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
+  app.exit(1);
+});
+
+async function main(): Promise<void> {
+  const temporaryRoot = await mkdtemp(join(tmpdir(), "infeld-browser-smoke-"));
+  app.setPath("userData", join(temporaryRoot, "user-data"));
+  const hardTimeout = setTimeout(() => {
+    process.stderr.write("BrowserHost smoke test timed out.\n");
+    app.exit(1);
+  }, 20_000);
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Local server did not start.");
+    const origin = `http://127.0.0.1:${address.port}`;
+
+    await app.whenReady();
+    process.stdout.write("BrowserHost: Electron ready.\n");
+    const window = new BrowserWindow({ show: false });
+    const downloadsRoot = join(temporaryRoot, "downloads");
+    const browser = new BrowserHost(window, downloadsRoot);
+
+    const tab = await browser.open(origin, "smoke-thread");
+    process.stdout.write("BrowserHost: local tab opened.\n");
+    const first = await browser.snapshot(tab.id);
+    const input = first.elements.find((element) => element.name === "Task");
+    const save = first.elements.find((element) => element.name === "Save");
+    if (!input || !save) throw new Error("Snapshot did not expose local controls.");
+
+    const typed = await browser.act(tab.id, first.revision, {
+      type: "type",
+      ref: input.ref,
+      text: "runs locally",
+    });
+    const currentSave = typed.elements.find((element) => element.name === "Save");
+    if (!currentSave) throw new Error("Save control disappeared after typing.");
+    await browser.act(tab.id, typed.revision, { type: "click", ref: currentSave.ref });
+    const result = await browser.snapshot(tab.id);
+    if (!result.text.includes("runs locally")) throw new Error("Browser click/type failed.");
+    process.stdout.write("BrowserHost: snapshot and actions passed.\n");
+    await expectFailure(() =>
+      browser.act(tab.id, first.revision, { type: "click", ref: save.ref }),
+    );
+
+    const screenshot = await browser.screenshot(tab.id);
+    if (!screenshot.startsWith("data:image/png;base64,")) throw new Error("Screenshot failed.");
+    process.stdout.write("BrowserHost: screenshot passed.\n");
+
+    await browser.open(`${origin}/cookie?set=1`, "smoke-thread");
+    const cookieTab = await browser.open(`${origin}/cookie`, "other-thread");
+    const cookieSnapshot = await browser.snapshot(cookieTab.id);
+    if (!cookieSnapshot.text.includes("infeld=shared")) throw new Error("Cookies were not shared.");
+    process.stdout.write("BrowserHost: shared cookies passed.\n");
+
+    await expectFailure(() => browser.open("file:///etc/passwd"));
+
+    const downloadPage = await browser.open(origin, "smoke-thread");
+    const downloadSnapshot = await browser.snapshot(downloadPage.id);
+    const download = downloadSnapshot.elements.find((element) => element.name === "Download");
+    if (!download) throw new Error("Download link is missing.");
+    await browser.act(downloadPage.id, downloadSnapshot.revision, {
+      type: "click",
+      ref: download.ref,
+    });
+    const downloadPath = join(downloadsRoot, "infeld-smoke.txt");
+    await waitFor(async () => (await readFile(downloadPath, "utf8")) === "local download");
+    process.stdout.write("BrowserHost: download passed.\n");
+
+    browser.destroy();
+    window.destroy();
+    process.stdout.write("BrowserHost smoke test passed.\n");
+  } finally {
+    clearTimeout(hardTimeout);
+    server.close();
+    await rm(temporaryRoot, { recursive: true, force: true });
+    app.quit();
+  }
+}
+
+async function expectFailure(operation: () => Promise<unknown>): Promise<void> {
+  try {
+    await operation();
+  } catch {
+    return;
+  }
+  throw new Error("Expected operation to fail.");
+}
+
+async function waitFor(check: () => Promise<boolean>): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      if (await check()) return;
+    } catch {
+      // The download may not exist yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Timed out waiting for a browser download.");
+}

@@ -1,0 +1,28 @@
+appId: app.infeld.bot
+productName: Infeld Bot
+asar: true
+artifactName: ${productName}-${version}-${arch}.${ext}
+files:
+  - out/**/*
+  - package.json
+directories:
+  output: dist
+mac:
+  category: public.app-category.productivity
+  minimumSystemVersion: "12.0"
+  identity: null
+  darkModeSupport: true
+  target:
+    - target: dmg
+      arch:
+        - arm64
+dmg:
+  title: ${productName} ${version}
+  backgroundColor: "#0b0d0e"
+  contents:
+    - x: 145
+      y: 180
+    - x: 395
+      y: 180
+      type: link
+      path: /Applications
