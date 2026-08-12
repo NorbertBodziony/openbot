@@ -25,6 +25,7 @@ import {
   type BrowserOpenInput,
   type BrowserVisibilityInput,
   type CancelQueuedMessageInput,
+  type ExternalDestination,
   type ImportAttachmentsInput,
   type InterruptTurnInput,
   IPC_CHANNELS,
@@ -54,6 +55,12 @@ let agentService: AgentService | null = null;
 let mailboxStore: MailboxStore | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
+
+const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
+  feedback:
+    "https://x.com/intent/post?text=Feedback%20for%20Infeld%20Bot%20%40norbertbodziony%3A%20",
+  message: "https://x.com/norbertbodziony",
+};
 
 function isTrustedRenderer(frameUrl: string): boolean {
   try {
@@ -115,10 +122,21 @@ function registerIpcHandlers(
     }
     return { name: app.getName(), version: app.getVersion(), platform };
   });
+  ipcMain.handle(IPC_CHANNELS.openExternal, (event, destination: unknown) => {
+    assertTrustedSender(event.senderFrame);
+    if (destination !== "feedback" && destination !== "message") {
+      throw new Error("Unknown external destination.");
+    }
+    return shell.openExternal(EXTERNAL_DESTINATIONS[destination]);
+  });
 
   ipcMain.handle(IPC_CHANNELS.agentGetStatus, (event) => {
     assertTrustedSender(event.senderFrame);
     return service.getStatus();
+  });
+  ipcMain.handle(IPC_CHANNELS.agentGetUsage, (event) => {
+    assertTrustedSender(event.senderFrame);
+    return service.getUsage();
   });
   ipcMain.handle(IPC_CHANNELS.agentListModels, (event) => {
     assertTrustedSender(event.senderFrame);

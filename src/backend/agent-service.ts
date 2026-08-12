@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type {
+  AccountUsage,
+  AccountUsageLimit,
+  AccountUsageWindow,
   AgentEvent,
   AgentModelOption,
   AgentPromptQuestion,
@@ -24,7 +27,10 @@ import { BROWSER_DYNAMIC_TOOLS, type BrowserHost, INFELD_BROWSER_NAMESPACE } fro
 import { CodexCliError, type CodexCliInfo, resolveCodexCli } from "./cli";
 import type { DeliveryContext, MailboxStore } from "./mailbox-store";
 import {
+  type AccountRateLimitResult,
+  type AccountRateLimitsReadResult,
   type AccountReadResult,
+  type AccountUsageReadResult,
   type AppServerNotification,
   type AppServerRequest,
   type DynamicToolCallParams,
@@ -141,6 +147,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   getStatus(): AgentStatus {
     return structuredClone(this.#status);
+  }
+
+  async getUsage(): Promise<AccountUsage> {
+    return this.#refreshUsage(this.#requireReadyClient());
   }
 
   listBots(): BotSummary[] {
@@ -423,10 +433,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#setStatus({
         phase: "ready",
         cliVersion: this.#cli.version,
-        auth: { kind: "chatgpt", planType: account.account.planType ?? null },
+        auth: {
+          kind: "chatgpt",
+          email: account.account.email ?? null,
+          planType: account.account.planType ?? null,
+        },
         capabilities: { chat: "ready", browser: "ready", computerUse },
         message: null,
       });
+      void this.#refreshUsage(client).catch(() => undefined);
       await this.#reconcileUnresolvedDeliveries(client);
       for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
     } catch (error) {
@@ -1002,6 +1017,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         });
         return;
       }
+      case "account/rateLimits/updated": {
+        if (this.#client) void this.#refreshUsage(this.#client).catch(() => undefined);
+        return;
+      }
       case "error":
       case "warning": {
         const message = getString(params, "message") ?? notification.method;
@@ -1183,6 +1202,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#client;
   }
 
+  async #refreshUsage(client: CodexAppServerClient): Promise<AccountUsage> {
+    const [rateLimits, tokenUsage] = await Promise.allSettled([
+      client.request<AccountRateLimitsReadResult>("account/rateLimits/read", undefined),
+      client.request<AccountUsageReadResult>("account/usage/read", undefined),
+    ]);
+    if (rateLimits.status === "rejected" && tokenUsage.status === "rejected") {
+      throw rateLimits.reason;
+    }
+
+    const usage = normalizeAccountUsage(
+      rateLimits.status === "fulfilled" ? rateLimits.value : null,
+      tokenUsage.status === "fulfilled" ? tokenUsage.value : null,
+      this.#status.auth.kind === "chatgpt" ? this.#status.auth.planType : null,
+    );
+    this.#emit({ type: "usage-changed", usage: structuredClone(usage) });
+    return structuredClone(usage);
+  }
+
   #setStatus(patch: Partial<AgentStatus>): void {
     this.#status = {
       ...this.#status,
@@ -1217,6 +1254,63 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #emit(event: AgentEvent): void {
     this.emit("event", event);
   }
+}
+
+function normalizeAccountUsage(
+  rateLimits: AccountRateLimitsReadResult | null,
+  tokenUsage: AccountUsageReadResult | null,
+  fallbackPlanType: string | null,
+): AccountUsage {
+  const entries = rateLimits?.rateLimitsByLimitId
+    ? Object.entries(rateLimits.rateLimitsByLimitId).filter(
+        (entry): entry is [string, AccountRateLimitResult] => Boolean(entry[1]),
+      )
+    : [];
+  if (entries.length === 0 && rateLimits?.rateLimits) {
+    entries.push([rateLimits.rateLimits.limitId ?? "codex", rateLimits.rateLimits]);
+  }
+  const limits = entries.map(([id, limit]) => normalizeAccountLimit(id, limit));
+  const summary = tokenUsage?.summary;
+  const tokens = summary
+    ? {
+        lifetimeTokens: finiteNumberOrNull(summary.lifetimeTokens),
+        peakDailyTokens: finiteNumberOrNull(summary.peakDailyTokens),
+        currentStreakDays: finiteNumberOrNull(summary.currentStreakDays),
+        longestStreakDays: finiteNumberOrNull(summary.longestStreakDays),
+      }
+    : null;
+
+  return {
+    planType: entries.find(([, limit]) => limit.planType)?.[1].planType ?? fallbackPlanType,
+    limits,
+    tokens,
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeAccountLimit(id: string, limit: AccountRateLimitResult): AccountUsageLimit {
+  return {
+    id: limit.limitId ?? id,
+    name: limit.limitName ?? null,
+    primary: normalizeUsageWindow(limit.primary),
+    secondary: normalizeUsageWindow(limit.secondary),
+  };
+}
+
+function normalizeUsageWindow(
+  window: AccountRateLimitResult["primary"],
+): AccountUsageWindow | null {
+  const usedPercent = finiteNumberOrNull(window?.usedPercent);
+  if (usedPercent === null) return null;
+  return {
+    usedPercent: Math.max(0, Math.min(100, usedPercent)),
+    windowDurationMins: finiteNumberOrNull(window?.windowDurationMins),
+    resetsAt: finiteNumberOrNull(window?.resetsAt),
+  };
+}
+
+function finiteNumberOrNull(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 const INFELD_DYNAMIC_TOOLS = {

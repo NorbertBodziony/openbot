@@ -1,6 +1,8 @@
 export const IPC_CHANNELS = {
   getAppInfo: "app:get-info",
+  openExternal: "app:open-external",
   agentGetStatus: "agent:get-status",
+  agentGetUsage: "agent:get-usage",
   agentListModels: "agent:list-models",
   agentListBots: "agent:list-bots",
   agentCreateBot: "agent:create-bot",
@@ -43,7 +45,36 @@ export type AgentAuthState =
   | { kind: "unknown" }
   | { kind: "signed-out" }
   | { kind: "unsupported"; accountType: string }
-  | { kind: "chatgpt"; planType: string | null };
+  | { kind: "chatgpt"; email: string | null; planType: string | null };
+
+export interface AccountUsageWindow {
+  usedPercent: number;
+  windowDurationMins: number | null;
+  resetsAt: number | null;
+}
+
+export interface AccountUsageLimit {
+  id: string;
+  name: string | null;
+  primary: AccountUsageWindow | null;
+  secondary: AccountUsageWindow | null;
+}
+
+export interface AccountTokenUsageSummary {
+  lifetimeTokens: number | null;
+  peakDailyTokens: number | null;
+  currentStreakDays: number | null;
+  longestStreakDays: number | null;
+}
+
+export interface AccountUsage {
+  planType: string | null;
+  limits: AccountUsageLimit[];
+  tokens: AccountTokenUsageSummary | null;
+  fetchedAt: string;
+}
+
+export type ExternalDestination = "feedback" | "message";
 
 export interface AgentStatus {
   phase: AgentPhase;
@@ -311,6 +342,7 @@ export interface RespondToPromptInput {
 
 export type AgentEvent =
   | { type: "status"; status: AgentStatus }
+  | { type: "usage-changed"; usage: AccountUsage }
   | { type: "bots-changed"; bots: BotSummary[] }
   | { type: "conversation"; snapshot: ConversationSnapshot }
   | { type: "queue-changed"; snapshot: QueueSnapshot }
@@ -394,6 +426,7 @@ export interface BrowserVisibilityInput {
 
 export interface AgentDesktopApi {
   getStatus: () => Promise<AgentStatus>;
+  getUsage: () => Promise<AccountUsage>;
   listModels: () => Promise<AgentModelOption[]>;
   listBots: () => Promise<BotSummary[]>;
   createBot: () => Promise<BotSummary>;
@@ -425,6 +458,7 @@ export interface BrowserDesktopApi {
 
 export interface InfeldDesktopApi {
   getAppInfo: () => Promise<AppInfo>;
+  openExternal: (destination: ExternalDestination) => Promise<void>;
   agent: AgentDesktopApi;
   browser: BrowserDesktopApi;
 }

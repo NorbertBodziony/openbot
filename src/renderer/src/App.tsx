@@ -1,6 +1,7 @@
 import { batch, createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { createMutable } from "solid-js/store";
 import type {
+  AccountUsage,
   AgentEvent,
   AgentModelOption,
   AgentStatus,
@@ -92,6 +93,7 @@ export function App() {
   );
   const [appInfo, setAppInfo] = createSignal<AppInfo | null>(null);
   const [agentStatus, setAgentStatus] = createSignal<AgentStatus>(FALLBACK_STATUS);
+  const [accountUsage, setAccountUsage] = createSignal<AccountUsage | null>(null);
   const [leftPanelWidth, setLeftPanelWidth] = createSignal(
     readPanelWidth(LEFT_PANEL_STORAGE_KEY, LEFT_PANEL_DEFAULT, LEFT_PANEL_MIN, LEFT_PANEL_MAX),
   );
@@ -179,6 +181,9 @@ export function App() {
             .then(setModelOptions)
             .catch(() => undefined);
         }
+        return;
+      case "usage-changed":
+        setAccountUsage(event.usage);
         return;
       case "bots-changed":
         applyStoredBots(event.bots);
@@ -468,6 +473,12 @@ export function App() {
       .catch((error) => appendUiError(bot.id, error, "Stop failed"));
   }
 
+  async function refreshAccountUsage(): Promise<AccountUsage> {
+    const usage = await window.infeld.agent.getUsage();
+    setAccountUsage(usage);
+    return usage;
+  }
+
   function appendUiError(botId: string, error: unknown, status: string) {
     const body = error instanceof Error ? error.message : String(error);
     setUiErrors((current) => ({
@@ -528,11 +539,14 @@ export function App() {
           activeBotId={activeBot()?.id ?? ""}
           appInfo={appInfo()}
           agentStatus={agentStatus()}
+          accountUsage={accountUsage()}
           agentStates={sidebarAgentStates()}
           onSelectBot={selectBot}
           onCreateBot={() => setAgentPickerOpen(true)}
           onEditBot={editBot}
           onDeleteBot={deleteBot}
+          onRefreshUsage={refreshAccountUsage}
+          onOpenExternal={(destination) => window.infeld.openExternal(destination)}
           onCollapse={() => setSidebarCollapsed(true)}
         />
         <PanelResizer

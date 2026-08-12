@@ -55,14 +55,37 @@ describe("Infeld connected desktop shell", () => {
         getAppInfo: vi
           .fn()
           .mockResolvedValue({ name: "Infeld Bot", version: "0.1.0", platform: "darwin" }),
+        openExternal: vi.fn().mockResolvedValue(undefined),
         agent: {
           getStatus: vi.fn().mockResolvedValue({
             phase: "ready",
             cliVersion: "0.144.1",
-            auth: { kind: "chatgpt", planType: "pro" },
+            auth: { kind: "chatgpt", email: "norbert@example.com", planType: "pro" },
             capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
             message: null,
             fullAccess: true,
+          }),
+          getUsage: vi.fn().mockResolvedValue({
+            planType: "pro",
+            limits: [
+              {
+                id: "codex",
+                name: null,
+                primary: { usedPercent: 28, windowDurationMins: 300, resetsAt: 1_786_563_600 },
+                secondary: {
+                  usedPercent: 41,
+                  windowDurationMins: 10_080,
+                  resetsAt: 1_787_040_000,
+                },
+              },
+            ],
+            tokens: {
+              lifetimeTokens: 1_234_567,
+              peakDailyTokens: 45_678,
+              currentStreakDays: 3,
+              longestStreakDays: 9,
+            },
+            fetchedAt: "2026-08-12T20:00:00.000Z",
           }),
           listModels: vi.fn().mockResolvedValue([
             {
@@ -148,6 +171,30 @@ describe("Infeld connected desktop shell", () => {
     expect(screen.queryByText(/Salesforce account queue/i)).not.toBeInTheDocument();
   });
 
+  it("shows the ChatGPT account popover, live Codex usage, and contact actions", async () => {
+    render(() => <App />);
+    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
+    expect(accountButton).toHaveTextContent("norbert@example.com");
+
+    fireEvent.click(accountButton);
+    await waitFor(() => expect(window.infeld.agent.getUsage).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: /^Usage/ }));
+
+    expect(await screen.findByText("5-hour limit")).toBeInTheDocument();
+    expect(screen.getByText("Weekly limit")).toBeInTheDocument();
+    expect(screen.getByText("72% left")).toBeInTheDocument();
+    expect(screen.getByText("1.2M")).toBeInTheDocument();
+    expect(screen.getByText("3 days")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to account menu" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+    await waitFor(() => expect(window.infeld.openExternal).toHaveBeenCalledWith("feedback"));
+
+    fireEvent.click(accountButton);
+    fireEvent.click(screen.getByRole("button", { name: /Message.*@norbertbodziony/ }));
+    await waitFor(() => expect(window.infeld.openExternal).toHaveBeenCalledWith("message"));
+  });
+
   it("renders loaded history without replaying entrance animations", async () => {
     vi.mocked(window.infeld.agent.readConversation).mockResolvedValueOnce({
       botId: "chief",
@@ -209,7 +256,7 @@ describe("Infeld connected desktop shell", () => {
       status: {
         phase: "ready",
         cliVersion: "0.144.1",
-        auth: { kind: "chatgpt", planType: "pro" },
+        auth: { kind: "chatgpt", email: "norbert@example.com", planType: "pro" },
         capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
         message: null,
         fullAccess: true,

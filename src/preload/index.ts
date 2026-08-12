@@ -62,8 +62,10 @@ window.addEventListener("paste", (event) => {
 
 const infeldApi: InfeldDesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC_CHANNELS.getAppInfo),
+  openExternal: (destination) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, destination),
   agent: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.agentGetStatus),
+    getUsage: () => ipcRenderer.invoke(IPC_CHANNELS.agentGetUsage),
     listModels: () => ipcRenderer.invoke(IPC_CHANNELS.agentListModels),
     listBots: () => ipcRenderer.invoke(IPC_CHANNELS.agentListBots),
     createBot: () => ipcRenderer.invoke(IPC_CHANNELS.agentCreateBot),

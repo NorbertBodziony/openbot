@@ -55,9 +55,38 @@ export interface AppServerRequest {
 export interface AccountReadResult {
   account: null | {
     type: string;
+    email?: string | null;
     planType?: string | null;
   };
   requiresOpenaiAuth: boolean;
+}
+
+export interface AccountRateLimitWindowResult {
+  usedPercent?: number | null;
+  windowDurationMins?: number | null;
+  resetsAt?: number | null;
+}
+
+export interface AccountRateLimitResult {
+  limitId?: string | null;
+  limitName?: string | null;
+  primary?: AccountRateLimitWindowResult | null;
+  secondary?: AccountRateLimitWindowResult | null;
+  planType?: string | null;
+}
+
+export interface AccountRateLimitsReadResult {
+  rateLimits?: AccountRateLimitResult | null;
+  rateLimitsByLimitId?: Record<string, AccountRateLimitResult | undefined> | null;
+}
+
+export interface AccountUsageReadResult {
+  summary?: {
+    lifetimeTokens?: number | null;
+    peakDailyTokens?: number | null;
+    currentStreakDays?: number | null;
+    longestStreakDays?: number | null;
+  } | null;
 }
 
 export interface ThreadItem {
