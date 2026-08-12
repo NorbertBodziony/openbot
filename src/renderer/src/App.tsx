@@ -2,6 +2,7 @@ import { batch, createEffect, createMemo, createSignal, onCleanup, onMount, Show
 import { createMutable } from "solid-js/store";
 import type {
   AgentEvent,
+  AgentModelOption,
   AgentStatus,
   AppInfo,
   BotSummary,
@@ -63,6 +64,7 @@ const ONBOARDING_PROFILES: Record<
 
 export function App() {
   const [botList, setBotList] = createSignal<BotProfile[]>([]);
+  const [modelOptions, setModelOptions] = createSignal<AgentModelOption[]>([]);
   const [activeBotId, setActiveBotId] = createSignal("");
   const [liveMessages, setLiveMessages] = createSignal<Record<string, BotMessage[]>>({});
   const [uiErrors, setUiErrors] = createSignal<Record<string, BotMessage[]>>({});
@@ -129,6 +131,10 @@ export function App() {
         .then(setAgentStatus)
         .catch(() => undefined),
       window.infeld.agent
+        .listModels()
+        .then(setModelOptions)
+        .catch(() => undefined),
+      window.infeld.agent
         .listBots()
         .then(applyStoredBots)
         .catch((error) => {
@@ -167,6 +173,12 @@ export function App() {
     switch (event.type) {
       case "status":
         setAgentStatus(event.status);
+        if (event.status.phase === "ready") {
+          void window.infeld.agent
+            .listModels()
+            .then(setModelOptions)
+            .catch(() => undefined);
+        }
         return;
       case "bots-changed":
         applyStoredBots(event.bots);
@@ -232,8 +244,7 @@ export function App() {
     setLiveMessages((current) => {
       const previous = current[botId] ?? [];
       const previousById = new Map(previous.map((message) => [message.id, message]));
-      const next = snapshot.messages.map((message) => {
-        const mapped = toBotMessage(message, botList());
+      const next = toBotMessages(snapshot.messages, botList()).map((mapped) => {
         const existing = previousById.get(mapped.id);
         if (!existing) return createMutable(mapped);
         if (!botMessagesEqual(existing, mapped)) Object.assign(existing, mapped);
@@ -527,6 +538,7 @@ export function App() {
       <Conversation
         bot={activeBot()}
         bots={botList()}
+        modelOptions={modelOptions()}
         messages={activeMessages()}
         loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
         queue={activeQueue()}
@@ -564,6 +576,8 @@ function toBotProfile(stored: BotSummary): BotProfile {
     role: stored.role,
     description: stored.description,
     notifications: stored.notifications,
+    model: stored.model,
+    reasoningEffort: stored.reasoningEffort,
     threadId: stored.threadId,
     initials: stored.name.slice(0, 1).toUpperCase(),
     accent:
@@ -586,10 +600,12 @@ function toBotMessage(message: ConversationMessage, bots: BotProfile[]): BotMess
   const exchangeSenderId = message.senderBotId ?? message.exchange?.senderBotId;
   return {
     id: message.id,
+    turnId: message.turnId,
     author: message.author === "user" ? "you" : "bot",
     body: message.text,
     time: formatTime(message.createdAt),
     streaming: message.status === "streaming",
+    itemType: message.itemType,
     kind: message.exchange ? "exchange" : "text",
     senderBotId: exchangeSenderId,
     senderLabel: sender ? `Message from ${sender}` : undefined,
@@ -610,6 +626,40 @@ function toBotMessage(message: ConversationMessage, bots: BotProfile[]): BotMess
   };
 }
 
+function toBotMessages(messages: ConversationMessage[], bots: BotProfile[]): BotMessage[] {
+  const result: BotMessage[] = [];
+  const thinkingByTurn = new Map<string, BotMessage>();
+  for (const message of messages) {
+    if (message.author !== "assistant" || message.itemType !== "commentary") {
+      result.push(toBotMessage(message, bots));
+      continue;
+    }
+
+    const key = message.turnId ?? message.id;
+    const existing = thinkingByTurn.get(key);
+    if (existing) {
+      if (message.text.trim()) existing.items = [...(existing.items ?? []), message.text];
+      existing.streaming = existing.streaming || message.status === "streaming";
+      continue;
+    }
+
+    const thinking: BotMessage = {
+      id: `thinking:${key}`,
+      turnId: message.turnId,
+      author: "bot",
+      body: "",
+      time: formatTime(message.createdAt),
+      streaming: message.status === "streaming",
+      itemType: "commentary",
+      kind: "thinking",
+      items: message.text.trim() ? [message.text] : [],
+    };
+    thinkingByTurn.set(key, thinking);
+    result.push(thinking);
+  }
+  return result;
+}
+
 function cleanPreview(preview: string): string {
   const cleaned = preview
     .replace(/\binbox\s+at\s+zero\b[:,]?\s*/gi, "")
@@ -621,17 +671,20 @@ function cleanPreview(preview: string): string {
 function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
   return (
     left.id === right.id &&
+    left.turnId === right.turnId &&
     left.author === right.author &&
     left.body === right.body &&
     left.time === right.time &&
     left.kind === right.kind &&
     left.streaming === right.streaming &&
+    left.itemType === right.itemType &&
     left.status === right.status &&
     left.senderBotId === right.senderBotId &&
     left.senderLabel === right.senderLabel &&
     left.replyToMessageId === right.replyToMessageId &&
     JSON.stringify(left.attachments) === JSON.stringify(right.attachments) &&
-    JSON.stringify(left.exchange) === JSON.stringify(right.exchange)
+    JSON.stringify(left.exchange) === JSON.stringify(right.exchange) &&
+    JSON.stringify(left.items) === JSON.stringify(right.items)
   );
 }
 

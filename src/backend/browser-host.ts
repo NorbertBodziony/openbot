@@ -27,6 +27,7 @@ interface InternalTab {
   id: string;
   view: WebContentsView;
   ownerThreadId: string | null;
+  ownerBotId: string | null;
   revision: number;
   queue: Promise<unknown>;
 }
@@ -131,6 +132,7 @@ export class BrowserHost {
   #visible = false;
   #bounds: BrowserBounds | null = null;
   #attachedView: WebContentsView | null = null;
+  readonly #mountedViews = new Set<WebContentsView>();
 
   constructor(window: BrowserWindow, downloadsRoot: string) {
     this.#window = window;
@@ -182,12 +184,17 @@ export class BrowserHost {
     return this.#activeTabId;
   }
 
-  async open(url: string, ownerThreadId: string | null = null): Promise<BrowserTab> {
+  async open(
+    url: string,
+    ownerThreadId: string | null = null,
+    ownerBotId: string | null = null,
+  ): Promise<BrowserTab> {
     const normalizedUrl = normalizeBrowserUrl(url);
     const tab: InternalTab = {
       id: randomUUID(),
       view: this.#createView(),
       ownerThreadId,
+      ownerBotId,
       revision: 0,
       queue: Promise.resolve(),
     };
@@ -217,7 +224,7 @@ export class BrowserHost {
 
   async close(tabId: string): Promise<void> {
     const tab = this.#requireTab(tabId);
-    if (this.#attachedView === tab.view) this.#detachView();
+    this.#unmountView(tab.view);
     this.#tabs.delete(tabId);
     tab.view.webContents.close();
 
@@ -231,9 +238,6 @@ export class BrowserHost {
   async setVisible(input: BrowserVisibilityInput): Promise<void> {
     this.#visible = input.visible;
     if (input.bounds) this.#bounds = validateBounds(input.bounds);
-    if (!input.visible && this.#attachedView) {
-      this.#attachedView.setBounds({ x: -10_000, y: -10_000, width: 1, height: 1 });
-    }
     this.#syncAttachedView();
   }
 
@@ -344,8 +348,10 @@ export class BrowserHost {
   }
 
   destroy(): void {
-    this.#detachView();
-    for (const tab of this.#tabs.values()) tab.view.webContents.close();
+    for (const tab of this.#tabs.values()) {
+      this.#unmountView(tab.view);
+      tab.view.webContents.close();
+    }
     this.#tabs.clear();
     this.#listeners.clear();
     this.clearControls();
@@ -353,7 +359,7 @@ export class BrowserHost {
   }
 
   #createView(): WebContentsView {
-    return new WebContentsView({
+    const view = new WebContentsView({
       webPreferences: {
         session: this.#session,
         sandbox: true,
@@ -363,6 +369,8 @@ export class BrowserHost {
         allowRunningInsecureContent: false,
       },
     });
+    view.setBackgroundColor("#0b0b0b");
+    return view;
   }
 
   #configureSession(): void {
@@ -402,27 +410,31 @@ export class BrowserHost {
   #syncAttachedView(): void {
     const tab = this.#activeTabId ? this.#tabs.get(this.#activeTabId) : null;
     if (!this.#visible || !this.#bounds || !tab) {
-      this.#detachView();
+      this.#attachedView?.setVisible(false);
       return;
     }
 
     if (this.#attachedView !== tab.view) {
-      this.#detachView();
-      this.#window.contentView.addChildView(tab.view);
+      this.#attachedView?.setVisible(false);
+      this.#mountView(tab.view);
       this.#attachedView = tab.view;
     }
     tab.view.setBounds(this.#bounds);
+    tab.view.setVisible(true);
+    tab.view.webContents.invalidate();
   }
 
-  #detachView(): void {
-    if (!this.#attachedView) return;
-    const view = this.#attachedView;
-    // WebContentsView is native to the window and does not follow renderer CSS
-    // transforms. Move it out of the viewport before detaching so hide remains
-    // reliable even while the renderer panel is animating away.
-    view.setBounds({ x: -10_000, y: -10_000, width: 1, height: 1 });
-    this.#window.contentView.removeChildView(view);
-    this.#attachedView = null;
+  #mountView(view: WebContentsView): void {
+    if (this.#mountedViews.has(view)) return;
+    view.setVisible(false);
+    this.#window.contentView.addChildView(view);
+    this.#mountedViews.add(view);
+  }
+
+  #unmountView(view: WebContentsView): void {
+    view.setVisible(false);
+    if (this.#mountedViews.delete(view)) this.#window.contentView.removeChildView(view);
+    if (this.#attachedView === view) this.#attachedView = null;
   }
 
   #requireTab(tabId: string): InternalTab {
@@ -559,14 +571,12 @@ function isAllowedMainUrl(value: string): boolean {
 }
 
 function validateBounds(bounds: BrowserBounds): BrowserBounds {
-  const normalized = {
-    x: Math.max(0, Math.round(bounds.x)),
-    y: Math.max(0, Math.round(bounds.y)),
-    width: Math.max(1, Math.round(bounds.width)),
-    height: Math.max(1, Math.round(bounds.height)),
-  };
-  if (!Object.values(normalized).every(Number.isFinite)) throw new Error("Invalid browser bounds.");
-  return normalized;
+  if (!Object.values(bounds).every(Number.isFinite)) throw new Error("Invalid browser bounds.");
+  const x = Math.max(0, Math.floor(bounds.x));
+  const y = Math.max(0, Math.floor(bounds.y));
+  const right = Math.max(x + 1, Math.ceil(bounds.x + bounds.width));
+  const bottom = Math.max(y + 1, Math.ceil(bounds.y + bounds.height));
+  return { x, y, width: right - x, height: bottom - y };
 }
 
 function toPublicTab(tab: InternalTab): BrowserTab {
@@ -576,6 +586,7 @@ function toPublicTab(tab: InternalTab): BrowserTab {
     url: tab.view.webContents.getURL() || "about:blank",
     loading: tab.view.webContents.isLoading(),
     ownerThreadId: tab.ownerThreadId,
+    ownerBotId: tab.ownerBotId,
   };
 }
 

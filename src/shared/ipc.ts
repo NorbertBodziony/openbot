@@ -1,6 +1,7 @@
 export const IPC_CHANNELS = {
   getAppInfo: "app:get-info",
   agentGetStatus: "agent:get-status",
+  agentListModels: "agent:list-models",
   agentListBots: "agent:list-bots",
   agentCreateBot: "agent:create-bot",
   agentUpdateBot: "agent:update-bot",
@@ -62,12 +63,26 @@ export interface BotSummary {
   role: string;
   description: string;
   notifications: boolean;
+  model: AgentModelId;
+  reasoningEffort: AgentReasoningEffort;
   threadId: string | null;
   workspacePath: string;
   preview: string;
   updatedAt: string | null;
   avatarShape: BotAvatarShape;
   avatarColor: BotAvatarColor;
+}
+
+export type AgentModelId = "gpt-5.6-luna" | "gpt-5.6-terra" | "gpt-5.6-sol";
+
+export type AgentReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+export interface AgentModelOption {
+  id: AgentModelId;
+  name: string;
+  description: string;
+  defaultReasoningEffort: AgentReasoningEffort;
+  supportedReasoningEfforts: AgentReasoningEffort[];
 }
 
 export type BotAvatarShape =
@@ -99,6 +114,8 @@ export interface UpdateBotInput {
   role?: string;
   description?: string;
   notifications?: boolean;
+  model?: AgentModelId;
+  reasoningEffort?: AgentReasoningEffort;
   avatarShape?: BotAvatarShape;
   avatarColor?: BotAvatarColor;
 }
@@ -295,6 +312,7 @@ export interface BrowserTab {
   url: string;
   loading: boolean;
   ownerThreadId: string | null;
+  ownerBotId: string | null;
 }
 
 export type BrowserControlPhase = "acting" | "waiting";
@@ -338,6 +356,7 @@ export interface BrowserBounds {
 export interface BrowserOpenInput {
   url: string;
   ownerThreadId?: string | null;
+  ownerBotId?: string | null;
 }
 
 export interface BrowserVisibilityInput {
@@ -347,6 +366,7 @@ export interface BrowserVisibilityInput {
 
 export interface AgentDesktopApi {
   getStatus: () => Promise<AgentStatus>;
+  listModels: () => Promise<AgentModelOption[]>;
   listBots: () => Promise<BotSummary[]>;
   createBot: () => Promise<BotSummary>;
   updateBot: (input: UpdateBotInput) => Promise<BotSummary>;

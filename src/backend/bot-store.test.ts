@@ -27,6 +27,8 @@ describe("BotStore", () => {
     expect(chief.workspacePath).toBe(join(home, "Infeld", "Bots", "chief"));
     expect(chief.description).toBe("Coordinates work across your local Infeld agents.");
     expect(chief.preview).toBe("No messages yet");
+    expect(chief.model).toBe("gpt-5.6-luna");
+    expect(chief.reasoningEffort).toBe("medium");
     expect(sales.workspacePath).toBe(join(home, "Infeld", "Bots", "sales-outbound"));
     expect(store.sharedRoot).toBe(join(home, "Infeld", "Shared"));
     expect(chief.workspacePath).not.toBe(sales.workspacePath);
@@ -42,7 +44,7 @@ describe("BotStore", () => {
     await store.setThreadId("chief", "thread-123");
     const parsed = JSON.parse(await readFile(join(userData, "agent-state.json"), "utf8"));
 
-    expect(parsed.version).toBe(5);
+    expect(parsed.version).toBe(6);
     expect(parsed.bots.find((bot: { id: string }) => bot.id === "chief").threadId).toBe(
       "thread-123",
     );
@@ -100,6 +102,8 @@ describe("BotStore", () => {
       role: "Operations lead",
       description: "Keeps the team aligned",
       notifications: false,
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
     });
     const restored = new BotStore(userData, join(root, "home"));
     await restored.initialize();
@@ -108,6 +112,8 @@ describe("BotStore", () => {
       role: "Operations lead",
       description: "Keeps the team aligned",
       notifications: false,
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
     });
   });
 

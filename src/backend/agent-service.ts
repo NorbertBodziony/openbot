@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type {
   AgentEvent,
+  AgentModelOption,
   AgentPromptQuestion,
+  AgentReasoningEffort,
   AgentStatus,
   AttachmentDataInput,
   BotSummary,
@@ -62,6 +64,40 @@ const INITIAL_STATUS: AgentStatus = {
   fullAccess: true,
 };
 
+const FALLBACK_MODELS: AgentModelOption[] = [
+  {
+    id: "gpt-5.6-luna",
+    name: "Luna",
+    description: "Fast and efficient for everyday agent work.",
+    defaultReasoningEffort: "medium",
+    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+  },
+  {
+    id: "gpt-5.6-terra",
+    name: "Terra",
+    description: "Balanced speed and capability for involved tasks.",
+    defaultReasoningEffort: "medium",
+    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+  },
+  {
+    id: "gpt-5.6-sol",
+    name: "Sol",
+    description: "Most capable for complex, long-running work.",
+    defaultReasoningEffort: "medium",
+    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
+  },
+];
+
+interface ModelListResponse {
+  data: Array<{
+    model?: string;
+    displayName?: string;
+    defaultReasoningEffort?: string;
+    supportedReasoningEfforts?: Array<{ reasoningEffort?: string }>;
+    hidden?: boolean;
+  }>;
+}
+
 export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #store: BotStore;
   readonly #mailbox: MailboxStore;
@@ -80,6 +116,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #stopping = false;
   #restartAttempts = 0;
   #restartTimer: NodeJS.Timeout | null = null;
+  #models = structuredClone(FALLBACK_MODELS);
 
   constructor(
     store: BotStore,
@@ -108,6 +145,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#store.list();
   }
 
+  listModels(): AgentModelOption[] {
+    return structuredClone(this.#models);
+  }
+
   async createBot(): Promise<BotSummary> {
     const bot = await this.#store.createBot();
     this.#emit({ type: "bots-changed", bots: this.#store.list() });
@@ -116,7 +157,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
     const profileChanged =
-      input.name !== undefined || input.role !== undefined || input.description !== undefined;
+      input.name !== undefined ||
+      input.role !== undefined ||
+      input.description !== undefined ||
+      input.model !== undefined ||
+      input.reasoningEffort !== undefined;
     const bot = await this.#store.updateBot(input);
     if (profileChanged && bot.threadId) {
       // Re-resume before the next turn so App Server receives the updated standing instructions.
@@ -345,6 +390,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return;
       }
 
+      await this.#refreshModelCatalog(client);
+
       const computerUse = await this.#probeComputerUse(client);
       this.#restartAttempts = 0;
       this.#setStatus({
@@ -415,6 +462,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!this.#loadedThreads.has(bot.threadId)) {
         await client.request("thread/resume", {
           threadId: bot.threadId,
+          model: bot.model,
           cwd: bot.workspacePath,
           runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
           approvalPolicy: "never",
@@ -428,6 +476,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     const response = await client.request<ThreadResponse>("thread/start", {
+      model: bot.model,
       cwd: bot.workspacePath,
       runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
       approvalPolicy: "never",
@@ -690,6 +739,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
       const response = await client.request<TurnResponse>("turn/start", {
         threadId,
+        model: bot.model,
+        effort: bot.reasoningEffort,
         clientUserMessageId: delivery.id,
         input,
         cwd: bot.workspacePath,
@@ -711,6 +762,42 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#emitQueue(delivery.recipientBotId);
       this.#emitError("delivery_start_failed", error, delivery.recipientBotId);
       this.#scheduleDrain(delivery.recipientBotId);
+    }
+  }
+
+  async #refreshModelCatalog(client: CodexAppServerClient): Promise<void> {
+    try {
+      const response = await client.request<ModelListResponse>(
+        "model/list",
+        { limit: 100, includeHidden: false },
+        5_000,
+      );
+      const serverModels = new Map(
+        response.data
+          .filter((item) => !item.hidden && typeof item.model === "string")
+          .map((item) => [item.model as string, item]),
+      );
+      const discovered = FALLBACK_MODELS.filter((fallback) => serverModels.has(fallback.id)).map(
+        (fallback) => {
+          const server = serverModels.get(fallback.id);
+          const efforts = (server?.supportedReasoningEfforts ?? [])
+            .map((item) => item.reasoningEffort)
+            .filter(isReasoningEffort);
+          return {
+            ...fallback,
+            name: cleanModelName(server?.displayName, fallback.name),
+            defaultReasoningEffort: isReasoningEffort(server?.defaultReasoningEffort)
+              ? server.defaultReasoningEffort
+              : fallback.defaultReasoningEffort,
+            supportedReasoningEfforts: efforts.length
+              ? efforts
+              : fallback.supportedReasoningEfforts,
+          };
+        },
+      );
+      if (discovered.length) this.#models = discovered;
+    } catch {
+      this.#models = structuredClone(FALLBACK_MODELS);
     }
   }
 
@@ -893,7 +980,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const latestAssistant = [...snapshot.messages]
       .reverse()
-      .find((message) => message.author === "assistant" && message.text.trim());
+      .find(
+        (message) =>
+          message.author === "assistant" &&
+          message.itemType !== "commentary" &&
+          message.text.trim(),
+      );
     if (latestAssistant) {
       await this.#store.updatePreview(botId, latestAssistant.text);
       this.#emit({ type: "bots-changed", bots: this.#store.list() });
@@ -1232,4 +1324,13 @@ function isDynamicToolCall(value: unknown): value is DynamicToolCallParams {
     typeof value.tool === "string" &&
     "arguments" in value
   );
+}
+
+function isReasoningEffort(value: unknown): value is AgentReasoningEffort {
+  return ["low", "medium", "high", "xhigh", "max"].includes(value as AgentReasoningEffort);
+}
+
+function cleanModelName(value: string | undefined, fallback: string): string {
+  if (!value) return fallback;
+  return value.replace(/^GPT-5\.6\s*/i, "").trim() || fallback;
 }

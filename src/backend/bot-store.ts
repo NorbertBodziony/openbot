@@ -1,16 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type { BotAvatarColor, BotAvatarShape, BotSummary, UpdateBotInput } from "../shared/ipc";
+import type {
+  AgentModelId,
+  AgentReasoningEffort,
+  BotAvatarColor,
+  BotAvatarShape,
+  BotSummary,
+  UpdateBotInput,
+} from "../shared/ipc";
 import { isRecord } from "./protocol";
 
 type StoredBot = BotSummary;
 
 interface StoredState {
-  version: 5;
+  version: 6;
   examplesInitialized: boolean;
   bots: StoredBot[];
 }
+
+export const DEFAULT_AGENT_MODEL: AgentModelId = "gpt-5.6-luna";
+export const DEFAULT_REASONING_EFFORT: AgentReasoningEffort = "medium";
 
 const DEFAULT_BOTS = [
   ["chief", "Chief", "Chief of staff", "Coordinates work across your local Infeld agents."],
@@ -57,7 +67,7 @@ export class BotStore {
   readonly #botsRoot: string;
   readonly #sharedRoot: string;
   readonly #downloadsRoot: string;
-  #state: StoredState = { version: 5, examplesInitialized: false, bots: [] };
+  #state: StoredState = { version: 6, examplesInitialized: false, bots: [] };
   #writeQueue: Promise<void> = Promise.resolve();
 
   constructor(userDataPath: string, homePath: string) {
@@ -112,6 +122,8 @@ export class BotStore {
     if (input.role !== undefined) bot.role = input.role.trim().slice(0, 120);
     if (input.description !== undefined) bot.description = input.description.trim().slice(0, 2_000);
     if (input.notifications !== undefined) bot.notifications = input.notifications;
+    if (input.model !== undefined) bot.model = input.model;
+    if (input.reasoningEffort !== undefined) bot.reasoningEffort = input.reasoningEffort;
     if (input.avatarShape !== undefined) bot.avatarShape = input.avatarShape;
     if (input.avatarColor !== undefined) bot.avatarColor = input.avatarColor;
     bot.updatedAt = new Date().toISOString();
@@ -159,7 +171,7 @@ export class BotStore {
     try {
       const parsed: unknown = JSON.parse(await readFile(this.#statePath, "utf8"));
       if (!isRecord(parsed) || !Array.isArray(parsed.bots)) {
-        return { version: 5, examplesInitialized: false, bots: [] };
+        return { version: 6, examplesInitialized: false, bots: [] };
       }
 
       const bots = parsed.bots.filter(isStoredBot).map((bot) => {
@@ -174,6 +186,10 @@ export class BotStore {
                 ? (example?.[3] ?? "")
                 : "",
           notifications: typeof bot.notifications === "boolean" ? bot.notifications : true,
+          model: isAgentModel(bot.model) ? bot.model : DEFAULT_AGENT_MODEL,
+          reasoningEffort: isReasoningEffort(bot.reasoningEffort)
+            ? bot.reasoningEffort
+            : DEFAULT_REASONING_EFFORT,
           preview:
             untouched && bot.preview === "Ready for a local task."
               ? "No messages yet"
@@ -188,10 +204,10 @@ export class BotStore {
             : defaultAvatarColor(bot.id),
         };
       });
-      return { version: 5, examplesInitialized: true, bots };
+      return { version: 6, examplesInitialized: true, bots };
     } catch (error) {
       if (isRecord(error) && error.code === "ENOENT") {
-        return { version: 5, examplesInitialized: false, bots: [] };
+        return { version: 6, examplesInitialized: false, bots: [] };
       }
       throw error;
     }
@@ -216,6 +232,8 @@ export class BotStore {
       role,
       description,
       notifications: true,
+      model: DEFAULT_AGENT_MODEL,
+      reasoningEffort: DEFAULT_REASONING_EFFORT,
       threadId: null,
       workspacePath: join(this.#botsRoot, id),
       preview: "No messages yet",
@@ -294,6 +312,14 @@ function isAvatarShape(value: unknown): value is BotAvatarShape {
 
 function isAvatarColor(value: unknown): value is BotAvatarColor {
   return typeof value === "string" && AVATAR_COLORS.includes(value as BotAvatarColor);
+}
+
+function isAgentModel(value: unknown): value is AgentModelId {
+  return ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"].includes(value as AgentModelId);
+}
+
+function isReasoningEffort(value: unknown): value is AgentReasoningEffort {
+  return ["low", "medium", "high", "xhigh", "max"].includes(value as AgentReasoningEffort);
 }
 
 function avatarIndex(id: string): number {

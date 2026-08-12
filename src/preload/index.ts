@@ -59,6 +59,7 @@ const infeldApi: InfeldDesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC_CHANNELS.getAppInfo),
   agent: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.agentGetStatus),
+    listModels: () => ipcRenderer.invoke(IPC_CHANNELS.agentListModels),
     listBots: () => ipcRenderer.invoke(IPC_CHANNELS.agentListBots),
     createBot: () => ipcRenderer.invoke(IPC_CHANNELS.agentCreateBot),
     updateBot: (input) => ipcRenderer.invoke(IPC_CHANNELS.agentUpdateBot, input),

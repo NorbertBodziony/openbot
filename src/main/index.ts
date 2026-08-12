@@ -116,6 +116,10 @@ function registerIpcHandlers(
     assertTrustedSender(event.senderFrame);
     return service.getStatus();
   });
+  ipcMain.handle(IPC_CHANNELS.agentListModels, (event) => {
+    assertTrustedSender(event.senderFrame);
+    return service.listModels();
+  });
   ipcMain.handle(IPC_CHANNELS.agentListBots, (event) => {
     assertTrustedSender(event.senderFrame);
     return service.listBots();
@@ -196,7 +200,7 @@ function registerIpcHandlers(
   ipcMain.handle(IPC_CHANNELS.browserOpen, (event, input: unknown) => {
     assertTrustedSender(event.senderFrame);
     const parsed = parseBrowserOpen(input);
-    return browser.open(parsed.url, parsed.ownerThreadId ?? null);
+    return browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null);
   });
   ipcMain.handle(IPC_CHANNELS.browserActivate, (event, tabId: unknown) => {
     assertTrustedSender(event.senderFrame);
@@ -217,10 +221,7 @@ function registerIpcHandlers(
   ipcMain.handle(IPC_CHANNELS.browserSetVisible, async (event, input: unknown) => {
     assertTrustedSender(event.senderFrame);
     const parsed = parseVisibility(input);
-    if (parsed.visible && browser.listTabs().length === 0) {
-      await browser.open("https://www.google.com");
-    }
-    return browser.setVisible(parsed);
+    await browser.setVisible(parsed);
   });
 }
 
@@ -394,6 +395,14 @@ function parseUpdateBot(value: unknown): UpdateBotInput {
     if (typeof value.notifications !== "boolean") throw new Error("Invalid notifications value.");
     result.notifications = value.notifications;
   }
+  if (value.model !== undefined) {
+    if (!isAgentModel(value.model)) throw new Error("Invalid agent model.");
+    result.model = value.model;
+  }
+  if (value.reasoningEffort !== undefined) {
+    if (!isReasoningEffort(value.reasoningEffort)) throw new Error("Invalid reasoning effort.");
+    result.reasoningEffort = value.reasoningEffort;
+  }
   if (value.avatarShape !== undefined) {
     if (!isAvatarShape(value.avatarShape)) throw new Error("Invalid avatar shape.");
     result.avatarShape = value.avatarShape;
@@ -403,6 +412,16 @@ function parseUpdateBot(value: unknown): UpdateBotInput {
     result.avatarColor = value.avatarColor;
   }
   return result;
+}
+
+function isAgentModel(value: unknown): value is NonNullable<UpdateBotInput["model"]> {
+  return ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"].includes(value as string);
+}
+
+function isReasoningEffort(
+  value: unknown,
+): value is NonNullable<UpdateBotInput["reasoningEffort"]> {
+  return ["low", "medium", "high", "xhigh", "max"].includes(value as string);
 }
 
 function isAvatarShape(value: unknown): value is NonNullable<UpdateBotInput["avatarShape"]> {
@@ -541,6 +560,10 @@ function parseBrowserOpen(value: unknown): BrowserOpenInput {
       value.ownerThreadId === null || value.ownerThreadId === undefined
         ? null
         : requireString(value.ownerThreadId, "ownerThreadId"),
+    ownerBotId:
+      value.ownerBotId === null || value.ownerBotId === undefined
+        ? null
+        : requireString(value.ownerBotId, "ownerBotId"),
   };
 }
 

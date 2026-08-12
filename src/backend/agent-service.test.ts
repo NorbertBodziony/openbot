@@ -60,18 +60,21 @@ describe.sequential("AgentService", () => {
     for (const start of starts) {
       const params = start.params as Record<string, unknown>;
       expect(params).toMatchObject({
+        model: "gpt-5.6-luna",
         approvalPolicy: "never",
         sandbox: "danger-full-access",
         ephemeral: false,
         serviceName: "infeld_bot",
       });
-      expect(params).not.toHaveProperty("model");
       expect(params.dynamicTools).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ type: "namespace", name: "infeld_browser" }),
           expect.objectContaining({ type: "namespace", name: "infeld" }),
         ]),
       );
+    }
+    for (const turn of requests.filter((message) => message.method === "turn/start")) {
+      expect(turn.params).toMatchObject({ model: "gpt-5.6-luna", effort: "medium" });
     }
     expect((await store.getOrCreate("chief")).threadId).not.toBe(
       (await store.getOrCreate("sales-outbound")).threadId,
@@ -347,6 +350,11 @@ process.stdin.on("data", (chunk) => {
       fs.appendFileSync(log, JSON.stringify(message) + "\\n");
       if (message.method === "initialize") write({ id: message.id, result: {} });
       if (message.method === "account/read") write({ id: message.id, result: { account: { type: "chatgpt", planType: "pro" } } });
+      if (message.method === "model/list") write({ id: message.id, result: { data: [
+        { model: "gpt-5.6-luna", displayName: "GPT-5.6 Luna", defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "medium" }, { reasoningEffort: "high" }] },
+        { model: "gpt-5.6-terra", displayName: "GPT-5.6 Terra", defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }] },
+        { model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", defaultReasoningEffort: "high", supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }, { reasoningEffort: "xhigh" }] }
+      ] } });
       if (message.method === "plugin/list") write({ id: message.id, result: { marketplaces: [{ plugins: [{ id: "computer-use@openai-bundled", name: "computer-use", installed: true, enabled: true }] }] } });
       if (message.method === "thread/start") {
         const threadId = "thread-" + (++threadCounter);

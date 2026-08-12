@@ -1129,9 +1129,6 @@ textarea {
   border-left: 1px solid var(--grok-line);
   background: #0b0b0b;
   color: var(--grok-white);
-  transform-origin: right center;
-  animation: browser-panel-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  will-change: transform, opacity;
   transition:
     border-color 180ms ease,
     box-shadow 180ms ease;
@@ -1378,7 +1375,7 @@ textarea {
   min-height: 0;
   flex: 1;
   overflow: hidden;
-  background: #fff;
+  background: #0b0b0b;
 }
 
 .browser-empty-state {
@@ -1386,7 +1383,7 @@ textarea {
   height: 100%;
   place-content: center;
   gap: 5px;
-  color: rgba(0, 0, 0, 0.62);
+  color: rgba(255, 255, 255, 0.46);
   text-align: center;
 }
 
@@ -1484,7 +1481,8 @@ textarea {
 }
 
 .agent-settings-field input,
-.agent-settings-field textarea {
+.agent-settings-field textarea,
+.agent-settings-field select {
   display: block;
   width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -1501,8 +1499,30 @@ textarea {
     background 150ms ease;
 }
 
-.agent-settings-field input {
+.agent-settings-field input,
+.agent-settings-field select {
   height: 38px;
+}
+
+.agent-settings-field select {
+  appearance: none;
+  cursor: pointer;
+  background-image:
+    linear-gradient(45deg, transparent 50%, rgba(255, 255, 255, 0.58) 50%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.58) 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) 16px,
+    calc(100% - 11px) 16px;
+  background-repeat: no-repeat;
+  background-size:
+    5px 5px,
+    5px 5px;
+  padding-right: 32px;
+}
+
+.agent-settings-field select option {
+  background: #202020;
+  color: var(--grok-white);
 }
 
 .agent-settings-field textarea {
@@ -1516,14 +1536,57 @@ textarea {
 }
 
 .agent-settings-field input:focus,
-.agent-settings-field textarea:focus {
+.agent-settings-field textarea:focus,
+.agent-settings-field select:focus {
   border-color: rgba(255, 255, 255, 0.34);
   background: rgba(0, 0, 0, 0.34);
 }
 
 .agent-settings-field input:focus-visible,
-.agent-settings-field textarea:focus-visible {
+.agent-settings-field textarea:focus-visible,
+.agent-settings-field select:focus-visible {
   outline: none;
+}
+
+.agent-settings-model {
+  margin: 4px 0 17px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.055);
+  padding: 13px 12px 2px;
+}
+
+.agent-settings-section-heading {
+  margin: 0 0 13px;
+  padding: 0 2px;
+}
+
+.agent-settings-section-heading strong,
+.agent-settings-section-heading span {
+  display: block;
+}
+
+.agent-settings-section-heading strong {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 19px;
+}
+
+.agent-settings-section-heading span,
+.agent-settings-field small {
+  color: rgba(255, 255, 255, 0.44);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.agent-settings-field small {
+  display: block;
+  margin: 6px 4px 0;
+}
+
+.agent-settings-model .agent-settings-field {
+  margin-bottom: 11px;
 }
 
 .agent-settings-notifications {
@@ -1821,6 +1884,124 @@ textarea {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+}
+
+.thinking-entry {
+  width: 100%;
+  margin: 8px 0 2px;
+}
+
+.thinking-entry-animated {
+  opacity: 0;
+  animation: message-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+.thinking-disclosure {
+  width: min(620px, 88%);
+}
+
+.thinking-disclosure summary {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  border-radius: 9px;
+  padding: 4px 7px 4px 5px;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 18px;
+  list-style: none;
+  user-select: none;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.thinking-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking-disclosure summary:hover,
+.thinking-disclosure summary:focus-visible,
+.thinking-disclosure[open] summary {
+  background: rgba(255, 255, 255, 0.055);
+  color: rgba(255, 255, 255, 0.72);
+  outline: none;
+}
+
+.thinking-mark,
+.thinking-chevron {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  place-items: center;
+}
+
+.thinking-mark svg,
+.thinking-chevron svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
+}
+
+.thinking-disclosure summary small {
+  color: rgba(255, 255, 255, 0.32);
+  font: inherit;
+}
+
+.thinking-chevron {
+  margin-left: -2px;
+  transition: transform 150ms ease;
+}
+
+.thinking-disclosure[open] .thinking-chevron {
+  transform: rotate(180deg);
+}
+
+.thinking-live-dots {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.thinking-live-dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: agent-activity-dot 900ms ease-in-out infinite;
+}
+
+.thinking-live-dots i:nth-child(2) {
+  animation-delay: 120ms;
+}
+
+.thinking-live-dots i:nth-child(3) {
+  animation-delay: 240ms;
+}
+
+.thinking-details {
+  margin: 3px 0 4px 12px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 3px 0 3px 13px;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.thinking-details p {
+  margin: 0;
+  white-space: pre-line;
+}
+
+.thinking-details p + p {
+  margin-top: 6px;
 }
 
 .exchange-message-entry {
@@ -3545,21 +3726,6 @@ textarea {
   to {
     opacity: 1;
     transform: translateX(0);
-  }
-}
-
-@keyframes browser-panel-in {
-  from {
-    opacity: 0;
-    transform: translateX(22px) scaleX(0.97);
-  }
-  70% {
-    opacity: 1;
-    transform: translateX(-3px) scaleX(1.005);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0) scaleX(1);
   }
 }
 

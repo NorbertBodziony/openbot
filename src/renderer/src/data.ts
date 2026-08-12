@@ -1,5 +1,7 @@
 import type {
   AgentExchangeSummary,
+  AgentModelId,
+  AgentReasoningEffort,
   AttachmentSummary,
   BotAvatarColor,
   BotAvatarShape,
@@ -34,6 +36,7 @@ export const AVATAR_COLORS: BotAvatarColor[] = [
 
 export type MessageKind =
   | "text"
+  | "thinking"
   | "exchange"
   | "checklist"
   | "computer"
@@ -45,10 +48,12 @@ export type MessageKind =
 
 export interface BotMessage {
   id: string;
+  turnId?: string;
   author: "you" | "bot";
   body: string;
   time: string;
   streaming?: boolean;
+  itemType?: string;
   kind?: MessageKind;
   status?: string;
   senderBotId?: string;
@@ -75,6 +80,8 @@ export interface BotProfile {
   role: string;
   description: string;
   notifications: boolean;
+  model: AgentModelId;
+  reasoningEffort: AgentReasoningEffort;
   threadId: string | null;
   initials: string;
   accent: BotAccent;

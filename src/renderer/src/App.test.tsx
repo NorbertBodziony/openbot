@@ -18,6 +18,8 @@ const BOTS: BotSummary[] = [
     role: "Chief of staff",
     description: "Coordinates work",
     notifications: true,
+    model: "gpt-5.6-luna",
+    reasoningEffort: "medium",
     avatarShape: "blob",
     avatarColor: "orange",
     threadId: "thread-chief",
@@ -31,6 +33,8 @@ const BOTS: BotSummary[] = [
     role: "Outbound specialist",
     description: "",
     notifications: true,
+    model: "gpt-5.6-luna",
+    reasoningEffort: "medium",
     avatarShape: "cloud",
     avatarColor: "violet",
     threadId: null,
@@ -60,6 +64,29 @@ describe("Infeld connected desktop shell", () => {
             message: null,
             fullAccess: true,
           }),
+          listModels: vi.fn().mockResolvedValue([
+            {
+              id: "gpt-5.6-luna",
+              name: "Luna",
+              description: "Fast and efficient for everyday agent work.",
+              defaultReasoningEffort: "medium",
+              supportedReasoningEfforts: ["low", "medium", "high"],
+            },
+            {
+              id: "gpt-5.6-terra",
+              name: "Terra",
+              description: "Balanced speed and capability for involved tasks.",
+              defaultReasoningEffort: "medium",
+              supportedReasoningEfforts: ["medium", "high"],
+            },
+            {
+              id: "gpt-5.6-sol",
+              name: "Sol",
+              description: "Most capable for complex, long-running work.",
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: ["medium", "high", "xhigh"],
+            },
+          ]),
           listBots: vi.fn().mockResolvedValue(BOTS),
           createBot: vi.fn().mockResolvedValue({ ...BOTS[0], id: "bot-new", name: "New agent" }),
           updateBot: vi.fn().mockImplementation(async (input) => ({
@@ -204,6 +231,26 @@ describe("Infeld connected desktop shell", () => {
     expect(rightResizer).toHaveAttribute("aria-valuenow", "296");
   });
 
+  it("edits the persisted model and thinking level in agent settings", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+
+    const model = await screen.findByRole("combobox", { name: "Agent model" });
+    const thinking = screen.getByRole("combobox", { name: "Agent thinking level" });
+    expect(model).toHaveValue("gpt-5.6-luna");
+    expect(thinking).toHaveValue("medium");
+
+    await fireEvent.change(model, { target: { value: "gpt-5.6-sol" } });
+    await fireEvent.change(thinking, { target: { value: "xhigh" } });
+    await waitFor(() =>
+      expect(window.infeld.agent.updateBot).toHaveBeenLastCalledWith({
+        botId: "chief",
+        reasoningEffort: "xhigh",
+      }),
+    );
+  });
+
   it("fully hides and restores the left sidebar without losing its width", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -252,20 +299,23 @@ describe("Infeld connected desktop shell", () => {
           url: "http://127.0.0.1:4321",
           loading: false,
           ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
         },
         {
           id: "tab-2",
           title: "Second page",
           url: "https://example.com/second",
           loading: false,
-          ownerThreadId: null,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
         },
         {
           id: "tab-3",
           title: "Third page",
           url: "https://example.com/third",
           loading: false,
-          ownerThreadId: null,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
         },
       ],
       activeTabId: "tab-1",
@@ -305,6 +355,7 @@ describe("Infeld connected desktop shell", () => {
     expect(window.infeld.browser.open).toHaveBeenCalledWith({
       url: "https://www.google.com",
       ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
     });
     expect(screen.queryByText("Typing…")).not.toBeInTheDocument();
     expect(
@@ -346,6 +397,28 @@ describe("Infeld connected desktop shell", () => {
     expect(screen.getByRole("complementary", { name: "Browser" })).not.toHaveClass(
       "browser-panel-controlled",
     );
+  });
+
+  it("restores the right panel independently for each agent", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    expect(screen.getByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    expect(screen.queryByRole("complementary", { name: "Agent settings" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open computer" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(screen.getByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    expect(screen.getByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    expect(screen.getByRole("complementary", { name: "Browser" })).toBeInTheDocument();
   });
 
   it("queues from the composer and clears only after success", async () => {
@@ -531,6 +604,68 @@ describe("Infeld connected desktop shell", () => {
     await waitFor(() =>
       expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument(),
     );
+  });
+
+  it("groups commentary into a collapsed thinking disclosure", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "user-open",
+            turnId: "turn-open",
+            author: "user",
+            text: "Open x.com",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "commentary-open",
+            turnId: "turn-open",
+            author: "assistant",
+            text: "I’ll open x.com in the Infeld browser.",
+            createdAt: "2026-08-12T10:00:01.000Z",
+            status: "completed",
+            itemType: "commentary",
+          },
+          {
+            id: "commentary-check",
+            turnId: "turn-open",
+            author: "assistant",
+            text: "Checking that the page loaded.",
+            createdAt: "2026-08-12T10:00:02.000Z",
+            status: "completed",
+            itemType: "commentary",
+          },
+          {
+            id: "answer-open",
+            turnId: "turn-open",
+            author: "assistant",
+            text: "Opened x.com.",
+            createdAt: "2026-08-12T10:00:03.000Z",
+            status: "completed",
+            itemType: "final_answer",
+          },
+        ],
+      },
+    });
+
+    const thinkingLabel = await screen.findByText("Thinking");
+    const details = thinkingLabel.closest("details");
+    expect(screen.getByText("I’ll open x.com in the Infeld browser.")).not.toBeVisible();
+    expect(screen.getByText("Checking that the page loaded.")).not.toBeVisible();
+    expect(screen.getByText("Opened x.com.")).toBeVisible();
+    expect(screen.getAllByText("Thinking")).toHaveLength(1);
+
+    await fireEvent.click(thinkingLabel);
+    expect(details).toHaveAttribute("open");
+    expect(screen.getByText("I’ll open x.com in the Infeld browser.")).toBeVisible();
   });
 
   it("keeps text and attachments when enqueue fails", async () => {

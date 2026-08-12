@@ -1,7 +1,10 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type {
   AgentEvent,
+  AgentModelId,
+  AgentModelOption,
   AgentPromptQuestion,
+  AgentReasoningEffort,
   AttachmentSummary,
   BotAvatarColor,
   BotAvatarShape,
@@ -22,6 +25,7 @@ import { SidebarToggleIcon } from "./Sidebar";
 interface ConversationProps {
   bot: BotProfile | undefined;
   bots: BotProfile[];
+  modelOptions: AgentModelOption[];
   messages: BotMessage[];
   loaded: boolean;
   activeTurnId: string | null | undefined;
@@ -60,6 +64,8 @@ interface MediaPreview {
   loading: boolean;
   error: string | null;
 }
+
+type RightPanelMode = "none" | "browser" | "settings";
 
 const EMPTY_DRAFT: ComposerDraft = { text: "", attachments: [] };
 const ONBOARDING_CHOICES = [
@@ -626,6 +632,38 @@ function AgentActivityIndicator(props: {
   );
 }
 
+function ThinkingDisclosure(props: { message: BotMessage }) {
+  const stepCount = () => props.message.items?.length ?? 0;
+  return (
+    <article class="thinking-entry">
+      <details class="thinking-disclosure">
+        <summary aria-label="Show thinking details">
+          <span class="thinking-mark" aria-hidden="true">
+            <ThinkingIcon />
+          </span>
+          <span>Thinking</span>
+          <Show when={props.message.streaming}>
+            <span class="thinking-live-dots" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+          </Show>
+          <Show when={!props.message.streaming && stepCount() > 1}>
+            <small>{stepCount()} steps</small>
+          </Show>
+          <span class="thinking-chevron" aria-hidden="true">
+            <ChevronIcon />
+          </span>
+        </summary>
+        <div class="thinking-details">
+          <For each={props.message.items ?? []}>{(item) => <p>{item}</p>}</For>
+        </div>
+      </details>
+    </article>
+  );
+}
+
 export function Conversation(props: ConversationProps) {
   const [drafts, setDrafts] = createSignal<Record<string, ComposerDraft>>({});
   const [showAttachments, setShowAttachments] = createSignal(false);
@@ -633,13 +671,13 @@ export function Conversation(props: ConversationProps) {
   const [composerError, setComposerError] = createSignal<string | null>(null);
   const [submitting, setSubmitting] = createSignal(false);
   const [dropActive, setDropActive] = createSignal(false);
-  const [screenOpen, setScreenOpen] = createSignal(false);
-  const [browserDismissed, setBrowserDismissed] = createSignal(false);
-  const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [rightPanels, setRightPanels] = createSignal<Record<string, RightPanelMode>>({});
   const [settingsName, setSettingsName] = createSignal("");
   const [settingsTitle, setSettingsTitle] = createSignal("");
   const [settingsDescription, setSettingsDescription] = createSignal("");
   const [settingsNotifications, setSettingsNotifications] = createSignal(true);
+  const [settingsModel, setSettingsModel] = createSignal<AgentModelId>("gpt-5.6-luna");
+  const [settingsReasoning, setSettingsReasoning] = createSignal<AgentReasoningEffort>("medium");
   const [avatarPickerOpen, setAvatarPickerOpen] = createSignal(false);
   const [avatarShape, setAvatarShape] = createSignal<BotAvatarShape>("blob");
   const [avatarColor, setAvatarColor] = createSignal<BotAvatarColor>("orange");
@@ -663,6 +701,12 @@ export function Conversation(props: ConversationProps) {
       BROWSER_PANEL_MAX,
     ),
   );
+  const selectedModel = createMemo(() =>
+    props.modelOptions.find((option) => option.id === settingsModel()),
+  );
+  const reasoningOptions = createMemo(
+    () => selectedModel()?.supportedReasoningEfforts ?? ["medium" as const],
+  );
   const currentDraft = createMemo(() => {
     const id = props.bot?.id;
     return id ? (drafts()[id] ?? EMPTY_DRAFT) : EMPTY_DRAFT;
@@ -673,13 +717,35 @@ export function Conversation(props: ConversationProps) {
       ? props.bots.filter((bot) => `${bot.name} ${bot.role}`.toLowerCase().includes(query))
       : props.bots;
   });
+  const activeRightPanel = createMemo<RightPanelMode>(() => {
+    if (props.agentPickerOpen) return "none";
+    const botId = props.bot?.id;
+    return botId ? (rightPanels()[botId] ?? "none") : "none";
+  });
+  const screenOpen = () => activeRightPanel() === "browser";
+  const settingsOpen = () => activeRightPanel() === "settings";
+  const browserTabs = createMemo(() => {
+    const bot = props.bot;
+    if (!bot) return [];
+    return props.browserTabs.filter((tab) =>
+      tab.ownerBotId
+        ? tab.ownerBotId === bot.id
+        : Boolean(bot.threadId && tab.ownerThreadId === bot.threadId),
+    );
+  });
+  const activeBrowserTab = createMemo(
+    () => browserTabs().find((tab) => tab.id === props.activeBrowserTabId) ?? browserTabs()[0],
+  );
   const activeBrowserControl = createMemo(() => {
     const sessions = props.browserControlState.sessions;
-    const activeTab = props.browserTabs.find((tab) => tab.id === props.activeBrowserTabId);
+    const activeTab = activeBrowserTab();
     const forActiveTab = activeTab?.ownerThreadId
       ? sessions.filter((session) => session.threadId === activeTab.ownerThreadId)
       : [];
-    const candidates = forActiveTab.length > 0 ? forActiveTab : sessions;
+    const forActiveBot = props.bot?.threadId
+      ? sessions.filter((session) => session.threadId === props.bot?.threadId)
+      : [];
+    const candidates = forActiveTab.length > 0 ? forActiveTab : forActiveBot;
     return (
       [...candidates]
         .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
@@ -697,7 +763,7 @@ export function Conversation(props: ConversationProps) {
       sessions.find(
         (session) =>
           session.tabId === null &&
-          tab.id === props.activeBrowserTabId &&
+          tab.id === activeBrowserTab()?.id &&
           session.threadId === tab.ownerThreadId,
       )
     );
@@ -771,7 +837,6 @@ export function Conversation(props: ConversationProps) {
       if (event.key !== "Escape") return;
       hideBrowserPanel();
       setMediaPreview(null);
-      setSettingsOpen(false);
       setAvatarPickerOpen(false);
       props.onCloseAgentPicker();
     };
@@ -817,6 +882,8 @@ export function Conversation(props: ConversationProps) {
     setSettingsTitle(bot.role);
     setSettingsDescription(bot.description);
     setSettingsNotifications(bot.notifications);
+    setSettingsModel(bot.model);
+    setSettingsReasoning(bot.reasoningEffort);
     setAvatarShape(bot.avatarShape);
     setAvatarColor(bot.avatarColor);
     setAvatarPickerOpen(false);
@@ -825,28 +892,46 @@ export function Conversation(props: ConversationProps) {
   createEffect(() => {
     const request = props.settingsRequest;
     if (!request || props.bot?.id !== request.botId) return;
-    setScreenOpen(false);
-    setSettingsOpen(true);
+    setActiveRightPanel("settings");
   });
 
   createEffect(() => {
     if (!props.agentPickerOpen) return;
     setPickerQuery("");
     setActivePickerOption(0);
-    hideBrowserPanel();
-    setSettingsOpen(false);
     requestAnimationFrame(() => pickerInput?.focus());
   });
 
   createEffect(() => {
-    const activeTab = props.browserTabs.find((tab) => tab.id === props.activeBrowserTabId);
-    if (activeTab) setBrowserAddress(activeTab.url);
-    if (props.browserTabs.length > 0 && !browserDismissed()) {
-      setScreenOpen(true);
+    props.bot?.id;
+    const activeTab = activeBrowserTab();
+    setBrowserAddress(activeTab?.url ?? "https://www.google.com");
+    if (screenOpen() && activeTab && activeTab.id !== props.activeBrowserTabId) {
+      props.onActivateBrowserTab(activeTab.id);
     }
   });
 
   createEffect(() => {
+    const controlledBotIds = new Set(
+      props.browserControlState.sessions
+        .map((session) => props.bots.find((bot) => bot.threadId === session.threadId)?.id)
+        .filter((botId): botId is string => Boolean(botId)),
+    );
+    if (controlledBotIds.size === 0) return;
+    setRightPanels((current) => {
+      const next = { ...current };
+      let changed = false;
+      for (const botId of controlledBotIds) {
+        if (next[botId] === "browser") continue;
+        next[botId] = "browser";
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  });
+
+  createEffect(() => {
+    props.bot?.id;
     const visible = screenOpen();
     browserResizeObserver?.disconnect();
     if (!visible) {
@@ -929,23 +1014,31 @@ export function Conversation(props: ConversationProps) {
       const tab = await window.infeld.browser.open({
         url,
         ownerThreadId: props.bot?.threadId ?? null,
+        ownerBotId: props.bot?.id ?? null,
       });
       setBrowserAddress(tab.url);
-      showBrowserPanel();
+      setActiveRightPanel("browser");
     } catch {
       setBrowserAddress(url);
     }
   }
 
   function showBrowserPanel() {
-    setBrowserDismissed(false);
-    setScreenOpen(true);
+    setActiveRightPanel("browser");
+    if (browserTabs().length === 0) void openBrowserAddress();
   }
 
   function hideBrowserPanel() {
-    setBrowserDismissed(true);
-    setScreenOpen(false);
+    setActiveRightPanel("none");
     void window.infeld.browser.setVisible({ visible: false });
+  }
+
+  function setActiveRightPanel(mode: RightPanelMode) {
+    const botId = props.bot?.id;
+    if (!botId) return;
+    setRightPanels((current) =>
+      current[botId] === mode ? current : { ...current, [botId]: mode },
+    );
   }
 
   async function previewAttachment(attachment: AttachmentSummary) {
@@ -1053,8 +1146,7 @@ export function Conversation(props: ConversationProps) {
                     class="conversation-title no-drag"
                     aria-label="View agent settings"
                     onClick={() => {
-                      hideBrowserPanel();
-                      setSettingsOpen(true);
+                      setActiveRightPanel("settings");
                     }}
                   >
                     <AgentAvatar bot={bot()} />
@@ -1075,7 +1167,6 @@ export function Conversation(props: ConversationProps) {
                 }
                 aria-expanded={screenOpen()}
                 onClick={() => {
-                  setSettingsOpen(false);
                   if (screenOpen()) hideBrowserPanel();
                   else showBrowserPanel();
                 }}
@@ -1186,28 +1277,40 @@ export function Conversation(props: ConversationProps) {
                 <Show
                   when={message.exchange}
                   fallback={
-                    <article
-                      class="message-entry"
-                      classList={{
-                        "message-entry-animated": animateEntrance,
-                        "message-entry-user": message.author === "you",
-                        "message-entry-bot": message.author === "bot",
-                      }}
-                      style={{ "animation-delay": `${Math.min(index() * 35, 350)}ms` }}
+                    <Show
+                      when={message.kind === "thinking"}
+                      fallback={
+                        <article
+                          class="message-entry"
+                          classList={{
+                            "message-entry-animated": animateEntrance,
+                            "message-entry-user": message.author === "you",
+                            "message-entry-bot": message.author === "bot",
+                          }}
+                          style={{ "animation-delay": `${Math.min(index() * 35, 350)}ms` }}
+                        >
+                          <div
+                            class={message.author === "you" ? "user-bubble" : "bot-bubble"}
+                            classList={{ "bot-bubble-streaming": message.streaming === true }}
+                          >
+                            <MessageBody
+                              message={message}
+                              bots={props.bots}
+                              onSelectAgent={props.onSelectAgent}
+                              onPreview={(attachment) => void previewAttachment(attachment)}
+                              onAttachmentAction={attachmentAction}
+                            />
+                          </div>
+                        </article>
+                      }
                     >
                       <div
-                        class={message.author === "you" ? "user-bubble" : "bot-bubble"}
-                        classList={{ "bot-bubble-streaming": message.streaming === true }}
+                        classList={{ "thinking-entry-animated": animateEntrance }}
+                        style={{ "animation-delay": `${Math.min(index() * 35, 350)}ms` }}
                       >
-                        <MessageBody
-                          message={message}
-                          bots={props.bots}
-                          onSelectAgent={props.onSelectAgent}
-                          onPreview={(attachment) => void previewAttachment(attachment)}
-                          onAttachmentAction={attachmentAction}
-                        />
+                        <ThinkingDisclosure message={message} />
                       </div>
-                    </article>
+                    </Show>
                   }
                 >
                   {(exchange) => (
@@ -1460,7 +1563,7 @@ export function Conversation(props: ConversationProps) {
           <header class="browser-panel-header">
             <div class="browser-tabs">
               <div class="browser-tab-strip" role="tablist" aria-label="Browser tabs">
-                <For each={props.browserTabs}>
+                <For each={browserTabs()}>
                   {(tab) => {
                     const control = () => browserControlForTab(tab);
                     const controller = () => browserControllerForTab(tab);
@@ -1481,7 +1584,7 @@ export function Conversation(props: ConversationProps) {
                           aria-selected={props.activeBrowserTabId === tab.id}
                           class="browser-tab"
                           classList={{
-                            "browser-tab-active": props.activeBrowserTabId === tab.id,
+                            "browser-tab-active": activeBrowserTab()?.id === tab.id,
                           }}
                           onClick={() => props.onActivateBrowserTab(tab.id)}
                         >
@@ -1559,7 +1662,7 @@ export function Conversation(props: ConversationProps) {
             </button>
           </div>
           <div class="browser-surface" ref={(element) => (browserSurface = element)}>
-            <Show when={props.browserTabs.length === 0}>
+            <Show when={browserTabs().length === 0}>
               <div class="browser-empty-state">
                 <strong>Open a page</strong>
                 <span>The agent can browse here while it works.</span>
@@ -1596,7 +1699,7 @@ export function Conversation(props: ConversationProps) {
               type="button"
               class="agent-settings-nav-button"
               aria-label="Back to details"
-              onClick={() => setSettingsOpen(false)}
+              onClick={() => setActiveRightPanel("none")}
             >
               <BackIcon />
             </button>
@@ -1605,7 +1708,7 @@ export function Conversation(props: ConversationProps) {
               type="button"
               class="agent-settings-nav-button"
               aria-label="Close details"
-              onClick={() => setSettingsOpen(false)}
+              onClick={() => setActiveRightPanel("none")}
             >
               <CloseIcon />
             </button>
@@ -1705,6 +1808,54 @@ export function Conversation(props: ConversationProps) {
                 }
               />
             </label>
+            <section class="agent-settings-model" aria-labelledby="agent-model-heading">
+              <div class="agent-settings-section-heading">
+                <strong id="agent-model-heading">Model</strong>
+                <span>Choose how this agent thinks and works</span>
+              </div>
+              <label class="agent-settings-field">
+                <span>Model</span>
+                <select
+                  value={settingsModel()}
+                  aria-label="Agent model"
+                  onChange={(event) => {
+                    const model = event.currentTarget.value as AgentModelId;
+                    const option = props.modelOptions.find((candidate) => candidate.id === model);
+                    const reasoningEffort = option?.supportedReasoningEfforts.includes(
+                      settingsReasoning(),
+                    )
+                      ? settingsReasoning()
+                      : (option?.defaultReasoningEffort ?? "medium");
+                    setSettingsModel(model);
+                    setSettingsReasoning(reasoningEffort);
+                    void props.onUpdateBot(props.bot?.id ?? "", { model, reasoningEffort });
+                  }}
+                >
+                  <For each={props.modelOptions}>
+                    {(option) => <option value={option.id}>{option.name}</option>}
+                  </For>
+                </select>
+                <Show when={selectedModel()} keyed>
+                  {(model) => <small>{model.description}</small>}
+                </Show>
+              </label>
+              <label class="agent-settings-field">
+                <span>Thinking</span>
+                <select
+                  value={settingsReasoning()}
+                  aria-label="Agent thinking level"
+                  onChange={(event) => {
+                    const reasoningEffort = event.currentTarget.value as AgentReasoningEffort;
+                    setSettingsReasoning(reasoningEffort);
+                    void props.onUpdateBot(props.bot?.id ?? "", { reasoningEffort });
+                  }}
+                >
+                  <For each={reasoningOptions()}>
+                    {(effort) => <option value={effort}>{reasoningLabel(effort)}</option>}
+                  </For>
+                </select>
+              </label>
+            </section>
             <div class="agent-settings-notifications">
               <div>
                 <strong>Notifications</strong>
@@ -1730,6 +1881,28 @@ export function Conversation(props: ConversationProps) {
         </aside>
       </Show>
     </main>
+  );
+}
+
+function reasoningLabel(effort: AgentReasoningEffort): string {
+  if (effort === "xhigh") return "Extra high";
+  return `${effort.slice(0, 1).toUpperCase()}${effort.slice(1)}`;
+}
+
+function ThinkingIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M8 1.75a4.65 4.65 0 0 0-2.85 8.33c.47.36.73.78.78 1.17h4.14c.05-.39.31-.81.78-1.17A4.65 4.65 0 0 0 8 1.75Z" />
+      <path d="M6.3 13h3.4M6.9 14.5h2.2" />
+    </svg>
+  );
+}
+
+function ChevronIcon() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true">
+      <path d="m5.75 6.5 2.25 2.25 2.25-2.25" />
+    </svg>
   );
 }
 
