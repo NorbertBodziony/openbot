@@ -57,6 +57,18 @@ interface ComputerUsePrerequisites {
   accessibility: boolean;
 }
 
+interface ThreadContextBudget {
+  usedTokens: number;
+  contextWindow: number;
+  pending: boolean;
+  phase: "idle" | "requested" | "running";
+  compactionTurnId: string | null;
+  lastCompactedTokens: number | null;
+}
+
+const CONTEXT_COMPACTION_THRESHOLD = 0.8;
+const CONTEXT_COMPACTION_TIMEOUT_MS = 120_000;
+
 const INITIAL_STATUS: AgentStatus = {
   phase: "idle",
   cliVersion: null,
@@ -117,6 +129,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #drainingBots = new Set<string>();
   readonly #scheduledDrains = new Set<string>();
   readonly #lastConversationSignatures = new Map<string, string>();
+  readonly #contextBudgets = new Map<string, ThreadContextBudget>();
+  readonly #compactingBots = new Set<string>();
+  readonly #compactionTimers = new Map<string, NodeJS.Timeout>();
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
   #client: CodexAppServerClient | null = null;
   #cli: CodexCliInfo | null = null;
@@ -200,7 +215,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (bot.threadId) {
       this.#threadToBot.delete(bot.threadId);
       this.#loadedThreads.delete(bot.threadId);
+      this.#contextBudgets.delete(bot.threadId);
+      this.#clearCompactionTimer(bot.threadId);
     }
+    this.#compactingBots.delete(botId);
     this.#emit({ type: "bots-changed", bots: this.#store.list() });
   }
 
@@ -214,6 +232,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#stopping = true;
     if (this.#restartTimer) clearTimeout(this.#restartTimer);
     this.#restartTimer = null;
+    this.#clearCompactionRuntime();
     this.#pendingPrompts.clear();
     this.#browser.clearControls();
     const client = this.#client;
@@ -474,6 +493,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.#client !== client || this.#stopping) return;
     this.#client = null;
     this.#loadedThreads.clear();
+    this.#clearCompactionRuntime();
     this.#pendingPrompts.clear();
     this.#browser.clearControls();
     this.#emitError("codex_exited", error);
@@ -690,7 +710,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (
       this.#status.phase !== "ready" ||
       this.#drainingBots.has(botId) ||
-      this.#scheduledDrains.has(botId)
+      this.#scheduledDrains.has(botId) ||
+      this.#compactingBots.has(botId)
     ) {
       return;
     }
@@ -702,13 +723,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #drainBot(botId: string): Promise<void> {
-    if (this.#drainingBots.has(botId) || this.#status.phase !== "ready") return;
+    if (
+      this.#drainingBots.has(botId) ||
+      this.#compactingBots.has(botId) ||
+      this.#status.phase !== "ready"
+    )
+      return;
     this.#drainingBots.add(botId);
     try {
       const snapshot = this.#snapshots.get(botId);
       if (snapshot?.activeTurnId) return;
       const context = this.#mailbox.nextQueued(botId);
       if (!context) return;
+      const bot = this.#store.list().find((candidate) => candidate.id === botId);
+      if (bot?.threadId && this.#reserveContextCompaction(botId, bot.threadId)) {
+        await this.#requestContextCompaction(botId, bot.threadId);
+        return;
+      }
       await this.#startDelivery(context);
     } finally {
       this.#drainingBots.delete(botId);
@@ -954,6 +985,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const turn = getRecord(params, "turn");
         const turnId = getString(turn, "id");
         if (!turnId) return;
+        const contextBudget = this.#contextBudgets.get(threadId);
+        if (contextBudget?.phase === "requested" && this.#compactingBots.has(botId)) {
+          contextBudget.phase = "running";
+          contextBudget.compactionTurnId = turnId;
+          return;
+        }
         const snapshot = this.#ensureSnapshot(botId, threadId);
         snapshot.activeTurnId = turnId;
         this.#emit({ type: "turn-started", botId, threadId, turnId });
@@ -968,6 +1005,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (!turnId || !item) return;
         const itemId = getString(item, "id");
         if (itemId) this.#itemTurns.set(itemId, turnId);
+        if (item.type === "contextCompaction") {
+          if (notification.method === "item/completed") {
+            this.#markContextCompacted(threadId);
+          }
+          return;
+        }
         this.#applyItem(
           botId,
           threadId,
@@ -1001,7 +1044,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const turnId = getString(turn, "id");
         if (!turnId) return;
         const status = getString(turn, "status") ?? "completed";
+        if (this.#contextBudgets.get(threadId)?.compactionTurnId === turnId) {
+          this.#finishContextCompaction(botId, threadId, status);
+          return;
+        }
         void this.#completeTurn(botId, threadId, turnId, status);
+        return;
+      }
+      case "thread/tokenUsage/updated": {
+        if (!threadId || !botId) return;
+        this.#updateContextBudget(threadId, params);
         return;
       }
       case "mcpServer/startupStatus/updated": {
@@ -1033,6 +1085,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     turnId: string,
     status: string,
   ): Promise<void> {
+    const shouldCompact = this.#reserveContextCompaction(botId, threadId);
     this.#browser.endControl(threadId, turnId);
     const snapshot = this.#ensureSnapshot(botId, threadId);
     snapshot.activeTurnId = null;
@@ -1066,7 +1119,131 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.#emit({ type: "turn-completed", botId, threadId, turnId, status });
     this.#emitConversation(snapshot);
+    if (shouldCompact) await this.#requestContextCompaction(botId, threadId);
+    else this.#scheduleDrain(botId);
+  }
+
+  #updateContextBudget(threadId: string, params: unknown): void {
+    const usage = getRecord(params, "tokenUsage");
+    const last = getRecord(usage, "last");
+    const usedTokens = finiteNumberOrNull(last?.totalTokens);
+    const contextWindow = finiteNumberOrNull(usage?.modelContextWindow);
+    if (usedTokens === null || contextWindow === null || contextWindow <= 0) return;
+
+    const budget = this.#contextBudgets.get(threadId) ?? {
+      usedTokens,
+      contextWindow,
+      pending: false,
+      phase: "idle" as const,
+      compactionTurnId: null,
+      lastCompactedTokens: null,
+    };
+    budget.usedTokens = usedTokens;
+    budget.contextWindow = contextWindow;
+    this.#contextBudgets.set(threadId, budget);
+
+    const pressured = usedTokens / contextWindow >= CONTEXT_COMPACTION_THRESHOLD;
+    if (!pressured) {
+      budget.pending = false;
+      budget.lastCompactedTokens = null;
+      return;
+    }
+    if (budget.phase !== "idle") return;
+
+    const minimumGrowth = Math.max(1_024, Math.floor(contextWindow * 0.05));
+    if (
+      budget.lastCompactedTokens !== null &&
+      usedTokens < budget.lastCompactedTokens + minimumGrowth
+    ) {
+      return;
+    }
+    budget.pending = true;
+  }
+
+  #reserveContextCompaction(botId: string, threadId: string): boolean {
+    const budget = this.#contextBudgets.get(threadId);
+    if (!budget?.pending || budget.phase !== "idle" || this.#compactingBots.has(botId)) {
+      return false;
+    }
+    budget.phase = "requested";
+    this.#compactingBots.add(botId);
+    return true;
+  }
+
+  async #requestContextCompaction(botId: string, threadId: string): Promise<void> {
+    const budget = this.#contextBudgets.get(threadId);
+    const client = this.#client;
+    if (budget?.phase !== "requested" || !client || this.#status.phase !== "ready") {
+      this.#releaseContextCompaction(botId, threadId);
+      return;
+    }
+
+    this.#clearCompactionTimer(threadId);
+    const timer = setTimeout(() => {
+      this.#emitError(
+        "context_compaction_timeout",
+        "Codex context compaction timed out; queued work will continue.",
+        botId,
+      );
+      this.#releaseContextCompaction(botId, threadId);
+      this.#scheduleDrain(botId);
+    }, CONTEXT_COMPACTION_TIMEOUT_MS);
+    timer.unref?.();
+    this.#compactionTimers.set(threadId, timer);
+
+    try {
+      await client.request("thread/compact/start", { threadId });
+    } catch (error) {
+      budget.lastCompactedTokens = budget.usedTokens;
+      this.#emitError("context_compaction_failed", error, botId);
+      this.#releaseContextCompaction(botId, threadId);
+      this.#scheduleDrain(botId);
+    }
+  }
+
+  #markContextCompacted(threadId: string): void {
+    const budget = this.#contextBudgets.get(threadId);
+    if (!budget) return;
+    budget.pending = false;
+    budget.lastCompactedTokens = budget.usedTokens;
+  }
+
+  #finishContextCompaction(botId: string, threadId: string, status: string): void {
+    const budget = this.#contextBudgets.get(threadId);
+    if (budget && status !== "completed") {
+      budget.lastCompactedTokens = budget.usedTokens;
+      this.#emitError(
+        "context_compaction_failed",
+        `Codex context compaction ended with status ${status}.`,
+        botId,
+      );
+    }
+    this.#releaseContextCompaction(botId, threadId);
     this.#scheduleDrain(botId);
+  }
+
+  #releaseContextCompaction(botId: string, threadId: string): void {
+    this.#clearCompactionTimer(threadId);
+    const budget = this.#contextBudgets.get(threadId);
+    if (budget) {
+      budget.pending = false;
+      budget.phase = "idle";
+      budget.compactionTurnId = null;
+    }
+    this.#compactingBots.delete(botId);
+  }
+
+  #clearCompactionTimer(threadId: string): void {
+    const timer = this.#compactionTimers.get(threadId);
+    if (timer) clearTimeout(timer);
+    this.#compactionTimers.delete(threadId);
+  }
+
+  #clearCompactionRuntime(): void {
+    for (const timer of this.#compactionTimers.values()) clearTimeout(timer);
+    this.#compactionTimers.clear();
+    this.#compactingBots.clear();
+    this.#contextBudgets.clear();
   }
 
   async #relayAgentResult(
@@ -1280,7 +1457,7 @@ function normalizeUsageWindow(
   };
 }
 
-function finiteNumberOrNull(value: number | null | undefined): number | null {
+function finiteNumberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 

@@ -17,6 +17,7 @@ messaging in one macOS app.
 ## What works
 
 - Persistent agents backed by independent Codex threads and local workspaces.
+- Per-agent context monitoring with automatic compaction before long threads exhaust the model window.
 - FIFO message queues with pause, resume, cancellation, and crash-safe persistence.
 - Agent-to-agent messages, replies, reactions, images, and managed file transfers.
 - A persistent embedded browser that agents can open, inspect, and control.
