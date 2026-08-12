@@ -1,24 +1,55 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type { BotSummary } from "../shared/ipc";
+import type { BotSummary, UpdateBotInput } from "../shared/ipc";
 import { isRecord } from "./protocol";
 
 type StoredBot = BotSummary;
 
 interface StoredState {
-  version: 1;
+  version: 5;
+  examplesInitialized: boolean;
   bots: StoredBot[];
 }
 
 const DEFAULT_BOTS = [
-  ["chief", "Chief", "Chief of staff"],
-  ["sales-outbound", "Sales Outbound", "Outbound specialist"],
-  ["inbox-manager", "Inbox Manager", "Inbox operations"],
-  ["account-manager", "Account Manager", "Customer accounts"],
-  ["talent-scout", "Talent Scout", "Recruiting research"],
-  ["expense-manager", "Expense Manager", "Finance operations"],
-  ["offsite-crew", "Offsite crew", "Project planning"],
+  ["chief", "Chief", "Chief of staff", "Coordinates work across your local Infeld agents."],
+  [
+    "sales-outbound",
+    "Sales Outbound",
+    "Outbound specialist",
+    "Researches prospects and prepares local outbound work.",
+  ],
+  [
+    "inbox-manager",
+    "Inbox Manager",
+    "Inbox operations",
+    "Helps review, organize, and draft inbox work.",
+  ],
+  [
+    "account-manager",
+    "Account Manager",
+    "Customer accounts",
+    "Keeps customer context and account follow-ups organized.",
+  ],
+  [
+    "talent-scout",
+    "Talent Scout",
+    "Recruiting research",
+    "Supports local candidate research and recruiting preparation.",
+  ],
+  [
+    "expense-manager",
+    "Expense Manager",
+    "Finance operations",
+    "Organizes local expense and finance operations.",
+  ],
+  [
+    "offsite-crew",
+    "Offsite crew",
+    "Project planning",
+    "Plans projects, events, and team logistics.",
+  ],
 ] as const;
 
 export class BotStore {
@@ -26,7 +57,7 @@ export class BotStore {
   readonly #botsRoot: string;
   readonly #sharedRoot: string;
   readonly #downloadsRoot: string;
-  #state: StoredState = { version: 1, bots: [] };
+  #state: StoredState = { version: 5, examplesInitialized: false, bots: [] };
   #writeQueue: Promise<void> = Promise.resolve();
 
   constructor(userDataPath: string, homePath: string) {
@@ -54,10 +85,13 @@ export class BotStore {
     ]);
 
     this.#state = await this.#readState();
-    if (this.#state.bots.length === 0) {
-      this.#state.bots = DEFAULT_BOTS.map(([id, name, role]) => this.#createRecord(id, name, role));
-      await this.#persist();
+    if (!this.#state.examplesInitialized) {
+      this.#state.bots = DEFAULT_BOTS.map(([id, name, role, description]) =>
+        this.#createRecord(id, name, role, description),
+      );
+      this.#state.examplesInitialized = true;
     }
+    await this.#persist();
   }
 
   list(): BotSummary[] {
@@ -70,6 +104,24 @@ export class BotStore {
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
     await this.#persist();
     return { ...record };
+  }
+
+  async updateBot(input: UpdateBotInput): Promise<BotSummary> {
+    const bot = this.#requireBot(input.botId);
+    if (input.name !== undefined) bot.name = requiredText(input.name, "Agent name", 80);
+    if (input.role !== undefined) bot.role = input.role.trim().slice(0, 120);
+    if (input.description !== undefined) bot.description = input.description.trim().slice(0, 2_000);
+    if (input.notifications !== undefined) bot.notifications = input.notifications;
+    bot.updatedAt = new Date().toISOString();
+    await this.#persist();
+    return { ...bot };
+  }
+
+  async deleteBot(id: string): Promise<BotSummary> {
+    const bot = this.#requireBot(id);
+    this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== id);
+    await this.#persist();
+    return { ...bot };
   }
 
   async getOrCreate(id: string, name?: string, role?: string): Promise<BotSummary> {
@@ -104,14 +156,35 @@ export class BotStore {
   async #readState(): Promise<StoredState> {
     try {
       const parsed: unknown = JSON.parse(await readFile(this.#statePath, "utf8"));
-      if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.bots)) {
-        return { version: 1, bots: [] };
+      if (!isRecord(parsed) || !Array.isArray(parsed.bots)) {
+        return { version: 5, examplesInitialized: false, bots: [] };
       }
 
-      const bots = parsed.bots.filter(isStoredBot);
-      return { version: 1, bots };
+      const bots = parsed.bots.filter(isStoredBot).map((bot) => {
+        const example = DEFAULT_BOTS.find(([id]) => id === bot.id);
+        const untouched = bot.threadId === null && bot.updatedAt === null;
+        return {
+          ...bot,
+          description:
+            typeof bot.description === "string" && bot.description
+              ? bot.description
+              : untouched
+                ? (example?.[3] ?? "")
+                : "",
+          notifications: typeof bot.notifications === "boolean" ? bot.notifications : true,
+          preview:
+            untouched && bot.preview === "Ready for a local task."
+              ? "No messages yet"
+              : bot.preview,
+          // MVP migration: old App Server threads do not contain the new dynamic tools.
+          threadId: typeof parsed.version === "number" && parsed.version >= 2 ? bot.threadId : null,
+        };
+      });
+      return { version: 5, examplesInitialized: true, bots };
     } catch (error) {
-      if (isRecord(error) && error.code === "ENOENT") return { version: 1, bots: [] };
+      if (isRecord(error) && error.code === "ENOENT") {
+        return { version: 5, examplesInitialized: false, bots: [] };
+      }
       throw error;
     }
   }
@@ -127,15 +200,17 @@ export class BotStore {
     await this.#writeQueue;
   }
 
-  #createRecord(id: string, name: string, role: string): StoredBot {
+  #createRecord(id: string, name: string, role: string, description = ""): StoredBot {
     validateBotId(id);
     return {
       id,
       name,
       role,
+      description,
+      notifications: true,
       threadId: null,
       workspacePath: join(this.#botsRoot, id),
-      preview: "Ready for a local task.",
+      preview: "No messages yet",
       updatedAt: null,
     };
   }
@@ -145,6 +220,12 @@ export class BotStore {
     if (!bot) throw new Error(`Unknown bot: ${id}`);
     return bot;
   }
+}
+
+function requiredText(value: string, label: string, maxLength: number): string {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error(`${label} is required.`);
+  return trimmed.slice(0, maxLength);
 }
 
 function validateBotId(id: string): void {

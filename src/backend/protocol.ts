@@ -63,6 +63,7 @@ export interface AccountReadResult {
 export interface ThreadItem {
   type: string;
   id?: string;
+  clientId?: string | null;
   text?: string;
   content?: Array<{ type: string; text?: string }>;
   status?: string;

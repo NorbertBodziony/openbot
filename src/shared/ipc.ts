@@ -3,8 +3,17 @@ export const IPC_CHANNELS = {
   agentGetStatus: "agent:get-status",
   agentListBots: "agent:list-bots",
   agentCreateBot: "agent:create-bot",
+  agentUpdateBot: "agent:update-bot",
+  agentDeleteBot: "agent:delete-bot",
   agentReadConversation: "agent:read-conversation",
   agentSendMessage: "agent:send-message",
+  agentChooseAttachments: "agent:choose-attachments",
+  agentImportAttachments: "agent:import-attachments",
+  agentDiscardDraftAttachment: "agent:discard-draft-attachment",
+  agentOpenAttachment: "agent:open-attachment",
+  agentListQueue: "agent:list-queue",
+  agentCancelQueuedMessage: "agent:cancel-queued-message",
+  agentSetQueuePaused: "agent:set-queue-paused",
   agentInterrupt: "agent:interrupt",
   agentRespondToPrompt: "agent:respond-to-prompt",
   agentEvent: "agent:event",
@@ -50,13 +59,89 @@ export interface BotSummary {
   id: string;
   name: string;
   role: string;
+  description: string;
+  notifications: boolean;
   threadId: string | null;
   workspacePath: string;
   preview: string;
   updatedAt: string | null;
 }
 
-export type ConversationMessageAuthor = "user" | "assistant" | "system";
+export interface UpdateBotInput {
+  botId: string;
+  name?: string;
+  role?: string;
+  description?: string;
+  notifications?: boolean;
+}
+
+export type ConversationMessageAuthor = "user" | "assistant" | "agent" | "system";
+
+export type AttachmentKind = "image" | "file";
+export type AttachmentPreviewKind = "image" | "pdf" | "text" | "none";
+
+export interface AttachmentSummary {
+  id: string;
+  name: string;
+  size: number;
+  kind: AttachmentKind;
+  mimeType: string;
+  previewKind: AttachmentPreviewKind;
+  previewUrl: string | null;
+}
+
+export interface DraftAttachment extends AttachmentSummary {}
+
+export interface AttachmentDataInput {
+  name: string;
+  mimeType: string;
+  bytes: Uint8Array;
+}
+
+export interface ImportAttachmentsInput {
+  paths: string[];
+  data: AttachmentDataInput[];
+}
+
+export type AttachmentImportEvent =
+  | { type: "started" }
+  | { type: "completed"; attachments: DraftAttachment[] }
+  | { type: "error"; message: string };
+
+export interface OpenAttachmentInput {
+  attachmentId: string;
+  action: "open" | "reveal";
+}
+
+export type QueueDeliveryStatus =
+  | "queued"
+  | "starting"
+  | "running"
+  | "completed"
+  | "failed"
+  | "interrupted"
+  | "cancelled";
+
+export interface QueueDelivery {
+  id: string;
+  messageId: string;
+  recipientBotId: string;
+  sender: { kind: "user" } | { kind: "bot"; botId: string };
+  text: string;
+  attachments: AttachmentSummary[];
+  replyToMessageId: string | null;
+  status: QueueDeliveryStatus;
+  position: number | null;
+  turnId: string | null;
+  error: string | null;
+  createdAt: string;
+}
+
+export interface QueueSnapshot {
+  botId: string;
+  paused: boolean;
+  deliveries: QueueDelivery[];
+}
 
 export interface ConversationMessage {
   id: string;
@@ -65,6 +150,21 @@ export interface ConversationMessage {
   createdAt: string;
   status: "streaming" | "completed" | "failed" | "interrupted";
   itemType?: string;
+  source?: "user" | "assistant" | "agent" | "system";
+  senderBotId?: string;
+  replyToMessageId?: string | null;
+  attachments?: AttachmentSummary[];
+  delivery?: Pick<QueueDelivery, "id" | "status" | "position">;
+  exchange?: AgentExchangeSummary;
+}
+
+export interface AgentExchangeSummary {
+  direction: "incoming" | "outgoing";
+  messageId: string;
+  senderBotId: string;
+  recipientBotIds: string[];
+  replyToMessageId: string | null;
+  deliveries: Array<Pick<QueueDelivery, "id" | "recipientBotId" | "status" | "position" | "error">>;
 }
 
 export interface ConversationSnapshot {
@@ -77,13 +177,27 @@ export interface ConversationSnapshot {
 export interface SendMessageInput {
   botId: string;
   text: string;
+  attachmentDraftIds?: string[];
 }
 
-export interface TurnHandle {
+export interface QueuedMessageReceipt {
+  messageId: string;
+  deliveries: Array<{
+    id: string;
+    recipientBotId: string;
+    status: QueueDeliveryStatus;
+    position: number | null;
+  }>;
+}
+
+export interface CancelQueuedMessageInput {
   botId: string;
-  threadId: string;
-  turnId: string;
-  mode: "start" | "steer";
+  deliveryId: string;
+}
+
+export interface SetQueuePausedInput {
+  botId: string;
+  paused: boolean;
 }
 
 export interface InterruptTurnInput {
@@ -106,7 +220,9 @@ export interface RespondToPromptInput {
 
 export type AgentEvent =
   | { type: "status"; status: AgentStatus }
+  | { type: "bots-changed"; bots: BotSummary[] }
   | { type: "conversation"; snapshot: ConversationSnapshot }
+  | { type: "queue-changed"; snapshot: QueueSnapshot }
   | { type: "turn-started"; botId: string; threadId: string; turnId: string }
   | {
       type: "assistant-delta";
@@ -171,8 +287,17 @@ export interface AgentDesktopApi {
   getStatus: () => Promise<AgentStatus>;
   listBots: () => Promise<BotSummary[]>;
   createBot: () => Promise<BotSummary>;
+  updateBot: (input: UpdateBotInput) => Promise<BotSummary>;
+  deleteBot: (botId: string) => Promise<void>;
   readConversation: (botId: string) => Promise<ConversationSnapshot>;
-  sendMessage: (input: SendMessageInput) => Promise<TurnHandle>;
+  chooseAttachments: () => Promise<DraftAttachment[]>;
+  onAttachmentImport: (listener: (event: AttachmentImportEvent) => void) => () => void;
+  discardDraftAttachment: (attachmentId: string) => Promise<void>;
+  openAttachment: (input: OpenAttachmentInput) => Promise<void>;
+  sendMessage: (input: SendMessageInput) => Promise<QueuedMessageReceipt>;
+  listQueue: (botId: string) => Promise<QueueSnapshot>;
+  cancelQueuedMessage: (input: CancelQueuedMessageInput) => Promise<void>;
+  setQueuePaused: (input: SetQueuePausedInput) => Promise<void>;
   interrupt: (input: InterruptTurnInput) => Promise<void>;
   respondToPrompt: (input: RespondToPromptInput) => Promise<void>;
   onEvent: (listener: (event: AgentEvent) => void) => () => void;

@@ -1,34 +1,52 @@
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   Menu,
+  type OpenDialogOptions,
+  protocol,
   session,
+  shell,
   systemPreferences,
   type WebFrameMain,
 } from "electron";
 import { AgentService } from "../backend/agent-service";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
+import { MailboxStore } from "../backend/mailbox-store";
 import {
   type AgentEvent,
   type AppInfo,
   type BrowserBounds,
   type BrowserOpenInput,
   type BrowserVisibilityInput,
+  type CancelQueuedMessageInput,
+  type ImportAttachmentsInput,
   type InterruptTurnInput,
   IPC_CHANNELS,
+  type OpenAttachmentInput,
   type RespondToPromptInput,
   type SendMessageInput,
+  type SetQueuePausedInput,
+  type UpdateBotInput,
 } from "../shared/ipc";
 
 app.enableSandbox();
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "infeld-attachment",
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
+]);
 
 let mainWindow: BrowserWindow | null = null;
 let browserHost: BrowserHost | null = null;
 let agentService: AgentService | null = null;
+let mailboxStore: MailboxStore | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
 
@@ -61,10 +79,11 @@ function configureContentSecurityPolicy(): void {
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: https://media.x.ai",
+    "img-src 'self' data: infeld-attachment:",
     "font-src 'self' data:",
     `connect-src 'self'${developmentSources}`,
     "object-src 'none'",
+    "frame-src 'self' infeld-attachment:",
     "base-uri 'none'",
     "frame-src 'none'",
   ].join("; ");
@@ -79,7 +98,11 @@ function configureContentSecurityPolicy(): void {
   });
 }
 
-function registerIpcHandlers(service: AgentService, browser: BrowserHost): void {
+function registerIpcHandlers(
+  service: AgentService,
+  mailbox: MailboxStore,
+  browser: BrowserHost,
+): void {
   ipcMain.handle(IPC_CHANNELS.getAppInfo, (event): AppInfo => {
     assertTrustedSender(event.senderFrame);
     const platform = process.platform;
@@ -101,6 +124,14 @@ function registerIpcHandlers(service: AgentService, browser: BrowserHost): void 
     assertTrustedSender(event.senderFrame);
     return service.createBot();
   });
+  ipcMain.handle(IPC_CHANNELS.agentUpdateBot, (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame);
+    return service.updateBot(parseUpdateBot(input));
+  });
+  ipcMain.handle(IPC_CHANNELS.agentDeleteBot, (event, botId: unknown) => {
+    assertTrustedSender(event.senderFrame);
+    return service.deleteBot(requireString(botId, "botId"));
+  });
   ipcMain.handle(IPC_CHANNELS.agentReadConversation, (event, botId: unknown) => {
     assertTrustedSender(event.senderFrame);
     return service.readConversation(requireString(botId, "botId"));
@@ -108,6 +139,49 @@ function registerIpcHandlers(service: AgentService, browser: BrowserHost): void 
   ipcMain.handle(IPC_CHANNELS.agentSendMessage, (event, input: unknown) => {
     assertTrustedSender(event.senderFrame);
     return service.sendMessage(parseSendMessage(input));
+  });
+  ipcMain.handle(IPC_CHANNELS.agentChooseAttachments, async (event) => {
+    assertTrustedSender(event.senderFrame);
+    const options: OpenDialogOptions = { properties: ["openFile", "multiSelections"] };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? [] : service.prepareAttachments(result.filePaths);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentImportAttachments, (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame);
+    const parsed = parseImportAttachments(input);
+    return service.prepareImportedAttachments(parsed.paths, parsed.data);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentDiscardDraftAttachment, (event, attachmentId: unknown) => {
+    assertTrustedSender(event.senderFrame);
+    return service.discardDraftAttachment(requireString(attachmentId, "attachmentId"));
+  });
+  ipcMain.handle(IPC_CHANNELS.agentOpenAttachment, async (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame);
+    const parsed = parseOpenAttachment(input);
+    const path = mailbox.resolveAttachmentPath(parsed.attachmentId);
+    if (!path) throw new Error("Attachment was not found.");
+    if (parsed.action === "reveal") {
+      shell.showItemInFolder(path);
+      return;
+    }
+    const error = await shell.openPath(path);
+    if (error) throw new Error(error);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentListQueue, (event, botId: unknown) => {
+    assertTrustedSender(event.senderFrame);
+    return service.listQueue(requireString(botId, "botId"));
+  });
+  ipcMain.handle(IPC_CHANNELS.agentCancelQueuedMessage, (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame);
+    const parsed = parseCancelQueuedMessage(input);
+    return service.cancelQueuedMessage(parsed.botId, parsed.deliveryId);
+  });
+  ipcMain.handle(IPC_CHANNELS.agentSetQueuePaused, (event, input: unknown) => {
+    assertTrustedSender(event.senderFrame);
+    const parsed = parseSetQueuePaused(input);
+    return service.setQueuePaused(parsed.botId, parsed.paused);
   });
   ipcMain.handle(IPC_CHANNELS.agentInterrupt, (event, input: unknown) => {
     assertTrustedSender(event.senderFrame);
@@ -156,6 +230,7 @@ function createWindow(): BrowserWindow {
     backgroundColor: "#0b0d0e",
     title: "Infeld Bot",
     titleBarStyle: "hidden",
+    trafficLightPosition: { x: 13, y: 14 },
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
@@ -164,10 +239,6 @@ function createWindow(): BrowserWindow {
       webSecurity: true,
     },
   });
-
-  if (process.platform === "darwin") {
-    window.setWindowButtonVisibility(false);
-  }
 
   window.once("ready-to-show", () => window.show());
   window.on("close", (event) => {
@@ -228,10 +299,13 @@ app.whenReady().then(async () => {
   mainWindow = createWindow();
   const store = new BotStore(app.getPath("userData"), homedir());
   await store.initialize();
+  mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot);
+  await mailboxStore.initialize();
+  configureAttachmentProtocol(mailboxStore);
   browserHost = new BrowserHost(mainWindow, store.downloadsRoot);
-  agentService = new AgentService(store, browserHost, readComputerUsePrerequisites);
+  agentService = new AgentService(store, mailboxStore, browserHost, readComputerUsePrerequisites);
   agentService.on("event", forwardAgentEvent);
-  registerIpcHandlers(agentService, browserHost);
+  registerIpcHandlers(agentService, mailboxStore, browserHost);
   configureApplicationMenu(agentService);
   void agentService.initialize().catch((error) => {
     console.error("Unable to initialize the local Codex backend:", error);
@@ -289,7 +363,114 @@ function requireString(value: unknown, field: string): string {
 
 function parseSendMessage(value: unknown): SendMessageInput {
   if (!isObject(value)) throw new Error("Invalid send message request.");
-  return { botId: requireString(value.botId, "botId"), text: requireString(value.text, "text") };
+  const attachmentDraftIds = value.attachmentDraftIds ?? [];
+  if (
+    !Array.isArray(attachmentDraftIds) ||
+    !attachmentDraftIds.every((item) => typeof item === "string")
+  ) {
+    throw new Error("Invalid attachment drafts.");
+  }
+  if (typeof value.text !== "string") throw new Error("text is required.");
+  if (!value.text.trim() && attachmentDraftIds.length === 0) {
+    throw new Error("A message or attachment is required.");
+  }
+  return { botId: requireString(value.botId, "botId"), text: value.text, attachmentDraftIds };
+}
+
+function parseUpdateBot(value: unknown): UpdateBotInput {
+  if (!isObject(value)) throw new Error("Invalid bot update request.");
+  const result: UpdateBotInput = { botId: requireString(value.botId, "botId") };
+  for (const field of ["name", "role", "description"] as const) {
+    if (value[field] !== undefined && typeof value[field] !== "string") {
+      throw new Error(`Invalid ${field}.`);
+    }
+    if (typeof value[field] === "string") result[field] = value[field];
+  }
+  if (value.notifications !== undefined) {
+    if (typeof value.notifications !== "boolean") throw new Error("Invalid notifications value.");
+    result.notifications = value.notifications;
+  }
+  return result;
+}
+
+function parseImportAttachments(value: unknown): ImportAttachmentsInput {
+  if (!isObject(value) || !Array.isArray(value.paths) || !Array.isArray(value.data)) {
+    throw new Error("Invalid attachment import.");
+  }
+  if (!value.paths.every((path) => typeof path === "string" && path.length > 0)) {
+    throw new Error("Invalid attachment path.");
+  }
+  const data = value.data.map((item) => {
+    if (
+      !isObject(item) ||
+      typeof item.name !== "string" ||
+      typeof item.mimeType !== "string" ||
+      !(item.bytes instanceof Uint8Array)
+    ) {
+      throw new Error("Invalid attachment data.");
+    }
+    return { name: item.name, mimeType: item.mimeType, bytes: item.bytes };
+  });
+  return { paths: value.paths, data };
+}
+
+function parseOpenAttachment(value: unknown): OpenAttachmentInput {
+  if (!isObject(value) || (value.action !== "open" && value.action !== "reveal")) {
+    throw new Error("Invalid attachment action.");
+  }
+  return {
+    attachmentId: requireString(value.attachmentId, "attachmentId"),
+    action: value.action,
+  };
+}
+
+function parseCancelQueuedMessage(value: unknown): CancelQueuedMessageInput {
+  if (!isObject(value)) throw new Error("Invalid queue cancellation request.");
+  return {
+    botId: requireString(value.botId, "botId"),
+    deliveryId: requireString(value.deliveryId, "deliveryId"),
+  };
+}
+
+function parseSetQueuePaused(value: unknown): SetQueuePausedInput {
+  if (!isObject(value) || typeof value.paused !== "boolean") {
+    throw new Error("Invalid queue pause request.");
+  }
+  return { botId: requireString(value.botId, "botId"), paused: value.paused };
+}
+
+function configureAttachmentProtocol(mailbox: MailboxStore): void {
+  session.defaultSession.protocol.handle("infeld-attachment", async (request) => {
+    try {
+      const url = new URL(request.url);
+      const id = url.pathname.split("/").filter(Boolean).at(-1);
+      const path = id ? mailbox.resolveAttachmentPath(id) : null;
+      if (!path) return new Response("Not found", { status: 404 });
+      return new Response(await readFile(path), {
+        headers: {
+          "Content-Type": attachmentContentType(path),
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+          "Content-Disposition": "inline",
+        },
+      });
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+}
+
+function attachmentContentType(path: string): string {
+  if (/\.png$/i.test(path)) return "image/png";
+  if (/\.jpe?g$/i.test(path)) return "image/jpeg";
+  if (/\.gif$/i.test(path)) return "image/gif";
+  if (/\.webp$/i.test(path)) return "image/webp";
+  if (/\.avif$/i.test(path)) return "image/avif";
+  if (/\.pdf$/i.test(path)) return "application/pdf";
+  if (/\.(txt|md|markdown|csv|json|log|xml|ya?ml|tsx?|jsx?|css|html?)$/i.test(path)) {
+    return "text/plain; charset=utf-8";
+  }
+  return "application/octet-stream";
 }
 
 function parseInterrupt(value: unknown): InterruptTurnInput {

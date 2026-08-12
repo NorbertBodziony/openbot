@@ -1,21 +1,46 @@
-import { fireEvent, render, screen } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentEvent } from "../../shared/ipc";
+import type { AgentEvent, AttachmentImportEvent, BotSummary } from "../../shared/ipc";
 import { App } from "./App";
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
+let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
 
-describe("Grok-style desktop shell", () => {
+const BOTS: BotSummary[] = [
+  {
+    id: "chief",
+    name: "Chief",
+    role: "Chief of staff",
+    description: "Coordinates work",
+    notifications: true,
+    threadId: null,
+    workspacePath: "/tmp/Infeld/Bots/chief",
+    preview: "No messages yet",
+    updatedAt: null,
+  },
+  {
+    id: "sales-outbound",
+    name: "Sales Outbound",
+    role: "Outbound specialist",
+    description: "",
+    notifications: true,
+    threadId: null,
+    workspacePath: "/tmp/Infeld/Bots/sales-outbound",
+    preview: "No messages yet",
+    updatedAt: null,
+  },
+];
+
+describe("Infeld connected desktop shell", () => {
   beforeEach(() => {
     emitAgentEvent = undefined;
+    emitAttachmentImport = undefined;
     Object.defineProperty(window, "infeld", {
       configurable: true,
       value: {
-        getAppInfo: vi.fn().mockResolvedValue({
-          name: "Infeld Bot",
-          version: "0.1.0",
-          platform: "darwin",
-        }),
+        getAppInfo: vi
+          .fn()
+          .mockResolvedValue({ name: "Infeld Bot", version: "0.1.0", platform: "darwin" }),
         agent: {
           getStatus: vi.fn().mockResolvedValue({
             phase: "ready",
@@ -25,23 +50,37 @@ describe("Grok-style desktop shell", () => {
             message: null,
             fullAccess: true,
           }),
-          listBots: vi.fn().mockRejectedValue(new Error("Keep fixture bots")),
-          createBot: vi.fn().mockResolvedValue({
-            id: "bot-new-1",
-            name: "New agent",
-            role: "New teammate",
+          listBots: vi.fn().mockResolvedValue(BOTS),
+          createBot: vi.fn().mockResolvedValue({ ...BOTS[0], id: "bot-new", name: "New agent" }),
+          updateBot: vi.fn().mockImplementation(async (input) => ({
+            ...BOTS.find((bot) => bot.id === input.botId),
+            ...input,
+          })),
+          deleteBot: vi.fn().mockResolvedValue(undefined),
+          readConversation: vi.fn().mockImplementation(async (botId) => ({
+            botId,
             threadId: null,
-            workspacePath: "/tmp/Infeld/Bots/bot-new-1",
-            preview: "Ready for a local task.",
-            updatedAt: null,
+            activeTurnId: null,
+            messages: [],
+          })),
+          chooseAttachments: vi.fn().mockResolvedValue([]),
+          onAttachmentImport: vi.fn((listener) => {
+            emitAttachmentImport = listener;
+            return () => undefined;
           }),
-          readConversation: vi.fn().mockRejectedValue(new Error("Keep fixture messages")),
+          discardDraftAttachment: vi.fn().mockResolvedValue(undefined),
+          openAttachment: vi.fn().mockResolvedValue(undefined),
           sendMessage: vi.fn().mockResolvedValue({
-            botId: "sales-outbound",
-            threadId: "thread-1",
-            turnId: "turn-1",
-            mode: "start",
+            messageId: "message-1",
+            deliveries: [
+              { id: "delivery-1", recipientBotId: "chief", status: "queued", position: 1 },
+            ],
           }),
+          listQueue: vi
+            .fn()
+            .mockImplementation(async (botId) => ({ botId, paused: false, deliveries: [] })),
+          cancelQueuedMessage: vi.fn().mockResolvedValue(undefined),
+          setQueuePaused: vi.fn().mockResolvedValue(undefined),
           interrupt: vi.fn().mockResolvedValue(undefined),
           respondToPrompt: vi.fn().mockResolvedValue(undefined),
           onEvent: vi.fn((listener) => {
@@ -60,146 +99,301 @@ describe("Grok-style desktop shell", () => {
     });
   });
 
-  it("renders the two-column navigation and conversation regions", () => {
+  it("uses the backend bot list and shows local onboarding for a real empty snapshot", async () => {
     render(() => <App />);
-
-    expect(screen.getByRole("complementary", { name: "Bot navigation" })).toBeInTheDocument();
-    expect(screen.getByRole("main", { name: "Conversation" })).toBeInTheDocument();
-    expect(screen.queryByRole("complementary", { name: "Bot details" })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Sales Outbound" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("listbox", { name: "What do you want me helping with most?" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Salesforce account queue/i)).not.toBeInTheDocument();
   });
 
-  it("filters chats and switches the active bot", async () => {
+  it("filters and switches backend bots", async () => {
     render(() => <App />);
-
+    await screen.findByRole("heading", { name: "Chief" });
+    await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
     const search = screen.getByRole("searchbox", { name: "Search chats" });
-    await fireEvent.input(search, { target: { value: "Chief" } });
-
-    expect(screen.getByRole("button", { name: /ChiefYesterday/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Sales Outbound 15:05/ })).not.toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("button", { name: /ChiefYesterday/ }));
-    expect(screen.getByRole("heading", { level: 1, name: "Chief" })).toBeInTheDocument();
+    await fireEvent.input(search, { target: { value: "Sales" } });
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    expect(screen.getByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
   });
 
-  it("sends a message from the composer", async () => {
+  it("queues from the composer and clears only after success", async () => {
     render(() => <App />);
-
-    const composer = screen.getByRole("textbox", { name: "Message Sales Outbound" });
-    await fireEvent.input(composer, { target: { value: "Run this every Monday." } });
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    await fireEvent.input(composer, { target: { value: "Run this Monday" } });
     await fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() =>
+      expect(window.infeld.agent.sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: "Run this Monday",
+        attachmentDraftIds: [],
+      }),
+    );
+    await waitFor(() => expect(composer).toHaveValue(""));
+  });
 
-    expect(screen.getByText("Run this every Monday.")).toBeInTheDocument();
-    expect(composer).toHaveValue("");
-    expect(window.infeld.agent.sendMessage).toHaveBeenCalledWith({
-      botId: "sales-outbound",
-      text: "Run this every Monday.",
+  it("keeps text and attachments when enqueue fails", async () => {
+    vi.mocked(window.infeld.agent.sendMessage).mockRejectedValueOnce(
+      new Error("Mailbox unavailable"),
+    );
+    render(() => <App />);
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    await fireEvent.input(composer, { target: { value: "Retry me" } });
+    await fireEvent.keyDown(composer, { key: "Enter" });
+    expect(await screen.findByText("Mailbox unavailable")).toBeInTheDocument();
+    expect(composer).toHaveValue("Retry me");
+  });
+
+  it("supports picker and attachment-only messages", async () => {
+    vi.mocked(window.infeld.agent.chooseAttachments).mockResolvedValueOnce([
+      attachment("draft-1", "brief.pdf", "pdf"),
+    ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "Attach a file" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    expect(await screen.findByText("brief.pdf")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() =>
+      expect(window.infeld.agent.sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: "",
+        attachmentDraftIds: ["draft-1"],
+      }),
+    );
+  });
+
+  it("adds pathless pasted images reported by preload", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAttachmentImport?.({ type: "started" });
+    emitAttachmentImport?.({
+      type: "completed",
+      attachments: [attachment("pasted-1", "pasted.png", "image")],
+    });
+    expect(await screen.findByText("pasted.png")).toBeInTheDocument();
+  });
+
+  it("shows and controls queued work", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        paused: true,
+        deliveries: [
+          {
+            id: "delivery-1",
+            messageId: "message-1",
+            recipientBotId: "chief",
+            sender: { kind: "user" },
+            text: "Later",
+            attachments: [],
+            replyToMessageId: null,
+            status: "queued",
+            position: 1,
+            turnId: null,
+            error: null,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Resume queue" }));
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        paused: true,
+        deliveries: [
+          {
+            id: "delivery-1",
+            messageId: "message-1",
+            recipientBotId: "chief",
+            sender: { kind: "user" },
+            text: "Later",
+            attachments: [],
+            replyToMessageId: null,
+            status: "queued",
+            position: 1,
+            turnId: null,
+            error: null,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel queued message 1" }));
+    expect(window.infeld.agent.cancelQueuedMessage).toHaveBeenCalled();
+    expect(window.infeld.agent.setQueuePaused).toHaveBeenCalledWith({
+      botId: "chief",
+      paused: false,
     });
   });
 
-  it("opens the computer screen modal and toggles voice state", async () => {
+  it("submits onboarding as the first queued user message", async () => {
     render(() => <App />);
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
-    expect(screen.getByRole("dialog", { name: "Sales Outbound's screen" })).toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("button", { name: "Close screen" }));
-    expect(
-      screen.queryByRole("dialog", { name: "Sales Outbound's screen" }),
-    ).not.toBeInTheDocument();
-
-    const voice = screen.getByRole("button", { name: "Voice message" });
-    await fireEvent.click(voice);
-    expect(voice).toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("opens the recipient picker, then creates and selects a new agent", async () => {
-    render(() => <App />);
-
-    await fireEvent.click(screen.getByRole("button", { name: "New agent" }));
-    expect(screen.getByRole("combobox", { name: "To:" })).toHaveAttribute(
-      "placeholder",
-      "Search or create agents",
-    );
-    expect(screen.getByRole("option", { name: "Create new agent" })).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Message agent" })).toBeDisabled();
-
-    await fireEvent.click(screen.getByRole("option", { name: "Create new agent" }));
-
-    expect(await screen.findByRole("heading", { level: 1, name: "New agent" })).toBeInTheDocument();
-    expect(window.infeld.agent.createBot).toHaveBeenCalledOnce();
-    expect(screen.getByRole("textbox", { name: "Message New agent" })).toBeEnabled();
-  });
-
-  it("filters and selects an existing recipient from the new-agent flow", async () => {
-    render(() => <App />);
-    await fireEvent.click(screen.getByRole("button", { name: "New agent" }));
-
-    const recipient = screen.getByRole("combobox", { name: "To:" });
-    await fireEvent.input(recipient, { target: { value: "talent" } });
-    expect(screen.getByRole("option", { name: "Talent Scout" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Chief" })).not.toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("option", { name: "Talent Scout" }));
-    expect(screen.getByRole("heading", { level: 1, name: "Talent Scout" })).toBeInTheDocument();
-    expect(screen.queryByRole("combobox", { name: "To:" })).not.toBeInTheDocument();
-  });
-
-  it("supports keyboard navigation and Escape in the recipient picker", async () => {
-    render(() => <App />);
-    await fireEvent.click(screen.getByRole("button", { name: "New agent" }));
-
-    const recipient = screen.getByRole("combobox", { name: "To:" });
-    await fireEvent.input(recipient, { target: { value: "chief" } });
-    await fireEvent.keyDown(recipient, { key: "ArrowDown" });
-    await fireEvent.keyDown(recipient, { key: "Enter" });
-    expect(screen.getByRole("heading", { level: 1, name: "Chief" })).toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("button", { name: "New agent" }));
-    await fireEvent.keyDown(screen.getByRole("combobox", { name: "To:" }), { key: "Escape" });
-    expect(screen.queryByRole("combobox", { name: "To:" })).not.toBeInTheDocument();
-  });
-
-  it("loads application metadata through the typed desktop bridge", async () => {
-    render(() => <App />);
-
-    expect(await screen.findByTestId("app-version")).toHaveTextContent("Version 0.1.0 · darwin");
-    expect(window.infeld.getAppInfo).toHaveBeenCalledOnce();
-    expect(await screen.findByTestId("agent-status")).toHaveTextContent(
-      "Full access · Codex ready",
+    await screen.findByRole("heading", { name: "Chief" });
+    await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
+    await fireEvent.click(screen.getByRole("option", { name: /Work & projects/ }));
+    await waitFor(() =>
+      expect(window.infeld.agent.sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: "Work & projects",
+        attachmentDraftIds: [],
+      }),
     );
   });
 
-  it("routes a model question and the next reply through the prompt bridge", async () => {
+  it("answers model prompts from a separate card while composer remains a queue", async () => {
     render(() => <App />);
-    if (!emitAgentEvent) throw new Error("Agent listener was not registered.");
-
-    emitAgentEvent({
+    await screen.findByRole("heading", { name: "Chief" });
+    await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
+    emitAgentEvent?.({
       type: "prompt",
       requestId: "prompt-1",
-      botId: "sales-outbound",
+      botId: "chief",
       threadId: "thread-1",
       turnId: "turn-1",
       questions: [
         {
-          id: "choice",
-          header: "Choice",
-          question: "Which account should I prioritize?",
+          id: "account",
+          header: "Account",
+          question: "Which account?",
           isSecret: false,
           options: null,
         },
       ],
     });
-    expect(screen.getByText("1. Which account should I prioritize?")).toBeInTheDocument();
+    const answer = await screen.findByRole("textbox", { name: "Account" });
+    await fireEvent.input(answer, { target: { value: "Acme" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+    await waitFor(() =>
+      expect(window.infeld.agent.respondToPrompt).toHaveBeenCalledWith({
+        requestId: "prompt-1",
+        answers: { account: ["Acme"] },
+      }),
+    );
+  });
 
-    const composer = screen.getByRole("textbox", { name: "Message Sales Outbound" });
-    await fireEvent.input(composer, { target: { value: "Acme" } });
-    await fireEvent.keyDown(composer, { key: "Enter" });
+  it("renders persistent outgoing and incoming agent exchanges", async () => {
+    vi.mocked(window.infeld.agent.readConversation).mockImplementation(async (botId) => ({
+      botId,
+      threadId: "thread-1",
+      activeTurnId: null,
+      messages:
+        botId === "chief"
+          ? [
+              {
+                id: "outbox-message-1",
+                author: "system",
+                source: "system",
+                text: "Prepare report",
+                createdAt: new Date().toISOString(),
+                status: "completed",
+                exchange: {
+                  direction: "outgoing",
+                  messageId: "message-1",
+                  senderBotId: "chief",
+                  recipientBotIds: ["sales-outbound"],
+                  replyToMessageId: null,
+                  deliveries: [
+                    {
+                      id: "delivery-1",
+                      recipientBotId: "sales-outbound",
+                      status: "queued",
+                      position: 1,
+                      error: null,
+                    },
+                  ],
+                },
+              },
+            ]
+          : [],
+    }));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    expect(await screen.findByText("Messaged")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1 agent, show list" })).toBeInTheDocument();
+  });
 
-    expect(window.infeld.agent.respondToPrompt).toHaveBeenCalledWith({
-      requestId: "prompt-1",
-      answers: { choice: ["Acme"] },
+  it("persists settings and opens managed attachment actions", async () => {
+    render(() => <App />);
+    await fireEvent.click(await screen.findByRole("button", { name: "View agent settings" }));
+    await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
+    const name = screen.getByRole("textbox", { name: "Agent name" });
+    await fireEvent.input(name, { target: { value: "Coordinator" } });
+    await fireEvent.blur(name);
+    await waitFor(() =>
+      expect(window.infeld.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        name: "Coordinator",
+      }),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Close details" }));
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: null,
+        activeTurnId: null,
+        messages: [
+          {
+            id: "file-message",
+            author: "user",
+            text: "",
+            createdAt: new Date().toISOString(),
+            status: "completed",
+            attachments: [attachment("file-1", "brief.pdf", "pdf")],
+          },
+        ],
+      },
     });
-    expect(window.infeld.agent.sendMessage).not.toHaveBeenCalled();
+    await fireEvent.click(await screen.findByRole("button", { name: "Preview brief.pdf" }));
+    expect(screen.getByRole("dialog", { name: "brief.pdf" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Show in Finder" }));
+    expect(window.infeld.agent.openAttachment).toHaveBeenCalledWith({
+      attachmentId: "file-1",
+      action: "reveal",
+    });
+  });
+
+  it("opens bot actions on right click and edits the selected agent", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Sales Outbound/ }), {
+      clientX: 120,
+      clientY: 90,
+    });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Edit agent" }));
+    expect(await screen.findByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
+  });
+
+  it("confirms and persistently deletes a bot from its context menu", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const sales = screen.getByRole("button", { name: /Sales Outbound/ });
+    await fireEvent.contextMenu(sales, { clientX: 120, clientY: 90 });
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Delete agent" }));
+    expect(screen.getByRole("alertdialog", { name: "Delete Sales Outbound?" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(window.infeld.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"));
+    await waitFor(() => expect(sales).not.toBeInTheDocument());
   });
 });
+
+function attachment(id: string, name: string, kind: "image" | "pdf") {
+  return {
+    id,
+    name,
+    size: 2048,
+    kind: kind === "image" ? ("image" as const) : ("file" as const),
+    mimeType: kind === "image" ? "image/png" : "application/pdf",
+    previewKind: kind,
+    previewUrl: `infeld-attachment://file/${id}`,
+  };
+}

@@ -8,6 +8,7 @@ import type { AgentEvent } from "../shared/ipc";
 import { AgentService } from "./agent-service";
 import { BotStore } from "./bot-store";
 import type { BrowserHost } from "./browser-host";
+import { MailboxStore } from "./mailbox-store";
 
 let root: string;
 let logPath: string;
@@ -27,13 +28,14 @@ afterEach(async () => {
   if (originalCodexPath === undefined) delete process.env.INFELD_CODEX_PATH;
   else process.env.INFELD_CODEX_PATH = originalCodexPath;
   delete process.env.INFELD_FAKE_CODEX_LOG;
+  delete process.env.INFELD_FAKE_AGENT_TOOL;
   await rm(root, { recursive: true, force: true });
 });
 
 describe.sequential("AgentService", () => {
-  it("creates independent persistent bots with full-access thread settings", async () => {
-    const store = new BotStore(join(root, "user-data"), join(root, "home"));
-    service = new AgentService(store, fakeBrowser(), () => ({
+  it("creates independent full-access threads with browser and Infeld tools", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), () => ({
       screenRecording: true,
       accessibility: true,
     }));
@@ -43,12 +45,13 @@ describe.sequential("AgentService", () => {
       phase: "ready",
       auth: { kind: "chatgpt" },
       capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
-      fullAccess: true,
     });
-
-    const first = await service.sendMessage({ botId: "chief", text: "First task" });
-    const second = await service.sendMessage({ botId: "sales-outbound", text: "Second task" });
-    expect(first.threadId).not.toBe(second.threadId);
+    await service.sendMessage({ botId: "chief", text: "First task" });
+    await service.sendMessage({ botId: "sales-outbound", text: "Second task" });
+    await waitFor(
+      async () =>
+        (await protocolMessages()).filter((item) => item.method === "turn/start").length === 2,
+    );
 
     const requests = await protocolMessages();
     const starts = requests.filter((message) => message.method === "thread/start");
@@ -62,73 +65,133 @@ describe.sequential("AgentService", () => {
         serviceName: "infeld_bot",
       });
       expect(params).not.toHaveProperty("model");
-      expect((params.dynamicTools as unknown[])[0]).toMatchObject({
-        type: "namespace",
-        name: "browser",
-      });
-      expect(params.runtimeWorkspaceRoots).toHaveLength(2);
+      expect(params.dynamicTools).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "namespace", name: "infeld_browser" }),
+          expect.objectContaining({ type: "namespace", name: "infeld" }),
+        ]),
+      );
     }
-
-    expect((await store.getOrCreate("chief")).threadId).toBe(first.threadId);
-    expect((await store.getOrCreate("sales-outbound")).threadId).toBe(second.threadId);
+    expect((await store.getOrCreate("chief")).threadId).not.toBe(
+      (await store.getOrCreate("sales-outbound")).threadId,
+    );
   });
 
-  it("streams events, steers an active turn, interrupts, and handles prompts safely", async () => {
-    const store = new BotStore(join(root, "user-data"), join(root, "home"));
-    service = new AgentService(store, fakeBrowser());
+  it("queues FIFO instead of steering and pause/resume controls draining", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
 
-    const turn = await service.sendMessage({ botId: "chief", text: "Start" });
-    await waitFor(() => events.some((event) => event.type === "assistant-delta"));
-    const steer = await service.sendMessage({ botId: "chief", text: "Add this" });
-    expect(steer.mode).toBe("steer");
+    await service.sendMessage({ botId: "chief", text: "Start" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const active = events.find((event) => event.type === "turn-started");
+    if (active?.type !== "turn-started") throw new Error("Turn did not start.");
+    await service.sendMessage({ botId: "chief", text: "Run after the first task" });
 
-    await waitFor(() => events.some((event) => event.type === "prompt"));
-    const prompt = events.find((event) => event.type === "prompt");
-    if (prompt?.type !== "prompt") throw new Error("Prompt was not emitted.");
-    await service.respondToPrompt({
-      requestId: prompt.requestId,
-      answers: { choice: ["Proceed"] },
-    });
-    await service.interrupt("chief", turn.turnId);
+    let queue = service.listQueue("chief");
+    expect(queue.deliveries.map((item) => item.status)).toEqual(["running", "queued"]);
+    expect((await protocolMessages()).some((message) => message.method === "turn/steer")).toBe(
+      false,
+    );
+
+    await service.interrupt("chief", active.turnId);
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
+    queue = service.listQueue("chief");
+    expect(queue.paused).toBe(true);
+    expect(queue.deliveries[1]?.status).toBe("queued");
+
+    await service.setQueuePaused("chief", false);
+    await waitFor(
+      async () =>
+        (await protocolMessages()).filter((item) => item.method === "turn/start").length === 2,
+    );
+    expect(service.listQueue("chief").deliveries[1]?.status).toBe("running");
+  });
+
+  it("fans out an idempotent agent tool message to other persistent bots", async () => {
+    process.env.INFELD_FAKE_AGENT_TOOL = "1";
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Coordinate the team" });
 
     await waitFor(async () => {
       const messages = await protocolMessages();
-      return messages.some((message) => message.id === "approval-1" && message.result);
+      return messages.some((message) => message.id === "agent-tool-1" && message.result);
     });
-    const messages = await protocolMessages();
-    expect(messages).toEqual(
+    await waitFor(() => service?.listQueue("sales-outbound").deliveries.length === 1);
+    await waitFor(() => service?.listQueue("inbox-manager").deliveries.length === 1);
+
+    const sales = service.listQueue("sales-outbound").deliveries[0];
+    const inbox = service.listQueue("inbox-manager").deliveries[0];
+    expect(sales.messageId).toBe(inbox.messageId);
+    expect(sales.sender).toEqual({ kind: "bot", botId: "chief" });
+    expect(sales.text).toBe("Please prepare your reports.");
+
+    expect((await service.readConversation("chief")).messages).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ method: "turn/steer" }),
-        expect.objectContaining({ method: "turn/interrupt" }),
-        expect.objectContaining({ id: "approval-1", result: { decision: "acceptForSession" } }),
+        expect.objectContaining({ exchange: expect.objectContaining({ direction: "outgoing" }) }),
+      ]),
+    );
+    expect((await service.readConversation("sales-outbound")).messages).toEqual(
+      expect.arrayContaining([
         expect.objectContaining({
-          id: "prompt-1",
-          result: { answers: { choice: { answers: ["Proceed"] } } },
+          senderBotId: "chief",
+          exchange: expect.objectContaining({ direction: "incoming" }),
         }),
       ]),
     );
   });
 
-  it("resumes a stored thread after a backend restart", async () => {
-    const store = new BotStore(join(root, "user-data"), join(root, "home"));
-    service = new AgentService(store, fakeBrowser());
+  it("resumes stored threads and does not replay an uncertain running delivery", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
-    const original = await service.sendMessage({ botId: "chief", text: "Remember this" });
+    await service.sendMessage({ botId: "chief", text: "Remember this" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    const threadId = (await store.getOrCreate("chief")).threadId;
     await service.stop();
 
-    service = new AgentService(store, fakeBrowser());
+    service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
-    const resumed = await service.sendMessage({ botId: "chief", text: "Continue" });
-
-    expect(resumed.threadId).toBe(original.threadId);
-    expect((await protocolMessages()).some((message) => message.method === "thread/resume")).toBe(
-      true,
+    expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
+    await service.sendMessage({ botId: "chief", text: "Continue" });
+    await waitFor(async () =>
+      (await protocolMessages()).some((message) => message.method === "thread/resume"),
     );
+    const resume = (await protocolMessages()).find((message) => message.method === "thread/resume");
+    expect(resume?.params).toMatchObject({
+      dynamicTools: expect.arrayContaining([
+        expect.objectContaining({ type: "namespace", name: "infeld_browser" }),
+        expect.objectContaining({ type: "namespace", name: "infeld" }),
+      ]),
+    });
+    expect((await store.getOrCreate("chief")).threadId).toBe(threadId);
+  });
+
+  it("deletes idle bots and refuses to orphan active work", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    await service.deleteBot("sales-outbound");
+    expect(service.listBots().some((bot) => bot.id === "sales-outbound")).toBe(false);
+
+    await service.sendMessage({ botId: "chief", text: "Keep working" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    await expect(service.deleteBot("chief")).rejects.toThrow(
+      "Stop the agent and cancel its queued messages before deleting it.",
+    );
+    expect(service.listBots().some((bot) => bot.id === "chief")).toBe(true);
   });
 });
+
+function stores(): { store: BotStore; mailbox: MailboxStore } {
+  const store = new BotStore(join(root, "user-data"), join(root, "home"));
+  return { store, mailbox: new MailboxStore(join(root, "user-data"), store.sharedRoot) };
+}
 
 function fakeBrowser(): BrowserHost {
   return {
@@ -149,8 +212,10 @@ async function protocolMessages(): Promise<Array<Record<string, unknown>>> {
   }
 }
 
-async function waitFor(check: () => boolean | Promise<boolean>): Promise<void> {
-  const deadline = Date.now() + 2_000;
+async function waitFor(
+  check: () => boolean | undefined | Promise<boolean | undefined>,
+): Promise<void> {
+  const deadline = Date.now() + 3_000;
   while (Date.now() < deadline) {
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -172,6 +237,7 @@ const log = process.env.INFELD_FAKE_CODEX_LOG;
 let buffer = "";
 let threadCounter = 0;
 let turnCounter = 0;
+const turns = new Map();
 const write = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -191,19 +257,23 @@ process.stdin.on("data", (chunk) => {
         write({ id: message.id, result: { thread: { id: threadId, turns: [] } } });
       }
       if (message.method === "thread/resume") write({ id: message.id, result: { thread: { id: message.params.threadId, turns: [] } } });
-      if (message.method === "thread/read") write({ id: message.id, result: { thread: { id: message.params.threadId, turns: [] } } });
+      if (message.method === "thread/read") write({ id: message.id, result: { thread: { id: message.params.threadId, turns: [...turns.values()] } } });
       if (message.method === "turn/start") {
         const turnId = "turn-" + (++turnCounter);
+        turns.set(turnId, { id: turnId, status: "inProgress", items: [] });
         write({ id: message.id, result: { turn: { id: turnId, status: "inProgress", items: [] } } });
         write({ method: "turn/started", params: { threadId: message.params.threadId, turn: { id: turnId } } });
         write({ method: "item/agentMessage/delta", params: { threadId: message.params.threadId, turnId, itemId: "message-" + turnId, delta: "Streaming" } });
-        if (turnCounter === 1) {
-          write({ id: "approval-1", method: "item/commandExecution/requestApproval", params: { threadId: message.params.threadId, turnId, itemId: "command-1" } });
-          write({ id: "prompt-1", method: "item/tool/requestUserInput", params: { threadId: message.params.threadId, turnId, itemId: "question-1", questions: [{ id: "choice", header: "Choice", question: "Proceed?", isSecret: false, options: null }] } });
+        if (process.env.INFELD_FAKE_AGENT_TOOL === "1" && turnCounter === 1) {
+          setTimeout(() => write({ id: "agent-tool-1", method: "item/tool/call", params: { threadId: message.params.threadId, turnId, callId: "call-1", namespace: "infeld", tool: "send_message", arguments: { recipientBotIds: ["sales-outbound", "inbox-manager"], text: "Please prepare your reports." } } }), 30);
         }
       }
-      if (message.method === "turn/steer") write({ id: message.id, result: { turnId: message.params.expectedTurnId } });
-      if (message.method === "turn/interrupt") write({ id: message.id, result: {} });
+      if (message.method === "turn/interrupt") {
+        write({ id: message.id, result: {} });
+        const turn = turns.get(message.params.turnId);
+        if (turn) turn.status = "interrupted";
+        write({ method: "turn/completed", params: { threadId: message.params.threadId, turn: { id: message.params.turnId, status: "interrupted" } } });
+      }
     }
     newline = buffer.indexOf("\\n");
   }

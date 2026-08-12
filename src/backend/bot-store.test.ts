@@ -25,6 +25,8 @@ describe("BotStore", () => {
     const sales = await store.getOrCreate("sales-outbound");
 
     expect(chief.workspacePath).toBe(join(home, "Infeld", "Bots", "chief"));
+    expect(chief.description).toBe("Coordinates work across your local Infeld agents.");
+    expect(chief.preview).toBe("No messages yet");
     expect(sales.workspacePath).toBe(join(home, "Infeld", "Bots", "sales-outbound"));
     expect(store.sharedRoot).toBe(join(home, "Infeld", "Shared"));
     expect(chief.workspacePath).not.toBe(sales.workspacePath);
@@ -40,7 +42,7 @@ describe("BotStore", () => {
     await store.setThreadId("chief", "thread-123");
     const parsed = JSON.parse(await readFile(join(userData, "agent-state.json"), "utf8"));
 
-    expect(parsed.version).toBe(1);
+    expect(parsed.version).toBe(5);
     expect(parsed.bots.find((bot: { id: string }) => bot.id === "chief").threadId).toBe(
       "thread-123",
     );
@@ -83,5 +85,45 @@ describe("BotStore", () => {
     await store.initialize();
 
     await expect(store.getOrCreate("../outside")).rejects.toThrow("Invalid bot id");
+  });
+
+  it("persists editable agent settings", async () => {
+    const root = await mkdtemp(join(tmpdir(), "infeld-store-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const store = new BotStore(userData, join(root, "home"));
+    await store.initialize();
+
+    await store.updateBot({
+      botId: "chief",
+      name: "Coordinator",
+      role: "Operations lead",
+      description: "Keeps the team aligned",
+      notifications: false,
+    });
+    const restored = new BotStore(userData, join(root, "home"));
+    await restored.initialize();
+    expect(restored.list().find((bot) => bot.id === "chief")).toMatchObject({
+      name: "Coordinator",
+      role: "Operations lead",
+      description: "Keeps the team aligned",
+      notifications: false,
+    });
+  });
+
+  it("deletes agents persistently without reseeding examples", async () => {
+    const root = await mkdtemp(join(tmpdir(), "infeld-store-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const home = join(root, "home");
+    const store = new BotStore(userData, home);
+    await store.initialize();
+
+    for (const bot of store.list()) await store.deleteBot(bot.id);
+    expect(store.list()).toEqual([]);
+
+    const restored = new BotStore(userData, home);
+    await restored.initialize();
+    expect(restored.list()).toEqual([]);
   });
 });

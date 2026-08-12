@@ -47,10 +47,12 @@ type BrowserAction =
   | { type: "forward" }
   | { type: "reload" };
 
+export const INFELD_BROWSER_NAMESPACE = "infeld_browser";
+
 export const BROWSER_DYNAMIC_TOOLS = [
   {
     type: "namespace",
-    name: "browser",
+    name: INFELD_BROWSER_NAMESPACE,
     description: "Operate Infeld's private, persistent local browser.",
     tools: [
       functionTool("open", "Open an HTTP(S) URL in a new tab.", {
@@ -187,6 +189,9 @@ export class BrowserHost {
   async setVisible(input: BrowserVisibilityInput): Promise<void> {
     this.#visible = input.visible;
     if (input.bounds) this.#bounds = validateBounds(input.bounds);
+    if (!input.visible && this.#attachedView) {
+      this.#attachedView.setBounds({ x: -10_000, y: -10_000, width: 1, height: 1 });
+    }
     this.#syncAttachedView();
   }
 
@@ -363,7 +368,12 @@ export class BrowserHost {
 
   #detachView(): void {
     if (!this.#attachedView) return;
-    this.#window.contentView.removeChildView(this.#attachedView);
+    const view = this.#attachedView;
+    // WebContentsView is native to the window and does not follow renderer CSS
+    // transforms. Move it out of the viewport before detaching so hide remains
+    // reliable even while the renderer panel is animating away.
+    view.setBounds({ x: -10_000, y: -10_000, width: 1, height: 1 });
+    this.#window.contentView.removeChildView(view);
     this.#attachedView = null;
   }
 
