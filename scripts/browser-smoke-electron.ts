@@ -5,8 +5,18 @@ import { join } from "node:path";
 import { app, BrowserWindow } from "electron";
 import { BrowserHost } from "../src/backend/browser-host";
 
+let cachedPageVersion = 1;
+
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  if (url.pathname === "/cached") {
+    response.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "public, max-age=3600",
+    });
+    response.end(`<main>version:${cachedPageVersion}</main>`);
+    return;
+  }
   if (url.pathname === "/download") {
     response.writeHead(200, {
       "content-type": "text/plain",
@@ -19,6 +29,11 @@ const server = createServer((request, response) => {
     if (url.searchParams.has("set")) response.setHeader("set-cookie", "openbot=shared; Path=/");
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(`<main>cookie:${request.headers.cookie ?? "none"}</main>`);
+    return;
+  }
+  if (url.pathname === "/headers") {
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(`<main>${JSON.stringify(request.headers)}</main>`);
     return;
   }
   if (url.pathname === "/abort") {
@@ -61,7 +76,8 @@ async function main(): Promise<void> {
     process.stdout.write("BrowserHost: Electron ready.\n");
     const window = new BrowserWindow({ show: false });
     const downloadsRoot = join(temporaryRoot, "downloads");
-    const browser = new BrowserHost(window, downloadsRoot);
+    const statePath = join(temporaryRoot, "browser-tabs.json");
+    const browser = new BrowserHost(window, downloadsRoot, statePath);
 
     const controlPhases: string[] = [];
     const controlledTabIds: Array<string | null> = [];
@@ -91,6 +107,18 @@ async function main(): Promise<void> {
     const result = await browser.snapshot(tab.id);
     if (!result.text.includes("runs locally")) throw new Error("Browser click/type failed.");
     process.stdout.write("BrowserHost: snapshot and actions passed.\n");
+
+    const headerTab = await browser.open(`${origin}/headers`, "smoke-thread");
+    const headerSnapshot = await browser.snapshot(headerTab.id);
+    if (
+      headerSnapshot.text.includes("Electron/") ||
+      headerSnapshot.text.includes("OpenBot/") ||
+      !headerSnapshot.text.includes("sec-ch-ua") ||
+      !headerSnapshot.text.includes("Google Chrome")
+    ) {
+      throw new Error(`Browser identity headers are invalid: ${headerSnapshot.text}`);
+    }
+    process.stdout.write("BrowserHost: Chrome identity headers passed.\n");
     await expectFailure(() =>
       browser.act(tab.id, first.revision, { type: "click", ref: save.ref }),
     );
@@ -121,6 +149,19 @@ async function main(): Promise<void> {
     if (!cookieSnapshot.text.includes("openbot=shared"))
       throw new Error("Cookies were not shared.");
     process.stdout.write("BrowserHost: shared cookies passed.\n");
+
+    const firstCachedTab = await browser.open(`${origin}/cached`, "smoke-thread");
+    const firstCachedSnapshot = await browser.snapshot(firstCachedTab.id);
+    if (!firstCachedSnapshot.text.includes("version:1")) {
+      throw new Error("Initial cached page did not load.");
+    }
+    cachedPageVersion = 2;
+    const revalidatedTab = await browser.open(`${origin}/cached`, "smoke-thread");
+    const revalidatedSnapshot = await browser.snapshot(revalidatedTab.id);
+    if (!revalidatedSnapshot.text.includes("version:2")) {
+      throw new Error("A new top-level navigation reused stale cached content.");
+    }
+    process.stdout.write("BrowserHost: top-level cache revalidation passed.\n");
 
     await expectFailure(() => browser.open("file:///etc/passwd"));
     const tabCountBeforeAbort = browser.listTabs().length;
@@ -175,8 +216,38 @@ async function main(): Promise<void> {
     }
     process.stdout.write("BrowserHost: agent control lifecycle passed.\n");
 
-    browser.destroy();
+    const persistedTab = await browser.open(
+      `${origin}/cookie`,
+      "persisted-thread",
+      "persisted-bot",
+    );
+    await browser.activate(persistedTab.id);
+    await browser.destroy();
+    const restoredWindow = new BrowserWindow({ show: false });
     window.destroy();
+    const restoredBrowser = new BrowserHost(restoredWindow, downloadsRoot, statePath);
+    await restoredBrowser.restore();
+    const restoredTabs = restoredBrowser.listTabs();
+    const restoredTab = restoredTabs.find((candidate) => candidate.id === persistedTab.id);
+    if (
+      restoredTab?.ownerThreadId !== "persisted-thread" ||
+      restoredTab?.ownerBotId !== "persisted-bot" ||
+      restoredBrowser.activeTabId !== persistedTab.id
+    ) {
+      throw new Error("Browser tabs did not survive a BrowserHost restart.");
+    }
+    process.stdout.write("BrowserHost: persisted tabs passed.\n");
+    await restoredBrowser.destroy();
+    const persistedState = JSON.parse(await readFile(statePath, "utf8")) as {
+      tabs?: Array<{ id?: string; url?: string }>;
+    };
+    if (
+      persistedState.tabs?.find((candidate) => candidate.id === persistedTab.id)?.url !==
+      `${origin}/cookie`
+    ) {
+      throw new Error("An immediate shutdown lost a restored tab URL.");
+    }
+    restoredWindow.destroy();
     process.stdout.write("BrowserHost smoke test passed.\n");
   } finally {
     clearTimeout(hardTimeout);

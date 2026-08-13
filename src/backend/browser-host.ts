@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import {
+  app,
   type BrowserWindow,
   type Session,
   session,
@@ -16,6 +18,7 @@ import type {
   BrowserTab,
   BrowserVisibilityInput,
 } from "../shared/ipc";
+import { persistentBrowserUrl } from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
 
@@ -27,10 +30,22 @@ interface BrowserHostEvents {
 interface InternalTab {
   id: string;
   view: WebContentsView;
+  requestedUrl: string;
   ownerThreadId: string | null;
   ownerBotId: string | null;
   revision: number;
   queue: Promise<unknown>;
+}
+
+interface StoredBrowserState {
+  version: 1;
+  activeTabId: string | null;
+  tabs: Array<{
+    id: string;
+    url: string;
+    ownerThreadId: string | null;
+    ownerBotId: string | null;
+  }>;
 }
 
 interface BrowserSnapshot {
@@ -124,6 +139,7 @@ export class BrowserHost {
   readonly #window: BrowserWindow;
   readonly #session: Session;
   readonly #downloadsRoot: string;
+  readonly #statePath: string;
   readonly #tabs = new Map<string, InternalTab>();
   readonly #listeners = new Set<(...args: BrowserHostEvents["changed"]) => void>();
   readonly #controlListeners = new Set<(...args: BrowserHostEvents["controlChanged"]) => void>();
@@ -135,12 +151,37 @@ export class BrowserHost {
   #bounds: BrowserBounds | null = null;
   #attachedView: WebContentsView | null = null;
   readonly #mountedViews = new Set<WebContentsView>();
+  #persistQueue: Promise<void> = Promise.resolve();
 
-  constructor(window: BrowserWindow, downloadsRoot: string) {
+  constructor(window: BrowserWindow, downloadsRoot: string, statePath: string) {
     this.#window = window;
     this.#downloadsRoot = downloadsRoot;
+    this.#statePath = statePath;
     this.#session = session.fromPartition("persist:openbot-browser", { cache: true });
     this.#configureSession();
+  }
+
+  async restore(): Promise<void> {
+    const state = await readBrowserState(this.#statePath);
+    if (state.tabs.length === 0) return;
+
+    const tabs = state.tabs.map((stored) => {
+      const tab = this.#createTab(stored.id, stored.url, stored.ownerThreadId, stored.ownerBotId);
+      this.#tabs.set(tab.id, tab);
+      this.#bindTabEvents(tab);
+      return tab;
+    });
+    this.#activeTabId = this.#tabs.has(state.activeTabId ?? "")
+      ? state.activeTabId
+      : (tabs[0]?.id ?? null);
+    this.#syncAttachedView();
+    this.#emitChanged();
+
+    for (const tab of tabs) {
+      void tab.view.webContents
+        .loadURL(tab.requestedUrl, browserLoadOptions())
+        .catch(() => undefined);
+    }
   }
 
   onChanged(listener: (...args: BrowserHostEvents["changed"]) => void): () => void {
@@ -192,23 +233,17 @@ export class BrowserHost {
     ownerBotId: string | null = null,
   ): Promise<BrowserTab> {
     const normalizedUrl = normalizeBrowserUrl(url);
-    const tab: InternalTab = {
-      id: randomUUID(),
-      view: this.#createView(),
-      ownerThreadId,
-      ownerBotId,
-      revision: 0,
-      queue: Promise.resolve(),
-    };
+    const tab = this.#createTab(randomUUID(), normalizedUrl, ownerThreadId, ownerBotId);
 
     this.#tabs.set(tab.id, tab);
     this.#bindTabEvents(tab);
     this.#activeTabId = tab.id;
     this.#syncAttachedView();
     this.#emitChanged();
+    await this.#persistState();
 
     try {
-      await tab.view.webContents.loadURL(normalizedUrl);
+      await tab.view.webContents.loadURL(normalizedUrl, browserLoadOptions());
     } catch (error) {
       if (this.#tabs.get(tab.id) === tab) {
         this.#unmountView(tab.view);
@@ -220,6 +255,7 @@ export class BrowserHost {
         this.#syncAttachedView();
       }
       this.#emitChanged();
+      await this.#persistState();
       throw new Error(`Unable to open ${normalizedUrl}: ${String(error)}`);
     }
 
@@ -231,6 +267,7 @@ export class BrowserHost {
     this.#activeTabId = tabId;
     this.#syncAttachedView();
     this.#emitChanged();
+    await this.#persistState();
   }
 
   async close(tabId: string): Promise<void> {
@@ -244,6 +281,7 @@ export class BrowserHost {
     }
     this.#syncAttachedView();
     this.#emitChanged();
+    await this.#persistState();
   }
 
   async setVisible(input: BrowserVisibilityInput): Promise<void> {
@@ -331,15 +369,36 @@ export class BrowserHost {
     }
   }
 
-  destroy(): void {
-    for (const tab of this.#tabs.values()) {
-      this.#unmountView(tab.view);
-      tab.view.webContents.close();
+  async destroy(): Promise<void> {
+    try {
+      await this.#persistState();
+    } finally {
+      for (const tab of this.#tabs.values()) {
+        this.#unmountView(tab.view);
+        tab.view.webContents.close();
+      }
+      this.#tabs.clear();
+      this.#listeners.clear();
+      this.clearControls();
+      this.#controlListeners.clear();
     }
-    this.#tabs.clear();
-    this.#listeners.clear();
-    this.clearControls();
-    this.#controlListeners.clear();
+  }
+
+  #createTab(
+    id: string,
+    requestedUrl: string,
+    ownerThreadId: string | null,
+    ownerBotId: string | null,
+  ): InternalTab {
+    return {
+      id,
+      view: this.#createView(),
+      requestedUrl,
+      ownerThreadId,
+      ownerBotId,
+      revision: 0,
+      queue: Promise.resolve(),
+    };
   }
 
   #createView(): WebContentsView {
@@ -358,6 +417,11 @@ export class BrowserHost {
   }
 
   #configureSession(): void {
+    this.#session.webRequest.onBeforeSendHeaders((details, callback) => {
+      callback({
+        requestHeaders: browserRequestHeaders(details.requestHeaders, this.#session.getUserAgent()),
+      });
+    });
     this.#session.setPermissionRequestHandler((_webContents, _permission, callback) => {
       callback(false);
     });
@@ -381,13 +445,17 @@ export class BrowserHost {
     contents.on("did-start-loading", changed);
     contents.on("did-stop-loading", changed);
     contents.on("page-title-updated", changed);
-    contents.on("did-navigate", () => {
+    contents.on("did-navigate", (_event, url) => {
+      if (isPersistableBrowserUrl(url)) tab.requestedUrl = persistentBrowserUrl(url);
       tab.revision += 1;
       changed();
+      this.#schedulePersist();
     });
-    contents.on("did-navigate-in-page", () => {
+    contents.on("did-navigate-in-page", (_event, url) => {
+      if (isPersistableBrowserUrl(url)) tab.requestedUrl = persistentBrowserUrl(url);
       tab.revision += 1;
       changed();
+      this.#schedulePersist();
     });
     contents.on("will-navigate", (event, url) => {
       if (!isAllowedMainUrl(url)) event.preventDefault();
@@ -514,6 +582,34 @@ export class BrowserHost {
     const state = this.getControlState();
     for (const listener of this.#controlListeners) listener(state);
   }
+
+  #schedulePersist(): void {
+    void this.#persistState().catch((error) => {
+      console.error("Unable to persist browser tabs:", error);
+    });
+  }
+
+  #persistState(): Promise<void> {
+    const state: StoredBrowserState = {
+      version: 1,
+      activeTabId: this.#activeTabId,
+      tabs: [...this.#tabs.values()].map((tab) => ({
+        id: tab.id,
+        url: persistentBrowserUrl(currentTabUrl(tab)),
+        ownerThreadId: tab.ownerThreadId,
+        ownerBotId: tab.ownerBotId,
+      })),
+    };
+    this.#persistQueue = this.#persistQueue
+      .catch(() => undefined)
+      .then(() =>
+        writeFile(this.#statePath, `${JSON.stringify(state)}\n`, {
+          encoding: "utf8",
+          mode: 0o600,
+        }),
+      );
+    return this.#persistQueue;
+  }
 }
 
 function controlSessionId(threadId: string, turnId: string): string {
@@ -571,8 +667,115 @@ function normalizeBrowserUrl(input: string): string {
   return url.toString();
 }
 
+function browserLoadOptions(): { extraHeaders: string } {
+  return { extraHeaders: "Cache-Control: no-cache\nPragma: no-cache" };
+}
+
+function browserRequestHeaders(
+  requestHeaders: Record<string, string>,
+  sessionUserAgent: string,
+): Record<string, string> {
+  const userAgent = removeUserAgentProducts(sessionUserAgent, ["Electron", app.getName()]);
+  const majorVersion = /\b(?:Chrome|Chromium)\/(\d+)\./.exec(userAgent)?.[1];
+  const headers = { ...requestHeaders };
+  setRequestHeader(headers, "User-Agent", userAgent);
+  setRequestHeader(headers, "Accept-Language", preferredBrowserLanguages());
+  if (majorVersion) {
+    setRequestHeader(
+      headers,
+      "sec-ch-ua",
+      `"Chromium";v="${majorVersion}", "Google Chrome";v="${majorVersion}", "Not=A?Brand";v="24"`,
+    );
+  }
+  setRequestHeader(headers, "sec-ch-ua-mobile", "?0");
+  setRequestHeader(headers, "sec-ch-ua-platform", browserPlatform());
+  return headers;
+}
+
+function removeUserAgentProducts(userAgent: string, products: string[]): string {
+  return products
+    .filter(Boolean)
+    .reduce(
+      (current, product) =>
+        current.replace(new RegExp(`\\s${escapeRegExp(product)}/[^\\s]+`, "g"), ""),
+      userAgent,
+    );
+}
+
+function preferredBrowserLanguages(): string {
+  const languages = app.getPreferredSystemLanguages();
+  return (languages.length > 0 ? languages : [app.getLocale()])
+    .map((language, index) =>
+      index === 0 ? language : `${language};q=${Math.max(1 - index * 0.1, 0.1).toFixed(1)}`,
+    )
+    .join(",");
+}
+
+function browserPlatform(): string {
+  if (process.platform === "darwin") return '"macOS"';
+  if (process.platform === "win32") return '"Windows"';
+  return '"Linux"';
+}
+
+function setRequestHeader(headers: Record<string, string>, name: string, value: string): void {
+  const existingName = Object.keys(headers).find(
+    (candidate) => candidate.toLowerCase() === name.toLowerCase(),
+  );
+  if (existingName && existingName !== name) delete headers[existingName];
+  headers[name] = value;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function readBrowserState(path: string): Promise<StoredBrowserState> {
+  try {
+    const parsed = JSON.parse(await readFile(path, "utf8")) as Partial<StoredBrowserState>;
+    if (parsed.version !== 1) return { version: 1, activeTabId: null, tabs: [] };
+    const tabs = Array.isArray(parsed.tabs)
+      ? parsed.tabs
+          .filter(isStoredBrowserTab)
+          .map((tab) => ({ ...tab, url: persistentBrowserUrl(tab.url) }))
+      : [];
+    return {
+      version: 1,
+      activeTabId: typeof parsed.activeTabId === "string" ? parsed.activeTabId : null,
+      tabs: tabs.filter(
+        (tab, index) => tabs.findIndex((candidate) => candidate.id === tab.id) === index,
+      ),
+    };
+  } catch (error) {
+    if (isMissingFile(error) || error instanceof SyntaxError) {
+      return { version: 1, activeTabId: null, tabs: [] };
+    }
+    throw error;
+  }
+}
+
+function isStoredBrowserTab(value: unknown): value is StoredBrowserState["tabs"][number] {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== "string" ||
+    !value.id ||
+    typeof value.url !== "string"
+  ) {
+    return false;
+  }
+  if (value.ownerThreadId !== null && typeof value.ownerThreadId !== "string") return false;
+  if (value.ownerBotId !== null && typeof value.ownerBotId !== "string") return false;
+  return isPersistableBrowserUrl(value.url);
+}
+
+function isMissingFile(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
 function isAllowedMainUrl(value: string): boolean {
-  if (value === "about:blank") return true;
+  return value === "about:blank" || isPersistableBrowserUrl(value);
+}
+
+function isPersistableBrowserUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === "http:" || url.protocol === "https:";
@@ -594,11 +797,16 @@ function toPublicTab(tab: InternalTab): BrowserTab {
   return {
     id: tab.id,
     title: tab.view.webContents.getTitle() || "New tab",
-    url: tab.view.webContents.getURL() || "about:blank",
+    url: currentTabUrl(tab),
     loading: tab.view.webContents.isLoading(),
     ownerThreadId: tab.ownerThreadId,
     ownerBotId: tab.ownerBotId,
   };
+}
+
+function currentTabUrl(tab: InternalTab): string {
+  const currentUrl = tab.view.webContents.getURL();
+  return isPersistableBrowserUrl(currentUrl) ? currentUrl : tab.requestedUrl;
 }
 
 function snapshotScript(revision: number): string {

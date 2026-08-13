@@ -79,6 +79,7 @@ let isQuitting = false;
 let shutdownStarted = false;
 
 const SETUP_FILE = "openbot-setup-v2.json";
+const BROWSER_STATE_FILE = "openbot-browser-state-v1.json";
 
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "agent-setup": "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
@@ -357,7 +358,12 @@ if (!hasSingleInstanceLock) {
       await mailboxStore.initialize();
       configureApplicationProtocol();
       configureAttachmentProtocol(mailboxStore);
-      browserHost = new BrowserHost(mainWindow, store.downloadsRoot);
+      browserHost = new BrowserHost(
+        mainWindow,
+        store.downloadsRoot,
+        join(app.getPath("userData"), BROWSER_STATE_FILE),
+      );
+      await browserHost.restore();
       const setupFile = join(app.getPath("userData"), SETUP_FILE);
       const setupState = await readSetupState(setupFile);
       agentService = new AgentService(
@@ -484,7 +490,7 @@ async function prepareForShutdown(): Promise<void> {
   shutdownStarted = true;
   isQuitting = true;
   updateService?.stop();
-  browserHost?.destroy();
+  await (browserHost?.destroy() ?? Promise.resolve());
   await (agentService?.stop() ?? Promise.resolve());
 }
 

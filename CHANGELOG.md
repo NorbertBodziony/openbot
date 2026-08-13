@@ -5,6 +5,15 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-13
+
+### Fixed
+
+- Present embedded browser requests as standard Chrome requests so X login and signup flows work.
+- Restart expired X onboarding routes from the stable login entry after an app restart.
+- Persist embedded browser tabs, active tab selection, URLs, and agent ownership across app restarts.
+- Revalidate top-level browser navigation to avoid stale cached pages.
+
 ## [0.1.3] - 2026-08-13
 
 ### Added
