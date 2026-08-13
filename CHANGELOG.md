@@ -5,6 +5,17 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-08-13
+
+### Added
+
+- Agent headers, settings, and onboarding now use one model picker with provider availability, CLI version, and account details.
+
+### Changed
+
+- Changing the preferred provider now updates the active account details and default model immediately.
+- Development mode now watches source files for changes.
+
 ## [0.1.2] - 2026-08-13
 
 ### Changed
