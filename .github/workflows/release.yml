@@ -137,7 +137,7 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          artifacts=(dist/*.dmg dist/*.zip dist/*.yml dist/*.blockmap dist/*.spdx.json dist/SHA256SUMS.txt)
+          artifacts=(dist/*.dmg dist/*.zip dist/latest-mac.yml dist/*.blockmap dist/*.spdx.json dist/SHA256SUMS.txt)
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${artifacts[@]}" --clobber
             gh release edit "$RELEASE_TAG" --draft=false --latest
