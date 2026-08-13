@@ -898,7 +898,7 @@ export function Conversation(props: ConversationProps) {
     const state = providerAvailability(props.agentStatus, props.modelOptions, provider).state;
     if (state !== "available") return;
     const models = props.modelOptions.filter((option) => providerForModel(option.id) === provider);
-    const preferredId: AgentModelId = provider === "claude" ? "claude-sonnet-5" : "gpt-5.6-luna";
+    const preferredId: AgentModelId = provider === "claude" ? "claude-opus-5" : "gpt-5.6-luna";
     const model = models.find((option) => option.id === preferredId) ?? models[0];
     if (!model) return;
     const previousModel = settingsModel();
@@ -2173,8 +2173,8 @@ export function Conversation(props: ConversationProps) {
             </label>
             <section class="agent-settings-model" aria-labelledby="agent-model-heading">
               <div class="agent-settings-section-heading">
-                <strong id="agent-model-heading">Intelligence</strong>
-                <span>Choose the provider, model, and thinking depth</span>
+                <strong id="agent-model-heading">Runtime</strong>
+                <span>Choose how this agent runs</span>
               </div>
               <div class="agent-settings-model-controls">
                 <ProviderSelect
@@ -2199,15 +2199,15 @@ export function Conversation(props: ConversationProps) {
                       </For>
                     </select>
                   </label>
+                  <Show when={selectedModel()} keyed>
+                    {(model) => <p class="agent-settings-model-description">{model.description}</p>}
+                  </Show>
                 </div>
-                <Show when={selectedModel()} keyed>
-                  {(model) => <p class="agent-settings-model-description">{model.description}</p>}
-                </Show>
                 <label class="agent-settings-model-row agent-settings-thinking-row">
-                  <span>Thinking</span>
+                  <span>Reasoning</span>
                   <select
                     value={settingsReasoning()}
-                    aria-label="Agent thinking level"
+                    aria-label="Agent reasoning level"
                     onChange={(event) => {
                       const reasoningEffort = event.currentTarget.value as AgentReasoningEffort;
                       setSettingsReasoning(reasoningEffort);

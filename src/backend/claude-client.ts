@@ -646,7 +646,7 @@ function dynamicContent(value: unknown): CallToolResult["content"] {
 }
 
 function normalizeClaudeModel(model: string): string {
-  return model.startsWith("claude-") ? model : "claude-sonnet-5";
+  return model.startsWith("claude-") ? model : "claude-opus-5";
 }
 
 function normalizeClaudeEffort(effort: string): "low" | "medium" | "high" | "xhigh" | "max" {

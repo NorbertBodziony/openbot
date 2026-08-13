@@ -142,7 +142,7 @@ describe.sequential("AgentService", () => {
       ],
     });
     await expect(service.createBot()).resolves.toMatchObject({
-      model: "claude-sonnet-5",
+      model: "claude-opus-5",
       reasoningEffort: "high",
     });
   });

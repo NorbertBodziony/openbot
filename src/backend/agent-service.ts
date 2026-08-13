@@ -232,7 +232,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.#preferredProvider === "claude") {
       bot = await this.#store.updateBot({
         botId: bot.id,
-        model: "claude-sonnet-5",
+        model: "claude-opus-5",
         reasoningEffort: "high",
       });
     }

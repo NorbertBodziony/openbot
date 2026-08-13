@@ -1993,11 +1993,16 @@ textarea {
 
 .agent-settings-model {
   margin: 25px 0 20px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 10px;
 }
 
 .agent-settings-section-heading {
-  margin: 0 0 10px;
-  padding: 0 2px;
+  margin: 0;
+  padding: 0 2px 9px;
 }
 
 .agent-settings-section-heading strong,
@@ -2006,17 +2011,19 @@ textarea {
 }
 
 .agent-settings-section-heading strong {
-  color: rgba(255, 255, 255, 0.88);
-  font-size: 13px;
-  font-weight: 550;
-  line-height: 18px;
+  color: #f1f1ee;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  text-wrap: balance;
 }
 
 .agent-settings-section-heading span {
   margin-top: 1px;
-  color: rgba(255, 255, 255, 0.44);
-  font-size: 11px;
-  line-height: 16px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  line-height: 17px;
+  text-wrap: pretty;
 }
 
 .agent-settings-model-controls {
@@ -2043,6 +2050,10 @@ textarea {
 
 .provider-picker-embedded .provider-picker-option + .provider-picker-option {
   border-color: rgba(255, 255, 255, 0.075);
+}
+
+.agent-settings-model-option {
+  min-width: 0;
 }
 
 .agent-settings-model-row {
@@ -2114,19 +2125,103 @@ textarea {
   border-top: 0;
 }
 
+.agent-settings-model .agent-settings-model-controls {
+  display: block;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 9px;
+  background: transparent;
+}
+
+.agent-settings-model .provider-picker-embedded {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.agent-settings-model .provider-picker-list {
+  display: block;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+
+.agent-settings-model .provider-picker-option {
+  min-height: 40px;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 10px;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 5px 8px;
+}
+
+.agent-settings-model .provider-picker-option + .provider-picker-option {
+  border-top-color: rgba(255, 255, 255, 0.06);
+}
+
+.agent-settings-model .provider-picker-option-selected {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.agent-settings-model .provider-picker-status {
+  gap: 6px;
+  font-size: 11px;
+}
+
+.agent-settings-model .agent-settings-model-option {
+  display: block;
+}
+
+.agent-settings-model .agent-settings-model-row {
+  min-height: 40px;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 5px 8px;
+}
+
+.agent-settings-model .agent-settings-model-row:focus-within {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.agent-settings-model .agent-settings-model-row > span {
+  padding: 0;
+}
+
+.agent-settings-model .agent-settings-model-row select {
+  height: 32px;
+  border-radius: 8px;
+  background-color: transparent;
+  background-position:
+    calc(100% - 10px) 14px,
+    calc(100% - 6px) 14px;
+  padding: 0 20px 0 8px;
+  box-shadow: none;
+  text-align: right;
+  text-align-last: right;
+}
+
+.agent-settings-model .agent-settings-model-description {
+  margin: 0;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0 8px 8px;
+  text-wrap: pretty;
+}
+
+.agent-settings-model .agent-settings-model-picker-row {
+  border-bottom: 0;
+}
+
+.agent-settings-model .agent-settings-thinking-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
 .agent-settings-save-error {
   margin: -8px 2px 15px;
   color: #ff8278;
   font-size: 11px;
   line-height: 16px;
-}
-
-.onboarding-runtime-card {
-  background: rgba(255, 255, 255, 0.055);
-}
-
-.onboarding-model-control {
-  background: rgba(0, 0, 0, 0.12);
 }
 
 .agent-settings-notifications {
@@ -4059,6 +4154,57 @@ textarea {
   gap: 12px;
   margin-top: 0;
   padding-top: 4px;
+}
+
+.onboarding-runtime-card .choice-card-heading strong {
+  text-wrap: balance;
+}
+
+.onboarding-runtime-card .choice-card-heading span {
+  text-wrap: pretty;
+}
+
+.onboarding-model-control {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 9px;
+  background: transparent;
+}
+
+.onboarding-model-control .provider-picker-embedded {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.onboarding-model-control .provider-picker-option {
+  min-height: 40px;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 5px 8px;
+  transition-property: background-color;
+  transition-duration: 140ms;
+  transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.onboarding-model-control .provider-picker-option + .provider-picker-option {
+  border-top-color: rgba(255, 255, 255, 0.06);
+}
+
+.onboarding-model-control .provider-picker-option-selected {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.onboarding-model-control .agent-settings-model-picker-row {
+  min-height: 40px;
+  border-bottom: 0;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 5px 8px;
+}
+
+.onboarding-model-control .agent-settings-model-description {
+  margin: 0;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 0 8px 8px;
+  text-wrap: pretty;
 }
 
 .agent-setup-card {

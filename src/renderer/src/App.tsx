@@ -353,6 +353,7 @@ export function App() {
       setConversationLoaded((current) => ({ ...current, [newAgent.id]: true }));
       setAgentPickerOpen(false);
       setActiveBotId(newAgent.id);
+      setSettingsRequest({ botId: newAgent.id, nonce: Date.now() });
     } catch (error) {
       setAgentPickerOpen(false);
       if (activeBotId()) appendUiError(activeBotId(), error, "Create failed");

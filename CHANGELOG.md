@@ -5,6 +5,15 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+### Changed
+
+- New Claude agents now use Claude Opus 5 as their default model.
+- Agent onboarding and runtime settings now use one consistent compact card layout.
+
+### Fixed
+
+- Creating an agent now opens its settings panel immediately.
+
 ## [0.1.1] - 2026-08-13
 
 ### Added

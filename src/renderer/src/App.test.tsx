@@ -121,6 +121,13 @@ describe("OpenBot connected desktop shell", () => {
               supportedReasoningEfforts: ["medium", "high", "xhigh"],
             },
             {
+              id: "claude-opus-5",
+              name: "Claude Opus 5",
+              description: "Most capable Claude model for complex work.",
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: ["low", "medium", "high"],
+            },
+            {
               id: "claude-sonnet-5",
               name: "Claude Sonnet 5",
               description: "Balanced Claude model for general agent work.",
@@ -493,6 +500,18 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
   });
 
+  it("opens settings after creating a new agent", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Create new agent" }));
+
+    expect(await screen.findByRole("heading", { name: "New agent" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue("New agent");
+  });
+
   it("resizes and persists the left and right side panels", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -522,7 +541,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
 
     const model = await screen.findByRole("combobox", { name: "Agent model" });
-    const thinking = screen.getByRole("combobox", { name: "Agent thinking level" });
+    const thinking = screen.getByRole("combobox", { name: "Agent reasoning level" });
     const provider = screen.getByRole("radiogroup", { name: "Agent provider" });
     expect(model).toHaveValue("gpt-5.6-luna");
     expect(thinking).toHaveValue("medium");
@@ -532,11 +551,11 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
-        model: "claude-sonnet-5",
+        model: "claude-opus-5",
         reasoningEffort: "high",
       }),
     );
-    expect(model).toHaveValue("claude-sonnet-5");
+    expect(model).toHaveValue("claude-opus-5");
 
     await fireEvent.click(within(provider).getByRole("radio", { name: /Codex.*Available/ }));
     await fireEvent.change(model, { target: { value: "gpt-5.6-sol" } });
@@ -568,7 +587,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "sales-outbound",
-        model: "claude-sonnet-5",
+        model: "claude-opus-5",
         reasoningEffort: "high",
       }),
     );
