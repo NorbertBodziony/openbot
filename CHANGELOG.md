@@ -5,6 +5,8 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-13
+
 ### Added
 
 - Claude CLI support with automatic Codex and Claude availability checks.
