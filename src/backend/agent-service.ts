@@ -170,6 +170,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #turnAssociations = new Map<string, Promise<void>>();
   readonly #drainingBots = new Set<string>();
   readonly #scheduledDrains = new Set<string>();
+  readonly #drainTasks = new Map<string, Promise<void>>();
   readonly #lastConversationSignatures = new Map<string, string>();
   readonly #contextBudgets = new Map<string, ThreadContextBudget>();
   readonly #compactingBots = new Set<string>();
@@ -325,10 +326,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#clearCompactionRuntime();
     this.#pendingPrompts.clear();
     this.#turnAssociations.clear();
+    this.#scheduledDrains.clear();
     this.#browser.clearControls();
     const clients = [...this.#clients.values()];
     this.#clients.clear();
     await Promise.all(clients.map((client) => client.stop().catch(() => undefined)));
+    await Promise.allSettled([...this.#drainTasks.values()]);
     this.#setStatus({ phase: "stopped", message: null });
   }
 
@@ -862,6 +865,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   #scheduleDrain(botId: string): void {
     if (
+      this.#stopping ||
       this.#status.phase !== "ready" ||
       this.#drainingBots.has(botId) ||
       this.#scheduledDrains.has(botId) ||
@@ -872,12 +876,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#scheduledDrains.add(botId);
     queueMicrotask(() => {
       this.#scheduledDrains.delete(botId);
-      void this.#drainBot(botId);
+      if (this.#stopping) return;
+      const task = this.#drainBot(botId).finally(() => {
+        if (this.#drainTasks.get(botId) === task) this.#drainTasks.delete(botId);
+      });
+      this.#drainTasks.set(botId, task);
     });
   }
 
   async #drainBot(botId: string): Promise<void> {
     if (
+      this.#stopping ||
       this.#drainingBots.has(botId) ||
       this.#compactingBots.has(botId) ||
       this.#status.phase !== "ready"

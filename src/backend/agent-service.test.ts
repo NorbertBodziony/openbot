@@ -259,6 +259,19 @@ describe.sequential("AgentService", () => {
     }
   });
 
+  it("waits for active queue drains before shutdown completes", async () => {
+    process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY = "2000";
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    await service.sendMessage({ botId: "chief", text: "Stop during startup" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "starting");
+    await service.stop();
+
+    expect(["failed", "interrupted"]).toContain(service.listQueue("chief").deliveries[0]?.status);
+  });
+
   it("compacts a pressured agent context before draining its next queued message", async () => {
     process.env.OPENBOT_FAKE_AUTO_COMPLETE = "DONE";
     process.env.OPENBOT_FAKE_CONTEXT_USAGE = "82000";

@@ -18,6 +18,10 @@ All notable changes to OpenBot will be documented here. The project follows
 - Simplified provider selection to show clear availability without decorative provider cards.
 - Development state reset now deletes `OpenBot Dev` state without creating a backup.
 
+### Fixed
+
+- Shutdown now waits for active queue writes before closing local storage.
+
 ## [0.1.0] - 2026-08-13
 
 ### Added
