@@ -48,6 +48,9 @@ import { handleTrusted } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 import { UpdateService } from "./update-service";
 
+if (!app.isPackaged) {
+  app.setPath("userData", join(app.getPath("appData"), "OpenBot Dev"));
+}
 app.enableSandbox();
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 protocol.registerSchemesAsPrivileged([
@@ -72,7 +75,7 @@ let shutdownStarted = false;
 const FULL_ACCESS_CONSENT_FILE = "full-access-consent-v1.json";
 
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
-  "codex-setup": "https://learn.chatgpt.com/docs/codex/cli",
+  "agent-setup": "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
   feedback: "https://x.com/intent/post?text=Feedback%20for%20OpenBot%20%40norbertbodziony%3A%20",
   message: "https://x.com/norbertbodziony",
 };
@@ -126,7 +129,7 @@ function registerIpcHandlers(
     await initializeAgent();
   });
   handleTrusted(IPC_CHANNELS.openExternal, (destination: unknown) => {
-    if (destination !== "codex-setup" && destination !== "feedback" && destination !== "message") {
+    if (destination !== "agent-setup" && destination !== "feedback" && destination !== "message") {
       throw new Error("Unknown external destination.");
     }
     return shell.openExternal(EXTERNAL_DESTINATIONS[destination]);
@@ -374,7 +377,7 @@ if (!hasSingleInstanceLock) {
       await loadRenderer(mainWindow);
       if (existsSync(consentFile)) {
         void agentInitialization.start().catch((error) => {
-          console.error("Unable to initialize the local Codex backend:", error);
+          console.error("Unable to initialize the local agent backend:", error);
         });
       }
 

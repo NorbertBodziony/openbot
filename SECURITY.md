@@ -39,7 +39,7 @@ Security boundaries that should hold include:
 - remote pages cannot access Node.js, the preload bridge, managed attachments, or privileged IPC;
 - IPC calls are accepted only from the trusted application renderer;
 - managed attachment IDs cannot escape their canonical storage roots;
-- Codex credentials remain owned by Codex CLI and are not copied into OpenBot storage;
+- Codex and Claude credentials remain owned by their CLIs and are not copied into OpenBot storage;
 - diagnostics do not expose tokens or raw sensitive stderr;
 - a browser tab is scoped to its owning agent/thread in the application UI.
 

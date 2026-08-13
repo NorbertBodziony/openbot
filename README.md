@@ -3,9 +3,10 @@
 [![CI](https://github.com/NorbertBodziony/openbot/actions/workflows/ci.yml/badge.svg)](https://github.com/NorbertBodziony/openbot/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-OpenBot is a local-first desktop workspace for persistent AI teammates. It embeds the local
-[Codex App Server](https://learn.chatgpt.com/docs/app-server), gives every agent its own workspace
-and conversation, and provides local queues, file transfers, an embedded browser, and agent-to-agent
+OpenBot is a local-first desktop workspace for persistent AI teammates. It supports the local
+[Codex App Server](https://learn.chatgpt.com/docs/app-server) and
+[Claude Code](https://code.claude.com/docs/en/overview). It gives every agent its own workspace and
+conversation, and provides local queues, file transfers, an embedded browser, and agent-to-agent
 messaging in one macOS app.
 
 > [!WARNING]
@@ -16,7 +17,7 @@ messaging in one macOS app.
 
 ## What works
 
-- Persistent agents backed by independent Codex threads and local workspaces.
+- Persistent agents backed by independent Codex or Claude threads and local workspaces.
 - Per-agent context monitoring with automatic compaction before long threads exhaust the model window.
 - FIFO message queues with pause, resume, cancellation, and crash-safe persistence.
 - Agent-to-agent messages, replies, reactions, images, and managed file transfers.
@@ -24,10 +25,10 @@ messaging in one macOS app.
 - Optional Computer Use integration for macOS through a locally installed Codex plugin.
 - Per-agent model, reasoning, profile, notification, browser, and panel state.
 - Local data and privacy-safe diagnostics exports from the account menu.
-- No OpenBot cloud backend, account system, telemetry service, or copied Codex credentials.
+- No OpenBot cloud backend, account system, telemetry service, or copied CLI credentials.
 
-OpenBot is local-first, not offline-only. Codex connects to OpenAI, visited pages use the network,
-and installed plugins may connect to their own services.
+OpenBot is local-first, not offline-only. Codex connects to OpenAI, Claude connects to Anthropic,
+visited pages use the network, and installed plugins may connect to their own services.
 
 ## Install
 
@@ -35,21 +36,28 @@ OpenBot currently supports macOS 12 or newer on Apple Silicon.
 
 1. Download the latest `OpenBot-*.dmg` from [GitHub Releases](https://github.com/NorbertBodziony/openbot/releases).
 2. Drag OpenBot to Applications and open it.
-3. Install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) if it is not already available:
+3. Install at least one supported CLI. You can install both.
+
+   Codex CLI:
 
    ```bash
    curl -fsSL https://chatgpt.com/codex/install.sh | sh
    ```
 
-4. Run `codex login` in Terminal and sign in with a ChatGPT account that has Codex access.
-5. Restart OpenBot. The setup card disappears when the local Codex App Server is ready.
+   Claude CLI:
+
+   ```bash
+   curl -fsSL https://claude.ai/install.sh | bash
+   ```
+
+4. Run `codex login` or `claude auth login` in Terminal.
+5. Restart OpenBot. Each available provider appears in the agent model list.
 
 Bun and Node.js are not required when using an installed release. Screen Recording and Accessibility
 permissions are needed only for the optional Computer Use plugin.
 
-OpenBot uses the existing local Codex login. It does not accept an API key or copy tokens from
-`~/.codex`. See the official [Codex authentication documentation](https://learn.chatgpt.com/docs/auth)
-for account setup.
+OpenBot uses the existing local CLI login. It does not copy tokens from `~/.codex` or `~/.claude`.
+See the official Codex and Claude authentication documentation for account setup.
 
 For setup problems, data reset, and uninstall instructions, see
 [Troubleshooting](docs/TROUBLESHOOTING.md). OpenBot's data and network behavior is documented in
@@ -57,8 +65,8 @@ For setup problems, data reset, and uninstall instructions, see
 
 ## Development
 
-Development requires [Bun](https://bun.sh/) 1.3.11, Node.js 22.12 or newer, and Codex CLI 0.144.1
-or newer.
+Development requires [Bun](https://bun.sh/) 1.3.11, Node.js 22.12 or newer, and at least one
+supported agent CLI.
 
 ```bash
 git clone https://github.com/NorbertBodziony/openbot.git
@@ -71,11 +79,15 @@ bun run dev
 `codex:doctor` checks the CLI version, App Server handshake, ChatGPT login, and Computer Use plugin
 without starting a model turn.
 
+To reset only the local development state, quit the dev app and run `bun run dev:reset`. The command
+moves the old state to a dated backup. It does not change agent workspaces or CLI sessions.
+
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
 | `bun run dev` | Start Electron with renderer HMR. |
+| `bun run dev:reset` | Move the local development state to a dated backup. |
 | `bun run check` | Run Biome, both typechecks, offline tests, the browser smoke test, and the production build. |
 | `bun run test:backend` | Run backend tests only. |
 | `bun run test:browser` | Run the local embedded-browser smoke test. |
@@ -96,6 +108,7 @@ signed-in subscription and must not run in CI.
 ```text
 Electron main
 ├── local Codex App Server process over stdio JSONL
+├── local Claude Agent SDK session over stream JSON
 ├── persistent bot and mailbox stores
 ├── secure typed IPC handlers
 └── sandboxed WebContentsView browser host
@@ -104,7 +117,7 @@ SolidJS renderer
 ```
 
 - `src/main` owns the Electron lifecycle, window security, local protocol, and IPC registration.
-- `src/backend` owns Codex, persistence, message scheduling, transfers, and the browser host.
+- `src/backend` owns provider adapters, persistence, message scheduling, transfers, and the browser host.
 - `src/preload` exposes only the typed `window.openbot` API.
 - `src/renderer` contains the SolidJS interface.
 - `src/shared` contains process-boundary contracts.
@@ -116,8 +129,9 @@ SolidJS renderer
 - `~/OpenBot/Downloads` — embedded-browser downloads.
 - Electron `userData` — bot metadata, queues, drafts, and attachment indexes.
 - `~/.codex` — login and thread history managed exclusively by Codex CLI.
+- `~/.claude` — login and session history managed exclusively by Claude CLI.
 
-OpenBot does not open an application HTTP port. Electron communicates with `codex app-server` over
+OpenBot does not open an application HTTP port. Electron communicates with local CLI processes over
 stdio. The embedded browser uses a separate sandboxed Electron session and cannot access
 `window.openbot` or managed local attachments.
 
@@ -133,8 +147,9 @@ described above.
 
 ## Releases
 
-Releases are tag-driven. `bun run release:patch`, `release:minor`, or `release:major` creates the
-version commit and tag; pushing `main` with `--follow-tags` builds a signed and notarized ARM64 release.
+Releases are tag-driven. `bun run release:patch`, `release:minor`, or `release:major` prepares the
+version and changelog. After review, commit, preflight, and tag the release; pushing the tag builds a
+signed and notarized ARM64 release.
 Installed builds check GitHub Releases for updates and expose download/restart controls in the account
 popover. Release signing secrets and the complete procedure are documented in
 [docs/RELEASING.md](docs/RELEASING.md).

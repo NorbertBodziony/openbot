@@ -78,7 +78,8 @@ export type AgentAuthState =
   | { kind: "unknown" }
   | { kind: "signed-out" }
   | { kind: "unsupported"; accountType: string }
-  | { kind: "chatgpt"; email: string | null };
+  | { kind: "chatgpt"; email: string | null }
+  | { kind: "claude"; email: string | null };
 
 export interface AccountUsageWindow {
   usedPercent: number;
@@ -96,7 +97,7 @@ export interface AccountUsage {
   limits: AccountUsageLimit[];
 }
 
-export type ExternalDestination = "codex-setup" | "feedback" | "message";
+export type ExternalDestination = "agent-setup" | "feedback" | "message";
 
 export interface AgentStatus {
   phase: AgentPhase;
@@ -127,7 +128,14 @@ export interface BotSummary {
   avatarColor: BotAvatarColor;
 }
 
-export const AGENT_MODELS = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"] as const;
+export const AGENT_MODELS = [
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+  "claude-fable-5",
+  "claude-opus-5",
+  "claude-sonnet-5",
+] as const;
 export type AgentModelId = (typeof AGENT_MODELS)[number];
 
 export const AGENT_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -170,6 +178,10 @@ export type BotAvatarColor = (typeof BOT_AVATAR_COLORS)[number];
 
 export function isAgentModel(value: unknown): value is AgentModelId {
   return typeof value === "string" && AGENT_MODELS.includes(value as AgentModelId);
+}
+
+export function isClaudeModel(model: AgentModelId): boolean {
+  return model.startsWith("claude-");
 }
 
 export function isReasoningEffort(value: unknown): value is AgentReasoningEffort {

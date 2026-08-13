@@ -197,16 +197,37 @@ describe("OpenBot connected desktop shell", () => {
     vi.mocked(window.openbot.getFullAccessConsent).mockResolvedValueOnce(false);
     render(() => <App />);
 
-    expect(
-      await screen.findByRole("dialog", { name: "OpenBot agents can control this Mac" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Agent access" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
 
-    const acceptButton = screen.getByRole("button", { name: "I understand — enable agents" });
-    expect(acceptButton).toHaveFocus();
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes[0]).toHaveFocus();
+    for (const checkbox of checkboxes) await fireEvent.click(checkbox);
+    const acceptButton = screen.getByRole("button", { name: "Enable access" });
     await fireEvent.click(acceptButton);
     expect(window.openbot.acceptFullAccessConsent).toHaveBeenCalledOnce();
     expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
+  });
+
+  it("lets the user review agent access from the account menu", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open account menu" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Agent access" }));
+
+    expect(screen.getByRole("dialog", { name: "Agent access" })).toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(4);
+    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.queryByRole("dialog", { name: "Agent access" })).not.toBeInTheDocument();
+  });
+
+  it("opens the create-agent picker for a new user with no agents", async () => {
+    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([]);
+    render(() => <App />);
+
+    expect(await screen.findByRole("option", { name: "Create new agent" })).toBeInTheDocument();
+    expect(screen.getByText("No agents yet")).toBeInTheDocument();
   });
 
   it("keeps full-access agents disabled when consent persistence fails", async () => {
@@ -216,9 +237,8 @@ describe("OpenBot connected desktop shell", () => {
     );
     render(() => <App />);
 
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "I understand — enable agents" }),
-    );
+    for (const checkbox of await screen.findAllByRole("checkbox")) await fireEvent.click(checkbox);
+    await fireEvent.click(screen.getByRole("button", { name: "Enable access" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save consent.");
     expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
   });
@@ -243,11 +263,11 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    expect(await screen.findByText("Codex setup required")).toBeInTheDocument();
+    expect(await screen.findByText("Agent CLI setup required")).toBeInTheDocument();
     expect(screen.queryByRole("listbox", { name: /helping with most/i })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "false");
     fireEvent.click(screen.getByRole("button", { name: "Setup guide" }));
-    await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("codex-setup"));
+    await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("agent-setup"));
   });
 
   it("shows a compact account menu with weekly usage and contact actions", async () => {
@@ -368,7 +388,7 @@ describe("OpenBot connected desktop shell", () => {
       });
 
     render(() => <App />);
-    await screen.findByText("Connecting to Codex…");
+    await screen.findByText("Connecting to agent CLIs…");
     emitAgentEvent?.({
       type: "status",
       status: {
@@ -602,6 +622,54 @@ describe("OpenBot connected desktop shell", () => {
     expect(controlledTab.closest(".browser-tab-wrap")).not.toHaveClass("browser-tab-controlled");
     expect(screen.getByRole("complementary", { name: "Browser" })).not.toHaveClass(
       "browser-panel-controlled",
+    );
+  });
+
+  it("updates embedded browser bounds when the window moves browser surface", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-resize",
+          title: "Resize test",
+          url: "https://example.com",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-resize",
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    const surface = document.querySelector(".browser-surface");
+    if (!(surface instanceof HTMLElement)) throw new Error("Browser surface was not rendered.");
+    await waitFor(() =>
+      expect(window.openbot.browser.setVisible).toHaveBeenCalledWith(
+        expect.objectContaining({ visible: true }),
+      ),
+    );
+    vi.mocked(window.openbot.browser.setVisible).mockClear();
+    vi.spyOn(surface, "getBoundingClientRect").mockReturnValue({
+      x: 640,
+      y: 73,
+      width: 380,
+      height: 600,
+      top: 73,
+      right: 1020,
+      bottom: 673,
+      left: 640,
+      toJSON: () => ({}),
+    });
+
+    window.dispatchEvent(new Event("resize"));
+
+    await waitFor(() =>
+      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
+        visible: true,
+        bounds: { x: 640, y: 73, width: 380, height: 600 },
+      }),
     );
   });
 

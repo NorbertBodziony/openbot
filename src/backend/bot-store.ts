@@ -12,6 +12,7 @@ import {
   isAgentModel,
   isAvatarColor,
   isAvatarShape,
+  isClaudeModel,
   isReasoningEffort,
   type UpdateBotInput,
 } from "../shared/ipc";
@@ -27,46 +28,6 @@ interface StoredState {
 
 export const DEFAULT_AGENT_MODEL: AgentModelId = "gpt-5.6-luna";
 export const DEFAULT_REASONING_EFFORT: AgentReasoningEffort = "medium";
-
-const DEFAULT_BOTS = [
-  ["chief", "Chief", "Chief of staff", "Coordinates work across your local OpenBot agents."],
-  [
-    "sales-outbound",
-    "Sales Outbound",
-    "Outbound specialist",
-    "Researches prospects and prepares local outbound work.",
-  ],
-  [
-    "inbox-manager",
-    "Inbox Manager",
-    "Inbox operations",
-    "Helps review, organize, and draft inbox work.",
-  ],
-  [
-    "account-manager",
-    "Account Manager",
-    "Customer accounts",
-    "Keeps customer context and account follow-ups organized.",
-  ],
-  [
-    "talent-scout",
-    "Talent Scout",
-    "Recruiting research",
-    "Supports local candidate research and recruiting preparation.",
-  ],
-  [
-    "expense-manager",
-    "Expense Manager",
-    "Finance operations",
-    "Organizes local expense and finance operations.",
-  ],
-  [
-    "offsite-crew",
-    "Offsite crew",
-    "Project planning",
-    "Plans projects, events, and team logistics.",
-  ],
-] as const;
 
 export class BotStore {
   readonly #statePath: string;
@@ -102,9 +63,6 @@ export class BotStore {
 
     this.#state = await this.#readState();
     if (!this.#state.examplesInitialized) {
-      this.#state.bots = DEFAULT_BOTS.map(([id, name, role, description]) =>
-        this.#createRecord(id, name, role, description),
-      );
       this.#state.examplesInitialized = true;
     }
     await this.#persist();
@@ -128,7 +86,10 @@ export class BotStore {
     if (input.role !== undefined) bot.role = input.role.trim().slice(0, 120);
     if (input.description !== undefined) bot.description = input.description.trim().slice(0, 2_000);
     if (input.notifications !== undefined) bot.notifications = input.notifications;
-    if (input.model !== undefined) bot.model = input.model;
+    if (input.model !== undefined) {
+      if (isClaudeModel(input.model) !== isClaudeModel(bot.model)) bot.threadId = null;
+      bot.model = input.model;
+    }
     if (input.reasoningEffort !== undefined) bot.reasoningEffort = input.reasoningEffort;
     if (input.avatarShape !== undefined) bot.avatarShape = input.avatarShape;
     if (input.avatarColor !== undefined) bot.avatarColor = input.avatarColor;

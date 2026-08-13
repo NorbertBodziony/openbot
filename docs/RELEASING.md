@@ -10,9 +10,9 @@ Create the `release` environment in `NorbertBodziony/openbot`, then add these en
 
 - `CSC_LINK` — a base64-encoded Developer ID Application `.p12` file.
 - `CSC_KEY_PASSWORD` — the `.p12` export password.
-- `APPLE_API_KEY_BASE64` — a base64-encoded App Store Connect API `.p8` key.
-- `APPLE_API_KEY_ID` — the API key ID.
-- `APPLE_API_ISSUER` — the API issuer ID.
+- `APPLE_ID` — the Apple Account used for notarization.
+- `APPLE_APP_SPECIFIC_PASSWORD` — a dedicated app-specific password for `notarytool`.
+- `APPLE_TEAM_ID` — the Apple Developer team ID.
 
 Do not use an Apple Development certificate. Direct distribution and native macOS updates require a
 Developer ID Application certificate. Never commit signing credentials to the repository.
@@ -27,17 +27,28 @@ git tag -a v0.1.0 -m "OpenBot v0.1.0"
 git push origin v0.1.0
 ```
 
-For later releases, choose the appropriate semantic version bump:
+For later releases, add the release notes under `Unreleased`, then choose the appropriate semantic
+version bump:
 
 ```bash
 bun run release:patch
 # or: bun run release:minor
 # or: bun run release:major
-git push origin main --follow-tags
 ```
 
-`bun pm version` updates `package.json`, creates the version commit, and creates the matching `vX.Y.Z`
-tag. Pushing a version tag runs `.github/workflows/release.yml`.
+The command updates `package.json` and moves the unreleased changelog entries under the new dated
+version heading. Review and publish that preparation before creating the tag:
+
+```bash
+git add package.json CHANGELOG.md
+git commit -m "release: prepare vX.Y.Z"
+git push origin main
+bun run release:preflight
+git tag -a vX.Y.Z -m "OpenBot vX.Y.Z"
+git push origin vX.Y.Z
+```
+
+Pushing the version tag runs `.github/workflows/release.yml`.
 
 The workflow:
 

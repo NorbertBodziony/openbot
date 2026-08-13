@@ -27,6 +27,7 @@ interface SidebarProps {
   onExportData: () => Promise<void>;
   onExportDiagnostics: () => Promise<void>;
   onOpenExternal: (destination: ExternalDestination) => Promise<void>;
+  onOpenPermissions: () => void;
   onCollapse: () => void;
 }
 
@@ -190,6 +191,15 @@ function DiagnosticsIcon() {
   );
 }
 
+function PermissionsIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
+      <path d="M10 2.9 15.5 5v4.6c0 3.6-2.2 6.3-5.5 7.5-3.3-1.2-5.5-3.9-5.5-7.5V5L10 2.9Z" />
+      <path d="m7.6 9.9 1.5 1.5 3.3-3.4" />
+    </svg>
+  );
+}
+
 export function Sidebar(props: SidebarProps) {
   const [query, setQuery] = createSignal("");
   const [contextMenu, setContextMenu] = createSignal<BotContextMenu | null>(null);
@@ -213,7 +223,7 @@ export function Sidebar(props: SidebarProps) {
   });
   const accountEmail = createMemo(() => {
     const auth = props.agentStatus.auth;
-    return auth.kind === "chatgpt" ? auth.email : null;
+    return auth.kind === "chatgpt" || auth.kind === "claude" ? auth.email : null;
   });
   const accountName = createMemo(() => accountEmail() ?? "OpenBot");
   const accountInitials = createMemo(() => {
@@ -437,7 +447,12 @@ export function Sidebar(props: SidebarProps) {
         }}
         onScroll={() => updateScrollFade()}
       >
-        <Show when={filteredBots().length > 0} fallback={<p class="empty-search">No matches</p>}>
+        <Show
+          when={filteredBots().length > 0}
+          fallback={
+            <p class="empty-search">{props.bots.length ? "No matches" : "No agents yet"}</p>
+          }
+        >
           <For each={filteredBots()}>
             {(bot) => (
               <button
@@ -516,6 +531,19 @@ export function Sidebar(props: SidebarProps) {
               <UsageIcon />
               <span>{usageLoading() ? "Updating usage…" : "Weekly usage"}</span>
               <small>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</small>
+            </button>
+            <div class="account-menu-separator" />
+            <button
+              type="button"
+              role="menuitem"
+              class="account-menu-row"
+              onClick={() => {
+                setAccountMenuOpen(false);
+                props.onOpenPermissions();
+              }}
+            >
+              <PermissionsIcon />
+              <span>Agent access</span>
             </button>
             <div class="account-menu-separator" />
             <button
@@ -656,7 +684,7 @@ export function Sidebar(props: SidebarProps) {
                 <h2 id="bot-delete-title">Delete {bot().name}?</h2>
                 <p id="bot-delete-description">
                   This removes the agent, its OpenBot queue, and managed files used only by that
-                  conversation. Its workspace and Codex CLI history stay on your Mac.
+                  conversation. Its workspace and CLI history stay on your Mac.
                 </p>
                 <Show when={deleteError()}>
                   {(message) => <p class="bot-delete-error">{message()}</p>}

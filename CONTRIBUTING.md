@@ -8,8 +8,8 @@ easiest to review.
 - Search existing issues first.
 - Use the security process in `SECURITY.md` for vulnerabilities.
 - Remove credentials, private file paths, conversation contents, and personal data from diagnostics.
-- Include the OpenBot version, macOS version, Mac architecture, Codex CLI version, and reproduction
-  steps for bugs.
+- Include the OpenBot version, macOS version, Mac architecture, provider, CLI version, and
+  reproduction steps for bugs.
 
 ## Development setup
 
@@ -33,7 +33,7 @@ first discussing the architectural cost.
 4. Run `bun run check`.
 5. Describe user-visible changes, risks, and manual verification in the pull request.
 
-Do not commit generated `out`, `dist`, coverage, local browser profiles, Electron `userData`, Codex
+Do not commit generated `out`, `dist`, coverage, local browser profiles, Electron `userData`, CLI
 state, `.env` files, credentials, real conversations, or user attachments.
 
 ## Security-sensitive changes
@@ -44,7 +44,7 @@ Preserve the following boundaries and their tests:
 - Attachment realpath, MIME, size, quota, and managed-protocol checks.
 - Queue serialization, idempotency, crash reconciliation, and atomic persistence.
 - The remote browser session's lack of preload and `window.openbot` access.
-- Secret redaction and Codex child-process cleanup.
+- Secret redaction and agent child-process cleanup.
 
 Full agent access is intentional today, but new privileges or network surfaces still require an
 explicit threat-model note in the pull request.

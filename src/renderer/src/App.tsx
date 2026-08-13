@@ -26,7 +26,7 @@ const FALLBACK_STATUS: AgentStatus = {
   cliVersion: null,
   auth: { kind: "unknown" },
   capabilities: { chat: "unavailable", browser: "unavailable", computerUse: "unavailable" },
-  message: "Starting local Codex…",
+  message: "Starting local agent CLIs…",
   fullAccess: true,
 };
 
@@ -114,6 +114,7 @@ export function App() {
   );
   const [fullAccessAccepted, setFullAccessAccepted] = createSignal(false);
   const [fullAccessConsentLoaded, setFullAccessConsentLoaded] = createSignal(false);
+  const [permissionsOpen, setPermissionsOpen] = createSignal(false);
   const pendingConversationSnapshots = new Map<string, ConversationSnapshot>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let conversationFrame: number | undefined;
@@ -258,6 +259,7 @@ export function App() {
     setActiveBotId((current) =>
       profiles.some((bot) => bot.id === current) ? current : (profiles[0]?.id ?? ""),
     );
+    if (profiles.length === 0) setAgentPickerOpen(true);
   }
 
   function scheduleConversation(snapshot: ConversationSnapshot) {
@@ -634,6 +636,7 @@ export function App() {
                 await window.openbot.maintenance.exportDiagnostics();
               }}
               onOpenExternal={(destination) => window.openbot.openExternal(destination)}
+              onOpenPermissions={() => setPermissionsOpen(true)}
               onCollapse={() => setSidebarCollapsed(true)}
             />
             <PanelResizer
@@ -678,9 +681,12 @@ export function App() {
             onActivateBrowserTab={activateBrowserTab}
             onCloseBrowserTab={closeBrowserTab}
             onToggleLeftSidebar={() => setSidebarCollapsed(false)}
-            onOpenCodexSetup={() => window.openbot.openExternal("codex-setup")}
+            onOpenAgentSetup={() => window.openbot.openExternal("agent-setup")}
             onStop={stopActiveTurn}
           />
+          <Show when={permissionsOpen()}>
+            <FullAccessConsent reviewing onClose={() => setPermissionsOpen(false)} />
+          </Show>
         </div>
       </Show>
     </Show>

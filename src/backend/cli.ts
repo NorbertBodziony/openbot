@@ -13,6 +13,11 @@ export interface CodexCliInfo {
   version: string;
 }
 
+export interface ClaudeCliInfo {
+  executable: string;
+  version: string;
+}
+
 export class CodexCliError extends Error {
   constructor(
     message: string,
@@ -24,7 +29,11 @@ export class CodexCliError extends Error {
 }
 
 export async function resolveCodexCli(): Promise<CodexCliInfo> {
-  const candidates = await collectCandidates();
+  const candidates = await collectCandidates("codex", process.env.OPENBOT_CODEX_PATH, [
+    join(homedir(), ".local", "bin", "codex"),
+    "/opt/homebrew/bin/codex",
+    "/usr/local/bin/codex",
+  ]);
 
   for (const candidate of candidates) {
     if (!(await isExecutable(candidate))) continue;
@@ -54,9 +63,43 @@ export async function resolveCodexCli(): Promise<CodexCliInfo> {
   );
 }
 
+export async function resolveClaudeCli(): Promise<ClaudeCliInfo> {
+  const candidates = await collectCandidates("claude", process.env.OPENBOT_CLAUDE_PATH, [
+    join(homedir(), ".local", "bin", "claude"),
+    join(homedir(), ".claude", "local", "claude"),
+    "/opt/homebrew/bin/claude",
+    "/usr/local/bin/claude",
+  ]);
+
+  for (const candidate of candidates) {
+    if (!(await isExecutable(candidate))) continue;
+
+    try {
+      const { stdout } = await execFileAsync(candidate, ["--version"], {
+        timeout: 5_000,
+        maxBuffer: 64 * 1024,
+      });
+      return { executable: candidate, version: parseClaudeVersion(stdout) };
+    } catch {
+      // Try the next executable candidate.
+    }
+  }
+
+  throw new CodexCliError(
+    "Claude CLI was not found. Install Claude Code, run `claude auth login`, then restart OpenBot.",
+    "missing",
+  );
+}
+
 export function parseCodexVersion(output: string): string {
   const match = output.match(/(?:codex-cli\s+)?(\d+)\.(\d+)\.(\d+)/i);
   if (!match) throw new CodexCliError("Unable to read the Codex CLI version.", "invalid");
+  return `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`;
+}
+
+export function parseClaudeVersion(output: string): string {
+  const match = output.match(/(\d+)\.(\d+)\.(\d+)(?:\s+\(Claude Code\))?/i);
+  if (!match) throw new CodexCliError("Unable to read the Claude CLI version.", "invalid");
   return `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`;
 }
 
@@ -69,13 +112,17 @@ function isMinimumVersion(version: string): boolean {
   return true;
 }
 
-async function collectCandidates(): Promise<string[]> {
+async function collectCandidates(
+  command: "codex" | "claude",
+  configuredPath: string | undefined,
+  knownPaths: string[],
+): Promise<string[]> {
   const candidates: string[] = [];
-  const override = process.env.OPENBOT_CODEX_PATH?.trim();
-  if (override) candidates.push(override);
+  const override = configuredPath?.trim();
+  if (override) return [override];
 
   try {
-    const { stdout } = await execFileAsync("/bin/zsh", ["-lic", "command -v codex"], {
+    const { stdout } = await execFileAsync("/bin/zsh", ["-lic", `command -v ${command}`], {
       timeout: 5_000,
       maxBuffer: 64 * 1024,
     });
@@ -84,11 +131,7 @@ async function collectCandidates(): Promise<string[]> {
     // Packaged macOS apps often have a restricted PATH; known locations are checked next.
   }
 
-  candidates.push(
-    join(homedir(), ".local", "bin", "codex"),
-    "/opt/homebrew/bin/codex",
-    "/usr/local/bin/codex",
-  );
+  candidates.push(...knownPaths);
 
   return [...new Set(candidates)];
 }

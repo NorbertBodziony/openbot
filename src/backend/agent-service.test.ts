@@ -14,12 +14,14 @@ let root: string;
 let logPath: string;
 let service: AgentService | null = null;
 const originalCodexPath = process.env.OPENBOT_CODEX_PATH;
+const originalClaudePath = process.env.OPENBOT_CLAUDE_PATH;
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "openbot-agent-test-"));
   logPath = join(root, "protocol.jsonl");
   process.env.OPENBOT_FAKE_CODEX_LOG = logPath;
   process.env.OPENBOT_CODEX_PATH = await createFakeCodex(root);
+  process.env.OPENBOT_CLAUDE_PATH = join(root, "missing-claude");
 });
 
 afterEach(async () => {
@@ -27,6 +29,8 @@ afterEach(async () => {
   service = null;
   if (originalCodexPath === undefined) delete process.env.OPENBOT_CODEX_PATH;
   else process.env.OPENBOT_CODEX_PATH = originalCodexPath;
+  if (originalClaudePath === undefined) delete process.env.OPENBOT_CLAUDE_PATH;
+  else process.env.OPENBOT_CLAUDE_PATH = originalClaudePath;
   delete process.env.OPENBOT_FAKE_CODEX_LOG;
   delete process.env.OPENBOT_FAKE_AGENT_TOOL;
   delete process.env.OPENBOT_FAKE_AGENT_TOOL_PATHS;
@@ -35,10 +39,33 @@ afterEach(async () => {
   delete process.env.OPENBOT_FAKE_CONTEXT_USAGE;
   delete process.env.OPENBOT_FAKE_COMPACTION_ERROR;
   delete process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY;
+  delete process.env.OPENBOT_FAKE_WARNING;
   await rm(root, { recursive: true, force: true });
 });
 
 describe.sequential("AgentService", () => {
+  it("does not surface the skills context-budget notice as an agent error", async () => {
+    process.env.OPENBOT_FAKE_WARNING =
+      "Skill descriptions were shortened to fit the skills context budget.";
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+
+    await service.sendMessage({ botId: "chief", text: "First task" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    expect(events).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "error",
+          message: expect.stringContaining("Skill descriptions were shortened"),
+        }),
+      ]),
+    );
+  });
+
   it("creates independent full-access threads with browser and OpenBot tools", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser(), () => ({
@@ -99,6 +126,7 @@ describe.sequential("AgentService", () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
+    await store.getOrCreate("chief");
     await service.updateBot({
       botId: "chief",
       role: "Research & writing",
@@ -246,6 +274,7 @@ describe.sequential("AgentService", () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
+    await Promise.all([store.getOrCreate("sales-outbound"), store.getOrCreate("inbox-manager")]);
     await service.sendMessage({ botId: "chief", text: "Coordinate the team" });
 
     await waitFor(async () => {
@@ -461,6 +490,7 @@ describe.sequential("AgentService", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
 
+    await store.getOrCreate("sales-outbound");
     await service.deleteBot("sales-outbound");
     expect(service.listBots().some((bot) => bot.id === "sales-outbound")).toBe(false);
 
@@ -566,6 +596,9 @@ process.stdin.on("data", (chunk) => {
         if (startResponseDelay > 0) setTimeout(respondToStart, startResponseDelay);
         else respondToStart();
         write({ method: "turn/started", params: { threadId: message.params.threadId, turn: { id: turnId } } });
+        if (process.env.OPENBOT_FAKE_WARNING) {
+          write({ method: "warning", params: { threadId: message.params.threadId, message: process.env.OPENBOT_FAKE_WARNING } });
+        }
         if (process.env.OPENBOT_FAKE_CONTEXT_USAGE) {
           const totalTokens = Number(process.env.OPENBOT_FAKE_CONTEXT_USAGE);
           write({ method: "thread/tokenUsage/updated", params: { threadId: message.params.threadId, turnId, tokenUsage: { total: { totalTokens }, last: { totalTokens }, modelContextWindow: 100000 } } });

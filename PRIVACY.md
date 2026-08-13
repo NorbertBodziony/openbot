@@ -12,6 +12,8 @@ remote conversation store.
   the shared browser profile, cookies, and application preferences.
 - `~/.codex` is owned by Codex CLI and contains its login and thread data. OpenBot does not copy or
   manage Codex credentials.
+- `~/.claude` is owned by Claude CLI and contains its login and session data. OpenBot does not copy
+  or manage Claude credentials.
 
 Attachments copied into OpenBot remain in managed storage after their original file is moved or
 deleted. All agents share the embedded browser profile, including cookies and website sessions.
@@ -21,6 +23,7 @@ deleted. All agents share the embedded browser profile, including cookies and we
 OpenBot itself does not open a listening HTTP port. Network traffic may still occur when:
 
 - the local Codex App Server connects to OpenAI;
+- the local Claude Agent SDK connects to Anthropic through Claude CLI;
 - you or an agent visits a page in the embedded browser;
 - a locally installed Codex plugin connects to its service;
 - an installed build checks GitHub Releases for updates;
@@ -36,7 +39,7 @@ files, run programs, use the network, and control the embedded browser without a
 dialog. This is an explicit product behavior, not a host security boundary. Keep backups and do not
 give an agent a task you would not allow a local command-line tool to perform.
 
-On first launch, OpenBot explains this access and does not start the Codex agent service until you
+On first launch, OpenBot explains this access and does not start the agent services until you
 explicitly accept it. The acceptance record stays in OpenBot's local application-support directory.
 
 Computer Use is provided by a separately installed local Codex plugin. macOS permission prompts and
@@ -45,7 +48,7 @@ any plugin safety hand-offs remain controlled by macOS and that plugin.
 ## Exports
 
 The account menu can export a local ZIP containing agent profiles, conversation snapshots, queues,
-and managed message attachments. It intentionally excludes Codex credentials, browser cookies, and
+and managed message attachments. It intentionally excludes CLI credentials, browser cookies, and
 agent workspace files.
 
 The diagnostics export contains application and CLI versions, capability states, and aggregate queue
@@ -56,7 +59,7 @@ counts. It contains no conversations, visited URLs, account email, file contents
 Quit OpenBot, then remove the OpenBot folders listed above. Removing
 `~/Library/Application Support/OpenBot` also removes the embedded browser's cookies and logins.
 Removing `~/OpenBot` removes agent workspaces, transfers, and downloads. OpenBot does not delete
-`~/.codex`; use Codex's own controls if you also want to remove its local data.
+`~/.codex` or `~/.claude`; use each CLI's own controls if you also want to remove its local data.
 
 Review folders before deleting them and keep a backup of anything you need. Deleted OpenBot data is
 not recoverable through an OpenBot cloud service because no such service exists.

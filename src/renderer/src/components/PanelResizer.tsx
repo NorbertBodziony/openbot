@@ -15,6 +15,8 @@ interface PanelResizerProps {
 
 export function PanelResizer(props: PanelResizerProps) {
   let cleanupDrag: (() => void) | undefined;
+  let handle: HTMLHRElement | undefined;
+  let parentResizeObserver: ResizeObserver | undefined;
   const [isResizing, setIsResizing] = createSignal(false);
 
   const maximum = () =>
@@ -31,9 +33,16 @@ export function PanelResizer(props: PanelResizerProps) {
     if (next !== props.value) commit(next);
   };
 
-  onMount(() => window.addEventListener("resize", enforceBounds));
+  onMount(() => {
+    window.addEventListener("resize", enforceBounds);
+    if (handle?.parentElement) {
+      parentResizeObserver = new ResizeObserver(enforceBounds);
+      parentResizeObserver.observe(handle.parentElement);
+    }
+  });
   onCleanup(() => {
     cleanupDrag?.();
+    parentResizeObserver?.disconnect();
     window.removeEventListener("resize", enforceBounds);
   });
 
@@ -98,6 +107,7 @@ export function PanelResizer(props: PanelResizerProps) {
 
   return (
     <hr
+      ref={(element) => (handle = element)}
       class={`panel-resizer no-drag ${isResizing() ? "panel-resizer-active" : ""} ${props.class ?? ""}`}
       tabIndex={0}
       aria-label={props.label}

@@ -31,9 +31,9 @@ try {
 for (const name of [
   "CSC_LINK",
   "CSC_KEY_PASSWORD",
-  "APPLE_API_KEY_BASE64",
-  "APPLE_API_KEY_ID",
-  "APPLE_API_ISSUER",
+  "APPLE_ID",
+  "APPLE_APP_SPECIFIC_PASSWORD",
+  "APPLE_TEAM_ID",
 ]) {
   if (!releaseSecrets.split("\n").some((line) => line.startsWith(`${name}\t`))) {
     failures.push(`GitHub release secret ${name} is missing`);

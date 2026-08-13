@@ -1,16 +1,53 @@
-import { createSignal, onMount, Show } from "solid-js";
+import { createMemo, createSignal, For, onMount, Show } from "solid-js";
 
 interface FullAccessConsentProps {
-  onAccept: () => Promise<void>;
+  reviewing?: boolean;
+  onAccept?: () => Promise<void>;
+  onClose?: () => void;
 }
+
+const ACCESS_ITEMS = [
+  {
+    id: "files",
+    title: "Files",
+    description: "Read, create, change, and delete files available to your account.",
+  },
+  {
+    id: "commands",
+    title: "Commands and network",
+    description: "Run local commands and connect to internet services.",
+  },
+  {
+    id: "browser",
+    title: "Embedded browser",
+    description: "Open, read, and control pages in OpenBot.",
+  },
+  {
+    id: "apps",
+    title: "Mac apps",
+    description: "Control apps after you grant the required macOS permissions.",
+  },
+] as const;
 
 export function FullAccessConsent(props: FullAccessConsentProps) {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
-  let acceptButton: HTMLButtonElement | undefined;
-  onMount(() => acceptButton?.focus());
+  const [selected, setSelected] = createSignal<Set<string>>(
+    new Set(props.reviewing ? ACCESS_ITEMS.map((item) => item.id) : []),
+  );
+  const allSelected = createMemo(() => ACCESS_ITEMS.every((item) => selected().has(item.id)));
+  let firstControl: HTMLInputElement | HTMLButtonElement | undefined;
+  onMount(() => firstControl?.focus());
+
+  function toggle(id: string, checked: boolean): void {
+    const next = new Set(selected());
+    if (checked) next.add(id);
+    else next.delete(id);
+    setSelected(next);
+  }
 
   async function accept(): Promise<void> {
+    if (!props.onAccept || !allSelected()) return;
     setBusy(true);
     setError("");
     try {
@@ -30,42 +67,65 @@ export function FullAccessConsent(props: FullAccessConsentProps) {
         aria-labelledby="full-access-title"
         aria-describedby="full-access-description"
       >
-        <div class="full-access-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24">
-            <title>Full access</title>
-            <path d="M12 2.8 19 5.7v5.8c0 4.6-2.8 8.1-7 9.7-4.2-1.6-7-5.1-7-9.7V5.7L12 2.8Z" />
-            <path d="M9.2 11.8 11 13.6l3.9-4" />
-          </svg>
-        </div>
-        <p class="full-access-eyebrow">Before you begin</p>
-        <h1 id="full-access-title">OpenBot agents can control this Mac</h1>
+        <p class="full-access-eyebrow">Agent permissions</p>
+        <h1 id="full-access-title">Agent access</h1>
         <p id="full-access-description" class="full-access-intro">
-          Agents run locally with full access so they can complete real work. They do not ask for
-          OpenBot approval before acting.
+          {props.reviewing
+            ? "OpenBot agents have the access below."
+            : "OpenBot currently uses one full-access mode. Select every item to continue."}
         </p>
-        <ul>
-          <li>Read, create, modify, and delete files your account can access</li>
-          <li>Run commands, use the network, and control the embedded browser</li>
-          <li>Use Computer Use after you grant the required macOS permissions</li>
-        </ul>
+        <div class="full-access-options">
+          <For each={ACCESS_ITEMS}>
+            {(item, index) => (
+              <label class="full-access-option">
+                <input
+                  ref={(element) => {
+                    if (index() === 0) firstControl = element;
+                  }}
+                  type="checkbox"
+                  checked={selected().has(item.id)}
+                  disabled={props.reviewing || busy()}
+                  onChange={(event) => toggle(item.id, event.currentTarget.checked)}
+                />
+                <span>
+                  <strong>{item.title}</strong>
+                  <small>{item.description}</small>
+                </span>
+              </label>
+            )}
+          </For>
+        </div>
         <div class="full-access-note">
-          Keep backups and avoid using OpenBot around files or accounts you would not trust an agent
-          to change. Codex and installed plugins may still require their own safety hand-offs.
+          Agents do not ask for OpenBot approval before each action. Keep backups. Do not give an
+          agent a task near files or accounts that it must not change.
         </div>
         <Show when={error()}>
           <p class="full-access-error" role="alert">
             {error()}
           </p>
         </Show>
-        <button
-          ref={acceptButton}
-          type="button"
-          class="full-access-accept"
-          disabled={busy()}
-          onClick={() => void accept()}
+        <Show
+          when={props.reviewing}
+          fallback={
+            <button
+              type="button"
+              class="full-access-accept"
+              disabled={busy() || !allSelected()}
+              onClick={() => void accept()}
+            >
+              {busy() ? "Enabling access…" : "Enable access"}
+            </button>
+          }
         >
-          {busy() ? "Enabling agents…" : "I understand — enable agents"}
-        </button>
+          <button
+            ref={(element) => (firstControl = element)}
+            type="button"
+            class="full-access-accept"
+            onClick={props.onClose}
+          >
+            Done
+          </button>
+        </Show>
       </section>
     </main>
   );

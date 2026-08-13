@@ -13,6 +13,16 @@ afterEach(async () => {
 });
 
 describe("BotStore", () => {
+  it("starts a new user with no agents", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
+    temporaryRoots.push(root);
+    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+
+    await store.initialize();
+
+    expect(store.list()).toEqual([]);
+  });
+
   it("creates separate bot workspaces and a shared directory", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
@@ -25,7 +35,7 @@ describe("BotStore", () => {
     const sales = await store.getOrCreate("sales-outbound");
 
     expect(chief.workspacePath).toBe(join(home, "OpenBot", "Bots", "chief"));
-    expect(chief.description).toBe("Coordinates work across your local OpenBot agents.");
+    expect(chief.description).toBe("");
     expect(chief.preview).toBe("No messages yet");
     expect(chief.model).toBe("gpt-5.6-luna");
     expect(chief.reasoningEffort).toBe("medium");
@@ -41,6 +51,7 @@ describe("BotStore", () => {
     const store = new BotStore(userData, join(root, "home"));
     await store.initialize();
 
+    await store.getOrCreate("chief");
     await store.setThreadId("chief", "thread-123");
     const parsed = JSON.parse(await readFile(join(userData, "bots.json"), "utf8"));
 
@@ -110,6 +121,7 @@ describe("BotStore", () => {
     const store = new BotStore(userData, join(root, "home"));
     await store.initialize();
 
+    await store.getOrCreate("chief");
     await store.updateBot({
       botId: "chief",
       name: "Coordinator",
@@ -131,6 +143,22 @@ describe("BotStore", () => {
     });
   });
 
+  it("starts a new thread when the model changes provider", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
+    temporaryRoots.push(root);
+    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    await store.initialize();
+    await store.getOrCreate("chief");
+    await store.setThreadId("chief", "codex-thread");
+
+    const claude = await store.updateBot({ botId: "chief", model: "claude-sonnet-5" });
+    expect(claude.threadId).toBeNull();
+    await store.setThreadId("chief", "claude-thread");
+
+    const opus = await store.updateBot({ botId: "chief", model: "claude-opus-5" });
+    expect(opus.threadId).toBe("claude-thread");
+  });
+
   it("deletes agents persistently without reseeding examples", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
@@ -139,6 +167,7 @@ describe("BotStore", () => {
     const store = new BotStore(userData, home);
     await store.initialize();
 
+    await store.createBot();
     for (const bot of store.list()) await store.deleteBot(bot.id);
     expect(store.list()).toEqual([]);
 

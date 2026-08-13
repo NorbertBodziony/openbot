@@ -58,7 +58,7 @@ interface ConversationProps {
   onActivateBrowserTab: (tabId: string) => void;
   onCloseBrowserTab: (tabId: string) => void;
   onToggleLeftSidebar: () => void;
-  onOpenCodexSetup: () => Promise<void>;
+  onOpenAgentSetup: () => Promise<void>;
   onStop: () => void;
 }
 
@@ -837,7 +837,9 @@ export function Conversation(props: ConversationProps) {
   let conversationPanel: HTMLElement | undefined;
   let browserSurface: HTMLDivElement | undefined;
   let browserResizeObserver: ResizeObserver | undefined;
+  let browserWindowResizeHandler: (() => void) | undefined;
   let browserVisibilityFrame: number | undefined;
+  let browserBoundsFrame: number | undefined;
   let browserVisibilityGeneration = 0;
   let pickerInput: HTMLInputElement | undefined;
   let stickToLatest = true;
@@ -1023,6 +1025,11 @@ export function Conversation(props: ConversationProps) {
     if (browserVisibilityFrame !== undefined) cancelAnimationFrame(browserVisibilityFrame);
     browserResizeObserver?.disconnect();
     browserResizeObserver = undefined;
+    if (browserWindowResizeHandler)
+      window.removeEventListener("resize", browserWindowResizeHandler);
+    browserWindowResizeHandler = undefined;
+    if (browserBoundsFrame !== undefined) cancelAnimationFrame(browserBoundsFrame);
+    browserBoundsFrame = undefined;
     if (!visible) {
       void window.openbot.browser.setVisible({ visible: false });
       return;
@@ -1053,15 +1060,27 @@ export function Conversation(props: ConversationProps) {
         });
       };
       syncBounds();
-      browserResizeObserver = new ResizeObserver(syncBounds);
+      const scheduleBoundsSync = () => {
+        if (browserBoundsFrame !== undefined) cancelAnimationFrame(browserBoundsFrame);
+        browserBoundsFrame = requestAnimationFrame(() => {
+          browserBoundsFrame = undefined;
+          syncBounds();
+        });
+      };
+      browserResizeObserver = new ResizeObserver(scheduleBoundsSync);
       browserResizeObserver.observe(browserSurface);
+      browserWindowResizeHandler = scheduleBoundsSync;
+      window.addEventListener("resize", browserWindowResizeHandler);
     });
   });
 
   onCleanup(() => {
     browserVisibilityGeneration += 1;
     if (browserVisibilityFrame !== undefined) cancelAnimationFrame(browserVisibilityFrame);
+    if (browserBoundsFrame !== undefined) cancelAnimationFrame(browserBoundsFrame);
     browserResizeObserver?.disconnect();
+    if (browserWindowResizeHandler)
+      window.removeEventListener("resize", browserWindowResizeHandler);
     void window.openbot.browser.setVisible({ visible: false });
   });
 
@@ -1407,12 +1426,12 @@ export function Conversation(props: ConversationProps) {
                 <strong>
                   {props.agentStatus.phase === "starting" ||
                   props.agentStatus.phase === "restarting"
-                    ? "Connecting to Codex…"
-                    : "Codex setup required"}
+                    ? "Connecting to agent CLIs…"
+                    : "Agent CLI setup required"}
                 </strong>
                 <p>
                   {props.agentStatus.message ??
-                    "Install the Codex CLI, sign in with ChatGPT, then restart OpenBot."}
+                    "Install and sign in to Codex CLI or Claude CLI, then restart OpenBot."}
                 </p>
               </div>
               <Show
@@ -1424,7 +1443,7 @@ export function Conversation(props: ConversationProps) {
                   type="button"
                   onClick={() =>
                     void props
-                      .onOpenCodexSetup()
+                      .onOpenAgentSetup()
                       .catch((error) =>
                         setComposerError(error instanceof Error ? error.message : String(error)),
                       )
@@ -1687,7 +1706,7 @@ export function Conversation(props: ConversationProps) {
               disabled={props.agentPickerOpen || submitting() || !agentReady()}
               placeholder={
                 !agentReady()
-                  ? "Complete Codex setup to start"
+                  ? "Complete agent CLI setup to start"
                   : replyTarget()
                     ? "Reply…"
                     : `Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`
