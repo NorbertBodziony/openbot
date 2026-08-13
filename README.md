@@ -80,14 +80,14 @@ bun run dev
 without starting a model turn.
 
 To reset only the local development state, quit the dev app and run `bun run dev:reset`. The command
-moves the old state to a dated backup. It does not change agent workspaces or CLI sessions.
+deletes the development state. It does not change agent workspaces or CLI sessions.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
 | `bun run dev` | Start Electron with renderer HMR. |
-| `bun run dev:reset` | Move the local development state to a dated backup. |
+| `bun run dev:reset` | Delete the local development state. |
 | `bun run check` | Run Biome, both typechecks, offline tests, the browser smoke test, and the production build. |
 | `bun run test:backend` | Run backend tests only. |
 | `bun run test:browser` | Run the local embedded-browser smoke test. |

@@ -3,9 +3,13 @@ import { createMutable } from "solid-js/store";
 import type {
   AccountUsage,
   AgentEvent,
+  AgentModelId,
   AgentModelOption,
+  AgentProviderId,
+  AgentReasoningEffort,
   AgentStatus,
   AppInfo,
+  AppSetupState,
   BotSummary,
   BrowserControlState,
   BrowserTab,
@@ -16,7 +20,7 @@ import type {
   UpdateStatus,
 } from "../../shared/ipc";
 import { Conversation } from "./components/Conversation";
-import { FullAccessConsent } from "./components/FullAccessConsent";
+import { InitialSetup } from "./components/InitialSetup";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./components/PanelResizer";
 import { Sidebar, type SidebarAgentState } from "./components/Sidebar";
 import { accentForAvatarColor, accentForBot, type BotMessage, type BotProfile } from "./data";
@@ -25,6 +29,10 @@ const FALLBACK_STATUS: AgentStatus = {
   phase: "starting",
   cliVersion: null,
   auth: { kind: "unknown" },
+  providers: [
+    { id: "codex", state: "not-started", version: null, message: null },
+    { id: "claude", state: "not-started", version: null, message: null },
+  ],
   capabilities: { chat: "unavailable", browser: "unavailable", computerUse: "unavailable" },
   message: "Starting local agent CLIs…",
   fullAccess: true,
@@ -112,8 +120,8 @@ export function App() {
   const [leftPanelCollapsed, setLeftPanelCollapsed] = createSignal(
     window.localStorage.getItem(LEFT_PANEL_COLLAPSED_STORAGE_KEY) === "true",
   );
-  const [fullAccessAccepted, setFullAccessAccepted] = createSignal(false);
-  const [fullAccessConsentLoaded, setFullAccessConsentLoaded] = createSignal(false);
+  const [setupState, setSetupState] = createSignal<AppSetupState | null>(null);
+  const [setupLoaded, setSetupLoaded] = createSignal(false);
   const [permissionsOpen, setPermissionsOpen] = createSignal(false);
   const pendingConversationSnapshots = new Map<string, ConversationSnapshot>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -142,9 +150,9 @@ export function App() {
       .then(setUpdateStatus)
       .catch(() => undefined);
     void window.openbot
-      .getFullAccessConsent()
-      .then(setFullAccessAccepted)
-      .finally(() => setFullAccessConsentLoaded(true));
+      .getSetupState()
+      .then(setSetupState)
+      .finally(() => setSetupLoaded(true));
 
     void Promise.all([
       window.openbot
@@ -471,7 +479,11 @@ export function App() {
     }
   }
 
-  async function completeOnboarding(answer: string): Promise<boolean> {
+  async function completeOnboarding(
+    answer: string,
+    model: AgentModelId,
+    reasoningEffort: AgentReasoningEffort,
+  ): Promise<boolean> {
     const bot = activeBot();
     const topic = answer.trim();
     if (!bot || !topic) return false;
@@ -482,7 +494,12 @@ export function App() {
       firstMessage: `My main focus for you is: ${topic}. Treat this as your ongoing specialty.`,
     };
     try {
-      await updateBot(bot.id, { role: profile.role, description: profile.description });
+      await updateBot(bot.id, {
+        role: profile.role,
+        description: profile.description,
+        model,
+        reasoningEffort,
+      });
     } catch {
       return false;
     }
@@ -582,9 +599,10 @@ export function App() {
     window.localStorage.setItem(LEFT_PANEL_COLLAPSED_STORAGE_KEY, String(collapsed));
   }
 
-  async function acceptFullAccess(): Promise<void> {
-    await window.openbot.acceptFullAccessConsent();
-    setFullAccessAccepted(true);
+  async function saveSetup(preferredProvider: AgentProviderId): Promise<void> {
+    const state = await window.openbot.saveSetup({ preferredProvider });
+    setSetupState(state);
+    setPermissionsOpen(false);
   }
 
   async function runUpdateAction(): Promise<void> {
@@ -602,12 +620,19 @@ export function App() {
 
   return (
     <Show
-      when={fullAccessConsentLoaded()}
-      fallback={<div class="full-access-screen" role="status" aria-label="Loading OpenBot" />}
+      when={setupLoaded() && appInfo() !== null}
+      fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}
     >
       <Show
-        when={fullAccessAccepted()}
-        fallback={<FullAccessConsent onAccept={acceptFullAccess} />}
+        when={setupState()?.completed}
+        fallback={
+          <InitialSetup
+            state={setupState() ?? { completed: false, preferredProvider: null }}
+            agentStatus={agentStatus()}
+            platform={appInfo()?.platform ?? "darwin"}
+            onSave={saveSetup}
+          />
+        }
       >
         <div
           class="app-frame"
@@ -629,12 +654,6 @@ export function App() {
               onDeleteBot={deleteBot}
               onRefreshUsage={refreshAccountUsage}
               onUpdateAction={runUpdateAction}
-              onExportData={async () => {
-                await window.openbot.maintenance.exportData();
-              }}
-              onExportDiagnostics={async () => {
-                await window.openbot.maintenance.exportDiagnostics();
-              }}
               onOpenExternal={(destination) => window.openbot.openExternal(destination)}
               onOpenPermissions={() => setPermissionsOpen(true)}
               onCollapse={() => setSidebarCollapsed(true)}
@@ -685,7 +704,14 @@ export function App() {
             onStop={stopActiveTurn}
           />
           <Show when={permissionsOpen()}>
-            <FullAccessConsent reviewing onClose={() => setPermissionsOpen(false)} />
+            <InitialSetup
+              reviewing
+              state={setupState() ?? { completed: true, preferredProvider: "codex" }}
+              agentStatus={agentStatus()}
+              platform={appInfo()?.platform ?? "darwin"}
+              onSave={saveSetup}
+              onClose={() => setPermissionsOpen(false)}
+            />
           </Show>
         </div>
       </Show>

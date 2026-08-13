@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentEvent,
@@ -58,14 +58,29 @@ describe("OpenBot connected desktop shell", () => {
         getAppInfo: vi
           .fn()
           .mockResolvedValue({ name: "OpenBot", version: "0.1.0", platform: "darwin" }),
-        getFullAccessConsent: vi.fn().mockResolvedValue(true),
-        acceptFullAccessConsent: vi.fn().mockResolvedValue(undefined),
+        getSetupState: vi.fn().mockResolvedValue({ completed: true, preferredProvider: "codex" }),
+        saveSetup: vi.fn().mockImplementation(async ({ preferredProvider }) => ({
+          completed: true,
+          preferredProvider,
+        })),
+        getMacPermissions: vi.fn().mockResolvedValue({
+          screenRecording: "granted",
+          accessibility: "granted",
+        }),
+        requestMacPermission: vi.fn().mockResolvedValue({
+          screenRecording: "granted",
+          accessibility: "granted",
+        }),
         openExternal: vi.fn().mockResolvedValue(undefined),
         agent: {
           getStatus: vi.fn().mockResolvedValue({
             phase: "ready",
             cliVersion: "0.144.1",
             auth: { kind: "chatgpt", email: "norbert@example.com" },
+            providers: [
+              { id: "codex", state: "available", version: "0.144.1", message: null },
+              { id: "claude", state: "available", version: "2.1.231", message: null },
+            ],
             capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
             message: null,
             fullAccess: true,
@@ -104,6 +119,13 @@ describe("OpenBot connected desktop shell", () => {
               description: "Most capable for complex, long-running work.",
               defaultReasoningEffort: "high",
               supportedReasoningEfforts: ["medium", "high", "xhigh"],
+            },
+            {
+              id: "claude-sonnet-5",
+              name: "Claude Sonnet 5",
+              description: "Balanced Claude model for general agent work.",
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: ["low", "medium", "high"],
             },
           ]),
           listBots: vi.fn().mockResolvedValue(BOTS),
@@ -193,33 +215,43 @@ describe("OpenBot connected desktop shell", () => {
     });
   });
 
-  it("requires explicit consent before enabling full-access agents", async () => {
-    vi.mocked(window.openbot.getFullAccessConsent).mockResolvedValueOnce(false);
+  it("requires a provider choice before starting agents", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
     render(() => <App />);
 
-    expect(await screen.findByRole("dialog", { name: "Agent access" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Choose your provider" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
-    const checkboxes = screen.getAllByRole("checkbox");
-    expect(checkboxes[0]).toHaveFocus();
-    for (const checkbox of checkboxes) await fireEvent.click(checkbox);
-    const acceptButton = screen.getByRole("button", { name: "Enable access" });
-    await fireEvent.click(acceptButton);
-    expect(window.openbot.acceptFullAccessConsent).toHaveBeenCalledOnce();
+    const providers = screen.getByRole("radiogroup", { name: "Default provider" });
+    const codex = within(providers).getByRole("radio", { name: /Codex.*Available/ });
+    expect(codex).toHaveFocus();
+    await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Available/ }));
+    await fireEvent.click(screen.getByRole("button", { name: "Continue with Claude" }));
+    expect(window.openbot.saveSetup).toHaveBeenCalledWith({ preferredProvider: "claude" });
     expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
   });
 
-  it("lets the user review agent access from the account menu", async () => {
+  it("lets the user review providers and permissions from the account menu", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
     await fireEvent.click(screen.getByRole("button", { name: "Open account menu" }));
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Agent access" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Providers & permissions" }));
 
-    expect(screen.getByRole("dialog", { name: "Agent access" })).toBeInTheDocument();
-    expect(screen.getAllByRole("checkbox")).toHaveLength(4);
-    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
-    expect(screen.queryByRole("dialog", { name: "Agent access" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Providers & permissions" })).toBeInTheDocument();
+    const providers = screen.getByRole("radiogroup", { name: "Default provider" });
+    expect(within(providers).getByRole("radio", { name: /Codex.*Available/ })).toBeChecked();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Available/ }));
+    await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(window.openbot.saveSetup).toHaveBeenLastCalledWith({ preferredProvider: "claude" });
+    expect(
+      screen.queryByRole("dialog", { name: "Providers & permissions" }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens the create-agent picker for a new user with no agents", async () => {
@@ -230,17 +262,73 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByText("No agents yet")).toBeInTheDocument();
   });
 
-  it("keeps full-access agents disabled when consent persistence fails", async () => {
-    vi.mocked(window.openbot.getFullAccessConsent).mockResolvedValueOnce(false);
-    vi.mocked(window.openbot.acceptFullAccessConsent).mockRejectedValueOnce(
-      new Error("Could not save consent."),
-    );
+  it("keeps agents disabled when setup persistence fails", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.saveSetup).mockRejectedValueOnce(new Error("Could not save setup."));
     render(() => <App />);
 
-    for (const checkbox of await screen.findAllByRole("checkbox")) await fireEvent.click(checkbox);
-    await fireEvent.click(screen.getByRole("button", { name: "Enable access" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save consent.");
+    expect(
+      within(await screen.findByRole("radiogroup", { name: "Default provider" })).getByRole(
+        "radio",
+        { name: /Codex.*Available/ },
+      ),
+    ).toBeChecked();
+    await fireEvent.click(screen.getByRole("button", { name: "Continue with Codex" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save setup.");
     expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
+  });
+
+  it("requests optional macOS permissions and shows the new state", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.getMacPermissions).mockResolvedValueOnce({
+      screenRecording: "not-determined",
+      accessibility: "not-determined",
+    });
+    vi.mocked(window.openbot.requestMacPermission).mockResolvedValueOnce({
+      screenRecording: "granted",
+      accessibility: "not-determined",
+    });
+    render(() => <App />);
+
+    const row = (await screen.findByText("Screen Recording")).closest(".mac-permission-row");
+    const action = row?.querySelector("button");
+    expect(action).not.toBeNull();
+    await fireEvent.click(action as HTMLButtonElement);
+    expect(window.openbot.requestMacPermission).toHaveBeenCalledWith("screen-recording");
+    expect(action).toHaveTextContent("Allowed");
+
+    vi.mocked(window.openbot.getMacPermissions).mockResolvedValueOnce({
+      screenRecording: "granted",
+      accessibility: "granted",
+    });
+    window.dispatchEvent(new Event("focus"));
+    const accessibilityRow = screen.getByText("Accessibility").closest(".mac-permission-row");
+    await waitFor(() =>
+      expect(accessibilityRow?.querySelector("button")).toHaveTextContent("Allowed"),
+    );
+  });
+
+  it("hides macOS permissions on other platforms", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.getAppInfo).mockResolvedValueOnce({
+      name: "OpenBot",
+      version: "0.1.0",
+      platform: "win32",
+    });
+    render(() => <App />);
+
+    expect(await screen.findByRole("dialog", { name: "Choose your provider" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Mac permissions")).not.toBeInTheDocument());
+    expect(window.openbot.getMacPermissions).not.toHaveBeenCalled();
   });
 
   it("uses the backend bot list and shows local onboarding for a real empty snapshot", async () => {
@@ -283,19 +371,9 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByText(/Developer preview/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Lifetime/i)).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("menuitem", { name: "Export data" }));
-    await waitFor(() => expect(window.openbot.maintenance.exportData).toHaveBeenCalledOnce());
-    await waitFor(() => expect(accountButton).toHaveAttribute("aria-expanded", "false"));
+    expect(screen.queryByRole("menuitem", { name: "Export data" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Export diagnostics" })).not.toBeInTheDocument();
 
-    await fireEvent.click(accountButton);
-    await screen.findByRole("menuitem", { name: "Export diagnostics" });
-    fireEvent.click(screen.getByRole("menuitem", { name: "Export diagnostics" }));
-    await waitFor(() =>
-      expect(window.openbot.maintenance.exportDiagnostics).toHaveBeenCalledOnce(),
-    );
-    await waitFor(() => expect(accountButton).toHaveAttribute("aria-expanded", "false"));
-
-    await fireEvent.click(accountButton);
     await screen.findByRole("menuitem", { name: "Send feedback" });
     fireEvent.click(screen.getByRole("menuitem", { name: "Send feedback" }));
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("feedback"));
@@ -445,9 +523,22 @@ describe("OpenBot connected desktop shell", () => {
 
     const model = await screen.findByRole("combobox", { name: "Agent model" });
     const thinking = screen.getByRole("combobox", { name: "Agent thinking level" });
+    const provider = screen.getByRole("radiogroup", { name: "Agent provider" });
     expect(model).toHaveValue("gpt-5.6-luna");
     expect(thinking).toHaveValue("medium");
+    expect(within(provider).getByRole("radio", { name: /Codex.*Available/ })).toBeChecked();
 
+    await fireEvent.click(within(provider).getByRole("radio", { name: /Claude.*Available/ }));
+    await waitFor(() =>
+      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        model: "claude-sonnet-5",
+        reasoningEffort: "high",
+      }),
+    );
+    expect(model).toHaveValue("claude-sonnet-5");
+
+    await fireEvent.click(within(provider).getByRole("radio", { name: /Codex.*Available/ }));
     await fireEvent.change(model, { target: { value: "gpt-5.6-sol" } });
     await fireEvent.change(thinking, { target: { value: "xhigh" } });
     await waitFor(() =>
@@ -456,6 +547,59 @@ describe("OpenBot connected desktop shell", () => {
         reasoningEffort: "xhigh",
       }),
     );
+  });
+
+  it("keeps provider choices separate for each agent profile", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    await fireEvent.click(
+      within(screen.getByRole("radiogroup", { name: "Agent provider" })).getByRole("radio", {
+        name: /Claude.*Available/,
+      }),
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    const provider = screen.getByRole("radiogroup", { name: "Agent provider" });
+    expect(within(provider).getByRole("radio", { name: /Codex.*Available/ })).toBeChecked();
+
+    await fireEvent.click(within(provider).getByRole("radio", { name: /Claude.*Available/ }));
+    await waitFor(() =>
+      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "sales-outbound",
+        model: "claude-sonnet-5",
+        reasoningEffort: "high",
+      }),
+    );
+  });
+
+  it("shows provider availability during onboarding", async () => {
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "ready",
+      cliVersion: "0.144.1",
+      auth: { kind: "chatgpt", email: "norbert@example.com" },
+      providers: [
+        { id: "codex", state: "available", version: "0.144.1", message: null },
+        {
+          id: "claude",
+          state: "not-installed",
+          version: null,
+          message: "Claude CLI was not found.",
+        },
+      ],
+      capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+      message: null,
+      fullAccess: true,
+    });
+    render(() => <App />);
+
+    const provider = await screen.findByRole("radiogroup", { name: "Onboarding provider" });
+    const codex = within(provider).getByRole("radio", { name: /Codex.*Available/ });
+    const claude = within(provider).getByRole("radio", { name: /Claude.*Not installed/ });
+    expect(codex).toBeEnabled();
+    expect(codex).toBeChecked();
+    expect(claude).toBeDisabled();
   });
 
   it("does not remount settings or discard an in-progress edit on bot list refresh", async () => {
@@ -1171,6 +1315,8 @@ describe("OpenBot connected desktop shell", () => {
         role: "Work & projects",
         description:
           "Helps plan, organize, and execute ongoing work and projects while keeping priorities, next steps, and deliverables clear.",
+        model: "gpt-5.6-luna",
+        reasoningEffort: "medium",
       }),
     );
     await waitFor(() =>
@@ -1201,6 +1347,8 @@ describe("OpenBot connected desktop shell", () => {
         botId: "chief",
         role: "Plan product launches",
         description: "Primary focus: Plan product launches.",
+        model: "gpt-5.6-luna",
+        reasoningEffort: "medium",
       }),
     );
     expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({

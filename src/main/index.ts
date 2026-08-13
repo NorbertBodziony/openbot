@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   app,
   BrowserWindow,
+  desktopCapturer,
   dialog,
   Menu,
   Notification,
@@ -21,7 +22,9 @@ import { BrowserHost } from "../backend/browser-host";
 import { MailboxStore } from "../backend/mailbox-store";
 import {
   type AgentEvent,
+  type AgentProviderId,
   type AppInfo,
+  type AppSetupState,
   type BrowserBounds,
   type BrowserOpenInput,
   type BrowserVisibilityInput,
@@ -35,6 +38,8 @@ import {
   isAvatarShape,
   isMessageReaction,
   isReasoningEffort,
+  type MacPermissionId,
+  type MacPermissionsState,
   type OpenAttachmentInput,
   type RespondToPromptInput,
   type SendMessageInput,
@@ -44,6 +49,7 @@ import {
 import { AgentInitializationGate } from "./agent-initialization";
 import { notificationForAgentEvent } from "./agent-notifications";
 import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
+import { readSetupState, writeSetupState } from "./setup-store";
 import { handleTrusted } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 import { UpdateService } from "./update-service";
@@ -72,7 +78,7 @@ let updateService: UpdateService | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
 
-const FULL_ACCESS_CONSENT_FILE = "full-access-consent-v1.json";
+const SETUP_FILE = "openbot-setup-v2.json";
 
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "agent-setup": "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
@@ -109,7 +115,7 @@ function registerIpcHandlers(
   mailbox: MailboxStore,
   browser: BrowserHost,
   updater: UpdateService,
-  consentFile: string,
+  setupFile: string,
   initializeAgent: () => Promise<void>,
 ): void {
   handleTrusted(IPC_CHANNELS.getAppInfo, (): AppInfo => {
@@ -119,15 +125,18 @@ function registerIpcHandlers(
     }
     return { name: app.getName(), version: app.getVersion(), platform };
   });
-  handleTrusted(IPC_CHANNELS.getFullAccessConsent, () => existsSync(consentFile));
-  handleTrusted(IPC_CHANNELS.acceptFullAccessConsent, async () => {
-    await writeFile(
-      consentFile,
-      `${JSON.stringify({ acceptedAt: new Date().toISOString(), version: 1 })}\n`,
-      { encoding: "utf8", mode: 0o600 },
-    );
+  handleTrusted(IPC_CHANNELS.getSetupState, () => readSetupState(setupFile));
+  handleTrusted(IPC_CHANNELS.saveSetup, async (input: unknown): Promise<AppSetupState> => {
+    const preferredProvider = parseProvider(input);
+    const state = await writeSetupState(setupFile, preferredProvider);
+    await service.setPreferredProvider(preferredProvider);
     await initializeAgent();
+    return state;
   });
+  handleTrusted(IPC_CHANNELS.getMacPermissions, readMacPermissions);
+  handleTrusted(IPC_CHANNELS.requestMacPermission, (permission: unknown) =>
+    requestMacPermission(parseMacPermission(permission)),
+  );
   handleTrusted(IPC_CHANNELS.openExternal, (destination: unknown) => {
     if (destination !== "agent-setup" && destination !== "feedback" && destination !== "message") {
       throw new Error("Unknown external destination.");
@@ -349,11 +358,15 @@ if (!hasSingleInstanceLock) {
       configureApplicationProtocol();
       configureAttachmentProtocol(mailboxStore);
       browserHost = new BrowserHost(mainWindow, store.downloadsRoot);
+      const setupFile = join(app.getPath("userData"), SETUP_FILE);
+      const setupState = await readSetupState(setupFile);
       agentService = new AgentService(
         store,
         mailboxStore,
         browserHost,
         readComputerUsePrerequisites,
+        30_000,
+        setupState.preferredProvider ?? "codex",
       );
       const service = agentService;
       const { autoUpdater } = electronUpdater;
@@ -368,18 +381,15 @@ if (!hasSingleInstanceLock) {
       service.on("event", forwardAgentEvent);
       updateService.on("status", forwardUpdateStatus);
       updateService.start();
-      const consentFile = join(app.getPath("userData"), FULL_ACCESS_CONSENT_FILE);
       const agentInitialization = new AgentInitializationGate(() => service.initialize());
-      registerIpcHandlers(service, mailboxStore, browserHost, updateService, consentFile, () =>
+      registerIpcHandlers(service, mailboxStore, browserHost, updateService, setupFile, () =>
         agentInitialization.start(),
       );
       configureApplicationMenu(service, updateService);
       await loadRenderer(mainWindow);
-      if (existsSync(consentFile)) {
-        void agentInitialization.start().catch((error) => {
-          console.error("Unable to initialize the local agent backend:", error);
-        });
-      }
+      void agentInitialization.start().catch((error) => {
+        console.error("Unable to initialize the local agent backend:", error);
+      });
 
       app.on("activate", () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -412,6 +422,50 @@ function readComputerUsePrerequisites(): {
     screenRecording: systemPreferences.getMediaAccessStatus("screen") === "granted",
     accessibility: systemPreferences.isTrustedAccessibilityClient(false),
   };
+}
+
+function readMacPermissions(): MacPermissionsState {
+  if (process.platform !== "darwin") {
+    return { screenRecording: "unknown", accessibility: "unknown" };
+  }
+  return {
+    screenRecording: systemPreferences.getMediaAccessStatus("screen"),
+    accessibility: systemPreferences.isTrustedAccessibilityClient(false)
+      ? "granted"
+      : "not-determined",
+  };
+}
+
+async function requestMacPermission(permission: MacPermissionId): Promise<MacPermissionsState> {
+  if (process.platform !== "darwin") return readMacPermissions();
+  if (permission === "accessibility") {
+    systemPreferences.isTrustedAccessibilityClient(true);
+    return readMacPermissions();
+  }
+
+  const state = systemPreferences.getMediaAccessStatus("screen");
+  if (state === "not-determined") {
+    await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } });
+  } else if (state === "denied" || state === "unknown") {
+    await shell.openExternal(
+      "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+    );
+  }
+  return readMacPermissions();
+}
+
+function parseProvider(input: unknown): AgentProviderId {
+  if (!input || typeof input !== "object") throw new Error("Setup input is required.");
+  const provider = Reflect.get(input, "preferredProvider");
+  if (provider !== "codex" && provider !== "claude") throw new Error("Unknown provider.");
+  return provider;
+}
+
+function parseMacPermission(input: unknown): MacPermissionId {
+  if (input !== "screen-recording" && input !== "accessibility") {
+    throw new Error("Unknown macOS permission.");
+  }
+  return input;
 }
 
 app.on("window-all-closed", () => {

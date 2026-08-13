@@ -7,6 +7,7 @@ import type {
   AgentEvent,
   AgentModelOption,
   AgentPromptQuestion,
+  AgentProviderStatus,
   AgentStatus,
   AttachmentDataInput,
   BotSummary,
@@ -87,6 +88,10 @@ const INITIAL_STATUS: AgentStatus = {
   phase: "idle",
   cliVersion: null,
   auth: { kind: "unknown" },
+  providers: [
+    { id: "codex", state: "not-started", version: null, message: null },
+    { id: "claude", state: "not-started", version: null, message: null },
+  ],
   capabilities: {
     chat: "unavailable",
     browser: "ready",
@@ -172,6 +177,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
   readonly #clients = new Map<AgentProvider, AgentClient>();
   readonly #cli = new Map<AgentProvider, CodexCliInfo | ClaudeCliInfo>();
+  readonly #accounts = new Map<AgentProvider, AccountReadResult["account"]>();
+  readonly #providerStarts = new Map<AgentProvider, Promise<void>>();
+  #preferredProvider: AgentProvider;
+  #initialized = false;
   #stopping = false;
   #restartAttempts = 0;
   #restartTimer: NodeJS.Timeout | null = null;
@@ -183,6 +192,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     browser: BrowserHost,
     computerUsePrerequisites: (() => ComputerUsePrerequisites) | null = null,
     requestTimeoutMs = 30_000,
+    preferredProvider: AgentProvider = "codex",
   ) {
     super();
     this.#store = store;
@@ -190,6 +200,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#browser = browser;
     this.#computerUsePrerequisites = computerUsePrerequisites;
     this.#requestTimeoutMs = requestTimeoutMs;
+    this.#preferredProvider = preferredProvider;
     this.#browser.onChanged((tabs, activeTabId) => {
       this.#emit({ type: "browser-changed", tabs, activeTabId });
     });
@@ -217,7 +228,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async createBot(): Promise<BotSummary> {
     let bot = await this.#store.createBot();
-    if (!this.#clients.has("codex") && this.#clients.has("claude")) {
+    if (this.#preferredProvider === "claude") {
       bot = await this.#store.updateBot({
         botId: bot.id,
         model: "claude-sonnet-5",
@@ -230,6 +241,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
     const previous = this.#store.list().find((bot) => bot.id === input.botId);
+    if (input.model && previous && providerForModel(input.model) !== providerForBot(previous)) {
+      await this.ensureProvider(providerForModel(input.model));
+    }
     const profileChanged =
       input.name !== undefined ||
       input.role !== undefined ||
@@ -279,11 +293,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async initialize(): Promise<void> {
     this.#stopping = false;
     await Promise.all([this.#store.initialize(), this.#mailbox.initialize()]);
-    await this.#connect("starting");
+    this.#initialized = true;
+    await this.#connect("starting", ["codex", "claude"]);
+  }
+
+  async setPreferredProvider(provider: AgentProvider): Promise<void> {
+    this.#preferredProvider = provider;
+    if (this.#initialized) await this.ensureProvider(provider).catch(() => undefined);
+  }
+
+  async ensureProvider(provider: AgentProvider): Promise<void> {
+    if (this.#clients.has(provider)) return;
+    let start = this.#providerStarts.get(provider);
+    if (!start) {
+      start = this.#connect("starting", [provider]).finally(() => {
+        this.#providerStarts.delete(provider);
+      });
+      this.#providerStarts.set(provider, start);
+    }
+    await start;
+    if (this.#clients.has(provider)) return;
+    const status = this.#status.providers?.find((candidate) => candidate.id === provider);
+    throw new Error(status?.message ?? `${providerLabel(provider)} CLI is not ready or signed in.`);
   }
 
   async stop(): Promise<void> {
     this.#stopping = true;
+    this.#initialized = false;
     if (this.#restartTimer) clearTimeout(this.#restartTimer);
     this.#restartTimer = null;
     this.#clearCompactionRuntime();
@@ -302,6 +338,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (cached?.activeTurnId) return structuredClone(cached);
     const revisionAtStart = cached?.revision ?? 0;
 
+    if (!this.#clientForBot(bot) && this.#initialized) {
+      await this.ensureProvider(providerForBot(bot));
+    }
     const client = this.#clientForBot(bot);
     if (!bot.threadId || !client || this.#status.phase !== "ready") {
       const snapshot = this.#ensureSnapshot(botId, bot.threadId);
@@ -368,6 +407,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async sendMessage(input: SendMessageInput): Promise<QueuedMessageReceipt> {
     const bot = await this.#store.getOrCreate(input.botId);
+    await this.ensureProvider(providerForBot(bot));
     const receipt = await this.#mailbox.enqueue({
       sender: { kind: "user" },
       recipientBotIds: [bot.id],
@@ -446,21 +486,41 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#pendingPrompts.delete(input.requestId);
   }
 
-  async #connect(phase: "starting" | "restarting"): Promise<void> {
-    this.#setStatus({
-      phase,
-      auth: { kind: "unknown" },
-      capabilities: { ...this.#status.capabilities, chat: "unavailable" },
-      message: phase === "starting" ? "Starting local agent CLIs…" : "Restarting local agent CLIs…",
-    });
+  async #connect(
+    phase: "starting" | "restarting",
+    requestedProviders: readonly AgentProvider[],
+  ): Promise<void> {
+    const hadClients = this.#clients.size > 0;
+    const providerStatuses: AgentProviderStatus[] = structuredClone(
+      this.#status.providers ?? INITIAL_STATUS.providers ?? [],
+    );
+    for (const provider of requestedProviders) {
+      setProviderStatus(providerStatuses, provider, {
+        state: this.#clients.has(provider) ? "available" : "checking",
+        version: this.#cli.get(provider)?.version ?? null,
+        message: null,
+      });
+    }
+    this.#setStatus(
+      hadClients
+        ? { providers: providerStatuses }
+        : {
+            phase,
+            auth: { kind: "unknown" },
+            providers: providerStatuses,
+            capabilities: { ...this.#status.capabilities, chat: "unavailable" },
+            message:
+              phase === "starting" ? "Starting local agent CLI…" : "Restarting local agent CLI…",
+          },
+    );
 
     const failures: string[] = [];
-    const accounts = new Map<AgentProvider, AccountReadResult["account"]>();
-    for (const provider of ["codex", "claude"] as const) {
+    for (const provider of requestedProviders) {
       if (this.#clients.has(provider)) continue;
       let client: AgentClient | null = null;
+      let cli: CodexCliInfo | ClaudeCliInfo | null = null;
       try {
-        const cli = provider === "codex" ? await resolveCodexCli() : await resolveClaudeCli();
+        cli = provider === "codex" ? await resolveCodexCli() : await resolveClaudeCli();
         client =
           provider === "codex"
             ? new CodexAppServerClient(cli.executable, this.#requestTimeoutMs)
@@ -476,22 +536,35 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           refreshToken: false,
         });
         if (!account.account) {
-          throw new Error(
+          const message =
             provider === "codex"
               ? "Run `codex login` to use Codex."
-              : "Run `claude auth login` to use Claude.",
-          );
+              : "Run `claude auth login` to use Claude.";
+          setProviderStatus(providerStatuses, provider, {
+            state: "sign-in-required",
+            version: cli.version,
+            message,
+          });
+          failures.push(message);
+          await client.stop().catch(() => undefined);
+          continue;
         }
         if (provider === "codex" && account.account.type !== "chatgpt") {
           throw new Error("Codex requires a ChatGPT subscription login. Run `codex login`.");
         }
         this.#cli.set(provider, cli);
         this.#clients.set(provider, client);
-        accounts.set(provider, account.account);
+        this.#accounts.set(provider, account.account);
+        setProviderStatus(providerStatuses, provider, {
+          state: "available",
+          version: cli.version,
+          message: null,
+        });
       } catch (error) {
         if (client) await client.stop().catch(() => undefined);
         const message = error instanceof Error ? error.message : String(error);
         failures.push(message);
+        setProviderStatus(providerStatuses, provider, providerFailureStatus(error, cli?.version));
         if (!(error instanceof CodexCliError)) this.#emitError(`${provider}_start_failed`, error);
       }
     }
@@ -501,6 +574,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         phase: "blocked",
         cliVersion: null,
         auth: { kind: "unknown" },
+        providers: providerStatuses,
         capabilities: { ...this.#status.capabilities, chat: "unavailable" },
         message: failures.join(" "),
       });
@@ -508,8 +582,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     await this.#refreshModelCatalog();
-    const primaryProvider: AgentProvider = this.#clients.has("codex") ? "codex" : "claude";
-    const primaryAccount = accounts.get(primaryProvider);
+    const primaryProvider: AgentProvider = this.#clients.has(this.#preferredProvider)
+      ? this.#preferredProvider
+      : this.#clients.has("codex")
+        ? "codex"
+        : "claude";
+    const primaryAccount = this.#accounts.get(primaryProvider);
     const codexClient = this.#clients.get("codex");
     const computerUse = codexClient ? await this.#probeComputerUse(codexClient) : "unavailable";
     this.#restartAttempts = 0;
@@ -520,6 +598,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         primaryProvider === "codex"
           ? { kind: "chatgpt", email: primaryAccount?.email ?? null }
           : { kind: "claude", email: primaryAccount?.email ?? null },
+      providers: providerStatuses,
       capabilities: { chat: "ready", browser: "ready", computerUse },
       message: null,
     });
@@ -548,26 +627,52 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#pendingPrompts.clear();
     this.#browser.clearControls();
     this.#emitError(`${client.provider}_exited`, error);
+    const providers = updateProviderStatus(this.#status.providers, client.provider, {
+      state: "error",
+      version: this.#cli.get(client.provider)?.version ?? null,
+      message: error.message,
+    });
+    const anotherProviderIsReady = this.#clients.size > 0;
 
     if (this.#restartAttempts >= 3) {
-      this.#setStatus({
-        phase: "blocked",
-        capabilities: { ...this.#status.capabilities, chat: "unavailable" },
-        message: `${providerLabel(client.provider)} stopped repeatedly. Restart OpenBot after checking the CLI.`,
-      });
+      this.#setStatus(
+        anotherProviderIsReady
+          ? {
+              phase: "ready",
+              providers,
+              capabilities: { ...this.#status.capabilities, chat: "ready" },
+              message: null,
+            }
+          : {
+              phase: "blocked",
+              providers,
+              capabilities: { ...this.#status.capabilities, chat: "unavailable" },
+              message: `${providerLabel(client.provider)} stopped repeatedly. Restart OpenBot after checking the CLI.`,
+            },
+      );
       return;
     }
 
     const delayMs = 500 * 2 ** this.#restartAttempts;
     this.#restartAttempts += 1;
-    this.#setStatus({
-      phase: "restarting",
-      capabilities: { ...this.#status.capabilities, chat: "unavailable" },
-      message: `${providerLabel(client.provider)} stopped. Retrying (${this.#restartAttempts}/3)…`,
-    });
+    this.#setStatus(
+      anotherProviderIsReady
+        ? {
+            phase: "ready",
+            providers,
+            capabilities: { ...this.#status.capabilities, chat: "ready" },
+            message: null,
+          }
+        : {
+            phase: "restarting",
+            providers,
+            capabilities: { ...this.#status.capabilities, chat: "unavailable" },
+            message: `${providerLabel(client.provider)} stopped. Retrying (${this.#restartAttempts}/3)…`,
+          },
+    );
     this.#restartTimer = setTimeout(() => {
       this.#restartTimer = null;
-      void this.#connect("restarting");
+      void this.#connect("restarting", [client.provider]);
     }, delayMs);
   }
 
@@ -802,6 +907,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.#mailbox.markStarting(delivery.id);
       this.#emitQueue(delivery.recipientBotId);
       const bot = await this.#store.getOrCreate(delivery.recipientBotId);
+      await this.ensureProvider(providerForBot(bot));
       const client = this.#requireReadyClient(providerForBot(bot));
       const threadId = await this.#ensureThread(bot, client);
       const snapshot = this.#ensureSnapshot(bot.id, threadId);
@@ -959,7 +1065,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         );
       }
     }
-    this.#models = discovered.length ? discovered : structuredClone(FALLBACK_MODELS);
+    const discoveredById = new Map(discovered.map((model) => [model.id, model]));
+    this.#models = FALLBACK_MODELS.map((fallback) => discoveredById.get(fallback.id) ?? fallback);
   }
 
   async #reconcileUnresolvedDeliveries(): Promise<void> {
@@ -1659,7 +1766,7 @@ function isDynamicToolCall(value: unknown): value is DynamicToolCallParams {
 
 function cleanModelName(value: string | undefined, fallback: string): string {
   if (!value) return fallback;
-  return value.replace(/^GPT-5\.6\s*/i, "").trim() || fallback;
+  return value.replace(/^GPT-5\.6[\s:–—-]*/i, "").trim() || fallback;
 }
 
 function providerForModel(model: BotSummary["model"]): AgentProvider {
@@ -1672,6 +1779,43 @@ function providerForBot(bot: BotSummary): AgentProvider {
 
 function providerLabel(provider: AgentProvider): string {
   return provider === "claude" ? "Claude" : "Codex";
+}
+
+function setProviderStatus(
+  statuses: AgentProviderStatus[],
+  provider: AgentProvider,
+  patch: Omit<AgentProviderStatus, "id">,
+): void {
+  const index = statuses.findIndex((status) => status.id === provider);
+  const status = { id: provider, ...patch };
+  if (index === -1) statuses.push(status);
+  else statuses[index] = status;
+}
+
+function updateProviderStatus(
+  statuses: AgentProviderStatus[] | undefined,
+  provider: AgentProvider,
+  patch: Omit<AgentProviderStatus, "id">,
+): AgentProviderStatus[] {
+  const next = structuredClone(statuses ?? []);
+  setProviderStatus(next, provider, patch);
+  return next;
+}
+
+function providerFailureStatus(
+  error: unknown,
+  version: string | null | undefined,
+): Omit<AgentProviderStatus, "id"> {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof CodexCliError) {
+    if (error.code === "missing") {
+      return { state: "not-installed", version: null, message };
+    }
+    if (error.code === "outdated") {
+      return { state: "outdated", version: version ?? null, message };
+    }
+  }
+  return { state: "error", version: version ?? null, message };
 }
 
 function isRequestTimeout(error: unknown, method: string): boolean {

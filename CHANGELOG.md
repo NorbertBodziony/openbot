@@ -5,6 +5,17 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+### Added
+
+- Claude CLI support with automatic Codex and Claude availability checks.
+- Per-agent provider and model selection during onboarding and in agent settings.
+- First-launch provider selection with macOS permission status and later account-menu access.
+
+### Changed
+
+- Simplified provider selection to show clear availability without decorative provider cards.
+- Development state reset now deletes `OpenBot Dev` state without creating a backup.
+
 ## [0.1.0] - 2026-08-13
 
 ### Added

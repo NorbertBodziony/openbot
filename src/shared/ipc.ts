@@ -1,7 +1,9 @@
 export const IPC_CHANNELS = {
   getAppInfo: "app:get-info",
-  getFullAccessConsent: "app:get-full-access-consent",
-  acceptFullAccessConsent: "app:accept-full-access-consent",
+  getSetupState: "app:get-setup-state",
+  saveSetup: "app:save-setup",
+  getMacPermissions: "app:get-mac-permissions",
+  requestMacPermission: "app:request-mac-permission",
   openExternal: "app:open-external",
   updateGetStatus: "update:get-status",
   updateCheck: "update:check",
@@ -74,6 +76,40 @@ export type AgentPhase = "idle" | "starting" | "ready" | "restarting" | "blocked
 
 export type CapabilityState = "ready" | "setup-required" | "unavailable";
 
+export type AgentProviderId = "codex" | "claude";
+export type AgentProviderState =
+  | "not-started"
+  | "checking"
+  | "available"
+  | "sign-in-required"
+  | "not-installed"
+  | "outdated"
+  | "error";
+
+export interface AgentProviderStatus {
+  id: AgentProviderId;
+  state: AgentProviderState;
+  version: string | null;
+  message: string | null;
+}
+
+export interface AppSetupState {
+  completed: boolean;
+  preferredProvider: AgentProviderId | null;
+}
+
+export interface SaveSetupInput {
+  preferredProvider: AgentProviderId;
+}
+
+export type MacPermissionId = "screen-recording" | "accessibility";
+export type MacPermissionState = "not-determined" | "granted" | "denied" | "restricted" | "unknown";
+
+export interface MacPermissionsState {
+  screenRecording: MacPermissionState;
+  accessibility: MacPermissionState;
+}
+
 export type AgentAuthState =
   | { kind: "unknown" }
   | { kind: "signed-out" }
@@ -103,6 +139,7 @@ export interface AgentStatus {
   phase: AgentPhase;
   cliVersion: string | null;
   auth: AgentAuthState;
+  providers?: AgentProviderStatus[];
   capabilities: {
     chat: CapabilityState;
     browser: CapabilityState;
@@ -515,8 +552,10 @@ export interface MaintenanceDesktopApi {
 
 export interface OpenBotDesktopApi {
   getAppInfo: () => Promise<AppInfo>;
-  getFullAccessConsent: () => Promise<boolean>;
-  acceptFullAccessConsent: () => Promise<void>;
+  getSetupState: () => Promise<AppSetupState>;
+  saveSetup: (input: SaveSetupInput) => Promise<AppSetupState>;
+  getMacPermissions: () => Promise<MacPermissionsState>;
+  requestMacPermission: (permission: MacPermissionId) => Promise<MacPermissionsState>;
   openExternal: (destination: ExternalDestination) => Promise<void>;
   agent: AgentDesktopApi;
   browser: BrowserDesktopApi;

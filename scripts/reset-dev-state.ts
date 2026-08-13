@@ -1,4 +1,4 @@
-import { rename, stat } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -14,12 +14,9 @@ try {
   throw error;
 }
 
-const timestamp = new Date().toISOString().replaceAll(":", "-");
-const backupPath = `${statePath}.reset-${timestamp}`;
-await rename(statePath, backupPath);
+await rm(statePath, { recursive: true, force: true });
 
 console.log("OpenBot dev state reset.");
-console.log(`Backup: ${backupPath}`);
 console.log("Agent workspaces and CLI sessions were not changed.");
 
 function isMissing(error: unknown): error is NodeJS.ErrnoException {

@@ -24,8 +24,6 @@ interface SidebarProps {
   onDeleteBot: (botId: string) => Promise<void>;
   onRefreshUsage: () => Promise<AccountUsage>;
   onUpdateAction: () => Promise<void>;
-  onExportData: () => Promise<void>;
-  onExportDiagnostics: () => Promise<void>;
   onOpenExternal: (destination: ExternalDestination) => Promise<void>;
   onOpenPermissions: () => void;
   onCollapse: () => void;
@@ -169,24 +167,6 @@ function UpdateIcon(props: { active: boolean }) {
     >
       <path d="M15.4 6.8A6 6 0 1 0 16 10" />
       <path d="M15.4 3.8v3h-3" />
-    </svg>
-  );
-}
-
-function ExportIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
-      <path d="M10 3.4v8.2M6.8 8.5 10 11.8l3.2-3.3" />
-      <path d="M4.4 12.5v3.1h11.2v-3.1" />
-    </svg>
-  );
-}
-
-function DiagnosticsIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
-      <path d="M5 3.8h10v12.4H5V3.8Z" />
-      <path d="M7.5 7h5M7.5 10h5M7.5 13h3" />
     </svg>
   );
 }
@@ -392,13 +372,6 @@ export function Sidebar(props: SidebarProps) {
       );
   }
 
-  function runMaintenanceAction(action: () => Promise<void>, fallback: string) {
-    setAccountError(null);
-    void action()
-      .then(() => setAccountMenuOpen(false))
-      .catch((error) => setAccountError(error instanceof Error ? error.message : fallback));
-  }
-
   return (
     <aside id="bot-sidebar" aria-label="Bot navigation" class="sidebar panel-edge">
       <div class="window-drag sidebar-topbar">
@@ -543,31 +516,9 @@ export function Sidebar(props: SidebarProps) {
               }}
             >
               <PermissionsIcon />
-              <span>Agent access</span>
+              <span>Providers &amp; permissions</span>
             </button>
             <div class="account-menu-separator" />
-            <button
-              type="button"
-              role="menuitem"
-              class="account-menu-row"
-              onClick={() =>
-                runMaintenanceAction(props.onExportData, "Could not export OpenBot data.")
-              }
-            >
-              <ExportIcon />
-              <span>Export data</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              class="account-menu-row"
-              onClick={() =>
-                runMaintenanceAction(props.onExportDiagnostics, "Could not export diagnostics.")
-              }
-            >
-              <DiagnosticsIcon />
-              <span>Export diagnostics</span>
-            </button>
             <button
               type="button"
               role="menuitem"

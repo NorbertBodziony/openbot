@@ -77,6 +77,10 @@ describe.sequential("AgentService", () => {
     expect(service.getStatus()).toMatchObject({
       phase: "ready",
       auth: { kind: "chatgpt", email: "codex@example.com" },
+      providers: [
+        { id: "codex", state: "available", version: "0.144.1" },
+        { id: "claude", state: "not-installed", version: null },
+      ],
       capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
     });
     await expect(service.getUsage()).resolves.toMatchObject({
@@ -119,6 +123,61 @@ describe.sequential("AgentService", () => {
     }
     expect((await store.getOrCreate("chief")).threadId).not.toBe(
       (await store.getOrCreate("sales-outbound")).threadId,
+    );
+  });
+
+  it("detects both providers and uses the preferred provider for new agents", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "claude");
+
+    await service.initialize();
+
+    expect(service.getStatus()).toMatchObject({
+      phase: "ready",
+      auth: { kind: "claude", email: "claude@example.com" },
+      providers: [
+        { id: "codex", state: "available", version: "0.144.1" },
+        { id: "claude", state: "available", version: "2.1.231" },
+      ],
+    });
+    await expect(service.createBot()).resolves.toMatchObject({
+      model: "claude-sonnet-5",
+      reasoningEffort: "high",
+    });
+  });
+
+  it("keeps the agent model and thread when a lazy provider cannot start", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+    await store.setThreadId("chief", "thread-codex");
+
+    await expect(service.updateBot({ botId: "chief", model: "claude-sonnet-5" })).rejects.toThrow(
+      "Claude CLI was not found",
+    );
+    expect(service.listBots().find((bot) => bot.id === "chief")).toMatchObject({
+      model: "gpt-5.6-luna",
+      threadId: "thread-codex",
+    });
+  });
+
+  it("starts the second provider when an agent selects its model", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+
+    await expect(
+      service.updateBot({ botId: "chief", model: "claude-sonnet-5", reasoningEffort: "high" }),
+    ).resolves.toMatchObject({ model: "claude-sonnet-5", reasoningEffort: "high" });
+    expect(service.getStatus().providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "codex", state: "available" }),
+        expect.objectContaining({ id: "claude", state: "available" }),
+      ]),
     );
   });
 
@@ -649,5 +708,21 @@ process.stdin.on("data", (chunk) => {
     { mode: 0o700 },
   );
   await chmod(executable, 0o700);
+  return executable;
+}
+
+async function createFakeClaude(directory: string): Promise<string> {
+  const executable = join(directory, "claude");
+  await writeFile(
+    executable,
+    `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s\\n' '2.1.231 (Claude Code)'
+elif [ "$1" = "auth" ]; then
+  printf '%s' '{"loggedIn":true,"email":"claude@example.com","subscriptionType":"max"}'
+fi
+`,
+  );
+  await chmod(executable, 0o755);
   return executable;
 }

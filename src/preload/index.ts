@@ -63,8 +63,11 @@ window.addEventListener("paste", (event) => {
 
 const openbotApi: OpenBotDesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC_CHANNELS.getAppInfo),
-  getFullAccessConsent: () => ipcRenderer.invoke(IPC_CHANNELS.getFullAccessConsent),
-  acceptFullAccessConsent: () => ipcRenderer.invoke(IPC_CHANNELS.acceptFullAccessConsent),
+  getSetupState: () => ipcRenderer.invoke(IPC_CHANNELS.getSetupState),
+  saveSetup: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveSetup, input),
+  getMacPermissions: () => ipcRenderer.invoke(IPC_CHANNELS.getMacPermissions),
+  requestMacPermission: (permission) =>
+    ipcRenderer.invoke(IPC_CHANNELS.requestMacPermission, permission),
   openExternal: (destination) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, destination),
   agent: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.agentGetStatus),

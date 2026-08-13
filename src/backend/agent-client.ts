@@ -1,6 +1,7 @@
+import type { AgentProviderId } from "../shared/ipc";
 import type { AppServerNotification, AppServerRequest, RequestId, RpcError } from "./protocol";
 
-export type AgentProvider = "codex" | "claude";
+export type AgentProvider = AgentProviderId;
 
 export interface AgentClient {
   readonly provider: AgentProvider;
