@@ -78,7 +78,12 @@ describe.sequential("AgentService", () => {
       phase: "ready",
       auth: { kind: "chatgpt", email: "codex@example.com" },
       providers: [
-        { id: "codex", state: "available", version: "0.144.1" },
+        {
+          id: "codex",
+          state: "available",
+          version: "0.144.1",
+          email: "codex@example.com",
+        },
         { id: "claude", state: "not-installed", version: null },
       ],
       capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
@@ -126,7 +131,7 @@ describe.sequential("AgentService", () => {
     );
   });
 
-  it("detects both providers and uses the preferred provider for new agents", async () => {
+  it("updates the active account and new-agent defaults with the preferred provider", async () => {
     process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "claude");
@@ -137,13 +142,28 @@ describe.sequential("AgentService", () => {
       phase: "ready",
       auth: { kind: "claude", email: "claude@example.com" },
       providers: [
-        { id: "codex", state: "available", version: "0.144.1" },
-        { id: "claude", state: "available", version: "2.1.231" },
+        {
+          id: "codex",
+          state: "available",
+          version: "0.144.1",
+          email: "codex@example.com",
+        },
+        {
+          id: "claude",
+          state: "available",
+          version: "2.1.231",
+          email: "claude@example.com",
+        },
       ],
     });
+    await service.setPreferredProvider("codex");
+    expect(service.getStatus()).toMatchObject({
+      auth: { kind: "chatgpt", email: "codex@example.com" },
+      cliVersion: "0.144.1",
+    });
     await expect(service.createBot()).resolves.toMatchObject({
-      model: "claude-opus-5",
-      reasoningEffort: "high",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
     });
   });
 

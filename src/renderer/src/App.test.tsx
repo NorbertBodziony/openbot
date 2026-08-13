@@ -78,8 +78,20 @@ describe("OpenBot connected desktop shell", () => {
             cliVersion: "0.144.1",
             auth: { kind: "chatgpt", email: "norbert@example.com" },
             providers: [
-              { id: "codex", state: "available", version: "0.144.1", message: null },
-              { id: "claude", state: "available", version: "2.1.231", message: null },
+              {
+                id: "codex",
+                state: "available",
+                version: "0.144.1",
+                message: null,
+                email: "norbert@example.com",
+              },
+              {
+                id: "claude",
+                state: "available",
+                version: "2.1.231",
+                message: null,
+                email: "claude@example.com",
+              },
             ],
             capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
             message: null,
@@ -252,6 +264,8 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("dialog", { name: "Providers & permissions" })).toBeInTheDocument();
     const providers = screen.getByRole("radiogroup", { name: "Default provider" });
     expect(within(providers).getByRole("radio", { name: /Codex.*Available/ })).toBeChecked();
+    expect(within(providers).getByText("norbert@example.com")).toBeInTheDocument();
+    expect(within(providers).getByText("claude@example.com")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Available/ }));
     await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -535,30 +549,159 @@ describe("OpenBot connected desktop shell", () => {
     expect(rightResizer).toHaveAttribute("aria-valuenow", "296");
   });
 
+  it("selects a provider and model from the conversation header", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    const trigger = screen.getByRole("button", { name: "Agent model: Luna" });
+    await fireEvent.click(trigger);
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    expect(within(picker).getByText("0.144.1 (Codex CLI)")).toBeInTheDocument();
+    expect(within(picker).getByRole("option", { name: "Luna, default" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
+    expect(window.openbot.agent.updateBot).not.toHaveBeenCalled();
+    expect(within(picker).getByText("2.1.231 (Claude Code)")).toBeInTheDocument();
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Opus 5, default" }));
+
+    await waitFor(() =>
+      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        model: "claude-opus-5",
+        reasoningEffort: "medium",
+      }),
+    );
+    expect(screen.queryByRole("dialog", { name: "Choose agent model" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Agent model: Claude Opus 5" })).toBeEnabled();
+  });
+
+  it("shows unavailable providers without allowing their models", async () => {
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "ready",
+      cliVersion: "0.144.1",
+      auth: { kind: "chatgpt", email: "norbert@example.com" },
+      providers: [
+        { id: "codex", state: "available", version: "0.144.1", message: null },
+        {
+          id: "claude",
+          state: "not-installed",
+          version: null,
+          message: "Claude CLI was not found.",
+        },
+      ],
+      capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+      message: null,
+      fullAccess: true,
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(
+      within(picker).getByRole("tab", { name: /Claude: Claude CLI was not found/ }),
+    );
+    expect(within(picker).getByText("Claude CLI was not found.")).toBeInTheDocument();
+    expect(within(picker).getByRole("option", { name: "Claude Opus 5, default" })).toBeDisabled();
+    expect(window.openbot.agent.updateBot).not.toHaveBeenCalled();
+  });
+
+  it("rolls back a failed header model change and reports the error", async () => {
+    vi.mocked(window.openbot.agent.updateBot).mockRejectedValueOnce(new Error("Provider failed"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    await fireEvent.click(screen.getByRole("option", { name: "Sol" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Could not change model. Try again.",
+    );
+    expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
+  });
+
+  it("locks the header model picker during active work", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const trigger = screen.getByRole("button", { name: "Agent model: Luna" });
+
+    emitAgentEvent?.({
+      type: "turn-started",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-1",
+    });
+    await waitFor(() => expect(trigger).toBeDisabled());
+    expect(trigger).toHaveAttribute(
+      "title",
+      "Wait for the current work to finish before changing models.",
+    );
+
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-1",
+      status: "completed",
+    });
+    await waitFor(() => expect(trigger).toBeEnabled());
+  });
+
+  it("supports picker keyboard navigation and outside dismissal", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const trigger = screen.getByRole("button", { name: "Agent model: Luna" });
+
+    await fireEvent.click(trigger);
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const codex = within(picker).getByRole("tab", { name: /^Codex:/ });
+    await fireEvent.keyDown(codex, { key: "ArrowUp" });
+    const claude = within(picker).getByRole("tab", { name: /^Claude:/ });
+    expect(claude).toHaveFocus();
+    expect(claude).toHaveAttribute("aria-selected", "true");
+
+    await fireEvent.keyDown(picker, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Choose agent model" })).not.toBeInTheDocument();
+    await fireEvent.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Choose agent model" })).toBeInTheDocument();
+    await fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("dialog", { name: "Choose agent model" })).not.toBeInTheDocument();
+  });
+
   it("edits the persisted model and thinking level in agent settings", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
 
-    const model = await screen.findByRole("combobox", { name: "Agent model" });
-    const thinking = screen.getByRole("combobox", { name: "Agent reasoning level" });
-    const provider = screen.getByRole("radiogroup", { name: "Agent provider" });
-    expect(model).toHaveValue("gpt-5.6-luna");
+    const settings = screen.getByRole("complementary", { name: "Agent settings" });
+    const thinking = within(settings).getByRole("combobox", { name: "Agent reasoning level" });
+    expect(within(settings).getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
     expect(thinking).toHaveValue("medium");
-    expect(within(provider).getByRole("radio", { name: /Codex.*Available/ })).toBeChecked();
 
-    await fireEvent.click(within(provider).getByRole("radio", { name: /Claude.*Available/ }));
+    await fireEvent.click(within(settings).getByRole("button", { name: "Agent model: Luna" }));
+    let picker = within(settings).getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Opus 5, default" }));
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
         model: "claude-opus-5",
-        reasoningEffort: "high",
+        reasoningEffort: "medium",
       }),
     );
-    expect(model).toHaveValue("claude-opus-5");
+    expect(
+      within(settings).getByRole("button", { name: "Agent model: Claude Opus 5" }),
+    ).toBeEnabled();
 
-    await fireEvent.click(within(provider).getByRole("radio", { name: /Codex.*Available/ }));
-    await fireEvent.change(model, { target: { value: "gpt-5.6-sol" } });
+    await fireEvent.click(
+      within(settings).getByRole("button", { name: "Agent model: Claude Opus 5" }),
+    );
+    picker = within(settings).getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Codex:/ }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Sol" }));
     await fireEvent.change(thinking, { target: { value: "xhigh" } });
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
@@ -572,23 +715,26 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
-    await fireEvent.click(
-      within(screen.getByRole("radiogroup", { name: "Agent provider" })).getByRole("radio", {
-        name: /Claude.*Available/,
-      }),
-    );
+    let settings = screen.getByRole("complementary", { name: "Agent settings" });
+    await fireEvent.click(within(settings).getByRole("button", { name: "Agent model: Luna" }));
+    let picker = within(settings).getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Opus 5, default" }));
 
     await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
-    const provider = screen.getByRole("radiogroup", { name: "Agent provider" });
-    expect(within(provider).getByRole("radio", { name: /Codex.*Available/ })).toBeChecked();
+    settings = screen.getByRole("complementary", { name: "Agent settings" });
+    expect(within(settings).getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
 
-    await fireEvent.click(within(provider).getByRole("radio", { name: /Claude.*Available/ }));
+    await fireEvent.click(within(settings).getByRole("button", { name: "Agent model: Luna" }));
+    picker = within(settings).getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Opus 5, default" }));
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "sales-outbound",
         model: "claude-opus-5",
-        reasoningEffort: "high",
+        reasoningEffort: "medium",
       }),
     );
   });
@@ -613,12 +759,18 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    const provider = await screen.findByRole("radiogroup", { name: "Onboarding provider" });
-    const codex = within(provider).getByRole("radio", { name: /Codex.*Available/ });
-    const claude = within(provider).getByRole("radio", { name: /Claude.*Not installed/ });
-    expect(codex).toBeEnabled();
-    expect(codex).toBeChecked();
-    expect(claude).toBeDisabled();
+    const trigger = await screen.findByRole("button", { name: "Onboarding model: Luna" });
+    await fireEvent.click(trigger);
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    expect(within(picker).getByRole("tab", { name: /^Codex: 0.144.1/ })).toBeEnabled();
+    const claude = within(picker).getByRole("tab", {
+      name: "Claude: Claude CLI was not found.",
+    });
+    expect(claude).toBeEnabled();
+
+    await fireEvent.click(claude);
+    expect(within(picker).getByText("Claude CLI was not found.")).toBeInTheDocument();
+    expect(within(picker).getByRole("option", { name: "Claude Opus 5, default" })).toBeDisabled();
   });
 
   it("does not remount settings or discard an in-progress edit on bot list refresh", async () => {

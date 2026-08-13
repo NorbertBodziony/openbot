@@ -3,8 +3,6 @@ import type {
   AgentEvent,
   AgentModelId,
   AgentModelOption,
-  AgentProviderId,
-  AgentProviderStatus,
   AgentReasoningEffort,
   AgentStatus,
   AttachmentSummary,
@@ -18,14 +16,14 @@ import type {
   QueueSnapshot,
   UpdateBotInput,
 } from "../../../shared/ipc";
-import { isClaudeModel, MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "../../../shared/ipc";
+import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "../../../shared/ipc";
 import type { BotMessage, BotProfile } from "../data";
 import { AVATAR_COLORS, AVATAR_SHAPES } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
 import { ChoiceCard, PromptCard } from "./ConversationPrompts";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./PanelResizer";
-import { ProviderPicker } from "./ProviderPicker";
+import { ProviderModelPicker } from "./ProviderModelPicker";
 import { SidebarToggleIcon } from "./Sidebar";
 
 interface ConversationProps {
@@ -91,7 +89,6 @@ const ONBOARDING_CHOICES = [
   "Sales & outreach",
   "Something else",
 ];
-const AGENT_PROVIDERS: AgentProviderId[] = ["codex", "claude"];
 const SETTINGS_PANEL_STORAGE_KEY = "openbot:settings-panel-width";
 const SETTINGS_PANEL_DEFAULT = 296;
 const SETTINGS_PANEL_MIN = 260;
@@ -745,10 +742,6 @@ export function Conversation(props: ConversationProps) {
   const selectedModel = createMemo(() =>
     props.modelOptions.find((option) => option.id === settingsModel()),
   );
-  const selectedProvider = createMemo(() => providerForModel(settingsModel()));
-  const selectedProviderModels = createMemo(() =>
-    props.modelOptions.filter((option) => providerForModel(option.id) === selectedProvider()),
-  );
   const reasoningOptions = createMemo(
     () => selectedModel()?.supportedReasoningEfforts ?? ["medium" as const],
   );
@@ -875,7 +868,7 @@ export function Conversation(props: ConversationProps) {
     }
   }
 
-  function selectModel(model: AgentModelId, persist = true): void {
+  function selectModel(model: AgentModelId, persist = true, reportComposerError = false): void {
     const option = props.modelOptions.find((candidate) => candidate.id === model);
     if (!option) return;
     const reasoningEffort = option.supportedReasoningEfforts.includes(settingsReasoning())
@@ -886,33 +879,12 @@ export function Conversation(props: ConversationProps) {
     setSettingsModel(model);
     setSettingsReasoning(reasoningEffort);
     if (persist) {
+      if (reportComposerError) setComposerError(null);
       void saveBotPatch({ model, reasoningEffort }).then((saved) => {
         if (saved) return;
         setSettingsModel(previousModel);
         setSettingsReasoning(previousReasoning);
-      });
-    }
-  }
-
-  function selectProvider(provider: AgentProviderId, persist = true): void {
-    const state = providerAvailability(props.agentStatus, props.modelOptions, provider).state;
-    if (state !== "available") return;
-    const models = props.modelOptions.filter((option) => providerForModel(option.id) === provider);
-    const preferredId: AgentModelId = provider === "claude" ? "claude-opus-5" : "gpt-5.6-luna";
-    const model = models.find((option) => option.id === preferredId) ?? models[0];
-    if (!model) return;
-    const previousModel = settingsModel();
-    const previousReasoning = settingsReasoning();
-    setSettingsModel(model.id);
-    setSettingsReasoning(model.defaultReasoningEffort);
-    if (persist) {
-      void saveBotPatch({
-        model: model.id,
-        reasoningEffort: model.defaultReasoningEffort,
-      }).then((saved) => {
-        if (saved) return;
-        setSettingsModel(previousModel);
-        setSettingsReasoning(previousReasoning);
+        if (reportComposerError) setComposerError("Could not change model. Try again.");
       });
     }
   }
@@ -1395,28 +1367,44 @@ export function Conversation(props: ConversationProps) {
                   </button>
                 )}
               </Show>
-              <button
-                type="button"
-                class="header-panel-toggle computer-button no-drag"
-                classList={{ "computer-button-agent-active": Boolean(activeBrowserControl()) }}
-                aria-label={
-                  activeBrowserControl()
-                    ? `${browserControlBot()?.name ?? "Agent"} is controlling the browser`
-                    : screenOpen()
-                      ? "Hide computer"
-                      : "Open computer"
-                }
-                aria-expanded={screenOpen()}
-                onClick={() => {
-                  if (screenOpen()) hideBrowserPanel();
-                  else showBrowserPanel();
-                }}
-              >
-                <ComputerIcon />
-                <Show when={activeBrowserControl()}>
-                  <span class="computer-control-dot" aria-hidden="true" />
+              <div class="conversation-header-actions no-drag">
+                <Show when={props.bot}>
+                  <ProviderModelPicker
+                    value={settingsModel()}
+                    modelOptions={props.modelOptions}
+                    agentStatus={props.agentStatus}
+                    disabled={!agentReady() || agentActivity() === "Working"}
+                    disabledReason={
+                      agentActivity() === "Working"
+                        ? "Wait for the current work to finish before changing models."
+                        : "Models are available after an agent CLI connects."
+                    }
+                    onChange={(model) => selectModel(model, true, true)}
+                  />
                 </Show>
-              </button>
+                <button
+                  type="button"
+                  class="header-panel-toggle computer-button"
+                  classList={{ "computer-button-agent-active": Boolean(activeBrowserControl()) }}
+                  aria-label={
+                    activeBrowserControl()
+                      ? `${browserControlBot()?.name ?? "Agent"} is controlling the browser`
+                      : screenOpen()
+                        ? "Hide computer"
+                        : "Open computer"
+                  }
+                  aria-expanded={screenOpen()}
+                  onClick={() => {
+                    if (screenOpen()) hideBrowserPanel();
+                    else showBrowserPanel();
+                  }}
+                >
+                  <ComputerIcon />
+                  <Show when={activeBrowserControl()}>
+                    <span class="computer-control-dot" aria-hidden="true" />
+                  </Show>
+                </button>
+              </div>
             </>
           }
         >
@@ -1532,36 +1520,18 @@ export function Conversation(props: ConversationProps) {
                 <div class="choice-card-heading">
                   <div>
                     <strong>Agent setup</strong>
-                    <span>Choose a provider and model. You can change both later.</span>
+                    <span>Choose a model. You can change it later.</span>
                   </div>
                 </div>
                 <div class="agent-settings-model-controls onboarding-model-control">
-                  <ProviderSelect
-                    value={selectedProvider()}
+                  <ProviderModelPicker
+                    variant="field"
+                    ariaLabel="Onboarding model"
+                    value={settingsModel()}
                     agentStatus={props.agentStatus}
                     modelOptions={props.modelOptions}
-                    ariaLabel="Onboarding provider"
-                    onChange={(provider) => selectProvider(provider, false)}
+                    onChange={(model) => selectModel(model, false)}
                   />
-                  <label class="agent-settings-model-row agent-settings-model-picker-row">
-                    <span>Model</span>
-                    <select
-                      value={settingsModel()}
-                      aria-label="Onboarding model"
-                      onChange={(event) =>
-                        selectModel(event.currentTarget.value as AgentModelId, false)
-                      }
-                    >
-                      <For each={selectedProviderModels()}>
-                        {(option) => (
-                          <option value={option.id}>{displayModelName(option.name)}</option>
-                        )}
-                      </For>
-                    </select>
-                  </label>
-                  <Show when={selectedModel()} keyed>
-                    {(model) => <p class="agent-settings-model-description">{model.description}</p>}
-                  </Show>
                 </div>
               </div>
               <ChoiceCard
@@ -2177,28 +2147,21 @@ export function Conversation(props: ConversationProps) {
                 <span>Choose how this agent runs</span>
               </div>
               <div class="agent-settings-model-controls">
-                <ProviderSelect
-                  value={selectedProvider()}
-                  agentStatus={props.agentStatus}
-                  modelOptions={props.modelOptions}
-                  ariaLabel="Agent provider"
-                  onChange={selectProvider}
-                />
                 <div class="agent-settings-model-option">
-                  <label class="agent-settings-model-row agent-settings-model-picker-row">
-                    <span>Model</span>
-                    <select
-                      value={settingsModel()}
-                      aria-label="Agent model"
-                      onChange={(event) => selectModel(event.currentTarget.value as AgentModelId)}
-                    >
-                      <For each={selectedProviderModels()}>
-                        {(option) => (
-                          <option value={option.id}>{displayModelName(option.name)}</option>
-                        )}
-                      </For>
-                    </select>
-                  </label>
+                  <ProviderModelPicker
+                    variant="field"
+                    ariaLabel="Agent model"
+                    value={settingsModel()}
+                    agentStatus={props.agentStatus}
+                    modelOptions={props.modelOptions}
+                    disabled={!agentReady() || agentActivity() === "Working"}
+                    disabledReason={
+                      agentActivity() === "Working"
+                        ? "Wait for the current work to finish before changing models."
+                        : "Models are available after an agent CLI connects."
+                    }
+                    onChange={(model) => selectModel(model, true, true)}
+                  />
                   <Show when={selectedModel()} keyed>
                     {(model) => <p class="agent-settings-model-description">{model.description}</p>}
                   </Show>
@@ -2256,70 +2219,9 @@ export function Conversation(props: ConversationProps) {
   );
 }
 
-function ProviderSelect(props: {
-  value: AgentProviderId;
-  agentStatus: AgentStatus;
-  modelOptions: AgentModelOption[];
-  ariaLabel: string;
-  onChange: (provider: AgentProviderId) => void;
-}) {
-  const options = createMemo(() =>
-    AGENT_PROVIDERS.map((provider) => {
-      const status = providerAvailability(props.agentStatus, props.modelOptions, provider);
-      return {
-        id: provider,
-        name: providerName(provider),
-        state: status.state,
-        message: status.message,
-      };
-    }),
-  );
-
-  return (
-    <ProviderPicker
-      embedded
-      value={props.value}
-      options={options()}
-      ariaLabel={props.ariaLabel}
-      onChange={props.onChange}
-    />
-  );
-}
-
-function providerAvailability(
-  status: AgentStatus,
-  models: AgentModelOption[],
-  provider: AgentProviderId,
-): AgentProviderStatus {
-  const explicit = status.providers?.find((item) => item.id === provider);
-  if (explicit) return explicit;
-  if (status.phase === "starting" || status.phase === "restarting") {
-    return { id: provider, state: "checking", version: null, message: null };
-  }
-  const available = models.some((model) => providerForModel(model.id) === provider);
-  return {
-    id: provider,
-    state: available ? "available" : "error",
-    version: null,
-    message: available ? null : `${provider === "codex" ? "Codex" : "Claude"} is unavailable.`,
-  };
-}
-
-function providerName(provider: AgentProviderId): string {
-  return provider === "claude" ? "Claude" : "Codex";
-}
-
-function providerForModel(model: AgentModelId): AgentProviderId {
-  return isClaudeModel(model) ? "claude" : "codex";
-}
-
 function reasoningLabel(effort: AgentReasoningEffort): string {
   if (effort === "xhigh") return "Extra high";
   return `${effort.slice(0, 1).toUpperCase()}${effort.slice(1)}`;
-}
-
-function displayModelName(name: string): string {
-  return name.replace(/^[\s:–—-]+/, "") || name;
 }
 
 function ThinkingIcon() {

@@ -91,6 +91,7 @@ export interface AgentProviderStatus {
   state: AgentProviderState;
   version: string | null;
   message: string | null;
+  email?: string | null;
 }
 
 export interface AppSetupState {

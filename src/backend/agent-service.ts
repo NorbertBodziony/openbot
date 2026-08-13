@@ -300,7 +300,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async setPreferredProvider(provider: AgentProvider): Promise<void> {
     this.#preferredProvider = provider;
-    if (this.#initialized) await this.ensureProvider(provider).catch(() => undefined);
+    if (!this.#initialized) return;
+    await this.ensureProvider(provider).catch(() => undefined);
+    const account = this.#accounts.get(provider);
+    if (!this.#clients.has(provider) || !account) return;
+    this.#setStatus({
+      cliVersion: this.#cli.get(provider)?.version ?? null,
+      auth:
+        provider === "codex"
+          ? { kind: "chatgpt", email: account.email ?? null }
+          : { kind: "claude", email: account.email ?? null },
+    });
   }
 
   async ensureProvider(provider: AgentProvider): Promise<void> {
@@ -502,6 +512,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         state: this.#clients.has(provider) ? "available" : "checking",
         version: this.#cli.get(provider)?.version ?? null,
         message: null,
+        email: this.#accounts.get(provider)?.email ?? null,
       });
     }
     this.#setStatus(
@@ -547,6 +558,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             state: "sign-in-required",
             version: cli.version,
             message,
+            email: null,
           });
           failures.push(message);
           await client.stop().catch(() => undefined);
@@ -562,6 +574,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           state: "available",
           version: cli.version,
           message: null,
+          email: account.account.email ?? null,
         });
       } catch (error) {
         if (client) await client.stop().catch(() => undefined);

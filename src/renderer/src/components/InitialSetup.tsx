@@ -70,6 +70,7 @@ export function InitialSetup(props: InitialSetupProps) {
         ...provider,
         state: status?.state ?? fallbackProviderState(props.agentStatus),
         message: status?.message,
+        email: status?.email,
       };
     }),
   );

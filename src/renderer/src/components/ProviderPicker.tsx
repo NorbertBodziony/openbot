@@ -6,6 +6,7 @@ export interface ProviderPickerOption {
   name: string;
   state: AgentProviderState;
   message?: string | null;
+  email?: string | null;
 }
 
 interface ProviderPickerProps {
@@ -68,7 +69,12 @@ export function ProviderPicker(props: ProviderPickerProps) {
                   disabled={props.disabled || !available()}
                   onChange={() => props.onChange(option.id)}
                 />
-                <span class="provider-picker-name">{option.name}</span>
+                <span class="provider-picker-identity">
+                  <span class="provider-picker-name">{option.name}</span>
+                  <Show when={option.email}>
+                    {(email) => <small class="provider-picker-email">{email()}</small>}
+                  </Show>
+                </span>
                 <span class={`provider-picker-status provider-picker-status-${option.state}`}>
                   <i aria-hidden="true" />
                   {providerStatusLabel(option.state)}

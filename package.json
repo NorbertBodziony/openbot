@@ -34,7 +34,7 @@
   },
   "scripts": {
     "postinstall": "install-electron",
-    "dev": "electron-vite dev",
+    "dev": "electron-vite dev --watch",
     "dev:reset": "bun scripts/reset-dev-state.ts",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
