@@ -5,6 +5,8 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-13
+
 ### Changed
 
 - New Claude agents now use Claude Opus 5 as their default model.
