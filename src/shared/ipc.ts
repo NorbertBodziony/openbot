@@ -1,11 +1,15 @@
 export const IPC_CHANNELS = {
   getAppInfo: "app:get-info",
+  getFullAccessConsent: "app:get-full-access-consent",
+  acceptFullAccessConsent: "app:accept-full-access-consent",
   openExternal: "app:open-external",
   updateGetStatus: "update:get-status",
   updateCheck: "update:check",
   updateDownload: "update:download",
   updateInstall: "update:install",
   updateEvent: "update:event",
+  maintenanceExportData: "maintenance:export-data",
+  maintenanceExportDiagnostics: "maintenance:export-diagnostics",
   agentGetStatus: "agent:get-status",
   agentGetUsage: "agent:get-usage",
   agentListModels: "agent:list-models",
@@ -60,6 +64,10 @@ export interface UpdateStatus {
   progress: number | null;
   checkedAt: string | null;
   message: string | null;
+}
+
+export interface ExportResult {
+  saved: boolean;
 }
 
 export type AgentPhase = "idle" | "starting" | "ready" | "restarting" | "blocked" | "stopped";
@@ -359,6 +367,16 @@ export type AgentEvent =
   | { type: "usage-changed"; usage: AccountUsage }
   | { type: "bots-changed"; bots: BotSummary[] }
   | { type: "conversation"; snapshot: ConversationSnapshot }
+  | {
+      type: "conversation-delta";
+      botId: string;
+      threadId: string;
+      turnId: string;
+      messageId: string;
+      delta: string;
+      createdAt: string;
+      revision: number;
+    }
   | { type: "queue-changed"; snapshot: QueueSnapshot }
   | { type: "turn-started"; botId: string; threadId: string; turnId: string }
   | {
@@ -478,10 +496,18 @@ export interface UpdateDesktopApi {
   onEvent: (listener: (status: UpdateStatus) => void) => () => void;
 }
 
+export interface MaintenanceDesktopApi {
+  exportData: () => Promise<ExportResult>;
+  exportDiagnostics: () => Promise<ExportResult>;
+}
+
 export interface OpenBotDesktopApi {
   getAppInfo: () => Promise<AppInfo>;
+  getFullAccessConsent: () => Promise<boolean>;
+  acceptFullAccessConsent: () => Promise<void>;
   openExternal: (destination: ExternalDestination) => Promise<void>;
   agent: AgentDesktopApi;
   browser: BrowserDesktopApi;
   update: UpdateDesktopApi;
+  maintenance: MaintenanceDesktopApi;
 }

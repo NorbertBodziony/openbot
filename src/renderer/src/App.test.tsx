@@ -58,6 +58,8 @@ describe("OpenBot connected desktop shell", () => {
         getAppInfo: vi
           .fn()
           .mockResolvedValue({ name: "OpenBot", version: "0.1.0", platform: "darwin" }),
+        getFullAccessConsent: vi.fn().mockResolvedValue(true),
+        acceptFullAccessConsent: vi.fn().mockResolvedValue(undefined),
         openExternal: vi.fn().mockResolvedValue(undefined),
         agent: {
           getStatus: vi.fn().mockResolvedValue({
@@ -183,8 +185,42 @@ describe("OpenBot connected desktop shell", () => {
             return () => undefined;
           }),
         },
+        maintenance: {
+          exportData: vi.fn().mockResolvedValue({ saved: true }),
+          exportDiagnostics: vi.fn().mockResolvedValue({ saved: true }),
+        },
       },
     });
+  });
+
+  it("requires explicit consent before enabling full-access agents", async () => {
+    vi.mocked(window.openbot.getFullAccessConsent).mockResolvedValueOnce(false);
+    render(() => <App />);
+
+    expect(
+      await screen.findByRole("dialog", { name: "OpenBot agents can control this Mac" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
+
+    const acceptButton = screen.getByRole("button", { name: "I understand — enable agents" });
+    expect(acceptButton).toHaveFocus();
+    await fireEvent.click(acceptButton);
+    expect(window.openbot.acceptFullAccessConsent).toHaveBeenCalledOnce();
+    expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
+  });
+
+  it("keeps full-access agents disabled when consent persistence fails", async () => {
+    vi.mocked(window.openbot.getFullAccessConsent).mockResolvedValueOnce(false);
+    vi.mocked(window.openbot.acceptFullAccessConsent).mockRejectedValueOnce(
+      new Error("Could not save consent."),
+    );
+    render(() => <App />);
+
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "I understand — enable agents" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save consent.");
+    expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
   });
 
   it("uses the backend bot list and shows local onboarding for a real empty snapshot", async () => {
@@ -227,6 +263,20 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByText(/Developer preview/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Lifetime/i)).not.toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("menuitem", { name: "Export data" }));
+    await waitFor(() => expect(window.openbot.maintenance.exportData).toHaveBeenCalledOnce());
+    await waitFor(() => expect(accountButton).toHaveAttribute("aria-expanded", "false"));
+
+    await fireEvent.click(accountButton);
+    await screen.findByRole("menuitem", { name: "Export diagnostics" });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Export diagnostics" }));
+    await waitFor(() =>
+      expect(window.openbot.maintenance.exportDiagnostics).toHaveBeenCalledOnce(),
+    );
+    await waitFor(() => expect(accountButton).toHaveAttribute("aria-expanded", "false"));
+
+    await fireEvent.click(accountButton);
+    await screen.findByRole("menuitem", { name: "Send feedback" });
     fireEvent.click(screen.getByRole("menuitem", { name: "Send feedback" }));
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("feedback"));
 
@@ -768,30 +818,14 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("status", { name: "Chief is working" })).toBe(workingIndicator);
 
     emitAgentEvent?.({
-      type: "conversation",
-      snapshot: {
-        botId: "chief",
-        threadId: "thread-chief",
-        activeTurnId: "turn-live",
-        revision: 4,
-        messages: [
-          {
-            id: "delivery-live",
-            author: "user",
-            text: "Do the work",
-            createdAt,
-            status: "completed",
-            delivery: { id: "delivery-live", status: "running", position: null },
-          },
-          {
-            id: "assistant-live",
-            author: "assistant",
-            text: "I am on it now",
-            createdAt: "2026-08-12T10:00:01.000Z",
-            status: "streaming",
-          },
-        ],
-      },
+      type: "conversation-delta",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live",
+      messageId: "assistant-live",
+      delta: " now",
+      createdAt: "2026-08-12T10:00:01.000Z",
+      revision: 4,
     });
     const updatedStreamingAnswer = await screen.findByText("I am on it now");
     expect(updatedStreamingAnswer.closest(".bot-bubble")).toBe(streamingBubble);

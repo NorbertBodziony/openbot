@@ -63,6 +63,8 @@ window.addEventListener("paste", (event) => {
 
 const openbotApi: OpenBotDesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC_CHANNELS.getAppInfo),
+  getFullAccessConsent: () => ipcRenderer.invoke(IPC_CHANNELS.getFullAccessConsent),
+  acceptFullAccessConsent: () => ipcRenderer.invoke(IPC_CHANNELS.acceptFullAccessConsent),
   openExternal: (destination) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, destination),
   agent: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.agentGetStatus),
@@ -113,6 +115,10 @@ const openbotApi: OpenBotDesktopApi = {
       ipcRenderer.on(IPC_CHANNELS.updateEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.updateEvent, handler);
     },
+  },
+  maintenance: {
+    exportData: () => ipcRenderer.invoke(IPC_CHANNELS.maintenanceExportData),
+    exportDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.maintenanceExportDiagnostics),
   },
 };
 

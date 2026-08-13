@@ -11,8 +11,8 @@ messaging in one macOS app.
 > [!WARNING]
 > OpenBot is a development preview. Agents currently run with `danger-full-access` and
 > `approvalPolicy: never`. They can read and modify files, run commands, use the network, and control
-> the embedded browser without a confirmation dialog. Run only agents and tasks you trust, keep
-> backups, and review [Security](#security) before use.
+> the embedded browser without per-action confirmations after the explicit first-launch consent.
+> Run only agents and tasks you trust, keep backups, and review [Security](#security) before use.
 
 ## What works
 
@@ -23,6 +23,7 @@ messaging in one macOS app.
 - A persistent embedded browser that agents can open, inspect, and control.
 - Optional Computer Use integration for macOS through a locally installed Codex plugin.
 - Per-agent model, reasoning, profile, notification, browser, and panel state.
+- Local data and privacy-safe diagnostics exports from the account menu.
 - No OpenBot cloud backend, account system, telemetry service, or copied Codex credentials.
 
 OpenBot is local-first, not offline-only. Codex connects to OpenAI, visited pages use the network,
@@ -75,12 +76,13 @@ without starting a model turn.
 | Command | Purpose |
 | --- | --- |
 | `bun run dev` | Start Electron with renderer HMR. |
-| `bun run check` | Run Biome, both typechecks, offline tests, and the production build. |
+| `bun run check` | Run Biome, both typechecks, offline tests, the browser smoke test, and the production build. |
 | `bun run test:backend` | Run backend tests only. |
 | `bun run test:browser` | Run the local embedded-browser smoke test. |
 | `bun run test:codex` | Probe the real CLI handshake and account without starting a paid turn. |
 | `bun run package` | Build an unpacked local ARM64 application. |
 | `bun run package:verify` | Build and verify the real ARM64 app bundle, icon, metadata, ASAR, and fuses. |
+| `bun run release:preflight` | Verify version, Git state, Apple signing, and GitHub release secrets before tagging. |
 | `bun run dist:mac` | Build unsigned local ARM64 DMG and ZIP update artifacts. |
 | `bun run release:patch` | Create the next patch version commit and tag. |
 | `bun run test:filesystem` | **Online/manual:** run a real full-access Codex filesystem turn. |

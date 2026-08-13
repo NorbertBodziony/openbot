@@ -36,8 +36,20 @@ files, run programs, use the network, and control the embedded browser without a
 dialog. This is an explicit product behavior, not a host security boundary. Keep backups and do not
 give an agent a task you would not allow a local command-line tool to perform.
 
+On first launch, OpenBot explains this access and does not start the Codex agent service until you
+explicitly accept it. The acceptance record stays in OpenBot's local application-support directory.
+
 Computer Use is provided by a separately installed local Codex plugin. macOS permission prompts and
 any plugin safety hand-offs remain controlled by macOS and that plugin.
+
+## Exports
+
+The account menu can export a local ZIP containing agent profiles, conversation snapshots, queues,
+and managed message attachments. It intentionally excludes Codex credentials, browser cookies, and
+agent workspace files.
+
+The diagnostics export contains application and CLI versions, capability states, and aggregate queue
+counts. It contains no conversations, visited URLs, account email, file contents, or local file paths.
 
 ## Delete your data
 

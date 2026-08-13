@@ -139,6 +139,19 @@ async function main(): Promise<void> {
     });
     const downloadPath = join(downloadsRoot, "openbot-smoke.txt");
     await waitFor(async () => (await readFile(downloadPath, "utf8")) === "local download");
+    const nextDownloadSnapshot = await browser.snapshot(downloadPage.id);
+    const nextDownload = nextDownloadSnapshot.elements.find(
+      (element) => element.name === "Download",
+    );
+    if (!nextDownload) throw new Error("Download link disappeared.");
+    await browser.act(downloadPage.id, nextDownloadSnapshot.revision, {
+      type: "click",
+      ref: nextDownload.ref,
+    });
+    await waitFor(
+      async () =>
+        (await readFile(join(downloadsRoot, "openbot-smoke (2).txt"), "utf8")) === "local download",
+    );
     process.stdout.write("BrowserHost: download passed.\n");
 
     const toolResult = await browser.handleDynamicTool({

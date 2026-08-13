@@ -206,6 +206,41 @@ describe("MailboxStore", () => {
     });
   });
 
+  it("cleans unrecoverable attachment drafts when a new app session starts", async () => {
+    const source = join(root, "abandoned.txt");
+    await writeFile(source, "abandoned");
+    const [draft] = await store.prepareAttachments([source]);
+    expect(draft).toBeDefined();
+
+    const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+
+    await expect(restored.resolveAttachment(draft.id)).resolves.toBeNull();
+  });
+
+  it("removes deleted bot deliveries while preserving messages visible to other bots", async () => {
+    await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Private to Chief",
+    });
+    await store.enqueue({
+      sender: { kind: "bot", botId: "chief" },
+      recipientBotIds: ["sales-outbound"],
+      text: "Keep this for Sales",
+    });
+
+    await store.deleteBotData("chief");
+
+    expect(store.listQueue("chief").deliveries).toEqual([]);
+    expect(store.conversationMessages("chief").map((message) => message.text)).not.toContain(
+      "Private to Chief",
+    );
+    expect(store.conversationMessages("sales-outbound")).toEqual([
+      expect.objectContaining({ text: "Keep this for Sales", senderBotId: "chief" }),
+    ]);
+  });
+
   it("rejects managed attachments replaced by symlinks outside the transfer root", async () => {
     const source = join(root, "inside.txt");
     const outside = join(root, "outside.txt");
@@ -224,6 +259,7 @@ describe("MailboxStore", () => {
     await symlink(outside, attachment?.path ?? "missing");
 
     await expect(store.resolveAttachment(attachment?.id ?? "")).resolves.toBeNull();
+    await expect(store.listExportAttachments()).resolves.toEqual([]);
   });
 
   it("keeps the persisted MIME type as the single source for attachment serving", async () => {

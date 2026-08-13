@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { basename, join } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, extname, join } from "node:path";
 import {
   type BrowserWindow,
   type Session,
@@ -128,6 +129,7 @@ export class BrowserHost {
   readonly #controlListeners = new Set<(...args: BrowserHostEvents["controlChanged"]) => void>();
   readonly #controlSessions = new Map<string, BrowserControlSession>();
   readonly #controlTimers = new Map<string, NodeJS.Timeout>();
+  readonly #reservedDownloadPaths = new Set<string>();
   #activeTabId: string | null = null;
   #visible = false;
   #bounds: BrowserBounds | null = null;
@@ -362,7 +364,14 @@ export class BrowserHost {
     this.#session.setPermissionCheckHandler(() => false);
     this.#session.on("will-download", (_event, item) => {
       const safeName = basename(item.getFilename()).replace(/[^a-zA-Z0-9._ -]/g, "_");
-      item.setSavePath(join(this.#downloadsRoot, safeName || `download-${Date.now()}`));
+      const downloadPath = uniqueDownloadPath(
+        this.#downloadsRoot,
+        safeName || `download-${Date.now()}`,
+        this.#reservedDownloadPaths,
+      );
+      this.#reservedDownloadPaths.add(downloadPath);
+      item.setSavePath(downloadPath);
+      item.once("done", () => this.#reservedDownloadPaths.delete(downloadPath));
     });
   }
 
@@ -745,6 +754,15 @@ function textResult(value: unknown): DynamicToolResult {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function uniqueDownloadPath(root: string, name: string, reserved: Set<string>): string {
+  const extension = extname(name);
+  const stem = extension ? name.slice(0, -extension.length) : name;
+  for (let suffix = 1; ; suffix += 1) {
+    const candidate = join(root, suffix === 1 ? name : `${stem} (${suffix})${extension}`);
+    if (!reserved.has(candidate) && !existsSync(candidate)) return candidate;
+  }
 }
 
 async function withTimeout<T>(

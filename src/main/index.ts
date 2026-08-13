@@ -1,19 +1,18 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   app,
   BrowserWindow,
   dialog,
-  ipcMain,
   Menu,
+  Notification,
   type OpenDialogOptions,
   protocol,
   session,
   shell,
   systemPreferences,
-  type WebFrameMain,
 } from "electron";
 import electronUpdater from "electron-updater";
 import { AgentService } from "../backend/agent-service";
@@ -42,9 +41,15 @@ import {
   type SetQueuePausedInput,
   type UpdateBotInput,
 } from "../shared/ipc";
+import { AgentInitializationGate } from "./agent-initialization";
+import { notificationForAgentEvent } from "./agent-notifications";
+import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
+import { handleTrusted } from "./trusted-ipc";
+import { isTrustedRendererUrl } from "./trusted-renderer";
 import { UpdateService } from "./update-service";
 
 app.enableSandbox();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "openbot-app",
@@ -64,32 +69,13 @@ let updateService: UpdateService | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
 
+const FULL_ACCESS_CONSENT_FILE = "full-access-consent-v1.json";
+
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "codex-setup": "https://learn.chatgpt.com/docs/codex/cli",
   feedback: "https://x.com/intent/post?text=Feedback%20for%20OpenBot%20%40norbertbodziony%3A%20",
   message: "https://x.com/norbertbodziony",
 };
-
-function isTrustedRenderer(frameUrl: string): boolean {
-  try {
-    const senderUrl = new URL(frameUrl);
-    const developmentUrl = process.env.ELECTRON_RENDERER_URL;
-
-    if (developmentUrl) {
-      return senderUrl.origin === new URL(developmentUrl).origin;
-    }
-
-    return senderUrl.protocol === "openbot-app:" && senderUrl.host === "app";
-  } catch {
-    return false;
-  }
-}
-
-function assertTrustedSender(frame: WebFrameMain | null): void {
-  if (!frame || !isTrustedRenderer(frame.url)) {
-    throw new Error("Rejected IPC request from an untrusted renderer.");
-  }
-}
 
 function configureContentSecurityPolicy(): void {
   const developmentSources = app.isPackaged ? "" : " http://localhost:* ws://localhost:*";
@@ -120,99 +106,78 @@ function registerIpcHandlers(
   mailbox: MailboxStore,
   browser: BrowserHost,
   updater: UpdateService,
+  consentFile: string,
+  initializeAgent: () => Promise<void>,
 ): void {
-  ipcMain.handle(IPC_CHANNELS.getAppInfo, (event): AppInfo => {
-    assertTrustedSender(event.senderFrame);
+  handleTrusted(IPC_CHANNELS.getAppInfo, (): AppInfo => {
     const platform = process.platform;
     if (platform !== "darwin" && platform !== "win32" && platform !== "linux") {
       throw new Error(`Unsupported desktop platform: ${platform}`);
     }
     return { name: app.getName(), version: app.getVersion(), platform };
   });
-  ipcMain.handle(IPC_CHANNELS.openExternal, (event, destination: unknown) => {
-    assertTrustedSender(event.senderFrame);
+  handleTrusted(IPC_CHANNELS.getFullAccessConsent, () => existsSync(consentFile));
+  handleTrusted(IPC_CHANNELS.acceptFullAccessConsent, async () => {
+    await writeFile(
+      consentFile,
+      `${JSON.stringify({ acceptedAt: new Date().toISOString(), version: 1 })}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    await initializeAgent();
+  });
+  handleTrusted(IPC_CHANNELS.openExternal, (destination: unknown) => {
     if (destination !== "codex-setup" && destination !== "feedback" && destination !== "message") {
       throw new Error("Unknown external destination.");
     }
     return shell.openExternal(EXTERNAL_DESTINATIONS[destination]);
   });
-  ipcMain.handle(IPC_CHANNELS.updateGetStatus, (event) => {
-    assertTrustedSender(event.senderFrame);
-    return updater.getStatus();
-  });
-  ipcMain.handle(IPC_CHANNELS.updateCheck, (event) => {
-    assertTrustedSender(event.senderFrame);
-    return updater.checkForUpdates();
-  });
-  ipcMain.handle(IPC_CHANNELS.updateDownload, (event) => {
-    assertTrustedSender(event.senderFrame);
-    return updater.downloadUpdate();
-  });
-  ipcMain.handle(IPC_CHANNELS.updateInstall, (event) => {
-    assertTrustedSender(event.senderFrame);
-    return updater.installUpdate();
-  });
+  handleTrusted(IPC_CHANNELS.updateGetStatus, () => updater.getStatus());
+  handleTrusted(IPC_CHANNELS.updateCheck, () => updater.checkForUpdates());
+  handleTrusted(IPC_CHANNELS.updateDownload, () => updater.downloadUpdate());
+  handleTrusted(IPC_CHANNELS.updateInstall, () => updater.installUpdate());
+  handleTrusted(IPC_CHANNELS.maintenanceExportData, () =>
+    exportOpenBotData({ service, mailbox, parentWindow: mainWindow }),
+  );
+  handleTrusted(IPC_CHANNELS.maintenanceExportDiagnostics, () =>
+    exportDiagnostics({ service, browser, updater, parentWindow: mainWindow }),
+  );
 
-  ipcMain.handle(IPC_CHANNELS.agentGetStatus, (event) => {
-    assertTrustedSender(event.senderFrame);
-    return service.getStatus();
-  });
-  ipcMain.handle(IPC_CHANNELS.agentGetUsage, (event) => {
-    assertTrustedSender(event.senderFrame);
-    return service.getUsage();
-  });
-  ipcMain.handle(IPC_CHANNELS.agentListModels, (event) => {
-    assertTrustedSender(event.senderFrame);
-    return service.listModels();
-  });
-  ipcMain.handle(IPC_CHANNELS.agentListBots, (event) => {
-    assertTrustedSender(event.senderFrame);
-    return service.listBots();
-  });
-  ipcMain.handle(IPC_CHANNELS.agentCreateBot, (event) => {
-    assertTrustedSender(event.senderFrame);
-    return service.createBot();
-  });
-  ipcMain.handle(IPC_CHANNELS.agentUpdateBot, (event, input: unknown) => {
-    assertTrustedSender(event.senderFrame);
-    return service.updateBot(parseUpdateBot(input));
-  });
-  ipcMain.handle(IPC_CHANNELS.agentDeleteBot, (event, botId: unknown) => {
-    assertTrustedSender(event.senderFrame);
-    return service.deleteBot(requireString(botId, "botId"));
-  });
-  ipcMain.handle(IPC_CHANNELS.agentReadConversation, (event, botId: unknown) => {
-    assertTrustedSender(event.senderFrame);
-    return service.readConversation(requireString(botId, "botId"));
-  });
-  ipcMain.handle(IPC_CHANNELS.agentSendMessage, (event, input: unknown) => {
-    assertTrustedSender(event.senderFrame);
-    return service.sendMessage(parseSendMessage(input));
-  });
-  ipcMain.handle(IPC_CHANNELS.agentSetMessageReaction, (event, input: unknown) => {
-    assertTrustedSender(event.senderFrame);
+  handleTrusted(IPC_CHANNELS.agentGetStatus, () => service.getStatus());
+  handleTrusted(IPC_CHANNELS.agentGetUsage, () => service.getUsage());
+  handleTrusted(IPC_CHANNELS.agentListModels, () => service.listModels());
+  handleTrusted(IPC_CHANNELS.agentListBots, () => service.listBots());
+  handleTrusted(IPC_CHANNELS.agentCreateBot, () => service.createBot());
+  handleTrusted(IPC_CHANNELS.agentUpdateBot, (input: unknown) =>
+    service.updateBot(parseUpdateBot(input)),
+  );
+  handleTrusted(IPC_CHANNELS.agentDeleteBot, (botId: unknown) =>
+    service.deleteBot(requireString(botId, "botId")),
+  );
+  handleTrusted(IPC_CHANNELS.agentReadConversation, (botId: unknown) =>
+    service.readConversation(requireString(botId, "botId")),
+  );
+  handleTrusted(IPC_CHANNELS.agentSendMessage, (input: unknown) =>
+    service.sendMessage(parseSendMessage(input)),
+  );
+  handleTrusted(IPC_CHANNELS.agentSetMessageReaction, (input: unknown) => {
     const parsed = parseMessageReaction(input);
     return service.setMessageReaction(parsed);
   });
-  ipcMain.handle(IPC_CHANNELS.agentChooseAttachments, async (event) => {
-    assertTrustedSender(event.senderFrame);
+  handleTrusted(IPC_CHANNELS.agentChooseAttachments, async () => {
     const options: OpenDialogOptions = { properties: ["openFile", "multiSelections"] };
     const result = mainWindow
       ? await dialog.showOpenDialog(mainWindow, options)
       : await dialog.showOpenDialog(options);
     return result.canceled ? [] : service.prepareAttachments(result.filePaths);
   });
-  ipcMain.handle(IPC_CHANNELS.agentImportAttachments, (event, input: unknown) => {
-    assertTrustedSender(event.senderFrame);
+  handleTrusted(IPC_CHANNELS.agentImportAttachments, (input: unknown) => {
     const parsed = parseImportAttachments(input);
     return service.prepareImportedAttachments(parsed.paths, parsed.data);
   });
-  ipcMain.handle(IPC_CHANNELS.agentDiscardDraftAttachment, (event, attachmentId: unknown) => {
-    assertTrustedSender(event.senderFrame);
-    return service.discardDraftAttachment(requireString(attachmentId, "attachmentId"));
-  });
-  ipcMain.handle(IPC_CHANNELS.agentOpenAttachment, async (event, input: unknown) => {
-    assertTrustedSender(event.senderFrame);
+  handleTrusted(IPC_CHANNELS.agentDiscardDraftAttachment, (attachmentId: unknown) =>
+    service.discardDraftAttachment(requireString(attachmentId, "attachmentId")),
+  );
+  handleTrusted(IPC_CHANNELS.agentOpenAttachment, async (input: unknown) => {
     const parsed = parseOpenAttachment(input);
     const attachment = await mailbox.resolveAttachment(parsed.attachmentId);
     if (!attachment) throw new Error("Attachment was not found.");
@@ -223,53 +188,38 @@ function registerIpcHandlers(
     const error = await shell.openPath(attachment.path);
     if (error) throw new Error(error);
   });
-  ipcMain.handle(IPC_CHANNELS.agentListQueue, (event, botId: unknown) => {
-    assertTrustedSender(event.senderFrame);
-    return service.listQueue(requireString(botId, "botId"));
-  });
-  ipcMain.handle(IPC_CHANNELS.agentCancelQueuedMessage, (event, input: unknown) => {
-    assertTrustedSender(event.senderFrame);
+  handleTrusted(IPC_CHANNELS.agentListQueue, (botId: unknown) =>
+    service.listQueue(requireString(botId, "botId")),
+  );
+  handleTrusted(IPC_CHANNELS.agentCancelQueuedMessage, (input: unknown) => {
     const parsed = parseCancelQueuedMessage(input);
     return service.cancelQueuedMessage(parsed.botId, parsed.deliveryId);
   });
-  ipcMain.handle(IPC_CHANNELS.agentSetQueuePaused, (event, input: unknown) => {
-    assertTrustedSender(event.senderFrame);
+  handleTrusted(IPC_CHANNELS.agentSetQueuePaused, (input: unknown) => {
     const parsed = parseSetQueuePaused(input);
     return service.setQueuePaused(parsed.botId, parsed.paused);
   });
-  ipcMain.handle(IPC_CHANNELS.agentInterrupt, (event, input: unknown) => {
-    assertTrustedSender(event.senderFrame);
+  handleTrusted(IPC_CHANNELS.agentInterrupt, (input: unknown) => {
     const parsed = parseInterrupt(input);
     return service.interrupt(parsed.botId, parsed.turnId);
   });
-  ipcMain.handle(IPC_CHANNELS.agentRespondToPrompt, (event, input: unknown) => {
-    assertTrustedSender(event.senderFrame);
-    return service.respondToPrompt(parsePromptResponse(input));
-  });
+  handleTrusted(IPC_CHANNELS.agentRespondToPrompt, (input: unknown) =>
+    service.respondToPrompt(parsePromptResponse(input)),
+  );
 
-  ipcMain.handle(IPC_CHANNELS.browserOpen, (event, input: unknown) => {
-    assertTrustedSender(event.senderFrame);
+  handleTrusted(IPC_CHANNELS.browserOpen, (input: unknown) => {
     const parsed = parseBrowserOpen(input);
     return browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null);
   });
-  ipcMain.handle(IPC_CHANNELS.browserActivate, (event, tabId: unknown) => {
-    assertTrustedSender(event.senderFrame);
-    return browser.activate(requireString(tabId, "tabId"));
-  });
-  ipcMain.handle(IPC_CHANNELS.browserClose, (event, tabId: unknown) => {
-    assertTrustedSender(event.senderFrame);
-    return browser.close(requireString(tabId, "tabId"));
-  });
-  ipcMain.handle(IPC_CHANNELS.browserListTabs, (event) => {
-    assertTrustedSender(event.senderFrame);
-    return browser.listTabs();
-  });
-  ipcMain.handle(IPC_CHANNELS.browserGetControlState, (event) => {
-    assertTrustedSender(event.senderFrame);
-    return browser.getControlState();
-  });
-  ipcMain.handle(IPC_CHANNELS.browserSetVisible, async (event, input: unknown) => {
-    assertTrustedSender(event.senderFrame);
+  handleTrusted(IPC_CHANNELS.browserActivate, (tabId: unknown) =>
+    browser.activate(requireString(tabId, "tabId")),
+  );
+  handleTrusted(IPC_CHANNELS.browserClose, (tabId: unknown) =>
+    browser.close(requireString(tabId, "tabId")),
+  );
+  handleTrusted(IPC_CHANNELS.browserListTabs, () => browser.listTabs());
+  handleTrusted(IPC_CHANNELS.browserGetControlState, () => browser.getControlState());
+  handleTrusted(IPC_CHANNELS.browserSetVisible, async (input: unknown) => {
     const parsed = parseVisibility(input);
     await browser.setVisible(parsed);
   });
@@ -308,7 +258,7 @@ function createWindow(): BrowserWindow {
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event, targetUrl) => {
-    if (!isTrustedRenderer(targetUrl)) event.preventDefault();
+    if (!isTrustedRendererUrl(targetUrl)) event.preventDefault();
   });
 
   return window;
@@ -355,6 +305,18 @@ function configureApplicationMenu(service: AgentService, updater: UpdateService)
 function forwardAgentEvent(event: AgentEvent): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.agentEvent, event);
+  if (mainWindow.isFocused() || !Notification.isSupported()) return;
+
+  const content = notificationForAgentEvent(event, agentService?.listBots() ?? []);
+  if (!content) return;
+  const notification = new Notification(content);
+  notification.on("click", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+  notification.show();
 }
 
 function forwardUpdateStatus(status: import("../shared/ipc").UpdateStatus): void {
@@ -362,56 +324,79 @@ function forwardUpdateStatus(status: import("../shared/ipc").UpdateStatus): void
   mainWindow.webContents.send(IPC_CHANNELS.updateEvent, status);
 }
 
-void app
-  .whenReady()
-  .then(async () => {
-    configureContentSecurityPolicy();
-    mainWindow = createWindow();
-    const store = new BotStore(app.getPath("userData"), homedir());
-    await store.initialize();
-    mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot);
-    await mailboxStore.initialize();
-    configureApplicationProtocol();
-    configureAttachmentProtocol(mailboxStore);
-    browserHost = new BrowserHost(mainWindow, store.downloadsRoot);
-    agentService = new AgentService(store, mailboxStore, browserHost, readComputerUsePrerequisites);
-    const { autoUpdater } = electronUpdater;
-    updateService = new UpdateService(autoUpdater, {
-      currentVersion: app.getVersion(),
-      enabled:
-        app.isPackaged &&
-        process.platform === "darwin" &&
-        existsSync(join(process.resourcesPath, "app-update.yml")),
-      beforeInstall: prepareForShutdown,
-    });
-    agentService.on("event", forwardAgentEvent);
-    updateService.on("status", forwardUpdateStatus);
-    updateService.start();
-    registerIpcHandlers(agentService, mailboxStore, browserHost, updateService);
-    configureApplicationMenu(agentService, updateService);
-    await loadRenderer(mainWindow);
-    void agentService.initialize().catch((error) => {
-      console.error("Unable to initialize the local Codex backend:", error);
-    });
-
-    app.on("activate", () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.show();
-        return;
-      }
-      mainWindow = createWindow();
-      void loadRenderer(mainWindow);
-    });
-  })
-  .catch((error) => {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error("OpenBot failed to start:", error);
-    dialog.showErrorBox(
-      "OpenBot couldn’t start",
-      `${message}\n\nYour local data was not reset or overwritten. See the troubleshooting guide for recovery steps.`,
-    );
-    app.quit();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
   });
+
+  void app
+    .whenReady()
+    .then(async () => {
+      configureContentSecurityPolicy();
+      mainWindow = createWindow();
+      const store = new BotStore(app.getPath("userData"), homedir());
+      await store.initialize();
+      mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot);
+      await mailboxStore.initialize();
+      configureApplicationProtocol();
+      configureAttachmentProtocol(mailboxStore);
+      browserHost = new BrowserHost(mainWindow, store.downloadsRoot);
+      agentService = new AgentService(
+        store,
+        mailboxStore,
+        browserHost,
+        readComputerUsePrerequisites,
+      );
+      const service = agentService;
+      const { autoUpdater } = electronUpdater;
+      updateService = new UpdateService(autoUpdater, {
+        currentVersion: app.getVersion(),
+        enabled:
+          app.isPackaged &&
+          process.platform === "darwin" &&
+          existsSync(join(process.resourcesPath, "app-update.yml")),
+        beforeInstall: prepareForShutdown,
+      });
+      service.on("event", forwardAgentEvent);
+      updateService.on("status", forwardUpdateStatus);
+      updateService.start();
+      const consentFile = join(app.getPath("userData"), FULL_ACCESS_CONSENT_FILE);
+      const agentInitialization = new AgentInitializationGate(() => service.initialize());
+      registerIpcHandlers(service, mailboxStore, browserHost, updateService, consentFile, () =>
+        agentInitialization.start(),
+      );
+      configureApplicationMenu(service, updateService);
+      await loadRenderer(mainWindow);
+      if (existsSync(consentFile)) {
+        void agentInitialization.start().catch((error) => {
+          console.error("Unable to initialize the local Codex backend:", error);
+        });
+      }
+
+      app.on("activate", () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.show();
+          return;
+        }
+        mainWindow = createWindow();
+        void loadRenderer(mainWindow);
+      });
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("OpenBot failed to start:", error);
+      dialog.showErrorBox(
+        "OpenBot couldn’t start",
+        `${message}\n\nYour local data was not reset or overwritten. See the troubleshooting guide for recovery steps.`,
+      );
+      app.quit();
+    });
+}
 
 function readComputerUsePrerequisites(): {
   screenRecording: boolean;

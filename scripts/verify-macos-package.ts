@@ -98,6 +98,7 @@ async function verifyLaunch(executable: string): Promise<void> {
       }),
       new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 3_000)),
     ]);
+    await verifySecondInstanceExits(executable, userDataPath);
   } finally {
     child.kill("SIGTERM");
     await Promise.race([
@@ -110,5 +111,27 @@ async function verifyLaunch(executable: string): Promise<void> {
       ),
     ]);
     await rm(userDataPath, { recursive: true, force: true });
+  }
+}
+
+async function verifySecondInstanceExits(executable: string, userDataPath: string): Promise<void> {
+  const second = spawn(executable, [`--user-data-dir=${userDataPath}`], {
+    env: { ...process.env, OPENBOT_CODEX_PATH: join(userDataPath, "missing-codex") },
+    stdio: "ignore",
+  });
+  const result = await Promise.race([
+    new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
+      second.once("exit", (code, signal) => resolveExit({ code, signal }));
+    }),
+    new Promise<null>((resolveDelay) => setTimeout(() => resolveDelay(null), 3_000)),
+  ]);
+  if (!result) {
+    second.kill("SIGKILL");
+    throw new Error("A second OpenBot instance did not exit.");
+  }
+  if (result.code !== 0 || result.signal) {
+    throw new Error(
+      `A second OpenBot instance exited unexpectedly (${result.signal ?? `code ${String(result.code)}`}).`,
+    );
   }
 }

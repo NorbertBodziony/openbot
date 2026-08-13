@@ -81,6 +81,11 @@ export interface DeliveryContext {
   managedAttachments: Array<AttachmentSummary & { path: string }>;
 }
 
+export interface ExportedAttachmentFile {
+  sourcePath: string;
+  relativePath: string;
+}
+
 const EMPTY_STATE: StoredState = {
   version: 1,
   messages: [],
@@ -111,6 +116,12 @@ export class MailboxStore {
       mkdir(this.#transfersRoot, { recursive: true, mode: 0o700 }),
     ]);
     this.#state = await this.#readState();
+    if (this.#state.drafts.length > 0) {
+      this.#state.drafts = [];
+      await this.#persist();
+    }
+    await rm(this.#draftsRoot, { recursive: true, force: true });
+    await mkdir(this.#draftsRoot, { recursive: true, mode: 0o700 });
   }
 
   async prepareAttachments(paths: string[]): Promise<DraftAttachment[]> {
@@ -472,6 +483,52 @@ export class MailboxStore {
     return delivery ? this.#context(delivery) : null;
   }
 
+  startingDeliveryForBot(botId: string): DeliveryContext | null {
+    const delivery = this.#state.deliveries.find(
+      (candidate) =>
+        candidate.recipientBotId === botId &&
+        candidate.status === "starting" &&
+        candidate.turnId === null,
+    );
+    return delivery ? this.#context(delivery) : null;
+  }
+
+  async deleteBotData(botId: string): Promise<void> {
+    const previous = structuredClone(this.#state);
+    const removedMessageIds = new Set<string>();
+    this.#state.deliveries = this.#state.deliveries.filter(
+      (delivery) => delivery.recipientBotId !== botId,
+    );
+    const remainingMessageIds = new Set(
+      this.#state.deliveries.map((delivery) => delivery.messageId),
+    );
+    this.#state.messages = this.#state.messages.filter((message) => {
+      const keep = remainingMessageIds.has(message.id);
+      if (!keep) removedMessageIds.add(message.id);
+      return keep;
+    });
+    this.#state.pausedBotIds = this.#state.pausedBotIds.filter((id) => id !== botId);
+    this.#state.reactions = this.#state.reactions.filter(
+      (reaction) => reaction.botId !== botId && !removedMessageIds.has(reaction.messageId),
+    );
+    this.#state.idempotency = Object.fromEntries(
+      Object.entries(this.#state.idempotency).filter(
+        ([, messageId]) => !removedMessageIds.has(messageId),
+      ),
+    );
+    try {
+      await this.#persist();
+    } catch (error) {
+      this.#state = previous;
+      throw error;
+    }
+    await Promise.all(
+      [...removedMessageIds].map((messageId) =>
+        rm(join(this.#transfersRoot, messageId), { recursive: true, force: true }),
+      ),
+    );
+  }
+
   chainOriginBotId(messageId: string): string | null {
     const visited = new Set<string>();
     let message = this.#state.messages.find((candidate) => candidate.id === messageId);
@@ -565,6 +622,25 @@ export class MailboxStore {
       if (attachment) return resolveManagedAttachment(this.#transfersRoot, attachment);
     }
     return null;
+  }
+
+  async listExportAttachments(): Promise<ExportedAttachmentFile[]> {
+    const files: ExportedAttachmentFile[] = [];
+    for (const [messageIndex, message] of this.#state.messages.entries()) {
+      for (const attachment of message.attachments) {
+        const resolved = await resolveManagedAttachment(this.#transfersRoot, attachment);
+        if (!resolved) continue;
+        files.push({
+          sourcePath: resolved.path,
+          relativePath: join(
+            "attachments",
+            `${messageIndex + 1}-${safeArchiveSegment(message.id)}`,
+            `${safeArchiveSegment(attachment.id)}-${safeArchiveSegment(attachment.name)}`,
+          ),
+        });
+      }
+    }
+    return files;
   }
 
   #context(delivery: StoredDelivery): DeliveryContext {
@@ -739,6 +815,15 @@ function sanitizeName(path: string): string {
     .replace(/^\.+/, "")
     .trim();
   return value.slice(0, 180) || "attachment";
+}
+
+function safeArchiveSegment(value: string): string {
+  return (
+    basename(value)
+      .replace(/[^\p{L}\p{N}._ -]+/gu, "-")
+      .replace(/^\.+/, "")
+      .slice(0, 120) || "item"
+  );
 }
 
 function uniqueName(name: string, used: Set<string>): string {

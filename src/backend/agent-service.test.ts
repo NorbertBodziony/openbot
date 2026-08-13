@@ -34,6 +34,7 @@ afterEach(async () => {
   delete process.env.OPENBOT_FAKE_AUTO_COMPLETE;
   delete process.env.OPENBOT_FAKE_CONTEXT_USAGE;
   delete process.env.OPENBOT_FAKE_COMPACTION_ERROR;
+  delete process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY;
   await rm(root, { recursive: true, force: true });
 });
 
@@ -402,6 +403,33 @@ describe.sequential("AgentService", () => {
     );
   });
 
+  it("does not fail or replay a turn whose start response times out after lifecycle events", async () => {
+    process.env.OPENBOT_FAKE_AUTO_COMPLETE = "Finished despite the late response";
+    process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY = "2000";
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 1000);
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+
+    await service.sendMessage({ botId: "chief", text: "Run exactly once" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
+    await waitFor(() =>
+      events.some((event) => event.type === "error" && event.code === "delivery_start_unconfirmed"),
+    );
+
+    expect(service.listQueue("chief").deliveries[0]).toMatchObject({
+      status: "completed",
+      error: null,
+    });
+    expect(
+      (await protocolMessages()).filter((message) => message.method === "turn/start"),
+    ).toHaveLength(1);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "error", code: "delivery_start_unconfirmed" }),
+    );
+  });
+
   it("resumes stored threads and does not replay an uncertain running delivery", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
@@ -533,7 +561,10 @@ process.stdin.on("data", (chunk) => {
       if (message.method === "turn/start") {
         const turnId = "turn-" + (++turnCounter);
         turns.set(turnId, { id: turnId, status: "inProgress", items: [] });
-        write({ id: message.id, result: { turn: { id: turnId, status: "inProgress", items: [] } } });
+        const respondToStart = () => write({ id: message.id, result: { turn: { id: turnId, status: "inProgress", items: [] } } });
+        const startResponseDelay = Number(process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY || 0);
+        if (startResponseDelay > 0) setTimeout(respondToStart, startResponseDelay);
+        else respondToStart();
         write({ method: "turn/started", params: { threadId: message.params.threadId, turn: { id: turnId } } });
         if (process.env.OPENBOT_FAKE_CONTEXT_USAGE) {
           const totalTokens = Number(process.env.OPENBOT_FAKE_CONTEXT_USAGE);

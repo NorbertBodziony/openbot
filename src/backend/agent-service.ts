@@ -10,7 +10,6 @@ import type {
   AgentStatus,
   AttachmentDataInput,
   BotSummary,
-  ConversationMessage,
   ConversationSnapshot,
   DraftAttachment,
   QueuedMessageReceipt,
@@ -25,6 +24,13 @@ import { CodexAppServerClient } from "./app-server-client";
 import type { BotStore } from "./bot-store";
 import { BROWSER_DYNAMIC_TOOLS, type BrowserHost, OPENBOT_BROWSER_NAMESPACE } from "./browser-host";
 import { CodexCliError, type CodexCliInfo, resolveCodexCli } from "./cli";
+import {
+  mergeConversationSnapshots,
+  newAssistantMessage,
+  normalizeCompletionStatus,
+  snapshotFromThread,
+  sortConversationMessages,
+} from "./conversation-snapshots";
 import type { DeliveryContext, MailboxStore } from "./mailbox-store";
 import {
   type AccountRateLimitResult,
@@ -121,11 +127,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #mailbox: MailboxStore;
   readonly #browser: BrowserHost;
   readonly #computerUsePrerequisites: (() => ComputerUsePrerequisites) | null;
+  readonly #requestTimeoutMs: number;
   readonly #snapshots = new Map<string, ConversationSnapshot>();
   readonly #threadToBot = new Map<string, string>();
   readonly #loadedThreads = new Set<string>();
   readonly #pendingPrompts = new Map<RequestId, PendingPrompt>();
   readonly #itemTurns = new Map<string, string>();
+  readonly #turnAssociations = new Map<string, Promise<void>>();
   readonly #drainingBots = new Set<string>();
   readonly #scheduledDrains = new Set<string>();
   readonly #lastConversationSignatures = new Map<string, string>();
@@ -145,12 +153,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     mailbox: MailboxStore,
     browser: BrowserHost,
     computerUsePrerequisites: (() => ComputerUsePrerequisites) | null = null,
+    requestTimeoutMs = 30_000,
   ) {
     super();
     this.#store = store;
     this.#mailbox = mailbox;
     this.#browser = browser;
     this.#computerUsePrerequisites = computerUsePrerequisites;
+    this.#requestTimeoutMs = requestTimeoutMs;
     this.#browser.onChanged((tabs, activeTabId) => {
       this.#emit({ type: "browser-changed", tabs, activeTabId });
     });
@@ -207,6 +217,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error("Stop the agent and cancel its queued messages before deleting it.");
     }
 
+    await this.#mailbox.deleteBotData(botId);
     await this.#store.deleteBot(botId);
     this.#snapshots.delete(botId);
     this.#lastConversationSignatures.delete(botId);
@@ -234,6 +245,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#restartTimer = null;
     this.#clearCompactionRuntime();
     this.#pendingPrompts.clear();
+    this.#turnAssociations.clear();
     this.#browser.clearControls();
     const client = this.#client;
     this.#client = null;
@@ -398,7 +410,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let client: CodexAppServerClient | null = null;
     try {
       this.#cli = await resolveCodexCli();
-      client = new CodexAppServerClient(this.#cli.executable);
+      client = new CodexAppServerClient(this.#cli.executable, this.#requestTimeoutMs);
       this.#bindClient(client);
       client.start();
       this.#client = client;
@@ -852,6 +864,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#emitQueue(bot.id);
       this.#emitConversation(snapshot);
     } catch (error) {
+      if (isRequestTimeout(error, "turn/start")) {
+        this.#emitError(
+          "delivery_start_unconfirmed",
+          "Codex did not confirm the turn start in time. OpenBot will wait for lifecycle events instead of retrying potentially duplicated work.",
+          delivery.recipientBotId,
+        );
+        return;
+      }
       await this.#mailbox.markTerminal(
         delivery.id,
         "failed",
@@ -908,12 +928,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const bot = this.#store
           .list()
           .find((candidate) => candidate.id === delivery.recipientBotId);
-        if (bot?.threadId && delivery.turnId) {
+        if (bot?.threadId) {
           const response = await client.request<ThreadResponse>("thread/read", {
             threadId: bot.threadId,
             includeTurns: true,
           });
-          const turn = response.thread.turns?.find((candidate) => candidate.id === delivery.turnId);
+          const turn = response.thread.turns?.find(
+            (candidate) =>
+              candidate.id === delivery.turnId ||
+              candidate.items?.some(
+                (item) => item.type === "userMessage" && item.clientId === delivery.id,
+              ),
+          );
+          if (turn && !delivery.turnId) {
+            await this.#mailbox.markRunning(delivery.id, turn.id);
+          }
           if (turn?.status === "completed") {
             terminal = "completed";
             reason = "Recovered completed delivery after restart.";
@@ -993,6 +1022,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         const snapshot = this.#ensureSnapshot(botId, threadId);
         snapshot.activeTurnId = turnId;
+        const association = this.#associateStartedTurn(botId, turnId, snapshot);
+        this.#turnAssociations.set(turnId, association);
+        void association.finally(() => {
+          if (this.#turnAssociations.get(turnId) === association) {
+            this.#turnAssociations.delete(turnId);
+          }
+        });
         this.#emit({ type: "turn-started", botId, threadId, turnId });
         this.#emitConversation(snapshot);
         return;
@@ -1035,7 +1071,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         message.text += delta;
         message.status = "streaming";
-        this.#emitConversation(snapshot);
+        snapshot.revision += 1;
+        this.#emit({
+          type: "conversation-delta",
+          botId,
+          threadId,
+          turnId,
+          messageId: itemId,
+          delta,
+          createdAt: message.createdAt,
+          revision: snapshot.revision,
+        });
         return;
       }
       case "turn/completed": {
@@ -1085,6 +1131,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     turnId: string,
     status: string,
   ): Promise<void> {
+    await this.#turnAssociations.get(turnId)?.catch(() => undefined);
     const shouldCompact = this.#reserveContextCompaction(botId, threadId);
     this.#browser.endControl(threadId, turnId);
     const snapshot = this.#ensureSnapshot(botId, threadId);
@@ -1121,6 +1168,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#emitConversation(snapshot);
     if (shouldCompact) await this.#requestContextCompaction(botId, threadId);
     else this.#scheduleDrain(botId);
+  }
+
+  async #associateStartedTurn(
+    botId: string,
+    turnId: string,
+    snapshot: ConversationSnapshot,
+  ): Promise<void> {
+    const delivery = this.#mailbox.startingDeliveryForBot(botId);
+    if (!delivery) return;
+    try {
+      await this.#mailbox.markRunning(delivery.delivery.id, turnId);
+      this.#syncDeliveryMessage(snapshot, delivery.delivery.id);
+      this.#emitQueue(botId);
+    } catch (error) {
+      this.#emitError("delivery_turn_association_failed", error, botId);
+    }
   }
 
   #updateContextBudget(threadId: string, params: unknown): void {
@@ -1524,129 +1587,6 @@ function developerInstructions(bot: BotSummary, sharedRoot: string): string {
   ].join("\n");
 }
 
-function snapshotFromThread(
-  botId: string,
-  thread: ThreadResponse["thread"],
-  findDelivery: (deliveryId: string) => DeliveryContext | null,
-): ConversationSnapshot {
-  const messages: ConversationMessage[] = [];
-  for (const turn of thread.turns ?? []) {
-    const items = turn.items ?? [];
-    const firstUserItem = items.find(
-      (item) => item.type === "userMessage" && typeof item.clientId === "string",
-    );
-    const firstDelivery = firstUserItem?.clientId ? findDelivery(firstUserItem.clientId) : null;
-    const deliveryTime = firstDelivery ? Date.parse(firstDelivery.delivery.createdAt) : Number.NaN;
-    const turnStartedAt = turn.startedAt ? turn.startedAt * 1_000 : Number.NaN;
-    const baseTime = Number.isFinite(deliveryTime)
-      ? deliveryTime
-      : Number.isFinite(turnStartedAt)
-        ? turnStartedAt
-        : Date.now();
-    for (const [itemIndex, item] of items.entries()) {
-      const createdAt = new Date(baseTime + itemIndex).toISOString();
-      if (item.type === "userMessage" && typeof item.id === "string") {
-        const delivery = item.clientId ? findDelivery(item.clientId) : null;
-        const text = (item.content ?? [])
-          .filter((part) => part.type === "text" && typeof part.text === "string")
-          .map((part) => part.text)
-          .join("\n");
-        if (text) {
-          messages.push({
-            id: delivery?.delivery.id ?? item.id,
-            turnId: turn.id,
-            author: delivery?.delivery.sender.kind === "bot" ? "agent" : "user",
-            source: delivery?.delivery.sender.kind === "bot" ? "agent" : "user",
-            senderBotId:
-              delivery?.delivery.sender.kind === "bot" ? delivery.delivery.sender.botId : undefined,
-            replyToMessageId: delivery?.delivery.replyToMessageId,
-            attachments: delivery?.delivery.attachments,
-            delivery: delivery
-              ? {
-                  id: delivery.delivery.id,
-                  status: delivery.delivery.status,
-                  position: delivery.delivery.position,
-                }
-              : undefined,
-            text: delivery?.delivery.text ?? text,
-            createdAt: delivery?.delivery.createdAt ?? createdAt,
-            status: "completed",
-          });
-        }
-      }
-      if (item.type === "agentMessage" && typeof item.id === "string" && item.text) {
-        messages.push({
-          id: item.id,
-          turnId: turn.id,
-          author: "assistant",
-          text: item.text,
-          createdAt,
-          status: normalizeCompletionStatus(turn.status ?? "completed"),
-          itemType: typeof item.phase === "string" ? item.phase : "agentMessage",
-        });
-      }
-    }
-  }
-  sortConversationMessages(messages);
-  return { botId, threadId: thread.id, activeTurnId: null, revision: 0, messages };
-}
-
-function mergeConversationSnapshots(
-  stored: ConversationSnapshot,
-  live: ConversationSnapshot,
-): ConversationSnapshot {
-  const messages = new Map(stored.messages.map((message) => [message.id, message]));
-  for (const message of live.messages) messages.set(message.id, message);
-  const merged: ConversationSnapshot = {
-    botId: live.botId,
-    threadId: live.threadId ?? stored.threadId,
-    activeTurnId: live.activeTurnId,
-    revision: live.revision,
-    messages: [...messages.values()],
-  };
-  sortConversationMessages(merged.messages);
-  return merged;
-}
-
-function sortConversationMessages(messages: ConversationMessage[]): void {
-  messages.sort((left, right) => {
-    if (left.turnId && left.turnId === right.turnId) {
-      const rankDifference = turnMessageRank(left) - turnMessageRank(right);
-      if (rankDifference !== 0) return rankDifference;
-    }
-    const leftTime = Date.parse(left.createdAt);
-    const rightTime = Date.parse(right.createdAt);
-    if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return 0;
-    return leftTime - rightTime;
-  });
-}
-
-function turnMessageRank(message: ConversationMessage): number {
-  if (message.exchange?.direction === "incoming" || message.author === "user") return 0;
-  if (message.author === "assistant" && message.itemType === "commentary") return 1;
-  if (message.exchange?.direction === "outgoing") return 2;
-  if (message.author === "assistant") return 3;
-  return 2;
-}
-
-function newAssistantMessage(id: string, turnId: string): ConversationMessage {
-  return {
-    id,
-    turnId,
-    author: "assistant",
-    text: "",
-    createdAt: new Date().toISOString(),
-    status: "streaming",
-    itemType: "agentMessage",
-  };
-}
-
-function normalizeCompletionStatus(status: string): ConversationMessage["status"] {
-  if (status === "failed") return "failed";
-  if (status === "interrupted") return "interrupted";
-  return "completed";
-}
-
 function isDynamicToolCall(value: unknown): value is DynamicToolCallParams {
   return (
     isRecord(value) &&
@@ -1662,4 +1602,8 @@ function isDynamicToolCall(value: unknown): value is DynamicToolCallParams {
 function cleanModelName(value: string | undefined, fallback: string): string {
   if (!value) return fallback;
   return value.replace(/^GPT-5\.6\s*/i, "").trim() || fallback;
+}
+
+function isRequestTimeout(error: unknown, method: string): boolean {
+  return error instanceof Error && error.message === `Codex request timed out: ${method}`;
 }

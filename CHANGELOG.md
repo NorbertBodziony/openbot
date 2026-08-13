@@ -18,6 +18,8 @@ All notable changes to OpenBot will be documented here. The project follows
 - FIFO queues, agent-to-agent messaging, replies, reactions, attachments, and file transfers.
 - Embedded browser control and optional macOS Computer Use integration.
 - SolidJS desktop interface with resizable agent, browser, and settings panels.
+- Explicit first-launch consent before the full-access Codex service can start.
+- Local ZIP backups, privacy-safe diagnostics, release SBOMs, and multi-version macOS CI checks.
 
 ### Changed
 

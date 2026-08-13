@@ -16,6 +16,7 @@ import type {
   UpdateStatus,
 } from "../../shared/ipc";
 import { Conversation } from "./components/Conversation";
+import { FullAccessConsent } from "./components/FullAccessConsent";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./components/PanelResizer";
 import { Sidebar, type SidebarAgentState } from "./components/Sidebar";
 import { accentForAvatarColor, accentForBot, type BotMessage, type BotProfile } from "./data";
@@ -111,6 +112,8 @@ export function App() {
   const [leftPanelCollapsed, setLeftPanelCollapsed] = createSignal(
     window.localStorage.getItem(LEFT_PANEL_COLLAPSED_STORAGE_KEY) === "true",
   );
+  const [fullAccessAccepted, setFullAccessAccepted] = createSignal(false);
+  const [fullAccessConsentLoaded, setFullAccessConsentLoaded] = createSignal(false);
   const pendingConversationSnapshots = new Map<string, ConversationSnapshot>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let conversationFrame: number | undefined;
@@ -137,6 +140,10 @@ export function App() {
       .getStatus()
       .then(setUpdateStatus)
       .catch(() => undefined);
+    void window.openbot
+      .getFullAccessConsent()
+      .then(setFullAccessAccepted)
+      .finally(() => setFullAccessConsentLoaded(true));
 
     void Promise.all([
       window.openbot
@@ -206,6 +213,9 @@ export function App() {
       case "conversation":
         scheduleConversation(event.snapshot);
         return;
+      case "conversation-delta":
+        applyConversationDelta(event);
+        return;
       case "queue-changed":
         setQueues((current) => ({ ...current, [event.snapshot.botId]: event.snapshot }));
         return;
@@ -265,6 +275,34 @@ export function App() {
         for (const pending of snapshots) applyConversation(pending);
       });
     });
+  }
+
+  function applyConversationDelta(event: Extract<AgentEvent, { type: "conversation-delta" }>) {
+    if (event.revision <= (conversationRevisions()[event.botId] ?? -1)) return;
+    pendingConversationSnapshots.delete(event.botId);
+    setConversationRevisions((current) => ({ ...current, [event.botId]: event.revision }));
+
+    const existing = liveMessages()[event.botId]?.find((message) => message.id === event.messageId);
+    if (existing) {
+      existing.body += event.delta;
+      existing.streaming = true;
+    } else {
+      const message = createMutable<BotMessage>({
+        id: event.messageId,
+        turnId: event.turnId,
+        author: "bot",
+        body: event.delta,
+        time: formatTime(event.createdAt),
+        streaming: true,
+        animate: conversationLoaded()[event.botId] === true,
+        kind: "text",
+      });
+      setLiveMessages((current) => ({
+        ...current,
+        [event.botId]: [...(current[event.botId] ?? []), message],
+      }));
+    }
+    setConversationLoaded((current) => ({ ...current, [event.botId]: true }));
   }
 
   function applyConversation(snapshot: ConversationSnapshot) {
@@ -542,6 +580,11 @@ export function App() {
     window.localStorage.setItem(LEFT_PANEL_COLLAPSED_STORAGE_KEY, String(collapsed));
   }
 
+  async function acceptFullAccess(): Promise<void> {
+    await window.openbot.acceptFullAccessConsent();
+    setFullAccessAccepted(true);
+  }
+
   async function runUpdateAction(): Promise<void> {
     const phase = updateStatus().phase;
     if (phase === "ready") {
@@ -556,75 +599,91 @@ export function App() {
   }
 
   return (
-    <div
-      class="app-frame"
-      classList={{ "app-frame-sidebar-collapsed": leftPanelCollapsed() }}
-      style={`--left-panel-width: ${leftPanelCollapsed() ? 0 : leftPanelWidth()}px`}
+    <Show
+      when={fullAccessConsentLoaded()}
+      fallback={<div class="full-access-screen" role="status" aria-label="Loading OpenBot" />}
     >
-      <Show when={!leftPanelCollapsed()}>
-        <Sidebar
-          bots={botList()}
-          activeBotId={activeBot()?.id ?? ""}
-          appInfo={appInfo()}
-          agentStatus={agentStatus()}
-          accountUsage={accountUsage()}
-          updateStatus={updateStatus()}
-          agentStates={sidebarAgentStates()}
-          onSelectBot={selectBot}
-          onCreateBot={() => setAgentPickerOpen(true)}
-          onEditBot={editBot}
-          onDeleteBot={deleteBot}
-          onRefreshUsage={refreshAccountUsage}
-          onUpdateAction={runUpdateAction}
-          onOpenExternal={(destination) => window.openbot.openExternal(destination)}
-          onCollapse={() => setSidebarCollapsed(true)}
-        />
-        <PanelResizer
-          class="left-panel-resizer"
-          label="Resize left sidebar"
-          controls="bot-sidebar"
-          direction="left"
-          value={leftPanelWidth()}
-          defaultValue={LEFT_PANEL_DEFAULT}
-          min={LEFT_PANEL_MIN}
-          max={LEFT_PANEL_MAX}
-          onResize={setLeftPanelWidth}
-          onResizeEnd={(value) => savePanelWidth(LEFT_PANEL_STORAGE_KEY, value)}
-        />
+      <Show
+        when={fullAccessAccepted()}
+        fallback={<FullAccessConsent onAccept={acceptFullAccess} />}
+      >
+        <div
+          class="app-frame"
+          classList={{ "app-frame-sidebar-collapsed": leftPanelCollapsed() }}
+          style={`--left-panel-width: ${leftPanelCollapsed() ? 0 : leftPanelWidth()}px`}
+        >
+          <Show when={!leftPanelCollapsed()}>
+            <Sidebar
+              bots={botList()}
+              activeBotId={activeBot()?.id ?? ""}
+              appInfo={appInfo()}
+              agentStatus={agentStatus()}
+              accountUsage={accountUsage()}
+              updateStatus={updateStatus()}
+              agentStates={sidebarAgentStates()}
+              onSelectBot={selectBot}
+              onCreateBot={() => setAgentPickerOpen(true)}
+              onEditBot={editBot}
+              onDeleteBot={deleteBot}
+              onRefreshUsage={refreshAccountUsage}
+              onUpdateAction={runUpdateAction}
+              onExportData={async () => {
+                await window.openbot.maintenance.exportData();
+              }}
+              onExportDiagnostics={async () => {
+                await window.openbot.maintenance.exportDiagnostics();
+              }}
+              onOpenExternal={(destination) => window.openbot.openExternal(destination)}
+              onCollapse={() => setSidebarCollapsed(true)}
+            />
+            <PanelResizer
+              class="left-panel-resizer"
+              label="Resize left sidebar"
+              controls="bot-sidebar"
+              direction="left"
+              value={leftPanelWidth()}
+              defaultValue={LEFT_PANEL_DEFAULT}
+              min={LEFT_PANEL_MIN}
+              max={LEFT_PANEL_MAX}
+              onResize={setLeftPanelWidth}
+              onResizeEnd={(value) => savePanelWidth(LEFT_PANEL_STORAGE_KEY, value)}
+            />
+          </Show>
+          <Conversation
+            agentStatus={agentStatus()}
+            bot={activeBot()}
+            bots={botList()}
+            modelOptions={modelOptions()}
+            messages={activeMessages()}
+            loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
+            queue={activeQueue()}
+            browserTabs={browserTabs()}
+            activeBrowserTabId={activeBrowserTabId()}
+            browserControlState={browserControlState()}
+            leftSidebarCollapsed={leftPanelCollapsed()}
+            prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
+            activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
+            agentPickerOpen={agentPickerOpen()}
+            creatingAgent={creatingAgent()}
+            settingsRequest={settingsRequest()}
+            onCloseAgentPicker={() => setAgentPickerOpen(false)}
+            onCreateAgent={() => void createAgent()}
+            onSelectAgent={selectBot}
+            onUpdateBot={updateBot}
+            onSendMessage={sendMessage}
+            onCompleteOnboarding={completeOnboarding}
+            onAnswerPrompt={answerPrompt}
+            onCancelQueuedMessage={cancelQueuedMessage}
+            onResumeQueue={resumeQueue}
+            onActivateBrowserTab={activateBrowserTab}
+            onCloseBrowserTab={closeBrowserTab}
+            onToggleLeftSidebar={() => setSidebarCollapsed(false)}
+            onOpenCodexSetup={() => window.openbot.openExternal("codex-setup")}
+            onStop={stopActiveTurn}
+          />
+        </div>
       </Show>
-      <Conversation
-        agentStatus={agentStatus()}
-        bot={activeBot()}
-        bots={botList()}
-        modelOptions={modelOptions()}
-        messages={activeMessages()}
-        loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
-        queue={activeQueue()}
-        browserTabs={browserTabs()}
-        activeBrowserTabId={activeBrowserTabId()}
-        browserControlState={browserControlState()}
-        leftSidebarCollapsed={leftPanelCollapsed()}
-        prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
-        activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
-        agentPickerOpen={agentPickerOpen()}
-        creatingAgent={creatingAgent()}
-        settingsRequest={settingsRequest()}
-        onCloseAgentPicker={() => setAgentPickerOpen(false)}
-        onCreateAgent={() => void createAgent()}
-        onSelectAgent={selectBot}
-        onUpdateBot={updateBot}
-        onSendMessage={sendMessage}
-        onCompleteOnboarding={completeOnboarding}
-        onAnswerPrompt={answerPrompt}
-        onCancelQueuedMessage={cancelQueuedMessage}
-        onResumeQueue={resumeQueue}
-        onActivateBrowserTab={activateBrowserTab}
-        onCloseBrowserTab={closeBrowserTab}
-        onToggleLeftSidebar={() => setSidebarCollapsed(false)}
-        onOpenCodexSetup={() => window.openbot.openExternal("codex-setup")}
-        onStop={stopActiveTurn}
-      />
-    </div>
+    </Show>
   );
 }
 

@@ -28,12 +28,12 @@ describe("UpdateService", () => {
     const beforeInstall = vi.fn(async () => undefined);
     updater.checkForUpdates.mockImplementation(async () => {
       updater.emit("checking-for-update");
-      updater.emit("update-available", { version: "0.2.0" });
+      updater.emit("update-available", { version: "0.1.1" });
       return null;
     });
     updater.downloadUpdate.mockImplementation(async () => {
       updater.emit("download-progress", { percent: 42.4 });
-      updater.emit("update-downloaded", { version: "0.2.0" });
+      updater.emit("update-downloaded", { version: "0.1.1" });
       return [];
     });
     const service = createService(updater, beforeInstall);
@@ -47,13 +47,13 @@ describe("UpdateService", () => {
     expect(service.getStatus()).toMatchObject({
       phase: "available",
       currentVersion: "0.1.0",
-      availableVersion: "0.2.0",
+      availableVersion: "0.1.1",
     });
 
     await service.downloadUpdate();
     expect(service.getStatus()).toMatchObject({
       phase: "ready",
-      availableVersion: "0.2.0",
+      availableVersion: "0.1.1",
       progress: 100,
     });
 
