@@ -1069,6 +1069,53 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(composer).toHaveTextContent(""));
   });
 
+  it("shows the first queued message and closes onboarding when the send event arrives", async () => {
+    vi.mocked(window.openbot.agent.sendMessage).mockImplementationOnce(async (input) => {
+      emitAgentEvent?.({
+        type: "conversation",
+        snapshot: {
+          botId: input.botId,
+          threadId: "thread-chief",
+          activeTurnId: null,
+          revision: 1,
+          messages: [
+            {
+              id: "delivery-visible",
+              author: "user",
+              text: input.text,
+              createdAt: "2026-08-14T12:00:00.000Z",
+              status: "completed",
+              delivery: { id: "delivery-visible", status: "queued", position: 1 },
+            },
+          ],
+        },
+      });
+      return {
+        messageId: "message-visible",
+        deliveries: [
+          { id: "delivery-visible", recipientBotId: input.botId, status: "queued", position: 1 },
+        ],
+      };
+    });
+
+    render(() => <App />);
+    await confirmOnboardingModel();
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Show this message";
+    await fireEvent.input(composer);
+    await fireEvent.keyDown(composer, { key: "Enter" });
+
+    expect(
+      await screen.findByText("Show this message", { selector: ".message-copy" }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("Choose a model to get started.")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("listbox", { name: "What do you want me helping with most?" }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
   it("replies to a message through the composer and keeps the reference in the queued input", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });

@@ -716,6 +716,9 @@ export function Conversation(props: ConversationProps) {
   const [settingsReasoning, setSettingsReasoning] = createSignal<AgentReasoningEffort>("medium");
   const [onboardingBots, setOnboardingBots] = createSignal<Record<string, true>>({});
   const [modelConfirmedBots, setModelConfirmedBots] = createSignal<Record<string, true>>({});
+  const [completedOnboardingBots, setCompletedOnboardingBots] = createSignal<Record<string, true>>(
+    {},
+  );
   const [avatarPickerOpen, setAvatarPickerOpen] = createSignal(false);
   const [avatarShape, setAvatarShape] = createSignal<BotAvatarShape>("blob");
   const [avatarColor, setAvatarColor] = createSignal<BotAvatarColor>("orange");
@@ -916,6 +919,22 @@ export function Conversation(props: ConversationProps) {
     if (botId) setModelConfirmedBots((current) => ({ ...current, [botId]: true }));
   }
 
+  function finishOnboarding(botId: string): void {
+    setCompletedOnboardingBots((current) => ({ ...current, [botId]: true }));
+    setOnboardingBots((current) => {
+      if (!current[botId]) return current;
+      const next = { ...current };
+      delete next[botId];
+      return next;
+    });
+    setModelConfirmedBots((current) => {
+      if (!current[botId]) return current;
+      const next = { ...current };
+      delete next[botId];
+      return next;
+    });
+  }
+
   function updateScrollFade(element = scrollElement) {
     if (!element) return;
     const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
@@ -1063,6 +1082,7 @@ export function Conversation(props: ConversationProps) {
       props.activeTurnId ||
       props.messages.length > 0 ||
       props.onboardingRequest?.botId === botId ||
+      completedOnboardingBots()[botId] ||
       onboardingBots()[botId]
     )
       return;
@@ -1235,6 +1255,7 @@ export function Conversation(props: ConversationProps) {
       (!text.trim() && attachments.length === 0)
     )
       return;
+    stickToLatest = true;
     setSubmitting(true);
     setComposerError(null);
     const sent = await props.onSendMessage(
@@ -1243,7 +1264,10 @@ export function Conversation(props: ConversationProps) {
       override ? null : draft.replyToMessageId,
     );
     setSubmitting(false);
-    if (sent) setDrafts((current) => ({ ...current, [botId]: EMPTY_DRAFT }));
+    if (sent) {
+      setDrafts((current) => ({ ...current, [botId]: EMPTY_DRAFT }));
+      finishOnboarding(botId);
+    }
   }
 
   function replyToMessage(message: BotMessage) {
@@ -1621,13 +1645,7 @@ export function Conversation(props: ConversationProps) {
                       );
                       if (completed) {
                         const botId = props.bot?.id;
-                        if (botId) {
-                          setOnboardingBots((current) => {
-                            const next = { ...current };
-                            delete next[botId];
-                            return next;
-                          });
-                        }
+                        if (botId) finishOnboarding(botId);
                       }
                       setSubmitting(false);
                       return completed;
