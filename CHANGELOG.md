@@ -5,6 +5,12 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-08-14
+
+### Fixed
+
+- Keep the first sent message visible and close onboarding after a successful send.
+
 ## [0.1.5] - 2026-08-14
 
 ### Changed
