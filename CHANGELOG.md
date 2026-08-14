@@ -5,6 +5,8 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-08-14
+
 ### Added
 
 - Add GitHub-hosted Windows x64 CI builds and unsigned NSIS release installers.
