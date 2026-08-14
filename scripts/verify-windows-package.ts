@@ -11,14 +11,15 @@ if (process.platform !== "win32") {
   throw new Error("The Windows package verifier must run on Windows.");
 }
 
-const appPath = resolve(process.argv[2] ?? "dist/win-unpacked");
+const requireUpdateMetadata = process.argv.includes("--require-update-metadata");
+const appPathArgument = process.argv.slice(2).find((argument) => !argument.startsWith("--"));
+const appPath = resolve(appPathArgument ?? "dist/win-unpacked");
 const executablePath = resolve(appPath, "OpenBot.exe");
 const resourcesPath = resolve(appPath, "resources");
 
 await Promise.all([
   access(executablePath),
   access(resolve(resourcesPath, "app.asar")),
-  access(resolve(resourcesPath, "app-update.yml")),
   access(resolve(resourcesPath, "licenses/Electron-LICENSE")),
   access(resolve(resourcesPath, "licenses/LICENSES.chromium.html")),
 ]);
@@ -58,8 +59,14 @@ if (!String(versionInfo.ProductVersion).startsWith(packageJson.version)) {
   );
 }
 
-const updateMetadata = await readFile(resolve(resourcesPath, "app-update.yml"), "utf8");
-if (!updateMetadata.includes("provider: github")) {
+const updateMetadataPath = resolve(resourcesPath, "app-update.yml");
+let updateMetadata: string | null = null;
+try {
+  updateMetadata = await readFile(updateMetadataPath, "utf8");
+} catch (error) {
+  if (requireUpdateMetadata) throw error;
+}
+if (updateMetadata !== null && !updateMetadata.includes("provider: github")) {
   throw new Error("The packaged update provider is not GitHub.");
 }
 

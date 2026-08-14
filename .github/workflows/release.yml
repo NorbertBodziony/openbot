@@ -191,7 +191,7 @@ jobs:
         run: bun run dist:win
 
       - name: Verify packaged application metadata and launch
-        run: bun run verify:package:win
+        run: bun run verify:package:win --require-update-metadata
 
       - name: Verify installer and updater metadata
         shell: pwsh
