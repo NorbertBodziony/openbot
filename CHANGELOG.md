@@ -5,6 +5,12 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-08-14
+
+### Fixed
+
+- Allow Codex or Claude selection on the initial setup screen while provider checks run or setup is still required.
+
 ## [0.1.8] - 2026-08-14
 
 ### Added
