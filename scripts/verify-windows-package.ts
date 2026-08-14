@@ -139,12 +139,25 @@ async function verifyLaunch(executable: string): Promise<void> {
     ]);
     await verifySecondInstanceExits(executable, userDataPath);
   } finally {
-    child.kill();
+    terminateProcessTree(child.pid);
     await Promise.race([
       new Promise<void>((resolveExit) => child.once("exit", () => resolveExit())),
-      new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 2_000)),
+      new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 5_000)),
     ]);
-    await rm(userDataPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+    try {
+      await rm(userDataPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+    } catch (error) {
+      console.warn(`Could not remove the temporary Windows profile: ${String(error)}`);
+    }
+  }
+}
+
+function terminateProcessTree(pid: number | undefined): void {
+  if (pid === undefined) return;
+  try {
+    execFileSync("taskkill.exe", ["/pid", String(pid), "/t", "/f"], { stdio: "ignore" });
+  } catch {
+    // The application can finish before taskkill reads the process tree.
   }
 }
 
