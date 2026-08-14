@@ -45,6 +45,15 @@ mac:
     - target: zip
       arch:
         - arm64
+win:
+  icon: build/icon.ico
+  # Windows builds are intentionally unsigned until release signing is configured.
+  signExecutable: false
+  verifyUpdateCodeSignature: false
+  target:
+    - target: nsis
+      arch:
+        - x64
 dmg:
   title: ${productName} ${version}
   backgroundColor: "#0b0d0e"

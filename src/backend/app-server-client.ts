@@ -63,6 +63,8 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
     const child = spawn(this.#executable, ["app-server", "--listen", "stdio://"], {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
+      shell: process.platform === "win32",
+      windowsHide: true,
     });
     this.#process = child;
 

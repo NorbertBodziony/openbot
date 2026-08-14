@@ -3,7 +3,7 @@
 import { EventEmitter } from "node:events";
 import type { AppUpdater } from "electron-updater";
 import { describe, expect, it, vi } from "vitest";
-import { UpdateService } from "./update-service";
+import { supportsInstalledUpdates, UpdateService } from "./update-service";
 
 class FakeUpdater extends EventEmitter {
   autoDownload = true;
@@ -94,5 +94,15 @@ describe("UpdateService", () => {
 
     expect((await service.checkForUpdates()).phase).toBe("unsupported");
     expect(updater.checkForUpdates).not.toHaveBeenCalled();
+  });
+});
+
+describe("supportsInstalledUpdates", () => {
+  it.each([
+    ["darwin", true],
+    ["win32", true],
+    ["linux", false],
+  ] as const)("returns %s support as %s", (platform, expected) => {
+    expect(supportsInstalledUpdates(platform)).toBe(expected);
   });
 });

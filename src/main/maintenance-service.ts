@@ -33,7 +33,7 @@ export async function exportOpenBotData(
 
   const temporaryRoot = await mkdtemp(join(tmpdir(), "openbot-export-"));
   const exportRoot = join(temporaryRoot, "OpenBot Backup");
-  const archiveCandidate = `${destination}.${randomUUID()}.tmp`;
+  const archiveCandidate = `${destination}.${randomUUID()}.tmp.zip`;
   try {
     await mkdir(exportRoot, { recursive: true, mode: 0o700 });
     const bots = context.service.listBots();
@@ -64,13 +64,24 @@ export async function exportOpenBotData(
       await mkdir(dirname(target), { recursive: true, mode: 0o700 });
       await copyFile(attachment.sourcePath, target);
     }
-    await execFileAsync("/usr/bin/ditto", [
-      "-c",
-      "-k",
-      "--keepParent",
-      exportRoot,
-      archiveCandidate,
-    ]);
+    if (process.platform === "win32") {
+      await execFileAsync("powershell.exe", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Compress-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force",
+        exportRoot,
+        archiveCandidate,
+      ]);
+    } else {
+      await execFileAsync("/usr/bin/ditto", [
+        "-c",
+        "-k",
+        "--keepParent",
+        exportRoot,
+        archiveCandidate,
+      ]);
+    }
     await rename(archiveCandidate, destination);
     return { saved: true };
   } finally {

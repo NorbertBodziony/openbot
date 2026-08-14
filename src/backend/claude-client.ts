@@ -169,6 +169,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       const { stdout } = await execFileAsync(this.#cli.executable, ["auth", "status", "--json"], {
         timeout: 5_000,
         maxBuffer: 64 * 1024,
+        shell: process.platform === "win32",
       });
       const status: unknown = JSON.parse(stdout);
       if (!isRecord(status) || status.loggedIn !== true) {

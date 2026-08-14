@@ -5,6 +5,17 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+### Added
+
+- Add GitHub-hosted Windows x64 CI builds and unsigned NSIS release installers.
+- Add Windows package launch, metadata, updater, and Electron fuse checks.
+
+### Changed
+
+- Publish macOS and Windows assets together only after both release jobs pass.
+- Detect local Codex and Claude CLI installations and enable installed updates on Windows.
+- Keep native window controls visible on Windows.
+
 ## [0.1.7] - 2026-08-14
 
 ### Changed

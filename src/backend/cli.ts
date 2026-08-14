@@ -31,6 +31,7 @@ export class CodexCliError extends Error {
 export async function resolveCodexCli(): Promise<CodexCliInfo> {
   const candidates = await collectCandidates("codex", process.env.OPENBOT_CODEX_PATH, [
     join(homedir(), ".local", "bin", "codex"),
+    join(homedir(), ".local", "bin", "codex.exe"),
     "/opt/homebrew/bin/codex",
     "/usr/local/bin/codex",
   ]);
@@ -42,6 +43,7 @@ export async function resolveCodexCli(): Promise<CodexCliInfo> {
       const { stdout } = await execFileAsync(candidate, ["--version"], {
         timeout: 5_000,
         maxBuffer: 64 * 1024,
+        shell: process.platform === "win32",
       });
       const version = parseCodexVersion(stdout);
       if (!isMinimumVersion(version)) {
@@ -66,7 +68,9 @@ export async function resolveCodexCli(): Promise<CodexCliInfo> {
 export async function resolveClaudeCli(): Promise<ClaudeCliInfo> {
   const candidates = await collectCandidates("claude", process.env.OPENBOT_CLAUDE_PATH, [
     join(homedir(), ".local", "bin", "claude"),
+    join(homedir(), ".local", "bin", "claude.exe"),
     join(homedir(), ".claude", "local", "claude"),
+    join(homedir(), ".claude", "local", "claude.exe"),
     "/opt/homebrew/bin/claude",
     "/usr/local/bin/claude",
   ]);
@@ -78,6 +82,7 @@ export async function resolveClaudeCli(): Promise<ClaudeCliInfo> {
       const { stdout } = await execFileAsync(candidate, ["--version"], {
         timeout: 5_000,
         maxBuffer: 64 * 1024,
+        shell: process.platform === "win32",
       });
       return { executable: candidate, version: parseClaudeVersion(stdout) };
     } catch {
@@ -121,14 +126,33 @@ async function collectCandidates(
   const override = configuredPath?.trim();
   if (override) return [override];
 
-  try {
-    const { stdout } = await execFileAsync("/bin/zsh", ["-lic", `command -v ${command}`], {
-      timeout: 5_000,
-      maxBuffer: 64 * 1024,
-    });
-    if (stdout.trim()) candidates.push(stdout.trim());
-  } catch {
-    // Packaged macOS apps often have a restricted PATH; known locations are checked next.
+  if (process.platform === "win32") {
+    try {
+      const { stdout } = await execFileAsync("where.exe", [command], {
+        timeout: 5_000,
+        maxBuffer: 64 * 1024,
+      });
+      candidates.push(
+        ...stdout
+          .split(/\r?\n/u)
+          .map((path) => path.trim())
+          .filter(Boolean),
+      );
+    } catch {
+      // Known Windows install locations are checked next.
+    }
+    const appData = process.env.APPDATA?.trim();
+    if (appData) candidates.push(join(appData, "npm", `${command}.cmd`));
+  } else {
+    try {
+      const { stdout } = await execFileAsync("/bin/zsh", ["-lic", `command -v ${command}`], {
+        timeout: 5_000,
+        maxBuffer: 64 * 1024,
+      });
+      if (stdout.trim()) candidates.push(stdout.trim());
+    } catch {
+      // Packaged macOS apps often have a restricted PATH; known locations are checked next.
+    }
   }
 
   candidates.push(...knownPaths);

@@ -52,12 +52,13 @@ import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
 import { readSetupState, writeSetupState } from "./setup-store";
 import { handleTrusted } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
-import { UpdateService } from "./update-service";
+import { supportsInstalledUpdates, UpdateService } from "./update-service";
 
 if (!app.isPackaged) {
   app.setPath("userData", join(app.getPath("appData"), "OpenBot Dev"));
 }
 app.enableSandbox();
+if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 protocol.registerSchemesAsPrivileged([
   {
@@ -247,8 +248,9 @@ function createWindow(): BrowserWindow {
     show: false,
     backgroundColor: "#0b0d0e",
     title: "OpenBot",
-    titleBarStyle: "hidden",
-    trafficLightPosition: { x: 13, y: 14 },
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 13, y: 14 } }
+      : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
@@ -380,7 +382,7 @@ if (!hasSingleInstanceLock) {
         currentVersion: app.getVersion(),
         enabled:
           app.isPackaged &&
-          process.platform === "darwin" &&
+          supportsInstalledUpdates(process.platform) &&
           existsSync(join(process.resourcesPath, "app-update.yml")),
         beforeInstall: prepareForShutdown,
       });

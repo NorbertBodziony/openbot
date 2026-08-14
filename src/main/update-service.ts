@@ -27,6 +27,10 @@ interface UpdateServiceOptions {
 
 const DEFAULT_CHECK_INTERVAL = 4 * 60 * 60 * 1_000;
 
+export function supportsInstalledUpdates(platform: NodeJS.Platform): boolean {
+  return platform === "darwin" || platform === "win32";
+}
+
 export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   readonly #updater: UpdateAdapter;
   readonly #options: Required<Omit<UpdateServiceOptions, "beforeInstall">> &
@@ -49,7 +53,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
       availableVersion: null,
       progress: null,
       checkedAt: null,
-      message: options.enabled ? null : "Updates are available in installed macOS builds.",
+      message: options.enabled ? null : "Updates are available in installed desktop builds.",
     };
   }
 

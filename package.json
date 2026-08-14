@@ -58,7 +58,11 @@
     "package": "bun run build && electron-builder --dir --mac --arm64 --config.mac.identity=null --config.mac.notarize=false",
     "verify:package": "bun scripts/verify-macos-package.ts",
     "package:verify": "bun run package && bun run verify:package",
+    "package:win": "bun run build && electron-builder --dir --win --x64",
+    "verify:package:win": "bun scripts/verify-windows-package.ts",
+    "package:win:verify": "bun run package:win && bun run verify:package:win",
     "dist:mac": "bun run build && electron-builder --mac --arm64 --config.mac.identity=null --config.mac.notarize=false",
+    "dist:win": "bun run build && electron-builder --win nsis --x64 --publish never",
     "dist:release": "bun run build && electron-builder --mac --arm64 --publish never"
   },
   "dependencies": {

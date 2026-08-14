@@ -7,7 +7,7 @@ OpenBot is a local-first desktop workspace for persistent AI teammates. It suppo
 [Codex App Server](https://learn.chatgpt.com/docs/app-server) and
 [Claude Code](https://code.claude.com/docs/en/overview). It gives every agent its own workspace and
 conversation, and provides local queues, file transfers, an embedded browser, and agent-to-agent
-messaging in one macOS app.
+messaging in one desktop app.
 
 > [!WARNING]
 > OpenBot is a development preview. Agents currently run with `danger-full-access` and
@@ -32,26 +32,41 @@ visited pages use the network, and installed plugins may connect to their own se
 
 ## Install
 
-OpenBot currently supports macOS 12 or newer on Apple Silicon.
+OpenBot supports macOS 12 or newer on Apple Silicon and Windows 10 or newer on x64 systems.
+
+### macOS
 
 1. Download the latest `OpenBot-*.dmg` from [GitHub Releases](https://github.com/NorbertBodziony/openbot/releases).
 2. Drag OpenBot to Applications and open it.
-3. Install at least one supported CLI. You can install both.
 
-   Codex CLI:
+### Windows
 
-   ```bash
-   curl -fsSL https://chatgpt.com/codex/install.sh | sh
-   ```
+1. Download the latest `OpenBot-*-x64.exe` from [GitHub Releases](https://github.com/NorbertBodziony/openbot/releases).
+2. Run the installer and open OpenBot.
 
-   Claude CLI:
+> [!IMPORTANT]
+> The Windows preview is not code-signed. Windows can show an `Unknown publisher` or SmartScreen
+> warning. Check the release checksum or GitHub build attestation before you run the installer.
 
-   ```bash
-   curl -fsSL https://claude.ai/install.sh | bash
-   ```
+### Agent setup
 
-4. Run `codex login` or `claude auth login` in Terminal.
-5. Restart OpenBot. Each available provider appears in the agent model list.
+Install at least one supported CLI. You can install both.
+
+Codex CLI on macOS:
+
+```bash
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+```
+
+Claude CLI on macOS:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+On Windows, install the native CLI and make sure `codex` or `claude` is available in PowerShell.
+Claude Code also requires Git for Windows. Then run `codex login` or `claude auth login` and restart
+OpenBot. Each available provider appears in the agent model list.
 
 Bun and Node.js are not required when using an installed release. Screen Recording and Accessibility
 permissions are needed only for the optional Computer Use plugin.
@@ -94,8 +109,11 @@ deletes the development state. It does not change agent workspaces or CLI sessio
 | `bun run test:codex` | Probe the real CLI handshake and account without starting a paid turn. |
 | `bun run package` | Build an unpacked local ARM64 application. |
 | `bun run package:verify` | Build and verify the real ARM64 app bundle, icon, metadata, ASAR, and fuses. |
+| `bun run package:win` | Build an unpacked local Windows x64 application on Windows. |
+| `bun run package:win:verify` | Build and verify the Windows x64 application on Windows. |
 | `bun run release:preflight` | Verify version, Git state, Apple signing, and GitHub release secrets before tagging. |
 | `bun run dist:mac` | Build unsigned local ARM64 DMG and ZIP update artifacts. |
+| `bun run dist:win` | Build an unsigned Windows x64 NSIS installer on Windows. |
 | `bun run release:patch` | Create the next patch version commit and tag. |
 | `bun run test:filesystem` | **Online/manual:** run a real full-access Codex filesystem turn. |
 | `bun run test:imagegen` | **Online/manual:** run a real full-access image-generation turn. |
@@ -149,7 +167,7 @@ described above.
 
 Releases are tag-driven. `bun run release:patch`, `release:minor`, or `release:major` prepares the
 version and changelog. After review, commit, preflight, and tag the release; pushing the tag builds a
-signed and notarized ARM64 release.
+signed and notarized macOS ARM64 release and an unsigned Windows x64 release in GitHub Actions.
 Installed builds check GitHub Releases for updates and expose download/restart controls in the account
 popover. Release signing secrets and the complete procedure are documented in
 [docs/RELEASING.md](docs/RELEASING.md).
