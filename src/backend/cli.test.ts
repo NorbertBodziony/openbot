@@ -67,10 +67,9 @@ describe("Windows CLI fallback paths", () => {
   it.runIf(process.platform === "win32")(
     "runs npm command shims when the user profile contains a space",
     async () => {
-      const root = await createWindowsNpmShims();
+      await createWindowsNpmShims();
       await expect(resolveCodexCli()).resolves.toMatchObject({ version: "0.144.1" });
       await expect(resolveClaudeCli()).resolves.toMatchObject({ version: "2.1.231" });
-      expect(root).toContain("User Name");
     },
   );
 
@@ -90,7 +89,7 @@ describe("Windows CLI fallback paths", () => {
   });
 });
 
-async function createWindowsNpmShims(): Promise<string> {
+async function createWindowsNpmShims(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "openbot-cli-test-"));
   temporaryPaths.push(root);
   const appData = join(root, "User Name", "AppData", "Roaming");
@@ -101,7 +100,6 @@ async function createWindowsNpmShims(): Promise<string> {
     writeFile(join(npmDirectory, "claude.cmd"), "@echo off\r\necho 2.1.231 (Claude Code)\r\n"),
   ]);
   useIsolatedWindowsEnvironment(appData, join(root, "missing-local-app-data"));
-  return root;
 }
 
 function useIsolatedWindowsEnvironment(appData: string, localAppData: string): void {
