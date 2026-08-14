@@ -51,6 +51,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
   let editor: HTMLDivElement | undefined;
   let lastBotId: string | undefined;
   let lastEmittedValue = "";
+  let isComposing = false;
 
   createEffect(() => {
     const botId = props.botId;
@@ -118,6 +119,8 @@ export function ComposerEditor(props: ComposerEditorProps) {
   }
 
   function handleKeyDown(event: KeyboardEvent) {
+    if (event.key === "Enter" && (isComposing || event.isComposing)) return;
+
     const options = matchingBots();
     if (mention() && options.length > 0) {
       if (event.key === "ArrowDown") {
@@ -130,7 +133,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
         setActiveOption((current) => (current - 1 + options.length) % options.length);
         return;
       }
-      if (event.key === "Enter" || event.key === "Tab") {
+      if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
         event.preventDefault();
         const bot = options[activeOption()];
         if (bot) insertMention(bot);
@@ -142,7 +145,16 @@ export function ComposerEditor(props: ComposerEditorProps) {
       setMention(null);
       return;
     }
-    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    if (event.key === "Enter" && event.shiftKey) {
+      event.preventDefault();
+      if (!editor) return;
+      insertPlainText(editor, "\n");
+      emitValue();
+      updateMention();
+      editor.scrollTop = editor.scrollHeight;
+      return;
+    }
+    if (event.key === "Enter") {
       event.preventDefault();
       props.onSubmit();
     }
@@ -187,8 +199,17 @@ export function ComposerEditor(props: ComposerEditorProps) {
         }}
         onClick={updateMention}
         onKeyDown={handleKeyDown}
+        onCompositionStart={() => {
+          isComposing = true;
+        }}
+        onCompositionEnd={() => {
+          isComposing = false;
+        }}
         onPaste={handlePaste}
-        onBlur={() => window.setTimeout(() => setMention(null), 100)}
+        onBlur={() => {
+          isComposing = false;
+          window.setTimeout(() => setMention(null), 100);
+        }}
       />
       <Portal>
         <Show when={mention() && matchingBots().length > 0}>
@@ -276,11 +297,8 @@ function renderEditorValue(editor: HTMLDivElement, value: string, bots: BotProfi
 }
 
 function serializeEditor(editor: HTMLDivElement): string {
-  return Array.from(editor.childNodes)
-    .map(serializeNode)
-    .join("")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/\n$/, "");
+  if (editor.textContent === "" && !editor.querySelector("[data-mention-id]")) return "";
+  return Array.from(editor.childNodes).map(serializeNode).join("");
 }
 
 function serializeNode(node: Node): string {
