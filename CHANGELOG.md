@@ -5,6 +5,19 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-14
+
+### Changed
+
+- Require an explicit model choice before a new empty agent can accept messages.
+- Show the specialty step immediately after model selection and after creating an agent.
+- Allow browser and settings panels to expand while keeping a usable conversation area.
+- Close an agent settings panel when switching chats and use clearer provider marks in model pickers.
+
+### Fixed
+
+- Show complete Claude responses immediately when stream deltas are missing or incomplete instead of requiring a chat refresh.
+
 ## [0.1.4] - 2026-08-13
 
 ### Fixed

@@ -2547,9 +2547,7 @@ textarea {
 }
 
 .provider-model-mark-claude {
-  stroke: #d97757;
-  stroke-width: 1.45;
-  stroke-linecap: round;
+  fill: #d97757;
 }
 
 .provider-model-mark-codex {
@@ -4476,53 +4474,17 @@ textarea {
   padding-top: 4px;
 }
 
-.onboarding-runtime-card .choice-card-heading strong {
-  text-wrap: balance;
+.onboarding-model-picker {
+  width: max-content;
 }
 
-.onboarding-runtime-card .choice-card-heading span {
-  text-wrap: pretty;
+.onboarding-model-picker .provider-model-popover {
+  right: auto;
+  left: 0;
 }
 
-.onboarding-runtime-card {
-  overflow: visible;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-}
-
-.onboarding-runtime-card .choice-card-heading {
-  padding: 0 0 10px;
-}
-
-.onboarding-runtime-card .choice-card-heading strong {
-  font-size: 13px;
-  font-weight: 560;
-  line-height: 18px;
-}
-
-.onboarding-runtime-card .choice-card-heading span {
-  margin-top: 0;
-  font-size: 11px;
-  line-height: 16px;
-}
-
-.onboarding-model-control {
-  overflow: visible;
-  border: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 0;
-  background: transparent;
-}
-
-.onboarding-model-control .provider-model-trigger-field {
-  height: 40px;
-  border-radius: 0;
-  background: transparent;
-  padding-right: 4px;
-  padding-left: 0;
+.onboarding-specialty-step {
+  width: 100%;
 }
 
 .agent-setup-card {

@@ -48,6 +48,7 @@ interface ActiveTurn {
   id: string;
   itemId: string;
   text: string;
+  assistantMessages: Map<string, string>;
 }
 
 interface ThreadRuntime {
@@ -249,7 +250,12 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const clientId = getString(params, "clientUserMessageId");
     const turnId = clientId && isUuid(clientId) ? clientId : randomUUID();
     const text = readInputText(params);
-    const activeTurn = { id: turnId, itemId: `${turnId}:assistant`, text: "" };
+    const activeTurn = {
+      id: turnId,
+      itemId: `${turnId}:assistant`,
+      text: "",
+      assistantMessages: new Map<string, string>(),
+    };
     runtime.activeTurn = activeTurn;
     this.emit("notification", {
       method: "turn/started",
@@ -300,10 +306,27 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       return;
     }
 
+    if (message.type === "assistant") {
+      if (message.parent_tool_use_id !== null) return;
+      const turn = runtime.activeTurn;
+      const text = messageText(message.message);
+      if (!turn || !text) return;
+      turn.assistantMessages.set(message.uuid, text);
+      const completeText = [...turn.assistantMessages.values()].join("");
+      if (completeText.startsWith(turn.text)) {
+        this.#appendDelta(runtime, completeText.slice(turn.text.length));
+      }
+      return;
+    }
+
     if (message.type !== "result") return;
     const fallback = message.subtype === "success" ? message.result : "";
-    if (runtime.activeTurn && !runtime.activeTurn.text && fallback)
-      this.#appendDelta(runtime, fallback);
+    const turn = runtime.activeTurn;
+    if (turn) {
+      const completeText = [...turn.assistantMessages.values()].join("");
+      if (completeText) turn.text = completeText;
+      else if (!turn.text && fallback) this.#appendDelta(runtime, fallback);
+    }
     const interrupted =
       message.terminal_reason === "aborted_streaming" ||
       message.terminal_reason === "aborted_tools" ||

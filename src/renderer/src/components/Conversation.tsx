@@ -37,6 +37,7 @@ interface ConversationProps {
   agentPickerOpen: boolean;
   creatingAgent: boolean;
   settingsRequest: { botId: string; nonce: number } | null;
+  onboardingRequest: { botId: string; nonce: number } | null;
   queue: QueueSnapshot | undefined;
   browserTabs: BrowserTab[];
   activeBrowserTabId: string | null;
@@ -91,12 +92,13 @@ const ONBOARDING_CHOICES = [
 ];
 const SETTINGS_PANEL_STORAGE_KEY = "openbot:settings-panel-width";
 const SETTINGS_PANEL_DEFAULT = 296;
-const SETTINGS_PANEL_MIN = 260;
-const SETTINGS_PANEL_MAX = 520;
+const SETTINGS_PANEL_MIN = 180;
+const SETTINGS_PANEL_MAX = 1600;
 const BROWSER_PANEL_STORAGE_KEY = "openbot:browser-panel-width";
 const BROWSER_PANEL_DEFAULT = 380;
-const BROWSER_PANEL_MIN = 300;
-const BROWSER_PANEL_MAX = 680;
+const BROWSER_PANEL_MIN = 220;
+const BROWSER_PANEL_MAX = 1600;
+const CONVERSATION_PANEL_MIN = 96;
 
 const BROWSER_ACTION_LABELS: Record<BrowserControlAction, string> = {
   open: "Opening a page…",
@@ -712,6 +714,8 @@ export function Conversation(props: ConversationProps) {
   const [settingsNotifications, setSettingsNotifications] = createSignal(true);
   const [settingsModel, setSettingsModel] = createSignal<AgentModelId>("gpt-5.6-luna");
   const [settingsReasoning, setSettingsReasoning] = createSignal<AgentReasoningEffort>("medium");
+  const [onboardingBots, setOnboardingBots] = createSignal<Record<string, true>>({});
+  const [modelConfirmedBots, setModelConfirmedBots] = createSignal<Record<string, true>>({});
   const [avatarPickerOpen, setAvatarPickerOpen] = createSignal(false);
   const [avatarShape, setAvatarShape] = createSignal<BotAvatarShape>("blob");
   const [avatarColor, setAvatarColor] = createSignal<BotAvatarColor>("orange");
@@ -744,6 +748,17 @@ export function Conversation(props: ConversationProps) {
   );
   const reasoningOptions = createMemo(
     () => selectedModel()?.supportedReasoningEfforts ?? ["medium" as const],
+  );
+  const onboardingActive = createMemo(() => {
+    const botId = props.bot?.id;
+    return Boolean(botId && onboardingBots()[botId]);
+  });
+  const onboardingModelConfirmed = createMemo(() => {
+    const botId = props.bot?.id;
+    return Boolean(botId && onboardingActive() && modelConfirmedBots()[botId]);
+  });
+  const onboardingModelRequired = createMemo(
+    () => agentReady() && onboardingActive() && !onboardingModelConfirmed(),
   );
   const currentDraft = createMemo(() => {
     const id = props.bot?.id;
@@ -850,6 +865,9 @@ export function Conversation(props: ConversationProps) {
   let pickerInput: HTMLInputElement | undefined;
   let stickToLatest = true;
   let lastConversationBotId: string | undefined;
+  let lastPanelBotId: string | undefined;
+  let lastHandledSettingsRequestNonce: number | undefined;
+  let lastHandledOnboardingRequestNonce: number | undefined;
   let lastSettingsSignature: string | undefined;
   const importTargetBots = new Map<string, string>();
 
@@ -868,9 +886,13 @@ export function Conversation(props: ConversationProps) {
     }
   }
 
-  function selectModel(model: AgentModelId, persist = true, reportComposerError = false): void {
+  async function selectModel(
+    model: AgentModelId,
+    persist = true,
+    reportComposerError = false,
+  ): Promise<boolean> {
     const option = props.modelOptions.find((candidate) => candidate.id === model);
-    if (!option) return;
+    if (!option) return false;
     const reasoningEffort = option.supportedReasoningEfforts.includes(settingsReasoning())
       ? settingsReasoning()
       : option.defaultReasoningEffort;
@@ -878,15 +900,20 @@ export function Conversation(props: ConversationProps) {
     const previousReasoning = settingsReasoning();
     setSettingsModel(model);
     setSettingsReasoning(reasoningEffort);
-    if (persist) {
-      if (reportComposerError) setComposerError(null);
-      void saveBotPatch({ model, reasoningEffort }).then((saved) => {
-        if (saved) return;
-        setSettingsModel(previousModel);
-        setSettingsReasoning(previousReasoning);
-        if (reportComposerError) setComposerError("Could not change model. Try again.");
-      });
-    }
+    if (!persist) return true;
+    if (reportComposerError) setComposerError(null);
+    const saved = await saveBotPatch({ model, reasoningEffort });
+    if (saved) return true;
+    setSettingsModel(previousModel);
+    setSettingsReasoning(previousReasoning);
+    if (reportComposerError) setComposerError("Could not change model. Try again.");
+    return false;
+  }
+
+  async function selectAndConfirmModel(model: AgentModelId): Promise<void> {
+    if (!(await selectModel(model, true, true))) return;
+    const botId = props.bot?.id;
+    if (botId) setModelConfirmedBots((current) => ({ ...current, [botId]: true }));
   }
 
   function updateScrollFade(element = scrollElement) {
@@ -963,6 +990,20 @@ export function Conversation(props: ConversationProps) {
   });
 
   createEffect(() => {
+    const request = props.onboardingRequest;
+    if (
+      !request ||
+      props.bot?.id !== request.botId ||
+      request.nonce === lastHandledOnboardingRequestNonce
+    )
+      return;
+    lastHandledOnboardingRequestNonce = request.nonce;
+    setOnboardingBots((current) => ({ ...current, [request.botId]: true }));
+    setModelConfirmedBots((current) => ({ ...current, [request.botId]: true }));
+    setActiveRightPanel("none");
+  });
+
+  createEffect(() => {
     const botId = props.bot?.id;
     const lastMessage = props.messages[props.messages.length - 1];
     props.activeTurnId;
@@ -1014,8 +1055,38 @@ export function Conversation(props: ConversationProps) {
   });
 
   createEffect(() => {
+    const botId = props.bot?.id;
+    if (
+      !botId ||
+      !props.loaded ||
+      !agentReady() ||
+      props.activeTurnId ||
+      props.messages.length > 0 ||
+      props.onboardingRequest?.botId === botId ||
+      onboardingBots()[botId]
+    )
+      return;
+    setOnboardingBots((current) => ({ ...current, [botId]: true }));
+  });
+
+  createEffect(() => {
+    const botId = props.bot?.id;
+    if (botId === lastPanelBotId) return;
+    const previousBotId = lastPanelBotId;
+    lastPanelBotId = botId;
+    if (!previousBotId || !botId || rightPanels()[botId] !== "settings") return;
+    setRightPanels((current) => ({ ...current, [botId]: "none" }));
+  });
+
+  createEffect(() => {
     const request = props.settingsRequest;
-    if (!request || props.bot?.id !== request.botId) return;
+    if (
+      !request ||
+      props.bot?.id !== request.botId ||
+      request.nonce === lastHandledSettingsRequestNonce
+    )
+      return;
+    lastHandledSettingsRequestNonce = request.nonce;
     setActiveRightPanel("settings");
   });
 
@@ -1157,7 +1228,13 @@ export function Conversation(props: ConversationProps) {
     const draft = currentDraft();
     const text = override ?? expandComposerMentions(draft.text);
     const attachments = override ? [] : draft.attachments;
-    if (!botId || submitting() || (!text.trim() && attachments.length === 0)) return;
+    if (
+      !botId ||
+      submitting() ||
+      onboardingModelRequired() ||
+      (!text.trim() && attachments.length === 0)
+    )
+      return;
     setSubmitting(true);
     setComposerError(null);
     const sent = await props.onSendMessage(
@@ -1379,7 +1456,7 @@ export function Conversation(props: ConversationProps) {
                         ? "Wait for the current work to finish before changing models."
                         : "Models are available after an agent CLI connects."
                     }
-                    onChange={(model) => selectModel(model, true, true)}
+                    onChange={(model) => void selectAndConfirmModel(model)}
                   />
                 </Show>
                 <button
@@ -1511,48 +1588,53 @@ export function Conversation(props: ConversationProps) {
               <span>{props.messages[0]?.time ?? "now"}</span>
             </div>
           </Show>
-          <Show when={agentReady() && props.messages.length === 0 && !props.activeTurnId}>
+          <Show when={agentReady() && onboardingActive() && !props.activeTurnId}>
             <article class="message-entry message-entry-animated message-entry-bot onboarding-message">
               <div class="bot-bubble">
-                <p class="message-copy">Hey — good to meet you.</p>
+                <p class="message-copy">Choose a model to get started.</p>
               </div>
-              <div class="choice-card onboarding-runtime-card">
-                <div class="choice-card-heading">
-                  <div>
-                    <strong>Agent setup</strong>
-                    <span>Choose a model. You can change it later.</span>
-                  </div>
-                </div>
-                <div class="agent-settings-model-controls onboarding-model-control">
-                  <ProviderModelPicker
-                    variant="field"
-                    ariaLabel="Onboarding model"
-                    value={settingsModel()}
-                    agentStatus={props.agentStatus}
-                    modelOptions={props.modelOptions}
-                    onChange={(model) => selectModel(model, false)}
+              <div class="onboarding-model-picker">
+                <ProviderModelPicker
+                  ariaLabel="Onboarding model"
+                  value={settingsModel()}
+                  agentStatus={props.agentStatus}
+                  modelOptions={props.modelOptions}
+                  onChange={(model) => void selectAndConfirmModel(model)}
+                />
+              </div>
+              <Show when={onboardingModelConfirmed()}>
+                <div class="onboarding-specialty-step message-entry-animated">
+                  <ChoiceCard
+                    title="What do you want me helping with most?"
+                    hint="This becomes my ongoing specialty. You can change it later in Settings."
+                    choices={ONBOARDING_CHOICES}
+                    customChoice="Something else"
+                    pending={submitting()}
+                    onSubmit={async (answer) => {
+                      if (submitting()) return false;
+                      setSubmitting(true);
+                      setComposerError(null);
+                      const completed = await props.onCompleteOnboarding(
+                        answer,
+                        settingsModel(),
+                        settingsReasoning(),
+                      );
+                      if (completed) {
+                        const botId = props.bot?.id;
+                        if (botId) {
+                          setOnboardingBots((current) => {
+                            const next = { ...current };
+                            delete next[botId];
+                            return next;
+                          });
+                        }
+                      }
+                      setSubmitting(false);
+                      return completed;
+                    }}
                   />
                 </div>
-              </div>
-              <ChoiceCard
-                title="What do you want me helping with most?"
-                hint="This becomes my ongoing specialty. You can change it later in Settings."
-                choices={ONBOARDING_CHOICES}
-                customChoice="Something else"
-                pending={submitting()}
-                onSubmit={async (answer) => {
-                  if (submitting()) return false;
-                  setSubmitting(true);
-                  setComposerError(null);
-                  const completed = await props.onCompleteOnboarding(
-                    answer,
-                    settingsModel(),
-                    settingsReasoning(),
-                  );
-                  setSubmitting(false);
-                  return completed;
-                }}
-              />
+              </Show>
             </article>
           </Show>
           <For each={props.messages}>
@@ -1767,7 +1849,12 @@ export function Conversation(props: ConversationProps) {
             type="button"
             class="composer-button"
             aria-label="Attach a file"
-            disabled={props.agentPickerOpen || attachmentBusy() || !agentReady()}
+            disabled={
+              props.agentPickerOpen ||
+              attachmentBusy() ||
+              !agentReady() ||
+              onboardingModelRequired()
+            }
             onClick={() => setShowAttachments((value) => !value)}
           >
             <PlusIcon />
@@ -1777,13 +1864,17 @@ export function Conversation(props: ConversationProps) {
               botId={props.bot?.id}
               bots={props.bots}
               value={currentDraft().text}
-              disabled={props.agentPickerOpen || submitting() || !agentReady()}
+              disabled={
+                props.agentPickerOpen || submitting() || !agentReady() || onboardingModelRequired()
+              }
               placeholder={
                 !agentReady()
                   ? "Complete agent CLI setup to start"
-                  : replyTarget()
-                    ? "Reply…"
-                    : `Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`
+                  : onboardingModelRequired()
+                    ? "Choose a model to continue"
+                    : replyTarget()
+                      ? "Reply…"
+                      : `Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`
               }
               ariaLabel={`Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`}
               onValueChange={(text) => updateCurrentDraft({ text })}
@@ -1797,7 +1888,7 @@ export function Conversation(props: ConversationProps) {
                 type="button"
                 class="voice-button"
                 aria-label="Send message"
-                disabled={submitting() || !agentReady()}
+                disabled={submitting() || !agentReady() || onboardingModelRequired()}
                 onClick={() => void submitMessage()}
               >
                 {submitting() ? "…" : "↑"}
@@ -1898,7 +1989,7 @@ export function Conversation(props: ConversationProps) {
                 BROWSER_PANEL_MAX,
                 Math.max(
                   BROWSER_PANEL_MIN,
-                  (conversationPanel?.clientWidth || window.innerWidth) - 300,
+                  (conversationPanel?.clientWidth || window.innerWidth) - CONVERSATION_PANEL_MIN,
                 ),
               )
             }
@@ -2032,7 +2123,7 @@ export function Conversation(props: ConversationProps) {
                 SETTINGS_PANEL_MAX,
                 Math.max(
                   SETTINGS_PANEL_MIN,
-                  (conversationPanel?.clientWidth || window.innerWidth) - 300,
+                  (conversationPanel?.clientWidth || window.innerWidth) - CONVERSATION_PANEL_MIN,
                 ),
               )
             }
@@ -2160,7 +2251,7 @@ export function Conversation(props: ConversationProps) {
                         ? "Wait for the current work to finish before changing models."
                         : "Models are available after an agent CLI connects."
                     }
-                    onChange={(model) => selectModel(model, true, true)}
+                    onChange={(model) => void selectAndConfirmModel(model)}
                   />
                   <Show when={selectedModel()} keyed>
                     {(model) => <p class="agent-settings-model-description">{model.description}</p>}

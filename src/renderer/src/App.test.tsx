@@ -46,6 +46,14 @@ const BOTS: BotSummary[] = [
   },
 ];
 
+async function confirmOnboardingModel(): Promise<void> {
+  const trigger = await screen.findByRole("button", { name: "Onboarding model: Luna" });
+  await fireEvent.click(trigger);
+  const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+  await fireEvent.click(within(picker).getByRole("option", { name: "Luna, default" }));
+  await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
+}
+
 describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {
     emitAgentEvent = undefined;
@@ -355,9 +363,21 @@ describe("OpenBot connected desktop shell", () => {
   it("uses the backend bot list and shows local onboarding for a real empty snapshot", async () => {
     render(() => <App />);
     expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
+    expect(await screen.findByText("Choose a model to get started.")).toBeInTheDocument();
     expect(
-      await screen.findByRole("listbox", { name: "What do you want me helping with most?" }),
+      screen.queryByRole("listbox", { name: "What do you want me helping with most?" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "false");
+    expect(screen.getByRole("button", { name: "Attach a file" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+
+    await confirmOnboardingModel();
+    expect(
+      screen.getByRole("listbox", { name: "What do you want me helping with most?" }),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "true");
+    expect(screen.getByRole("button", { name: "Attach a file" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
     expect(screen.queryByText(/Salesforce account queue/i)).not.toBeInTheDocument();
   });
 
@@ -507,14 +527,14 @@ describe("OpenBot connected desktop shell", () => {
   it("filters and switches backend bots", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
+    await screen.findByRole("button", { name: "Onboarding model: Luna" });
     const search = screen.getByRole("searchbox", { name: "Search chats" });
     await fireEvent.input(search, { target: { value: "Sales" } });
     await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
     expect(screen.getByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
   });
 
-  it("opens settings after creating a new agent", async () => {
+  it("shows the specialty question immediately after creating a new agent", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
@@ -522,8 +542,11 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("option", { name: "Create new agent" }));
 
     expect(await screen.findByRole("heading", { name: "New agent" })).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue("New agent");
+    expect(screen.queryByRole("complementary", { name: "Agent settings" })).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("listbox", { name: "What do you want me helping with most?" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Message New agent")).toHaveAttribute("contenteditable", "true");
   });
 
   it("resizes and persists the left and right side panels", async () => {
@@ -547,6 +570,14 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.dblClick(rightResizer);
     expect(rightResizer).toHaveAttribute("aria-valuenow", "296");
+
+    await fireEvent.keyDown(rightResizer, { key: "Home" });
+    expect(rightResizer).toHaveAttribute("aria-valuenow", "180");
+    await fireEvent.keyDown(rightResizer, { key: "End" });
+    expect(rightResizer).toHaveAttribute(
+      "aria-valuenow",
+      String(Math.min(1600, window.innerWidth - 96)),
+    );
   });
 
   it("selects a provider and model from the conversation header", async () => {
@@ -554,6 +585,7 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("heading", { name: "Chief" });
 
     const trigger = screen.getByRole("button", { name: "Agent model: Luna" });
+    expect(trigger.querySelector(".provider-model-mark-codex")).toBeInTheDocument();
     await fireEvent.click(trigger);
     const picker = screen.getByRole("dialog", { name: "Choose agent model" });
     expect(within(picker).getByText("0.144.1 (Codex CLI)")).toBeInTheDocument();
@@ -575,7 +607,12 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     expect(screen.queryByRole("dialog", { name: "Choose agent model" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Agent model: Claude Opus 5" })).toBeEnabled();
+    const claudeTrigger = await screen.findByRole("button", {
+      name: "Agent model: Claude Opus 5",
+    });
+    expect(claudeTrigger).toBeEnabled();
+    expect(claudeTrigger.querySelector(".provider-model-mark-claude")).toBeInTheDocument();
+    expect(claudeTrigger.querySelector(".provider-model-mark-codex")).not.toBeInTheDocument();
   });
 
   it("shows unavailable providers without allowing their models", async () => {
@@ -613,6 +650,7 @@ describe("OpenBot connected desktop shell", () => {
     vi.mocked(window.openbot.agent.updateBot).mockRejectedValueOnce(new Error("Provider failed"));
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
+    await screen.findByRole("button", { name: "Onboarding model: Luna" });
 
     await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
     await fireEvent.click(screen.getByRole("option", { name: "Sol" }));
@@ -621,6 +659,10 @@ describe("OpenBot connected desktop shell", () => {
       "Could not change model. Try again.",
     );
     expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
+    expect(
+      screen.queryByRole("listbox", { name: "What do you want me helping with most?" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "false");
   });
 
   it("locks the header model picker during active work", async () => {
@@ -988,7 +1030,7 @@ describe("OpenBot connected desktop shell", () => {
     );
   });
 
-  it("restores the right panel independently for each agent", async () => {
+  it("closes settings on agent switch but restores browser panels", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
@@ -1003,7 +1045,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("complementary", { name: "Browser" })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
-    expect(screen.getByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Agent settings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
@@ -1012,6 +1054,7 @@ describe("OpenBot connected desktop shell", () => {
 
   it("queues from the composer and clears only after success", async () => {
     render(() => <App />);
+    await confirmOnboardingModel();
     const composer = await screen.findByRole("textbox", { name: "Message Chief" });
     composer.textContent = "Run this Monday";
     await fireEvent.input(composer);
@@ -1362,6 +1405,7 @@ describe("OpenBot connected desktop shell", () => {
       new Error("Mailbox unavailable"),
     );
     render(() => <App />);
+    await confirmOnboardingModel();
     const composer = await screen.findByRole("textbox", { name: "Message Chief" });
     composer.textContent = "Retry me";
     await fireEvent.input(composer);
@@ -1376,6 +1420,7 @@ describe("OpenBot connected desktop shell", () => {
     ]);
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
     await fireEvent.click(screen.getByRole("button", { name: "Attach a file" }));
     await fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
     expect(await screen.findByText("brief.pdf")).toBeInTheDocument();
@@ -1478,7 +1523,7 @@ describe("OpenBot connected desktop shell", () => {
   it("persists the onboarding focus before queuing the first user message", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
+    await confirmOnboardingModel();
     await fireEvent.click(screen.getByRole("option", { name: /Work & projects/ }));
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
@@ -1505,6 +1550,7 @@ describe("OpenBot connected desktop shell", () => {
   it("uses a custom onboarding answer as the persistent agent remit", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
     await fireEvent.click(await screen.findByRole("option", { name: /Something else/ }));
     expect(window.openbot.agent.sendMessage).not.toHaveBeenCalled();
 
@@ -1532,7 +1578,7 @@ describe("OpenBot connected desktop shell", () => {
   it("answers model prompts from a separate card while composer remains a queue", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
+    await confirmOnboardingModel();
     emitAgentEvent?.({
       type: "prompt",
       requestId: "prompt-1",
@@ -1716,7 +1762,7 @@ describe("OpenBot connected desktop shell", () => {
   it("persists settings and opens managed attachment actions", async () => {
     render(() => <App />);
     await fireEvent.click(await screen.findByRole("button", { name: "View agent settings" }));
-    await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
+    await screen.findByRole("button", { name: "Onboarding model: Luna" });
     const name = screen.getByRole("textbox", { name: "Agent name" });
     await fireEvent.input(name, { target: { value: "Coordinator" } });
     await fireEvent.blur(name);

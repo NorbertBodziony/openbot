@@ -107,6 +107,10 @@ export function App() {
     botId: string;
     nonce: number;
   } | null>(null);
+  const [onboardingRequest, setOnboardingRequest] = createSignal<{
+    botId: string;
+    nonce: number;
+  } | null>(null);
   const [pendingPrompts, setPendingPrompts] = createSignal<Record<string, PromptEvent | undefined>>(
     {},
   );
@@ -353,7 +357,7 @@ export function App() {
       setConversationLoaded((current) => ({ ...current, [newAgent.id]: true }));
       setAgentPickerOpen(false);
       setActiveBotId(newAgent.id);
-      setSettingsRequest({ botId: newAgent.id, nonce: Date.now() });
+      setOnboardingRequest({ botId: newAgent.id, nonce: Date.now() });
     } catch (error) {
       setAgentPickerOpen(false);
       if (activeBotId()) appendUiError(activeBotId(), error, "Create failed");
@@ -689,6 +693,7 @@ export function App() {
             agentPickerOpen={agentPickerOpen()}
             creatingAgent={creatingAgent()}
             settingsRequest={settingsRequest()}
+            onboardingRequest={onboardingRequest()}
             onCloseAgentPicker={() => setAgentPickerOpen(false)}
             onCreateAgent={() => void createAgent()}
             onSelectAgent={selectBot}
