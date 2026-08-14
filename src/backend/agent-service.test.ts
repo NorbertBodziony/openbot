@@ -402,6 +402,11 @@ describe.sequential("AgentService", () => {
     expect(
       chiefMessages.findIndex((message) => message.exchange?.direction === "outgoing"),
     ).toBeLessThan(chiefMessages.findIndex((message) => message.author === "assistant"));
+    await waitFor(async () =>
+      (await service?.readConversation("sales-outbound"))?.messages.some(
+        (message) => message.exchange?.direction === "incoming",
+      ),
+    );
     expect((await service.readConversation("sales-outbound")).messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
