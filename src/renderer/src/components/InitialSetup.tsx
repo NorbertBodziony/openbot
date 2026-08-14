@@ -79,10 +79,11 @@ export function InitialSetup(props: InitialSetupProps) {
   );
 
   createEffect(() => {
+    const options = providerOptions();
     const available = availableProviders();
     const selected = selectedProvider();
-    if (selected && available.some((provider) => provider.id === selected)) return;
-    const preferred = available.find((provider) => provider.id === props.state.preferredProvider);
+    if (selected && options.some((provider) => provider.id === selected)) return;
+    const preferred = options.find((provider) => provider.id === props.state.preferredProvider);
     setSelectedProvider(preferred?.id ?? available[0]?.id ?? null);
   });
 
@@ -156,6 +157,7 @@ export function InitialSetup(props: InitialSetupProps) {
           label="Default provider"
           hint="Used for new agents. You can change it for each agent later."
           disabled={saving()}
+          allowUnavailableSelection
           focusFirst
           onChange={setSelectedProvider}
         />

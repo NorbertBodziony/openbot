@@ -17,6 +17,7 @@ interface ProviderPickerProps {
   hint?: string;
   embedded?: boolean;
   disabled?: boolean;
+  allowUnavailableSelection?: boolean;
   focusFirst?: boolean;
   onChange: (provider: AgentProviderId) => void;
 }
@@ -27,7 +28,9 @@ export function ProviderPicker(props: ProviderPickerProps) {
 
   createEffect(() => {
     if (!props.focusFirst || focused) return;
-    const first = props.options.find((option) => option.state === "available");
+    const first =
+      props.options.find((option) => option.state === "available") ??
+      (props.allowUnavailableSelection ? props.options[0] : undefined);
     const input = first ? inputs.get(first.id) : undefined;
     if (!input) return;
     focused = true;
@@ -57,6 +60,8 @@ export function ProviderPicker(props: ProviderPickerProps) {
                 classList={{
                   "provider-picker-option-selected": props.value === option.id,
                   "provider-picker-option-unavailable": !available(),
+                  "provider-picker-option-selectable-unavailable":
+                    !available() && Boolean(props.allowUnavailableSelection),
                 }}
                 title={option.message ?? undefined}
               >
@@ -66,7 +71,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
                   name={props.ariaLabel}
                   value={option.id}
                   checked={props.value === option.id}
-                  disabled={props.disabled || !available()}
+                  disabled={props.disabled || (!props.allowUnavailableSelection && !available())}
                   onChange={() => props.onChange(option.id)}
                 />
                 <span class="provider-picker-identity">

@@ -262,6 +262,86 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
   });
 
+  it("lets the user choose a provider while provider checks are running", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "starting",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        {
+          id: "codex",
+          state: "checking",
+          version: null,
+          message: null,
+          email: null,
+        },
+        {
+          id: "claude",
+          state: "checking",
+          version: null,
+          message: null,
+          email: null,
+        },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: null,
+      fullAccess: true,
+    });
+    render(() => <App />);
+
+    const providers = await screen.findByRole("radiogroup", { name: "Default provider" });
+    const codex = within(providers).getByRole("radio", { name: /Codex.*Checking/ });
+    const claude = within(providers).getByRole("radio", { name: /Claude.*Checking/ });
+
+    expect(codex).toBeEnabled();
+    expect(claude).toBeEnabled();
+    expect(codex).toHaveFocus();
+
+    await fireEvent.click(claude);
+    expect(claude).toBeChecked();
+    expect(screen.getByRole("button", { name: "Continue with Claude" })).toBeEnabled();
+
+    emitAgentEvent?.({
+      type: "status",
+      status: {
+        phase: "blocked",
+        cliVersion: null,
+        auth: { kind: "unknown" },
+        providers: [
+          {
+            id: "codex",
+            state: "not-installed",
+            version: null,
+            message: "Codex CLI is not installed.",
+            email: null,
+          },
+          {
+            id: "claude",
+            state: "sign-in-required",
+            version: "2.1.231",
+            message: "Sign in to Claude.",
+            email: null,
+          },
+        ],
+        capabilities: {
+          chat: "setup-required",
+          browser: "ready",
+          computerUse: "setup-required",
+        },
+        message: "Choose and configure a provider.",
+        fullAccess: true,
+      },
+    });
+
+    expect(claude).toBeChecked();
+    await fireEvent.click(screen.getByRole("button", { name: "Continue with Claude" }));
+    expect(window.openbot.saveSetup).toHaveBeenCalledWith({ preferredProvider: "claude" });
+  });
+
   it("lets the user review providers and permissions from the account menu", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
