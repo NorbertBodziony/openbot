@@ -5,6 +5,16 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-08-14
+
+### Changed
+
+- Make the message composer grow up to six lines and preserve multiline typing and paste input.
+
+### Fixed
+
+- Prevent horizontal scrolling in chats and wrap long URLs and paths inside message bubbles.
+
 ## [0.1.6] - 2026-08-14
 
 ### Fixed
