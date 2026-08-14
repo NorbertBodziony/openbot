@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { extname, join, win32 } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -29,22 +29,14 @@ export class CodexCliError extends Error {
 }
 
 export async function resolveCodexCli(): Promise<CodexCliInfo> {
-  const candidates = await collectCandidates("codex", process.env.OPENBOT_CODEX_PATH, [
-    join(homedir(), ".local", "bin", "codex"),
-    join(homedir(), ".local", "bin", "codex.exe"),
-    "/opt/homebrew/bin/codex",
-    "/usr/local/bin/codex",
-  ]);
+  const candidates = await collectCandidates("codex", process.env.OPENBOT_CODEX_PATH);
+  const failures: CodexCliError[] = [];
 
   for (const candidate of candidates) {
     if (!(await isExecutable(candidate))) continue;
 
     try {
-      const { stdout } = await execFileAsync(candidate, ["--version"], {
-        timeout: 5_000,
-        maxBuffer: 64 * 1024,
-        shell: process.platform === "win32",
-      });
+      const stdout = await readCliVersion(candidate);
       const version = parseCodexVersion(stdout);
       if (!isMinimumVersion(version)) {
         throw new CodexCliError(
@@ -55,8 +47,21 @@ export async function resolveCodexCli(): Promise<CodexCliInfo> {
 
       return { executable: candidate, version };
     } catch (error) {
-      if (error instanceof CodexCliError) throw error;
+      failures.push(
+        error instanceof CodexCliError
+          ? error
+          : new CodexCliError("Codex CLI was found but could not be started.", "invalid"),
+      );
     }
+  }
+
+  const outdated = failures.find((failure) => failure.code === "outdated");
+  if (outdated) throw outdated;
+  if (failures.length > 0) {
+    throw new CodexCliError(
+      "Codex CLI was found but could not be started. Run `codex --version` in a new terminal.",
+      "invalid",
+    );
   }
 
   throw new CodexCliError(
@@ -66,28 +71,26 @@ export async function resolveCodexCli(): Promise<CodexCliInfo> {
 }
 
 export async function resolveClaudeCli(): Promise<ClaudeCliInfo> {
-  const candidates = await collectCandidates("claude", process.env.OPENBOT_CLAUDE_PATH, [
-    join(homedir(), ".local", "bin", "claude"),
-    join(homedir(), ".local", "bin", "claude.exe"),
-    join(homedir(), ".claude", "local", "claude"),
-    join(homedir(), ".claude", "local", "claude.exe"),
-    "/opt/homebrew/bin/claude",
-    "/usr/local/bin/claude",
-  ]);
+  const candidates = await collectCandidates("claude", process.env.OPENBOT_CLAUDE_PATH);
+  let foundCandidate = false;
 
   for (const candidate of candidates) {
     if (!(await isExecutable(candidate))) continue;
+    foundCandidate = true;
 
     try {
-      const { stdout } = await execFileAsync(candidate, ["--version"], {
-        timeout: 5_000,
-        maxBuffer: 64 * 1024,
-        shell: process.platform === "win32",
-      });
+      const stdout = await readCliVersion(candidate);
       return { executable: candidate, version: parseClaudeVersion(stdout) };
     } catch {
       // Try the next executable candidate.
     }
+  }
+
+  if (foundCandidate) {
+    throw new CodexCliError(
+      "Claude CLI was found but could not be started. Run `claude --version` in a new terminal.",
+      "invalid",
+    );
   }
 
   throw new CodexCliError(
@@ -120,7 +123,6 @@ function isMinimumVersion(version: string): boolean {
 async function collectCandidates(
   command: "codex" | "claude",
   configuredPath: string | undefined,
-  knownPaths: string[],
 ): Promise<string[]> {
   const candidates: string[] = [];
   const override = configuredPath?.trim();
@@ -141,8 +143,7 @@ async function collectCandidates(
     } catch {
       // Known Windows install locations are checked next.
     }
-    const appData = process.env.APPDATA?.trim();
-    if (appData) candidates.push(join(appData, "npm", `${command}.cmd`));
+    candidates.push(...windowsFallbackPaths(command));
   } else {
     try {
       const { stdout } = await execFileAsync("/bin/zsh", ["-lic", `command -v ${command}`], {
@@ -153,16 +154,78 @@ async function collectCandidates(
     } catch {
       // Packaged macOS apps often have a restricted PATH; known locations are checked next.
     }
+    candidates.push(...posixFallbackPaths(command));
   }
-
-  candidates.push(...knownPaths);
 
   return [...new Set(candidates)];
 }
 
+export function windowsFallbackPaths(
+  command: "codex" | "claude",
+  userHome = homedir(),
+  environment: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const paths: string[] = [];
+  const appData = environment.APPDATA?.trim();
+  const localAppData = environment.LOCALAPPDATA?.trim();
+
+  if (command === "codex" && localAppData) {
+    paths.push(win32.join(localAppData, "Programs", "OpenAI", "Codex", "bin", "codex.exe"));
+  }
+  if (command === "claude" && localAppData) {
+    paths.push(win32.join(localAppData, "Microsoft", "WinGet", "Links", "claude.exe"));
+  }
+  if (appData) paths.push(win32.join(appData, "npm", `${command}.cmd`));
+  paths.push(
+    win32.join(userHome, ".local", "bin", `${command}.exe`),
+    win32.join(userHome, ".bun", "bin", `${command}.exe`),
+    win32.join(userHome, ".bun", "bin", `${command}.cmd`),
+  );
+  if (localAppData) {
+    paths.push(
+      win32.join(localAppData, "pnpm", `${command}.exe`),
+      win32.join(localAppData, "pnpm", `${command}.cmd`),
+    );
+  }
+
+  return paths;
+}
+
+function posixFallbackPaths(command: "codex" | "claude"): string[] {
+  const paths = [join(homedir(), ".local", "bin", command)];
+  if (command === "claude") paths.push(join(homedir(), ".claude", "local", "claude"));
+  paths.push(`/opt/homebrew/bin/${command}`, `/usr/local/bin/${command}`);
+  return paths;
+}
+
+async function readCliVersion(candidate: string): Promise<string> {
+  if (process.platform === "win32" && [".bat", ".cmd"].includes(extname(candidate).toLowerCase())) {
+    const commandProcessor = process.env.ComSpec?.trim() || "cmd.exe";
+    const escapedCandidate = candidate.replaceAll("%", "%%");
+    const { stdout } = await execFileAsync(
+      commandProcessor,
+      ["/d", "/s", "/c", `""${escapedCandidate}" --version"`],
+      {
+        timeout: 5_000,
+        maxBuffer: 64 * 1024,
+        windowsHide: true,
+        windowsVerbatimArguments: true,
+      },
+    );
+    return stdout;
+  }
+
+  const { stdout } = await execFileAsync(candidate, ["--version"], {
+    timeout: 5_000,
+    maxBuffer: 64 * 1024,
+    windowsHide: process.platform === "win32",
+  });
+  return stdout;
+}
+
 async function isExecutable(path: string): Promise<boolean> {
   try {
-    await access(path, constants.X_OK);
+    await access(path, process.platform === "win32" ? constants.F_OK : constants.X_OK);
     return true;
   } catch {
     return false;
