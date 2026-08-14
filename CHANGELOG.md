@@ -5,6 +5,13 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-08-14
+
+### Fixed
+
+- Detect Codex and Claude in current Windows installer locations and in npm paths that contain spaces.
+- Report a CLI that exists but cannot start instead of incorrectly reporting it as not installed.
+
 ## [0.1.9] - 2026-08-14
 
 ### Fixed
