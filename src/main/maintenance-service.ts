@@ -69,9 +69,7 @@ export async function exportOpenBotData(
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        "Compress-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force",
-        exportRoot,
-        archiveCandidate,
+        `Compress-Archive -LiteralPath '${powerShellLiteral(exportRoot)}' -DestinationPath '${powerShellLiteral(archiveCandidate)}' -Force`,
       ]);
     } else {
       await execFileAsync("/usr/bin/ditto", [
@@ -90,6 +88,10 @@ export async function exportOpenBotData(
       rm(archiveCandidate, { force: true }),
     ]);
   }
+}
+
+function powerShellLiteral(value: string): string {
+  return value.replaceAll("'", "''");
 }
 
 export async function exportDiagnostics(

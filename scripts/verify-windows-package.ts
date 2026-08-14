@@ -46,9 +46,8 @@ const versionInfo = JSON.parse(
     "-NoProfile",
     "-NonInteractive",
     "-Command",
-    "$value = (Get-Item -LiteralPath $args[0]).VersionInfo; " +
+    `$value = (Get-Item -LiteralPath '${powerShellLiteral(executablePath)}').VersionInfo; ` +
       "[pscustomobject]@{ ProductName = $value.ProductName; FileDescription = $value.FileDescription; ProductVersion = $value.ProductVersion } | ConvertTo-Json -Compress",
-    executablePath,
   ]),
 ) as Record<string, unknown>;
 expectEqual(versionInfo.ProductName, "OpenBot", "product name");
@@ -102,6 +101,10 @@ function expectEqual(actual: unknown, expected: unknown, label: string): void {
 
 function run(command: string, args: string[]): string {
   return execFileSync(command, args, { encoding: "utf8" }).trim();
+}
+
+function powerShellLiteral(value: string): string {
+  return value.replaceAll("'", "''");
 }
 
 async function verifyLaunch(executable: string): Promise<void> {
