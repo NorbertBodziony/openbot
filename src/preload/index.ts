@@ -69,6 +69,7 @@ const openbotApi: OpenBotDesktopApi = {
   requestMacPermission: (permission) =>
     ipcRenderer.invoke(IPC_CHANNELS.requestMacPermission, permission),
   openExternal: (destination) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, destination),
+  openUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.openUrl, url),
   agent: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.agentGetStatus),
     getUsage: () => ipcRenderer.invoke(IPC_CHANNELS.agentGetUsage),

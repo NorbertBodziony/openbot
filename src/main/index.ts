@@ -94,7 +94,7 @@ function configureContentSecurityPolicy(): void {
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: openbot-attachment:",
+    "img-src 'self' data: openbot-attachment: https:",
     "font-src 'self' data:",
     `connect-src 'self'${developmentSources}`,
     "object-src 'none'",
@@ -144,6 +144,13 @@ function registerIpcHandlers(
       throw new Error("Unknown external destination.");
     }
     return shell.openExternal(EXTERNAL_DESTINATIONS[destination]);
+  });
+  handleTrusted(IPC_CHANNELS.openUrl, (value: unknown) => {
+    const url = new URL(requireString(value, "URL"));
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error("Only HTTP(S) links can open in the external browser.");
+    }
+    return shell.openExternal(url.toString());
   });
   handleTrusted(IPC_CHANNELS.updateGetStatus, () => updater.getStatus());
   handleTrusted(IPC_CHANNELS.updateCheck, () => updater.checkForUpdates());

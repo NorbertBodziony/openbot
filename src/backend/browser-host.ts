@@ -18,7 +18,7 @@ import type {
   BrowserTab,
   BrowserVisibilityInput,
 } from "../shared/ipc";
-import { persistentBrowserUrl } from "./browser-state";
+import { persistentBrowserUrl, xLoginUrlForLanding } from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
 
@@ -35,6 +35,7 @@ interface InternalTab {
   ownerBotId: string | null;
   revision: number;
   queue: Promise<unknown>;
+  xLoginRedirected: boolean;
 }
 
 interface StoredBrowserState {
@@ -303,11 +304,23 @@ export class BrowserHost {
         throw new Error("Stale browser references. Take a fresh snapshot before acting.");
       }
 
-      await withTimeout(
-        performAction(tab.view.webContents, action),
-        10_000,
-        "Browser action timed out.",
-      );
+      const wasVisible = tab.view.getVisible();
+      if (!wasVisible) {
+        tab.view.setVisible(true);
+        tab.view.webContents.invalidate();
+      }
+      tab.view.webContents.focus();
+      try {
+        if (!wasVisible) await delay(250);
+        await withTimeout(
+          performAction(tab.view.webContents, action),
+          10_000,
+          "Browser action timed out.",
+        );
+        await delay(50);
+      } finally {
+        if (!wasVisible) tab.view.setVisible(false);
+      }
       await delay(250);
       const nextRevision = tab.revision + 1;
       return this.#readSnapshot(tab, nextRevision);
@@ -390,14 +403,17 @@ export class BrowserHost {
     ownerThreadId: string | null,
     ownerBotId: string | null,
   ): InternalTab {
+    const view = this.#createView();
+    this.#mountView(view);
     return {
       id,
-      view: this.#createView(),
+      view,
       requestedUrl,
       ownerThreadId,
       ownerBotId,
       revision: 0,
       queue: Promise.resolve(),
+      xLoginRedirected: false,
     };
   }
 
@@ -417,9 +433,11 @@ export class BrowserHost {
   }
 
   #configureSession(): void {
+    const userAgent = browserUserAgent(this.#session.getUserAgent());
+    this.#session.setUserAgent(userAgent, preferredBrowserLanguageCodes());
     this.#session.webRequest.onBeforeSendHeaders((details, callback) => {
       callback({
-        requestHeaders: browserRequestHeaders(details.requestHeaders, this.#session.getUserAgent()),
+        requestHeaders: browserRequestHeaders(details.requestHeaders, userAgent),
       });
     });
     this.#session.setPermissionRequestHandler((_webContents, _permission, callback) => {
@@ -443,7 +461,10 @@ export class BrowserHost {
     const contents = tab.view.webContents;
     const changed = () => this.#emitChanged();
     contents.on("did-start-loading", changed);
-    contents.on("did-stop-loading", changed);
+    contents.on("did-stop-loading", () => {
+      changed();
+      void this.#redirectXLandingToLogin(tab);
+    });
     contents.on("page-title-updated", changed);
     contents.on("did-navigate", (_event, url) => {
       if (isPersistableBrowserUrl(url)) tab.requestedUrl = persistentBrowserUrl(url);
@@ -464,6 +485,18 @@ export class BrowserHost {
       if (isAllowedMainUrl(url)) void this.open(url, tab.ownerThreadId, tab.ownerBotId);
       return { action: "deny" };
     });
+  }
+
+  async #redirectXLandingToLogin(tab: InternalTab): Promise<void> {
+    if (tab.xLoginRedirected) return;
+    const currentUrl = tab.view.webContents.getURL();
+    const loginUrl = xLoginUrlForLanding(currentUrl);
+    if (!loginUrl) return;
+    await delay(1_000);
+    if (tab.xLoginRedirected || tab.view.webContents.getURL() !== currentUrl) return;
+    tab.xLoginRedirected = true;
+    tab.requestedUrl = loginUrl;
+    await tab.view.webContents.loadURL(loginUrl, browserLoadOptions()).catch(() => undefined);
   }
 
   async #readSnapshot(tab: InternalTab, revision: number): Promise<BrowserSnapshot> {
@@ -506,6 +539,7 @@ export class BrowserHost {
   #mountView(view: WebContentsView): void {
     if (this.#mountedViews.has(view)) return;
     view.setVisible(false);
+    view.setBounds({ x: 0, y: 0, width: 1200, height: 800 });
     this.#window.contentView.addChildView(view);
     this.#mountedViews.add(view);
   }
@@ -675,21 +709,15 @@ function browserRequestHeaders(
   requestHeaders: Record<string, string>,
   sessionUserAgent: string,
 ): Record<string, string> {
-  const userAgent = removeUserAgentProducts(sessionUserAgent, ["Electron", app.getName()]);
-  const majorVersion = /\b(?:Chrome|Chromium)\/(\d+)\./.exec(userAgent)?.[1];
+  const userAgent = browserUserAgent(sessionUserAgent);
   const headers = { ...requestHeaders };
   setRequestHeader(headers, "User-Agent", userAgent);
   setRequestHeader(headers, "Accept-Language", preferredBrowserLanguages());
-  if (majorVersion) {
-    setRequestHeader(
-      headers,
-      "sec-ch-ua",
-      `"Chromium";v="${majorVersion}", "Google Chrome";v="${majorVersion}", "Not=A?Brand";v="24"`,
-    );
-  }
-  setRequestHeader(headers, "sec-ch-ua-mobile", "?0");
-  setRequestHeader(headers, "sec-ch-ua-platform", browserPlatform());
   return headers;
+}
+
+function browserUserAgent(sessionUserAgent: string): string {
+  return removeUserAgentProducts(sessionUserAgent, ["Electron", app.getName()]);
 }
 
 function removeUserAgentProducts(userAgent: string, products: string[]): string {
@@ -703,18 +731,17 @@ function removeUserAgentProducts(userAgent: string, products: string[]): string 
 }
 
 function preferredBrowserLanguages(): string {
-  const languages = app.getPreferredSystemLanguages();
-  return (languages.length > 0 ? languages : [app.getLocale()])
+  return preferredBrowserLanguageCodes()
+    .split(",")
     .map((language, index) =>
       index === 0 ? language : `${language};q=${Math.max(1 - index * 0.1, 0.1).toFixed(1)}`,
     )
     .join(",");
 }
 
-function browserPlatform(): string {
-  if (process.platform === "darwin") return '"macOS"';
-  if (process.platform === "win32") return '"Windows"';
-  return '"Linux"';
+function preferredBrowserLanguageCodes(): string {
+  const languages = app.getPreferredSystemLanguages();
+  return (languages.length > 0 ? languages : [app.getLocale()]).join(",");
 }
 
 function setRequestHeader(headers: Record<string, string>, name: string, value: string): void {
@@ -844,15 +871,50 @@ function snapshotScript(revision: number): string {
 async function performAction(contents: WebContents, action: BrowserAction): Promise<void> {
   switch (action.type) {
     case "click": {
-      await contents.executeJavaScript(
+      const point = await contents.executeJavaScript(
         `(() => {
           const node = document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]');
           if (!(node instanceof HTMLElement)) throw new Error('Element reference is no longer available.');
+          node.scrollIntoView({ block: 'center', inline: 'center' });
           node.focus();
-          node.click();
+          const rect = node.getBoundingClientRect();
+          return {
+            x: Math.round(rect.left + rect.width / 2),
+            y: Math.round(rect.top + rect.height / 2),
+            direct: node instanceof HTMLAnchorElement && node.hasAttribute('download'),
+          };
         })()`,
         true,
       );
+      if (!isInputPoint(point)) throw new Error("Element does not have a clickable position.");
+      if (point.direct === true) {
+        await contents.executeJavaScript(
+          `document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]')?.click()`,
+          true,
+        );
+        return;
+      }
+      await withDevToolsDebugger(contents, async () => {
+        await contents.debugger.sendCommand("Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          x: point.x,
+          y: point.y,
+        });
+        await contents.debugger.sendCommand("Input.dispatchMouseEvent", {
+          type: "mousePressed",
+          x: point.x,
+          y: point.y,
+          button: "left",
+          clickCount: 1,
+        });
+        await contents.debugger.sendCommand("Input.dispatchMouseEvent", {
+          type: "mouseReleased",
+          x: point.x,
+          y: point.y,
+          button: "left",
+          clickCount: 1,
+        });
+      });
       return;
     }
     case "type": {
@@ -861,19 +923,24 @@ async function performAction(contents: WebContents, action: BrowserAction): Prom
           const node = document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]');
           if (!(node instanceof HTMLElement)) throw new Error('Element reference is no longer available.');
           node.focus();
-          const text = ${JSON.stringify(action.text.slice(0, 50_000))};
           if ('value' in node) {
-            const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), 'value')?.set;
-            if (setter) setter.call(node, text); else node.value = text;
+            if (typeof node.select === 'function') node.select();
           } else if (node.isContentEditable) {
-            node.textContent = text;
+            const selection = getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            selection?.removeAllRanges();
+            selection?.addRange(range);
           } else {
             throw new Error('Element does not accept text.');
           }
-          node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
-          node.dispatchEvent(new Event('change', { bubbles: true }));
         })()`,
         true,
+      );
+      await withDevToolsDebugger(contents, () =>
+        contents.debugger.sendCommand("Input.insertText", {
+          text: action.text.slice(0, 50_000),
+        }),
       );
       if (action.submit) pressKey(contents, "Enter");
       return;
@@ -895,6 +962,29 @@ async function performAction(contents: WebContents, action: BrowserAction): Prom
       return;
     case "reload":
       contents.reload();
+  }
+}
+
+function isInputPoint(value: unknown): value is { x: number; y: number; direct?: boolean } {
+  return (
+    isRecord(value) &&
+    typeof value.x === "number" &&
+    Number.isFinite(value.x) &&
+    typeof value.y === "number" &&
+    Number.isFinite(value.y)
+  );
+}
+
+async function withDevToolsDebugger<T>(
+  contents: WebContents,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const attachedHere = !contents.debugger.isAttached();
+  if (attachedHere) contents.debugger.attach("1.3");
+  try {
+    return await operation();
+  } finally {
+    if (attachedHere && contents.debugger.isAttached()) contents.debugger.detach();
   }
 }
 

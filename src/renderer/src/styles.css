@@ -3488,6 +3488,70 @@ textarea {
   white-space: pre-line;
 }
 
+.message-link {
+  border-radius: 3px;
+  color: inherit;
+  font-weight: 560;
+  text-decoration-color: rgba(255, 255, 255, 0.48);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  transition:
+    color 100ms ease,
+    text-decoration-color 100ms ease;
+}
+
+.message-link-icon {
+  position: relative;
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+  color: currentColor;
+  vertical-align: -2px;
+}
+
+.message-link-icon img,
+.message-link-fallback {
+  width: 14px;
+  height: 14px;
+}
+
+.message-link-icon img {
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.message-link-fallback {
+  opacity: 0.72;
+}
+
+.message-link:hover {
+  color: #fff;
+  text-decoration-color: currentColor;
+}
+
+.message-link:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.62);
+  outline-offset: 2px;
+}
+
+.user-bubble .message-link {
+  text-decoration-color: rgba(20, 20, 20, 0.42);
+}
+
+.user-bubble .message-link:hover {
+  color: #000;
+}
+
+.user-bubble .message-link:focus-visible {
+  outline-color: rgba(20, 20, 20, 0.58);
+}
+
 .message-reply-context {
   max-width: 360px;
   margin: -1px 0 7px;

@@ -5,6 +5,18 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-08-16
+
+### Added
+
+- Render Markdown and plain web links with site favicons, safe fallbacks, and system-browser opening.
+
+### Fixed
+
+- Automatically unarchive stored Codex sessions before resuming work or reading conversation history.
+- Use trusted Chromium input events and one consistent page and network identity in the embedded browser so X sign-in and account confirmation work.
+- Send signed-out X landing pages to the stable login route while preserving signed-in sessions.
+
 ## [0.1.10] - 2026-08-14
 
 ### Fixed

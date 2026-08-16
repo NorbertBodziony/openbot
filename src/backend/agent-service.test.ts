@@ -38,6 +38,7 @@ afterEach(async () => {
   delete process.env.OPENBOT_FAKE_AUTO_COMPLETE;
   delete process.env.OPENBOT_FAKE_CONTEXT_USAGE;
   delete process.env.OPENBOT_FAKE_COMPACTION_ERROR;
+  delete process.env.OPENBOT_FAKE_ARCHIVED_THREAD;
   delete process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY;
   delete process.env.OPENBOT_FAKE_WARNING;
   await rm(root, { recursive: true, force: true });
@@ -582,6 +583,47 @@ describe.sequential("AgentService", () => {
     expect((await store.getOrCreate("chief")).threadId).toBe(threadId);
   });
 
+  it("unarchives a stored Codex thread and resumes the queued delivery", async () => {
+    process.env.OPENBOT_FAKE_ARCHIVED_THREAD = "1";
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Remember this" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    const threadId = (await store.getOrCreate("chief")).threadId;
+    await service.stop();
+
+    service = new AgentService(store, mailbox, fakeBrowser());
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Continue" });
+    await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "running");
+
+    const requests = await protocolMessages();
+    expect(requests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ method: "thread/unarchive", params: { threadId } }),
+      ]),
+    );
+    expect(
+      requests.filter(
+        (message) =>
+          message.method === "thread/resume" &&
+          (message.params as Record<string, unknown>).threadId === threadId,
+      ),
+    ).toHaveLength(2);
+    expect(events).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "error",
+          message: expect.stringContaining("is archived"),
+        }),
+      ]),
+    );
+  });
+
   it("deletes idle bots and refuses to orphan active work", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
@@ -653,6 +695,7 @@ let buffer = "";
 let threadCounter = 0;
 let turnCounter = 0;
 const turns = new Map();
+let archivedThread = process.env.OPENBOT_FAKE_ARCHIVED_THREAD === "1";
 const write = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
@@ -677,7 +720,14 @@ process.stdin.on("data", (chunk) => {
         const threadId = "thread-" + (++threadCounter);
         write({ id: message.id, result: { thread: { id: threadId, turns: [] } } });
       }
-      if (message.method === "thread/resume") write({ id: message.id, result: { thread: { id: message.params.threadId, turns: [] } } });
+      if (message.method === "thread/resume") {
+        if (archivedThread) write({ id: message.id, error: { code: -32600, message: "session " + message.params.threadId + " is archived. Run codex unarchive " + message.params.threadId + " to unarchive it first." } });
+        else write({ id: message.id, result: { thread: { id: message.params.threadId, turns: [] } } });
+      }
+      if (message.method === "thread/unarchive") {
+        archivedThread = false;
+        write({ id: message.id, result: { thread: { id: message.params.threadId, turns: [] } } });
+      }
       if (message.method === "thread/read") {
         const capturedTurns = JSON.parse(JSON.stringify([...turns.values()]));
         const respond = () => write({ id: message.id, result: { thread: { id: message.params.threadId, turns: capturedTurns } } });

@@ -5,6 +5,7 @@ export const IPC_CHANNELS = {
   getMacPermissions: "app:get-mac-permissions",
   requestMacPermission: "app:request-mac-permission",
   openExternal: "app:open-external",
+  openUrl: "app:open-url",
   updateGetStatus: "update:get-status",
   updateCheck: "update:check",
   updateDownload: "update:download",
@@ -558,6 +559,7 @@ export interface OpenBotDesktopApi {
   getMacPermissions: () => Promise<MacPermissionsState>;
   requestMacPermission: (permission: MacPermissionId) => Promise<MacPermissionsState>;
   openExternal: (destination: ExternalDestination) => Promise<void>;
+  openUrl: (url: string) => Promise<void>;
   agent: AgentDesktopApi;
   browser: BrowserDesktopApi;
   update: UpdateDesktopApi;

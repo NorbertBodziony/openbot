@@ -33,7 +33,14 @@ const server = createServer((request, response) => {
   }
   if (url.pathname === "/headers") {
     response.setHeader("content-type", "text/html; charset=utf-8");
-    response.end(`<main>${JSON.stringify(request.headers)}</main>`);
+    const requestHeaders = JSON.stringify(request.headers).replaceAll("<", "\\u003c");
+    response.end(`<main></main><script>
+      document.querySelector("main").textContent = JSON.stringify({
+        requestHeaders: ${requestHeaders},
+        navigatorUserAgent: navigator.userAgent,
+        navigatorBrands: navigator.userAgentData?.brands ?? [],
+      });
+    </script>`);
     return;
   }
   if (url.pathname === "/abort") {
@@ -43,8 +50,8 @@ const server = createServer((request, response) => {
 
   response.setHeader("content-type", "text/html; charset=utf-8");
   response.end(`<!doctype html>
-    <input aria-label="Task" />
-    <button aria-label="Save" onclick="document.querySelector('output').textContent = document.querySelector('input').value">Save</button>
+    <input aria-label="Task" oninput="this.dataset.trusted = String(event.isTrusted)" />
+    <button aria-label="Save" onclick="document.querySelector('output').textContent = document.querySelector('input').value + '|input:' + document.querySelector('input').dataset.trusted + '|click:' + event.isTrusted">Save</button>
     <a href="/child" target="_blank">Child</a>
     <a href="/download" download>Download</a>
     <output>empty</output>`);
@@ -74,7 +81,9 @@ async function main(): Promise<void> {
 
     await app.whenReady();
     process.stdout.write("BrowserHost: Electron ready.\n");
-    const window = new BrowserWindow({ show: false });
+    const window = new BrowserWindow({ show: false, opacity: 0 });
+    window.show();
+    window.focus();
     const downloadsRoot = join(temporaryRoot, "downloads");
     const statePath = join(temporaryRoot, "browser-tabs.json");
     const browser = new BrowserHost(window, downloadsRoot, statePath);
@@ -105,20 +114,31 @@ async function main(): Promise<void> {
     if (!currentSave) throw new Error("Save control disappeared after typing.");
     await browser.act(tab.id, typed.revision, { type: "click", ref: currentSave.ref });
     const result = await browser.snapshot(tab.id);
-    if (!result.text.includes("runs locally")) throw new Error("Browser click/type failed.");
+    if (!result.text.includes("runs locally|input:true|click:true")) {
+      throw new Error(`Browser input was not native: ${result.text}`);
+    }
     process.stdout.write("BrowserHost: snapshot and actions passed.\n");
 
     const headerTab = await browser.open(`${origin}/headers`, "smoke-thread");
     const headerSnapshot = await browser.snapshot(headerTab.id);
+    const identity = JSON.parse(headerSnapshot.text) as {
+      requestHeaders: Record<string, string | undefined>;
+      navigatorUserAgent: string;
+      navigatorBrands: Array<{ brand: string; version: string }>;
+    };
+    const clientHintBrands = identity.requestHeaders["sec-ch-ua"] ?? "";
     if (
       headerSnapshot.text.includes("Electron/") ||
       headerSnapshot.text.includes("OpenBot/") ||
-      !headerSnapshot.text.includes("sec-ch-ua") ||
-      !headerSnapshot.text.includes("Google Chrome")
+      identity.requestHeaders["user-agent"] !== identity.navigatorUserAgent ||
+      (clientHintBrands.length > 0 &&
+        identity.navigatorBrands.some(
+          ({ brand, version }) => !clientHintBrands.includes(`"${brand}";v="${version}"`),
+        ))
     ) {
       throw new Error(`Browser identity headers are invalid: ${headerSnapshot.text}`);
     }
-    process.stdout.write("BrowserHost: Chrome identity headers passed.\n");
+    process.stdout.write("BrowserHost: matching Chromium page and request identity passed.\n");
     await expectFailure(() =>
       browser.act(tab.id, first.revision, { type: "click", ref: save.ref }),
     );

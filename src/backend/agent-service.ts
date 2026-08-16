@@ -22,7 +22,7 @@ import type {
 } from "../shared/ipc";
 import { isClaudeModel, isReasoningEffort } from "../shared/ipc";
 import type { AgentClient, AgentProvider } from "./agent-client";
-import { CodexAppServerClient } from "./app-server-client";
+import { AppServerError, CodexAppServerClient } from "./app-server-client";
 import type { BotStore } from "./bot-store";
 import { BROWSER_DYNAMIC_TOOLS, type BrowserHost, OPENBOT_BROWSER_NAMESPACE } from "./browser-host";
 import { ClaudeAgentClient } from "./claude-client";
@@ -362,10 +362,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     try {
-      const response = await client.request<ThreadResponse>("thread/read", {
-        threadId: bot.threadId,
-        includeTurns: true,
-      });
+      const response = await this.#requestWithArchivedThreadRecovery<ThreadResponse>(
+        bot,
+        client,
+        "thread/read",
+        { threadId: bot.threadId, includeTurns: true },
+      );
       const fromThread = snapshotFromThread(botId, response.thread, (deliveryId) =>
         this.#mailbox.getDelivery(deliveryId),
       );
@@ -696,18 +698,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (bot.threadId) {
       this.#threadToBot.set(bot.threadId, bot.id);
       if (!this.#loadedThreads.has(bot.threadId)) {
-        await client.request("thread/resume", {
-          threadId: bot.threadId,
-          model: bot.model,
-          effort: bot.reasoningEffort,
-          cwd: bot.workspacePath,
-          runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
-          approvalPolicy: "never",
-          sandbox: "danger-full-access",
-          developerInstructions: developerInstructions(bot, this.#store.sharedRoot),
-          dynamicTools: [...BROWSER_DYNAMIC_TOOLS, OPENBOT_DYNAMIC_TOOLS],
-        });
-        this.#loadedThreads.add(bot.threadId);
+        await this.#resumeThread(bot, client);
       }
       return bot.threadId;
     }
@@ -730,6 +721,45 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#loadedThreads.add(threadId);
     this.#ensureSnapshot(bot.id, threadId);
     return threadId;
+  }
+
+  async #resumeThread(bot: BotSummary, client: AgentClient): Promise<void> {
+    if (!bot.threadId) return;
+    const params = {
+      threadId: bot.threadId,
+      model: bot.model,
+      effort: bot.reasoningEffort,
+      cwd: bot.workspacePath,
+      runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+      developerInstructions: developerInstructions(bot, this.#store.sharedRoot),
+      dynamicTools: [...BROWSER_DYNAMIC_TOOLS, OPENBOT_DYNAMIC_TOOLS],
+    };
+
+    try {
+      await client.request("thread/resume", params);
+    } catch (error) {
+      if (client.provider !== "codex" || !isArchivedThreadError(error)) throw error;
+      await client.request("thread/unarchive", { threadId: bot.threadId });
+      await client.request("thread/resume", params);
+    }
+    this.#loadedThreads.add(bot.threadId);
+  }
+
+  async #requestWithArchivedThreadRecovery<T>(
+    bot: BotSummary,
+    client: AgentClient,
+    method: string,
+    params: unknown,
+  ): Promise<T> {
+    try {
+      return await client.request<T>(method, params);
+    } catch (error) {
+      if (client.provider !== "codex" || !isArchivedThreadError(error)) throw error;
+      await this.#resumeThread(bot, client);
+      return client.request<T>(method, params);
+    }
   }
 
   async #handleServerRequest(client: AgentClient, request: AppServerRequest): Promise<void> {
@@ -1012,17 +1042,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.#emitConversation(snapshot);
 
-      const response = await client.request<TurnResponse>("turn/start", {
-        threadId,
-        model: bot.model,
-        effort: bot.reasoningEffort,
-        clientUserMessageId: delivery.id,
-        input,
-        cwd: bot.workspacePath,
-        runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
-        approvalPolicy: "never",
-        sandboxPolicy: { type: "dangerFullAccess" },
-      });
+      const response = await this.#requestWithArchivedThreadRecovery<TurnResponse>(
+        bot,
+        client,
+        "turn/start",
+        {
+          threadId,
+          model: bot.model,
+          effort: bot.reasoningEffort,
+          clientUserMessageId: delivery.id,
+          input,
+          cwd: bot.workspacePath,
+          runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
+          approvalPolicy: "never",
+          sandboxPolicy: { type: "dangerFullAccess" },
+        },
+      );
       await this.#mailbox.markRunning(delivery.id, response.turn.id);
       snapshot.activeTurnId = response.turn.id;
       this.#syncDeliveryMessage(snapshot, delivery.id);
@@ -1273,6 +1308,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       case "thread/tokenUsage/updated": {
         if (!threadId || !botId) return;
         this.#updateContextBudget(threadId, params);
+        return;
+      }
+      case "thread/archived": {
+        if (threadId) this.#loadedThreads.delete(threadId);
         return;
       }
       case "mcpServer/startupStatus/updated": {
@@ -1772,6 +1811,10 @@ function developerInstructions(bot: BotSummary, sharedRoot: string): string {
 
 function isNonActionableCodexWarning(message: string): boolean {
   return message.startsWith("Skill descriptions were shortened to fit");
+}
+
+function isArchivedThreadError(error: unknown): boolean {
+  return error instanceof AppServerError && /\bis archived\b/i.test(error.message);
 }
 
 function isDynamicToolCall(value: unknown): value is DynamicToolCallParams {

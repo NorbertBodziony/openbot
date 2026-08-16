@@ -80,6 +80,7 @@ describe("OpenBot connected desktop shell", () => {
           accessibility: "granted",
         }),
         openExternal: vi.fn().mockResolvedValue(undefined),
+        openUrl: vi.fn().mockResolvedValue(undefined),
         agent: {
           getStatus: vi.fn().mockResolvedValue({
             phase: "ready",
@@ -551,6 +552,40 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     const stored = await screen.findByText("Already in history");
     expect(stored.closest(".message-entry")).not.toHaveClass("message-entry-animated");
+  });
+
+  it("renders message links and opens them in the embedded browser", async () => {
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValueOnce({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 1,
+      messages: [
+        {
+          id: "linked-message",
+          author: "assistant",
+          text: "Read [Meta](https://about.fb.com/news/) or https://example.com/report.",
+          createdAt: "2026-08-12T09:00:00.000Z",
+          status: "completed",
+        },
+      ],
+    });
+    render(() => <App />);
+    const metaLink = await screen.findByRole("link", { name: "Meta" });
+    expect(metaLink).toHaveAttribute("href", "https://about.fb.com/news/");
+    expect(metaLink.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://about.fb.com/favicon.ico",
+    );
+    expect(screen.getByRole("link", { name: "https://example.com/report" })).toHaveAttribute(
+      "href",
+      "https://example.com/report",
+    );
+    expect(screen.queryByText("https://about.fb.com/news/")).not.toBeInTheDocument();
+
+    await fireEvent.click(metaLink);
+    expect(window.openbot.openUrl).toHaveBeenCalledWith("https://about.fb.com/news/");
+    expect(window.openbot.browser.open).not.toHaveBeenCalled();
   });
 
   it("refreshes stored history when Codex becomes ready after the window opens", async () => {

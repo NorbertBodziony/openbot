@@ -172,6 +172,20 @@ function PlusIcon() {
   );
 }
 
+function LinkIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16" class="message-link-fallback">
+      <path
+        d="M6.6 9.4 9.4 6.6M5.2 10.8l-1 .9a2.2 2.2 0 0 1-3.1-3.1l2.1-2.1a2.2 2.2 0 0 1 3.1 0M10.8 5.2l1-.9a2.2 2.2 0 1 1 3.1 3.1l-2.1 2.1a2.2 2.2 0 0 1-3.1 0"
+        fill="none"
+        stroke="currentColor"
+        stroke-linecap="round"
+        stroke-width="1.3"
+      />
+    </svg>
+  );
+}
+
 function FileIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20" class="file-icon fill-none stroke-current">
@@ -440,6 +454,7 @@ function MessageBody(props: {
   referencedMessage?: BotMessage;
   bots: BotProfile[];
   onSelectAgent: (botId: string) => void;
+  onOpenLink: (url: string) => void;
   onPreview: (attachment: AttachmentSummary) => void;
   onAttachmentAction: (attachment: AttachmentSummary, action: "open" | "reveal") => void;
 }) {
@@ -455,10 +470,11 @@ function MessageBody(props: {
       </Show>
       <Show when={props.message.body}>
         <p class="message-copy">
-          <TaggedMessageText
+          <RichMessageText
             body={props.message.body}
             bots={props.bots}
             onSelectAgent={props.onSelectAgent}
+            onOpenLink={props.onOpenLink}
           />
         </p>
       </Show>
@@ -586,31 +602,112 @@ function MessageActions(props: {
   );
 }
 
-function TaggedMessageText(props: {
+function RichMessageText(props: {
   body: string;
   bots: BotProfile[];
   onSelectAgent: (botId: string) => void;
+  onOpenLink: (url: string) => void;
 }) {
-  const parts = createMemo(() => taggedMessageParts(props.body, props.bots));
+  const parts = createMemo(() => richMessageParts(props.body, props.bots));
   return (
     <For each={parts()}>
-      {(part) => (
-        <Show when={part.bot} fallback={part.text}>
-          {(bot) => (
+      {(part) => {
+        if (part.url) {
+          return (
+            <a
+              class="message-link"
+              href={part.url}
+              title={part.url}
+              onClick={(event) => {
+                event.preventDefault();
+                props.onOpenLink(part.url ?? "");
+              }}
+            >
+              <span class="message-link-icon" aria-hidden="true">
+                <LinkIcon />
+                <img
+                  src={faviconUrl(part.url)}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
+                  onError={(event) => event.currentTarget.remove()}
+                />
+              </span>
+              {part.text}
+            </a>
+          );
+        }
+        if (part.bot) {
+          return (
             <button
               type="button"
               class="message-agent-tag"
-              aria-label={`Open agent ${bot().name}`}
-              onClick={() => props.onSelectAgent(bot().id)}
+              aria-label={`Open agent ${part.bot.name}`}
+              onClick={() => props.onSelectAgent(part.bot?.id ?? "")}
             >
-              <AgentAvatar bot={bot()} />
-              <span>{bot().name}</span>
+              <AgentAvatar bot={part.bot} />
+              <span>{part.bot.name}</span>
             </button>
-          )}
-        </Show>
-      )}
+          );
+        }
+        return part.text;
+      }}
     </For>
   );
+}
+
+interface RichMessagePart {
+  text: string;
+  bot?: BotProfile;
+  url?: string;
+}
+
+function richMessageParts(body: string, bots: BotProfile[]): RichMessagePart[] {
+  const parts: RichMessagePart[] = [];
+  for (const part of linkedMessageParts(body)) {
+    if (part.url) parts.push(part);
+    else parts.push(...taggedMessageParts(part.text, bots));
+  }
+  return parts;
+}
+
+function linkedMessageParts(body: string): RichMessagePart[] {
+  const expression = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()]+)/giu;
+  const parts: RichMessagePart[] = [];
+  let cursor = 0;
+  for (const match of body.matchAll(expression)) {
+    const index = match.index ?? 0;
+    if (index > cursor) parts.push({ text: body.slice(cursor, index) });
+    const markdownUrl = match[2];
+    const rawUrl = match[3];
+    const rawLink = markdownUrl ?? rawUrl ?? "";
+    const cleanLink = rawLink.replace(/[.,!?;:]+$/u, "");
+    const url = safeBrowserUrl(cleanLink);
+    if (!url) {
+      parts.push({ text: match[0] });
+    } else {
+      parts.push({ text: match[1] ?? cleanLink, url });
+      const trailingText = rawLink.slice(cleanLink.length);
+      if (trailingText) parts.push({ text: trailingText });
+    }
+    cursor = index + match[0].length;
+  }
+  if (cursor < body.length) parts.push({ text: body.slice(cursor) });
+  return parts.length > 0 ? parts : [{ text: body }];
+}
+
+function safeBrowserUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function faviconUrl(value: string): string {
+  return `${new URL(value).origin}/favicon.ico`;
 }
 
 function taggedMessageParts(body: string, bots: BotProfile[]) {
@@ -1337,6 +1434,14 @@ export function Conversation(props: ConversationProps) {
     }
   }
 
+  async function openMessageLink(url: string) {
+    try {
+      await window.openbot.openUrl(url);
+    } catch {
+      setComposerError("Could not open the link.");
+    }
+  }
+
   function showBrowserPanel() {
     setActiveRightPanel("browser");
     if (browserTabs().length === 0) void openBrowserAddress();
@@ -1685,6 +1790,7 @@ export function Conversation(props: ConversationProps) {
                                 )}
                                 bots={props.bots}
                                 onSelectAgent={props.onSelectAgent}
+                                onOpenLink={(url) => void openMessageLink(url)}
                                 onPreview={(attachment) => void previewAttachment(attachment)}
                                 onAttachmentAction={attachmentAction}
                               />
