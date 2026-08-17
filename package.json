@@ -66,7 +66,7 @@
     "dist:release": "bun run build && electron-builder --mac --arm64 --publish never"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.228",
+    "@anthropic-ai/claude-agent-sdk": "0.3.232",
     "electron-updater": "6.8.9",
     "solid-js": "1.9.14",
     "zod": "4.4.3"
