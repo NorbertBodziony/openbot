@@ -6,6 +6,8 @@ const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
 export type AvatarMotion = "hover" | "always";
 
+const BLOBATAR_SHAPES = ["round", "organic", "boxy", "nub", "cloud", "sun"] as const;
+
 export const AVATAR_HUE_OPTIONS: ReadonlyArray<{
   hue: BotAvatarHue;
   label: string;
@@ -23,16 +25,29 @@ export const AVATAR_HUE_OPTIONS: ReadonlyArray<{
 ];
 
 export function avatarHueSwatch(hue: BotAvatarHue): string {
-  return palette(hue, true, 0.49).head ?? `hsl(${hue} 72% 58%)`;
+  const swatch = palette(hue, true, 0.49).head;
+  if (!swatch) throw new Error(`Blobatar did not return a head color for hue ${hue}.`);
+  return swatch;
 }
 
 export function avatarCandidateSeeds(botId: string, currentSeed: string, batch: number): string[] {
   const candidates = [currentSeed];
+  const missingShapes = new Set(BLOBATAR_SHAPES);
+  missingShapes.delete(layout(traits(currentSeed)).shape);
   let index = 1;
+
+  while (missingShapes.size > 0) {
+    const candidate = `${botId}:avatar:${batch}:${index}`;
+    index += 1;
+    if (candidates.includes(candidate)) continue;
+    if (!missingShapes.delete(layout(traits(candidate)).shape)) continue;
+    candidates.push(candidate);
+  }
+
   while (candidates.length < 12) {
     const candidate = `${botId}:avatar:${batch}:${index}`;
-    if (!candidates.includes(candidate)) candidates.push(candidate);
     index += 1;
+    if (!candidates.includes(candidate)) candidates.push(candidate);
   }
   return candidates;
 }

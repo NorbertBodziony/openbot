@@ -884,6 +884,14 @@ describe("OpenBot connected desktop shell", () => {
 
     const editor = within(settings).getByRole("region", { name: "Avatar editor" });
     expect(within(editor).getAllByRole("button", { name: /Avatar option/ })).toHaveLength(11);
+    const faceButtons = within(editor).getAllByRole("button", {
+      name: /Current avatar|Avatar option/,
+    });
+    expect(faceButtons).toHaveLength(12);
+    for (const faceButton of faceButtons) {
+      expect(faceButton.querySelector(".bot-avatar > svg .mo-root")).not.toBeNull();
+      expect(faceButton.querySelector(".agent-mark")).toBeNull();
+    }
     await fireEvent.click(within(editor).getByRole("button", { name: "Avatar option 2" }));
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({

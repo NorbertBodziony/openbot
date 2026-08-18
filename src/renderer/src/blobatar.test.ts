@@ -1,5 +1,14 @@
+import { traits } from "blobatar";
+import { blobatar, layout } from "blobatar/blob";
 import { describe, expect, it } from "vitest";
 import { avatarCandidateSeeds, buildAnimatedAvatarSvg } from "./blobatar";
+
+const shapeMarkup = (markup: string) => {
+  const document = new DOMParser().parseFromString(markup, "image/svg+xml");
+  return Array.from(
+    document.querySelectorAll("circle, ellipse, line, path, polygon, polyline, rect"),
+  ).map((element) => element.outerHTML);
+};
 
 describe("animated Blobatar adapter", () => {
   it("renders stable motion markup for the same agent seed", () => {
@@ -18,7 +27,16 @@ describe("animated Blobatar adapter", () => {
     expect(buildAnimatedAvatarSvg("chief", 215, "hover")).not.toContain("mo-always");
   });
 
-  it("keeps the current face while producing deterministic alternative sets", () => {
+  it("keeps all visible geometry from the pinned Blobatar renderer", () => {
+    const seed = "chief:avatar:2:4";
+    const hue = 215;
+
+    expect(shapeMarkup(buildAnimatedAvatarSvg(seed, hue))).toEqual(
+      shapeMarkup(blobatar(seed, { hue })),
+    );
+  });
+
+  it("keeps the current face and all six package silhouettes in each deterministic set", () => {
     const firstSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 0);
     const repeatedSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 0);
     const nextSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 1);
@@ -27,6 +45,9 @@ describe("animated Blobatar adapter", () => {
     expect(firstSet).toHaveLength(12);
     expect(new Set(firstSet)).toHaveLength(12);
     expect(firstSet[0]).toBe("chief:avatar:4:7");
+    expect(new Set(firstSet.map((seed) => layout(traits(seed)).shape))).toEqual(
+      new Set(["round", "organic", "boxy", "nub", "cloud", "sun"]),
+    );
     expect(nextSet[0]).toBe(firstSet[0]);
     expect(nextSet.slice(1)).not.toEqual(firstSet.slice(1));
   });
