@@ -41,6 +41,7 @@
     "api:start": "bun run --cwd apps/auth-api start",
     "api:build": "bun run --cwd apps/auth-api build",
     "api:deploy": "bun run --cwd apps/auth-api deploy",
+    "api:deploy:test": "bun run --cwd apps/auth-api deploy:test",
     "api:migrate:local": "bun run --cwd apps/auth-api db:migrate:local",
     "api:migrate:remote": "bun run --cwd apps/auth-api db:migrate:remote",
     "env:encrypt:dev": "bun run --cwd apps/auth-api env:encrypt:dev",

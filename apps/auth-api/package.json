@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "dotenvx run -f .env.production -fk ../../.env.keys -- vite preview --port 3100",
     "deploy": "dotenvx run -f .env.production -fk ../../.env.keys -- bun ../../scripts/deploy-auth-api.ts",
+    "deploy:test": "dotenvx run -f .env.production -fk ../../.env.keys -- bun ../../scripts/deploy-auth-api.ts --env test",
     "env:encrypt:dev": "dotenvx encrypt -f .env.dev -fk ../../.env.keys",
     "env:encrypt:prod": "dotenvx encrypt -f .env.production -fk ../../.env.keys",
     "env:set:smtp": "bun ../../scripts/set-auth-smtp-secret.ts",

@@ -25,6 +25,7 @@ export type SmtpConnector = (
 ) => SmtpSocket;
 
 const SMTP_TIMEOUT_MS = 15_000;
+const SMTP_MAX_ATTEMPTS = 3;
 const EMAIL_PATTERN = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+$/iu;
 
 export async function sendPrivateEmailCode(
@@ -42,7 +43,28 @@ export async function sendPrivateEmailCode(
     throw new Error("smtp_invalid_code");
   }
 
-  const connect = connector ?? (await loadCloudflareConnector());
+  const connect =
+    connector ??
+    (await loadCloudflareConnector().catch(() => {
+      throw wrapTransportError();
+    }));
+  for (let attempt = 1; attempt <= SMTP_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      await sendPrivateEmailCodeAttempt(config, message, connect);
+      return;
+    } catch (error) {
+      const smtpError = normalizeSmtpError(error);
+      if (!isRetryableSmtpError(smtpError) || attempt === SMTP_MAX_ATTEMPTS) throw smtpError;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, attempt * 250));
+    }
+  }
+}
+
+async function sendPrivateEmailCodeAttempt(
+  config: SmtpEmailConfig,
+  message: SmtpEmailMessage,
+  connect: SmtpConnector,
+): Promise<void> {
   const socket = connect(
     { hostname: config.host, port: config.port },
     { secureTransport: "on", allowHalfOpen: false },
@@ -53,6 +75,21 @@ export async function sendPrivateEmailCode(
   } finally {
     await Promise.resolve(socket.close()).catch(() => undefined);
   }
+}
+
+function normalizeSmtpError(error: unknown): Error {
+  if (error instanceof Error && /^smtp_[a-z_]+$/u.test(error.message)) return error;
+  return wrapTransportError();
+}
+
+function wrapTransportError(): Error {
+  return new Error("smtp_transport_failed");
+}
+
+function isRetryableSmtpError(error: Error): boolean {
+  return ["smtp_transport_failed", "smtp_timeout", "smtp_connection_closed"].includes(
+    error.message,
+  );
 }
 
 async function runSmtpSession(

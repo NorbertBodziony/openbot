@@ -50,6 +50,9 @@ Worker, and deploys it. The password is never passed as a process argument. The
 other values are Worker variables. The SMTP connection uses TLS from the start
 and accepts only port 465.
 
+Use `bun run api:deploy:test` for the isolated `openbot-auth-api-test` Worker
+and the `openbot-auth-test` D1 database.
+
 As a fallback, set `EMAIL_DELIVERY_WEBHOOK_URL` to an HTTPS endpoint. OpenBot
 sends this JSON:
 

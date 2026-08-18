@@ -18,5 +18,27 @@
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  "env": {
+    "test": {
+      "name": "openbot-auth-api-test",
+      "workers_dev": true,
+      "preview_urls": false,
+      "vars": {
+        "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
+        "EMAIL_SMTP_HOST": "mail.privateemail.com",
+        "EMAIL_SMTP_PORT": "465",
+        "EMAIL_SMTP_USERNAME": "hello@openbot.run",
+        "EMAIL_FROM": "hello@openbot.run"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "openbot-auth-test",
+          "database_id": "38f1a836-6c70-44bb-bbf3-f0bbc5b766b3",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
 }

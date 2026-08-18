@@ -138,6 +138,56 @@ describe("Private Email SMTP delivery", () => {
     expect((error as Error).message).not.toContain(password);
   });
 
+  it("retries transport failures but not protocol failures", async () => {
+    let attempts = 0;
+    const writes: string[] = [];
+    const connector: SmtpConnector = () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return {
+          opened: Promise.reject(new Error("network details that must not escape")),
+          readable: new ReadableStream(),
+          writable: new WritableStream(),
+          close() {},
+        };
+      }
+      return {
+        opened: Promise.resolve(),
+        readable: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`${SUCCESS_RESPONSES}\r\n`));
+            controller.close();
+          },
+        }),
+        writable: new WritableStream({
+          write(chunk) {
+            writes.push(new TextDecoder().decode(chunk));
+          },
+        }),
+        close() {},
+      };
+    };
+
+    await sendPrivateEmailCode(
+      {
+        host: "mail.privateemail.com",
+        port: 465,
+        username: "hello@openbot.run",
+        password: "app-password-value",
+        from: "hello@openbot.run",
+      },
+      {
+        email: "person@example.com",
+        code: "ABCD-EFGH",
+        expiresAt: Date.now() + 10 * 60_000,
+      },
+      connector,
+    );
+
+    expect(attempts).toBe(2);
+    expect(writes).toContain("QUIT\r\n");
+  });
+
   it("rejects partial SMTP configuration", () => {
     expect(() =>
       createEmailCodeDelivery({
