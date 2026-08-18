@@ -17,6 +17,10 @@ class MemoryAuthRepository implements AuthRepository {
   >();
   readonly limits = new Map<string, number>();
   readonly sessions = new Map<string, { user: AuthUser; expiresAt: number; revoked: boolean }>();
+  readonly teamTickets = new Map<
+    string,
+    { user: AuthUser; serverId: string; expiresAt: number; consumed: boolean }
+  >();
 
   async latestEmailChallengeAt(email: string): Promise<number | null> {
     const matches = [...this.challenges.values()].filter((value) => value.email === email);
@@ -98,6 +102,42 @@ class MemoryAuthRepository implements AuthRepository {
     const session = this.sessions.get(sessionToken);
     if (session) session.revoked = true;
   }
+
+  async createTeamAuthTicket(input: {
+    ticketHash: string;
+    userId: string;
+    serverId: string;
+    expiresAt: number;
+  }): Promise<void> {
+    const user = [...this.sessions.values()].find(
+      (session) => session.user.id === input.userId,
+    )?.user;
+    if (!user) throw new Error("User not found.");
+    this.teamTickets.set(input.ticketHash, {
+      user,
+      serverId: input.serverId,
+      expiresAt: input.expiresAt,
+      consumed: false,
+    });
+  }
+
+  async redeemTeamAuthTicket(input: {
+    ticketHash: string;
+    serverId: string;
+    now: number;
+  }): Promise<AuthUser | null> {
+    const ticket = this.teamTickets.get(input.ticketHash);
+    if (
+      !ticket ||
+      ticket.consumed ||
+      ticket.serverId !== input.serverId ||
+      ticket.expiresAt <= input.now
+    ) {
+      return null;
+    }
+    ticket.consumed = true;
+    return ticket.user;
+  }
 }
 
 describe("email one-time codes", () => {
@@ -133,6 +173,19 @@ describe("email one-time codes", () => {
     });
     expect(session.user.email).toBe("person@example.com");
     expect(await service.authenticate(session.sessionToken)).toEqual(session.user);
+    const serverId = "00000000-0000-4000-8000-000000000000";
+    const ticket = await service.issueTeamAuthTicket(session.sessionToken, serverId, "203.0.113.4");
+    expect(
+      await service.redeemTeamAuthTicket(
+        ticket.ticket,
+        "00000000-0000-4000-8000-000000000001",
+        "203.0.113.5",
+      ),
+    ).toBeNull();
+    expect(await service.redeemTeamAuthTicket(ticket.ticket, serverId, "203.0.113.5")).toEqual(
+      session.user,
+    );
+    expect(await service.redeemTeamAuthTicket(ticket.ticket, serverId, "203.0.113.5")).toBeNull();
     await expect(
       service.verifyEmailCode({
         challengeId: challenge.challengeId,

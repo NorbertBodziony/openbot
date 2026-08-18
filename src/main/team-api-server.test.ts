@@ -18,6 +18,84 @@ afterEach(async () => {
 });
 
 describe("TeamApiServer administration", () => {
+  it("joins an email-bound invitation with a verified OpenBot account", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-account-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configureWithAccount("Studio Mac", {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
+    const invite = await store.createInvite("member", "alice@example.com");
+    const agentEvents = new EventEmitter();
+    const agents = agentEvents as unknown as AgentService;
+    const api = new TeamApiServer({
+      store,
+      agents,
+      mailbox: {} as MailboxStore,
+      browser: {} as BrowserHost,
+      getRemoteMac: () => ({ hostname: null, online: false }),
+      redeemCentralTicket: async (ticket, serverId) =>
+        ticket === "valid-team-ticket" && serverId === store.getIdentity()?.serverId
+          ? {
+              id: "alice-account",
+              email: "alice@example.com",
+              name: "Alice",
+              avatarUrl: null,
+            }
+          : null,
+    });
+    const port = await api.start();
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/join/account`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          inviteToken: invite.token,
+          accountTicket: "valid-team-ticket",
+        }),
+      });
+      expect(response.status).toBe(201);
+      const joined = (await response.json()) as {
+        member: { email: string; role: string };
+        sessionToken: string;
+      };
+      expect(joined.member).toMatchObject({ email: "alice@example.com", role: "member" });
+      expect(store.authenticate(joined.sessionToken)?.email).toBe("alice@example.com");
+
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
+        "openbot-events",
+        `openbot-token.${joined.sessionToken}`,
+      ]);
+      await new Promise<void>((resolve, reject) => {
+        socket.addEventListener("open", () => resolve(), { once: true });
+        socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), {
+          once: true,
+        });
+      });
+      const received = new Promise<unknown>((resolve) => {
+        socket.addEventListener("message", (message) => resolve(JSON.parse(String(message.data))), {
+          once: true,
+        });
+      });
+      agentEvents.emit("event", {
+        type: "error",
+        code: "smoke_event",
+        message: "WebSocket delivery works.",
+      });
+      await expect(received).resolves.toMatchObject({ type: "error", code: "smoke_event" });
+      socket.close();
+    } finally {
+      await api.stop();
+    }
+  });
+
   it("manages invites, members, sessions, and password changes on loopback", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-"));
     roots.push(root);

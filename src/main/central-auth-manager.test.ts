@@ -36,6 +36,12 @@ describe("CentralAuthManager", () => {
           user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
         });
       }
+      if (url.pathname === "/v1/team-invitations/email") {
+        return new Response(null, { status: 204 });
+      }
+      if (url.pathname === "/v1/team-auth/ticket") {
+        return Response.json({ ticket: "one-time-ticket", expiresAt: 20_000 });
+      }
       return Response.json({
         id: "user-1",
         email: "person@example.com",
@@ -60,8 +66,31 @@ describe("CentralAuthManager", () => {
     expect(await manager.verifyEmailCode("challenge-1", "ABCD-EFGH")).toMatchObject({
       status: "signed_in",
     });
+    const serverId = "00000000-0000-4000-8000-000000000000";
+    expect(await manager.createTeamAuthTicket(serverId)).toBe("one-time-ticket");
+    expect(await manager.redeemTeamAuthTicket("one-time-ticket", serverId)).toMatchObject({
+      email: "person@example.com",
+    });
+    await manager.sendTeamInviteEmail({
+      email: "alice@example.com",
+      serverName: "Studio Mac",
+      inviteUrl: "openbot://join?invite=token",
+      role: "member",
+    });
     expect(requests[1]?.body).toEqual({ challengeId: "challenge-1", code: "ABCD-EFGH" });
     expect(await readFile(storagePath, "utf8")).not.toContain("session-secret");
+    expect(requests[2]).toMatchObject({
+      path: "/v1/team-auth/ticket",
+      authorization: "Bearer session-secret",
+    });
+    expect(requests[3]).toMatchObject({
+      path: "/v1/team-auth/redeem",
+      authorization: null,
+    });
+    expect(requests[4]).toMatchObject({
+      path: "/v1/team-invitations/email",
+      authorization: "Bearer session-secret",
+    });
 
     const restored = new CentralAuthManager(options);
     expect(await restored.initialize()).toMatchObject({ status: "signed_in" });

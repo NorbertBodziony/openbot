@@ -18,7 +18,9 @@ const scriptsRoot = dirname(fileURLToPath(import.meta.url));
 export const projectRoot = dirname(scriptsRoot);
 
 export function servicesForTarget(target: DevelopmentTarget): DevelopmentService[] {
-  return target === "all" ? ["api", "app", "host"] : [target];
+  if (target === "all") return ["api", "app", "host"];
+  if (target === "api") return ["api"];
+  return ["api", target];
 }
 
 export function createDevelopmentServiceSpec(

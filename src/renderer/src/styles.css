@@ -1196,6 +1196,43 @@ textarea:focus-visible {
   font-weight: 450;
 }
 
+.remote-account-chip {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 16px 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 11px 12px;
+  background: #101216;
+}
+.remote-account-chip > span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #b9bec8;
+  font-size: 13px;
+  font-weight: 700;
+}
+.remote-account-chip > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.remote-account-chip small {
+  color: #777e8c;
+  font-size: 10px;
+}
+.remote-account-chip strong {
+  overflow: hidden;
+  color: #e3e5e9;
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+
 .remote-dialog footer,
 .remote-host-actions {
   display: flex;
@@ -1240,6 +1277,74 @@ textarea:focus-visible {
   background: rgba(208, 91, 91, 0.1);
   color: #e08b8b;
   font-size: 12px;
+}
+
+.remote-invite-composer {
+  margin-top: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 12px;
+  padding: 15px;
+  background: #101216;
+}
+.remote-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.remote-section-heading p {
+  margin-top: 4px;
+  color: #777e8c;
+  font-size: 11px;
+}
+.remote-section-heading label {
+  display: grid;
+  gap: 4px;
+  color: #777e8c;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.remote-section-heading select {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 7px;
+  padding: 5px 25px 5px 8px;
+  background: #181a1f;
+  color: #d6d9df;
+  font: inherit;
+  text-transform: none;
+}
+.remote-invite-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin-top: 14px;
+  border-radius: 9px;
+  padding: 3px;
+  background: #090b0e;
+}
+.remote-invite-tabs button {
+  min-height: 31px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #797f8a;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.remote-invite-tabs button.active {
+  background: #1c1f24;
+  color: #e5e7eb;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+.remote-invite-email {
+  margin-bottom: 0;
+}
+.remote-invite-submit {
+  width: 100%;
+  margin-top: 12px;
 }
 
 .remote-invite-result {

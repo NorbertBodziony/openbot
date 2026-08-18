@@ -2,14 +2,13 @@ import { createSignal, Show } from "solid-js";
 
 interface JoinServerDialogProps {
   inviteUrl: string;
+  accountEmail: string;
   onClose: () => void;
-  onJoin: (input: { inviteUrl: string; username: string; password: string }) => Promise<void>;
+  onJoin: (input: { inviteUrl: string }) => Promise<void>;
 }
 
 export function JoinServerDialog(props: JoinServerDialogProps) {
   const [inviteUrl, setInviteUrl] = createSignal(props.inviteUrl);
-  const [username, setUsername] = createSignal("");
-  const [password, setPassword] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
@@ -18,7 +17,7 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
     setBusy(true);
     setError(null);
     try {
-      await props.onJoin({ inviteUrl: inviteUrl(), username: username(), password: password() });
+      await props.onJoin({ inviteUrl: inviteUrl() });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not join the server.");
     } finally {
@@ -44,7 +43,9 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
             ×
           </button>
         </header>
-        <p>Paste the one-time invitation link. Choose a login that you will use on this server.</p>
+        <p>
+          Paste the one-time invitation link. You will join with your signed-in OpenBot account.
+        </p>
         <label class="remote-field">
           <span>Invitation link</span>
           <textarea
@@ -54,24 +55,13 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
             spellcheck={false}
           />
         </label>
-        <label class="remote-field">
-          <span>Username</span>
-          <input
-            value={username()}
-            onInput={(event) => setUsername(event.currentTarget.value)}
-            autocomplete="username"
-          />
-        </label>
-        <label class="remote-field">
-          <span>Password</span>
-          <input
-            type="password"
-            value={password()}
-            onInput={(event) => setPassword(event.currentTarget.value)}
-            autocomplete="new-password"
-          />
-          <small>Use at least 12 characters. OpenBot does not save this password.</small>
-        </label>
+        <div class="remote-account-chip">
+          <span aria-hidden="true">@</span>
+          <div>
+            <small>Joining as</small>
+            <strong>{props.accountEmail}</strong>
+          </div>
+        </div>
         <Show when={error()}>{(message) => <p class="remote-dialog-error">{message()}</p>}</Show>
         <footer>
           <button

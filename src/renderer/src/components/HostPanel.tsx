@@ -14,11 +14,15 @@ interface HostPanelProps {
   members: TeamMemberSummary[];
   invites: TeamInviteSummary[];
   sessions: TeamSessionSummary[];
+  accountEmail: string;
   onClose: () => void;
-  onConfigure: (input: { serverName: string; username: string; password: string }) => Promise<void>;
+  onConfigure: (input: { serverName: string }) => Promise<void>;
   onStart: () => Promise<void>;
   onStop: () => Promise<void>;
-  onCreateInvite: (role: Exclude<TeamRole, "owner">) => Promise<InviteSummary>;
+  onCreateInvite: (input: {
+    role: Exclude<TeamRole, "owner">;
+    email?: string;
+  }) => Promise<InviteSummary>;
   onUpdateMember: (input: UpdateTeamMemberInput) => Promise<void>;
   onRevokeSession: (sessionId: string) => Promise<void>;
   onRevokeInvite: (inviteId: string) => Promise<void>;
@@ -27,8 +31,9 @@ interface HostPanelProps {
 
 export function HostPanel(props: HostPanelProps) {
   const [serverName, setServerName] = createSignal("");
-  const [username, setUsername] = createSignal("");
-  const [password, setPassword] = createSignal("");
+  const [inviteMode, setInviteMode] = createSignal<"link" | "email">("link");
+  const [inviteEmail, setInviteEmail] = createSignal("");
+  const [inviteRole, setInviteRole] = createSignal<"admin" | "member">("member");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [invite, setInvite] = createSignal<InviteSummary | null>(null);
@@ -46,11 +51,16 @@ export function HostPanel(props: HostPanelProps) {
     }
   }
 
-  async function createInvite(role: "admin" | "member") {
+  async function createInvite() {
     await run(async () => {
-      const created = await props.onCreateInvite(role);
+      const email = inviteMode() === "email" ? inviteEmail().trim() : undefined;
+      const created = await props.onCreateInvite({
+        role: inviteRole(),
+        ...(email ? { email } : {}),
+      });
       setInvite(created);
-      await navigator.clipboard.writeText(created.inviteUrl);
+      if (inviteMode() === "link") await navigator.clipboard.writeText(created.inviteUrl);
+      else setInviteEmail("");
     });
   }
 
@@ -77,7 +87,8 @@ export function HostPanel(props: HostPanelProps) {
           fallback={
             <div class="remote-host-setup">
               <p>
-                Create the owner account. Other people will create accounts from one-time links.
+                This Mac will use your signed-in OpenBot account as the owner. No separate host
+                password is needed.
               </p>
               <label class="remote-field">
                 <span>Server name</span>
@@ -86,37 +97,18 @@ export function HostPanel(props: HostPanelProps) {
                   onInput={(event) => setServerName(event.currentTarget.value)}
                 />
               </label>
-              <label class="remote-field">
-                <span>Owner username</span>
-                <input
-                  autocomplete="username"
-                  value={username()}
-                  onInput={(event) => setUsername(event.currentTarget.value)}
-                />
-              </label>
-              <label class="remote-field">
-                <span>Owner password</span>
-                <input
-                  type="password"
-                  autocomplete="new-password"
-                  value={password()}
-                  onInput={(event) => setPassword(event.currentTarget.value)}
-                />
-                <small>Use at least 12 characters.</small>
-              </label>
+              <div class="remote-account-chip">
+                <span aria-hidden="true">@</span>
+                <div>
+                  <small>Owner account</small>
+                  <strong>{props.accountEmail}</strong>
+                </div>
+              </div>
               <button
                 type="button"
                 class="remote-primary-button"
                 disabled={busy()}
-                onClick={() =>
-                  void run(() =>
-                    props.onConfigure({
-                      serverName: serverName(),
-                      username: username(),
-                      password: password(),
-                    }),
-                  )
-                }
+                onClick={() => void run(() => props.onConfigure({ serverName: serverName() }))}
               >
                 {busy() ? "Creating…" : "Create team server"}
               </button>
@@ -163,22 +155,6 @@ export function HostPanel(props: HostPanelProps) {
               type="button"
               class="remote-secondary-button"
               disabled={!props.status.apiOnline || busy()}
-              onClick={() => void createInvite("member")}
-            >
-              Copy member invite
-            </button>
-            <button
-              type="button"
-              class="remote-secondary-button"
-              disabled={!props.status.apiOnline || busy()}
-              onClick={() => void createInvite("admin")}
-            >
-              Copy admin invite
-            </button>
-            <button
-              type="button"
-              class="remote-secondary-button"
-              disabled={!props.status.apiOnline || busy()}
               onClick={() =>
                 void run(async () => {
                   await props.onCopyAddressUpdate();
@@ -188,10 +164,77 @@ export function HostPanel(props: HostPanelProps) {
               Copy address update
             </button>
           </div>
+          <section class="remote-invite-composer" aria-labelledby="invite-team-title">
+            <div class="remote-section-heading">
+              <div>
+                <h3 id="invite-team-title">Invite someone</h3>
+                <p>Create a one-time link or send it to a verified email address.</p>
+              </div>
+              <label>
+                <span>Access</span>
+                <select
+                  value={inviteRole()}
+                  onChange={(event) =>
+                    setInviteRole(event.currentTarget.value as "admin" | "member")
+                  }
+                >
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+            </div>
+            <div class="remote-invite-tabs" role="tablist" aria-label="Invitation method">
+              <button
+                type="button"
+                class={inviteMode() === "link" ? "active" : ""}
+                onClick={() => setInviteMode("link")}
+              >
+                Copy link
+              </button>
+              <button
+                type="button"
+                class={inviteMode() === "email" ? "active" : ""}
+                onClick={() => setInviteMode("email")}
+              >
+                Send email
+              </button>
+            </div>
+            <Show when={inviteMode() === "email"}>
+              <label class="remote-field remote-invite-email">
+                <span>Email address</span>
+                <input
+                  type="email"
+                  aria-label="Email address"
+                  autocomplete="email"
+                  value={inviteEmail()}
+                  placeholder="person@company.com"
+                  onInput={(event) => setInviteEmail(event.currentTarget.value)}
+                />
+                <small>Only this OpenBot account can accept the invitation.</small>
+              </label>
+            </Show>
+            <button
+              type="button"
+              class="remote-primary-button remote-invite-submit"
+              disabled={
+                !props.status.apiOnline ||
+                busy() ||
+                (inviteMode() === "email" && !inviteEmail().trim())
+              }
+              onClick={() => void createInvite()}
+            >
+              {busy()
+                ? "Working…"
+                : inviteMode() === "email"
+                  ? "Send invitation"
+                  : "Create and copy link"}
+            </button>
+          </section>
           <Show when={invite()}>
             {(item) => (
               <p class="remote-invite-result">
-                Invite copied. It expires {new Date(item().expiresAt).toLocaleString()}.
+                {item().email ? `Invitation sent to ${item().email}.` : "Invitation link copied."}{" "}
+                It expires {new Date(item().expiresAt).toLocaleString()}.
               </p>
             )}
           </Show>
@@ -201,7 +244,10 @@ export function HostPanel(props: HostPanelProps) {
               {(member) => (
                 <div>
                   <span>
-                    {member.username}
+                    {member.name ?? member.email ?? member.username}
+                    <Show when={member.name && member.email}>
+                      <small>{member.email}</small>
+                    </Show>
                     <small>{member.disabled ? "disabled" : member.role}</small>
                   </span>
                   <Show when={member.role !== "owner"}>
@@ -272,8 +318,9 @@ export function HostPanel(props: HostPanelProps) {
                 {(item) => (
                   <div>
                     <span>
-                      {item.role}
+                      {item.email ?? "Shareable link"}
                       <small>
+                        {item.role} ·{" "}
                         {item.usedAt
                           ? "used"
                           : `Expires ${new Date(item.expiresAt).toLocaleString()}`}

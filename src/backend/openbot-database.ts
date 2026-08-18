@@ -414,7 +414,7 @@ export class OpenBotDatabase {
                 created_at, updated_at, resume_cursor
          FROM projection_provider_sessions
          WHERE thread_id = ? AND provider = ? AND state = 'active'
-         ORDER BY created_at DESC LIMIT 1`,
+         ORDER BY created_at DESC, last_event_sequence DESC LIMIT 1`,
       )
       .get(threadId, provider) as SessionRow | undefined;
     return row ? toProviderSession(row) : null;
@@ -426,7 +426,9 @@ export class OpenBotDatabase {
         .prepare(
           `SELECT id, thread_id, provider, external_session_id, model, effort, state,
                   created_at, updated_at, resume_cursor
-           FROM projection_provider_sessions WHERE thread_id = ? ORDER BY created_at`,
+           FROM projection_provider_sessions
+           WHERE thread_id = ?
+           ORDER BY created_at, last_event_sequence`,
         )
         .all(threadId) as unknown as SessionRow[]
     ).map(toProviderSession);

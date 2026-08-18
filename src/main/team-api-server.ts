@@ -1,13 +1,19 @@
 import { readFile } from "node:fs/promises";
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { basename } from "node:path";
+import { createRequire } from "node:module";
+import { basename, dirname, join } from "node:path";
+import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
-import type { AgentEvent, TeamMemberSummary, UpdateBotInput } from "../shared/ipc";
+import type { AgentEvent, CentralAuthUser, TeamMemberSummary, UpdateBotInput } from "../shared/ipc";
 import type { TeamStore } from "./team-store";
 
 const JSON_LIMIT = 1024 * 1024;
+const requireModule = createRequire(import.meta.url);
+const webSockets = requireModule(
+  join(dirname(requireModule.resolve("ws/package.json")), "index.js"),
+) as typeof Ws;
 
 interface TeamApiOptions {
   store: TeamStore;
@@ -15,6 +21,7 @@ interface TeamApiOptions {
   mailbox: MailboxStore;
   browser: BrowserHost;
   getRemoteMac: () => { hostname: string | null; online: boolean };
+  redeemCentralTicket?: (ticket: string, serverId: string) => Promise<CentralAuthUser | null>;
 }
 
 interface RateEntry {
@@ -25,7 +32,11 @@ interface RateEntry {
 export class TeamApiServer {
   readonly #options: TeamApiOptions;
   readonly #rateLimits = new Map<string, RateEntry>();
-  readonly #eventClients = new Set<ServerResponse>();
+  readonly #eventClients = new Set<Ws.WebSocket>();
+  readonly #webSockets = new webSockets.WebSocketServer({
+    noServer: true,
+    handleProtocols: (protocols) => (protocols.has("openbot-events") ? "openbot-events" : false),
+  });
   #server: Server | null = null;
   #port: number | null = null;
   #heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -42,6 +53,24 @@ export class TeamApiServer {
   async start(): Promise<number> {
     if (this.#server && this.#port) return this.#port;
     this.#server = createServer((request, response) => void this.#handle(request, response));
+    this.#server.on("upgrade", (request, socket, head) => {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      const protocols = (request.headers["sec-websocket-protocol"] ?? "")
+        .split(",")
+        .map((value) => value.trim());
+      const encodedToken = protocols.find((value) => value.startsWith("openbot-token."));
+      const token = encodedToken?.slice("openbot-token.".length) ?? "";
+      const member = this.#options.store.authenticate(token);
+      if (url.pathname !== "/v1/events" || !protocols.includes("openbot-events") || !member) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      this.#webSockets.handleUpgrade(request, socket, head, (client) => {
+        this.#eventClients.add(client);
+        client.once("close", () => this.#eventClients.delete(client));
+      });
+    });
     await new Promise<void>((resolve, reject) => {
       this.#server?.once("error", reject);
       this.#server?.listen(0, "127.0.0.1", () => resolve());
@@ -52,7 +81,10 @@ export class TeamApiServer {
     this.#agentListener = (event) => this.#broadcast(event);
     this.#options.agents.on("event", this.#agentListener);
     this.#heartbeat = setInterval(() => {
-      for (const client of this.#eventClients) client.write(": heartbeat\n\n");
+      for (const client of this.#eventClients) {
+        if (client.readyState === webSockets.WebSocket.OPEN) client.ping();
+        else this.#eventClients.delete(client);
+      }
     }, 15_000);
     this.#heartbeat.unref?.();
     return this.#port;
@@ -63,7 +95,7 @@ export class TeamApiServer {
     this.#heartbeat = null;
     if (this.#agentListener) this.#options.agents.off("event", this.#agentListener);
     this.#agentListener = null;
-    for (const client of this.#eventClients) client.end();
+    for (const client of this.#eventClients) client.close(1001, "Server stopped");
     this.#eventClients.clear();
     const server = this.#server;
     this.#server = null;
@@ -99,6 +131,23 @@ export class TeamApiServer {
         );
         return this.#json(response, 201, result);
       }
+      if (method === "POST" && url.pathname === "/v1/join/account") {
+        const body = await readJson(request);
+        const identity = this.#options.store.getIdentity();
+        const user = identity
+          ? await this.#options.redeemCentralTicket?.(
+              stringField(body, "accountTicket"),
+              identity.serverId,
+            )
+          : null;
+        if (!user) return this.#json(response, 401, { error: "OpenBot sign-in is required." });
+        this.#checkRate(request, user.email);
+        const result = await this.#options.store.acceptInviteWithAccount(
+          stringField(body, "inviteToken"),
+          user,
+        );
+        return this.#json(response, 201, result);
+      }
       if (method === "POST" && url.pathname === "/v1/auth/login") {
         const body = await readJson(request);
         this.#checkRate(request, stringField(body, "username"));
@@ -107,6 +156,19 @@ export class TeamApiServer {
           stringField(body, "password"),
         );
         return this.#json(response, 200, result);
+      }
+      if (method === "POST" && url.pathname === "/v1/auth/account") {
+        const body = await readJson(request);
+        const identity = this.#options.store.getIdentity();
+        const user = identity
+          ? await this.#options.redeemCentralTicket?.(
+              stringField(body, "accountTicket"),
+              identity.serverId,
+            )
+          : null;
+        if (!user) return this.#json(response, 401, { error: "OpenBot sign-in is required." });
+        this.#checkRate(request, user.email);
+        return this.#json(response, 200, await this.#options.store.loginWithAccount(user));
       }
 
       const token = bearerToken(request.headers.authorization);
@@ -131,15 +193,7 @@ export class TeamApiServer {
         return this.#json(response, 200, member);
       }
       if (method === "GET" && url.pathname === "/v1/events") {
-        response.writeHead(200, {
-          "Content-Type": "text/event-stream",
-          Connection: "keep-alive",
-          "Cache-Control": "no-store",
-        });
-        response.write(": connected\n\n");
-        this.#eventClients.add(response);
-        request.once("close", () => this.#eventClients.delete(response));
-        return;
+        return this.#json(response, 426, { error: "Use WebSocket for remote events." });
       }
       if (method === "GET" && url.pathname === "/v1/host/remote-mac") {
         return this.#json(response, 200, this.#options.getRemoteMac());
@@ -384,8 +438,10 @@ export class TeamApiServer {
   }
 
   #broadcast(event: AgentEvent): void {
-    const payload = `data: ${JSON.stringify(event)}\n\n`;
-    for (const client of this.#eventClients) client.write(payload);
+    const payload = JSON.stringify(event);
+    for (const client of this.#eventClients) {
+      if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
+    }
   }
 
   #json(response: ServerResponse, status: number, value: unknown): void {

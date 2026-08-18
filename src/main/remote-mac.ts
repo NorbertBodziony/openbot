@@ -57,6 +57,8 @@ export async function resolveCloudflaredExecutable(
   pathValue = process.env.PATH ?? "",
 ): Promise<string | null> {
   const candidates = new Set([
+    "/opt/homebrew/opt/cloudflared/bin/cloudflared",
+    "/usr/local/opt/cloudflared/bin/cloudflared",
     ...pathValue
       .split(delimiter)
       .filter(Boolean)

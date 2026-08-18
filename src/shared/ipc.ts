@@ -89,14 +89,10 @@ export interface ServerSummary {
 
 export interface JoinServerInput {
   inviteUrl: string;
-  username: string;
-  password: string;
 }
 
 export interface LoginServerInput {
   serverId: string;
-  username: string;
-  password: string;
 }
 
 export type HostPhase = "unconfigured" | "idle" | "starting" | "online" | "stopping" | "error";
@@ -116,13 +112,13 @@ export interface HostStatus {
 
 export interface ConfigureHostInput {
   serverName: string;
-  username: string;
-  password: string;
 }
 
 export interface TeamMemberSummary {
   id: string;
   username: string;
+  email: string | null;
+  name: string | null;
   role: TeamRole;
   createdAt: string;
   disabled: boolean;
@@ -134,6 +130,7 @@ export interface InviteSummary {
   expiresAt: string;
   usedAt: string | null;
   inviteUrl: string;
+  email: string | null;
 }
 
 export interface TeamInviteSummary {
@@ -141,6 +138,12 @@ export interface TeamInviteSummary {
   role: Exclude<TeamRole, "owner">;
   expiresAt: string;
   usedAt: string | null;
+  email: string | null;
+}
+
+export interface CreateTeamInviteInput {
+  role: Exclude<TeamRole, "owner">;
+  email?: string;
 }
 
 export interface TeamSessionSummary {
@@ -735,7 +738,7 @@ export interface HostDesktopApi {
   revokeSession: (sessionId: string) => Promise<void>;
   listInvites: () => Promise<TeamInviteSummary[]>;
   revokeInvite: (inviteId: string) => Promise<void>;
-  createInvite: (role: Exclude<TeamRole, "owner">) => Promise<InviteSummary>;
+  createInvite: (input: CreateTeamInviteInput) => Promise<InviteSummary>;
   createAddressUpdate: () => Promise<string>;
   onEvent: (listener: (status: HostStatus) => void) => () => void;
 }

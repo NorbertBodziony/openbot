@@ -37,6 +37,50 @@ describe("TeamStore", () => {
     ).rejects.toThrow("invalid or expired");
   });
 
+  it("uses the verified OpenBot email as the team identity", async () => {
+    const { store } = await createStore();
+    await store.configureWithAccount("Studio Mac", {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
+    const invite = await store.createInvite("member", "alice@example.com");
+    const joined = await store.acceptInviteWithAccount(invite.token, {
+      id: "alice-account",
+      email: "ALICE@example.com",
+      name: "Alice",
+      avatarUrl: null,
+    });
+
+    expect(joined.member).toMatchObject({
+      email: "alice@example.com",
+      username: "alice@example.com",
+      role: "member",
+    });
+    expect(store.authenticate(joined.sessionToken)?.email).toBe("alice@example.com");
+  });
+
+  it("rejects a verified account that does not match an email invitation", async () => {
+    const { store } = await createStore();
+    await store.configureWithAccount("Studio Mac", {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: null,
+      avatarUrl: null,
+    });
+    const invite = await store.createInvite("member", "alice@example.com");
+
+    await expect(
+      store.acceptInviteWithAccount(invite.token, {
+        id: "bob-account",
+        email: "bob@example.com",
+        name: null,
+        avatarUrl: null,
+      }),
+    ).rejects.toThrow("different email");
+  });
+
   it("revokes a session on logout and persists members", async () => {
     const { store, path } = await createStore();
     await store.configure("Studio Mac", "owner", "correct horse battery");

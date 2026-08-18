@@ -21,6 +21,16 @@ export interface EmailCodeDelivery {
   send(message: { email: string; code: string; expiresAt: number }): Promise<void>;
 }
 
+export interface TeamInviteEmailDelivery {
+  send(message: {
+    email: string;
+    inviterEmail: string;
+    serverName: string;
+    inviteUrl: string;
+    role: "admin" | "member";
+  }): Promise<void>;
+}
+
 export type EmailVerificationResult =
   | { status: "verified"; session: { sessionToken: string; user: AuthUser } }
   | { status: "invalid" | "expired" | "too_many_attempts" };
@@ -50,4 +60,16 @@ export interface AuthRepository {
   ): Promise<{ allowed: boolean; count: number; windowStart: number }>;
   authenticate(sessionToken: string, now: number): Promise<AuthUser | null>;
   revokeSession(sessionToken: string, now: number): Promise<void>;
+  createTeamAuthTicket(input: {
+    ticketHash: string;
+    userId: string;
+    serverId: string;
+    createdAt: number;
+    expiresAt: number;
+  }): Promise<void>;
+  redeemTeamAuthTicket(input: {
+    ticketHash: string;
+    serverId: string;
+    now: number;
+  }): Promise<AuthUser | null>;
 }

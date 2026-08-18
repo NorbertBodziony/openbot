@@ -39,17 +39,24 @@ interface TokenCipher {
   decrypt: (value: Buffer) => string;
 }
 
+interface CentralAccountSession {
+  createTeamAuthTicket: (serverId: string) => Promise<string>;
+  getEmail: () => string;
+}
+
 export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #path: string;
   readonly #cipher: TokenCipher;
+  readonly #centralAccount: CentralAccountSession;
   #state: StoredRemoteServers = { version: 1, activeServerId: "local", servers: [] };
   #states = new Map<string, ServerSummary["state"]>();
   #eventControllers = new Map<string, AbortController>();
 
-  constructor(path: string, cipher: TokenCipher) {
+  constructor(path: string, cipher: TokenCipher, centralAccount: CentralAccountSession) {
     super();
     this.#path = path;
     this.#cipher = cipher;
+    this.#centralAccount = centralAccount;
   }
 
   async initialize(): Promise<void> {
@@ -109,15 +116,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       invite.serverId,
       invite.fingerprint,
     );
+    const accountTicket = await this.#centralAccount.createTeamAuthTicket(invite.serverId);
     const result = await requestJson<{
       member: { role: TeamRole };
       sessionToken: string;
-    }>(invite.apiUrl, "/v1/join", {
+    }>(invite.apiUrl, "/v1/join/account", {
       method: "POST",
       body: {
         inviteToken: invite.token,
-        username: input.username,
-        password: input.password,
+        accountTicket,
       },
     });
     const stored: StoredRemoteServer = {
@@ -126,7 +133,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       apiUrl: invite.apiUrl,
       fingerprint: invite.fingerprint,
       publicKey: verifiedIdentity.publicKey,
-      username: input.username.trim().toLowerCase(),
+      username: this.#centralAccount.getEmail().trim().toLowerCase(),
       encryptedToken: this.#cipher.encrypt(result.sessionToken).toString("base64"),
       vncHostname: null,
       role: result.member.role,
@@ -150,12 +157,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#emitChanged();
     try {
       await this.#verifyIdentity(server.apiUrl, server.id, server.fingerprint);
+      const accountTicket = await this.#centralAccount.createTeamAuthTicket(server.id);
       const result = await requestJson<{ member: { role: TeamRole }; sessionToken: string }>(
         server.apiUrl,
-        "/v1/auth/login",
-        { method: "POST", body: { username: input.username, password: input.password } },
+        "/v1/auth/account",
+        { method: "POST", body: { accountTicket } },
       );
-      server.username = input.username.trim().toLowerCase();
+      server.username = this.#centralAccount.getEmail().trim().toLowerCase();
       server.role = result.member.role;
       server.encryptedToken = this.#cipher.encrypt(result.sessionToken).toString("base64");
       this.#states.set(server.id, "online");
@@ -309,29 +317,44 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const controller = new AbortController();
     this.#eventControllers.set(serverId, controller);
     try {
-      const response = await fetch(`${server.apiUrl}/v1/events`, {
-        headers: { Authorization: `Bearer ${this.#token(server)}` },
-        signal: controller.signal,
+      const eventsUrl = new URL("/v1/events", server.apiUrl);
+      eventsUrl.protocol = "wss:";
+      const socket = new WebSocket(eventsUrl, [
+        "openbot-events",
+        `openbot-token.${this.#token(server)}`,
+      ]);
+      controller.signal.addEventListener("abort", () => socket.close(1000, "Client stopped"), {
+        once: true,
       });
-      if (!response.ok || !response.body) throw new Error("Remote events are unavailable.");
-      this.#states.set(serverId, "online");
-      this.#emitChanged();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for await (const chunk of response.body) {
-        buffer += decoder.decode(chunk, { stream: true });
-        let boundary = buffer.indexOf("\n\n");
-        while (boundary >= 0) {
-          const block = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          const data = block
-            .split("\n")
-            .filter((line) => line.startsWith("data: "))
-            .map((line) => line.slice(6))
-            .join("\n");
-          if (data) this.emit("agent", serverId, JSON.parse(data) as AgentEvent);
-          boundary = buffer.indexOf("\n\n");
-        }
+      await new Promise<void>((resolve, reject) => {
+        socket.addEventListener(
+          "open",
+          () => {
+            this.#states.set(serverId, "online");
+            this.#emitChanged();
+          },
+          { once: true },
+        );
+        socket.addEventListener("message", (message) => {
+          if (typeof message.data !== "string") return;
+          try {
+            this.emit("agent", serverId, JSON.parse(message.data) as AgentEvent);
+          } catch {
+            socket.close(1003, "Invalid event payload");
+          }
+        });
+        socket.addEventListener(
+          "error",
+          () => reject(new Error("Remote events are unavailable.")),
+          {
+            once: true,
+          },
+        );
+        socket.addEventListener("close", () => resolve(), { once: true });
+      });
+      if (!controller.signal.aborted) {
+        this.#states.set(serverId, "offline");
+        this.#emitChanged();
       }
     } catch {
       if (!controller.signal.aborted) {

@@ -362,19 +362,12 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.input(screen.getByRole("textbox", { name: "Host invitation" }), {
       target: { value: "openbot://join/invite" },
     });
-    await fireEvent.input(screen.getByRole("textbox", { name: "Profile name" }), {
-      target: { value: "Norbert" },
-    });
-    await fireEvent.input(screen.getByLabelText("Host password"), {
-      target: { value: "strong-secret" },
-    });
+    expect(screen.getAllByText(/person@example.com/).length).toBeGreaterThan(0);
     await fireEvent.click(screen.getByRole("button", { name: "Connect to host" }));
 
     await waitFor(() =>
       expect(window.openbot.servers.join).toHaveBeenCalledWith({
         inviteUrl: "openbot://join/invite",
-        username: "Norbert",
-        password: "strong-secret",
       }),
     );
     await waitFor(() =>

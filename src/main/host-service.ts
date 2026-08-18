@@ -4,12 +4,13 @@ import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
 import type {
+  CentralAuthUser,
   ConfigureHostInput,
+  CreateTeamInviteInput,
   HostStatus,
   InviteSummary,
   TeamInviteSummary,
   TeamMemberSummary,
-  TeamRole,
   TeamSessionSummary,
   UpdateTeamMemberInput,
 } from "../shared/ipc";
@@ -34,7 +35,16 @@ interface HostServiceOptions {
   resolveCloudflared?: () => Promise<string | null>;
   spawnProcess?: typeof spawn;
   tunnelTimeoutMs?: number;
+  publicReadyTimeoutMs?: number;
   logDirectory?: string;
+  getSignedInUser: () => CentralAuthUser;
+  redeemCentralTicket: (ticket: string, serverId: string) => Promise<CentralAuthUser | null>;
+  sendTeamInviteEmail: (input: {
+    email: string;
+    serverName: string;
+    inviteUrl: string;
+    role: "admin" | "member";
+  }) => Promise<void>;
 }
 
 export function buildApiTunnelArgs(port: number): string[] {
@@ -51,8 +61,10 @@ export function parseQuickTunnelHostname(value: string): string | null {
 }
 
 export class HostService extends EventEmitter<HostEvents> {
-  readonly #options: Required<Pick<HostServiceOptions, "spawnProcess" | "tunnelTimeoutMs">> &
-    Omit<HostServiceOptions, "spawnProcess" | "tunnelTimeoutMs">;
+  readonly #options: Required<
+    Pick<HostServiceOptions, "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs">
+  > &
+    Omit<HostServiceOptions, "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs">;
   readonly #api: TeamApiServer;
   #apiTunnel: ChildProcess | null = null;
   #vncTunnel: ChildProcess | null = null;
@@ -64,6 +76,7 @@ export class HostService extends EventEmitter<HostEvents> {
       ...options,
       spawnProcess: options.spawnProcess ?? spawn,
       tunnelTimeoutMs: options.tunnelTimeoutMs ?? 15_000,
+      publicReadyTimeoutMs: options.publicReadyTimeoutMs ?? 30_000,
     };
     const identity = options.store.getIdentity();
     this.#status = {
@@ -87,6 +100,7 @@ export class HostService extends EventEmitter<HostEvents> {
         hostname: this.#status.vncHostname,
         online: this.#status.vncOnline,
       }),
+      redeemCentralTicket: options.redeemCentralTicket,
     });
   }
 
@@ -95,10 +109,9 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async configure(input: ConfigureHostInput): Promise<HostStatus> {
-    const identity = await this.#options.store.configure(
+    const identity = await this.#options.store.configureWithAccount(
       input.serverName,
-      input.username,
-      input.password,
+      this.#options.getSignedInUser(),
     );
     this.#setStatus({
       phase: "idle",
@@ -133,6 +146,10 @@ export class HostService extends EventEmitter<HostEvents> {
       this.#apiTunnel = apiTunnel;
       const apiHostname = await waitForTunnelHostname(apiTunnel, this.#options.tunnelTimeoutMs);
       if (!apiHostname) throw new Error("The API Quick Tunnel did not return a hostname.");
+      this.#setStatus({ message: "Publishing the secure host address…" });
+      if (!(await waitForPublicApi(`https://${apiHostname}`, this.#options.publicReadyTimeoutMs))) {
+        throw new Error("Cloudflare did not publish the Quick Tunnel address. Try again.");
+      }
       this.#setStatus({
         apiUrl: `https://${apiHostname}`,
         apiOnline: true,
@@ -233,23 +250,38 @@ export class HostService extends EventEmitter<HostEvents> {
     return url.toString();
   }
 
-  async createInvite(role: Exclude<TeamRole, "owner">): Promise<InviteSummary> {
+  async createInvite(input: CreateTeamInviteInput): Promise<InviteSummary> {
     if (!this.#status.apiUrl) throw new Error("Start the team server before creating an invite.");
     const identity = this.#options.store.getIdentity();
     if (!identity) throw new Error("Configure the team server first.");
-    const invite = await this.#options.store.createInvite(role);
+    const invite = await this.#options.store.createInvite(input.role, input.email);
     const url = new URL("openbot://join");
     url.searchParams.set("api", this.#status.apiUrl);
     url.searchParams.set("server", identity.serverId);
     url.searchParams.set("fingerprint", identity.fingerprint);
     url.searchParams.set("invite", invite.token);
-    return {
+    const result: InviteSummary = {
       id: invite.id,
-      role,
+      role: input.role,
       expiresAt: invite.expiresAt,
       usedAt: null,
       inviteUrl: url.toString(),
+      email: invite.email,
     };
+    if (invite.email) {
+      try {
+        await this.#options.sendTeamInviteEmail({
+          email: invite.email,
+          serverName: identity.serverName,
+          inviteUrl: result.inviteUrl,
+          role: input.role,
+        });
+      } catch (error) {
+        await this.#options.store.revokeInvite(invite.id);
+        throw error;
+      }
+    }
+    return result;
   }
 
   async shutdown(): Promise<void> {
@@ -304,6 +336,22 @@ export class HostService extends EventEmitter<HostEvents> {
     this.#status = { ...this.#status, ...patch };
     this.emit("changed", this.getStatus());
   }
+}
+
+export async function waitForPublicApi(apiUrl: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(new URL("/v1/identity", apiUrl), {
+        signal: AbortSignal.timeout(Math.min(5_000, Math.max(1, timeoutMs))),
+      });
+      if (response.ok) return true;
+    } catch {
+      // A new Quick Tunnel can need a short DNS warm-up.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
 }
 
 function waitForTunnelHostname(child: ChildProcess, timeoutMs: number): Promise<string | null> {

@@ -71,8 +71,6 @@ export function InitialSetup(props: InitialSetupProps) {
   const [permissionBusy, setPermissionBusy] = createSignal<MacPermissionId | null>(null);
   const [error, setError] = createSignal("");
   const [inviteUrl, setInviteUrl] = createSignal("");
-  const [username, setUsername] = createSignal("");
-  const [password, setPassword] = createSignal("");
   let permissionRevision = 0;
   const providerOptions = createMemo<ProviderPickerOption[]>(() =>
     PROVIDERS.map((provider) => {
@@ -161,10 +159,7 @@ export function InitialSetup(props: InitialSetupProps) {
     setSaving(true);
     setError("");
     try {
-      await props.onJoinRemote(
-        { inviteUrl: inviteUrl().trim(), username: username().trim(), password: password() },
-        provider,
-      );
+      await props.onJoinRemote({ inviteUrl: inviteUrl().trim() }, provider);
     } catch (cause) {
       setError(errorMessage(cause, "OpenBot could not connect to this host."));
       setSaving(false);
@@ -359,32 +354,9 @@ export function InitialSetup(props: InitialSetupProps) {
                 required
               />
             </label>
-            <div class="setup-remote-fields">
-              <label>
-                <span>Profile name</span>
-                <input
-                  value={username()}
-                  onInput={(event) => setUsername(event.currentTarget.value)}
-                  autocomplete="username"
-                  placeholder="Your name on this host"
-                  required
-                />
-              </label>
-              <label>
-                <span>Host password</span>
-                <input
-                  type="password"
-                  value={password()}
-                  onInput={(event) => setPassword(event.currentTarget.value)}
-                  autocomplete="new-password"
-                  placeholder="At least 12 characters"
-                  minlength={12}
-                  required
-                />
-              </label>
-            </div>
             <p class="setup-remote-note">
-              Your OpenBot account is already verified. These details apply only to this host.
+              You will join as <strong>{props.accountEmail}</strong>. Email invitations only work
+              for the address that received them.
             </p>
           </form>
         </Show>
@@ -408,8 +380,7 @@ export function InitialSetup(props: InitialSetupProps) {
               disabled={
                 saving() ||
                 (route() === "local" && !selectedProvider()) ||
-                (route() === "remote" &&
-                  (!inviteUrl().trim() || !username().trim() || password().length < 12))
+                (route() === "remote" && !inviteUrl().trim())
               }
               onClick={() => (route() === "local" ? void saveLocal() : void connectRemote())}
             >

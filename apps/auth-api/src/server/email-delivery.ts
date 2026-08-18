@@ -1,5 +1,9 @@
-import { type SmtpEmailConfig, sendPrivateEmailCode } from "./smtp-email-delivery";
-import type { EmailCodeDelivery, WorkerBindings } from "./types";
+import {
+  type SmtpEmailConfig,
+  sendPrivateEmailCode,
+  sendPrivateTeamInvite,
+} from "./smtp-email-delivery";
+import type { EmailCodeDelivery, TeamInviteEmailDelivery, WorkerBindings } from "./types";
 
 export function createEmailCodeDelivery(bindings: WorkerBindings): EmailCodeDelivery | null {
   const smtp = readSmtpConfig(bindings);
@@ -30,6 +34,13 @@ export function createEmailCodeDelivery(bindings: WorkerBindings): EmailCodeDeli
       if (!response.ok) throw new Error("email_delivery_webhook_failed");
     },
   };
+}
+
+export function createTeamInviteEmailDelivery(
+  bindings: WorkerBindings,
+): TeamInviteEmailDelivery | null {
+  const smtp = readSmtpConfig(bindings);
+  return smtp ? { send: (message) => sendPrivateTeamInvite(smtp, message) } : null;
 }
 
 function readSmtpConfig(bindings: WorkerBindings): SmtpEmailConfig | null {

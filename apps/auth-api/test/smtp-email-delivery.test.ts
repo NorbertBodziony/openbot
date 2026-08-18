@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createEmailCodeDelivery } from "../src/server/email-delivery";
-import { type SmtpConnector, sendPrivateEmailCode } from "../src/server/smtp-email-delivery";
+import {
+  type SmtpConnector,
+  sendPrivateEmailCode,
+  sendPrivateTeamInvite,
+} from "../src/server/smtp-email-delivery";
 import type { WorkerBindings } from "../src/server/types";
 
 const SUCCESS_RESPONSES = [
@@ -18,6 +22,48 @@ const SUCCESS_RESPONSES = [
 ].join("\r\n");
 
 describe("Private Email SMTP delivery", () => {
+  it("sends a one-time host invitation to the selected email", async () => {
+    const writes: string[] = [];
+    const connector: SmtpConnector = () => ({
+      opened: Promise.resolve(),
+      readable: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(`${SUCCESS_RESPONSES}\r\n`));
+          controller.close();
+        },
+      }),
+      writable: new WritableStream({
+        write(chunk) {
+          writes.push(new TextDecoder().decode(chunk));
+        },
+      }),
+      close() {},
+    });
+
+    await sendPrivateTeamInvite(
+      {
+        host: "mail.privateemail.com",
+        port: 465,
+        username: "hello@openbot.run",
+        password: "app-password-value",
+        from: "hello@openbot.run",
+      },
+      {
+        email: "alice@example.com",
+        inviterEmail: "owner@example.com",
+        serverName: "Studio Mac",
+        inviteUrl: "openbot://join?invite=one-time-token",
+        role: "member",
+      },
+      connector,
+    );
+
+    expect(writes).toContain("RCPT TO:<alice@example.com>\r\n");
+    expect(writes[7]).toContain("Subject: Join Studio Mac on OpenBot");
+    expect(writes[7]).toContain("owner@example.com invited you");
+    expect(writes[7]).toContain("openbot://join?invite=one-time-token");
+  });
+
   it("uses TLS on port 465 and sends the code without SMTP injection", async () => {
     const writes: string[] = [];
     const addresses: unknown[] = [];

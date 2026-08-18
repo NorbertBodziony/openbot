@@ -6,6 +6,7 @@ const CODE_LENGTH = 8;
 const CHALLENGE_TTL_MS = 10 * 60_000;
 const RESEND_COOLDOWN_MS = 60_000;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
+const TEAM_TICKET_TTL_MS = 2 * 60_000;
 const RATE_WINDOW_MS = 15 * 60_000;
 
 interface AuthServiceOptions {
@@ -124,6 +125,57 @@ export class AuthService {
     return this.#repository.authenticate(sessionToken, this.#now());
   }
 
+  async enforceTeamInviteRateLimit(
+    userId: string,
+    recipientEmail: string,
+    sourceIp: string,
+  ): Promise<void> {
+    const now = this.#now();
+    const email = normalizeEmail(recipientEmail);
+    await this.#enforceRateLimit(`invite:user:${userId}`, 20, now);
+    await this.#enforceRateLimit(`invite:email:${email}`, 5, now);
+    await this.#enforceRateLimit(`invite:ip:${normalizeSourceIp(sourceIp)}`, 30, now);
+  }
+
+  async issueTeamAuthTicket(
+    sessionToken: string,
+    serverId: string,
+    sourceIp: string,
+  ): Promise<{ ticket: string; expiresAt: number }> {
+    validateServerId(serverId);
+    const user = await this.authenticate(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    const now = this.#now();
+    await this.#enforceRateLimit(`team-ticket:user:${user.id}`, 30, now);
+    await this.#enforceRateLimit(`team-ticket:ip:${normalizeSourceIp(sourceIp)}`, 60, now);
+    const ticket = randomToken();
+    const expiresAt = now + TEAM_TICKET_TTL_MS;
+    await this.#repository.createTeamAuthTicket({
+      ticketHash: await sha256(ticket),
+      userId: user.id,
+      serverId,
+      createdAt: now,
+      expiresAt,
+    });
+    return { ticket, expiresAt };
+  }
+
+  async redeemTeamAuthTicket(
+    ticket: string,
+    serverId: string,
+    sourceIp: string,
+  ): Promise<AuthUser | null> {
+    validateServerId(serverId);
+    if (!ticket || ticket.length > 128) return null;
+    const now = this.#now();
+    await this.#enforceRateLimit(`team-ticket-redeem:ip:${normalizeSourceIp(sourceIp)}`, 120, now);
+    return this.#repository.redeemTeamAuthTicket({
+      ticketHash: await sha256(ticket),
+      serverId,
+      now,
+    });
+  }
+
   logout(sessionToken: string): Promise<void> {
     return this.#repository.revokeSession(sessionToken, this.#now());
   }
@@ -212,6 +264,12 @@ function safeNormalizeCode(value: string): string {
 function normalizeSourceIp(value: string): string {
   const normalized = value.trim();
   return normalized && normalized.length <= 64 ? normalized : "unknown";
+}
+
+function validateServerId(value: string): void {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value)) {
+    throw new AuthServiceError(400, "invalid_server_id", "The team server ID is invalid.");
+  }
 }
 
 function isValidDomain(value: string): boolean {

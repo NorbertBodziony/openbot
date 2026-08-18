@@ -1,8 +1,8 @@
 import { env } from "cloudflare:workers";
 import { AuthService, AuthServiceError } from "./auth-service";
 import { D1AuthRepository } from "./d1-auth-repository";
-import { createEmailCodeDelivery } from "./email-delivery";
-import type { WorkerBindings } from "./types";
+import { createEmailCodeDelivery, createTeamInviteEmailDelivery } from "./email-delivery";
+import type { TeamInviteEmailDelivery, WorkerBindings } from "./types";
 
 export function requestAuthService(): AuthService {
   const bindings = env as unknown as WorkerBindings;
@@ -12,6 +12,10 @@ export function requestAuthService(): AuthService {
     delivery: exposeDevelopmentCode ? null : createEmailCodeDelivery(bindings),
     exposeDevelopmentCode,
   });
+}
+
+export function requestTeamInviteEmailDelivery(): TeamInviteEmailDelivery | null {
+  return createTeamInviteEmailDelivery(env as unknown as WorkerBindings);
 }
 
 export function requestSourceIp(request: Request): string {

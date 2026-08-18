@@ -12,6 +12,20 @@ export interface SmtpEmailMessage {
   expiresAt: number;
 }
 
+export interface SmtpTeamInviteMessage {
+  email: string;
+  inviterEmail: string;
+  serverName: string;
+  inviteUrl: string;
+  role: "admin" | "member";
+}
+
+interface PreparedEmailMessage {
+  email: string;
+  subject: string;
+  body: string;
+}
+
 interface SmtpSocket {
   readable: ReadableStream<Uint8Array>;
   writable: WritableStream<Uint8Array>;
@@ -43,6 +57,65 @@ export async function sendPrivateEmailCode(
     throw new Error("smtp_invalid_code");
   }
 
+  return sendPrivateEmail(
+    config,
+    {
+      email: message.email,
+      subject: "Your OpenBot sign-in code",
+      body: createCodeBody(message),
+    },
+    connector,
+  );
+}
+
+export function sendPrivateTeamInvite(
+  config: SmtpEmailConfig,
+  message: SmtpTeamInviteMessage,
+  connector?: SmtpConnector,
+): Promise<void> {
+  validateEmail(message.email, "recipient");
+  validateEmail(message.inviterEmail, "inviter");
+  if (
+    !message.serverName.trim() ||
+    message.serverName.length > 64 ||
+    hasHeaderBreak(message.serverName)
+  ) {
+    throw new Error("smtp_invalid_server_name");
+  }
+  const inviteUrl = new URL(message.inviteUrl);
+  if (inviteUrl.protocol !== "openbot:" || inviteUrl.hostname !== "join") {
+    throw new Error("smtp_invalid_invite_url");
+  }
+  return sendPrivateEmail(
+    config,
+    {
+      email: message.email,
+      subject: `Join ${message.serverName.trim()} on OpenBot`,
+      body: [
+        `${message.inviterEmail} invited you to join ${message.serverName.trim()} on OpenBot.`,
+        "",
+        `Access: ${message.role}`,
+        "",
+        "Open this one-time invitation link:",
+        message.inviteUrl,
+        "",
+        "The invitation expires after 24 hours. Sign in with this email address to accept it.",
+      ].join("\r\n"),
+    },
+    connector,
+  );
+}
+
+async function sendPrivateEmail(
+  config: SmtpEmailConfig,
+  message: PreparedEmailMessage,
+  connector?: SmtpConnector,
+): Promise<void> {
+  validateConfig(config);
+  validateEmail(message.email, "recipient");
+  if (!message.subject || message.subject.length > 160 || hasHeaderBreak(message.subject)) {
+    throw new Error("smtp_invalid_subject");
+  }
   const connect =
     connector ??
     (await loadCloudflareConnector().catch(() => {
@@ -50,7 +123,7 @@ export async function sendPrivateEmailCode(
     }));
   for (let attempt = 1; attempt <= SMTP_MAX_ATTEMPTS; attempt += 1) {
     try {
-      await sendPrivateEmailCodeAttempt(config, message, connect);
+      await sendPrivateEmailAttempt(config, message, connect);
       return;
     } catch (error) {
       const smtpError = normalizeSmtpError(error);
@@ -60,9 +133,9 @@ export async function sendPrivateEmailCode(
   }
 }
 
-async function sendPrivateEmailCodeAttempt(
+async function sendPrivateEmailAttempt(
   config: SmtpEmailConfig,
-  message: SmtpEmailMessage,
+  message: PreparedEmailMessage,
   connect: SmtpConnector,
 ): Promise<void> {
   const socket = connect(
@@ -95,7 +168,7 @@ function isRetryableSmtpError(error: Error): boolean {
 async function runSmtpSession(
   socket: SmtpSocket,
   config: SmtpEmailConfig,
-  message: SmtpEmailMessage,
+  message: PreparedEmailMessage,
 ): Promise<void> {
   await socket.opened;
   const reader = new SmtpResponseReader(socket.readable.getReader());
@@ -158,9 +231,9 @@ class SmtpResponseReader {
   }
 }
 
-function createMimeMessage(from: string, message: SmtpEmailMessage): string {
+function createCodeBody(message: SmtpEmailMessage): string {
   const expiresInMinutes = Math.max(1, Math.ceil((message.expiresAt - Date.now()) / 60_000));
-  const body = [
+  return [
     "Use this code to sign in to OpenBot:",
     "",
     message.code,
@@ -168,17 +241,20 @@ function createMimeMessage(from: string, message: SmtpEmailMessage): string {
     `This code expires in ${expiresInMinutes} minutes.`,
     "If you did not request this code, ignore this email.",
   ].join("\r\n");
+}
+
+function createMimeMessage(from: string, message: PreparedEmailMessage): string {
   return [
     `From: OpenBot <${from}>`,
     `To: <${message.email}>`,
-    "Subject: Your OpenBot sign-in code",
+    `Subject: ${message.subject}`,
     `Date: ${new Date().toUTCString()}`,
     `Message-ID: <${crypto.randomUUID()}@openbot.run>`,
     "MIME-Version: 1.0",
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: 8bit",
     "",
-    dotStuff(body),
+    dotStuff(message.body),
   ].join("\r\n");
 }
 

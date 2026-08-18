@@ -14,6 +14,9 @@ import { Route as HealthLiveRouteImport } from './routes/health/live'
 import { Route as HealthReadyRouteImport } from './routes/health/ready'
 import { Route as V1MeRouteImport } from './routes/v1/me'
 import { Route as V1AuthLogoutRouteImport } from './routes/v1/auth/logout'
+import { Route as V1TeamAuthRedeemRouteImport } from './routes/v1/team-auth/redeem'
+import { Route as V1TeamAuthTicketRouteImport } from './routes/v1/team-auth/ticket'
+import { Route as V1TeamInvitationsEmailRouteImport } from './routes/v1/team-invitations/email'
 import { Route as V1AuthEmailStartRouteImport } from './routes/v1/auth/email/start'
 import { Route as V1AuthEmailVerifyRouteImport } from './routes/v1/auth/email/verify'
 
@@ -42,6 +45,21 @@ const V1AuthLogoutRoute = V1AuthLogoutRouteImport.update({
   path: '/v1/auth/logout',
   getParentRoute: () => rootRouteImport,
 } as any)
+const V1TeamAuthRedeemRoute = V1TeamAuthRedeemRouteImport.update({
+  id: '/v1/team-auth/redeem',
+  path: '/v1/team-auth/redeem',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V1TeamAuthTicketRoute = V1TeamAuthTicketRouteImport.update({
+  id: '/v1/team-auth/ticket',
+  path: '/v1/team-auth/ticket',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V1TeamInvitationsEmailRoute = V1TeamInvitationsEmailRouteImport.update({
+  id: '/v1/team-invitations/email',
+  path: '/v1/team-invitations/email',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const V1AuthEmailStartRoute = V1AuthEmailStartRouteImport.update({
   id: '/v1/auth/email/start',
   path: '/v1/auth/email/start',
@@ -59,6 +77,9 @@ export interface FileRoutesByFullPath {
   '/health/ready': typeof HealthReadyRoute
   '/v1/me': typeof V1MeRoute
   '/v1/auth/logout': typeof V1AuthLogoutRoute
+  '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
+  '/v1/team-auth/ticket': typeof V1TeamAuthTicketRoute
+  '/v1/team-invitations/email': typeof V1TeamInvitationsEmailRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
 }
@@ -68,6 +89,9 @@ export interface FileRoutesByTo {
   '/health/ready': typeof HealthReadyRoute
   '/v1/me': typeof V1MeRoute
   '/v1/auth/logout': typeof V1AuthLogoutRoute
+  '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
+  '/v1/team-auth/ticket': typeof V1TeamAuthTicketRoute
+  '/v1/team-invitations/email': typeof V1TeamInvitationsEmailRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
 }
@@ -78,6 +102,9 @@ export interface FileRoutesById {
   '/health/ready': typeof HealthReadyRoute
   '/v1/me': typeof V1MeRoute
   '/v1/auth/logout': typeof V1AuthLogoutRoute
+  '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
+  '/v1/team-auth/ticket': typeof V1TeamAuthTicketRoute
+  '/v1/team-invitations/email': typeof V1TeamInvitationsEmailRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
 }
@@ -89,6 +116,9 @@ export interface FileRouteTypes {
     | '/health/ready'
     | '/v1/me'
     | '/v1/auth/logout'
+    | '/v1/team-auth/redeem'
+    | '/v1/team-auth/ticket'
+    | '/v1/team-invitations/email'
     | '/v1/auth/email/start'
     | '/v1/auth/email/verify'
   fileRoutesByTo: FileRoutesByTo
@@ -98,6 +128,9 @@ export interface FileRouteTypes {
     | '/health/ready'
     | '/v1/me'
     | '/v1/auth/logout'
+    | '/v1/team-auth/redeem'
+    | '/v1/team-auth/ticket'
+    | '/v1/team-invitations/email'
     | '/v1/auth/email/start'
     | '/v1/auth/email/verify'
   id:
@@ -107,6 +140,9 @@ export interface FileRouteTypes {
     | '/health/ready'
     | '/v1/me'
     | '/v1/auth/logout'
+    | '/v1/team-auth/redeem'
+    | '/v1/team-auth/ticket'
+    | '/v1/team-invitations/email'
     | '/v1/auth/email/start'
     | '/v1/auth/email/verify'
   fileRoutesById: FileRoutesById
@@ -117,6 +153,9 @@ export interface RootRouteChildren {
   HealthReadyRoute: typeof HealthReadyRoute
   V1MeRoute: typeof V1MeRoute
   V1AuthLogoutRoute: typeof V1AuthLogoutRoute
+  V1TeamAuthRedeemRoute: typeof V1TeamAuthRedeemRoute
+  V1TeamAuthTicketRoute: typeof V1TeamAuthTicketRoute
+  V1TeamInvitationsEmailRoute: typeof V1TeamInvitationsEmailRoute
   V1AuthEmailStartRoute: typeof V1AuthEmailStartRoute
   V1AuthEmailVerifyRoute: typeof V1AuthEmailVerifyRoute
 }
@@ -158,6 +197,27 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1AuthLogoutRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/v1/team-auth/redeem': {
+      id: '/v1/team-auth/redeem'
+      path: '/v1/team-auth/redeem'
+      fullPath: '/v1/team-auth/redeem'
+      preLoaderRoute: typeof V1TeamAuthRedeemRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/team-auth/ticket': {
+      id: '/v1/team-auth/ticket'
+      path: '/v1/team-auth/ticket'
+      fullPath: '/v1/team-auth/ticket'
+      preLoaderRoute: typeof V1TeamAuthTicketRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/team-invitations/email': {
+      id: '/v1/team-invitations/email'
+      path: '/v1/team-invitations/email'
+      fullPath: '/v1/team-invitations/email'
+      preLoaderRoute: typeof V1TeamInvitationsEmailRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/v1/auth/email/start': {
       id: '/v1/auth/email/start'
       path: '/v1/auth/email/start'
@@ -181,6 +241,9 @@ const rootRouteChildren: RootRouteChildren = {
   HealthReadyRoute: HealthReadyRoute,
   V1MeRoute: V1MeRoute,
   V1AuthLogoutRoute: V1AuthLogoutRoute,
+  V1TeamAuthRedeemRoute: V1TeamAuthRedeemRoute,
+  V1TeamAuthTicketRoute: V1TeamAuthTicketRoute,
+  V1TeamInvitationsEmailRoute: V1TeamInvitationsEmailRoute,
   V1AuthEmailStartRoute: V1AuthEmailStartRoute,
   V1AuthEmailVerifyRoute: V1AuthEmailVerifyRoute,
 }

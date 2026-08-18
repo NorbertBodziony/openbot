@@ -777,11 +777,7 @@ export function App() {
     applyStoredBots(storedBots);
   }
 
-  async function joinServer(input: {
-    inviteUrl: string;
-    username: string;
-    password: string;
-  }): Promise<void> {
+  async function joinServer(input: { inviteUrl: string }): Promise<void> {
     await window.openbot.servers.join(input);
     setPendingInviteUrl("");
     setJoinServerOpen(false);
@@ -793,7 +789,7 @@ export function App() {
   }
 
   async function joinRemoteDuringSetup(
-    input: { inviteUrl: string; username: string; password: string },
+    input: { inviteUrl: string },
     provider: AgentProviderId,
   ): Promise<void> {
     await joinServer(input);
@@ -828,11 +824,7 @@ export function App() {
     void refreshHostManagement();
   }
 
-  async function configureHost(input: {
-    serverName: string;
-    username: string;
-    password: string;
-  }): Promise<void> {
+  async function configureHost(input: { serverName: string }): Promise<void> {
     setHostStatus(await window.openbot.host.configure(input));
     await refreshHostManagement();
   }
@@ -845,8 +837,11 @@ export function App() {
     setHostStatus(await window.openbot.host.stop());
   }
 
-  async function createHostInvite(role: "admin" | "member"): Promise<InviteSummary> {
-    const invite = await window.openbot.host.createInvite(role);
+  async function createHostInvite(input: {
+    role: "admin" | "member";
+    email?: string;
+  }): Promise<InviteSummary> {
+    const invite = await window.openbot.host.createInvite(input);
     await refreshHostManagement();
     return invite;
   }
@@ -1020,6 +1015,7 @@ export function App() {
               <Show when={joinServerOpen()}>
                 <JoinServerDialog
                   inviteUrl={pendingInviteUrl()}
+                  accountEmail={account().email}
                   onClose={() => {
                     setJoinServerOpen(false);
                     setPendingInviteUrl("");
@@ -1033,6 +1029,7 @@ export function App() {
                   members={teamMembers()}
                   invites={teamInvites()}
                   sessions={teamSessions()}
+                  accountEmail={account().email}
                   onClose={() => setHostOpen(false)}
                   onConfigure={configureHost}
                   onStart={startHost}

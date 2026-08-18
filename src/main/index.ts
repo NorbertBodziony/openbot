@@ -33,6 +33,7 @@ import {
   type CancelQueuedMessageInput,
   type CentralAuthState,
   type ConfigureHostInput,
+  type CreateTeamInviteInput,
   type ExternalDestination,
   type ImportAttachmentsInput,
   type InterruptTurnInput,
@@ -245,10 +246,9 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.hostRevokeInvite, (inviteId: unknown) =>
     host.revokeInvite(requireString(inviteId, "inviteId")),
   );
-  handleTrusted(IPC_CHANNELS.hostCreateInvite, (role: unknown) => {
-    if (role !== "admin" && role !== "member") throw new Error("Unknown team role.");
-    return host.createInvite(role);
-  });
+  handleTrusted(IPC_CHANNELS.hostCreateInvite, (input: unknown) =>
+    host.createInvite(parseCreateTeamInvite(input)),
+  );
   handleTrusted(IPC_CHANNELS.hostCreateAddressUpdate, () => host.createAddressUpdate());
   handleTrusted(IPC_CHANNELS.remoteMacList, () => remoteMac.list());
   handleTrusted(IPC_CHANNELS.remoteMacConnect, (input: unknown) =>
@@ -709,6 +709,18 @@ if (!hasSingleInstanceLock) {
         mailbox: mailboxStore,
         browser: browserHost,
         logDirectory: join(app.getPath("userData"), "logs", "remote"),
+        getSignedInUser: () => {
+          if (!centralAuthManager) throw new Error("The account service is not ready.");
+          return centralAuthManager.getSignedInUser();
+        },
+        redeemCentralTicket: (ticket, serverId) => {
+          if (!centralAuthManager) return Promise.resolve(null);
+          return centralAuthManager.redeemTeamAuthTicket(ticket, serverId);
+        },
+        sendTeamInviteEmail: (input) => {
+          if (!centralAuthManager) throw new Error("The account service is not ready.");
+          return centralAuthManager.sendTeamInviteEmail(input);
+        },
       });
       remoteMacManager = new RemoteMacManager({
         openExternal: (url) => shell.openExternal(url),
@@ -724,6 +736,16 @@ if (!hasSingleInstanceLock) {
             return safeStorage.encryptString(value);
           },
           decrypt: (value) => safeStorage.decryptString(value),
+        },
+        {
+          createTeamAuthTicket: (serverId) => {
+            if (!centralAuthManager) throw new Error("The account service is not ready.");
+            return centralAuthManager.createTeamAuthTicket(serverId);
+          },
+          getEmail: () => {
+            if (!centralAuthManager) throw new Error("The account service is not ready.");
+            return centralAuthManager.getSignedInUser().email;
+          },
         },
       );
       await remoteServerManager.initialize();
@@ -904,8 +926,6 @@ function parseHostConfig(value: unknown): ConfigureHostInput {
   if (!isObject(value)) throw new Error("Host configuration is required.");
   return {
     serverName: requireString(value.serverName, "serverName"),
-    username: requireString(value.username, "username"),
-    password: requireString(value.password, "password"),
   };
 }
 
@@ -913,8 +933,6 @@ function parseJoinServer(value: unknown): JoinServerInput {
   if (!isObject(value)) throw new Error("Invitation details are required.");
   return {
     inviteUrl: requireString(value.inviteUrl, "inviteUrl"),
-    username: requireString(value.username, "username"),
-    password: requireString(value.password, "password"),
   };
 }
 
@@ -922,8 +940,20 @@ function parseLoginServer(value: unknown): LoginServerInput {
   if (!isObject(value)) throw new Error("Login details are required.");
   return {
     serverId: requireString(value.serverId, "serverId"),
-    username: requireString(value.username, "username"),
-    password: requireString(value.password, "password"),
+  };
+}
+
+function parseCreateTeamInvite(value: unknown): CreateTeamInviteInput {
+  if (!isObject(value)) throw new Error("Invitation details are required.");
+  if (value.role !== "admin" && value.role !== "member") {
+    throw new Error("Unknown team role.");
+  }
+  if (value.email !== undefined && typeof value.email !== "string") {
+    throw new Error("Invalid invitation email.");
+  }
+  return {
+    role: value.role,
+    ...(value.email?.trim() ? { email: value.email.trim() } : {}),
   };
 }
 

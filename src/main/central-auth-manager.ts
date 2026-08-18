@@ -35,6 +35,55 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     return structuredClone(this.#state);
   }
 
+  getSignedInUser(): CentralAuthUser {
+    if (this.#state.status !== "signed_in") {
+      throw new AuthApiError(401, "unauthorized", "Sign in to OpenBot first.");
+    }
+    return structuredClone(this.#state.user);
+  }
+
+  async createTeamAuthTicket(serverId: string): Promise<string> {
+    const result = await this.#authorizedRequest<{ ticket: string; expiresAt: number }>(
+      "/v1/team-auth/ticket",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverId }),
+      },
+    );
+    if (!result.ticket || !Number.isFinite(result.expiresAt)) {
+      throw new Error("The account service returned an invalid team ticket.");
+    }
+    return result.ticket;
+  }
+
+  async redeemTeamAuthTicket(ticket: string, serverId: string): Promise<CentralAuthUser | null> {
+    if (!ticket) return null;
+    try {
+      return await this.#request<CentralAuthUser>("/v1/team-auth/redeem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticket, serverId }),
+      });
+    } catch (error) {
+      if (error instanceof AuthApiError && error.status === 401) return null;
+      throw error;
+    }
+  }
+
+  sendTeamInviteEmail(input: {
+    email: string;
+    serverName: string;
+    inviteUrl: string;
+    role: "admin" | "member";
+  }): Promise<void> {
+    return this.#authorizedRequest("/v1/team-invitations/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  }
+
   async initialize(): Promise<CentralAuthState> {
     try {
       const encrypted = Buffer.from(await readFile(this.#options.storagePath, "utf8"), "base64");

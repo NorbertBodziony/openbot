@@ -172,6 +172,48 @@ export class D1AuthRepository implements AuthRepository {
       .run();
   }
 
+  async createTeamAuthTicket(input: {
+    ticketHash: string;
+    userId: string;
+    serverId: string;
+    createdAt: number;
+    expiresAt: number;
+  }): Promise<void> {
+    await this.database
+      .prepare(
+        `INSERT INTO team_auth_tickets(
+          ticket_hash, user_id, server_id, created_at, expires_at
+        ) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(input.ticketHash, input.userId, input.serverId, input.createdAt, input.expiresAt)
+      .run();
+  }
+
+  async redeemTeamAuthTicket(input: {
+    ticketHash: string;
+    serverId: string;
+    now: number;
+  }): Promise<AuthUser | null> {
+    const consumed = await this.database
+      .prepare(
+        `UPDATE team_auth_tickets SET consumed_at = ?
+         WHERE ticket_hash = ? AND server_id = ? AND consumed_at IS NULL AND expires_at > ?`,
+      )
+      .bind(input.now, input.ticketHash, input.serverId, input.now)
+      .run();
+    if (consumed.meta.changes !== 1) return null;
+    const row = await this.database
+      .prepare(
+        `SELECT users.id, users.email, users.name, users.avatar_url
+         FROM team_auth_tickets
+         JOIN users ON users.id = team_auth_tickets.user_id
+         WHERE team_auth_tickets.ticket_hash = ?`,
+      )
+      .bind(input.ticketHash)
+      .first<UserRow>();
+    return row ? mapUser(row) : null;
+  }
+
   private async upsertEmailUser(email: string, now: number): Promise<AuthUser> {
     const existing = await this.database
       .prepare("SELECT id, email, name, avatar_url FROM users WHERE email = ?")

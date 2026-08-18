@@ -226,7 +226,7 @@ const openbotApi: OpenBotDesktopApi = {
     revokeSession: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.hostRevokeSession, sessionId),
     listInvites: () => ipcRenderer.invoke(IPC_CHANNELS.hostListInvites),
     revokeInvite: (inviteId) => ipcRenderer.invoke(IPC_CHANNELS.hostRevokeInvite, inviteId),
-    createInvite: (role) => ipcRenderer.invoke(IPC_CHANNELS.hostCreateInvite, role),
+    createInvite: (input) => ipcRenderer.invoke(IPC_CHANNELS.hostCreateInvite, input),
     createAddressUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.hostCreateAddressUpdate),
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, status: Parameters<typeof listener>[0]) =>

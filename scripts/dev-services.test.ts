@@ -11,6 +11,12 @@ describe("development service runner", () => {
     expect(servicesForTarget("all")).toEqual(["api", "app", "host"]);
   });
 
+  it("starts the auth API with every Electron development target", () => {
+    expect(servicesForTarget("app")).toEqual(["api", "app"]);
+    expect(servicesForTarget("host")).toEqual(["api", "host"]);
+    expect(servicesForTarget("api")).toEqual(["api"]);
+  });
+
   it("builds the API command without a shell command string", () => {
     const spec = createDevelopmentServiceSpec("api", {});
     expect(spec.executable).toBe(process.execPath);
