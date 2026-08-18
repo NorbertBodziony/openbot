@@ -50,9 +50,11 @@ async function run(
   options: { env?: NodeJS.ProcessEnv; input?: string; label: string },
 ): Promise<void> {
   await new Promise<void>((resolveProcess, rejectProcess) => {
+    const environment = { ...process.env, ...options.env };
+    if (executable === wranglerExecutable) delete environment.CLOUDFLARE_API_TOKEN;
     const child = spawn(executable, args, {
       cwd: apiRoot,
-      env: { ...process.env, ...options.env },
+      env: environment,
       shell: false,
       stdio: [options.input === undefined ? "inherit" : "pipe", "inherit", "inherit"],
     });
