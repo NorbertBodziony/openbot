@@ -35,6 +35,7 @@ import type {
   UpdateBotInput,
   UpdateStatus,
 } from "../../shared/ipc";
+import { AccountLogin } from "./components/AccountLogin";
 import { Conversation } from "./components/Conversation";
 import { HostPanel } from "./components/HostPanel";
 import { InitialSetup } from "./components/InitialSetup";
@@ -791,6 +792,14 @@ export function App() {
     );
   }
 
+  async function joinRemoteDuringSetup(
+    input: { inviteUrl: string; username: string; password: string },
+    provider: AgentProviderId,
+  ): Promise<void> {
+    await joinServer(input);
+    await saveSetup(provider);
+  }
+
   async function refreshHostManagement(): Promise<void> {
     if (!hostStatus().configured) {
       setTeamMembers([]);
@@ -874,6 +883,10 @@ export function App() {
   }
 
   const activeServer = createMemo(() => servers().find((server) => server.active));
+  const signedInAccount = createMemo(() => {
+    const state = centralAuth();
+    return state.status === "signed_in" ? state.user : null;
+  });
 
   return (
     <Show
@@ -881,156 +894,168 @@ export function App() {
       fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}
     >
       <Show
-        when={setupState()?.completed}
+        when={signedInAccount()}
         fallback={
-          <InitialSetup
-            state={setupState() ?? { completed: false, preferredProvider: null }}
-            agentStatus={agentStatus()}
-            platform={appInfo()?.platform ?? "darwin"}
-            authState={centralAuth()}
-            onSave={saveSetup}
+          <AccountLogin
+            state={centralAuth()}
             onRequestEmailCode={requestEmailCode}
             onVerifyEmailCode={verifyEmailCode}
-            onLogout={logoutCentralAccount}
+            onReset={logoutCentralAccount}
           />
         }
       >
-        <div
-          class={[
-            "app-frame",
-            {
-              "app-frame-sidebar-collapsed": leftPanelCollapsed(),
-              "app-frame-with-server-rail": appInfo()?.platform === "darwin",
-            },
-          ]}
-          style={`--left-panel-width: ${leftPanelCollapsed() ? 0 : leftPanelWidth()}px`}
-        >
-          <Show when={appInfo()?.platform === "darwin"}>
-            <ServerRail
-              servers={servers()}
-              hostStatus={hostStatus()}
-              onSelect={(serverId) => void selectServer(serverId)}
-              onAdd={() => setJoinServerOpen(true)}
-              onOpenHost={openHostPanel}
-              onOpenRemoteMac={() => setRemoteMacOpen(true)}
-            />
+        {(account) => (
+          <Show
+            when={setupState()?.completed}
+            fallback={
+              <InitialSetup
+                state={setupState() ?? { completed: false, preferredProvider: null }}
+                agentStatus={agentStatus()}
+                platform={appInfo()?.platform ?? "darwin"}
+                accountEmail={account().email}
+                onSave={saveSetup}
+                onJoinRemote={joinRemoteDuringSetup}
+                onLogout={logoutCentralAccount}
+              />
+            }
+          >
+            <div
+              class={[
+                "app-frame",
+                {
+                  "app-frame-sidebar-collapsed": leftPanelCollapsed(),
+                  "app-frame-with-server-rail": appInfo()?.platform === "darwin",
+                },
+              ]}
+              style={`--left-panel-width: ${leftPanelCollapsed() ? 0 : leftPanelWidth()}px`}
+            >
+              <Show when={appInfo()?.platform === "darwin"}>
+                <ServerRail
+                  servers={servers()}
+                  hostStatus={hostStatus()}
+                  onSelect={(serverId) => void selectServer(serverId)}
+                  onAdd={() => setJoinServerOpen(true)}
+                  onOpenHost={openHostPanel}
+                  onOpenRemoteMac={() => setRemoteMacOpen(true)}
+                />
+              </Show>
+              <Show when={!leftPanelCollapsed()}>
+                <Sidebar
+                  bots={botList()}
+                  activeBotId={activeBot()?.id ?? ""}
+                  appInfo={appInfo()}
+                  agentStatus={agentStatus()}
+                  accountUsage={accountUsage()}
+                  updateStatus={updateStatus()}
+                  agentStates={sidebarAgentStates()}
+                  onSelectBot={selectBot}
+                  onCreateBot={() => setAgentPickerOpen(true)}
+                  onEditBot={editBot}
+                  onDeleteBot={deleteBot}
+                  onRefreshUsage={refreshAccountUsage}
+                  onUpdateAction={runUpdateAction}
+                  onOpenExternal={(destination) => window.openbot.openExternal(destination)}
+                  onOpenPermissions={() => setPermissionsOpen(true)}
+                  onCollapse={() => setSidebarCollapsed(true)}
+                />
+                <PanelResizer
+                  class="left-panel-resizer"
+                  label="Resize left sidebar"
+                  controls="bot-sidebar"
+                  direction="left"
+                  value={leftPanelWidth()}
+                  defaultValue={LEFT_PANEL_DEFAULT}
+                  min={LEFT_PANEL_MIN}
+                  max={LEFT_PANEL_MAX}
+                  onResize={setLeftPanelWidth}
+                  onResizeEnd={(value) => savePanelWidth(LEFT_PANEL_STORAGE_KEY, value)}
+                />
+              </Show>
+              <Conversation
+                agentStatus={agentStatus()}
+                bot={activeBot()}
+                bots={botList()}
+                modelOptions={modelOptions()}
+                messages={activeMessages()}
+                loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
+                queue={activeQueue()}
+                browserTabs={browserTabs()}
+                activeBrowserTabId={activeBrowserTabId()}
+                browserControlState={browserControlState()}
+                leftSidebarCollapsed={leftPanelCollapsed()}
+                prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
+                activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
+                agentPickerOpen={agentPickerOpen()}
+                creatingAgent={creatingAgent()}
+                settingsRequest={settingsRequest()}
+                onboardingRequest={onboardingRequest()}
+                onCloseAgentPicker={() => setAgentPickerOpen(false)}
+                onCreateAgent={() => void createAgent()}
+                onSelectAgent={selectBot}
+                onUpdateBot={updateBot}
+                onSendMessage={sendMessage}
+                onCompleteOnboarding={completeOnboarding}
+                onAnswerPrompt={answerPrompt}
+                onCancelQueuedMessage={cancelQueuedMessage}
+                onResumeQueue={resumeQueue}
+                onActivateBrowserTab={activateBrowserTab}
+                onCloseBrowserTab={closeBrowserTab}
+                onToggleLeftSidebar={() => setSidebarCollapsed(false)}
+                onOpenAgentSetup={() => window.openbot.openExternal("agent-setup")}
+                onStop={stopActiveTurn}
+              />
+              <Show when={permissionsOpen()}>
+                <InitialSetup
+                  reviewing
+                  state={setupState() ?? { completed: true, preferredProvider: "codex" }}
+                  agentStatus={agentStatus()}
+                  platform={appInfo()?.platform ?? "darwin"}
+                  accountEmail={account().email}
+                  onSave={saveSetup}
+                  onJoinRemote={joinRemoteDuringSetup}
+                  onLogout={logoutCentralAccount}
+                  onClose={() => setPermissionsOpen(false)}
+                />
+              </Show>
+              <Show when={joinServerOpen()}>
+                <JoinServerDialog
+                  inviteUrl={pendingInviteUrl()}
+                  onClose={() => {
+                    setJoinServerOpen(false);
+                    setPendingInviteUrl("");
+                  }}
+                  onJoin={joinServer}
+                />
+              </Show>
+              <Show when={hostOpen()}>
+                <HostPanel
+                  status={hostStatus()}
+                  members={teamMembers()}
+                  invites={teamInvites()}
+                  sessions={teamSessions()}
+                  onClose={() => setHostOpen(false)}
+                  onConfigure={configureHost}
+                  onStart={startHost}
+                  onStop={stopHost}
+                  onCreateInvite={createHostInvite}
+                  onUpdateMember={updateHostMember}
+                  onRevokeSession={revokeHostSession}
+                  onRevokeInvite={revokeHostInvite}
+                  onCopyAddressUpdate={copyHostAddressUpdate}
+                />
+              </Show>
+              <Show when={remoteMacOpen()}>
+                <RemoteMacPanel
+                  server={activeServer()}
+                  sessions={remoteMacSessions()}
+                  onClose={() => setRemoteMacOpen(false)}
+                  onConnect={connectRemoteMac}
+                  onDisconnect={disconnectRemoteMac}
+                />
+              </Show>
+            </div>
           </Show>
-          <Show when={!leftPanelCollapsed()}>
-            <Sidebar
-              bots={botList()}
-              activeBotId={activeBot()?.id ?? ""}
-              appInfo={appInfo()}
-              agentStatus={agentStatus()}
-              accountUsage={accountUsage()}
-              updateStatus={updateStatus()}
-              agentStates={sidebarAgentStates()}
-              onSelectBot={selectBot}
-              onCreateBot={() => setAgentPickerOpen(true)}
-              onEditBot={editBot}
-              onDeleteBot={deleteBot}
-              onRefreshUsage={refreshAccountUsage}
-              onUpdateAction={runUpdateAction}
-              onOpenExternal={(destination) => window.openbot.openExternal(destination)}
-              onOpenPermissions={() => setPermissionsOpen(true)}
-              onCollapse={() => setSidebarCollapsed(true)}
-            />
-            <PanelResizer
-              class="left-panel-resizer"
-              label="Resize left sidebar"
-              controls="bot-sidebar"
-              direction="left"
-              value={leftPanelWidth()}
-              defaultValue={LEFT_PANEL_DEFAULT}
-              min={LEFT_PANEL_MIN}
-              max={LEFT_PANEL_MAX}
-              onResize={setLeftPanelWidth}
-              onResizeEnd={(value) => savePanelWidth(LEFT_PANEL_STORAGE_KEY, value)}
-            />
-          </Show>
-          <Conversation
-            agentStatus={agentStatus()}
-            bot={activeBot()}
-            bots={botList()}
-            modelOptions={modelOptions()}
-            messages={activeMessages()}
-            loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
-            queue={activeQueue()}
-            browserTabs={browserTabs()}
-            activeBrowserTabId={activeBrowserTabId()}
-            browserControlState={browserControlState()}
-            leftSidebarCollapsed={leftPanelCollapsed()}
-            prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
-            activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
-            agentPickerOpen={agentPickerOpen()}
-            creatingAgent={creatingAgent()}
-            settingsRequest={settingsRequest()}
-            onboardingRequest={onboardingRequest()}
-            onCloseAgentPicker={() => setAgentPickerOpen(false)}
-            onCreateAgent={() => void createAgent()}
-            onSelectAgent={selectBot}
-            onUpdateBot={updateBot}
-            onSendMessage={sendMessage}
-            onCompleteOnboarding={completeOnboarding}
-            onAnswerPrompt={answerPrompt}
-            onCancelQueuedMessage={cancelQueuedMessage}
-            onResumeQueue={resumeQueue}
-            onActivateBrowserTab={activateBrowserTab}
-            onCloseBrowserTab={closeBrowserTab}
-            onToggleLeftSidebar={() => setSidebarCollapsed(false)}
-            onOpenAgentSetup={() => window.openbot.openExternal("agent-setup")}
-            onStop={stopActiveTurn}
-          />
-          <Show when={permissionsOpen()}>
-            <InitialSetup
-              reviewing
-              state={setupState() ?? { completed: true, preferredProvider: "codex" }}
-              agentStatus={agentStatus()}
-              platform={appInfo()?.platform ?? "darwin"}
-              authState={centralAuth()}
-              onSave={saveSetup}
-              onRequestEmailCode={requestEmailCode}
-              onVerifyEmailCode={verifyEmailCode}
-              onLogout={logoutCentralAccount}
-              onClose={() => setPermissionsOpen(false)}
-            />
-          </Show>
-          <Show when={joinServerOpen()}>
-            <JoinServerDialog
-              inviteUrl={pendingInviteUrl()}
-              onClose={() => {
-                setJoinServerOpen(false);
-                setPendingInviteUrl("");
-              }}
-              onJoin={joinServer}
-            />
-          </Show>
-          <Show when={hostOpen()}>
-            <HostPanel
-              status={hostStatus()}
-              members={teamMembers()}
-              invites={teamInvites()}
-              sessions={teamSessions()}
-              onClose={() => setHostOpen(false)}
-              onConfigure={configureHost}
-              onStart={startHost}
-              onStop={stopHost}
-              onCreateInvite={createHostInvite}
-              onUpdateMember={updateHostMember}
-              onRevokeSession={revokeHostSession}
-              onRevokeInvite={revokeHostInvite}
-              onCopyAddressUpdate={copyHostAddressUpdate}
-            />
-          </Show>
-          <Show when={remoteMacOpen()}>
-            <RemoteMacPanel
-              server={activeServer()}
-              sessions={remoteMacSessions()}
-              onClose={() => setRemoteMacOpen(false)}
-              onConnect={connectRemoteMac}
-              onDisconnect={disconnectRemoteMac}
-            />
-          </Show>
-        </div>
+        )}
       </Show>
     </Show>
   );

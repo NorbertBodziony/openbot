@@ -82,7 +82,10 @@ describe("OpenBot connected desktop shell", () => {
         openExternal: vi.fn().mockResolvedValue(undefined),
         openUrl: vi.fn().mockResolvedValue(undefined),
         auth: {
-          getState: vi.fn().mockResolvedValue({ status: "signed_out" }),
+          getState: vi.fn().mockResolvedValue({
+            status: "signed_in",
+            user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
+          }),
           requestEmailCode: vi.fn().mockResolvedValue({
             status: "code_sent",
             challengeId: "challenge-1",
@@ -328,9 +331,13 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    expect(await screen.findByRole("dialog", { name: "Choose your provider" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("dialog", { name: "Where will OpenBot run?" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: /Use this computer/ }));
 
     const providers = screen.getByRole("radiogroup", { name: "Default provider" });
     const codex = within(providers).getByRole("radio", { name: /Codex.*Available/ });
@@ -341,23 +348,73 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
   });
 
-  it("lets a user request an email code from the initial screen", async () => {
+  it("connects to a remote host after account sign-in", async () => {
     vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
       completed: false,
       preferredProvider: null,
     });
     render(() => <App />);
 
-    await fireEvent.input(await screen.findByRole("textbox", { name: "Email address" }), {
+    await fireEvent.click(await screen.findByRole("button", { name: /Connect to a host/ }));
+    expect(screen.getByRole("dialog", { name: "Connect to a host" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Email" })).not.toBeInTheDocument();
+
+    await fireEvent.input(screen.getByRole("textbox", { name: "Host invitation" }), {
+      target: { value: "openbot://join/invite" },
+    });
+    await fireEvent.input(screen.getByRole("textbox", { name: "Profile name" }), {
+      target: { value: "Norbert" },
+    });
+    await fireEvent.input(screen.getByLabelText("Host password"), {
+      target: { value: "strong-secret" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Connect to host" }));
+
+    await waitFor(() =>
+      expect(window.openbot.servers.join).toHaveBeenCalledWith({
+        inviteUrl: "openbot://join/invite",
+        username: "Norbert",
+        password: "strong-secret",
+      }),
+    );
+    await waitFor(() =>
+      expect(window.openbot.saveSetup).toHaveBeenCalledWith({ preferredProvider: "codex" }),
+    );
+  });
+
+  it("lets a user request an email code from the initial screen", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({ status: "signed_out" });
+    render(() => <App />);
+
+    expect(await screen.findByRole("dialog", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "Default provider" })).not.toBeInTheDocument();
+
+    await fireEvent.input(screen.getByRole("textbox", { name: "Email" }), {
       target: { value: "person@example.com" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(window.openbot.auth.requestEmailCode).toHaveBeenCalledWith("person@example.com");
-    await fireEvent.input(await screen.findByRole("textbox", { name: "Sign-in code" }), {
+    await fireEvent.input(await screen.findByRole("textbox", { name: "One-time code" }), {
       target: { value: "ABCD-EFGH" },
     });
     await fireEvent.click(screen.getByRole("button", { name: "Verify code" }));
     expect(window.openbot.auth.verifyEmailCode).toHaveBeenCalledWith("challenge-1", "ABCD-EFGH");
+    expect(
+      await screen.findByRole("dialog", { name: "Where will OpenBot run?" }),
+    ).toBeInTheDocument();
+  });
+
+  it("requires account sign-in before opening a completed workspace", async () => {
+    vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({ status: "signed_out" });
+    render(() => <App />);
+
+    expect(await screen.findByRole("dialog", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Codex")).not.toBeInTheDocument();
   });
 
   it("lets the user choose a provider while provider checks are running", async () => {
@@ -391,6 +448,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
+    await fireEvent.click(await screen.findByRole("button", { name: /Use this computer/ }));
     const providers = await screen.findByRole("radiogroup", { name: "Default provider" });
     const codex = within(providers).getByRole("radio", { name: /Codex.*Checking/ });
     const claude = within(providers).getByRole("radio", { name: /Claude.*Checking/ });
@@ -477,6 +535,7 @@ describe("OpenBot connected desktop shell", () => {
     vi.mocked(window.openbot.saveSetup).mockRejectedValueOnce(new Error("Could not save setup."));
     render(() => <App />);
 
+    await fireEvent.click(await screen.findByRole("button", { name: /Use this computer/ }));
     expect(
       within(await screen.findByRole("radiogroup", { name: "Default provider" })).getByRole(
         "radio",
@@ -503,6 +562,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
+    await fireEvent.click(await screen.findByRole("button", { name: /Use this computer/ }));
     const row = (await screen.findByText("Screen Recording")).closest(".mac-permission-row");
     const action = row?.querySelector("button");
     expect(action).not.toBeNull();
@@ -533,7 +593,10 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    expect(await screen.findByRole("dialog", { name: "Choose your provider" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("dialog", { name: "Where will OpenBot run?" }),
+    ).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /Use this computer/ }));
     await waitFor(() => expect(screen.queryByText("Mac permissions")).not.toBeInTheDocument());
     expect(window.openbot.getMacPermissions).not.toHaveBeenCalled();
   });

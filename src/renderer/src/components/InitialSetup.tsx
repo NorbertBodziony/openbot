@@ -4,7 +4,7 @@ import {
   createSignal,
   For,
   flush,
-  onSettled,
+  onCleanup,
   Show,
   untrack,
 } from "solid-js";
@@ -13,8 +13,8 @@ import type {
   AgentProviderState,
   AgentStatus,
   AppSetupState,
-  CentralAuthState,
   DesktopPlatform,
+  JoinServerInput,
   MacPermissionId,
   MacPermissionsState,
 } from "../../../shared/ipc";
@@ -25,26 +25,18 @@ interface InitialSetupProps {
   state: AppSetupState;
   agentStatus: AgentStatus;
   platform: DesktopPlatform;
-  authState: CentralAuthState;
+  accountEmail: string;
   onSave: (provider: AgentProviderId) => Promise<void>;
-  onRequestEmailCode: (email: string) => Promise<void>;
-  onVerifyEmailCode: (challengeId: string, code: string) => Promise<void>;
+  onJoinRemote: (input: JoinServerInput, provider: AgentProviderId) => Promise<void>;
   onLogout: () => Promise<void>;
   onClose?: () => void;
 }
 
-const PROVIDERS: Array<{
-  id: AgentProviderId;
-  name: string;
-}> = [
-  {
-    id: "codex",
-    name: "Codex",
-  },
-  {
-    id: "claude",
-    name: "Claude",
-  },
+type SetupRoute = "local" | "remote";
+
+const PROVIDERS: Array<{ id: AgentProviderId; name: string }> = [
+  { id: "codex", name: "Codex" },
+  { id: "claude", name: "Claude" },
 ];
 
 const PERMISSIONS: Array<{
@@ -70,6 +62,7 @@ const EMPTY_PERMISSIONS: MacPermissionsState = {
 };
 
 export function InitialSetup(props: InitialSetupProps) {
+  const [route, setRoute] = createSignal<SetupRoute | null>(props.reviewing ? "local" : null);
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(
     untrack(() => props.state.preferredProvider),
   );
@@ -77,8 +70,10 @@ export function InitialSetup(props: InitialSetupProps) {
   const [saving, setSaving] = createSignal(false);
   const [permissionBusy, setPermissionBusy] = createSignal<MacPermissionId | null>(null);
   const [error, setError] = createSignal("");
-  const [accountEmail, setAccountEmail] = createSignal("");
-  const [accountCode, setAccountCode] = createSignal("");
+  const [inviteUrl, setInviteUrl] = createSignal("");
+  const [username, setUsername] = createSignal("");
+  const [password, setPassword] = createSignal("");
+  let permissionRevision = 0;
   const providerOptions = createMemo<ProviderPickerOption[]>(() =>
     PROVIDERS.map((provider) => {
       const status = props.agentStatus.providers?.find((candidate) => candidate.id === provider.id);
@@ -104,34 +99,37 @@ export function InitialSetup(props: InitialSetupProps) {
     ({ options, available, selected, preferredProvider }) => {
       if (selected && options.some((provider) => provider.id === selected)) return;
       const preferred = options.find((provider) => provider.id === preferredProvider);
-      setSelectedProvider(preferred?.id ?? available[0]?.id ?? null);
+      setSelectedProvider(preferred?.id ?? available[0]?.id ?? options[0]?.id ?? null);
     },
   );
 
   async function refreshPermissions(): Promise<void> {
-    if (props.platform !== "darwin") return;
+    if (props.platform !== "darwin" || route() !== "local") return;
+    const revision = ++permissionRevision;
     try {
       const next = await window.openbot.getMacPermissions();
-      flush(() => setPermissions(next));
+      if (revision === permissionRevision) flush(() => setPermissions(next));
     } catch (cause) {
       setError(errorMessage(cause, "OpenBot could not read macOS permissions."));
     }
   }
 
-  onSettled(() => {
-    void refreshPermissions();
-    const handleFocus = () => void refreshPermissions();
-    window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
+  createEffect(route, (currentRoute) => {
+    if (currentRoute === "local") void refreshPermissions();
   });
+
+  const handleFocus = () => void refreshPermissions();
+  window.addEventListener("focus", handleFocus);
+  onCleanup(() => window.removeEventListener("focus", handleFocus));
 
   async function requestPermission(permission: MacPermissionId): Promise<void> {
     if (permissionBusy()) return;
+    const revision = ++permissionRevision;
     setPermissionBusy(permission);
     setError("");
     try {
       const next = await window.openbot.requestMacPermission(permission);
-      flush(() => setPermissions(next));
+      if (revision === permissionRevision) flush(() => setPermissions(next));
     } catch (cause) {
       setError(errorMessage(cause, "OpenBot could not open this macOS permission."));
     } finally {
@@ -139,7 +137,12 @@ export function InitialSetup(props: InitialSetupProps) {
     }
   }
 
-  async function save(): Promise<void> {
+  function chooseRoute(nextRoute: SetupRoute): void {
+    setError("");
+    setRoute(nextRoute);
+  }
+
+  async function saveLocal(): Promise<void> {
     const provider = selectedProvider();
     if (!provider || saving()) return;
     setSaving(true);
@@ -147,10 +150,46 @@ export function InitialSetup(props: InitialSetupProps) {
     try {
       await props.onSave(provider);
     } catch (cause) {
-      setError(errorMessage(cause, "OpenBot could not save your provider."));
+      setError(errorMessage(cause, "OpenBot could not save your local setup."));
       setSaving(false);
     }
   }
+
+  async function connectRemote(): Promise<void> {
+    const provider = selectedProvider() ?? "codex";
+    if (saving()) return;
+    setSaving(true);
+    setError("");
+    try {
+      await props.onJoinRemote(
+        { inviteUrl: inviteUrl().trim(), username: username().trim(), password: password() },
+        provider,
+      );
+    } catch (cause) {
+      setError(errorMessage(cause, "OpenBot could not connect to this host."));
+      setSaving(false);
+    }
+  }
+
+  const title = () => {
+    if (props.reviewing) return "Providers & permissions";
+    if (route() === "local") return "Set up this computer";
+    if (route() === "remote") return "Connect to a host";
+    return "Where will OpenBot run?";
+  };
+
+  const description = () => {
+    if (props.reviewing) {
+      return "Choose the default provider for local agents and review macOS permissions.";
+    }
+    if (route() === "local") {
+      return "Agents, conversations, and files stay on this computer.";
+    }
+    if (route() === "remote") {
+      return "Use an invitation from the person who runs your OpenBot host.";
+    }
+    return "Use this computer, or connect to an OpenBot host that runs somewhere else.";
+  };
 
   return (
     <main class="initial-setup-screen">
@@ -162,179 +201,192 @@ export function InitialSetup(props: InitialSetupProps) {
         aria-describedby="initial-setup-description"
       >
         <header class="initial-setup-header">
-          <p class="initial-setup-eyebrow">OpenBot setup</p>
-          <h1 id="initial-setup-title">
-            {props.reviewing ? "Providers & permissions" : "Choose your provider"}
-          </h1>
-          <p id="initial-setup-description" class="initial-setup-intro">
-            {props.reviewing
-              ? "Choose the default provider for new agents and review macOS permissions."
-              : "New agents will use this provider by default. Each agent can use a different provider later."}
-          </p>
-        </header>
-
-        <section class="setup-account" aria-labelledby="setup-account-title">
-          <div class="setup-account-copy">
-            <p class="initial-setup-section-label">OpenBot account</p>
-            <h2 id="setup-account-title">
-              {props.authState.status === "signed_in"
-                ? props.authState.user.name || props.authState.user.email
-                : props.authState.status === "code_sent"
-                  ? "Enter your sign-in code"
-                  : "Sign in with your email"}
-            </h2>
-            <p>
-              {props.authState.status === "signed_in"
-                ? props.authState.user.email
-                : props.authState.status === "code_sent"
-                  ? `We sent an 8-character code to ${props.authState.email}.`
-                  : "Your verified email identifies you when a host grants access."}
-            </p>
-            <Show when={props.authState.status === "error"}>
-              <p class="setup-account-error" role="alert">
-                {props.authState.status === "error" ? props.authState.message : ""}
-              </p>
-            </Show>
-            <Show when={props.authState.status === "code_sent" && props.authState.error}>
-              <p class="setup-account-error" role="alert">
-                {props.authState.status === "code_sent" ? props.authState.error : ""}
-              </p>
-            </Show>
-            <Show when={props.authState.status === "code_sent" && props.authState.developmentCode}>
-              <p class="setup-account-development-code">
-                Development code:{" "}
-                {props.authState.status === "code_sent" ? props.authState.developmentCode : ""}
-              </p>
-            </Show>
-          </div>
-          <Show
-            when={props.authState.status === "signed_in"}
-            fallback={
-              <Show
-                when={props.authState.status === "code_sent"}
-                fallback={
-                  <form
-                    class="setup-account-form"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      void props.onRequestEmailCode(accountEmail());
-                    }}
-                  >
-                    <input
-                      type="email"
-                      autocomplete="email"
-                      aria-label="Email address"
-                      placeholder="you@example.com"
-                      value={accountEmail()}
-                      onInput={(event) => setAccountEmail(event.currentTarget.value)}
-                      required
-                    />
-                    <button
-                      type="submit"
-                      class="setup-google-button"
-                      disabled={
-                        !accountEmail().trim() ||
-                        props.authState.status === "loading" ||
-                        props.authState.status === "signing_in"
-                      }
-                    >
-                      {props.authState.status === "signing_in" ? "Sending…" : "Send code"}
-                    </button>
-                  </form>
-                }
+          <div class="initial-setup-account-row">
+            <Show when={!props.reviewing && route()}>
+              <button
+                type="button"
+                class="initial-setup-back"
+                aria-label="Back to connection choice"
+                onClick={() => {
+                  setError("");
+                  setRoute(null);
+                }}
               >
-                <form
-                  class="setup-account-form"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    if (props.authState.status !== "code_sent") return;
-                    void props.onVerifyEmailCode(props.authState.challengeId, accountCode());
-                  }}
-                >
-                  <input
-                    type="text"
-                    autocomplete="one-time-code"
-                    aria-label="Sign-in code"
-                    placeholder="XXXX-XXXX"
-                    maxlength={9}
-                    value={accountCode()}
-                    onInput={(event) => setAccountCode(event.currentTarget.value.toUpperCase())}
-                    required
-                  />
-                  <button
-                    type="submit"
-                    class="setup-google-button"
-                    disabled={accountCode().replace(/[\s-]/gu, "").length !== 8}
-                  >
-                    Verify code
-                  </button>
-                </form>
-              </Show>
-            }
-          >
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path d="m12.5 4.5-5 5 5 5" />
+                </svg>
+              </button>
+            </Show>
+            <span class="initial-setup-account">
+              <i aria-hidden="true" />
+              {props.accountEmail}
+            </span>
             <button
               type="button"
-              class="setup-account-signout"
+              class="initial-setup-signout"
               onClick={() => void props.onLogout()}
             >
               Sign out
             </button>
-          </Show>
-        </section>
+          </div>
+          <p class="initial-setup-eyebrow">OpenBot setup</p>
+          <h1 id="initial-setup-title">{title()}</h1>
+          <p id="initial-setup-description" class="initial-setup-intro">
+            {description()}
+          </p>
+        </header>
 
-        <ProviderPicker
-          value={selectedProvider()}
-          options={providerOptions()}
-          ariaLabel="Default provider"
-          label="Default provider"
-          hint="Used for new agents. You can change it for each agent later."
-          disabled={saving()}
-          allowUnavailableSelection
-          focusFirst
-          onChange={setSelectedProvider}
-        />
+        <Show when={!props.reviewing && route() === null}>
+          <ul class="setup-route-list" aria-label="Connection type">
+            <li>
+              <button type="button" class="setup-route-button" onClick={() => chooseRoute("local")}>
+                <span class="setup-route-icon setup-route-icon-local" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <title>Local computer</title>
+                    <rect x="3" y="4" width="18" height="13" rx="2.5" />
+                    <path d="M8 21h8M12 17v4" />
+                  </svg>
+                  <i />
+                </span>
+                <span class="setup-route-copy">
+                  <strong>Use this computer</strong>
+                  <small>Run Codex or Claude locally. Keep all OpenBot data here.</small>
+                </span>
+                <RouteArrow />
+              </button>
+            </li>
+            <li>
+              <button
+                type="button"
+                class="setup-route-button"
+                onClick={() => chooseRoute("remote")}
+              >
+                <span class="setup-route-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <title>Remote host</title>
+                    <rect x="3" y="3" width="18" height="7" rx="2.5" />
+                    <rect x="3" y="14" width="18" height="7" rx="2.5" />
+                    <path d="M7 6.5h.01M7 17.5h.01" />
+                  </svg>
+                  <i />
+                </span>
+                <span class="setup-route-copy">
+                  <strong>Connect to a host</strong>
+                  <small>Use agents and conversations from an existing OpenBot host.</small>
+                </span>
+                <RouteArrow />
+              </button>
+            </li>
+          </ul>
+        </Show>
 
-        <Show when={props.platform === "darwin"}>
-          <section class="mac-permissions" aria-labelledby="mac-permissions-title">
-            <div class="mac-permissions-heading">
-              <div>
-                <h2 id="mac-permissions-title">Mac permissions</h2>
-                <p>Optional. Computer Use needs both permissions.</p>
-              </div>
+        <Show when={route() === "local"}>
+          <div class="setup-local-content">
+            <ProviderPicker
+              value={selectedProvider()}
+              options={providerOptions()}
+              ariaLabel="Default provider"
+              label="Default provider"
+              hint="Used for new local agents. You can change it for each agent later."
+              disabled={saving()}
+              allowUnavailableSelection
+              focusFirst
+              onChange={setSelectedProvider}
+            />
+
+            <Show when={props.platform === "darwin"}>
+              <section class="mac-permissions" aria-labelledby="mac-permissions-title">
+                <div class="mac-permissions-heading">
+                  <div>
+                    <h2 id="mac-permissions-title">Mac permissions</h2>
+                    <p>Optional. Computer Use needs both permissions.</p>
+                  </div>
+                </div>
+                <div class="mac-permission-list">
+                  <For each={PERMISSIONS}>
+                    {(permission) => {
+                      const state = () => permissionState(permissions(), permission.id);
+                      return (
+                        <div class="mac-permission-row">
+                          <span class="mac-permission-copy">
+                            <strong>{permission.title}</strong>
+                            <small>{permission.description}</small>
+                          </span>
+                          <button
+                            type="button"
+                            class={[
+                              "mac-permission-action",
+                              { "mac-permission-allowed": state() === "granted" },
+                            ]}
+                            disabled={
+                              permissionBusy() !== null ||
+                              state() === "granted" ||
+                              state() === "restricted"
+                            }
+                            onClick={() => void requestPermission(permission.id)}
+                          >
+                            {permissionBusy() === permission.id
+                              ? "Checking…"
+                              : permissionLabel(state())}
+                          </button>
+                        </div>
+                      );
+                    }}
+                  </For>
+                </div>
+              </section>
+            </Show>
+          </div>
+        </Show>
+
+        <Show when={!props.reviewing && route() === "remote"}>
+          <form
+            class="setup-remote-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void connectRemote();
+            }}
+          >
+            <label>
+              <span>Host invitation</span>
+              <textarea
+                rows="3"
+                value={inviteUrl()}
+                onInput={(event) => setInviteUrl(event.currentTarget.value)}
+                placeholder="Paste an openbot:// invitation link"
+                spellcheck={false}
+                autofocus
+                required
+              />
+            </label>
+            <div class="setup-remote-fields">
+              <label>
+                <span>Profile name</span>
+                <input
+                  value={username()}
+                  onInput={(event) => setUsername(event.currentTarget.value)}
+                  autocomplete="username"
+                  placeholder="Your name on this host"
+                  required
+                />
+              </label>
+              <label>
+                <span>Host password</span>
+                <input
+                  type="password"
+                  value={password()}
+                  onInput={(event) => setPassword(event.currentTarget.value)}
+                  autocomplete="new-password"
+                  placeholder="At least 12 characters"
+                  minlength={12}
+                  required
+                />
+              </label>
             </div>
-            <div class="mac-permission-list">
-              <For each={PERMISSIONS}>
-                {(permission) => {
-                  const state = () => permissionState(permissions(), permission.id);
-                  return (
-                    <div class="mac-permission-row">
-                      <span class="mac-permission-copy">
-                        <strong>{permission.title}</strong>
-                        <small>{permission.description}</small>
-                      </span>
-                      <button
-                        type="button"
-                        class={[
-                          "mac-permission-action",
-                          { "mac-permission-allowed": state() === "granted" },
-                        ]}
-                        disabled={
-                          permissionBusy() !== null ||
-                          state() === "granted" ||
-                          state() === "restricted"
-                        }
-                        onClick={() => void requestPermission(permission.id)}
-                      >
-                        {permissionBusy() === permission.id
-                          ? "Checking…"
-                          : permissionLabel(state())}
-                      </button>
-                    </div>
-                  );
-                }}
-              </For>
-            </div>
-          </section>
+            <p class="setup-remote-note">
+              Your OpenBot account is already verified. These details apply only to this host.
+            </p>
+          </form>
         </Show>
 
         <Show when={error()}>
@@ -343,29 +395,48 @@ export function InitialSetup(props: InitialSetupProps) {
           </p>
         </Show>
 
-        <div class="initial-setup-actions">
-          <Show when={props.reviewing}>
-            <button type="button" class="initial-setup-secondary" onClick={props.onClose}>
-              Cancel
+        <Show when={route() !== null}>
+          <div class="initial-setup-actions">
+            <Show when={props.reviewing}>
+              <button type="button" class="initial-setup-secondary" onClick={props.onClose}>
+                Cancel
+              </button>
+            </Show>
+            <button
+              type="button"
+              class="initial-setup-save"
+              disabled={
+                saving() ||
+                (route() === "local" && !selectedProvider()) ||
+                (route() === "remote" &&
+                  (!inviteUrl().trim() || !username().trim() || password().length < 12))
+              }
+              onClick={() => (route() === "local" ? void saveLocal() : void connectRemote())}
+            >
+              {saving()
+                ? route() === "remote"
+                  ? "Connecting…"
+                  : "Saving…"
+                : props.reviewing
+                  ? "Save changes"
+                  : route() === "remote"
+                    ? "Connect to host"
+                    : selectedProvider()
+                      ? `Continue with ${providerName(selectedProvider())}`
+                      : "Choose a provider"}
             </button>
-          </Show>
-          <button
-            type="button"
-            class="initial-setup-save"
-            disabled={saving() || !selectedProvider()}
-            onClick={() => void save()}
-          >
-            {saving()
-              ? "Saving…"
-              : props.reviewing
-                ? "Save changes"
-                : selectedProvider()
-                  ? `Continue with ${providerName(selectedProvider())}`
-                  : "Choose a provider"}
-          </button>
-        </div>
+          </div>
+        </Show>
       </section>
     </main>
+  );
+}
+
+function RouteArrow() {
+  return (
+    <svg class="setup-route-arrow" viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M4 10h11M11 6l4 4-4 4" />
+    </svg>
   );
 }
 

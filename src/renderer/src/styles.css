@@ -58,6 +58,7 @@ textarea {
   font: inherit;
 }
 
+.account-login-screen,
 .initial-setup-screen {
   position: absolute;
   z-index: 100;
@@ -67,12 +68,193 @@ textarea {
   place-items: center;
   overflow-y: auto;
   padding: 52px 24px 32px;
-  background: rgba(5, 5, 5, 0.98);
+  background:
+    radial-gradient(circle at 50% 18%, rgba(255, 255, 255, 0.035), transparent 34%), #050505;
   -webkit-app-region: drag;
 }
 
+.account-login {
+  width: min(100%, 400px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  -webkit-app-region: no-drag;
+}
+
+.account-login-brand {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 19px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  background: #0e0e0e;
+  color: #f3f3f1;
+  font-size: 24px;
+  font-weight: 560;
+  letter-spacing: -0.08em;
+}
+
+.account-login-brand::after {
+  position: absolute;
+  width: 70px;
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  content: "";
+  transform: rotate(-24deg);
+}
+
+.account-login-wordmark {
+  margin: 0 0 22px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.account-login h1 {
+  margin: 0;
+  color: #f4f4f2;
+  font-size: 34px;
+  font-weight: 560;
+  letter-spacing: -0.045em;
+  line-height: 1.08;
+}
+
+.account-login-description {
+  max-width: 350px;
+  margin: 13px 0 0;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.account-login-error {
+  width: 100%;
+  margin: 18px 0 0;
+  border: 1px solid rgba(255, 111, 100, 0.22);
+  border-radius: 10px;
+  background: rgba(189, 85, 76, 0.1);
+  padding: 10px 12px;
+  color: #ff9289;
+  font-size: 12px;
+  line-height: 17px;
+  text-align: left;
+}
+
+.account-login-form {
+  width: 100%;
+  display: grid;
+  gap: 10px;
+  margin-top: 30px;
+  text-align: left;
+}
+
+.account-login-form label {
+  margin: 0 2px -2px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.account-login-form input {
+  width: 100%;
+  height: 50px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 13px;
+  outline: 0;
+  background: rgba(255, 255, 255, 0.055);
+  padding: 0 15px;
+  color: #f4f4f2;
+  font-size: 14px;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.account-login-form input:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.account-login-form input:focus {
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.account-login-form input::placeholder {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.account-login-form .account-login-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 17px;
+  letter-spacing: 0.16em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.account-login-form > button:not(.account-login-link) {
+  width: 100%;
+  height: 50px;
+  margin-top: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: #efefed;
+  color: #101010;
+  font-size: 13px;
+  font-weight: 650;
+  transition:
+    background-color 140ms ease,
+    transform 100ms ease;
+}
+
+.account-login-form > button:not(.account-login-link):hover:not(:disabled) {
+  background: #fff;
+}
+
+.account-login-form > button:not(.account-login-link):active:not(:disabled) {
+  transform: scale(0.992);
+}
+
+.account-login-form > button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.account-login-link {
+  justify-self: center;
+  border: 0;
+  background: transparent;
+  padding: 6px 10px;
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 12px;
+}
+
+.account-login-link:hover {
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.account-login-development-code {
+  margin: -2px 2px 0;
+  color: var(--openbot-orange);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  text-align: center;
+}
+
+.account-login-note {
+  margin: 22px 0 0;
+  color: rgba(255, 255, 255, 0.34);
+  font-size: 11px;
+}
+
 .initial-setup {
-  width: min(100%, 580px);
+  width: min(100%, 620px);
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -81,7 +263,77 @@ textarea {
 }
 
 .initial-setup-header {
-  max-width: 500px;
+  max-width: 560px;
+}
+
+.initial-setup-account-row {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 28px;
+}
+
+.initial-setup-account {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.initial-setup-account i {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--openbot-teal);
+  box-shadow: 0 0 0 3px rgba(84, 185, 166, 0.1);
+}
+
+.initial-setup-signout,
+.initial-setup-back {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.initial-setup-signout {
+  margin-left: 2px;
+  padding: 5px 7px;
+  font-size: 11px;
+}
+
+.initial-setup-signout:hover,
+.initial-setup-back:hover {
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.initial-setup-back {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  margin-right: 3px;
+  border-radius: 50%;
+  padding: 0;
+}
+
+.initial-setup-back:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.initial-setup-back svg {
+  width: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
 }
 
 .initial-setup-eyebrow {
@@ -103,129 +355,174 @@ textarea {
 }
 
 .initial-setup-intro {
-  max-width: 500px;
+  max-width: 540px;
   margin: 12px 0 0;
   color: var(--text-secondary);
   font-size: 14px;
   line-height: 1.55;
 }
 
-.setup-account {
-  min-height: 88px;
+.setup-route-list {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  margin-top: 30px;
+  padding: 0;
+  list-style: none;
+}
+
+.setup-route-button {
+  width: 100%;
+  min-height: 96px;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 20px;
   align-items: center;
-  gap: 18px;
-  margin-top: 24px;
-  border: 1px solid var(--openbot-line-strong);
+  gap: 15px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 15px;
+  background: #0e0e0e;
+  padding: 15px 17px;
+  color: var(--openbot-white);
+  text-align: left;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    transform 120ms ease;
+}
+
+.setup-route-button:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: #121212;
+  transform: translateY(-1px);
+}
+
+.setup-route-button:active {
+  transform: translateY(0);
+}
+
+.setup-route-icon {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  background: #101010;
-  padding: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(255, 255, 255, 0.72);
 }
 
-.setup-account-copy {
-  min-width: 0;
+.setup-route-icon svg {
+  width: 23px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
 }
 
-.initial-setup-section-label {
-  margin: 0 0 3px;
-  color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 620;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.setup-route-icon i {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid #0e0e0e;
+  border-radius: 50%;
+  background: var(--openbot-blue);
 }
 
-.setup-account h2 {
-  overflow: hidden;
-  margin: 0;
-  color: var(--text-primary);
+.setup-route-icon-local i {
+  background: var(--openbot-teal);
+}
+
+.setup-route-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.setup-route-copy strong {
   font-size: 14px;
-  font-weight: 590;
-  line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-weight: 600;
 }
 
-.setup-account-copy > p:not(.initial-setup-section-label) {
-  margin: 3px 0 0;
-  color: var(--text-muted);
+.setup-route-copy small {
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.setup-route-arrow {
+  width: 19px;
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.34);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+  transition: transform 150ms ease;
+}
+
+.setup-route-button:hover .setup-route-arrow {
+  transform: translateX(2px);
+}
+
+.setup-local-content {
+  margin-top: 28px;
+}
+
+.setup-remote-form {
+  display: grid;
+  gap: 15px;
+  margin-top: 28px;
+}
+
+.setup-remote-form label {
+  display: grid;
+  gap: 7px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 12px;
+  font-weight: 560;
+}
+
+.setup-remote-form input,
+.setup-remote-form textarea {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 11px;
+  outline: 0;
+  background: #0e0e0e;
+  padding: 11px 12px;
+  color: var(--openbot-white);
+  font-size: 13px;
+  line-height: 18px;
+  resize: none;
+}
+
+.setup-remote-form input {
+  min-height: 43px;
+}
+
+.setup-remote-form input:focus,
+.setup-remote-form textarea:focus {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: #111;
+}
+
+.setup-remote-form input::placeholder,
+.setup-remote-form textarea::placeholder {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.setup-remote-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.setup-remote-note {
+  margin: -2px 1px 0;
+  color: rgba(255, 255, 255, 0.4);
   font-size: 11px;
   line-height: 16px;
-}
-
-.setup-account-copy .setup-account-error {
-  color: #ff8278;
-}
-
-.setup-account-copy .setup-account-development-code {
-  color: var(--openbot-orange);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.setup-account-form {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.setup-account-form input {
-  width: 180px;
-  min-height: 34px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  outline: 0;
-  background: rgba(0, 0, 0, 0.3);
-  padding: 7px 10px;
-  color: var(--text-primary);
-  font-size: 12px;
-}
-
-.setup-account-form input[aria-label="Sign-in code"] {
-  width: 112px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.setup-account-form input::placeholder {
-  color: var(--text-muted);
-}
-
-.setup-google-button,
-.setup-account-signout {
-  min-height: 34px;
-  flex: 0 0 auto;
-  border-radius: 8px;
-  padding: 7px 12px;
-  font-size: 11px;
-  font-weight: 610;
-  white-space: nowrap;
-}
-
-.setup-google-button {
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: #ececea;
-  color: #171717;
-}
-
-.setup-google-button:hover:not(:disabled) {
-  background: #fff;
-}
-
-.setup-google-button:disabled {
-  cursor: default;
-  opacity: 0.48;
-}
-
-.setup-account-signout {
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  background: rgba(255, 255, 255, 0.055);
-  color: var(--text-secondary);
-}
-
-.setup-account-signout:hover {
-  background: rgba(255, 255, 255, 0.1);
 }
 
 .provider-picker {
@@ -237,6 +534,10 @@ textarea {
 
 .provider-picker-standalone {
   margin-top: 24px;
+}
+
+.setup-local-content .provider-picker-standalone {
+  margin-top: 0;
 }
 
 .provider-picker-label {
@@ -504,6 +805,7 @@ textarea {
 }
 
 @media (max-width: 620px) {
+  .account-login-screen,
   .initial-setup-screen {
     place-items: start center;
     padding: 52px 18px 24px;
@@ -519,22 +821,37 @@ textarea {
     flex-direction: column-reverse;
   }
 
-  .setup-account {
+  .setup-route-button {
+    grid-template-columns: 42px minmax(0, 1fr) 18px;
+    gap: 12px;
+    padding-inline: 13px;
+  }
+
+  .setup-route-icon {
+    width: 42px;
+    height: 42px;
+  }
+
+  .setup-remote-fields {
     grid-template-columns: 1fr;
   }
 
-  .setup-google-button,
-  .setup-account-signout {
-    width: 100%;
+  .initial-setup-account {
+    max-width: 55vw;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .account-login,
+  .initial-setup {
+    animation: setup-enter 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
 
-  .setup-account-form {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .setup-account-form input {
-    width: 100%;
+  @keyframes setup-enter {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
   }
 }
 
