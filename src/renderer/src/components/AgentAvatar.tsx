@@ -1,25 +1,27 @@
-import type { BotAvatarColor, BotAvatarShape } from "../../../shared/ipc";
+import { createMemo } from "solid-js";
+import type { BotAvatarHue } from "../../../shared/ipc";
+import { type AvatarMotion, buildAnimatedAvatarSvg } from "../blobatar";
 import type { BotProfile } from "../data";
-import { AgentMark } from "./AgentMark";
 
 interface AgentAvatarProps {
-  bot?: Pick<BotProfile, "avatarShape" | "avatarColor" | "accent">;
-  shape?: BotAvatarShape;
-  color?: BotAvatarColor;
+  bot?: Pick<BotProfile, "avatarSeed" | "avatarHue">;
+  seed?: string;
+  hue?: BotAvatarHue | null;
+  motion?: AvatarMotion;
   class?: string;
   style?: Record<string, string>;
 }
 
 export function AgentAvatar(props: AgentAvatarProps) {
-  const shape = () => props.shape ?? props.bot?.avatarShape ?? "blob";
-  const color = () => props.color ?? props.bot?.avatarColor ?? "orange";
+  const seed = () => props.seed ?? props.bot?.avatarSeed ?? "agent";
+  const hue = () => (props.hue !== undefined ? props.hue : (props.bot?.avatarHue ?? null));
+  const markup = createMemo(() => buildAnimatedAvatarSvg(seed(), hue(), props.motion));
   return (
     <span
-      class={`bot-avatar bot-avatar-${props.bot?.accent ?? "neutral"} bot-avatar-shape-${shape()} bot-avatar-color-${color()} ${props.class ?? ""}`}
+      class={`bot-avatar ${props.class ?? ""}`}
       style={props.style}
       aria-hidden="true"
-    >
-      <AgentMark shape={shape()} />
-    </span>
+      innerHTML={markup()}
+    />
   );
 }

@@ -193,7 +193,7 @@ function toBackupBot(bot: BotSummary): Omit<BotSummary, "workspacePath"> {
     threadId: bot.threadId,
     preview: bot.preview,
     updatedAt: bot.updatedAt,
-    avatarShape: bot.avatarShape,
-    avatarColor: bot.avatarColor,
+    avatarSeed: bot.avatarSeed,
+    avatarHue: bot.avatarHue,
   };
 }

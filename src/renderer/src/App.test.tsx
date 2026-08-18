@@ -22,8 +22,8 @@ const BOTS: BotSummary[] = [
     notifications: true,
     model: "gpt-5.6-luna",
     reasoningEffort: "medium",
-    avatarShape: "blob",
-    avatarColor: "orange",
+    avatarSeed: "chief",
+    avatarHue: null,
     threadId: "thread-chief",
     workspacePath: "/tmp/OpenBot/Bots/chief",
     preview: "No messages yet",
@@ -37,8 +37,8 @@ const BOTS: BotSummary[] = [
     notifications: true,
     model: "gpt-5.6-luna",
     reasoningEffort: "medium",
-    avatarShape: "cloud",
-    avatarColor: "violet",
+    avatarSeed: "sales-outbound",
+    avatarHue: 280,
     threadId: null,
     workspacePath: "/tmp/OpenBot/Bots/sales-outbound",
     preview: "No messages yet",
@@ -157,7 +157,13 @@ describe("OpenBot connected desktop shell", () => {
             },
           ]),
           listBots: vi.fn().mockResolvedValue(BOTS),
-          createBot: vi.fn().mockResolvedValue({ ...BOTS[0], id: "bot-new", name: "New agent" }),
+          createBot: vi.fn().mockResolvedValue({
+            ...BOTS[0],
+            id: "bot-new",
+            name: "New agent",
+            avatarSeed: "bot-new",
+            avatarHue: null,
+          }),
           updateBot: vi.fn().mockImplementation(async (input) => ({
             ...BOTS.find((bot) => bot.id === input.botId),
             ...input,
@@ -864,6 +870,51 @@ describe("OpenBot connected desktop shell", () => {
       expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
         botId: "chief",
         reasoningEffort: "xhigh",
+      }),
+    );
+  });
+
+  it("selects a stable generated avatar and color without tying it to the agent name", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    const settings = screen.getByRole("complementary", { name: "Agent settings" });
+    const avatarButton = within(settings).getByRole("button", { name: "Edit agent avatar" });
+    await fireEvent.click(avatarButton);
+
+    const editor = within(settings).getByRole("region", { name: "Avatar editor" });
+    expect(within(editor).getAllByRole("button", { name: /Avatar option/ })).toHaveLength(11);
+    await fireEvent.click(within(editor).getByRole("button", { name: "Avatar option 2" }));
+    await waitFor(() =>
+      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        avatarSeed: "chief:avatar:0:1",
+      }),
+    );
+    await fireEvent.click(within(editor).getByRole("button", { name: "Reset to ID" }));
+    await waitFor(() =>
+      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        avatarSeed: "chief",
+      }),
+    );
+    await fireEvent.click(within(editor).getByRole("button", { name: "Avatar option 2" }));
+
+    await fireEvent.click(within(editor).getByRole("button", { name: "Blue avatar color" }));
+    await waitFor(() =>
+      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        avatarHue: 215,
+      }),
+    );
+
+    const name = within(settings).getByRole("textbox", { name: "Agent name" });
+    await fireEvent.input(name, { target: { value: "Coordinator" } });
+    await fireEvent.blur(name);
+    await waitFor(() =>
+      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        name: "Coordinator",
       }),
     );
   });

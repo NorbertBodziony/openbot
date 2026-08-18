@@ -34,8 +34,8 @@ import {
   type InterruptTurnInput,
   IPC_CHANNELS,
   isAgentModel,
-  isAvatarColor,
-  isAvatarShape,
+  isAvatarHue,
+  isAvatarSeed,
   isMessageReaction,
   isReasoningEffort,
   type MacPermissionId,
@@ -567,13 +567,15 @@ function parseUpdateBot(value: unknown): UpdateBotInput {
     if (!isReasoningEffort(value.reasoningEffort)) throw new Error("Invalid reasoning effort.");
     result.reasoningEffort = value.reasoningEffort;
   }
-  if (value.avatarShape !== undefined) {
-    if (!isAvatarShape(value.avatarShape)) throw new Error("Invalid avatar shape.");
-    result.avatarShape = value.avatarShape;
+  if (value.avatarSeed !== undefined) {
+    if (!isAvatarSeed(value.avatarSeed)) throw new Error("Invalid avatar seed.");
+    result.avatarSeed = value.avatarSeed;
   }
-  if (value.avatarColor !== undefined) {
-    if (!isAvatarColor(value.avatarColor)) throw new Error("Invalid avatar color.");
-    result.avatarColor = value.avatarColor;
+  if (value.avatarHue !== undefined) {
+    if (value.avatarHue !== null && !isAvatarHue(value.avatarHue)) {
+      throw new Error("Invalid avatar hue.");
+    }
+    result.avatarHue = value.avatarHue;
   }
   return result;
 }

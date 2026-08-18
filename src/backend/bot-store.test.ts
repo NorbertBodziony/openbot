@@ -55,10 +55,43 @@ describe("BotStore", () => {
     await store.setThreadId("chief", "thread-123");
     const parsed = JSON.parse(await readFile(join(userData, "bots.json"), "utf8"));
 
-    expect(parsed.version).toBe(1);
+    expect(parsed.version).toBe(2);
     expect(parsed.bots.find((bot: { id: string }) => bot.id === "chief").threadId).toBe(
       "thread-123",
     );
+  });
+
+  it("migrates version 1 avatars to stable id seeds", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const statePath = join(userData, "bots.json");
+    const store = new BotStore(userData, join(root, "home"));
+    await store.initialize();
+    await store.getOrCreate("chief");
+
+    const current = JSON.parse(await readFile(statePath, "utf8"));
+    current.version = 1;
+    current.bots = current.bots.map(
+      ({ avatarSeed: _avatarSeed, avatarHue: _avatarHue, ...bot }: Record<string, unknown>) => ({
+        ...bot,
+        avatarShape: "cloud",
+        avatarColor: "violet",
+      }),
+    );
+    await writeFile(statePath, `${JSON.stringify(current, null, 2)}\n`);
+
+    const restored = new BotStore(userData, join(root, "home"));
+    await restored.initialize();
+
+    expect(restored.list().find((bot) => bot.id === "chief")).toMatchObject({
+      avatarSeed: "chief",
+      avatarHue: null,
+    });
+    const migrated = JSON.parse(await readFile(statePath, "utf8"));
+    expect(migrated.version).toBe(2);
+    expect(migrated.bots[0]).not.toHaveProperty("avatarShape");
+    expect(migrated.bots[0]).not.toHaveProperty("avatarColor");
   });
 
   it("creates unique new agents at the top of the persistent list", async () => {
@@ -130,6 +163,8 @@ describe("BotStore", () => {
       notifications: false,
       model: "gpt-5.6-sol",
       reasoningEffort: "high",
+      avatarSeed: "chief:avatar:2:4",
+      avatarHue: 215,
     });
     const restored = new BotStore(userData, join(root, "home"));
     await restored.initialize();
@@ -140,6 +175,8 @@ describe("BotStore", () => {
       notifications: false,
       model: "gpt-5.6-sol",
       reasoningEffort: "high",
+      avatarSeed: "chief:avatar:2:4",
+      avatarHue: 215,
     });
   });
 

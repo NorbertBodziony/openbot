@@ -163,8 +163,8 @@ export interface BotSummary {
   workspacePath: string;
   preview: string;
   updatedAt: string | null;
-  avatarShape: BotAvatarShape;
-  avatarColor: BotAvatarColor;
+  avatarSeed: string;
+  avatarHue: BotAvatarHue | null;
 }
 
 export const AGENT_MODELS = [
@@ -188,32 +188,8 @@ export interface AgentModelOption {
   supportedReasoningEfforts: AgentReasoningEffort[];
 }
 
-export const BOT_AVATAR_SHAPES = [
-  "blob",
-  "pebble",
-  "squircle",
-  "tablet",
-  "wedge",
-  "hex",
-  "cloud",
-  "teardrop",
-] as const;
-export type BotAvatarShape = (typeof BOT_AVATAR_SHAPES)[number];
-
-export const BOT_AVATAR_COLORS = [
-  "black",
-  "brown",
-  "red",
-  "orange",
-  "yellow",
-  "green",
-  "cyan",
-  "blue",
-  "violet",
-  "magenta",
-  "gray",
-] as const;
-export type BotAvatarColor = (typeof BOT_AVATAR_COLORS)[number];
+export const BOT_AVATAR_HUES = [0, 30, 55, 100, 150, 185, 215, 245, 280, 320] as const;
+export type BotAvatarHue = (typeof BOT_AVATAR_HUES)[number];
 
 export function isAgentModel(value: unknown): value is AgentModelId {
   return typeof value === "string" && AGENT_MODELS.includes(value as AgentModelId);
@@ -229,12 +205,12 @@ export function isReasoningEffort(value: unknown): value is AgentReasoningEffort
   );
 }
 
-export function isAvatarShape(value: unknown): value is BotAvatarShape {
-  return typeof value === "string" && BOT_AVATAR_SHAPES.includes(value as BotAvatarShape);
+export function isAvatarSeed(value: unknown): value is string {
+  return typeof value === "string" && /^[a-z0-9:-]{1,128}$/.test(value);
 }
 
-export function isAvatarColor(value: unknown): value is BotAvatarColor {
-  return typeof value === "string" && BOT_AVATAR_COLORS.includes(value as BotAvatarColor);
+export function isAvatarHue(value: unknown): value is BotAvatarHue {
+  return typeof value === "number" && BOT_AVATAR_HUES.includes(value as BotAvatarHue);
 }
 
 export interface UpdateBotInput {
@@ -245,8 +221,8 @@ export interface UpdateBotInput {
   notifications?: boolean;
   model?: AgentModelId;
   reasoningEffort?: AgentReasoningEffort;
-  avatarShape?: BotAvatarShape;
-  avatarColor?: BotAvatarColor;
+  avatarSeed?: string;
+  avatarHue?: BotAvatarHue | null;
 }
 
 export type ConversationMessageAuthor = "user" | "assistant" | "agent" | "system";

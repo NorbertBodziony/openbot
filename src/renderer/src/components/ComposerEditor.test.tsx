@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
+import type { BotProfile } from "../data";
 import { ComposerEditor } from "./ComposerEditor";
 
 function renderComposer() {
@@ -96,5 +97,38 @@ describe("ComposerEditor", () => {
 
     expect(onValueChange).toHaveBeenLastCalledWith("First line\nSecond line\nThird line");
     expect(editor.textContent).toBe("First line\nSecond line\nThird line");
+  });
+
+  it("renders saved mentions with the animated agent avatar", () => {
+    const sales: BotProfile = {
+      id: "sales",
+      name: "Sales",
+      role: "Agent",
+      description: "",
+      notifications: true,
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
+      threadId: null,
+      avatarSeed: "sales:avatar:0:2",
+      avatarHue: 215,
+      time: "",
+      preview: "",
+    };
+
+    render(() => (
+      <ComposerEditor
+        botId="chief"
+        bots={[sales]}
+        value="Ask @[Sales](sales)"
+        placeholder="Message Chief"
+        ariaLabel="Mention test"
+        disabled={false}
+        onValueChange={() => undefined}
+        onSubmit={() => undefined}
+      />
+    ));
+
+    const token = document.querySelector<HTMLElement>('[data-mention-id="sales"]');
+    expect(token?.querySelector(".composer-mention-avatar svg .mo-root")).not.toBeNull();
   });
 });

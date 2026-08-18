@@ -31,7 +31,7 @@ import { Conversation } from "./components/Conversation";
 import { InitialSetup } from "./components/InitialSetup";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./components/PanelResizer";
 import { Sidebar, type SidebarAgentState } from "./components/Sidebar";
-import { accentForAvatarColor, accentForBot, type BotMessage, type BotProfile } from "./data";
+import type { BotMessage, BotProfile } from "./data";
 
 const FALLBACK_STATUS: AgentStatus = {
   phase: "starting",
@@ -767,14 +767,8 @@ function toBotProfile(stored: BotSummary): BotProfile {
     model: stored.model,
     reasoningEffort: stored.reasoningEffort,
     threadId: stored.threadId,
-    accent:
-      stored.name.toLowerCase() === "new agent"
-        ? "neutral"
-        : stored.avatarColor
-          ? accentForAvatarColor(stored.avatarColor)
-          : accentForBot(stored.id),
-    avatarShape: stored.avatarShape ?? "blob",
-    avatarColor: stored.avatarColor ?? "orange",
+    avatarSeed: stored.avatarSeed,
+    avatarHue: stored.avatarHue,
     time: stored.updatedAt ? formatTime(stored.updatedAt) : "now",
     preview: cleanPreview(stored.preview),
   };
@@ -862,9 +856,8 @@ function botProfilesEqual(left: BotProfile, right: BotProfile): boolean {
     left.model === right.model &&
     left.reasoningEffort === right.reasoningEffort &&
     left.threadId === right.threadId &&
-    left.accent === right.accent &&
-    left.avatarShape === right.avatarShape &&
-    left.avatarColor === right.avatarColor &&
+    left.avatarSeed === right.avatarSeed &&
+    left.avatarHue === right.avatarHue &&
     left.time === right.time &&
     left.preview === right.preview
   );

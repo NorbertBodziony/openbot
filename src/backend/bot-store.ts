@@ -4,14 +4,10 @@ import { basename, dirname, join } from "node:path";
 import {
   type AgentModelId,
   type AgentReasoningEffort,
-  BOT_AVATAR_COLORS,
-  BOT_AVATAR_SHAPES,
-  type BotAvatarColor,
-  type BotAvatarShape,
   type BotSummary,
   isAgentModel,
-  isAvatarColor,
-  isAvatarShape,
+  isAvatarHue,
+  isAvatarSeed,
   isClaudeModel,
   isReasoningEffort,
   type UpdateBotInput,
@@ -21,10 +17,39 @@ import { isRecord } from "./protocol";
 type StoredBot = BotSummary;
 
 interface StoredState {
-  version: 1;
+  version: 2;
   examplesInitialized: boolean;
   bots: StoredBot[];
 }
+
+type LegacyStoredBot = Omit<StoredBot, "avatarSeed" | "avatarHue"> & {
+  avatarShape: string;
+  avatarColor: string;
+};
+
+const LEGACY_AVATAR_SHAPES = [
+  "blob",
+  "pebble",
+  "squircle",
+  "tablet",
+  "wedge",
+  "hex",
+  "cloud",
+  "teardrop",
+] as const;
+const LEGACY_AVATAR_COLORS = [
+  "black",
+  "brown",
+  "red",
+  "orange",
+  "yellow",
+  "green",
+  "cyan",
+  "blue",
+  "violet",
+  "magenta",
+  "gray",
+] as const;
 
 export const DEFAULT_AGENT_MODEL: AgentModelId = "gpt-5.6-luna";
 export const DEFAULT_REASONING_EFFORT: AgentReasoningEffort = "medium";
@@ -34,7 +59,7 @@ export class BotStore {
   readonly #botsRoot: string;
   readonly #sharedRoot: string;
   readonly #downloadsRoot: string;
-  #state: StoredState = { version: 1, examplesInitialized: false, bots: [] };
+  #state: StoredState = { version: 2, examplesInitialized: false, bots: [] };
   #writeQueue: Promise<void> = Promise.resolve();
 
   constructor(userDataPath: string, homePath: string) {
@@ -91,8 +116,8 @@ export class BotStore {
       bot.model = input.model;
     }
     if (input.reasoningEffort !== undefined) bot.reasoningEffort = input.reasoningEffort;
-    if (input.avatarShape !== undefined) bot.avatarShape = input.avatarShape;
-    if (input.avatarColor !== undefined) bot.avatarColor = input.avatarColor;
+    if (input.avatarSeed !== undefined) bot.avatarSeed = input.avatarSeed;
+    if (input.avatarHue !== undefined) bot.avatarHue = input.avatarHue;
     bot.updatedAt = new Date().toISOString();
     await this.#persist();
     return { ...bot };
@@ -139,24 +164,31 @@ export class BotStore {
       const parsed: unknown = JSON.parse(await readFile(this.#statePath, "utf8"));
       if (
         !isRecord(parsed) ||
-        parsed.version !== 1 ||
         typeof parsed.examplesInitialized !== "boolean" ||
-        !Array.isArray(parsed.bots) ||
-        !parsed.bots.every(isStoredBot)
+        !Array.isArray(parsed.bots)
       ) {
         throw new Error(
           "Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.",
         );
       }
 
-      const bots = parsed.bots.map((bot) => ({ ...bot }));
+      let bots: StoredBot[];
+      if (parsed.version === 1 && parsed.bots.every(isLegacyStoredBot)) {
+        bots = parsed.bots.map(migrateLegacyBot);
+      } else if (parsed.version === 2 && parsed.bots.every(isStoredBot)) {
+        bots = parsed.bots.map((bot) => ({ ...bot }));
+      } else {
+        throw new Error(
+          "Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.",
+        );
+      }
       if (new Set(bots.map((bot) => bot.id)).size !== bots.length) {
         throw new Error("Agent state contains duplicate bot ids; refusing to overwrite it.");
       }
-      return { version: 1, examplesInitialized: parsed.examplesInitialized, bots };
+      return { version: 2, examplesInitialized: parsed.examplesInitialized, bots };
     } catch (error) {
       if (isRecord(error) && error.code === "ENOENT") {
-        return { version: 1, examplesInitialized: false, bots: [] };
+        return { version: 2, examplesInitialized: false, bots: [] };
       }
       throw error;
     }
@@ -189,8 +221,8 @@ export class BotStore {
       workspacePath: join(this.#botsRoot, id),
       preview: "No messages yet",
       updatedAt: null,
-      avatarShape: defaultAvatarShape(id),
-      avatarColor: defaultAvatarColor(id),
+      avatarSeed: id,
+      avatarHue: null,
     };
   }
 
@@ -224,7 +256,7 @@ function titleFromId(id: string): string {
     .join(" ");
 }
 
-function isStoredBot(value: unknown): value is StoredBot {
+function isStoredBotBase(value: unknown): value is Omit<StoredBot, "avatarSeed" | "avatarHue"> {
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
@@ -238,22 +270,30 @@ function isStoredBot(value: unknown): value is StoredBot {
     (typeof value.threadId === "string" || value.threadId === null) &&
     typeof value.workspacePath === "string" &&
     typeof value.preview === "string" &&
-    (typeof value.updatedAt === "string" || value.updatedAt === null) &&
-    isAvatarShape(value.avatarShape) &&
-    isAvatarColor(value.avatarColor)
+    (typeof value.updatedAt === "string" || value.updatedAt === null)
   );
 }
 
-function avatarIndex(id: string): number {
-  let hash = 0;
-  for (const character of id) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  return hash;
+function isStoredBot(value: unknown): value is StoredBot {
+  if (!isStoredBotBase(value) || !isRecord(value)) return false;
+  const record: Record<string, unknown> = value;
+  return (
+    isAvatarSeed(record.avatarSeed) && (record.avatarHue === null || isAvatarHue(record.avatarHue))
+  );
 }
 
-function defaultAvatarShape(id: string): BotAvatarShape {
-  return BOT_AVATAR_SHAPES[avatarIndex(id) % BOT_AVATAR_SHAPES.length] ?? "blob";
+function isLegacyStoredBot(value: unknown): value is LegacyStoredBot {
+  if (!isStoredBotBase(value) || !isRecord(value)) return false;
+  const record: Record<string, unknown> = value;
+  return (
+    typeof record.avatarShape === "string" &&
+    LEGACY_AVATAR_SHAPES.includes(record.avatarShape as (typeof LEGACY_AVATAR_SHAPES)[number]) &&
+    typeof record.avatarColor === "string" &&
+    LEGACY_AVATAR_COLORS.includes(record.avatarColor as (typeof LEGACY_AVATAR_COLORS)[number])
+  );
 }
 
-function defaultAvatarColor(id: string): BotAvatarColor {
-  return BOT_AVATAR_COLORS[avatarIndex(`${id}:color`) % BOT_AVATAR_COLORS.length] ?? "orange";
+function migrateLegacyBot(bot: LegacyStoredBot): StoredBot {
+  const { avatarShape: _avatarShape, avatarColor: _avatarColor, ...rest } = bot;
+  return { ...rest, avatarSeed: bot.id, avatarHue: null };
 }

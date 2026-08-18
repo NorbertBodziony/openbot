@@ -1,5 +1,6 @@
 import { Portal } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { buildAnimatedAvatarSvg } from "../blobatar";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 
@@ -260,7 +261,8 @@ function createMentionToken(bot: BotProfile): HTMLSpanElement {
   token.dataset.mentionName = bot.name;
   token.setAttribute("aria-label", `Agent ${bot.name}`);
   const avatar = document.createElement("span");
-  avatar.className = `composer-mention-avatar bot-avatar-color-${bot.avatarColor} composer-mention-shape-${bot.avatarShape}`;
+  avatar.className = "composer-mention-avatar";
+  avatar.innerHTML = buildAnimatedAvatarSvg(bot.avatarSeed, bot.avatarHue);
   const name = document.createElement("span");
   name.textContent = bot.name;
   token.append(avatar, name);
@@ -287,9 +289,8 @@ function renderEditorValue(editor: HTMLDivElement, value: string, bots: BotProfi
           model: "gpt-5.6-luna",
           reasoningEffort: "medium",
           threadId: null,
-          accent: "neutral",
-          avatarShape: "blob",
-          avatarColor: "gray",
+          avatarSeed: id || "agent",
+          avatarHue: null,
           time: "",
           preview: "",
         },

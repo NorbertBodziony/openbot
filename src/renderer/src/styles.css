@@ -1062,88 +1062,16 @@ textarea {
   overflow: visible;
 }
 
-.agent-mark {
-  width: 36.2px;
-  height: 36.2px;
+.bot-avatar > svg {
+  display: block;
+  width: 113%;
+  height: 113%;
   overflow: visible;
-}
-
-.agent-mark__head {
-  fill: currentColor;
-}
-
-.agent-mark__face {
-  fill: none;
-  stroke: #1c1c1c;
-  stroke-linecap: round;
-  stroke-width: 5.5;
-}
-
-.bot-avatar-teal {
-  color: var(--openbot-teal);
-}
-.bot-avatar-orange {
-  color: var(--openbot-orange);
-}
-.bot-avatar-purple {
-  color: var(--openbot-purple);
-}
-.bot-avatar-blue {
-  color: var(--openbot-blue);
-}
-.bot-avatar-violet {
-  color: var(--openbot-violet);
-}
-.bot-avatar-coral {
-  color: var(--openbot-coral);
-}
-.bot-avatar-neutral {
-  color: #f1f1ef;
 }
 
 .bot-row .bot-avatar {
   width: 32px;
   height: 32px;
-}
-
-.bot-row .agent-mark {
-  width: 36.2px;
-  height: 36.2px;
-}
-
-/* The avatar editor reuses the same face mark with selectable silhouettes and colors. */
-.bot-avatar-color-black {
-  color: #f1f1ef;
-}
-.bot-avatar-color-brown {
-  color: #8b654d;
-}
-.bot-avatar-color-red {
-  color: #e52d3f;
-}
-.bot-avatar-color-orange {
-  color: #f39a21;
-}
-.bot-avatar-color-yellow {
-  color: #f1b51e;
-}
-.bot-avatar-color-green {
-  color: #08a866;
-}
-.bot-avatar-color-cyan {
-  color: #21b7ad;
-}
-.bot-avatar-color-blue {
-  color: #397fe4;
-}
-.bot-avatar-color-violet {
-  color: #8056e8;
-}
-.bot-avatar-color-magenta {
-  color: #d33b9b;
-}
-.bot-avatar-color-gray {
-  color: #a3a3a3;
 }
 
 .avatar-editor {
@@ -1173,17 +1101,62 @@ textarea {
   background: rgba(255, 255, 255, 0.075);
 }
 
-.avatar-shape-grid {
+.avatar-editor-heading {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px 3px 13px;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+  font-weight: 590;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.avatar-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.avatar-editor-actions button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0 9px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 11px;
+  font-weight: 540;
+  transition-property: scale, background-color, color;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+.avatar-editor-actions button:hover {
+  background: rgba(255, 255, 255, 0.065);
+  color: var(--openbot-white);
+}
+
+.avatar-editor-actions button:active,
+.avatar-face-choice:active,
+.avatar-color-choice:active {
+  scale: 0.96;
+}
+
+.avatar-face-grid {
   display: grid;
   min-width: 0;
   margin: 0;
   border: 0;
   grid-template-columns: repeat(4, 1fr);
-  gap: 5px;
-  padding: 13px 10px 12px;
+  gap: 6px;
+  padding: 7px 10px 12px;
 }
 
-.avatar-shape-choice,
+.avatar-face-choice,
 .avatar-color-choice {
   display: grid;
   place-items: center;
@@ -1191,32 +1164,31 @@ textarea {
   border-radius: 9px;
   background: transparent;
   color: rgba(255, 255, 255, 0.72);
+  transition-property: scale, background-color, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
 }
 
-.avatar-shape-choice {
+.avatar-face-choice {
   width: 100%;
-  height: 42px;
+  height: 48px;
 }
 
-.avatar-shape-choice:hover,
+.avatar-face-choice:hover,
 .avatar-color-choice:hover {
   background: rgba(255, 255, 255, 0.065);
 }
 
 .avatar-choice-selected {
-  border-color: rgba(255, 255, 255, 0.56);
   background: rgba(255, 255, 255, 0.075);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.56),
+    0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
-.avatar-shape-choice .bot-avatar {
-  width: 29px;
-  height: 29px;
-}
-
-.avatar-shape-choice .agent-mark {
-  width: 32px;
-  height: 32px;
+.avatar-face-choice .bot-avatar {
+  width: 34px;
+  height: 34px;
 }
 
 .avatar-color-grid {
@@ -1224,14 +1196,14 @@ textarea {
   min-width: 0;
   margin: 0;
   border: 0;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 5px;
-  padding: 10px 10px 12px;
+  padding: 4px 10px 12px;
 }
 
 .avatar-color-choice {
   width: 100%;
-  height: 34px;
+  height: 40px;
 }
 
 .avatar-color-swatch {
@@ -1242,48 +1214,20 @@ textarea {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
 
-.avatar-color-swatch-black {
-  background: #f1f1ef;
-}
-.avatar-color-swatch-brown {
-  background: #8b654d;
-}
-.avatar-color-swatch-red {
-  background: #e52d3f;
-}
-.avatar-color-swatch-orange {
-  background: #f39a21;
-}
-.avatar-color-swatch-yellow {
-  background: #f1b51e;
-}
-.avatar-color-swatch-green {
-  background: #08a866;
-}
-.avatar-color-swatch-cyan {
-  background: #21b7ad;
-}
-.avatar-color-swatch-blue {
-  background: #397fe4;
-}
-.avatar-color-swatch-violet {
-  background: #8056e8;
-}
-.avatar-color-swatch-magenta {
-  background: #d33b9b;
-}
-.avatar-color-swatch-gray {
-  background: #a3a3a3;
+.avatar-color-swatch-auto {
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(255, 255, 255, 0.48);
+  background: transparent;
+  box-shadow: none;
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 9px;
+  font-weight: 650;
 }
 
 .conversation-title .bot-avatar {
   width: 18px;
   height: 18px;
-}
-
-.conversation-title .agent-mark {
-  width: 20.3px;
-  height: 20.3px;
 }
 
 .bot-row-copy {
@@ -1924,9 +1868,9 @@ textarea {
   height: 62px;
 }
 
-.agent-settings-avatar .agent-mark {
-  width: 62px;
-  height: 62px;
+.agent-settings-avatar .bot-avatar > svg {
+  width: 100%;
+  height: 100%;
 }
 
 .agent-settings-avatar:hover {
@@ -2376,11 +2320,6 @@ textarea {
 .agent-picker-option .bot-avatar {
   width: 24px;
   height: 24px;
-}
-
-.agent-picker-option .agent-mark {
-  width: 27px;
-  height: 27px;
 }
 
 .agent-picker-create {
@@ -3241,11 +3180,6 @@ textarea {
   align-self: center;
 }
 
-.agent-activity-avatar .agent-mark {
-  width: 32px;
-  height: 32px;
-}
-
 .agent-activity-bubble {
   display: inline-flex;
   align-items: center;
@@ -3381,17 +3315,7 @@ textarea {
   margin-left: -6px;
 }
 
-.exchange-agent-avatar .agent-mark {
-  width: 16px;
-  height: 16px;
-}
-
 .exchange-agent-trigger-incoming .exchange-agent-avatar {
-  width: 16px;
-  height: 16px;
-}
-
-.exchange-agent-trigger-incoming .exchange-agent-avatar .agent-mark {
   width: 16px;
   height: 16px;
 }
@@ -3400,11 +3324,6 @@ textarea {
   width: 18px;
   height: 18px;
   flex-basis: 18px;
-}
-
-.exchange-agent-menu-item .exchange-agent-avatar .agent-mark {
-  width: 18px;
-  height: 18px;
 }
 
 .exchange-agent-menu {
@@ -3619,11 +3538,6 @@ textarea {
 .message-agent-tag .bot-avatar {
   width: 16px;
   height: 16px;
-}
-
-.message-agent-tag .agent-mark {
-  width: 18px;
-  height: 18px;
 }
 
 .message-status,
@@ -3990,58 +3904,18 @@ textarea {
 }
 
 .composer-mention-avatar {
-  position: relative;
-  display: inline-block;
+  display: inline-grid;
   width: 15px;
   height: 15px;
   flex: 0 0 auto;
-  background: currentColor;
-  border-radius: 50%;
+  place-items: center;
 }
 
-.composer-mention-avatar::before,
-.composer-mention-avatar::after {
-  position: absolute;
-  top: 3px;
-  width: 2px;
-  height: 5px;
-  border-radius: 999px;
-  background: #1a1a1a;
-  content: "";
-  transform: rotate(-18deg);
-}
-
-.composer-mention-avatar::before {
-  left: 7px;
-}
-
-.composer-mention-avatar::after {
-  left: 11px;
-}
-
-.composer-mention-shape-pebble {
-  border-radius: 47% 53% 50% 50%;
-}
-
-.composer-mention-shape-squircle,
-.composer-mention-shape-tablet {
-  border-radius: 4px;
-}
-
-.composer-mention-shape-wedge {
-  clip-path: polygon(50% 0, 100% 88%, 75% 100%, 25% 100%, 0 88%);
-}
-
-.composer-mention-shape-hex {
-  clip-path: polygon(24% 0, 76% 0, 100% 50%, 76% 100%, 24% 100%, 0 50%);
-}
-
-.composer-mention-shape-cloud {
-  border-radius: 58% 42% 54% 46%;
-}
-
-.composer-mention-shape-teardrop {
-  clip-path: polygon(50% 0, 100% 48%, 78% 88%, 50% 100%, 22% 88%, 0 48%);
+.composer-mention-avatar > svg {
+  display: block;
+  width: 113%;
+  height: 113%;
+  overflow: visible;
 }
 
 .mention-picker {
@@ -4092,11 +3966,6 @@ textarea {
 .mention-picker-option .bot-avatar {
   width: 23px;
   height: 23px;
-}
-
-.mention-picker-option .agent-mark {
-  width: 26px;
-  height: 26px;
 }
 
 .mention-picker-option strong {
