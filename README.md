@@ -124,6 +124,7 @@ deletes the development state. It does not change agent workspaces or CLI sessio
 | `bun run release:patch` | Create the next patch version commit and tag. |
 | `bun run test:filesystem` | **Online/manual:** run a real full-access Codex filesystem turn. |
 | `bun run test:imagegen` | **Online/manual:** run a real full-access image-generation turn. |
+| `bun run test:storage-live` | **Online/manual:** verify isolated Codex and Claude turns in a temporary SQLite database. |
 
 The host profile uses a separate Electron `userData` directory. Configure the team server in its
 Host panel on the first run. Later `bun run host` and `bun run dev:all` start the configured host
@@ -139,7 +140,7 @@ signed-in subscription and must not run in CI.
 Electron main
 ├── local Codex App Server process over stdio JSONL
 ├── local Claude Agent SDK session over stream JSON
-├── persistent bot and mailbox stores
+├── SQLite command log and read projections
 ├── secure typed IPC handlers
 └── sandboxed WebContentsView browser host
     ↕ typed preload bridge
@@ -162,9 +163,15 @@ Cloudflare Workers
 - `~/OpenBot/Bots/<bot-id>` — one working directory per agent.
 - `~/OpenBot/Shared` — files intentionally shared between agents.
 - `~/OpenBot/Downloads` — embedded-browser downloads.
-- Electron `userData` — bot metadata, queues, drafts, and attachment indexes.
+- Electron `userData/openbot.db` — the canonical OpenBot event log and projections for agents,
+  conversations, provider session bindings, queues, reactions, and attachment indexes.
+- Electron `userData/legacy-backup-v1` — unchanged copies of imported `bots.json` and
+  `mailbox.json` files, when these files existed before the SQLite migration.
 - `~/.codex` — login and thread history managed exclusively by Codex CLI.
 - `~/.claude` — login and session history managed exclusively by Claude CLI.
+
+OpenBot keeps one stable local conversation when an agent changes between Codex and Claude. Native
+provider session identifiers stay private and are used only to resume provider runtime state.
 
 The Electron client does not open a public application HTTP port. It communicates with local CLI
 processes over stdio. The optional account flow connects to the configured HTTPS account API. The

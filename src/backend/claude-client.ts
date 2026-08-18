@@ -42,6 +42,7 @@ interface ThreadConfig {
   effort?: string;
   developerInstructions: string;
   additionalDirectories: string[];
+  persistSession: boolean;
 }
 
 interface ActiveTurn {
@@ -214,6 +215,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         includePartialMessages: true,
+        persistSession: config.persistSession,
         additionalDirectories: config.additionalDirectories,
         canUseTool,
         mcpServers,
@@ -628,6 +630,7 @@ function readThreadConfig(params: unknown): ThreadConfig {
     effort: getString(params, "effort") ?? undefined,
     developerInstructions: getString(params, "developerInstructions") ?? "",
     additionalDirectories: [...new Set([cwd, ...roots])],
+    persistSession: !isRecord(params) || params.persistSession !== false,
   };
 }
 

@@ -5,6 +5,7 @@
       "**",
       "!node_modules",
       "!out",
+      "!out-dev-app",
       "!dist",
       "!**/dist",
       "!**/.wrangler",

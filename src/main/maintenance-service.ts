@@ -43,7 +43,7 @@ export async function exportOpenBotData(
       context.mailbox.listExportAttachments(),
     ]);
     const manifest = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       exportedAt: new Date().toISOString(),
       application: { name: "OpenBot", version: app.getVersion() },
       scope: {

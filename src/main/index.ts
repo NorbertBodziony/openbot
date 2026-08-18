@@ -680,7 +680,7 @@ if (!hasSingleInstanceLock) {
       await centralAuthManager.initialize();
       const store = new BotStore(app.getPath("userData"), homedir());
       await store.initialize();
-      mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot);
+      mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot, store.database);
       await mailboxStore.initialize();
       configureApplicationProtocol();
       configureAttachmentProtocol(mailboxStore);

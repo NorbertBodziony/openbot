@@ -1,14 +1,18 @@
 // @vitest-environment node
 
+import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentEvent } from "../shared/ipc";
+import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentService } from "./agent-service";
 import { BotStore } from "./bot-store";
 import type { BrowserHost } from "./browser-host";
 import { MailboxStore } from "./mailbox-store";
+import type { AppServerNotification, RequestId, RpcError } from "./protocol";
 
 let root: string;
 let logPath: string;
@@ -173,14 +177,14 @@ describe.sequential("AgentService", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
     await store.getOrCreate("chief");
-    await store.setThreadId("chief", "thread-codex");
+    const threadId = await store.ensureThreadId("chief");
 
     await expect(service.updateBot({ botId: "chief", model: "claude-sonnet-5" })).rejects.toThrow(
       "Claude CLI was not found",
     );
     expect(service.listBots().find((bot) => bot.id === "chief")).toMatchObject({
       model: "gpt-5.6-luna",
-      threadId: "thread-codex",
+      threadId,
     });
   });
 
@@ -200,6 +204,92 @@ describe.sequential("AgentService", () => {
         expect.objectContaining({ id: "claude", state: "available" }),
       ]),
     );
+  });
+
+  it("hands one SQLite conversation across Codex, Claude, and a new Codex session", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+
+    await service.sendMessage({ botId: "chief", text: "First request" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
+    const publicThreadId = service.listBots().find((bot) => bot.id === "chief")?.threadId;
+
+    await service.updateBot({ botId: "chief", model: "claude-sonnet-5" });
+    expect(service.listBots().find((bot) => bot.id === "chief")?.threadId).toBe(publicThreadId);
+    await service.sendMessage({ botId: "chief", text: "Second request" });
+    await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "completed");
+
+    const claudeInput = clients
+      .get("claude")
+      ?.requests.find((request) => request.method === "turn/start")?.params as
+      | { input?: Array<{ text?: string }> }
+      | undefined;
+    expect(claudeInput?.input?.[0]?.text).toContain("CODEX_DONE");
+    expect(claudeInput?.input?.[0]?.text).toContain("Second request");
+
+    await service.updateBot({ botId: "chief", model: "gpt-5.6-sol" });
+    await service.sendMessage({ botId: "chief", text: "Third request" });
+    await waitFor(() => service?.listQueue("chief").deliveries[2]?.status === "completed");
+    const codexStarts = clients
+      .get("codex")
+      ?.requests.filter((request) => request.method === "thread/start");
+    expect(codexStarts).toHaveLength(2);
+    const codexTurns = clients
+      .get("codex")
+      ?.requests.filter((request) => request.method === "turn/start");
+    const latestCodexTurn = codexTurns?.at(-1)?.params as
+      | { input?: Array<{ text?: string }> }
+      | undefined;
+    expect(latestCodexTurn?.input?.[0]?.text).toContain("CLAUDE_DONE");
+
+    const conversation = await service.readConversation("chief");
+    expect(conversation.threadId).toBe(publicThreadId);
+    expect(conversation.messages.map((message) => message.text)).toEqual(
+      expect.arrayContaining(["CODEX_DONE", "CLAUDE_DONE"]),
+    );
+    expect(store.database.listProviderSessions(publicThreadId as string)).toMatchObject([
+      { provider: "codex", state: "inactive" },
+      { provider: "claude", state: "inactive" },
+      { provider: "codex", state: "active" },
+    ]);
+  });
+
+  it("stores a visible summary when a provider handoff exceeds its budget", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const output = provider === "codex" ? "X".repeat(250_000) : "CLAUDE_DONE";
+      const client = new FakeAgentClient(provider, output);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Create a long result" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
+    const publicThreadId = service.listBots().find((bot) => bot.id === "chief")?.threadId;
+
+    await service.updateBot({ botId: "chief", model: "claude-sonnet-5" });
+    await service.sendMessage({ botId: "chief", text: "Continue from the result" });
+    await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "completed");
+
+    const claudeTurn = clients
+      .get("claude")
+      ?.requests.find((request) => request.method === "turn/start")?.params as
+      | { input?: Array<{ text?: string }> }
+      | undefined;
+    expect(claudeTurn?.input?.[0]?.text).toContain("oldest visible history was summarized");
+    expect(store.database.latestThreadSummary(publicThreadId as string)).toMatchObject({
+      threadId: publicThreadId,
+      throughMessageId: expect.any(String),
+    });
   });
 
   it("starts a new thread with the persisted onboarding remit", async () => {
@@ -498,8 +588,7 @@ describe.sequential("AgentService", () => {
     expect(service.listQueue("chief").deliveries).toHaveLength(2);
   });
 
-  it("merges a late thread read with a newer active stream", async () => {
-    process.env.OPENBOT_FAKE_THREAD_READ_DELAY = "80";
+  it("reads the canonical SQLite conversation during an active stream", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
@@ -511,23 +600,17 @@ describe.sequential("AgentService", () => {
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
     await service.setQueuePaused("chief", false);
 
-    const readsBefore = (await protocolMessages()).filter(
-      (message) => message.method === "thread/read",
-    ).length;
-    const refresh = service.readConversation("chief");
-    await waitFor(
-      async () =>
-        (await protocolMessages()).filter((message) => message.method === "thread/read").length >
-        readsBefore,
-    );
     await service.sendMessage({ botId: "chief", text: "New live turn" });
     await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "running");
 
-    const snapshot = await refresh;
+    const snapshot = await service.readConversation("chief");
     expect(snapshot.activeTurnId).toBe(service.listQueue("chief").deliveries[1]?.turnId);
     expect(snapshot.messages).toEqual(
       expect.arrayContaining([expect.objectContaining({ text: "Streaming", status: "streaming" })]),
     );
+    expect(
+      (await protocolMessages()).filter((message) => message.method === "thread/read"),
+    ).toHaveLength(0);
   });
 
   it("does not fail or replay a turn whose start response times out after lifecycle events", async () => {
@@ -592,7 +675,8 @@ describe.sequential("AgentService", () => {
     await service.initialize();
     await service.sendMessage({ botId: "chief", text: "Remember this" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
-    const threadId = (await store.getOrCreate("chief")).threadId;
+    await store.getOrCreate("chief");
+    const externalThreadId = store.activeProviderSession("chief")?.externalSessionId;
     await service.stop();
 
     service = new AgentService(store, mailbox, fakeBrowser());
@@ -604,14 +688,17 @@ describe.sequential("AgentService", () => {
     const requests = await protocolMessages();
     expect(requests).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ method: "thread/unarchive", params: { threadId } }),
+        expect.objectContaining({
+          method: "thread/unarchive",
+          params: { threadId: externalThreadId },
+        }),
       ]),
     );
     expect(
       requests.filter(
         (message) =>
           message.method === "thread/resume" &&
-          (message.params as Record<string, unknown>).threadId === threadId,
+          (message.params as Record<string, unknown>).threadId === externalThreadId,
       ),
     ).toHaveLength(2);
     expect(events).not.toEqual(
@@ -632,6 +719,22 @@ describe.sequential("AgentService", () => {
     await store.getOrCreate("sales-outbound");
     await service.deleteBot("sales-outbound");
     expect(service.listBots().some((bot) => bot.id === "sales-outbound")).toBe(false);
+    expect(
+      store.database.connection
+        .prepare(
+          `SELECT COUNT(*) AS count FROM orchestration_events
+           WHERE payload_json LIKE '%sales-outbound%'`,
+        )
+        .get(),
+    ).toMatchObject({ count: 0 });
+    expect(
+      store.database.connection
+        .prepare(
+          `SELECT COUNT(*) AS count FROM orchestration_command_receipts
+           WHERE command_id LIKE '%sales-outbound%'`,
+        )
+        .get(),
+    ).toMatchObject({ count: 0 });
 
     await service.sendMessage({ botId: "chief", text: "Keep working" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
@@ -641,6 +744,119 @@ describe.sequential("AgentService", () => {
     expect(service.listBots().some((bot) => bot.id === "chief")).toBe(true);
   });
 });
+
+class FakeAgentClient extends EventEmitter implements AgentClient {
+  readonly requests: Array<{ method: string; params: unknown }> = [];
+  #threadCounter = 0;
+  running = false;
+
+  constructor(
+    readonly provider: AgentProvider,
+    readonly output = provider === "codex" ? "CODEX_DONE" : "CLAUDE_DONE",
+  ) {
+    super();
+  }
+
+  start(): void {
+    this.running = true;
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+  }
+
+  async request<T>(method: string, params: unknown): Promise<T> {
+    this.requests.push({ method, params: structuredClone(params) });
+    if (method === "initialize") return {} as T;
+    if (method === "account/read") {
+      return {
+        account: {
+          type: this.provider === "codex" ? "chatgpt" : "claude",
+          email: `${this.provider}@example.com`,
+        },
+      } as T;
+    }
+    if (method === "account/rateLimits/read") {
+      return { rateLimits: null, rateLimitsByLimitId: null } as T;
+    }
+    if (method === "model/list") {
+      return {
+        data:
+          this.provider === "codex"
+            ? ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"].map((model) => ({ model }))
+            : ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"].map((model) => ({ model })),
+      } as T;
+    }
+    if (method === "plugin/list") return { marketplaces: [] } as T;
+    if (method === "thread/start") {
+      this.#threadCounter += 1;
+      return { thread: { id: `${this.provider}-session-${this.#threadCounter}` } } as T;
+    }
+    if (method === "thread/resume") {
+      return { thread: { id: stringParam(params, "threadId") } } as T;
+    }
+    if (method === "thread/read") {
+      return { thread: { id: stringParam(params, "threadId"), turns: [] } } as T;
+    }
+    if (method === "thread/compact/start" || method === "turn/interrupt") return {} as T;
+    if (method === "turn/start") {
+      const threadId = stringParam(params, "threadId");
+      const turnId = randomUUID();
+      const itemId = `${turnId}:assistant`;
+      const text = this.output;
+      setTimeout(() => {
+        if (!this.running) return;
+        this.emit("notification", notification("turn/started", { threadId, turn: { id: turnId } }));
+        this.emit(
+          "notification",
+          notification("item/started", {
+            threadId,
+            turnId,
+            item: { id: itemId, type: "agentMessage", text: "" },
+          }),
+        );
+        this.emit(
+          "notification",
+          notification("item/agentMessage/delta", { threadId, turnId, itemId, delta: text }),
+        );
+        this.emit(
+          "notification",
+          notification("item/completed", {
+            threadId,
+            turnId,
+            item: { id: itemId, type: "agentMessage", text },
+          }),
+        );
+        this.emit(
+          "notification",
+          notification("turn/completed", {
+            threadId,
+            turn: { id: turnId, status: "completed" },
+          }),
+        );
+      }, 0);
+      return { turn: { id: turnId, status: "inProgress", items: [] } } as T;
+    }
+    throw new Error(`Fake client does not implement ${method}.`);
+  }
+
+  notify(): void {}
+
+  respond(): void {}
+
+  respondError(_id: RequestId, _error: RpcError): void {}
+}
+
+function notification(method: string, params: unknown): AppServerNotification {
+  return { method, params };
+}
+
+function stringParam(value: unknown, key: string): string {
+  if (typeof value !== "object" || value === null) throw new Error(`${key} is missing.`);
+  const result = (value as Record<string, unknown>)[key];
+  if (typeof result !== "string") throw new Error(`${key} is missing.`);
+  return result;
+}
 
 function stores(): { store: BotStore; mailbox: MailboxStore } {
   const store = new BotStore(join(root, "user-data"), join(root, "home"));

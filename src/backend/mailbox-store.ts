@@ -15,6 +15,7 @@ import type {
   QueueSnapshot,
 } from "../shared/ipc";
 import { isMessageReaction } from "../shared/ipc";
+import { OpenBotDatabase } from "./openbot-database";
 import { isRecord } from "./protocol";
 
 const MAX_ATTACHMENTS = 10;
@@ -100,13 +101,18 @@ export class MailboxStore {
   readonly #statePath: string;
   readonly #draftsRoot: string;
   readonly #transfersRoot: string;
+  readonly #database: OpenBotDatabase;
   #state: StoredState = structuredClone(EMPTY_STATE);
-  #writeQueue: Promise<void> = Promise.resolve();
 
-  constructor(userDataPath: string, sharedRoot: string) {
+  constructor(
+    userDataPath: string,
+    sharedRoot: string,
+    database = new OpenBotDatabase(userDataPath),
+  ) {
     this.#statePath = join(userDataPath, "mailbox.json");
     this.#draftsRoot = join(userDataPath, "attachment-drafts");
     this.#transfersRoot = join(sharedRoot, "Transfers");
+    this.#database = database;
   }
 
   async initialize(): Promise<void> {
@@ -115,13 +121,23 @@ export class MailboxStore {
       mkdir(this.#draftsRoot, { recursive: true, mode: 0o700 }),
       mkdir(this.#transfersRoot, { recursive: true, mode: 0o700 }),
     ]);
-    this.#state = await this.#readState();
+    await this.#database.initialize();
+    const persisted = this.#database.readMailboxState();
+    if (persisted) {
+      if (!isStoredState(persisted)) throw new Error("Stored mailbox projection is invalid.");
+      this.#state = persisted;
+    } else {
+      this.#state = await this.#readState();
+      await this.#database.backupLegacyFile(this.#statePath);
+      await this.#persist("mailbox.legacy-imported", "legacy-import:mailbox:v1");
+    }
     if (this.#state.drafts.length > 0) {
       this.#state.drafts = [];
-      await this.#persist();
+      await this.#persist("mailbox.drafts-cleared");
     }
     await rm(this.#draftsRoot, { recursive: true, force: true });
     await mkdir(this.#draftsRoot, { recursive: true, mode: 0o700 });
+    await this.#drainFileDeletionOutbox();
   }
 
   async prepareAttachments(paths: string[]): Promise<DraftAttachment[]> {
@@ -188,7 +204,7 @@ export class MailboxStore {
         });
       }
       this.#state.drafts.push(...prepared);
-      await this.#persist();
+      await this.#persist("attachments.prepared");
       return prepared.map(toAttachmentSummary);
     } catch (error) {
       const preparedIds = new Set(prepared.map((draft) => draft.id));
@@ -205,7 +221,7 @@ export class MailboxStore {
     if (index < 0) return;
     const [draft] = this.#state.drafts.splice(index, 1);
     try {
-      await this.#persist();
+      await this.#persist("attachment-draft.discarded");
     } catch (error) {
       this.#state.drafts.splice(index, 0, draft);
       throw error;
@@ -434,7 +450,7 @@ export class MailboxStore {
         updatedAt: new Date().toISOString(),
       });
     }
-    await this.#persist();
+    await this.#persist("reaction.updated");
   }
 
   #sourceTurnId(messageId: string): string | undefined {
@@ -517,16 +533,17 @@ export class MailboxStore {
       ),
     );
     try {
-      await this.#persist();
+      await this.#persist(
+        "mailbox.agent-data-deleted",
+        `mailbox:hard-delete:${randomUUID()}`,
+        [...removedMessageIds].map((messageId) => join(this.#transfersRoot, messageId)),
+        true,
+      );
     } catch (error) {
       this.#state = previous;
       throw error;
     }
-    await Promise.all(
-      [...removedMessageIds].map((messageId) =>
-        rm(join(this.#transfersRoot, messageId), { recursive: true, force: true }),
-      ),
-    );
+    await this.#drainFileDeletionOutbox();
   }
 
   chainOriginBotId(messageId: string): string | null {
@@ -590,7 +607,7 @@ export class MailboxStore {
     if (!delivery) throw new Error("Queued message was not found.");
     if (delivery.status !== "queued") throw new Error("Only queued messages can be cancelled.");
     delivery.status = "cancelled";
-    await this.#persist();
+    await this.#persist("delivery.cancelled");
   }
 
   async setPaused(botId: string, paused: boolean): Promise<void> {
@@ -598,7 +615,7 @@ export class MailboxStore {
     if (paused) current.add(botId);
     else current.delete(botId);
     this.#state.pausedBotIds = [...current];
-    await this.#persist();
+    await this.#persist("queue.pause-updated");
   }
 
   unresolvedDeliveries(): DeliveryContext[] {
@@ -740,7 +757,7 @@ export class MailboxStore {
     if (!delivery) throw new Error(`Unknown delivery: ${id}`);
     if (!allowed.includes(delivery.status)) return;
     Object.assign(delivery, patch);
-    await this.#persist();
+    await this.#persist("delivery.updated");
   }
 
   #requireMessage(id: string): StoredMessage {
@@ -764,16 +781,33 @@ export class MailboxStore {
     }
   }
 
-  async #persist(): Promise<void> {
-    const serialized = `${JSON.stringify(this.#state, null, 2)}\n`;
-    const temporaryPath = `${this.#statePath}.${process.pid}.${randomUUID()}.tmp`;
-    this.#writeQueue = this.#writeQueue
-      .catch(() => undefined)
-      .then(async () => {
-        await writeFile(temporaryPath, serialized, { encoding: "utf8", mode: 0o600 });
-        await rename(temporaryPath, this.#statePath);
-      });
-    await this.#writeQueue;
+  async #persist(
+    eventType = "mailbox.updated",
+    commandId = `mailbox:${eventType}:${randomUUID()}`,
+    fileDeletions: string[] = [],
+    rebaseHistory = false,
+  ): Promise<void> {
+    this.#database.replaceMailboxState(
+      commandId,
+      this.#state,
+      eventType,
+      fileDeletions,
+      rebaseHistory,
+    );
+  }
+
+  async #drainFileDeletionOutbox(): Promise<void> {
+    for (const item of this.#database.pendingFileDeletions()) {
+      try {
+        await rm(item.path, { recursive: true, force: true });
+        this.#database.completeFileDeletion(item.id);
+      } catch (error) {
+        this.#database.failFileDeletion(
+          item.id,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
   }
 }
 

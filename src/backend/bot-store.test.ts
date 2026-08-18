@@ -44,7 +44,7 @@ describe("BotStore", () => {
     expect(chief.workspacePath).not.toBe(sales.workspacePath);
   });
 
-  it("persists thread ids with a complete JSON state file", async () => {
+  it("persists stable OpenBot thread ids in SQLite", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
@@ -52,13 +52,13 @@ describe("BotStore", () => {
     await store.initialize();
 
     await store.getOrCreate("chief");
-    await store.setThreadId("chief", "thread-123");
-    const parsed = JSON.parse(await readFile(join(userData, "bots.json"), "utf8"));
-
-    expect(parsed.version).toBe(2);
-    expect(parsed.bots.find((bot: { id: string }) => bot.id === "chief").threadId).toBe(
-      "thread-123",
-    );
+    const threadId = await store.ensureThreadId("chief");
+    const restored = new BotStore(userData, join(root, "home"));
+    await restored.initialize();
+    expect(restored.list().find((bot) => bot.id === "chief")?.threadId).toBe(threadId);
+    await expect(readFile(join(userData, "bots.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("migrates version 1 avatars to stable id seeds", async () => {
@@ -66,20 +66,29 @@ describe("BotStore", () => {
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const statePath = join(userData, "bots.json");
-    const store = new BotStore(userData, join(root, "home"));
-    await store.initialize();
-    await store.getOrCreate("chief");
-
-    const current = JSON.parse(await readFile(statePath, "utf8"));
-    current.version = 1;
-    current.bots = current.bots.map(
-      ({ avatarSeed: _avatarSeed, avatarHue: _avatarHue, ...bot }: Record<string, unknown>) => ({
-        ...bot,
-        avatarShape: "cloud",
-        avatarColor: "violet",
-      }),
-    );
-    await writeFile(statePath, `${JSON.stringify(current, null, 2)}\n`);
+    await mkdir(userData, { recursive: true });
+    const legacy = {
+      version: 1,
+      examplesInitialized: true,
+      bots: [
+        {
+          id: "chief",
+          name: "Chief",
+          role: "Coordinator",
+          description: "",
+          notifications: true,
+          model: "gpt-5.6-luna",
+          reasoningEffort: "medium",
+          threadId: "native-codex-thread",
+          workspacePath: join(root, "home", "OpenBot", "Bots", "chief"),
+          preview: "Hello",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          avatarShape: "cloud",
+          avatarColor: "violet",
+        },
+      ],
+    };
+    await writeFile(statePath, `${JSON.stringify(legacy, null, 2)}\n`);
 
     const restored = new BotStore(userData, join(root, "home"));
     await restored.initialize();
@@ -88,10 +97,53 @@ describe("BotStore", () => {
       avatarSeed: "chief",
       avatarHue: null,
     });
-    const migrated = JSON.parse(await readFile(statePath, "utf8"));
-    expect(migrated.version).toBe(2);
-    expect(migrated.bots[0]).not.toHaveProperty("avatarShape");
-    expect(migrated.bots[0]).not.toHaveProperty("avatarColor");
+    expect(restored.list()[0]?.threadId).toBe("openbot-thread-chief");
+    expect(restored.activeProviderSession("chief")?.externalSessionId).toBe("native-codex-thread");
+    await expect(readFile(statePath, "utf8")).resolves.toContain('"version": 1');
+    await expect(
+      readFile(join(userData, "legacy-backup-v1", "bots.json"), "utf8"),
+    ).resolves.toContain('"version": 1');
+  });
+
+  it("imports a version 2 agent file without changing the legacy source", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const statePath = join(userData, "bots.json");
+    await mkdir(userData, { recursive: true });
+    const legacy = {
+      version: 2,
+      examplesInitialized: true,
+      bots: [
+        {
+          id: "writer",
+          name: "Writer",
+          role: "Writing",
+          description: "Writes concise copy",
+          notifications: false,
+          model: "claude-sonnet-5",
+          reasoningEffort: "high",
+          threadId: null,
+          workspacePath: join(root, "home", "OpenBot", "Bots", "writer"),
+          preview: "No messages yet",
+          updatedAt: null,
+          avatarSeed: "writer",
+          avatarHue: 215,
+        },
+      ],
+    };
+    const source = `${JSON.stringify(legacy, null, 2)}\n`;
+    await writeFile(statePath, source);
+    const store = new BotStore(userData, join(root, "home"));
+    await store.initialize();
+
+    expect(store.list()).toMatchObject([
+      { id: "writer", model: "claude-sonnet-5", threadId: null, avatarHue: 215 },
+    ]);
+    await expect(readFile(statePath, "utf8")).resolves.toBe(source);
+    await expect(readFile(join(userData, "legacy-backup-v1", "bots.json"), "utf8")).resolves.toBe(
+      source,
+    );
   });
 
   it("creates unique new agents at the top of the persistent list", async () => {
@@ -180,20 +232,45 @@ describe("BotStore", () => {
     });
   });
 
-  it("starts a new thread when the model changes provider", async () => {
+  it("keeps the OpenBot thread when the model changes provider", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const store = new BotStore(join(root, "user-data"), join(root, "home"));
     await store.initialize();
     await store.getOrCreate("chief");
-    await store.setThreadId("chief", "codex-thread");
+    const threadId = await store.ensureThreadId("chief");
 
     const claude = await store.updateBot({ botId: "chief", model: "claude-sonnet-5" });
-    expect(claude.threadId).toBeNull();
-    await store.setThreadId("chief", "claude-thread");
+    expect(claude.threadId).toBe(threadId);
 
     const opus = await store.updateBot({ botId: "chief", model: "claude-opus-5" });
-    expect(opus.threadId).toBe("claude-thread");
+    expect(opus.threadId).toBe(threadId);
+  });
+
+  it("keeps provider sessions private and creates a new session when returning", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
+    temporaryRoots.push(root);
+    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    await store.initialize();
+    await store.getOrCreate("chief");
+    const publicThreadId = await store.ensureThreadId("chief");
+    store.bindProviderSession("chief", "codex-native-1");
+    store.database.deactivateProviderSessions(publicThreadId);
+
+    await store.updateBot({ botId: "chief", model: "claude-sonnet-5" });
+    store.bindProviderSession("chief", "claude-native-1");
+    store.database.deactivateProviderSessions(publicThreadId);
+    await store.updateBot({ botId: "chief", model: "gpt-5.6-sol" });
+    expect(store.activeProviderSession("chief")).toBeNull();
+    store.bindProviderSession("chief", "codex-native-2");
+
+    expect(store.list()[0]?.threadId).toBe(publicThreadId);
+    expect(store.activeProviderSession("chief")?.externalSessionId).toBe("codex-native-2");
+    expect(store.database.listProviderSessions(publicThreadId)).toMatchObject([
+      { provider: "codex", externalSessionId: "codex-native-1", state: "inactive" },
+      { provider: "claude", externalSessionId: "claude-native-1", state: "inactive" },
+      { provider: "codex", externalSessionId: "codex-native-2", state: "active" },
+    ]);
   });
 
   it("deletes agents persistently without reseeding examples", async () => {

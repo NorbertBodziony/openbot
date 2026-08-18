@@ -72,6 +72,7 @@
     "test:codex": "bun scripts/codex-doctor.ts --strict",
     "test:filesystem": "bun scripts/filesystem-smoke.ts",
     "test:imagegen": "bun scripts/filesystem-smoke.ts --imagegen",
+    "test:storage-live": "bun scripts/provider-storage-smoke.ts",
     "codex:doctor": "bun scripts/codex-doctor.ts",
     "release:preflight": "bun scripts/release-preflight.ts",
     "release:patch": "bun scripts/prepare-release.ts patch",

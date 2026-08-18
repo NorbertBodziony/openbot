@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
   type AgentModelId,
@@ -8,10 +8,15 @@ import {
   isAgentModel,
   isAvatarHue,
   isAvatarSeed,
-  isClaudeModel,
   isReasoningEffort,
   type UpdateBotInput,
 } from "../shared/ipc";
+import {
+  OpenBotDatabase,
+  type ProviderSession,
+  providerForStoredModel,
+  stableThreadId,
+} from "./openbot-database";
 import { isRecord } from "./protocol";
 
 type StoredBot = BotSummary;
@@ -59,15 +64,24 @@ export class BotStore {
   readonly #botsRoot: string;
   readonly #sharedRoot: string;
   readonly #downloadsRoot: string;
+  readonly #database: OpenBotDatabase;
   #state: StoredState = { version: 2, examplesInitialized: false, bots: [] };
-  #writeQueue: Promise<void> = Promise.resolve();
 
-  constructor(userDataPath: string, homePath: string) {
+  constructor(
+    userDataPath: string,
+    homePath: string,
+    database = new OpenBotDatabase(userDataPath),
+  ) {
     const openbotRoot = join(homePath, "OpenBot");
     this.#statePath = join(userDataPath, "bots.json");
     this.#botsRoot = join(openbotRoot, "Bots");
     this.#sharedRoot = join(openbotRoot, "Shared");
     this.#downloadsRoot = join(openbotRoot, "Downloads");
+    this.#database = database;
+  }
+
+  get database(): OpenBotDatabase {
+    return this.#database;
   }
 
   get sharedRoot(): string {
@@ -86,11 +100,33 @@ export class BotStore {
       mkdir(dirname(this.#statePath), { recursive: true, mode: 0o700 }),
     ]);
 
-    this.#state = await this.#readState();
-    if (!this.#state.examplesInitialized) {
-      this.#state.examplesInitialized = true;
+    await this.#database.initialize();
+    const persisted = this.#database.listAgents();
+    if (persisted.length > 0 || this.#database.hasAggregateEvents("agents", "agents")) {
+      this.#state = { version: 2, examplesInitialized: true, bots: persisted };
+      return;
     }
-    await this.#persist();
+
+    const legacy = await this.#readState();
+    await this.#database.backupLegacyFile(this.#statePath);
+    const sessions: Array<{ bot: StoredBot; externalSessionId: string }> = [];
+    legacy.bots = legacy.bots.map((bot) => {
+      if (!bot.threadId) return bot;
+      sessions.push({ bot, externalSessionId: bot.threadId });
+      return { ...bot, threadId: stableThreadId(bot.id) };
+    });
+    legacy.examplesInitialized = true;
+    this.#state = legacy;
+    this.#database.replaceAgents("legacy-import:bots:v1", legacy.bots, "agents.legacy-imported");
+    for (const { bot, externalSessionId } of sessions) {
+      this.#database.bindProviderSession({
+        threadId: stableThreadId(bot.id),
+        provider: providerForStoredModel(bot.model),
+        externalSessionId,
+        model: bot.model,
+        effort: bot.reasoningEffort,
+      });
+    }
   }
 
   list(): BotSummary[] {
@@ -101,7 +137,7 @@ export class BotStore {
     const record = this.#createRecord(`bot-${randomUUID()}`, "New agent", "New teammate");
     this.#state.bots.unshift(record);
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
-    await this.#persist();
+    this.#persist("agent.created");
     return { ...record };
   }
 
@@ -112,21 +148,25 @@ export class BotStore {
     if (input.description !== undefined) bot.description = input.description.trim().slice(0, 2_000);
     if (input.notifications !== undefined) bot.notifications = input.notifications;
     if (input.model !== undefined) {
-      if (isClaudeModel(input.model) !== isClaudeModel(bot.model)) bot.threadId = null;
       bot.model = input.model;
     }
     if (input.reasoningEffort !== undefined) bot.reasoningEffort = input.reasoningEffort;
     if (input.avatarSeed !== undefined) bot.avatarSeed = input.avatarSeed;
     if (input.avatarHue !== undefined) bot.avatarHue = input.avatarHue;
     bot.updatedAt = new Date().toISOString();
-    await this.#persist();
+    this.#persist("agent.updated");
     return { ...bot };
   }
 
   async deleteBot(id: string): Promise<BotSummary> {
     const bot = this.#requireBot(id);
     this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== id);
-    await this.#persist();
+    this.#database.hardDeleteAgent(
+      `agents:hard-delete:${randomUUID()}`,
+      id,
+      bot.threadId,
+      this.#state.bots,
+    );
     return { ...bot };
   }
 
@@ -141,22 +181,42 @@ export class BotStore {
     const record = this.#createRecord(id, name ?? titleFromId(id), role ?? "Local teammate");
     this.#state.bots.push(record);
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
-    await this.#persist();
+    this.#persist("agent.created");
     return { ...record };
   }
 
-  async setThreadId(id: string, threadId: string): Promise<void> {
+  async ensureThreadId(id: string): Promise<string> {
     const bot = this.#requireBot(id);
-    bot.threadId = threadId;
+    if (bot.threadId) return bot.threadId;
+    bot.threadId = `openbot-thread-${randomUUID()}`;
     bot.updatedAt = new Date().toISOString();
-    await this.#persist();
+    this.#persist("thread.created");
+    return bot.threadId;
+  }
+
+  activeProviderSession(id: string): ProviderSession | null {
+    const bot = this.#requireBot(id);
+    if (!bot.threadId) return null;
+    return this.#database.activeProviderSession(bot.threadId, providerForStoredModel(bot.model));
+  }
+
+  bindProviderSession(id: string, externalSessionId: string): ProviderSession {
+    const bot = this.#requireBot(id);
+    if (!bot.threadId) throw new Error(`Agent ${id} does not have an OpenBot thread.`);
+    return this.#database.bindProviderSession({
+      threadId: bot.threadId,
+      provider: providerForStoredModel(bot.model),
+      externalSessionId,
+      model: bot.model,
+      effort: bot.reasoningEffort,
+    });
   }
 
   async updatePreview(id: string, preview: string): Promise<void> {
     const bot = this.#requireBot(id);
     bot.preview = preview.slice(0, 180);
     bot.updatedAt = new Date().toISOString();
-    await this.#persist();
+    this.#persist("agent.preview-updated");
   }
 
   async #readState(): Promise<StoredState> {
@@ -194,17 +254,12 @@ export class BotStore {
     }
   }
 
-  async #persist(): Promise<void> {
-    const serialized = `${JSON.stringify(this.#state, null, 2)}\n`;
-    const temporaryPath = `${this.#statePath}.${process.pid}.${randomUUID()}.tmp`;
-
-    this.#writeQueue = this.#writeQueue
-      .catch(() => undefined)
-      .then(async () => {
-        await writeFile(temporaryPath, serialized, { encoding: "utf8", mode: 0o600 });
-        await rename(temporaryPath, this.#statePath);
-      });
-    await this.#writeQueue;
+  #persist(eventType: string): void {
+    this.#database.replaceAgents(
+      `agents:${eventType}:${randomUUID()}`,
+      this.#state.bots,
+      eventType,
+    );
   }
 
   #createRecord(id: string, name: string, role: string, description = ""): StoredBot {

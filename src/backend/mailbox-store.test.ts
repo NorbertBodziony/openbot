@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -20,6 +20,53 @@ afterEach(async () => {
 });
 
 describe("MailboxStore", () => {
+  it("imports mailbox.json once and keeps a legacy backup", async () => {
+    const userData = join(root, "legacy-user-data");
+    await mkdir(userData, { recursive: true });
+    const legacy = {
+      version: 1,
+      messages: [
+        {
+          id: "message-1",
+          sender: { kind: "user" },
+          text: "Legacy request",
+          attachments: [],
+          replyToMessageId: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      deliveries: [
+        {
+          id: "delivery-1",
+          messageId: "message-1",
+          recipientBotId: "chief",
+          status: "completed",
+          turnId: "turn-1",
+          error: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      drafts: [],
+      pausedBotIds: [],
+      idempotency: {},
+      reactions: [],
+    };
+    const legacyPath = join(userData, "mailbox.json");
+    await writeFile(legacyPath, `${JSON.stringify(legacy, null, 2)}\n`);
+    const imported = new MailboxStore(userData, join(root, "Legacy Shared"));
+    await imported.initialize();
+
+    expect(imported.listQueue("chief").deliveries).toMatchObject([
+      { id: "delivery-1", text: "Legacy request", status: "completed" },
+    ]);
+    await expect(
+      readFile(join(userData, "legacy-backup-v1", "mailbox.json"), "utf8"),
+    ).resolves.toContain("Legacy request");
+    const restored = new MailboxStore(userData, join(root, "Legacy Shared"));
+    await restored.initialize();
+    expect(restored.listQueue("chief").deliveries).toHaveLength(1);
+  });
+
   it("copies attachments once and fans out independent FIFO deliveries", async () => {
     const original = join(root, "report.csv");
     await writeFile(original, "account,value\nAcme,42\n");
@@ -65,44 +112,34 @@ describe("MailboxStore", () => {
     });
   });
 
-  it("rolls back a failed enqueue without losing its attachment draft", async () => {
+  it("keeps enqueue idempotent in SQLite", async () => {
     const original = join(root, "retry.txt");
-    const userData = join(root, "user-data");
     await writeFile(original, "retry me\n");
     const [draft] = await store.prepareAttachments([original]);
-
-    await chmod(userData, 0o500);
-    try {
-      await expect(
-        store.enqueue({
-          sender: { kind: "user" },
-          recipientBotIds: ["chief"],
-          text: "",
-          draftIds: [draft.id],
-        }),
-      ).rejects.toThrow();
-    } finally {
-      await chmod(userData, 0o700);
-    }
-
-    expect(store.listQueue("chief").deliveries).toEqual([]);
-    await expect(
-      store.enqueue({
-        sender: { kind: "user" },
-        recipientBotIds: ["chief"],
-        text: "",
-        draftIds: [draft.id],
-      }),
-    ).resolves.toMatchObject({ deliveries: [{ recipientBotId: "chief" }] });
+    const first = await store.enqueue({
+      sender: { kind: "bot", botId: "planner" },
+      recipientBotIds: ["chief"],
+      text: "",
+      draftIds: [draft.id],
+      idempotencyKey: "session:turn:call",
+    });
+    const second = await store.enqueue({
+      sender: { kind: "bot", botId: "planner" },
+      recipientBotIds: ["chief"],
+      text: "ignored duplicate",
+      idempotencyKey: "session:turn:call",
+    });
+    expect(second).toEqual(first);
+    expect(store.listQueue("chief").deliveries).toHaveLength(1);
   });
 
-  it("fails closed instead of overwriting an unsupported mailbox state", async () => {
+  it("does not read or overwrite legacy mailbox files after SQLite activation", async () => {
     const statePath = join(root, "user-data", "mailbox.json");
     const unsupported = '{"version":999,"messages":[{"important":true}]}\n';
     await writeFile(statePath, unsupported);
 
     const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
-    await expect(restored.initialize()).rejects.toThrow("refusing to overwrite");
+    await expect(restored.initialize()).resolves.toBeUndefined();
     await expect(readFile(statePath, "utf8")).resolves.toBe(unsupported);
   });
 
