@@ -10,6 +10,7 @@ import {
   type WebContents,
   WebContentsView,
 } from "electron";
+import { INPUT_LIMITS } from "../shared/input-limits";
 import type {
   BrowserBounds,
   BrowserControlAction,
@@ -83,21 +84,21 @@ export const BROWSER_DYNAMIC_TOOLS = [
     tools: [
       functionTool("open", "Open an HTTP(S) URL in a new tab.", {
         type: "object",
-        properties: { url: { type: "string" } },
+        properties: { url: { type: "string", maxLength: INPUT_LIMITS.browserUrl } },
         required: ["url"],
         additionalProperties: false,
       }),
       functionTool("list_tabs", "List the browser tabs.", emptySchema()),
       functionTool("snapshot", "Read a page and obtain current element references.", {
         type: "object",
-        properties: { tabId: { type: "string" } },
+        properties: { tabId: { type: "string", maxLength: INPUT_LIMITS.identifier } },
         required: ["tabId"],
         additionalProperties: false,
       }),
       functionTool("act", "Click, type, press a key, scroll, navigate back/forward, or reload.", {
         type: "object",
         properties: {
-          tabId: { type: "string" },
+          tabId: { type: "string", maxLength: INPUT_LIMITS.identifier },
           revision: { type: "integer" },
           action: {
             type: "object",
@@ -106,10 +107,10 @@ export const BROWSER_DYNAMIC_TOOLS = [
                 type: "string",
                 enum: ["click", "type", "key", "scroll", "back", "forward", "reload"],
               },
-              ref: { type: "string" },
-              text: { type: "string" },
+              ref: { type: "string", maxLength: INPUT_LIMITS.identifier },
+              text: { type: "string", maxLength: INPUT_LIMITS.browserActionText },
               submit: { type: "boolean" },
-              key: { type: "string" },
+              key: { type: "string", maxLength: 32 },
               deltaY: { type: "number" },
             },
             required: ["type"],
@@ -121,13 +122,13 @@ export const BROWSER_DYNAMIC_TOOLS = [
       }),
       functionTool("screenshot", "Capture the visible page as an image.", {
         type: "object",
-        properties: { tabId: { type: "string" } },
+        properties: { tabId: { type: "string", maxLength: INPUT_LIMITS.identifier } },
         required: ["tabId"],
         additionalProperties: false,
       }),
       functionTool("close_tab", "Close a browser tab.", {
         type: "object",
-        properties: { tabId: { type: "string" } },
+        properties: { tabId: { type: "string", maxLength: INPUT_LIMITS.identifier } },
         required: ["tabId"],
         additionalProperties: false,
       }),
@@ -166,7 +167,7 @@ export class BrowserHost {
     const state = await readBrowserState(this.#statePath);
     if (state.tabs.length === 0) return;
 
-    const tabs = state.tabs.map((stored) => {
+    const tabs = state.tabs.slice(0, INPUT_LIMITS.browserTabs).map((stored) => {
       const tab = this.#createTab(stored.id, stored.url, stored.ownerThreadId, stored.ownerBotId);
       this.#tabs.set(tab.id, tab);
       this.#bindTabEvents(tab);
@@ -233,6 +234,9 @@ export class BrowserHost {
     ownerThreadId: string | null = null,
     ownerBotId: string | null = null,
   ): Promise<BrowserTab> {
+    if (this.#tabs.size >= INPUT_LIMITS.browserTabs) {
+      throw new Error(`The browser can have up to ${INPUT_LIMITS.browserTabs} open tabs.`);
+    }
     const normalizedUrl = normalizeBrowserUrl(url);
     const tab = this.#createTab(randomUUID(), normalizedUrl, ownerThreadId, ownerBotId);
 
@@ -344,7 +348,7 @@ export class BrowserHost {
     try {
       switch (params.tool) {
         case "open": {
-          const url = requiredString(args, "url");
+          const url = requiredString(args, "url", INPUT_LIMITS.browserUrl);
           const tab = await this.open(url, params.threadId);
           this.#updateControlTab(params, tab.id);
           return textResult({ tab });
@@ -352,21 +356,25 @@ export class BrowserHost {
         case "list_tabs":
           return textResult({ tabs: this.listTabs(), activeTabId: this.#activeTabId });
         case "snapshot": {
-          const snapshot = await this.snapshot(requiredString(args, "tabId"));
+          const snapshot = await this.snapshot(
+            requiredString(args, "tabId", INPUT_LIMITS.identifier),
+          );
           return textResult(snapshot);
         }
         case "act": {
-          const tabId = requiredString(args, "tabId");
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
           const revision = requiredNumber(args, "revision");
           const action = parseAction(args.action);
           return textResult(await this.act(tabId, revision, action));
         }
         case "screenshot": {
-          const imageUrl = await this.screenshot(requiredString(args, "tabId"));
+          const imageUrl = await this.screenshot(
+            requiredString(args, "tabId", INPUT_LIMITS.identifier),
+          );
           return { success: true, contentItems: [{ type: "inputImage", imageUrl }] };
         }
         case "close_tab": {
-          await this.close(requiredString(args, "tabId"));
+          await this.close(requiredString(args, "tabId", INPUT_LIMITS.identifier));
           return textResult({ closed: true });
         }
         default:
@@ -693,6 +701,7 @@ function emptySchema() {
 function normalizeBrowserUrl(input: string): string {
   const value = input.trim();
   if (!value) throw new Error("A browser URL is required.");
+  if (value.length > INPUT_LIMITS.browserUrl) throw new Error("The browser URL is too long.");
   const withProtocol = /^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`;
   const url = new URL(withProtocol);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -785,12 +794,25 @@ function isStoredBrowserTab(value: unknown): value is StoredBrowserState["tabs"]
     !isRecord(value) ||
     typeof value.id !== "string" ||
     !value.id ||
-    typeof value.url !== "string"
+    value.id.length > INPUT_LIMITS.identifier ||
+    typeof value.url !== "string" ||
+    value.url.length > INPUT_LIMITS.browserUrl
   ) {
     return false;
   }
-  if (value.ownerThreadId !== null && typeof value.ownerThreadId !== "string") return false;
-  if (value.ownerBotId !== null && typeof value.ownerBotId !== "string") return false;
+  if (
+    value.ownerThreadId !== null &&
+    (typeof value.ownerThreadId !== "string" ||
+      value.ownerThreadId.length > INPUT_LIMITS.identifier)
+  ) {
+    return false;
+  }
+  if (
+    value.ownerBotId !== null &&
+    (typeof value.ownerBotId !== "string" || value.ownerBotId.length > INPUT_LIMITS.identifier)
+  ) {
+    return false;
+  }
   return isPersistableBrowserUrl(value.url);
 }
 
@@ -813,11 +835,12 @@ function isPersistableBrowserUrl(value: string): boolean {
 
 function validateBounds(bounds: BrowserBounds): BrowserBounds {
   if (!Object.values(bounds).every(Number.isFinite)) throw new Error("Invalid browser bounds.");
-  const x = Math.max(0, Math.floor(bounds.x));
-  const y = Math.max(0, Math.floor(bounds.y));
-  const right = Math.max(x + 1, Math.ceil(bounds.x + bounds.width));
-  const bottom = Math.max(y + 1, Math.ceil(bounds.y + bounds.height));
-  return { x, y, width: right - x, height: bottom - y };
+  return {
+    x: Math.max(0, Math.min(INPUT_LIMITS.browserCoordinate, Math.floor(bounds.x))),
+    y: Math.max(0, Math.min(INPUT_LIMITS.browserCoordinate, Math.floor(bounds.y))),
+    width: Math.max(1, Math.min(INPUT_LIMITS.browserDimension, Math.ceil(bounds.width))),
+    height: Math.max(1, Math.min(INPUT_LIMITS.browserDimension, Math.ceil(bounds.height))),
+  };
 }
 
 function toPublicTab(tab: InternalTab): BrowserTab {
@@ -939,7 +962,7 @@ async function performAction(contents: WebContents, action: BrowserAction): Prom
       );
       await withDevToolsDebugger(contents, () =>
         contents.debugger.sendCommand("Input.insertText", {
-          text: action.text.slice(0, 50_000),
+          text: action.text,
         }),
       );
       if (action.submit) pressKey(contents, "Enter");
@@ -999,16 +1022,16 @@ function parseAction(value: unknown): BrowserAction {
     throw new Error("Invalid browser action.");
   switch (value.type) {
     case "click":
-      return { type: "click", ref: requiredString(value, "ref") };
+      return { type: "click", ref: requiredString(value, "ref", INPUT_LIMITS.identifier) };
     case "type":
       return {
         type: "type",
-        ref: requiredString(value, "ref"),
-        text: requiredString(value, "text"),
+        ref: requiredString(value, "ref", INPUT_LIMITS.identifier),
+        text: requiredString(value, "text", INPUT_LIMITS.browserActionText),
         submit: value.submit === true,
       };
     case "key":
-      return { type: "key", key: requiredString(value, "key") };
+      return { type: "key", key: requiredString(value, "key", 32) };
     case "scroll":
       return { type: "scroll", deltaY: requiredNumber(value, "deltaY") };
     case "back":
@@ -1020,8 +1043,9 @@ function parseAction(value: unknown): BrowserAction {
   }
 }
 
-function requiredString(value: Record<string, unknown>, key: string): string {
+function requiredString(value: Record<string, unknown>, key: string, maxLength: number): string {
   if (typeof value[key] !== "string" || !value[key].trim()) throw new Error(`${key} is required.`);
+  if (value[key].length > maxLength) throw new Error(`${key} is too long.`);
   return value[key];
 }
 

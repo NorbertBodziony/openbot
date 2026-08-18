@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
+import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "../shared/input-limits";
 import type {
   AttachmentDataInput,
   AttachmentKind,
@@ -18,9 +19,9 @@ import { isMessageReaction } from "../shared/ipc";
 import { OpenBotDatabase } from "./openbot-database";
 import { isRecord } from "./protocol";
 
-const MAX_ATTACHMENTS = 10;
-const MAX_FILE_BYTES = 100 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 250 * 1024 * 1024;
+const MAX_ATTACHMENTS = INPUT_LIMITS.attachments;
+const MAX_FILE_BYTES = ATTACHMENT_LIMITS.fileBytes;
+const MAX_TOTAL_BYTES = ATTACHMENT_LIMITS.totalBytes;
 
 interface StoredAttachment extends AttachmentSummary {
   path: string;
@@ -152,6 +153,21 @@ export class MailboxStore {
     if (paths.length + data.length > MAX_ATTACHMENTS) {
       throw new Error(`Choose at most ${MAX_ATTACHMENTS} files.`);
     }
+    if (this.#state.drafts.length + paths.length + data.length > INPUT_LIMITS.draftAttachments) {
+      throw new Error(`Keep at most ${INPUT_LIMITS.draftAttachments} draft attachments.`);
+    }
+    if (paths.some((path) => !path || path.length > INPUT_LIMITS.path)) {
+      throw new Error("An attachment path is invalid.");
+    }
+    if (
+      data.some(
+        (item) =>
+          item.name.length > INPUT_LIMITS.attachmentName ||
+          item.mimeType.length > INPUT_LIMITS.mimeType,
+      )
+    ) {
+      throw new Error("Attachment metadata is too long.");
+    }
 
     const prepared: StoredDraft[] = [];
     let total = 0;
@@ -237,10 +253,21 @@ export class MailboxStore {
 
     const recipients = [...new Set(input.recipientBotIds)];
     if (recipients.length === 0) throw new Error("At least one recipient is required.");
-    if (recipients.length > 32) throw new Error("A message can have at most 32 recipients.");
+    if (recipients.length > INPUT_LIMITS.messageRecipients) {
+      throw new Error(`A message can have at most ${INPUT_LIMITS.messageRecipients} recipients.`);
+    }
+    if (recipients.some((id) => !id || id.length > INPUT_LIMITS.identifier)) {
+      throw new Error("A message recipient is invalid.");
+    }
+    if (
+      input.idempotencyKey !== undefined &&
+      input.idempotencyKey.length > INPUT_LIMITS.identifier
+    ) {
+      throw new Error("The idempotency key is too long.");
+    }
 
     const text = input.text.trim();
-    if (text.length > 100_000) throw new Error("Message is too long.");
+    if (text.length > INPUT_LIMITS.messageText) throw new Error("Message is too long.");
 
     const drafts = (input.draftIds ?? []).map((id) => {
       const draft = this.#state.drafts.find((candidate) => candidate.id === id);

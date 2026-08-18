@@ -1,4 +1,5 @@
 import { createSignal, Show } from "solid-js";
+import { INPUT_LIMITS } from "../../../shared/input-limits";
 
 interface JoinServerDialogProps {
   inviteUrl: string;
@@ -52,6 +53,7 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
             value={inviteUrl()}
             onInput={(event) => setInviteUrl(event.currentTarget.value)}
             rows="3"
+            maxlength={INPUT_LIMITS.inviteUrl}
             spellcheck={false}
           />
         </label>
@@ -67,7 +69,7 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
           <button
             type="button"
             class="remote-secondary-button"
-            disabled={busy()}
+            disabled={busy() || !inviteUrl().trim()}
             onClick={props.onClose}
           >
             Cancel

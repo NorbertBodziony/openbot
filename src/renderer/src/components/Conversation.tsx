@@ -8,6 +8,7 @@ import {
   Show,
   untrack,
 } from "solid-js";
+import { INPUT_LIMITS } from "../../../shared/input-limits";
 import type {
   AgentEvent,
   AgentModelId,
@@ -1675,6 +1676,7 @@ export function Conversation(props: ConversationProps) {
                 aria-label="To:"
                 aria-expanded="true"
                 placeholder="Search or create agents"
+                maxlength={INPUT_LIMITS.agentName}
                 value={pickerQuery()}
                 onInput={(event) => {
                   setPickerQuery(event.currentTarget.value);
@@ -2276,6 +2278,7 @@ export function Conversation(props: ConversationProps) {
               <input
                 value={browserAddress()}
                 aria-label="Browser address"
+                maxlength={INPUT_LIMITS.browserUrl}
                 onInput={(event) => setBrowserAddress(event.currentTarget.value)}
               />
             </form>
@@ -2464,6 +2467,7 @@ export function Conversation(props: ConversationProps) {
               <input
                 value={settingsName()}
                 aria-label="Agent name"
+                maxlength={INPUT_LIMITS.agentName}
                 onInput={(event) => setSettingsName(event.currentTarget.value)}
                 onBlur={() => saveBotPatch({ name: settingsName().trim() || "New agent" })}
               />
@@ -2474,6 +2478,7 @@ export function Conversation(props: ConversationProps) {
                 value={settingsTitle()}
                 aria-label="Agent title"
                 placeholder="Describe what your agent does"
+                maxlength={INPUT_LIMITS.agentTitle}
                 onInput={(event) => setSettingsTitle(event.currentTarget.value)}
                 onBlur={() => saveBotPatch({ role: settingsTitle().trim() })}
               />
@@ -2485,6 +2490,7 @@ export function Conversation(props: ConversationProps) {
                 value={settingsDescription()}
                 aria-label="Agent description"
                 placeholder="What this agent is for"
+                maxlength={INPUT_LIMITS.agentDescription}
                 onInput={(event) => setSettingsDescription(event.currentTarget.value)}
                 onBlur={() => saveBotPatch({ description: settingsDescription() })}
               />

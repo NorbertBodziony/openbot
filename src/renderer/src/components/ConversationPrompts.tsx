@@ -1,4 +1,5 @@
 import { createSignal, For, Show } from "solid-js";
+import { INPUT_LIMITS } from "../../../shared/input-limits";
 import type { AgentPromptQuestion } from "../../../shared/ipc";
 
 export function ChoiceCard(props: {
@@ -67,6 +68,7 @@ export function ChoiceCard(props: {
         value={answer()}
         placeholder="Type your own answer"
         aria-label="Custom answer"
+        maxlength={INPUT_LIMITS.promptAnswerText}
         disabled={props.pending}
         onInput={(event) => {
           setCustomSelected(true);
@@ -131,6 +133,7 @@ export function PromptCard(props: {
               value={answers()[question.id] ?? ""}
               placeholder="Type your answer"
               aria-label={question.header}
+              maxlength={INPUT_LIMITS.promptAnswerText}
               onInput={(event) =>
                 setAnswers((current) => ({ ...current, [question.id]: event.currentTarget.value }))
               }

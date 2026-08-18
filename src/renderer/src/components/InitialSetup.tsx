@@ -8,6 +8,7 @@ import {
   Show,
   untrack,
 } from "solid-js";
+import { INPUT_LIMITS } from "../../../shared/input-limits";
 import type {
   AgentProviderId,
   AgentProviderState,
@@ -346,6 +347,7 @@ export function InitialSetup(props: InitialSetupProps) {
               <span>Host invitation</span>
               <textarea
                 rows="3"
+                maxlength={INPUT_LIMITS.inviteUrl}
                 value={inviteUrl()}
                 onInput={(event) => setInviteUrl(event.currentTarget.value)}
                 placeholder="Paste an openbot:// invitation link"

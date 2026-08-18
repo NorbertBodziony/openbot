@@ -1,5 +1,6 @@
 import { Portal } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js";
+import { INPUT_LIMITS } from "../../../shared/input-limits";
 import type {
   AccountUsage,
   AgentStatus,
@@ -407,6 +408,7 @@ export function Sidebar(props: SidebarProps) {
             onInput={(event) => setQuery(event.currentTarget.value)}
             placeholder="Search"
             aria-label="Search chats"
+            maxlength={INPUT_LIMITS.agentName}
           />
         </label>
       </div>

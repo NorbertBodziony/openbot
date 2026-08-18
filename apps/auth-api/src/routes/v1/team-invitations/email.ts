@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/solid-router";
 import { normalizeEmail } from "../../../server/auth-service";
+import { readJsonObject } from "../../../server/json-body";
 import {
   apiError,
   authErrorResponse,
@@ -19,7 +20,7 @@ export const Route = createFileRoute("/v1/team-invitations/email")({
           const auth = requestAuthService();
           const user = await auth.authenticate(token);
           if (!user) return apiError(401, "unauthorized", "The session is invalid.");
-          const body = (await request.json()) as Record<string, unknown>;
+          const body = await readJsonObject(request);
           if (
             typeof body.email !== "string" ||
             typeof body.serverName !== "string" ||

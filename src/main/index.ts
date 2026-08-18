@@ -21,6 +21,7 @@ import { AgentService } from "../backend/agent-service";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
 import { MailboxStore } from "../backend/mailbox-store";
+import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "../shared/input-limits";
 import {
   type AgentEvent,
   type AgentIpcRequest,
@@ -183,7 +184,7 @@ function registerIpcHandlers(
     return shell.openExternal(EXTERNAL_DESTINATIONS[destination]);
   });
   handleTrusted(IPC_CHANNELS.openUrl, (value: unknown) => {
-    const url = new URL(requireString(value, "URL"));
+    const url = new URL(requireString(value, "URL", INPUT_LIMITS.browserUrl));
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       throw new Error("Only HTTP(S) links can open in the external browser.");
     }
@@ -191,13 +192,13 @@ function registerIpcHandlers(
   });
   handleTrusted(IPC_CHANNELS.authGetState, () => centralAuth.getState());
   handleTrusted(IPC_CHANNELS.authRequestEmailCode, (email: unknown) =>
-    centralAuth.requestEmailCode(requireString(email, "email")),
+    centralAuth.requestEmailCode(requireString(email, "email", INPUT_LIMITS.email)),
   );
   handleTrusted(IPC_CHANNELS.authVerifyEmailCode, (input: unknown) => {
     if (!isObject(input)) throw new Error("Sign-in code details are required.");
     return centralAuth.verifyEmailCode(
-      requireString(input.challengeId, "challengeId"),
-      requireString(input.code, "code"),
+      requireString(input.challengeId, "challengeId", INPUT_LIMITS.identifier),
+      requireString(input.code, "code", 32),
     );
   });
   handleTrusted(IPC_CHANNELS.authLogout, () => centralAuth.logout());
@@ -223,7 +224,7 @@ function registerIpcHandlers(
     remoteServers.login(parseLoginServer(input)),
   );
   handleTrusted(IPC_CHANNELS.serversUpdateAddress, (updateUrl: unknown) =>
-    remoteServers.updateAddress(requireString(updateUrl, "updateUrl")),
+    remoteServers.updateAddress(requireString(updateUrl, "updateUrl", INPUT_LIMITS.inviteUrl)),
   );
   handleTrusted(IPC_CHANNELS.serversRemove, (serverId: unknown) =>
     remoteServers.remove(requireString(serverId, "serverId")),
@@ -921,22 +922,27 @@ async function prepareForShutdown(): Promise<void> {
   await (agentService?.stop() ?? Promise.resolve());
 }
 
-function requireString(value: unknown, field: string): string {
+function requireString(
+  value: unknown,
+  field: string,
+  maxLength: number = INPUT_LIMITS.identifier,
+): string {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${field} is required.`);
+  if (value.length > maxLength) throw new Error(`${field} is too long.`);
   return value;
 }
 
 function parseHostConfig(value: unknown): ConfigureHostInput {
   if (!isObject(value)) throw new Error("Host configuration is required.");
   return {
-    serverName: requireString(value.serverName, "serverName"),
+    serverName: requireString(value.serverName, "serverName", INPUT_LIMITS.serverName),
   };
 }
 
 function parseJoinServer(value: unknown): JoinServerInput {
   if (!isObject(value)) throw new Error("Invitation details are required.");
   return {
-    inviteUrl: requireString(value.inviteUrl, "inviteUrl"),
+    inviteUrl: requireString(value.inviteUrl, "inviteUrl", INPUT_LIMITS.inviteUrl),
   };
 }
 
@@ -955,6 +961,9 @@ function parseCreateTeamInvite(value: unknown): CreateTeamInviteInput {
   if (value.email !== undefined && typeof value.email !== "string") {
     throw new Error("Invalid invitation email.");
   }
+  if (typeof value.email === "string" && value.email.length > INPUT_LIMITS.email) {
+    throw new Error("Invitation email is too long.");
+  }
   return {
     role: value.role,
     ...(value.email?.trim() ? { email: value.email.trim() } : {}),
@@ -968,7 +977,7 @@ function parseRemoteMacConnect(value: unknown): RemoteMacConnectInput {
     throw new Error("Invalid serverId.");
   }
   return {
-    hostname: requireString(value.hostname, "hostname"),
+    hostname: requireString(value.hostname, "hostname", INPUT_LIMITS.hostname),
     serverId: serverId ?? null,
   };
 }
@@ -1059,7 +1068,9 @@ async function uploadRemotePaths(
   serverId: string,
   paths: string[],
 ) {
-  if (paths.length > 10) throw new Error("Choose at most 10 files.");
+  if (paths.length > INPUT_LIMITS.attachments) {
+    throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
+  }
   const files = await Promise.all(
     paths.map(async (path) => ({
       name: basename(path),
@@ -1067,10 +1078,12 @@ async function uploadRemotePaths(
     })),
   );
   const total = files.reduce((sum, file) => sum + file.bytes.byteLength, 0);
-  if (files.some((file) => file.bytes.byteLength > 100 * 1024 * 1024)) {
+  if (files.some((file) => file.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes)) {
     throw new Error("A file exceeds the 100 MB limit.");
   }
-  if (total > 250 * 1024 * 1024) throw new Error("Attachments exceed the 250 MB total limit.");
+  if (total > ATTACHMENT_LIMITS.totalBytes) {
+    throw new Error("Attachments exceed the 250 MB total limit.");
+  }
   return Promise.all(
     files.map((file) =>
       remoteServers.uploadAttachment(file.name, mimeTypeForName(file.name), file.bytes, serverId),
@@ -1083,7 +1096,9 @@ async function uploadRemoteImports(
   serverId: string,
   input: ImportAttachmentsInput,
 ) {
-  if (input.paths.length + input.data.length > 10) throw new Error("Choose at most 10 files.");
+  if (input.paths.length + input.data.length > INPUT_LIMITS.attachments) {
+    throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
+  }
   const pathFiles = await Promise.all(
     input.paths.map(async (path) => ({
       name: basename(path),
@@ -1099,10 +1114,10 @@ async function uploadRemoteImports(
       bytes: item.bytes,
     })),
   ];
-  if (files.some((file) => file.bytes.byteLength > 100 * 1024 * 1024)) {
+  if (files.some((file) => file.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes)) {
     throw new Error("A file exceeds the 100 MB limit.");
   }
-  if (files.reduce((sum, file) => sum + file.bytes.byteLength, 0) > 250 * 1024 * 1024) {
+  if (files.reduce((sum, file) => sum + file.bytes.byteLength, 0) > ATTACHMENT_LIMITS.totalBytes) {
     throw new Error("Attachments exceed the 250 MB total limit.");
   }
   return Promise.all(
@@ -1136,16 +1151,23 @@ function parseSendMessage(value: unknown): SendMessageInput {
   const attachmentDraftIds = value.attachmentDraftIds ?? [];
   if (
     !Array.isArray(attachmentDraftIds) ||
-    !attachmentDraftIds.every((item) => typeof item === "string")
+    attachmentDraftIds.length > INPUT_LIMITS.attachments ||
+    !attachmentDraftIds.every(
+      (item) => typeof item === "string" && item.length <= INPUT_LIMITS.identifier,
+    )
   ) {
     throw new Error("Invalid attachment drafts.");
   }
   if (typeof value.text !== "string") throw new Error("text is required.");
+  if (value.text.length > INPUT_LIMITS.messageText) throw new Error("Message is too long.");
   if (!value.text.trim() && attachmentDraftIds.length === 0) {
     throw new Error("A message or attachment is required.");
   }
   const replyToMessageId = value.replyToMessageId ?? null;
-  if (replyToMessageId !== null && typeof replyToMessageId !== "string") {
+  if (
+    replyToMessageId !== null &&
+    (typeof replyToMessageId !== "string" || replyToMessageId.length > INPUT_LIMITS.identifier)
+  ) {
     throw new Error("Invalid reply target.");
   }
   return {
@@ -1172,11 +1194,19 @@ function parseMessageReaction(value: unknown) {
 function parseUpdateBot(value: unknown): UpdateBotInput {
   if (!isObject(value)) throw new Error("Invalid bot update request.");
   const result: UpdateBotInput = { botId: requireString(value.botId, "botId") };
+  const limits = {
+    name: INPUT_LIMITS.agentName,
+    role: INPUT_LIMITS.agentTitle,
+    description: INPUT_LIMITS.agentDescription,
+  } as const;
   for (const field of ["name", "role", "description"] as const) {
     if (value[field] !== undefined && typeof value[field] !== "string") {
       throw new Error(`Invalid ${field}.`);
     }
-    if (typeof value[field] === "string") result[field] = value[field];
+    if (typeof value[field] === "string") {
+      if (value[field].length > limits[field]) throw new Error(`${field} is too long.`);
+      result[field] = value[field];
+    }
   }
   if (value.notifications !== undefined) {
     if (typeof value.notifications !== "boolean") throw new Error("Invalid notifications value.");
@@ -1207,14 +1237,23 @@ function parseImportAttachments(value: unknown): ImportAttachmentsInput {
   if (!isObject(value) || !Array.isArray(value.paths) || !Array.isArray(value.data)) {
     throw new Error("Invalid attachment import.");
   }
-  if (!value.paths.every((path) => typeof path === "string" && path.length > 0)) {
+  if (value.paths.length + value.data.length > INPUT_LIMITS.attachments) {
+    throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
+  }
+  if (
+    !value.paths.every(
+      (path) => typeof path === "string" && path.length > 0 && path.length <= INPUT_LIMITS.path,
+    )
+  ) {
     throw new Error("Invalid attachment path.");
   }
   const data = value.data.map((item) => {
     if (
       !isObject(item) ||
       typeof item.name !== "string" ||
+      item.name.length > INPUT_LIMITS.attachmentName ||
       typeof item.mimeType !== "string" ||
+      item.mimeType.length > INPUT_LIMITS.mimeType ||
       !(item.bytes instanceof Uint8Array)
     ) {
       throw new Error("Invalid attachment data.");
@@ -1367,10 +1406,26 @@ function parsePromptResponse(value: unknown): RespondToPromptInput {
   ) {
     throw new Error("Invalid prompt response.");
   }
+  if (
+    (typeof value.requestId === "string" &&
+      (value.requestId.length === 0 || value.requestId.length > INPUT_LIMITS.identifier)) ||
+    (typeof value.requestId === "number" && !Number.isSafeInteger(value.requestId))
+  ) {
+    throw new Error("Invalid prompt response.");
+  }
   if (!isObject(value.answers)) throw new Error("Prompt answers are required.");
+  const entries = Object.entries(value.answers);
+  if (entries.length > INPUT_LIMITS.promptQuestions) throw new Error("Too many prompt answers.");
   const answers: Record<string, string[]> = {};
-  for (const [key, answer] of Object.entries(value.answers)) {
-    if (!Array.isArray(answer) || !answer.every((item) => typeof item === "string")) {
+  for (const [key, answer] of entries) {
+    if (
+      key.length > INPUT_LIMITS.identifier ||
+      !Array.isArray(answer) ||
+      answer.length > INPUT_LIMITS.promptAnswersPerQuestion ||
+      !answer.every(
+        (item) => typeof item === "string" && item.length <= INPUT_LIMITS.promptAnswerText,
+      )
+    ) {
       throw new Error("Invalid prompt answer.");
     }
     answers[key] = answer;
@@ -1381,7 +1436,7 @@ function parsePromptResponse(value: unknown): RespondToPromptInput {
 function parseBrowserOpen(value: unknown): BrowserOpenInput {
   if (!isObject(value)) throw new Error("Invalid browser open request.");
   return {
-    url: requireString(value.url, "url"),
+    url: requireString(value.url, "url", INPUT_LIMITS.browserUrl),
     ownerThreadId:
       value.ownerThreadId === null || value.ownerThreadId === undefined
         ? null

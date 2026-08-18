@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/solid-router";
+import { readJsonObject } from "../../../../server/json-body";
 import {
   apiError,
   authErrorResponse,
@@ -12,7 +13,7 @@ export const Route = createFileRoute("/v1/auth/email/verify")({
     handlers: {
       POST: async ({ request }) => {
         try {
-          const body = (await request.json()) as { challengeId?: unknown; code?: unknown };
+          const body = await readJsonObject(request);
           if (typeof body.challengeId !== "string" || typeof body.code !== "string") {
             return apiError(400, "invalid_sign_in_code", "The sign-in code is invalid.");
           }

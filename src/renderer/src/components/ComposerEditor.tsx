@@ -1,5 +1,6 @@
 import { Portal } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { INPUT_LIMITS } from "../../../shared/input-limits";
 import { buildAnimatedAvatarSvg } from "../blobatar";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
@@ -68,7 +69,12 @@ export function ComposerEditor(props: ComposerEditorProps) {
 
   function emitValue() {
     if (!editor) return;
-    const value = serializeEditor(editor);
+    let value = serializeEditor(editor);
+    if (value.length > INPUT_LIMITS.messageText) {
+      value = value.slice(0, INPUT_LIMITS.messageText);
+      renderEditorValue(editor, value, props.bots);
+      placeCaretAtEnd(editor);
+    }
     lastEmittedValue = value;
     props.onValueChange(value);
   }
@@ -169,7 +175,10 @@ export function ComposerEditor(props: ComposerEditorProps) {
     const clipboard = event.clipboardData;
     if (!clipboard || clipboard.files.length > 0) return;
 
-    const text = clipboard.getData("text/plain").replace(/\r\n?/g, "\n");
+    const text = clipboard
+      .getData("text/plain")
+      .replace(/\r\n?/g, "\n")
+      .slice(0, INPUT_LIMITS.messageText);
     if (!text) return;
 
     insertPlainText(editor, text);
@@ -334,6 +343,15 @@ function insertPlainText(editor: HTMLDivElement, text: string): void {
   range.insertNode(textNode);
   range.setStart(textNode, textNode.data.length);
   range.collapse(true);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function placeCaretAtEnd(editor: HTMLDivElement): void {
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  const selection = window.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(range);
 }

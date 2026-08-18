@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { INPUT_LIMITS } from "../shared/input-limits";
 import { parseAddressUpdateUrl, verifyAddressUpdate } from "./remote-server-manager";
 import { fingerprint, TeamStore } from "./team-store";
 
@@ -14,6 +15,20 @@ afterEach(async () => {
 });
 
 describe("TeamStore", () => {
+  it("rejects server names above the shared limit", async () => {
+    const { store } = await createStore();
+
+    await expect(
+      store.configureWithAccount("x".repeat(INPUT_LIMITS.serverName + 1), {
+        id: "owner-account",
+        email: "owner@example.com",
+        name: "Owner",
+        avatarUrl: null,
+      }),
+    ).rejects.toThrow(`2 to ${INPUT_LIMITS.serverName} characters`);
+    expect(store.configured).toBe(false);
+  });
+
   it("creates an owner and authenticates without storing the password", async () => {
     const { store, path } = await createStore();
     const identity = await store.configure("Studio Mac", "owner", "correct horse battery");

@@ -4,6 +4,7 @@ import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { INPUT_LIMITS } from "../shared/input-limits";
 import { MailboxStore } from "./mailbox-store";
 
 let root: string;
@@ -213,6 +214,25 @@ describe("MailboxStore", () => {
         text: "Too many",
       }),
     ).rejects.toThrow("32 recipients");
+    await expect(
+      store.enqueue({
+        sender: { kind: "user" },
+        recipientBotIds: ["x".repeat(INPUT_LIMITS.identifier + 1)],
+        text: "Invalid recipient",
+      }),
+    ).rejects.toThrow("recipient is invalid");
+    await expect(
+      store.prepareImportedAttachments(
+        [],
+        [
+          {
+            name: "x".repeat(INPUT_LIMITS.attachmentName + 1),
+            mimeType: "image/png",
+            bytes: new Uint8Array(),
+          },
+        ],
+      ),
+    ).rejects.toThrow("metadata is too long");
   });
 
   it("imports pathless image bytes and accepts an attachment-only user message", async () => {

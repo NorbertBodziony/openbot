@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
+import { INPUT_LIMITS } from "../../../shared/input-limits";
 import type { BotProfile } from "../data";
 import { ComposerEditor } from "./ComposerEditor";
 
@@ -97,6 +98,26 @@ describe("ComposerEditor", () => {
 
     expect(onValueChange).toHaveBeenLastCalledWith("First line\nSecond line\nThird line");
     expect(editor.textContent).toBe("First line\nSecond line\nThird line");
+  });
+
+  it("limits typed and pasted messages to the shared message limit", async () => {
+    const { editor, onValueChange } = renderComposer();
+    editor.textContent = "x".repeat(INPUT_LIMITS.messageText + 1);
+    placeCaretAtEnd(editor);
+    await fireEvent.input(editor);
+
+    expect(onValueChange).toHaveBeenLastCalledWith("x".repeat(INPUT_LIMITS.messageText));
+    expect(editor.textContent).toHaveLength(INPUT_LIMITS.messageText);
+
+    editor.textContent = "";
+    placeCaretAtEnd(editor);
+    await fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        getData: () => "y".repeat(INPUT_LIMITS.messageText + 1),
+      },
+    });
+    expect(onValueChange).toHaveBeenLastCalledWith("y".repeat(INPUT_LIMITS.messageText));
   });
 
   it("renders saved mentions with the animated agent avatar", () => {

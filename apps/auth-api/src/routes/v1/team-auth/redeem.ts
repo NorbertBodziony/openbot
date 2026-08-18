@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/solid-router";
+import { readJsonObject } from "../../../server/json-body";
 import {
   apiError,
   authErrorResponse,
@@ -12,7 +13,7 @@ export const Route = createFileRoute("/v1/team-auth/redeem")({
     handlers: {
       POST: async ({ request }) => {
         try {
-          const body = (await request.json()) as { ticket?: unknown; serverId?: unknown };
+          const body = await readJsonObject(request);
           if (typeof body.ticket !== "string" || typeof body.serverId !== "string") {
             return apiError(400, "invalid_team_ticket", "The team ticket is invalid.");
           }

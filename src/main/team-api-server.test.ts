@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
+import { INPUT_LIMITS } from "../shared/input-limits";
 import { TeamApiServer } from "./team-api-server";
 import { TeamStore } from "./team-store";
 
@@ -165,6 +166,51 @@ describe("TeamApiServer administration", () => {
         },
       });
       expect(store.authenticate(ownerToken)).toBeNull();
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("rejects oversized agent input before it reaches the agent service", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-limits-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const agents = new EventEmitter() as unknown as AgentService;
+    const api = new TeamApiServer({
+      store,
+      agents,
+      mailbox: {} as MailboxStore,
+      browser: {} as BrowserHost,
+      getRemoteMac: () => ({ hostname: null, online: false }),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      const message = await fetch(`${base}/v1/agents/chief/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: "x".repeat(INPUT_LIMITS.messageText + 1) }),
+      });
+      expect(message.status).toBe(400);
+
+      const update = await fetch(`${base}/v1/agents/chief`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: "x".repeat(INPUT_LIMITS.agentName + 1) }),
+      });
+      expect(update.status).toBe(400);
     } finally {
       await api.stop();
     }

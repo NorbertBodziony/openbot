@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { INPUT_LIMITS } from "../shared/input-limits";
 import {
   type AgentModelId,
   type AgentReasoningEffort,
@@ -134,6 +135,9 @@ export class BotStore {
   }
 
   async createBot(): Promise<BotSummary> {
+    if (this.#state.bots.length >= INPUT_LIMITS.agents) {
+      throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
+    }
     const record = this.#createRecord(`bot-${randomUUID()}`, "New agent", "New teammate");
     this.#state.bots.unshift(record);
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
@@ -143,9 +147,19 @@ export class BotStore {
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
     const bot = this.#requireBot(input.botId);
-    if (input.name !== undefined) bot.name = requiredText(input.name, "Agent name", 80);
-    if (input.role !== undefined) bot.role = input.role.trim().slice(0, 120);
-    if (input.description !== undefined) bot.description = input.description.trim().slice(0, 2_000);
+    if (input.name !== undefined) {
+      bot.name = requiredText(input.name, "Agent name", INPUT_LIMITS.agentName);
+    }
+    if (input.role !== undefined) {
+      bot.role = limitedText(input.role, "Agent title", INPUT_LIMITS.agentTitle);
+    }
+    if (input.description !== undefined) {
+      bot.description = limitedText(
+        input.description,
+        "Agent description",
+        INPUT_LIMITS.agentDescription,
+      );
+    }
     if (input.notifications !== undefined) bot.notifications = input.notifications;
     if (input.model !== undefined) {
       bot.model = input.model;
@@ -291,7 +305,14 @@ export class BotStore {
 function requiredText(value: string, label: string, maxLength: number): string {
   const trimmed = value.trim();
   if (!trimmed) throw new Error(`${label} is required.`);
-  return trimmed.slice(0, maxLength);
+  if (trimmed.length > maxLength) throw new Error(`${label} is too long.`);
+  return trimmed;
+}
+
+function limitedText(value: string, label: string, maxLength: number): string {
+  const trimmed = value.trim();
+  if (trimmed.length > maxLength) throw new Error(`${label} is too long.`);
+  return trimmed;
 }
 
 function validateBotId(id: string): void {

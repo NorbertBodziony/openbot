@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { INPUT_LIMITS } from "../shared/input-limits";
 import { BotStore } from "./bot-store";
 
 const temporaryRoots: string[] = [];
@@ -229,6 +230,28 @@ describe("BotStore", () => {
       reasoningEffort: "high",
       avatarSeed: "chief:avatar:2:4",
       avatarHue: 215,
+    });
+  });
+
+  it("rejects agent fields above their limits without truncating stored values", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
+    temporaryRoots.push(root);
+    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    await store.initialize();
+    await store.getOrCreate("chief");
+
+    await expect(
+      store.updateBot({ botId: "chief", name: "x".repeat(INPUT_LIMITS.agentName + 1) }),
+    ).rejects.toThrow("Agent name is too long");
+    await expect(
+      store.updateBot({
+        botId: "chief",
+        description: "x".repeat(INPUT_LIMITS.agentDescription + 1),
+      }),
+    ).rejects.toThrow("Agent description is too long");
+    expect(store.list().find((bot) => bot.id === "chief")).toMatchObject({
+      name: "Chief",
+      description: "",
     });
   });
 

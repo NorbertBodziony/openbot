@@ -4,6 +4,7 @@ import { CloudflareTunnelProvider } from "./cloudflare-tunnel-provider";
 import { D1AuthRepository } from "./d1-auth-repository";
 import { D1TeamTunnelRepository } from "./d1-team-tunnel-repository";
 import { createEmailCodeDelivery, createTeamInviteEmailDelivery } from "./email-delivery";
+import { JsonBodyError } from "./json-body";
 import { TeamTunnelService } from "./team-tunnel-service";
 import type { TeamInviteEmailDelivery, WorkerBindings } from "./types";
 
@@ -72,6 +73,9 @@ export function apiError(status: number, code: string, message: string): Respons
 }
 
 export function authErrorResponse(error: unknown): Response {
+  if (error instanceof JsonBodyError) {
+    return apiError(error.status, error.code, error.message);
+  }
   if (error instanceof AuthServiceError) {
     const response = apiError(error.status, error.code, error.message);
     if (error.retryAfterSeconds !== undefined) {

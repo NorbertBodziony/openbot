@@ -1,8 +1,46 @@
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
+import { INPUT_LIMITS } from "../../../shared/input-limits";
 import { HostPanel } from "./HostPanel";
 
 describe("HostPanel", () => {
+  it("shows the shared server-name limit during host setup", () => {
+    render(() => (
+      <HostPanel
+        accountEmail="owner@example.com"
+        status={{
+          phase: "unconfigured",
+          configured: false,
+          enabledOnLaunch: false,
+          serverId: null,
+          serverName: null,
+          apiUrl: null,
+          vncHostname: null,
+          apiOnline: false,
+          vncOnline: false,
+          message: "Configure this host.",
+        }}
+        members={[]}
+        invites={[]}
+        sessions={[]}
+        onClose={vi.fn()}
+        onConfigure={vi.fn()}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onCreateInvite={vi.fn()}
+        onUpdateMember={vi.fn()}
+        onRevokeSession={vi.fn()}
+        onRevokeInvite={vi.fn()}
+        onCopyAddressUpdate={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByRole("textbox", { name: "Server name" })).toHaveAttribute(
+      "maxlength",
+      String(INPUT_LIMITS.serverName),
+    );
+  });
+
   it("sends an email-bound invitation from the configured host", async () => {
     const onCreateInvite = vi.fn().mockResolvedValue({
       id: "invite-1",
@@ -43,7 +81,9 @@ describe("HostPanel", () => {
     ));
 
     await fireEvent.click(screen.getByRole("button", { name: "Send email" }));
-    await fireEvent.input(screen.getByRole("textbox", { name: "Email address" }), {
+    const emailInput = screen.getByRole("textbox", { name: "Email address" });
+    expect(emailInput).toHaveAttribute("maxlength", String(INPUT_LIMITS.email));
+    await fireEvent.input(emailInput, {
       target: { value: "alice@example.com" },
     });
     await fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));

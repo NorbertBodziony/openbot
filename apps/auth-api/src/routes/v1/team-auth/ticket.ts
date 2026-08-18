@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/solid-router";
+import { readJsonObject } from "../../../server/json-body";
 import {
   apiError,
   authErrorResponse,
@@ -15,7 +16,7 @@ export const Route = createFileRoute("/v1/team-auth/ticket")({
         try {
           const token = bearerToken(request);
           if (!token) return apiError(401, "unauthorized", "Sign in is required.");
-          const body = (await request.json()) as { serverId?: unknown };
+          const body = await readJsonObject(request);
           if (typeof body.serverId !== "string") {
             return apiError(400, "invalid_server_id", "The team server ID is invalid.");
           }

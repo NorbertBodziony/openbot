@@ -1,4 +1,5 @@
 import { createSignal, Show } from "solid-js";
+import { INPUT_LIMITS } from "../../../shared/input-limits";
 import type { CentralAuthState } from "../../../shared/ipc";
 
 interface AccountLoginProps {
@@ -63,6 +64,7 @@ export function AccountLogin(props: AccountLoginProps) {
                 autocomplete="email"
                 inputmode="email"
                 placeholder="you@example.com"
+                maxlength={INPUT_LIMITS.email}
                 value={email()}
                 onInput={(event) => setEmail(event.currentTarget.value)}
                 autofocus

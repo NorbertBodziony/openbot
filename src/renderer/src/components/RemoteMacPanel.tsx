@@ -1,4 +1,5 @@
 import { createSignal, For, Show } from "solid-js";
+import { INPUT_LIMITS } from "../../../shared/input-limits";
 import type { RemoteMacSession, ServerSummary } from "../../../shared/ipc";
 
 interface RemoteMacPanelProps {
@@ -71,13 +72,14 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
             value={hostname()}
             placeholder="example.trycloudflare.com"
             spellcheck={false}
+            maxlength={INPUT_LIMITS.hostname}
             onInput={(event) => setHostname(event.currentTarget.value)}
           />
         </label>
         <button
           type="button"
           class="remote-primary-button"
-          disabled={busy()}
+          disabled={busy() || !hostname().trim()}
           onClick={() => void connect()}
         >
           {busy() ? "Connecting…" : "Connect"}

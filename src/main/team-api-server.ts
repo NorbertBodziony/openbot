@@ -6,7 +6,18 @@ import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
-import type { AgentEvent, CentralAuthUser, TeamMemberSummary, UpdateBotInput } from "../shared/ipc";
+import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "../shared/input-limits";
+import {
+  type AgentEvent,
+  type CentralAuthUser,
+  isAgentModel,
+  isAvatarHue,
+  isAvatarSeed,
+  isMessageReaction,
+  isReasoningEffort,
+  type TeamMemberSummary,
+  type UpdateBotInput,
+} from "../shared/ipc";
 import type { TeamStore } from "./team-store";
 
 const JSON_LIMIT = 1024 * 1024;
@@ -60,7 +71,7 @@ export class TeamApiServer {
         .map((value) => value.trim());
       const encodedToken = protocols.find((value) => value.startsWith("openbot-token."));
       const token = encodedToken?.slice("openbot-token.".length) ?? "";
-      const member = this.#options.store.authenticate(token);
+      const member = token.length <= 512 ? this.#options.store.authenticate(token) : null;
       if (url.pathname !== "/v1/events" || !protocols.includes("openbot-events") || !member) {
         socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
         socket.destroy();
@@ -123,11 +134,11 @@ export class TeamApiServer {
       }
       if (method === "POST" && url.pathname === "/v1/join") {
         const body = await readJson(request);
-        this.#checkRate(request, stringField(body, "username"));
+        this.#checkRate(request, stringField(body, "username", false, 64));
         const result = await this.#options.store.acceptInvite(
-          stringField(body, "inviteToken"),
-          stringField(body, "username"),
-          stringField(body, "password"),
+          stringField(body, "inviteToken", false, INPUT_LIMITS.identifier),
+          stringField(body, "username", false, 64),
+          stringField(body, "password", false, 256),
         );
         return this.#json(response, 201, result);
       }
@@ -136,24 +147,24 @@ export class TeamApiServer {
         const identity = this.#options.store.getIdentity();
         const user = identity
           ? await this.#options.redeemCentralTicket?.(
-              stringField(body, "accountTicket"),
+              stringField(body, "accountTicket", false, INPUT_LIMITS.identifier),
               identity.serverId,
             )
           : null;
         if (!user) return this.#json(response, 401, { error: "OpenBot sign-in is required." });
         this.#checkRate(request, user.email);
         const result = await this.#options.store.acceptInviteWithAccount(
-          stringField(body, "inviteToken"),
+          stringField(body, "inviteToken", false, INPUT_LIMITS.identifier),
           user,
         );
         return this.#json(response, 201, result);
       }
       if (method === "POST" && url.pathname === "/v1/auth/login") {
         const body = await readJson(request);
-        this.#checkRate(request, stringField(body, "username"));
+        this.#checkRate(request, stringField(body, "username", false, 64));
         const result = await this.#options.store.login(
-          stringField(body, "username"),
-          stringField(body, "password"),
+          stringField(body, "username", false, 64),
+          stringField(body, "password", false, 256),
         );
         return this.#json(response, 200, result);
       }
@@ -162,7 +173,7 @@ export class TeamApiServer {
         const identity = this.#options.store.getIdentity();
         const user = identity
           ? await this.#options.redeemCentralTicket?.(
-              stringField(body, "accountTicket"),
+              stringField(body, "accountTicket", false, INPUT_LIMITS.identifier),
               identity.serverId,
             )
           : null;
@@ -184,8 +195,8 @@ export class TeamApiServer {
         const body = await readJson(request);
         await this.#options.store.changePassword(
           member.id,
-          stringField(body, "currentPassword"),
-          stringField(body, "newPassword"),
+          stringField(body, "currentPassword", false, 256),
+          stringField(body, "newPassword", false, 256),
         );
         return this.#empty(response, 204);
       }
@@ -210,7 +221,7 @@ export class TeamApiServer {
           response,
           201,
           await this.#options.browser.open(
-            stringField(body, "url"),
+            stringField(body, "url", false, INPUT_LIMITS.browserUrl),
             nullableString(body, "ownerThreadId"),
             nullableString(body, "ownerBotId"),
           ),
@@ -238,10 +249,13 @@ export class TeamApiServer {
       if (method === "POST" && url.pathname === "/v1/attachments") {
         const name = url.searchParams.get("name")?.trim();
         const mimeType = url.searchParams.get("mime") ?? "application/octet-stream";
-        if (!name || basename(name) !== name || name.length > 255) {
+        if (!name || basename(name) !== name || name.length > INPUT_LIMITS.attachmentName) {
           throw new HttpError(400, "A safe attachment name is required.");
         }
-        const bytes = await readBinary(request, 100 * 1024 * 1024);
+        if (mimeType.length > INPUT_LIMITS.mimeType) {
+          throw new HttpError(400, "The attachment MIME type is too long.");
+        }
+        const bytes = await readBinary(request, ATTACHMENT_LIMITS.fileBytes);
         const attachments = await this.#options.agents.prepareImportedAttachments(
           [],
           [{ name, mimeType, bytes }],
@@ -250,7 +264,7 @@ export class TeamApiServer {
       }
       const attachmentMatch = url.pathname.match(/^\/v1\/attachments\/([^/]+)$/);
       if (attachmentMatch) {
-        const attachmentId = decodeURIComponent(attachmentMatch[1] ?? "");
+        const attachmentId = pathIdentifier(attachmentMatch[1], "attachmentId");
         if (method === "DELETE") {
           await this.#options.agents.discardDraftAttachment(attachmentId);
           return this.#empty(response, 204);
@@ -287,7 +301,7 @@ export class TeamApiServer {
         return this.#json(
           response,
           200,
-          await this.#options.store.updateMember(decodeURIComponent(memberMatch[1] ?? ""), {
+          await this.#options.store.updateMember(pathIdentifier(memberMatch[1], "memberId"), {
             ...(role ? { role } : {}),
             ...(disabled === undefined ? {} : { disabled }),
           }),
@@ -298,7 +312,14 @@ export class TeamApiServer {
         const body = await readJson(request);
         const role = stringField(body, "role");
         if (role !== "admin" && role !== "member") throw new HttpError(400, "Invalid role.");
-        return this.#json(response, 201, await this.#options.store.createInvite(role));
+        return this.#json(
+          response,
+          201,
+          await this.#options.store.createInvite(
+            role,
+            nullableString(body, "email", INPUT_LIMITS.email) ?? undefined,
+          ),
+        );
       }
       if (method === "GET" && url.pathname === "/v1/team/invites") {
         requireAdmin(member);
@@ -307,7 +328,7 @@ export class TeamApiServer {
       const inviteMatch = url.pathname.match(/^\/v1\/team\/invites\/([^/]+)$/);
       if (method === "DELETE" && inviteMatch) {
         requireAdmin(member);
-        await this.#options.store.revokeInvite(decodeURIComponent(inviteMatch[1] ?? ""));
+        await this.#options.store.revokeInvite(pathIdentifier(inviteMatch[1], "inviteId"));
         return this.#empty(response, 204);
       }
       if (method === "GET" && url.pathname === "/v1/team/sessions") {
@@ -317,7 +338,7 @@ export class TeamApiServer {
       const sessionMatch = url.pathname.match(/^\/v1\/team\/sessions\/([^/]+)$/);
       if (method === "DELETE" && sessionMatch) {
         requireAdmin(member);
-        await this.#options.store.revokeSession(decodeURIComponent(sessionMatch[1] ?? ""));
+        await this.#options.store.revokeSession(pathIdentifier(sessionMatch[1], "sessionId"));
         return this.#empty(response, 204);
       }
 
@@ -339,14 +360,14 @@ export class TeamApiServer {
 
       const agentMatch = url.pathname.match(/^\/v1\/agents\/([^/]+)(?:\/(.*))?$/);
       if (agentMatch) {
-        const botId = decodeURIComponent(agentMatch[1] ?? "");
+        const botId = pathIdentifier(agentMatch[1], "botId");
         const action = agentMatch[2] ?? "";
         if (method === "PATCH" && !action) {
-          const body = (await readJson(request)) as unknown as UpdateBotInput;
+          const body = await readJson(request);
           return this.#json(
             response,
             200,
-            await this.#options.agents.updateBot({ ...body, botId }),
+            await this.#options.agents.updateBot(botUpdate(body, botId)),
           );
         }
         if (method === "DELETE" && !action) {
@@ -364,7 +385,7 @@ export class TeamApiServer {
             202,
             await this.#options.agents.sendMessage({
               botId,
-              text: stringField(body, "text", true),
+              text: stringField(body, "text", true, INPUT_LIMITS.messageText),
               attachmentDraftIds: stringArray(body, "attachmentDraftIds"),
               replyToMessageId: nullableString(body, "replyToMessageId"),
             }),
@@ -376,12 +397,12 @@ export class TeamApiServer {
         if (method === "POST" && action === "reactions") {
           const body = await readJson(request);
           const emoji = body.emoji;
-          if (emoji !== null && typeof emoji !== "string")
+          if (emoji !== null && !isMessageReaction(emoji))
             throw new HttpError(400, "Invalid emoji.");
           await this.#options.agents.setMessageReaction({
             botId,
             messageId: stringField(body, "messageId"),
-            emoji: emoji as import("../shared/ipc").MessageReaction | null,
+            emoji,
           });
           return this.#empty(response, 204);
         }
@@ -405,13 +426,9 @@ export class TeamApiServer {
 
       if (method === "POST" && url.pathname === "/v1/prompts/respond") {
         const body = await readJson(request);
-        const answers = body.answers;
-        if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
-          throw new HttpError(400, "answers is required.");
-        }
         await this.#options.agents.respondToPrompt({
-          requestId: body.requestId as string | number,
-          answers: answers as Record<string, string[]>,
+          requestId: promptRequestId(body.requestId),
+          answers: promptAnswers(body.answers),
         });
         return this.#empty(response, 204);
       }
@@ -465,7 +482,7 @@ class HttpError extends Error {
 }
 
 function bearerToken(value: string | undefined): string | null {
-  const match = value?.match(/^Bearer ([A-Za-z0-9_-]{20,})$/);
+  const match = value?.match(/^Bearer ([A-Za-z0-9_-]{20,512})$/);
   return match?.[1] ?? null;
 }
 
@@ -493,28 +510,138 @@ async function readJson(
   }
 }
 
-function stringField(value: Record<string, unknown>, field: string, allowEmpty = false): string {
+function stringField(
+  value: Record<string, unknown>,
+  field: string,
+  allowEmpty = false,
+  maxLength: number = INPUT_LIMITS.identifier,
+): string {
   const item = value[field];
   if (typeof item !== "string" || (!allowEmpty && !item.trim())) {
     throw new HttpError(400, `${field} is required.`);
   }
+  if (item.length > maxLength) throw new HttpError(400, `${field} is too long.`);
   return item;
 }
 
-function nullableString(value: Record<string, unknown>, field: string): string | null {
+function nullableString(
+  value: Record<string, unknown>,
+  field: string,
+  maxLength: number = INPUT_LIMITS.identifier,
+): string | null {
   const item = value[field];
   if (item === undefined || item === null || item === "") return null;
   if (typeof item !== "string") throw new HttpError(400, `${field} must be a string.`);
+  if (item.length > maxLength) throw new HttpError(400, `${field} is too long.`);
   return item;
 }
 
-function stringArray(value: Record<string, unknown>, field: string): string[] {
+function pathIdentifier(value: string | undefined, field: string): string {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value ?? "");
+  } catch {
+    throw new HttpError(400, `${field} is invalid.`);
+  }
+  if (!decoded || decoded.length > INPUT_LIMITS.identifier) {
+    throw new HttpError(400, `${field} is invalid.`);
+  }
+  return decoded;
+}
+
+function stringArray(
+  value: Record<string, unknown>,
+  field: string,
+  maxItems: number = INPUT_LIMITS.attachments,
+  maxLength: number = INPUT_LIMITS.identifier,
+): string[] {
   const item = value[field];
   if (item === undefined) return [];
-  if (!Array.isArray(item) || !item.every((entry) => typeof entry === "string")) {
+  if (
+    !Array.isArray(item) ||
+    item.length > maxItems ||
+    !item.every((entry) => typeof entry === "string" && entry.length <= maxLength)
+  ) {
     throw new HttpError(400, `${field} must be a string array.`);
   }
   return item;
+}
+
+function promptRequestId(value: unknown): string | number {
+  if (typeof value === "number" && Number.isSafeInteger(value)) return value;
+  if (typeof value === "string" && value.length > 0 && value.length <= INPUT_LIMITS.identifier) {
+    return value;
+  }
+  throw new HttpError(400, "requestId is invalid.");
+}
+
+function promptAnswers(value: unknown): Record<string, string[]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new HttpError(400, "answers is required.");
+  }
+  const entries = Object.entries(value);
+  if (entries.length > INPUT_LIMITS.promptQuestions) {
+    throw new HttpError(400, "Too many prompt answers.");
+  }
+  const answers: Record<string, string[]> = {};
+  for (const [key, answer] of entries) {
+    if (
+      key.length > INPUT_LIMITS.identifier ||
+      !Array.isArray(answer) ||
+      answer.length > INPUT_LIMITS.promptAnswersPerQuestion ||
+      !answer.every(
+        (item) => typeof item === "string" && item.length <= INPUT_LIMITS.promptAnswerText,
+      )
+    ) {
+      throw new HttpError(400, "A prompt answer is invalid.");
+    }
+    answers[key] = answer;
+  }
+  return answers;
+}
+
+function botUpdate(value: Record<string, unknown>, botId: string): UpdateBotInput {
+  const result: UpdateBotInput = { botId };
+  const textFields = {
+    name: INPUT_LIMITS.agentName,
+    role: INPUT_LIMITS.agentTitle,
+    description: INPUT_LIMITS.agentDescription,
+  } as const;
+  for (const [field, maxLength] of Object.entries(textFields)) {
+    const item = value[field];
+    if (item === undefined) continue;
+    if (typeof item !== "string" || item.length > maxLength) {
+      throw new HttpError(400, `${field} is invalid.`);
+    }
+    result[field as keyof typeof textFields] = item;
+  }
+  if (value.notifications !== undefined) {
+    if (typeof value.notifications !== "boolean") {
+      throw new HttpError(400, "notifications is invalid.");
+    }
+    result.notifications = value.notifications;
+  }
+  if (value.model !== undefined) {
+    if (!isAgentModel(value.model)) throw new HttpError(400, "model is invalid.");
+    result.model = value.model;
+  }
+  if (value.reasoningEffort !== undefined) {
+    if (!isReasoningEffort(value.reasoningEffort)) {
+      throw new HttpError(400, "reasoningEffort is invalid.");
+    }
+    result.reasoningEffort = value.reasoningEffort;
+  }
+  if (value.avatarSeed !== undefined) {
+    if (!isAvatarSeed(value.avatarSeed)) throw new HttpError(400, "avatarSeed is invalid.");
+    result.avatarSeed = value.avatarSeed;
+  }
+  if (value.avatarHue !== undefined) {
+    if (value.avatarHue !== null && !isAvatarHue(value.avatarHue)) {
+      throw new HttpError(400, "avatarHue is invalid.");
+    }
+    result.avatarHue = value.avatarHue;
+  }
+  return result;
 }
 
 async function readBinary(

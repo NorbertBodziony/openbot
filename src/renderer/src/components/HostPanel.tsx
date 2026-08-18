@@ -1,4 +1,5 @@
 import { createSignal, For, Show } from "solid-js";
+import { INPUT_LIMITS } from "../../../shared/input-limits";
 import type {
   HostStatus,
   InviteSummary,
@@ -94,6 +95,8 @@ export function HostPanel(props: HostPanelProps) {
                 <span>Server name</span>
                 <input
                   value={serverName()}
+                  minlength={2}
+                  maxlength={INPUT_LIMITS.serverName}
                   onInput={(event) => setServerName(event.currentTarget.value)}
                 />
               </label>
@@ -206,6 +209,7 @@ export function HostPanel(props: HostPanelProps) {
                   type="email"
                   aria-label="Email address"
                   autocomplete="email"
+                  maxlength={INPUT_LIMITS.email}
                   value={inviteEmail()}
                   placeholder="person@company.com"
                   onInput={(event) => setInviteEmail(event.currentTarget.value)}

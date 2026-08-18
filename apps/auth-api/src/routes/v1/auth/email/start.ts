@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/solid-router";
+import { readJsonObject } from "../../../../server/json-body";
 import {
   apiError,
   authErrorResponse,
@@ -12,7 +13,7 @@ export const Route = createFileRoute("/v1/auth/email/start")({
     handlers: {
       POST: async ({ request }) => {
         try {
-          const body = (await request.json()) as { email?: unknown };
+          const body = await readJsonObject(request);
           if (typeof body.email !== "string") {
             return apiError(400, "invalid_email", "Enter a valid email address.");
           }

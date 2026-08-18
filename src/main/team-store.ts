@@ -9,6 +9,7 @@ import {
 } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import { INPUT_LIMITS } from "../shared/input-limits";
 import type {
   CentralAuthUser,
   TeamInviteSummary,
@@ -259,6 +260,12 @@ export class TeamStore {
   ): Promise<CreatedInvite> {
     if (role !== "admin" && role !== "member") throw new Error("Invalid invite role.");
     const state = this.#requireState();
+    const activeInvites = state.invites.filter(
+      (invite) => invite.usedAt === null && Date.parse(invite.expiresAt) > Date.now(),
+    ).length;
+    if (activeInvites >= INPUT_LIMITS.activeInvites) {
+      throw new Error(`A host can have up to ${INPUT_LIMITS.activeInvites} active invitations.`);
+    }
     const token = randomBytes(32).toString("base64url");
     const email = emailInput?.trim() ? normalizeEmail(emailInput) : null;
     const invite: StoredInvite = {
@@ -285,6 +292,9 @@ export class TeamStore {
     }
     const invite = this.#findUsableInvite(token);
     if (!invite) throw new Error("The invitation is invalid or expired.");
+    if (state.members.length >= INPUT_LIMITS.teamMembers) {
+      throw new Error(`A host can have up to ${INPUT_LIMITS.teamMembers} members.`);
+    }
     if (invite.email && invite.email !== email) {
       throw new Error("This invitation belongs to a different email address.");
     }
@@ -334,6 +344,9 @@ export class TeamStore {
     }
     const invite = this.#findUsableInvite(token);
     if (!invite) throw new Error("The invitation is invalid or expired.");
+    if (state.members.length >= INPUT_LIMITS.teamMembers) {
+      throw new Error(`A host can have up to ${INPUT_LIMITS.teamMembers} members.`);
+    }
     const credentials = await hashPassword(password);
     const member: StoredMember = {
       id: randomUUID(),
@@ -435,6 +448,14 @@ export class TeamStore {
 
   #createSession(member: StoredMember): AuthenticatedMember {
     const state = this.#requireState();
+    const memberSessions = state.sessions
+      .filter((session) => session.memberId === member.id)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const excess = memberSessions.length - INPUT_LIMITS.sessionsPerMember + 1;
+    if (excess > 0) {
+      const removedIds = new Set(memberSessions.slice(0, excess).map((session) => session.id));
+      state.sessions = state.sessions.filter((session) => !removedIds.has(session.id));
+    }
     const sessionToken = randomBytes(32).toString("base64url");
     const sessionExpiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
     state.sessions.push({
@@ -561,13 +582,14 @@ function normalizeEmail(value: string): string {
 
 function normalizeName(value: string | null): string | null {
   const normalized = value?.trim() ?? "";
-  return normalized ? normalized.slice(0, 120) : null;
+  if (normalized.length > INPUT_LIMITS.accountName) throw new Error("Account name is too long.");
+  return normalized || null;
 }
 
 function validateServerName(value: string): void {
   const normalized = value.trim();
-  if (normalized.length < 2 || normalized.length > 64) {
-    throw new Error("Server name must contain 2 to 64 characters.");
+  if (normalized.length < 2 || normalized.length > INPUT_LIMITS.serverName) {
+    throw new Error(`Server name must contain 2 to ${INPUT_LIMITS.serverName} characters.`);
   }
 }
 
