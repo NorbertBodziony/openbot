@@ -261,7 +261,7 @@ function createMentionToken(bot: BotProfile): HTMLSpanElement {
   token.dataset.mentionName = bot.name;
   token.setAttribute("aria-label", `Agent ${bot.name}`);
   const avatar = document.createElement("span");
-  avatar.className = "composer-mention-avatar";
+  avatar.className = "composer-mention-avatar bot-avatar-motion-hover";
   avatar.innerHTML = buildAnimatedAvatarSvg(bot.avatarSeed, bot.avatarHue);
   const name = document.createElement("span");
   name.textContent = bot.name;

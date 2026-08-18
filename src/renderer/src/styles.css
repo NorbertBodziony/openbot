@@ -1069,6 +1069,21 @@ textarea {
   overflow: visible;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  :is(
+      .bot-avatar-motion-hover:hover,
+      button:hover .bot-avatar-motion-hover,
+      [role="button"]:hover .bot-avatar-motion-hover,
+      .composer-mention-token:hover .bot-avatar-motion-hover
+    )
+    .mo-root {
+    --mo-amp: 1;
+    transition-duration:
+      calc(0.4s * var(--mo-rate, 1)), calc(0.22s * var(--mo-rate, 1)), var(--mo-md);
+    transform: translateY(-1.5px) scale(1.04);
+  }
+}
+
 .bot-row .bot-avatar {
   width: 32px;
   height: 32px;

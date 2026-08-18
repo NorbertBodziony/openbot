@@ -15,10 +15,11 @@ interface AgentAvatarProps {
 export function AgentAvatar(props: AgentAvatarProps) {
   const seed = () => props.seed ?? props.bot?.avatarSeed ?? "agent";
   const hue = () => (props.hue !== undefined ? props.hue : (props.bot?.avatarHue ?? null));
-  const markup = createMemo(() => buildAnimatedAvatarSvg(seed(), hue(), props.motion));
+  const motion = () => props.motion ?? "hover";
+  const markup = createMemo(() => buildAnimatedAvatarSvg(seed(), hue(), motion()));
   return (
     <span
-      class={`bot-avatar ${props.class ?? ""}`}
+      class={`bot-avatar bot-avatar-motion-${motion()} ${props.class ?? ""}`}
       style={props.style}
       aria-hidden="true"
       innerHTML={markup()}

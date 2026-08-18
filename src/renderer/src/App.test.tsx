@@ -889,6 +889,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     expect(faceButtons).toHaveLength(12);
     for (const faceButton of faceButtons) {
+      expect(faceButton.querySelector(".bot-avatar-motion-hover")).not.toBeNull();
       expect(faceButton.querySelector(".bot-avatar > svg .mo-root")).not.toBeNull();
       expect(faceButton.querySelector(".agent-mark")).toBeNull();
     }
