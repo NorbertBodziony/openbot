@@ -1,7 +1,10 @@
 import { env } from "cloudflare:workers";
 import { AuthService, AuthServiceError } from "./auth-service";
+import { CloudflareTunnelProvider } from "./cloudflare-tunnel-provider";
 import { D1AuthRepository } from "./d1-auth-repository";
+import { D1TeamTunnelRepository } from "./d1-team-tunnel-repository";
 import { createEmailCodeDelivery, createTeamInviteEmailDelivery } from "./email-delivery";
+import { TeamTunnelService } from "./team-tunnel-service";
 import type { TeamInviteEmailDelivery, WorkerBindings } from "./types";
 
 export function requestAuthService(): AuthService {
@@ -16,6 +19,27 @@ export function requestAuthService(): AuthService {
 
 export function requestTeamInviteEmailDelivery(): TeamInviteEmailDelivery | null {
   return createTeamInviteEmailDelivery(env as unknown as WorkerBindings);
+}
+
+export function requestTeamTunnelService(): TeamTunnelService | null {
+  const bindings = env as unknown as WorkerBindings;
+  if (
+    !bindings.CLOUDFLARE_ACCOUNT_ID ||
+    !bindings.CLOUDFLARE_ZONE_ID ||
+    !bindings.CLOUDFLARE_TUNNEL_DOMAIN ||
+    !bindings.CLOUDFLARE_API_TOKEN
+  ) {
+    return null;
+  }
+  return new TeamTunnelService({
+    repository: new D1TeamTunnelRepository(bindings.DB),
+    provider: new CloudflareTunnelProvider({
+      accountId: bindings.CLOUDFLARE_ACCOUNT_ID,
+      zoneId: bindings.CLOUDFLARE_ZONE_ID,
+      apiToken: bindings.CLOUDFLARE_API_TOKEN,
+    }),
+    domain: bindings.CLOUDFLARE_TUNNEL_DOMAIN,
+  });
 }
 
 export function requestSourceIp(request: Request): string {

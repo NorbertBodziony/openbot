@@ -42,6 +42,15 @@ describe("CentralAuthManager", () => {
       if (url.pathname === "/v1/team-auth/ticket") {
         return Response.json({ ticket: "one-time-ticket", expiresAt: 20_000 });
       }
+      if (url.pathname === "/v1/team-tunnels/provision") {
+        return Response.json({
+          tunnelId: "11111111-1111-4111-8111-111111111111",
+          tunnelName: "openbot-00000000000040008000000000000000",
+          apiUrl: "https://h-00000000000040008000000000000000.openbot.run",
+          vncHostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+          token: "x".repeat(40),
+        });
+      }
       return Response.json({
         id: "user-1",
         email: "person@example.com",
@@ -77,6 +86,16 @@ describe("CentralAuthManager", () => {
       inviteUrl: "openbot://join?invite=token",
       role: "member",
     });
+    await expect(
+      manager.provisionTeamTunnel({
+        serverId,
+        serverName: "Studio Mac",
+        apiPort: 43_123,
+        vncEnabled: true,
+      }),
+    ).resolves.toMatchObject({
+      apiUrl: "https://h-00000000000040008000000000000000.openbot.run",
+    });
     expect(requests[1]?.body).toEqual({ challengeId: "challenge-1", code: "ABCD-EFGH" });
     expect(await readFile(storagePath, "utf8")).not.toContain("session-secret");
     expect(requests[2]).toMatchObject({
@@ -90,6 +109,11 @@ describe("CentralAuthManager", () => {
     expect(requests[4]).toMatchObject({
       path: "/v1/team-invitations/email",
       authorization: "Bearer session-secret",
+    });
+    expect(requests[5]).toMatchObject({
+      path: "/v1/team-tunnels/provision",
+      authorization: "Bearer session-secret",
+      body: { serverId, serverName: "Studio Mac", apiPort: 43_123, vncEnabled: true },
     });
 
     const restored = new CentralAuthManager(options);

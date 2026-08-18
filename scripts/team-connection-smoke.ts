@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { AgentService } from "../src/backend/agent-service";
 import type { BrowserHost } from "../src/backend/browser-host";
 import type { MailboxStore } from "../src/backend/mailbox-store";
-import { parseQuickTunnelHostname } from "../src/main/host-service";
+import { buildNamedTunnelArgs, waitForNamedTunnelConnection } from "../src/main/host-service";
 import { resolveCloudflaredExecutable, stopOwnedProcess } from "../src/main/remote-mac";
 import { RemoteServerManager } from "../src/main/remote-server-manager";
 import { TeamApiServer } from "../src/main/team-api-server";
@@ -19,38 +19,51 @@ const REQUEST_TIMEOUT_MS = 15_000;
 
 async function main(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "openbot-team-smoke-"));
-  const executable = await resolveCloudflaredExecutable();
-  if (!executable) throw new Error("cloudflared is required for the team connection smoke test.");
-
-  const ownerSession = await createDevelopmentSession(`owner-${Date.now()}@example.com`);
-  const memberSession = await createDevelopmentSession(`member-${Date.now()}@example.com`);
-  const store = new TeamStore(join(root, "team.json"));
-  await store.initialize();
-  await store.configureWithAccount("Smoke Host", ownerSession.user);
-  const agentEvents = new EventEmitter();
-  const agents = agentEvents as unknown as AgentService;
-  const api = new TeamApiServer({
-    store,
-    agents,
-    mailbox: {} as MailboxStore,
-    browser: {} as BrowserHost,
-    getRemoteMac: () => ({ hostname: null, online: false }),
-    redeemCentralTicket: redeemDevelopmentTicket,
-  });
-  const port = await api.start();
-  const tunnel = spawn(
-    executable,
-    ["tunnel", "--protocol", "quic", "--url", `http://127.0.0.1:${port}`],
-    { detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] },
-  );
+  let api: TeamApiServer | null = null;
+  let tunnel: ReturnType<typeof spawn> | null = null;
+  let remote: RemoteServerManager | null = null;
+  let cleanup: { sessionToken: string; serverId: string } | null = null;
 
   try {
-    const tunnelState = await waitForTunnel(tunnel);
-    const hostname = tunnelState.hostname;
-    const apiUrl = `https://${hostname}`;
-    await waitForPublicTunnel(apiUrl, tunnelState.output);
+    const executable = await resolveCloudflaredExecutable();
+    if (!executable) {
+      throw new Error("cloudflared is required for the team connection smoke test.");
+    }
+    const ownerSession = await createDevelopmentSession(`owner-${Date.now()}@example.com`);
+    const memberSession = await createDevelopmentSession(`member-${Date.now()}@example.com`);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configureWithAccount("Smoke Host", ownerSession.user);
     const identity = store.getIdentity();
     if (!identity) throw new Error("The temporary team identity is missing.");
+    cleanup = { sessionToken: ownerSession.sessionToken, serverId: identity.serverId };
+    await provisionDevelopmentTunnel(ownerSession.sessionToken, identity.serverId, null);
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    const agentEvents = new EventEmitter();
+    const agents = agentEvents as unknown as AgentService;
+    api = new TeamApiServer({
+      store,
+      agents,
+      mailbox: {} as MailboxStore,
+      browser: {} as BrowserHost,
+      getRemoteMac: () => ({ hostname: null, online: false }),
+      redeemCentralTicket: redeemDevelopmentTicket,
+    });
+    const port = await api.start();
+    const provisioned = await provisionDevelopmentTunnel(
+      ownerSession.sessionToken,
+      identity.serverId,
+      port,
+    );
+    tunnel = spawn(executable, buildNamedTunnelArgs(), {
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, TUNNEL_TOKEN: provisioned.token },
+    });
+    const connected = await waitForNamedTunnelConnection(tunnel, 30_000);
+    if (!connected) throw new Error("The named Cloudflare Tunnel did not connect.");
+    const apiUrl = provisioned.apiUrl;
+    await waitForPublicTunnel(apiUrl);
     const invite = await store.createInvite("member");
     const inviteUrl = new URL("openbot://join");
     inviteUrl.searchParams.set("api", apiUrl);
@@ -60,18 +73,19 @@ async function main(): Promise<void> {
 
     const cipher = createTemporaryCipher();
     const remotePath = join(root, "remote-servers.json");
-    const remote = new RemoteServerManager(remotePath, cipher, {
+    const remoteManager = new RemoteServerManager(remotePath, cipher, {
       createTeamAuthTicket: (serverId) =>
         createDevelopmentTeamTicket(memberSession.sessionToken, serverId),
       getEmail: () => memberSession.user.email,
     });
-    await remote.initialize();
+    remote = remoteManager;
+    await remoteManager.initialize();
     const remoteEvent = new Promise<void>((resolve) => {
-      remote.once("agent", (_serverId, event) => {
+      remoteManager.once("agent", (_serverId, event) => {
         if (event.type === "error" && event.code === "team_smoke_event") resolve();
       });
     });
-    const server = await remote.join({ inviteUrl: inviteUrl.toString() });
+    const server = await remoteManager.join({ inviteUrl: inviteUrl.toString() });
     const eventInterval = setInterval(() => {
       agentEvents.emit("event", {
         type: "error",
@@ -101,25 +115,44 @@ async function main(): Promise<void> {
     if (storedRemote.includes(memberSession.sessionToken)) {
       throw new Error("The host session token was stored without encryption.");
     }
-    remote.stop();
     console.log(
       JSON.stringify({
         status: "passed",
         serverId: server.id,
         memberEmail: memberSession.user.email,
         memberCount: members.length,
-        transport: "cloudflare-quick-tunnel",
+        transport: "cloudflare-named-tunnel",
+        hostname: new URL(apiUrl).hostname,
         events: "websocket",
       }),
     );
   } finally {
-    await stopOwnedProcess(tunnel);
-    await api.stop();
+    remote?.stop();
+    if (tunnel) await stopOwnedProcess(tunnel);
+    if (cleanup) {
+      await deprovisionDevelopmentTunnel(cleanup.sessionToken, cleanup.serverId);
+    }
+    await api?.stop();
     await rm(root, { recursive: true, force: true });
   }
 }
 
-async function waitForPublicTunnel(apiUrl: string, tunnelOutput: () => string): Promise<void> {
+async function deprovisionDevelopmentTunnel(sessionToken: string, serverId: string): Promise<void> {
+  const response = await fetch(new URL("/v1/team-tunnels/provision", AUTH_API_URL), {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${sessionToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ serverId }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`Temporary tunnel cleanup returned ${response.status}.`);
+  }
+}
+
+async function waitForPublicTunnel(apiUrl: string): Promise<void> {
   const deadline = Date.now() + 90_000;
   let lastError = "not ready";
   while (Date.now() < deadline) {
@@ -134,9 +167,36 @@ async function waitForPublicTunnel(apiUrl: string, tunnelOutput: () => string): 
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  throw new Error(
-    `The Quick Tunnel is not reachable: ${lastError}\n${tunnelOutput().slice(-4_000)}`,
-  );
+  throw new Error(`The named tunnel is not reachable: ${lastError}`);
+}
+
+async function provisionDevelopmentTunnel(
+  sessionToken: string,
+  serverId: string,
+  apiPort: number | null,
+): Promise<{ apiUrl: string; token: string }> {
+  const response = await fetch(new URL("/v1/team-tunnels/provision", AUTH_API_URL), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${sessionToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ serverId, serverName: "Smoke Host", apiPort, vncEnabled: false }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const value = (await response.json()) as {
+    apiUrl?: string;
+    token?: string;
+    error?: { code?: string; message?: string };
+  };
+  if (!response.ok || !value.apiUrl || !value.token) {
+    throw new Error(
+      value.error
+        ? `${value.error.code ?? "tunnel_error"}: ${value.error.message ?? "Tunnel provisioning failed."}`
+        : `Tunnel provisioning returned ${response.status}.`,
+    );
+  }
+  return { apiUrl: value.apiUrl, token: value.token };
 }
 
 async function createDevelopmentSession(email: string): Promise<{
@@ -201,30 +261,6 @@ async function requestJson<T>(path: string, body: unknown): Promise<T> {
   if (!response.ok)
     throw new Error(value.error?.message ?? `Request failed with ${response.status}.`);
   return value;
-}
-
-function waitForTunnel(child: ReturnType<typeof spawn>): Promise<{
-  hostname: string;
-  output: () => string;
-}> {
-  return new Promise((resolve, reject) => {
-    let output = "";
-    const timeout = setTimeout(() => finish(new Error("The Quick Tunnel did not start.")), 30_000);
-    const onData = (chunk: Buffer) => {
-      output = `${output}${chunk.toString("utf8")}`.slice(-32_000);
-      const hostname = parseQuickTunnelHostname(output);
-      if (hostname) finish(null, hostname);
-    };
-    const finish = (error: Error | null, hostname?: string) => {
-      clearTimeout(timeout);
-      if (error) reject(error);
-      else resolve({ hostname: hostname as string, output: () => output });
-    };
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
-    child.once("error", (error) => finish(error));
-    child.once("exit", (code) => finish(new Error(`cloudflared stopped with code ${code}.`)));
-  });
 }
 
 function createTemporaryCipher(): {

@@ -9,7 +9,10 @@
     "EMAIL_SMTP_HOST": "mail.privateemail.com",
     "EMAIL_SMTP_PORT": "465",
     "EMAIL_SMTP_USERNAME": "hello@openbot.run",
-    "EMAIL_FROM": "hello@openbot.run"
+    "EMAIL_FROM": "hello@openbot.run",
+    "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
+    "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
+    "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run"
   },
   "d1_databases": [
     {
@@ -29,7 +32,10 @@
         "EMAIL_SMTP_HOST": "mail.privateemail.com",
         "EMAIL_SMTP_PORT": "465",
         "EMAIL_SMTP_USERNAME": "hello@openbot.run",
-        "EMAIL_FROM": "hello@openbot.run"
+        "EMAIL_FROM": "hello@openbot.run",
+        "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
+        "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
+        "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run"
       },
       "d1_databases": [
         {

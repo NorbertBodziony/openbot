@@ -30,13 +30,9 @@ interface ManagedSession {
 }
 
 export function isValidTunnelHostname(value: string): boolean {
-  if (
-    value.length > 253 ||
-    value !== value.toLowerCase() ||
-    !value.endsWith(".trycloudflare.com")
-  ) {
-    return false;
-  }
+  if (value.length > 253 || value !== value.toLowerCase()) return false;
+  if (/^vnc-h-[0-9a-f]{32}\.openbot\.run$/u.test(value)) return true;
+  if (!value.endsWith(".trycloudflare.com")) return false;
   const labels = value.split(".");
   if (labels.length < 3) return false;
   return labels.every(
@@ -148,7 +144,7 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
   async connect(input: RemoteMacConnectInput): Promise<RemoteMacSession> {
     const hostname = input.hostname.trim().toLowerCase();
     if (!isValidTunnelHostname(hostname)) {
-      throw new Error("Enter a valid *.trycloudflare.com hostname.");
+      throw new Error("Enter a valid OpenBot Remote Mac hostname.");
     }
     const managed: ManagedSession = {
       snapshot: {

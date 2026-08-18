@@ -721,6 +721,10 @@ if (!hasSingleInstanceLock) {
           if (!centralAuthManager) throw new Error("The account service is not ready.");
           return centralAuthManager.sendTeamInviteEmail(input);
         },
+        provisionTeamTunnel: (input) => {
+          if (!centralAuthManager) throw new Error("The account service is not ready.");
+          return centralAuthManager.provisionTeamTunnel(input);
+        },
       });
       remoteMacManager = new RemoteMacManager({
         openExternal: (url) => shell.openExternal(url),

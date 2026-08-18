@@ -21,6 +21,14 @@ interface SessionResponse {
   user: CentralAuthUser;
 }
 
+export interface ProvisionedTeamTunnel {
+  tunnelId: string;
+  tunnelName: string;
+  apiUrl: string;
+  vncHostname: string;
+  token: string;
+}
+
 export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   readonly #options: Required<CentralAuthManagerOptions>;
   #state: CentralAuthState = { status: "loading" };
@@ -82,6 +90,35 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     });
+  }
+
+  async provisionTeamTunnel(input: {
+    serverId: string;
+    serverName: string;
+    apiPort?: number | null;
+    vncEnabled?: boolean;
+  }): Promise<ProvisionedTeamTunnel> {
+    const result = await this.#authorizedRequest<ProvisionedTeamTunnel>(
+      "/v1/team-tunnels/provision",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+      60_000,
+    );
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(
+        result.tunnelId,
+      ) ||
+      !/^openbot-[0-9a-f]{32}$/u.test(result.tunnelName) ||
+      !isOpenBotHostUrl(result.apiUrl) ||
+      !/^vnc-h-[0-9a-f]{32}\.openbot\.run$/u.test(result.vncHostname) ||
+      result.token.length < 40
+    ) {
+      throw new Error("The account service returned invalid team tunnel details.");
+    }
+    return result;
   }
 
   async initialize(): Promise<CentralAuthState> {
@@ -180,22 +217,26 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     return this.#setState({ status: "signed_out" });
   }
 
-  async #request<T>(path: string, init: RequestInit): Promise<T> {
+  async #request<T>(path: string, init: RequestInit, timeoutMs = 10_000): Promise<T> {
     const response = await this.#options.fetch(new URL(path, this.#options.apiUrl), {
       ...init,
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) throw await AuthApiError.fromResponse(response);
     if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
   }
 
-  #authorizedRequest<T>(path: string, init: RequestInit): Promise<T> {
+  #authorizedRequest<T>(path: string, init: RequestInit, timeoutMs?: number): Promise<T> {
     if (!this.#sessionToken) throw new AuthApiError(401, "unauthorized", "Sign in is required.");
-    return this.#request<T>(path, {
-      ...init,
-      headers: { ...init.headers, Authorization: `Bearer ${this.#sessionToken}` },
-    });
+    return this.#request<T>(
+      path,
+      {
+        ...init,
+        headers: { ...init.headers, Authorization: `Bearer ${this.#sessionToken}` },
+      },
+      timeoutMs,
+    );
   }
 
   async #writeStoredSession(token: string): Promise<void> {
@@ -221,6 +262,21 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     const copy = this.getState();
     this.emit("changed", copy);
     return copy;
+  }
+}
+
+function isOpenBotHostUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === "" &&
+      /^h-[0-9a-f]{32}\.openbot\.run$/u.test(url.hostname)
+    );
+  } catch {
+    return false;
   }
 }
 

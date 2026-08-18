@@ -79,3 +79,19 @@ bun run api:deploy
 ```
 
 The service applies limits per email, per IP, per challenge, and per resend.
+
+## Named team tunnels
+
+The Auth API provisions one remotely managed Cloudflare Tunnel for each OpenBot
+team server. Each server receives stable API and Remote Mac hostnames under
+`openbot.run`. The desktop app receives only the connector token for its tunnel.
+It never receives the Cloudflare account API token.
+
+Create a scoped Cloudflare API token with these permissions:
+
+- Account · Cloudflare Tunnel · Edit for the OpenBot account.
+- Zone · DNS · Edit for `openbot.run`.
+
+Set `CLOUDFLARE_API_TOKEN` in the encrypted production environment. The deploy
+script sends it to `wrangler secret put` through standard input. The account ID,
+zone ID, and domain are non-secret Worker variables in `wrangler.jsonc`.

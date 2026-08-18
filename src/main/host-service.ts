@@ -14,6 +14,7 @@ import type {
   TeamSessionSummary,
   UpdateTeamMemberInput,
 } from "../shared/ipc";
+import type { ProvisionedTeamTunnel } from "./central-auth-manager";
 import {
   appendDiagnosticLog,
   probeRfbHandshake,
@@ -45,19 +46,23 @@ interface HostServiceOptions {
     inviteUrl: string;
     role: "admin" | "member";
   }) => Promise<void>;
+  provisionTeamTunnel: (input: {
+    serverId: string;
+    serverName: string;
+    apiPort?: number | null;
+    vncEnabled?: boolean;
+  }) => Promise<ProvisionedTeamTunnel>;
 }
 
-export function buildApiTunnelArgs(port: number): string[] {
-  return ["tunnel", "--protocol", "quic", "--url", `http://127.0.0.1:${port}`];
+export function buildNamedTunnelArgs(): string[] {
+  return ["tunnel", "--protocol", "quic", "run"];
 }
 
-export function buildVncTunnelArgs(): string[] {
-  return ["tunnel", "--protocol", "quic", "--url", "tcp://localhost:5900"];
-}
-
-export function parseQuickTunnelHostname(value: string): string | null {
-  const match = value.match(/https:\/\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com)/i);
-  return match?.[1]?.toLowerCase() ?? null;
+export function buildNamedTunnelEnvironment(
+  token: string,
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return { ...base, TUNNEL_TOKEN: token };
 }
 
 export class HostService extends EventEmitter<HostEvents> {
@@ -66,8 +71,7 @@ export class HostService extends EventEmitter<HostEvents> {
   > &
     Omit<HostServiceOptions, "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs">;
   readonly #api: TeamApiServer;
-  #apiTunnel: ChildProcess | null = null;
-  #vncTunnel: ChildProcess | null = null;
+  #tunnel: ChildProcess | null = null;
   #status: HostStatus;
 
   constructor(options: HostServiceOptions) {
@@ -75,7 +79,7 @@ export class HostService extends EventEmitter<HostEvents> {
     this.#options = {
       ...options,
       spawnProcess: options.spawnProcess ?? spawn,
-      tunnelTimeoutMs: options.tunnelTimeoutMs ?? 15_000,
+      tunnelTimeoutMs: options.tunnelTimeoutMs ?? 30_000,
       publicReadyTimeoutMs: options.publicReadyTimeoutMs ?? 30_000,
     };
     const identity = options.store.getIdentity();
@@ -121,6 +125,22 @@ export class HostService extends EventEmitter<HostEvents> {
       enabledOnLaunch: false,
       message: null,
     });
+    try {
+      const tunnel = await this.#options.provisionTeamTunnel({
+        serverId: identity.serverId,
+        serverName: identity.serverName,
+      });
+      this.#setStatus({
+        apiUrl: tunnel.apiUrl,
+        vncHostname: null,
+        message: `Reserved ${new URL(tunnel.apiUrl).hostname}.`,
+      });
+    } catch (error) {
+      this.#setStatus({
+        phase: "error",
+        message: error instanceof Error ? error.message : "Could not create the named team tunnel.",
+      });
+    }
     return this.getStatus();
   }
 
@@ -129,6 +149,7 @@ export class HostService extends EventEmitter<HostEvents> {
     if (this.#status.phase === "online" || this.#status.phase === "starting") {
       return this.getStatus();
     }
+    this.#options.store.assertOwnerAccount(this.#options.getSignedInUser());
     this.#setStatus({ phase: "starting", message: "Starting the team API…" });
     const executable = await (this.#options.resolveCloudflared?.() ??
       resolveCloudflaredExecutable());
@@ -142,39 +163,36 @@ export class HostService extends EventEmitter<HostEvents> {
 
     try {
       const apiPort = await this.#api.start();
-      const apiTunnel = this.#spawnTunnel(executable, buildApiTunnelArgs(apiPort), "api");
-      this.#apiTunnel = apiTunnel;
-      const apiHostname = await waitForTunnelHostname(apiTunnel, this.#options.tunnelTimeoutMs);
-      if (!apiHostname) throw new Error("The API Quick Tunnel did not return a hostname.");
-      this.#setStatus({ message: "Publishing the secure host address…" });
-      if (!(await waitForPublicApi(`https://${apiHostname}`, this.#options.publicReadyTimeoutMs))) {
-        throw new Error("Cloudflare did not publish the Quick Tunnel address. Try again.");
+      const vncReady = await probeRfbHandshake(5900, 2_000);
+      this.#setStatus({ message: "Provisioning a stable openbot.run address…" });
+      const identity = this.#options.store.getIdentity();
+      if (!identity) throw new Error("Configure the team server first.");
+      const provisioned = await this.#options.provisionTeamTunnel({
+        serverId: identity.serverId,
+        serverName: identity.serverName,
+        apiPort,
+        vncEnabled: vncReady,
+      });
+      const tunnel = this.#spawnTunnel(executable, provisioned.token);
+      this.#tunnel = tunnel;
+      if (!(await waitForNamedTunnelConnection(tunnel, this.#options.tunnelTimeoutMs))) {
+        throw new Error("The named Cloudflare Tunnel did not connect.");
       }
       this.#setStatus({
-        apiUrl: `https://${apiHostname}`,
-        apiOnline: true,
-        message: "Checking macOS Screen Sharing…",
+        apiUrl: provisioned.apiUrl,
+        vncHostname: vncReady ? provisioned.vncHostname : null,
+        message: "Publishing the secure host address…",
       });
-
-      const vncReady = await probeRfbHandshake(5900, 2_000);
-      if (vncReady) {
-        const vncTunnel = this.#spawnTunnel(executable, buildVncTunnelArgs(), "vnc");
-        this.#vncTunnel = vncTunnel;
-        const vncHostname = await waitForTunnelHostname(vncTunnel, this.#options.tunnelTimeoutMs);
-        this.#setStatus({
-          vncHostname,
-          vncOnline: Boolean(vncHostname),
-          message: vncHostname
-            ? "The team server and Remote Mac are online."
-            : "The team server is online, but the VNC tunnel did not start.",
-        });
-      } else {
-        this.#setStatus({
-          vncHostname: null,
-          vncOnline: false,
-          message: "The team server is online. Enable macOS Screen Sharing to use Remote Mac.",
-        });
+      if (!(await waitForPublicApi(provisioned.apiUrl, this.#options.publicReadyTimeoutMs))) {
+        throw new Error("Cloudflare did not publish the named tunnel address. Try again.");
       }
+      this.#setStatus({
+        apiOnline: true,
+        vncOnline: vncReady,
+        message: vncReady
+          ? "The team server and Remote Mac are online."
+          : "The team server is online. Enable macOS Screen Sharing to use Remote Mac.",
+      });
       await this.#options.store.setEnabledOnLaunch(true);
       this.#setStatus({ phase: "online", enabledOnLaunch: true });
     } catch (error) {
@@ -288,47 +306,41 @@ export class HostService extends EventEmitter<HostEvents> {
     await this.stop(false);
   }
 
-  #spawnTunnel(executable: string, args: string[], kind: "api" | "vnc"): ChildProcess {
-    const child = this.#options.spawnProcess(executable, args, {
+  #spawnTunnel(executable: string, token: string): ChildProcess {
+    const child = this.#options.spawnProcess(executable, buildNamedTunnelArgs(), {
       shell: false,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      env: buildNamedTunnelEnvironment(token),
     });
     child.once("exit", () => {
       if (this.#status.phase === "stopping" || this.#status.phase === "idle") return;
-      this.#setStatus(
-        kind === "api"
-          ? {
-              phase: "error",
-              apiOnline: false,
-              message: "The API tunnel stopped unexpectedly.",
-            }
-          : { vncOnline: false, message: "The VNC tunnel stopped unexpectedly." },
-      );
+      this.#setStatus({
+        phase: "error",
+        apiOnline: false,
+        vncOnline: false,
+        message: "The named Cloudflare Tunnel stopped unexpectedly.",
+      });
     });
     if (this.#options.logDirectory) {
       child.stdout?.on(
         "data",
         (chunk) =>
-          void appendDiagnosticLog(this.#options.logDirectory as string, `host-${kind}`, chunk),
+          void appendDiagnosticLog(this.#options.logDirectory as string, "host-tunnel", chunk),
       );
       child.stderr?.on(
         "data",
         (chunk) =>
-          void appendDiagnosticLog(this.#options.logDirectory as string, `host-${kind}`, chunk),
+          void appendDiagnosticLog(this.#options.logDirectory as string, "host-tunnel", chunk),
       );
     }
     return child;
   }
 
   async #stopRuntime(): Promise<void> {
-    const children = [this.#apiTunnel, this.#vncTunnel].filter(
-      (child): child is ChildProcess => child !== null,
-    );
-    this.#apiTunnel = null;
-    this.#vncTunnel = null;
-    await Promise.all(children.map((child) => stopOwnedProcess(child)));
+    const tunnel = this.#tunnel;
+    this.#tunnel = null;
+    if (tunnel) await stopOwnedProcess(tunnel);
     await this.#api.stop();
   }
 
@@ -347,32 +359,34 @@ export async function waitForPublicApi(apiUrl: string, timeoutMs: number): Promi
       });
       if (response.ok) return true;
     } catch {
-      // A new Quick Tunnel can need a short DNS warm-up.
+      // A named tunnel can need a short configuration propagation delay.
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   return false;
 }
 
-function waitForTunnelHostname(child: ChildProcess, timeoutMs: number): Promise<string | null> {
+export function waitForNamedTunnelConnection(
+  child: ChildProcess,
+  timeoutMs: number,
+): Promise<boolean> {
   return new Promise((resolve) => {
     let buffer = "";
     let settled = false;
-    const finish = (hostname: string | null) => {
+    const finish = (connected: boolean) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(hostname);
+      resolve(connected);
     };
     const onData = (chunk: Buffer) => {
       buffer = `${buffer}${chunk.toString("utf8")}`.slice(-16_000);
-      const hostname = parseQuickTunnelHostname(buffer);
-      if (hostname) finish(hostname);
+      if (/Registered tunnel connection|Connection .* registered/iu.test(buffer)) finish(true);
     };
     child.stdout?.on("data", onData);
     child.stderr?.on("data", onData);
-    child.once("error", () => finish(null));
-    child.once("exit", () => finish(null));
-    const timer = setTimeout(() => finish(null), timeoutMs);
+    child.once("error", () => finish(false));
+    child.once("exit", () => finish(false));
+    const timer = setTimeout(() => finish(false), timeoutMs);
   });
 }

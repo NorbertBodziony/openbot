@@ -119,6 +119,16 @@ export class TeamStore {
     };
   }
 
+  assertOwnerAccount(user: CentralAuthUser): void {
+    const owner = this.#state?.members.find((member) => member.role === "owner");
+    if (!owner?.email) {
+      throw new Error("This host is not linked to an OpenBot owner account.");
+    }
+    if (normalizeEmail(user.email) !== normalizeEmail(owner.email)) {
+      throw new Error("Sign in with the OpenBot email that created this host.");
+    }
+  }
+
   getIdentityProof(
     challenge: string,
   ): (TeamIdentity & { challenge: string; signature: string }) | null {

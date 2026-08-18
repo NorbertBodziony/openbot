@@ -61,6 +61,33 @@ describe("TeamStore", () => {
     expect(store.authenticate(joined.sessionToken)?.email).toBe("alice@example.com");
   });
 
+  it("allows only the OpenBot email that created the host to own it", async () => {
+    const { store } = await createStore();
+    await store.configureWithAccount("Studio Mac", {
+      id: "owner-account",
+      email: "Owner@Example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
+
+    expect(() =>
+      store.assertOwnerAccount({
+        id: "owner-account",
+        email: "owner@example.com",
+        name: "Owner",
+        avatarUrl: null,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      store.assertOwnerAccount({
+        id: "other-account",
+        email: "other@example.com",
+        name: null,
+        avatarUrl: null,
+      }),
+    ).toThrow("email that created this host");
+  });
+
   it("rejects a verified account that does not match an email invitation", async () => {
     const { store } = await createStore();
     await store.configureWithAccount("Studio Mac", {

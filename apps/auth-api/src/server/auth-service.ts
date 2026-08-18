@@ -137,6 +137,12 @@ export class AuthService {
     await this.#enforceRateLimit(`invite:ip:${normalizeSourceIp(sourceIp)}`, 30, now);
   }
 
+  async enforceTeamTunnelRateLimit(userId: string, sourceIp: string): Promise<void> {
+    const now = this.#now();
+    await this.#enforceRateLimit(`team-tunnel:user:${userId}`, 20, now);
+    await this.#enforceRateLimit(`team-tunnel:ip:${normalizeSourceIp(sourceIp)}`, 60, now);
+  }
+
   async issueTeamAuthTicket(
     sessionToken: string,
     serverId: string,

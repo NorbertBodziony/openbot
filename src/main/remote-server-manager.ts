@@ -399,7 +399,8 @@ export function isValidRemoteApiUrl(value: string): boolean {
       url.pathname === "/" &&
       url.search === "" &&
       url.hash === "" &&
-      /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com$/.test(url.hostname)
+      (/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com$/.test(url.hostname) ||
+        /^h-[0-9a-f]{32}\.openbot\.run$/u.test(url.hostname))
     );
   } catch {
     return false;
@@ -458,14 +459,20 @@ export function parseAddressUpdateUrl(value: string): {
     url.hostname !== "update" ||
     !isValidRemoteApiUrl(apiUrl) ||
     !/^[0-9a-f-]{36}$/i.test(serverId) ||
-    (vncHostname !== null &&
-      !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com$/.test(vncHostname)) ||
+    (vncHostname !== null && !isValidRemoteVncHostname(vncHostname)) ||
     !/^[A-Za-z0-9_-]{64,2048}$/.test(publicKey) ||
     !/^[A-Za-z0-9_-]{64,128}$/.test(signature)
   ) {
     throw new Error("The OpenBot address update link is invalid.");
   }
   return { apiUrl, serverId, vncHostname, publicKey, signature };
+}
+
+function isValidRemoteVncHostname(value: string): boolean {
+  return (
+    /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com$/.test(value) ||
+    /^vnc-h-[0-9a-f]{32}\.openbot\.run$/u.test(value)
+  );
 }
 
 export function verifyAddressUpdate(

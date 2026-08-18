@@ -15,10 +15,18 @@ async function main(): Promise<void> {
   if (!smtpPassword?.trim()) {
     throw new Error("EMAIL_SMTP_PASSWORD is missing from the decrypted production environment.");
   }
+  const cloudflareApiToken = process.env.CLOUDFLARE_API_TOKEN;
+  if (!cloudflareApiToken?.trim()) {
+    throw new Error("CLOUDFLARE_API_TOKEN is missing from the decrypted production environment.");
+  }
 
   await run(wranglerExecutable, ["secret", "put", "EMAIL_SMTP_PASSWORD", ...environmentArgs], {
     input: `${smtpPassword}\n`,
     label: "Cloudflare SMTP secret",
+  });
+  await run(wranglerExecutable, ["secret", "put", "CLOUDFLARE_API_TOKEN", ...environmentArgs], {
+    input: `${cloudflareApiToken}\n`,
+    label: "Cloudflare tunnel API secret",
   });
   if (cloudflareEnvironment) {
     await run(
@@ -31,7 +39,7 @@ async function main(): Promise<void> {
     label: "Auth API build",
     env: cloudflareEnvironment ? { CLOUDFLARE_ENV: cloudflareEnvironment } : undefined,
   });
-  await run(wranglerExecutable, ["deploy", ...environmentArgs], {
+  await run(wranglerExecutable, ["deploy", ...(cloudflareEnvironment ? ["--env", ""] : [])], {
     label: "Auth API deployment",
   });
 }

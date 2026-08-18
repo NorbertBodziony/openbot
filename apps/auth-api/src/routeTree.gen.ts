@@ -17,6 +17,7 @@ import { Route as V1AuthLogoutRouteImport } from './routes/v1/auth/logout'
 import { Route as V1TeamAuthRedeemRouteImport } from './routes/v1/team-auth/redeem'
 import { Route as V1TeamAuthTicketRouteImport } from './routes/v1/team-auth/ticket'
 import { Route as V1TeamInvitationsEmailRouteImport } from './routes/v1/team-invitations/email'
+import { Route as V1TeamTunnelsProvisionRouteImport } from './routes/v1/team-tunnels/provision'
 import { Route as V1AuthEmailStartRouteImport } from './routes/v1/auth/email/start'
 import { Route as V1AuthEmailVerifyRouteImport } from './routes/v1/auth/email/verify'
 
@@ -60,6 +61,11 @@ const V1TeamInvitationsEmailRoute = V1TeamInvitationsEmailRouteImport.update({
   path: '/v1/team-invitations/email',
   getParentRoute: () => rootRouteImport,
 } as any)
+const V1TeamTunnelsProvisionRoute = V1TeamTunnelsProvisionRouteImport.update({
+  id: '/v1/team-tunnels/provision',
+  path: '/v1/team-tunnels/provision',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const V1AuthEmailStartRoute = V1AuthEmailStartRouteImport.update({
   id: '/v1/auth/email/start',
   path: '/v1/auth/email/start',
@@ -80,6 +86,7 @@ export interface FileRoutesByFullPath {
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
   '/v1/team-auth/ticket': typeof V1TeamAuthTicketRoute
   '/v1/team-invitations/email': typeof V1TeamInvitationsEmailRoute
+  '/v1/team-tunnels/provision': typeof V1TeamTunnelsProvisionRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
 }
@@ -92,6 +99,7 @@ export interface FileRoutesByTo {
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
   '/v1/team-auth/ticket': typeof V1TeamAuthTicketRoute
   '/v1/team-invitations/email': typeof V1TeamInvitationsEmailRoute
+  '/v1/team-tunnels/provision': typeof V1TeamTunnelsProvisionRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
 }
@@ -105,6 +113,7 @@ export interface FileRoutesById {
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
   '/v1/team-auth/ticket': typeof V1TeamAuthTicketRoute
   '/v1/team-invitations/email': typeof V1TeamInvitationsEmailRoute
+  '/v1/team-tunnels/provision': typeof V1TeamTunnelsProvisionRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
 }
@@ -119,6 +128,7 @@ export interface FileRouteTypes {
     | '/v1/team-auth/redeem'
     | '/v1/team-auth/ticket'
     | '/v1/team-invitations/email'
+    | '/v1/team-tunnels/provision'
     | '/v1/auth/email/start'
     | '/v1/auth/email/verify'
   fileRoutesByTo: FileRoutesByTo
@@ -131,6 +141,7 @@ export interface FileRouteTypes {
     | '/v1/team-auth/redeem'
     | '/v1/team-auth/ticket'
     | '/v1/team-invitations/email'
+    | '/v1/team-tunnels/provision'
     | '/v1/auth/email/start'
     | '/v1/auth/email/verify'
   id:
@@ -143,6 +154,7 @@ export interface FileRouteTypes {
     | '/v1/team-auth/redeem'
     | '/v1/team-auth/ticket'
     | '/v1/team-invitations/email'
+    | '/v1/team-tunnels/provision'
     | '/v1/auth/email/start'
     | '/v1/auth/email/verify'
   fileRoutesById: FileRoutesById
@@ -156,6 +168,7 @@ export interface RootRouteChildren {
   V1TeamAuthRedeemRoute: typeof V1TeamAuthRedeemRoute
   V1TeamAuthTicketRoute: typeof V1TeamAuthTicketRoute
   V1TeamInvitationsEmailRoute: typeof V1TeamInvitationsEmailRoute
+  V1TeamTunnelsProvisionRoute: typeof V1TeamTunnelsProvisionRoute
   V1AuthEmailStartRoute: typeof V1AuthEmailStartRoute
   V1AuthEmailVerifyRoute: typeof V1AuthEmailVerifyRoute
 }
@@ -218,6 +231,13 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1TeamInvitationsEmailRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/v1/team-tunnels/provision': {
+      id: '/v1/team-tunnels/provision'
+      path: '/v1/team-tunnels/provision'
+      fullPath: '/v1/team-tunnels/provision'
+      preLoaderRoute: typeof V1TeamTunnelsProvisionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/v1/auth/email/start': {
       id: '/v1/auth/email/start'
       path: '/v1/auth/email/start'
@@ -244,6 +264,7 @@ const rootRouteChildren: RootRouteChildren = {
   V1TeamAuthRedeemRoute: V1TeamAuthRedeemRoute,
   V1TeamAuthTicketRoute: V1TeamAuthTicketRoute,
   V1TeamInvitationsEmailRoute: V1TeamInvitationsEmailRoute,
+  V1TeamTunnelsProvisionRoute: V1TeamTunnelsProvisionRoute,
   V1AuthEmailStartRoute: V1AuthEmailStartRoute,
   V1AuthEmailVerifyRoute: V1AuthEmailVerifyRoute,
 }

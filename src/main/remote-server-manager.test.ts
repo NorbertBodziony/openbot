@@ -9,8 +9,11 @@ import {
 } from "./remote-server-manager";
 
 describe("remote server links", () => {
-  it("accepts only a root HTTPS Quick Tunnel URL", () => {
+  it("accepts only supported root HTTPS tunnel URLs", () => {
     expect(isValidRemoteApiUrl("https://team-host.trycloudflare.com/")).toBe(true);
+    expect(isValidRemoteApiUrl("https://h-00000000000040008000000000000000.openbot.run/")).toBe(
+      true,
+    );
     expect(isValidRemoteApiUrl("http://team-host.trycloudflare.com/")).toBe(false);
     expect(isValidRemoteApiUrl("https://team-host.trycloudflare.com/path")).toBe(false);
     expect(isValidRemoteApiUrl("https://example.com/")).toBe(false);
@@ -28,6 +31,16 @@ describe("remote server links", () => {
       fingerprint: "a".repeat(43),
       token: "b".repeat(43),
     });
+  });
+
+  it("parses a stable openbot.run invitation", () => {
+    const apiUrl = "https://h-00000000000040008000000000000000.openbot.run/";
+    const url = new URL("openbot://join");
+    url.searchParams.set("api", apiUrl);
+    url.searchParams.set("server", "00000000-0000-4000-8000-000000000000");
+    url.searchParams.set("fingerprint", "a".repeat(43));
+    url.searchParams.set("invite", "b".repeat(43));
+    expect(parseJoinUrl(url.toString())).toMatchObject({ apiUrl });
   });
 
   it("rejects a link with a non-Cloudflare API URL", () => {

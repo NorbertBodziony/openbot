@@ -8,6 +8,10 @@ export interface WorkerBindings {
   EMAIL_FROM?: string;
   EMAIL_DELIVERY_WEBHOOK_URL?: string;
   EMAIL_DELIVERY_WEBHOOK_SECRET?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CLOUDFLARE_ZONE_ID?: string;
+  CLOUDFLARE_TUNNEL_DOMAIN?: string;
+  CLOUDFLARE_API_TOKEN?: string;
 }
 
 export interface AuthUser {

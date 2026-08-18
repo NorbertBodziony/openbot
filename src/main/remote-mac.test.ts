@@ -31,17 +31,21 @@ describe("Remote Mac helpers", () => {
     ["pty-vacuum.trycloudflare.com/path", false],
     ["PTY.trycloudflare.com", false],
     ["-bad.trycloudflare.com", false],
+    ["vnc-h-00000000000040008000000000000000.openbot.run", true],
+    ["h-00000000000040008000000000000000.openbot.run", false],
+    ["vnc-h-not-a-server.openbot.run", false],
     ["example.com", false],
   ])("validates %s as %s", (hostname, expected) => {
     expect(isValidTunnelHostname(hostname)).toBe(expected);
   });
 
   it("builds a shell-free argument array", () => {
-    expect(buildCloudflaredAccessArgs("demo.trycloudflare.com", 5907)).toEqual([
+    const hostname = "vnc-h-00000000000040008000000000000000.openbot.run";
+    expect(buildCloudflaredAccessArgs(hostname, 5907)).toEqual([
       "access",
       "tcp",
       "--hostname",
-      "demo.trycloudflare.com",
+      hostname,
       "--url",
       "127.0.0.1:5907",
     ]);
