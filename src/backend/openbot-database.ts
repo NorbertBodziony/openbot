@@ -9,6 +9,12 @@ import type {
   ConversationSnapshot,
 } from "@openbot/contracts/ipc";
 import { isClaudeModel } from "@openbot/contracts/ipc";
+import {
+  type DynamicRecord,
+  isDynamicRecord,
+  isNumber,
+  isString,
+} from "@openbot/contracts/runtime-values";
 import { migrateOpenBotDatabase } from "./openbot-database-schema";
 
 export interface OrchestrationEventInput {
@@ -65,6 +71,51 @@ interface SessionRow {
   created_at: string;
   updated_at: string;
   resume_cursor: string | null;
+}
+
+interface MailboxProjectionAttachment {
+  id: string;
+  name: string;
+  path: string;
+}
+
+interface MailboxProjectionMessage {
+  id: string;
+  sender: { kind: string; botId?: string };
+  text: string;
+  replyToMessageId: string | null;
+  createdAt: string;
+  attachments: MailboxProjectionAttachment[];
+}
+
+interface MailboxProjectionDelivery {
+  id: string;
+  messageId: string;
+  recipientBotId: string;
+  status: string;
+  turnId: string | null;
+  error: string | null;
+  createdAt: string;
+}
+
+interface MailboxProjectionDraft extends MailboxProjectionAttachment {
+  createdAt: string;
+}
+
+interface MailboxProjectionReaction {
+  botId: string;
+  messageId: string;
+  emoji: string;
+  updatedAt: string;
+}
+
+interface MailboxProjectionState {
+  messages: MailboxProjectionMessage[];
+  deliveries: MailboxProjectionDelivery[];
+  drafts: MailboxProjectionDraft[];
+  pausedBotIds: string[];
+  idempotency: Record<string, string>;
+  reactions: MailboxProjectionReaction[];
 }
 
 /**
@@ -384,13 +435,12 @@ export class OpenBotDatabase {
             "turn.reconciled-after-restart",
             "turn.interrupted-by-restart",
           ].includes(eventType) &&
-          typeof payload === "object" &&
-          payload !== null &&
+          isDynamicRecord(payload) &&
           "turnId" in payload &&
-          typeof payload.turnId === "string"
+          isString(payload.turnId)
         ) {
           const status =
-            "status" in payload && typeof payload.status === "string"
+            "status" in payload && isString(payload.status)
               ? payload.status
               : eventType === "turn.interrupted-by-restart"
                 ? "interrupted"
@@ -651,17 +701,16 @@ export class OpenBotDatabase {
       } else if (event.event_type === "provider-session.deactivated") {
         const ids = Array.isArray(record?.sessionIds) ? record.sessionIds : [];
         for (const id of ids) {
-          if (typeof id === "string") {
+          if (isString(id)) {
             const session = sessions.get(id);
             if (session) session.state = "inactive";
           }
         }
       } else if (event.event_type === "provider-session.config-updated") {
-        const session =
-          typeof record?.sessionId === "string" ? sessions.get(record.sessionId) : null;
+        const session = isString(record?.sessionId) ? sessions.get(record.sessionId) : null;
         if (session) {
-          if (typeof record?.model === "string") session.model = record.model;
-          if (typeof record?.effort === "string") session.effort = record.effort;
+          if (isString(record?.model)) session.model = record.model;
+          if (isString(record?.effort)) session.effort = record.effort;
           session.sequence = event.sequence;
         }
       } else if (event.event_type === "thread.summary-created") {
@@ -811,7 +860,7 @@ export class OpenBotDatabase {
 
   replaceMailboxState(
     commandId: string,
-    state: unknown,
+    state: MailboxProjectionState,
     eventType: string,
     fileDeletions: string[] = [],
     rebaseHistory = false,
@@ -840,14 +889,7 @@ export class OpenBotDatabase {
              WHERE aggregate_type = 'mailbox' AND aggregate_id = 'mailbox' AND sequence < ?`,
           ).run(sequence);
         }
-        const value = state as {
-          messages: Array<Record<string, unknown>>;
-          deliveries: Array<Record<string, unknown>>;
-          drafts: Array<Record<string, unknown>>;
-          pausedBotIds: string[];
-          idempotency: Record<string, string>;
-          reactions: Array<Record<string, unknown>>;
-        };
+        const value = state;
         db.exec("DELETE FROM projection_deliveries");
         db.exec("DELETE FROM projection_mailbox_messages");
         db.exec("DELETE FROM projection_queue_state");
@@ -872,12 +914,12 @@ export class OpenBotDatabase {
             sender.kind,
             sender.botId ?? null,
             String(message.text),
-            typeof message.replyToMessageId === "string" ? message.replyToMessageId : null,
+            isString(message.replyToMessageId) ? message.replyToMessageId : null,
             String(message.createdAt),
             JSON.stringify(message),
             sequence,
           );
-          for (const attachment of (message.attachments ?? []) as Array<Record<string, unknown>>) {
+          for (const attachment of message.attachments) {
             attachmentInsert.run(
               String(attachment.id),
               "mailbox-message",
@@ -901,8 +943,8 @@ export class OpenBotDatabase {
             String(delivery.messageId),
             String(delivery.recipientBotId),
             String(delivery.status),
-            typeof delivery.turnId === "string" ? delivery.turnId : null,
-            typeof delivery.error === "string" ? delivery.error : null,
+            isString(delivery.turnId) ? delivery.turnId : null,
+            isString(delivery.error) ? delivery.error : null,
             String(delivery.createdAt),
             JSON.stringify(delivery),
             sequence,
@@ -1099,55 +1141,51 @@ function toProviderSession(row: SessionRow): ProviderSession {
   };
 }
 
-function objectValue(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+function objectValue(value: unknown): DynamicRecord | null {
+  return isDynamicRecord(value) ? value : null;
 }
 
-function providerSessionValue(value: Record<string, unknown> | null): ProviderSession | null {
+function providerSessionValue(value: DynamicRecord | null): ProviderSession | null {
   if (
     !value ||
-    typeof value.id !== "string" ||
-    typeof value.threadId !== "string" ||
+    !isString(value.id) ||
+    !isString(value.threadId) ||
     (value.provider !== "codex" && value.provider !== "claude") ||
-    typeof value.externalSessionId !== "string" ||
-    typeof value.model !== "string" ||
-    typeof value.effort !== "string" ||
+    !isString(value.externalSessionId) ||
+    !isString(value.model) ||
+    !isString(value.effort) ||
     (value.state !== "active" && value.state !== "inactive" && value.state !== "failed") ||
-    typeof value.createdAt !== "string" ||
-    typeof value.updatedAt !== "string" ||
-    (typeof value.resumeCursor !== "string" && value.resumeCursor !== null)
+    !isString(value.createdAt) ||
+    !isString(value.updatedAt) ||
+    (!isString(value.resumeCursor) && value.resumeCursor !== null)
   ) {
     return null;
   }
   return value as unknown as ProviderSession;
 }
 
-function summaryValue(value: Record<string, unknown> | null): StoredThreadSummary | null {
+function summaryValue(value: DynamicRecord | null): StoredThreadSummary | null {
   if (
     !value ||
-    typeof value.id !== "string" ||
-    typeof value.threadId !== "string" ||
-    (typeof value.throughMessageId !== "string" && value.throughMessageId !== null) ||
-    typeof value.text !== "string" ||
-    typeof value.estimatedTokens !== "number" ||
-    typeof value.createdAt !== "string"
+    !isString(value.id) ||
+    !isString(value.threadId) ||
+    (!isString(value.throughMessageId) && value.throughMessageId !== null) ||
+    !isString(value.text) ||
+    !isNumber(value.estimatedTokens) ||
+    !isString(value.createdAt)
   ) {
     return null;
   }
   return value as unknown as StoredThreadSummary;
 }
 
-function conversationSnapshotValue(
-  value: Record<string, unknown> | null,
-): ConversationSnapshot | null {
+function conversationSnapshotValue(value: DynamicRecord | null): ConversationSnapshot | null {
   if (
     !value ||
-    typeof value.botId !== "string" ||
-    (typeof value.threadId !== "string" && value.threadId !== null) ||
-    (typeof value.activeTurnId !== "string" && value.activeTurnId !== null) ||
-    typeof value.revision !== "number" ||
+    !isString(value.botId) ||
+    (!isString(value.threadId) && value.threadId !== null) ||
+    (!isString(value.activeTurnId) && value.activeTurnId !== null) ||
+    !isNumber(value.revision) ||
     !Array.isArray(value.messages)
   ) {
     return null;

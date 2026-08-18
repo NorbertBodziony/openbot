@@ -1,3 +1,5 @@
+import { type DynamicRecord, isDynamicRecord } from "@openbot/contracts/runtime-values";
+
 export const JSON_BODY_LIMIT = 16 * 1024;
 
 export class JsonBodyError extends Error {
@@ -10,7 +12,7 @@ export class JsonBodyError extends Error {
   }
 }
 
-export async function readJsonObject(request: Request): Promise<Record<string, unknown>> {
+export async function readJsonObject(request: Request): Promise<DynamicRecord> {
   const declaredLength = request.headers.get("Content-Length");
   if (declaredLength !== null) {
     const parsedLength = Number(declaredLength);
@@ -42,8 +44,8 @@ export async function readJsonObject(request: Request): Promise<Record<string, u
   }
   try {
     const value = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw invalidJson();
-    return value as Record<string, unknown>;
+    if (!isDynamicRecord(value)) throw invalidJson();
+    return value;
   } catch (error) {
     if (error instanceof JsonBodyError) throw error;
     throw invalidJson();

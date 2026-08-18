@@ -3,7 +3,7 @@ import { blobatar, layout } from "blobatar/blob";
 import { describe, expect, it } from "vitest";
 import { avatarCandidateSeeds, buildAnimatedAvatarSvg } from "./blobatar";
 
-const shapeMarkup = (markup: string) => {
+const avatarGeometryMarkup = (markup: string) => {
   const document = new DOMParser().parseFromString(markup, "image/svg+xml");
   return Array.from(
     document.querySelectorAll("circle, ellipse, line, path, polygon, polyline, rect"),
@@ -31,8 +31,8 @@ describe("animated Blobatar adapter", () => {
     const seed = "chief:avatar:2:4";
     const hue = 215;
 
-    expect(shapeMarkup(buildAnimatedAvatarSvg(seed, hue))).toEqual(
-      shapeMarkup(blobatar(seed, { hue })),
+    expect(avatarGeometryMarkup(buildAnimatedAvatarSvg(seed, hue))).toEqual(
+      avatarGeometryMarkup(blobatar(seed, { hue })),
     );
   });
 

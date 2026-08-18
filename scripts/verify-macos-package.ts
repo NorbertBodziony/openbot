@@ -7,6 +7,16 @@ import { FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
 const FUSE_DISABLED = 48;
 const FUSE_ENABLED = 49;
 
+interface MacBundleMetadata {
+  CFBundleDisplayName?: unknown;
+  CFBundleExecutable?: unknown;
+  CFBundleIdentifier?: unknown;
+  CFBundleIconFile?: unknown;
+  CFBundleShortVersionString?: unknown;
+  LSMinimumSystemVersion?: unknown;
+  ElectronAsarIntegrity?: unknown;
+}
+
 const appPath = resolve(process.argv[2] ?? "dist/mac-arm64/OpenBot.app");
 const contentsPath = resolve(appPath, "Contents");
 const executablePath = resolve(contentsPath, "MacOS/OpenBot");
@@ -21,10 +31,9 @@ await Promise.all([
   access(resolve(resourcesPath, "licenses/LICENSES.chromium.html")),
 ]);
 
-const plist = JSON.parse(run("plutil", ["-convert", "json", "-o", "-", plistPath])) as Record<
-  string,
-  unknown
->;
+const plist = JSON.parse(
+  run("plutil", ["-convert", "json", "-o", "-", plistPath]),
+) as MacBundleMetadata;
 expectEqual(plist.CFBundleDisplayName, "OpenBot", "display name");
 expectEqual(plist.CFBundleExecutable, "OpenBot", "executable name");
 expectEqual(plist.CFBundleIdentifier, "app.openbot.desktop", "bundle identifier");

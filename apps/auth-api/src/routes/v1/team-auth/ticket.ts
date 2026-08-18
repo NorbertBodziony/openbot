@@ -1,3 +1,4 @@
+import { isString } from "@openbot/contracts/runtime-values";
 import { createFileRoute } from "@tanstack/solid-router";
 import { readJsonObject } from "../../../server/json-body";
 import {
@@ -17,7 +18,7 @@ export const Route = createFileRoute("/v1/team-auth/ticket")({
           const token = bearerToken(request);
           if (!token) return apiError(401, "unauthorized", "Sign in is required.");
           const body = await readJsonObject(request);
-          if (typeof body.serverId !== "string") {
+          if (!isString(body.serverId)) {
             return apiError(400, "invalid_server_id", "The team server ID is invalid.");
           }
           return json(

@@ -1,3 +1,4 @@
+import { isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { createFileRoute } from "@tanstack/solid-router";
 import { CloudflareTunnelError } from "../../../server/cloudflare-tunnel-provider";
 import { readJsonObject } from "../../../server/json-body";
@@ -24,12 +25,10 @@ export const Route = createFileRoute("/v1/team-tunnels/provision")({
           if (!user) return apiError(401, "unauthorized", "The session is invalid.");
           const body = await readJsonObject(request);
           if (
-            typeof body.serverId !== "string" ||
-            typeof body.serverName !== "string" ||
-            (body.apiPort !== undefined &&
-              body.apiPort !== null &&
-              typeof body.apiPort !== "number") ||
-            (body.vncEnabled !== undefined && typeof body.vncEnabled !== "boolean")
+            !isString(body.serverId) ||
+            !isString(body.serverName) ||
+            (body.apiPort !== undefined && body.apiPort !== null && !isNumber(body.apiPort)) ||
+            (body.vncEnabled !== undefined && !isBoolean(body.vncEnabled))
           ) {
             return apiError(400, "invalid_tunnel_request", "The tunnel details are invalid.");
           }
@@ -72,7 +71,7 @@ export const Route = createFileRoute("/v1/team-tunnels/provision")({
           const user = await auth.authenticate(token);
           if (!user) return apiError(401, "unauthorized", "The session is invalid.");
           const body = await readJsonObject(request);
-          if (typeof body.serverId !== "string") {
+          if (!isString(body.serverId)) {
             return apiError(400, "invalid_server_id", "The team server ID is invalid.");
           }
           await auth.enforceTeamTunnelRateLimit(user.id, requestSourceIp(request));

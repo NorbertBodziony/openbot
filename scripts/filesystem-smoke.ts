@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isString } from "@openbot/contracts/runtime-values";
 import { CodexAppServerClient } from "../src/backend/app-server-client";
 import { resolveCodexCli } from "../src/backend/cli";
 import { isRecord, type RequestId } from "../src/backend/protocol";
@@ -151,7 +152,7 @@ function waitForTurn(activeClient: CodexAppServerClient, timeoutMs: number): Pro
     const onNotification = (notification: { method: string; params: unknown }) => {
       if (notification.method !== "turn/completed" || !isRecord(notification.params)) return;
       const turn = isRecord(notification.params.turn) ? notification.params.turn : null;
-      const status = turn && typeof turn.status === "string" ? turn.status : "completed";
+      const status = turn && isString(turn.status) ? turn.status : "completed";
       cleanup();
       if (status === "completed") resolve();
       else reject(new Error(`Filesystem smoke turn finished with status ${status}.`));

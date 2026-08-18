@@ -15,6 +15,13 @@ import {
   type TeamMemberSummary,
   type UpdateBotInput,
 } from "@openbot/contracts/ipc";
+import {
+  type DynamicRecord,
+  isBoolean,
+  isDynamicRecord,
+  isNumber,
+  isString,
+} from "@openbot/contracts/runtime-values";
 import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
@@ -111,7 +118,7 @@ export class TeamApiServer {
       this.#server?.listen(0, "127.0.0.1", () => resolve());
     });
     const address = this.#server.address();
-    if (!address || typeof address === "string") throw new Error("Could not bind the team API.");
+    if (!address || isString(address)) throw new Error("Could not bind the team API.");
     this.#port = address.port;
     this.#agentListener = (event) => this.#broadcast(event);
     this.#options.agents.on("event", this.#agentListener);
@@ -281,7 +288,7 @@ export class TeamApiServer {
       }
       if (method === "POST" && url.pathname === "/v1/browser/visible") {
         const body = await readJson(request);
-        if (typeof body.visible !== "boolean") throw new HttpError(400, "visible is required.");
+        if (!isBoolean(body.visible)) throw new HttpError(400, "visible is required.");
         await this.#options.browser.setVisible({
           visible: body.visible,
           bounds: body.bounds as import("@openbot/contracts/ipc").BrowserBounds | undefined,
@@ -337,7 +344,7 @@ export class TeamApiServer {
         if (role !== undefined && role !== "admin" && role !== "member") {
           throw new HttpError(400, "Invalid role.");
         }
-        if (disabled !== undefined && typeof disabled !== "boolean") {
+        if (disabled !== undefined && !isBoolean(disabled)) {
           throw new HttpError(400, "disabled must be a boolean.");
         }
         return this.#json(
@@ -455,7 +462,7 @@ export class TeamApiServer {
         }
         if (method === "POST" && action === "queue/pause") {
           const body = await readJson(request);
-          if (typeof body.paused !== "boolean") throw new HttpError(400, "paused is required.");
+          if (!isBoolean(body.paused)) throw new HttpError(400, "paused is required.");
           await this.#options.agents.setQueuePaused(botId, body.paused);
           return this.#empty(response, 204);
         }
@@ -574,9 +581,7 @@ function requireAdmin(member: TeamMemberSummary): void {
   if (member.role === "member") throw new HttpError(403, "Administrator access is required.");
 }
 
-async function readJson(
-  request: import("node:http").IncomingMessage,
-): Promise<Record<string, unknown>> {
+async function readJson(request: import("node:http").IncomingMessage): Promise<DynamicRecord> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -587,21 +592,21 @@ async function readJson(
   }
   try {
     const value = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
-    return value as Record<string, unknown>;
+    if (!isDynamicRecord(value)) throw new Error();
+    return value;
   } catch {
     throw new HttpError(400, "A valid JSON object is required.");
   }
 }
 
 function stringField(
-  value: Record<string, unknown>,
+  value: DynamicRecord,
   field: string,
   allowEmpty = false,
   maxLength: number = INPUT_LIMITS.identifier,
 ): string {
   const item = value[field];
-  if (typeof item !== "string" || (!allowEmpty && !item.trim())) {
+  if (!isString(item) || (!allowEmpty && !item.trim())) {
     throw new HttpError(400, `${field} is required.`);
   }
   if (item.length > maxLength) throw new HttpError(400, `${field} is too long.`);
@@ -609,13 +614,13 @@ function stringField(
 }
 
 function nullableString(
-  value: Record<string, unknown>,
+  value: DynamicRecord,
   field: string,
   maxLength: number = INPUT_LIMITS.identifier,
 ): string | null {
   const item = value[field];
   if (item === undefined || item === null || item === "") return null;
-  if (typeof item !== "string") throw new HttpError(400, `${field} must be a string.`);
+  if (!isString(item)) throw new HttpError(400, `${field} must be a string.`);
   if (item.length > maxLength) throw new HttpError(400, `${field} is too long.`);
   return item;
 }
@@ -634,7 +639,7 @@ function pathIdentifier(value: string | undefined, field: string): string {
 }
 
 function stringArray(
-  value: Record<string, unknown>,
+  value: DynamicRecord,
   field: string,
   maxItems: number = INPUT_LIMITS.attachments,
   maxLength: number = INPUT_LIMITS.identifier,
@@ -644,7 +649,7 @@ function stringArray(
   if (
     !Array.isArray(item) ||
     item.length > maxItems ||
-    !item.every((entry) => typeof entry === "string" && entry.length <= maxLength)
+    !item.every((entry) => isString(entry) && entry.length <= maxLength)
   ) {
     throw new HttpError(400, `${field} must be a string array.`);
   }
@@ -652,15 +657,15 @@ function stringArray(
 }
 
 function promptRequestId(value: unknown): string | number {
-  if (typeof value === "number" && Number.isSafeInteger(value)) return value;
-  if (typeof value === "string" && value.length > 0 && value.length <= INPUT_LIMITS.identifier) {
+  if (isNumber(value) && Number.isSafeInteger(value)) return value;
+  if (isString(value) && value.length > 0 && value.length <= INPUT_LIMITS.identifier) {
     return value;
   }
   throw new HttpError(400, "requestId is invalid.");
 }
 
 function promptAnswers(value: unknown): Record<string, string[]> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!isDynamicRecord(value)) {
     throw new HttpError(400, "answers is required.");
   }
   const entries = Object.entries(value);
@@ -673,9 +678,7 @@ function promptAnswers(value: unknown): Record<string, string[]> {
       key.length > INPUT_LIMITS.identifier ||
       !Array.isArray(answer) ||
       answer.length > INPUT_LIMITS.promptAnswersPerQuestion ||
-      !answer.every(
-        (item) => typeof item === "string" && item.length <= INPUT_LIMITS.promptAnswerText,
-      )
+      !answer.every((item) => isString(item) && item.length <= INPUT_LIMITS.promptAnswerText)
     ) {
       throw new HttpError(400, "A prompt answer is invalid.");
     }
@@ -684,7 +687,7 @@ function promptAnswers(value: unknown): Record<string, string[]> {
   return answers;
 }
 
-function botUpdate(value: Record<string, unknown>, botId: string): UpdateBotInput {
+function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {
   const result: UpdateBotInput = { botId };
   const textFields = {
     name: INPUT_LIMITS.agentName,
@@ -694,13 +697,13 @@ function botUpdate(value: Record<string, unknown>, botId: string): UpdateBotInpu
   for (const [field, maxLength] of Object.entries(textFields)) {
     const item = value[field];
     if (item === undefined) continue;
-    if (typeof item !== "string" || item.length > maxLength) {
+    if (!isString(item) || item.length > maxLength) {
       throw new HttpError(400, `${field} is invalid.`);
     }
     result[field as keyof typeof textFields] = item;
   }
   if (value.notifications !== undefined) {
-    if (typeof value.notifications !== "boolean") {
+    if (!isBoolean(value.notifications)) {
       throw new HttpError(400, "notifications is invalid.");
     }
     result.notifications = value.notifications;

@@ -21,6 +21,7 @@ import type {
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
 import { isClaudeModel, isReasoningEffort } from "@openbot/contracts/ipc";
+import { isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AppServerError, CodexAppServerClient } from "./app-server-client";
 import type { BotStore } from "./bot-store";
@@ -891,10 +892,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error(`Unsupported OpenBot tool: ${params.tool}`);
     }
     const recipientValues = params.arguments.recipientBotIds;
-    if (
-      !Array.isArray(recipientValues) ||
-      !recipientValues.every((item) => typeof item === "string")
-    ) {
+    if (!Array.isArray(recipientValues) || !recipientValues.every((item) => isString(item))) {
       throw new Error("recipientBotIds must be an array of bot ids.");
     }
     if (recipientValues.length !== new Set(recipientValues).size) {
@@ -906,18 +904,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!knownIds.has(recipient)) throw new Error(`Unknown OpenBot agent: ${recipient}`);
     }
     const paths = params.arguments.paths ?? [];
-    if (!Array.isArray(paths) || !paths.every((item) => typeof item === "string")) {
+    if (!Array.isArray(paths) || !paths.every((item) => isString(item))) {
       throw new Error("paths must be an array of local file paths.");
     }
     const replyToMessageId = params.arguments.replyToMessageId;
     if (
       replyToMessageId !== undefined &&
       replyToMessageId !== null &&
-      typeof replyToMessageId !== "string"
+      !isString(replyToMessageId)
     ) {
       throw new Error("replyToMessageId must be a message id.");
     }
-    if (typeof params.arguments.text !== "string") throw new Error("text is required.");
+    if (!isString(params.arguments.text)) throw new Error("text is required.");
 
     const receipt = await this.#mailbox.enqueue({
       sender: { kind: "bot", botId: senderBotId },
@@ -1057,7 +1055,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (managedAttachments.length) {
         text += `\n\nAttached local files:\n${managedAttachments.map((item) => `- ${item.name}: ${item.path}`).join("\n")}`;
       }
-      const input: Array<Record<string, unknown>> = [{ type: "text", text }];
+      const input: Array<
+        | { type: "text"; text: string }
+        | { type: "localImage"; path: string }
+        | { type: "mention"; name: string; path: string }
+      > = [{ type: "text", text }];
       for (const attachment of managedAttachments) {
         input.push(
           attachment.kind === "image"
@@ -1134,7 +1136,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         );
         const serverModels = new Map(
           response.data
-            .filter((item) => !item.hidden && typeof item.model === "string")
+            .filter((item) => !item.hidden && isString(item.model))
             .map((item) => [item.model as string, item]),
         );
         for (const fallback of FALLBACK_MODELS) {
@@ -1683,15 +1685,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     item: ThreadItem,
     completed: boolean,
   ): void {
-    if (item.type !== "agentMessage" || typeof item.id !== "string") return;
+    if (item.type !== "agentMessage" || !isString(item.id)) return;
     const snapshot = this.#ensureSnapshot(botId, threadId);
     let message = snapshot.messages.find((candidate) => candidate.id === item.id);
     if (!message) {
       message = newAssistantMessage(item.id, turnId);
       snapshot.messages.push(message);
     }
-    if (typeof item.text === "string") message.text = item.text;
-    if (typeof item.phase === "string") message.itemType = item.phase;
+    if (isString(item.text)) message.text = item.text;
+    if (isString(item.phase)) message.itemType = item.phase;
     message.status = completed ? "completed" : "streaming";
     this.#itemTurns.set(item.id, turnId);
     this.#emitConversation(snapshot);
@@ -1988,7 +1990,7 @@ function normalizeUsageWindow(
 }
 
 function finiteNumberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+  return isNumber(value) && Number.isFinite(value) ? value : null;
 }
 
 const OPENBOT_DYNAMIC_TOOLS = {
@@ -2065,11 +2067,11 @@ function isArchivedThreadError(error: unknown): boolean {
 function isDynamicToolCall(value: unknown): value is DynamicToolCallParams {
   return (
     isRecord(value) &&
-    typeof value.threadId === "string" &&
-    typeof value.turnId === "string" &&
-    typeof value.callId === "string" &&
-    (typeof value.namespace === "string" || value.namespace === null) &&
-    typeof value.tool === "string" &&
+    isString(value.threadId) &&
+    isString(value.turnId) &&
+    isString(value.callId) &&
+    (isString(value.namespace) || value.namespace === null) &&
+    isString(value.tool) &&
     "arguments" in value
   );
 }

@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import { createConnection, type Socket } from "node:net";
 import { dirname, join } from "node:path";
+import { isString } from "@openbot/contracts/runtime-values";
 import type * as Ws from "ws";
 
 const LOOPBACK_HOST = "127.0.0.1";
@@ -80,7 +81,7 @@ export async function startVncWebSocketBridge(targetPort: number): Promise<VncWe
   await listenOnLoopback(server);
   server.unref();
   const address = server.address();
-  if (!address || typeof address === "string") {
+  if (!address || isString(address)) {
     await closeHttpServer(server);
     throw new Error("The VNC WebSocket bridge did not get a local port.");
   }
@@ -157,7 +158,7 @@ export async function startVncWebSocketRelay(
   await listenOnLoopback(server);
   server.unref();
   const address = server.address();
-  if (!address || typeof address === "string") {
+  if (!address || isString(address)) {
     await closeHttpServer(server);
     throw new Error("The Remote Desktop WebSocket relay did not get a local port.");
   }

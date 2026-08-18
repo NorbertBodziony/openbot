@@ -4,6 +4,7 @@ import { createServer as createHttpServer } from "node:http";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
+import { isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import type * as Ws from "ws";
 import {
@@ -38,7 +39,7 @@ describe("VNC WebSocket bridge", () => {
     servers.push(vnc);
     await new Promise<void>((resolve) => vnc.listen(0, "127.0.0.1", resolve));
     const address = vnc.address();
-    if (!address || typeof address === "string") throw new Error("Missing VNC test port");
+    if (!address || isString(address)) throw new Error("Missing VNC test port");
 
     const bridge = await startVncWebSocketBridge(address.port);
     bridges.push(bridge);
@@ -57,7 +58,7 @@ describe("VNC WebSocket bridge", () => {
     servers.push(vnc);
     await new Promise<void>((resolve) => vnc.listen(0, "127.0.0.1", resolve));
     const address = vnc.address();
-    if (!address || typeof address === "string") throw new Error("Missing VNC test port");
+    if (!address || isString(address)) throw new Error("Missing VNC test port");
     const bridge = await startVncWebSocketBridge(address.port);
     bridges.push(bridge);
 
@@ -81,7 +82,7 @@ describe("VNC WebSocket bridge", () => {
     });
     await new Promise<void>((resolve) => remoteServer.listen(0, "127.0.0.1", resolve));
     const address = remoteServer.address();
-    if (!address || typeof address === "string") throw new Error("Missing relay test port");
+    if (!address || isString(address)) throw new Error("Missing relay test port");
 
     try {
       const bridge = await startVncWebSocketRelay({

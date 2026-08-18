@@ -14,6 +14,7 @@ import {
   tool,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { type DynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { z } from "zod";
 import type { AgentProvider } from "./agent-client";
 import type { ClaudeCliInfo } from "./cli";
@@ -172,15 +173,15 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         maxBuffer: 64 * 1024,
         shell: process.platform === "win32",
       });
-      const status: unknown = JSON.parse(stdout);
+      const status = JSON.parse(stdout) as unknown;
       if (!isRecord(status) || status.loggedIn !== true) {
         return { account: null, requiresOpenaiAuth: false };
       }
       return {
         account: {
           type: "claude",
-          email: typeof status.email === "string" ? status.email : null,
-          planType: typeof status.subscriptionType === "string" ? status.subscriptionType : null,
+          email: isString(status.email) ? status.email : null,
+          planType: isString(status.subscriptionType) ? status.subscriptionType : null,
         },
         requiresOpenaiAuth: false,
       };
@@ -302,7 +303,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         event.type === "content_block_delta" &&
         isRecord(delta) &&
         delta.type === "text_delta" &&
-        typeof delta.text === "string"
+        isString(delta.text)
       ) {
         this.#appendDelta(runtime, delta.text);
       }
@@ -383,9 +384,10 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
   async #readThread(threadId: string): Promise<ThreadResponse> {
     const runtime = this.#threads.get(threadId);
-    const messages = await getSessionMessages(threadId, {
-      ...(runtime?.config.cwd ? { dir: runtime.config.cwd } : {}),
-    });
+    const messages = await getSessionMessages(
+      threadId,
+      runtime?.config.cwd ? { dir: runtime.config.cwd } : undefined,
+    );
     const turns: NonNullable<ThreadResponse["thread"]["turns"]> = [];
     let current: (typeof turns)[number] | null = null;
     for (const message of messages) {
@@ -513,18 +515,15 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
   async #requestUserInput(
     threadId: string,
-    input: Record<string, unknown>,
+    input: DynamicRecord,
     toolUseId: string,
   ): Promise<PermissionResult> {
     const runtime = this.#requireThread(threadId);
     const rawQuestions = Array.isArray(input.questions) ? input.questions.filter(isRecord) : [];
     const questions = rawQuestions.map((question, index) => ({
       id: `question-${index}`,
-      header: typeof question.header === "string" ? question.header : "Question",
-      question:
-        typeof question.question === "string"
-          ? question.question
-          : "Claude needs more information.",
+      header: isString(question.header) ? question.header : "Question",
+      question: isString(question.question) ? question.question : "Claude needs more information.",
       options: Array.isArray(question.options) ? question.options : undefined,
     }));
     const result = await this.#callServerRequest("item/tool/requestUserInput", {
@@ -540,7 +539,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         const values = isRecord(entry) && Array.isArray(entry.answers) ? entry.answers : [];
         return [
           question.question,
-          values.filter((value): value is string => typeof value === "string").join(", "),
+          values.filter((value): value is string => isString(value)).join(", "),
         ];
       }),
     );
@@ -621,7 +620,7 @@ const CLAUDE_MODELS = [
 function readThreadConfig(params: unknown): ThreadConfig {
   const roots =
     isRecord(params) && Array.isArray(params.runtimeWorkspaceRoots)
-      ? params.runtimeWorkspaceRoots.filter((value): value is string => typeof value === "string")
+      ? params.runtimeWorkspaceRoots.filter((value): value is string => isString(value))
       : [];
   const cwd = requiredString(params, "cwd");
   return {
@@ -644,28 +643,28 @@ function readInputText(params: unknown): string {
   if (!isRecord(params) || !Array.isArray(params.input)) return "";
   return params.input
     .filter(isRecord)
-    .filter((item) => item.type === "text" && typeof item.text === "string")
+    .filter((item) => item.type === "text" && isString(item.text))
     .map((item) => item.text as string)
     .join("\n");
 }
 
 function messageText(message: unknown): string {
   if (!isRecord(message)) return "";
-  if (typeof message.content === "string") return message.content;
+  if (isString(message.content)) return message.content;
   if (!Array.isArray(message.content)) return "";
   return message.content
     .filter(isRecord)
-    .filter((block) => block.type === "text" && typeof block.text === "string")
+    .filter((block) => block.type === "text" && isString(block.text))
     .map((block) => block.text as string)
     .join("\n");
 }
 
 function dynamicContent(value: unknown): CallToolResult["content"] {
   if (!isRecord(value)) return [];
-  if (value.type === "inputText" && typeof value.text === "string") {
+  if (value.type === "inputText" && isString(value.text)) {
     return [{ type: "text" as const, text: value.text }];
   }
-  if (value.type === "inputImage" && typeof value.imageUrl === "string") {
+  if (value.type === "inputImage" && isString(value.imageUrl)) {
     const match = value.imageUrl.match(/^data:([^;]+);base64,(.+)$/s);
     if (match) return [{ type: "image" as const, mimeType: match[1], data: match[2] }];
   }

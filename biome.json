@@ -1,8 +1,22 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.8/schema.json",
+  "plugins": [
+    "./tools/biome/anti-slop/rules/no-chained-type-assertions.grit",
+    "./tools/biome/anti-slop/rules/no-conditional-empty-object-spread.grit",
+    "./tools/biome/anti-slop/rules/no-known-value-widening.grit",
+    "./tools/biome/anti-slop/rules/no-module-mocking.grit",
+    "./tools/biome/anti-slop/rules/no-reflect-apply.grit",
+    "./tools/biome/anti-slop/rules/no-reflect-get.grit",
+    "./tools/biome/anti-slop/rules/no-runtime-typeof.grit",
+    "./tools/biome/anti-slop/rules/no-shape-in-symbol-names.grit",
+    "./tools/biome/anti-slop/rules/no-unknown-returns.grit",
+    "./tools/biome/anti-slop/rules/no-unknown-type-aliases.grit",
+    "./tools/biome/anti-slop/rules/no-unsafe-dictionary-type.grit"
+  ],
   "files": {
     "includes": [
       "**",
+      "!.codex",
       "!node_modules",
       "!out",
       "!out-dev-app",
@@ -10,6 +24,7 @@
       "!**/dist",
       "!**/.wrangler",
       "!**/routeTree.gen.ts",
+      "!tools/biome/anti-slop",
       "!coverage"
     ]
   },

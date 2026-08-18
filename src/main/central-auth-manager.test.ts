@@ -1,6 +1,7 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
 
@@ -20,7 +21,7 @@ describe("CentralAuthManager", () => {
       const url = new URL(input.toString());
       requests.push({
         path: url.pathname,
-        body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
+        body: isString(init?.body) ? JSON.parse(init.body) : null,
         authorization: new Headers(init?.headers).get("Authorization"),
       });
       if (url.pathname.endsWith("/start")) {

@@ -1,3 +1,4 @@
+import { isString } from "@openbot/contracts/runtime-values";
 import { describe, expect, it, vi } from "vitest";
 import { CloudflareTunnelProvider } from "../src/server/cloudflare-tunnel-provider";
 import {
@@ -160,7 +161,7 @@ describe("CloudflareTunnelProvider", () => {
       requests.push({
         path: `${url.pathname}${url.search}`,
         method,
-        body: typeof init?.body === "string" ? JSON.parse(init.body) : null,
+        body: isString(init?.body) ? JSON.parse(init.body) : null,
         auth: new Headers(init?.headers).get("Authorization"),
       });
       if (url.pathname.endsWith("/token")) {

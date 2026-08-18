@@ -1,3 +1,4 @@
+import { isFunction } from "@openbot/contracts/runtime-values";
 import { createSignal, onSettled } from "solid-js";
 
 interface PanelResizerProps {
@@ -19,8 +20,7 @@ export function PanelResizer(props: PanelResizerProps) {
   let parentResizeObserver: ResizeObserver | undefined;
   const [isResizing, setIsResizing] = createSignal(false);
 
-  const maximum = () =>
-    Math.max(props.min, typeof props.max === "function" ? props.max() : props.max);
+  const maximum = () => Math.max(props.min, isFunction(props.max) ? props.max() : props.max);
   const clamp = (value: number) => Math.round(Math.min(maximum(), Math.max(props.min, value)));
   const commit = (value: number) => {
     const next = clamp(value);

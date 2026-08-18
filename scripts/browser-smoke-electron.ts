@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isString } from "@openbot/contracts/runtime-values";
 import { app, BrowserWindow } from "electron";
 import { BrowserHost } from "../src/backend/browser-host";
 
@@ -76,7 +77,7 @@ async function main(): Promise<void> {
       server.listen(0, "127.0.0.1", resolve);
     });
     const address = server.address();
-    if (!address || typeof address === "string") throw new Error("Local server did not start.");
+    if (!address || isString(address)) throw new Error("Local server did not start.");
     const origin = `http://127.0.0.1:${address.port}`;
 
     await app.whenReady();

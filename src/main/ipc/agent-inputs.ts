@@ -16,6 +16,7 @@ import {
   type SetQueuePausedInput,
   type UpdateBotInput,
 } from "@openbot/contracts/ipc";
+import { isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { isObject, requireString } from "./validation";
 
 export function parseAgentRequest(value: unknown): AgentIpcRequest {
@@ -32,13 +33,11 @@ export function parseSendMessage(value: unknown): SendMessageInput {
   if (
     !Array.isArray(attachmentDraftIds) ||
     attachmentDraftIds.length > INPUT_LIMITS.attachments ||
-    !attachmentDraftIds.every(
-      (item) => typeof item === "string" && item.length <= INPUT_LIMITS.identifier,
-    )
+    !attachmentDraftIds.every((item) => isString(item) && item.length <= INPUT_LIMITS.identifier)
   ) {
     throw new Error("Invalid attachment drafts.");
   }
-  if (typeof value.text !== "string") throw new Error("text is required.");
+  if (!isString(value.text)) throw new Error("text is required.");
   if (value.text.length > INPUT_LIMITS.messageText) throw new Error("Message is too long.");
   if (!value.text.trim() && attachmentDraftIds.length === 0) {
     throw new Error("A message or attachment is required.");
@@ -46,7 +45,7 @@ export function parseSendMessage(value: unknown): SendMessageInput {
   const replyToMessageId = value.replyToMessageId ?? null;
   if (
     replyToMessageId !== null &&
-    (typeof replyToMessageId !== "string" || replyToMessageId.length > INPUT_LIMITS.identifier)
+    (!isString(replyToMessageId) || replyToMessageId.length > INPUT_LIMITS.identifier)
   ) {
     throw new Error("Invalid reply target.");
   }
@@ -80,16 +79,16 @@ export function parseUpdateBot(value: unknown): UpdateBotInput {
     description: INPUT_LIMITS.agentDescription,
   } as const;
   for (const field of ["name", "role", "description"] as const) {
-    if (value[field] !== undefined && typeof value[field] !== "string") {
+    if (value[field] !== undefined && !isString(value[field])) {
       throw new Error(`Invalid ${field}.`);
     }
-    if (typeof value[field] === "string") {
+    if (isString(value[field])) {
       if (value[field].length > limits[field]) throw new Error(`${field} is too long.`);
       result[field] = value[field];
     }
   }
   if (value.notifications !== undefined) {
-    if (typeof value.notifications !== "boolean") throw new Error("Invalid notifications value.");
+    if (!isBoolean(value.notifications)) throw new Error("Invalid notifications value.");
     result.notifications = value.notifications;
   }
   if (value.model !== undefined) {
@@ -122,7 +121,7 @@ export function parseImportAttachments(value: unknown): ImportAttachmentsInput {
   }
   if (
     !value.paths.every(
-      (path) => typeof path === "string" && path.length > 0 && path.length <= INPUT_LIMITS.path,
+      (path) => isString(path) && path.length > 0 && path.length <= INPUT_LIMITS.path,
     )
   ) {
     throw new Error("Invalid attachment path.");
@@ -130,9 +129,9 @@ export function parseImportAttachments(value: unknown): ImportAttachmentsInput {
   const data = value.data.map((item) => {
     if (
       !isObject(item) ||
-      typeof item.name !== "string" ||
+      !isString(item.name) ||
       item.name.length > INPUT_LIMITS.attachmentName ||
-      typeof item.mimeType !== "string" ||
+      !isString(item.mimeType) ||
       item.mimeType.length > INPUT_LIMITS.mimeType ||
       !(item.bytes instanceof Uint8Array)
     ) {
@@ -162,7 +161,7 @@ export function parseCancelQueuedMessage(value: unknown): CancelQueuedMessageInp
 }
 
 export function parseSetQueuePaused(value: unknown): SetQueuePausedInput {
-  if (!isObject(value) || typeof value.paused !== "boolean") {
+  if (!isObject(value) || !isBoolean(value.paused)) {
     throw new Error("Invalid queue pause request.");
   }
   return { botId: requireString(value.botId, "botId"), paused: value.paused };
@@ -177,16 +176,13 @@ export function parseInterrupt(value: unknown): InterruptTurnInput {
 }
 
 export function parsePromptResponse(value: unknown): RespondToPromptInput {
-  if (
-    !isObject(value) ||
-    (typeof value.requestId !== "string" && typeof value.requestId !== "number")
-  ) {
+  if (!isObject(value) || (!isString(value.requestId) && !isNumber(value.requestId))) {
     throw new Error("Invalid prompt response.");
   }
   if (
-    (typeof value.requestId === "string" &&
+    (isString(value.requestId) &&
       (value.requestId.length === 0 || value.requestId.length > INPUT_LIMITS.identifier)) ||
-    (typeof value.requestId === "number" && !Number.isSafeInteger(value.requestId))
+    (isNumber(value.requestId) && !Number.isSafeInteger(value.requestId))
   ) {
     throw new Error("Invalid prompt response.");
   }
@@ -199,9 +195,7 @@ export function parsePromptResponse(value: unknown): RespondToPromptInput {
       key.length > INPUT_LIMITS.identifier ||
       !Array.isArray(answer) ||
       answer.length > INPUT_LIMITS.promptAnswersPerQuestion ||
-      !answer.every(
-        (item) => typeof item === "string" && item.length <= INPUT_LIMITS.promptAnswerText,
-      )
+      !answer.every((item) => isString(item) && item.length <= INPUT_LIMITS.promptAnswerText)
     ) {
       throw new Error("Invalid prompt answer.");
     }

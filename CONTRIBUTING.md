@@ -24,6 +24,9 @@ bun run dev
 The supported toolchain is pinned in `package.json`. Use Bun 1.3.11, TypeScript 5.9, Vite 7, and the
 existing Biome configuration. Biome is the only lint and format tool. Do not add a second linter,
 Prettier, a second state library, or a UI kit without first discussing the architectural cost.
+The Biome configuration also loads the repository-owned GritQL rules in
+`tools/biome/anti-slop/rules`. Fix these findings at the domain boundary. Do not suppress a rule or
+replace a concrete contract with a broad dictionary type.
 
 ## Pull requests
 

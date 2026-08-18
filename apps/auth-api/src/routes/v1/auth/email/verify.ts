@@ -1,3 +1,4 @@
+import { isString } from "@openbot/contracts/runtime-values";
 import { createFileRoute } from "@tanstack/solid-router";
 import { readJsonObject } from "../../../../server/json-body";
 import {
@@ -14,7 +15,7 @@ export const Route = createFileRoute("/v1/auth/email/verify")({
       POST: async ({ request }) => {
         try {
           const body = await readJsonObject(request);
-          if (typeof body.challengeId !== "string" || typeof body.code !== "string") {
+          if (!isString(body.challengeId) || !isString(body.code)) {
             return apiError(400, "invalid_sign_in_code", "The sign-in code is invalid.");
           }
           return json(

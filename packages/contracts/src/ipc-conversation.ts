@@ -1,4 +1,5 @@
 import type { BrowserControlState, BrowserTab } from "./ipc-browser";
+import { isNumber, isString } from "./runtime-values";
 
 export type AgentPhase = "idle" | "starting" | "ready" | "restarting" | "blocked" | "stopped";
 
@@ -100,7 +101,7 @@ export const BOT_AVATAR_HUES = [0, 30, 55, 100, 150, 185, 215, 245, 280, 320] as
 export type BotAvatarHue = (typeof BOT_AVATAR_HUES)[number];
 
 export function isAgentModel(value: unknown): value is AgentModelId {
-  return typeof value === "string" && AGENT_MODELS.includes(value as AgentModelId);
+  return isString(value) && AGENT_MODELS.includes(value as AgentModelId);
 }
 
 export function isClaudeModel(model: AgentModelId): boolean {
@@ -108,17 +109,15 @@ export function isClaudeModel(model: AgentModelId): boolean {
 }
 
 export function isReasoningEffort(value: unknown): value is AgentReasoningEffort {
-  return (
-    typeof value === "string" && AGENT_REASONING_EFFORTS.includes(value as AgentReasoningEffort)
-  );
+  return isString(value) && AGENT_REASONING_EFFORTS.includes(value as AgentReasoningEffort);
 }
 
 export function isAvatarSeed(value: unknown): value is string {
-  return typeof value === "string" && /^[a-z0-9:-]{1,128}$/.test(value);
+  return isString(value) && /^[a-z0-9:-]{1,128}$/.test(value);
 }
 
 export function isAvatarHue(value: unknown): value is BotAvatarHue {
-  return typeof value === "number" && BOT_AVATAR_HUES.includes(value as BotAvatarHue);
+  return isNumber(value) && BOT_AVATAR_HUES.includes(value as BotAvatarHue);
 }
 
 export interface UpdateBotInput {
@@ -226,7 +225,7 @@ export type MessageReaction =
   | (typeof MORE_MESSAGE_REACTIONS)[number];
 
 export function isMessageReaction(value: unknown): value is MessageReaction {
-  return typeof value === "string" && ALL_MESSAGE_REACTIONS.includes(value as MessageReaction);
+  return isString(value) && ALL_MESSAGE_REACTIONS.includes(value as MessageReaction);
 }
 
 export interface AgentExchangeSummary {

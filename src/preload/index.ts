@@ -13,9 +13,9 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 const attachmentImportListeners = new Set<(event: AttachmentImportEvent) => void>();
 let selectedServerId = "local";
 
-function invokeAgent(channel: string, payload: unknown = null): Promise<unknown> {
+function invokeAgent<TResult>(channel: string, payload: unknown = null): Promise<TResult> {
   const request: AgentIpcRequest = { serverId: selectedServerId, payload };
-  return ipcRenderer.invoke(channel, request);
+  return ipcRenderer.invoke(channel, request) as Promise<TResult>;
 }
 
 function rememberActiveServer<T extends { id: string; active: boolean }[]>(servers: T): T {

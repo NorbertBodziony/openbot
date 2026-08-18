@@ -1,3 +1,4 @@
+import { isString } from "@openbot/contracts/runtime-values";
 import { createFileRoute } from "@tanstack/solid-router";
 import { readJsonObject } from "../../../../server/json-body";
 import {
@@ -14,7 +15,7 @@ export const Route = createFileRoute("/v1/auth/email/start")({
       POST: async ({ request }) => {
         try {
           const body = await readJsonObject(request);
-          if (typeof body.email !== "string") {
+          if (!isString(body.email)) {
             return apiError(400, "invalid_email", "Enter a valid email address.");
           }
           return json(

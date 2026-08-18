@@ -17,6 +17,7 @@ import type {
   TeamRole,
   TeamSessionSummary,
 } from "@openbot/contracts/ipc";
+import { isObjectValue, isString } from "@openbot/contracts/runtime-values";
 import { normalizeEmailAddress } from "@openbot/contracts/validation";
 
 const scrypt = promisify(scryptCallback);
@@ -591,14 +592,14 @@ function validatePassword(value: string): void {
 }
 
 function isStoredTeam(value: unknown): value is StoredTeam {
-  if (!value || typeof value !== "object") return false;
+  if (!value || !isObjectValue(value)) return false;
   const record = value as Partial<StoredTeam>;
   return (
     record.version === 1 &&
-    typeof record.serverId === "string" &&
-    typeof record.serverName === "string" &&
-    typeof record.publicKey === "string" &&
-    typeof record.privateKey === "string" &&
+    isString(record.serverId) &&
+    isString(record.serverName) &&
+    isString(record.publicKey) &&
+    isString(record.privateKey) &&
     Array.isArray(record.members) &&
     Array.isArray(record.invites) &&
     Array.isArray(record.sessions)

@@ -7,6 +7,7 @@ import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
@@ -242,7 +243,7 @@ describe("TeamApiServer administration", () => {
     tcpServers.push(vnc);
     await new Promise<void>((resolve) => vnc.listen(0, "127.0.0.1", resolve));
     const address = vnc.address();
-    if (!address || typeof address === "string") throw new Error("Missing VNC test port");
+    if (!address || isString(address)) throw new Error("Missing VNC test port");
     const api = new TeamApiServer({
       store,
       agents: new EventEmitter() as unknown as AgentService,

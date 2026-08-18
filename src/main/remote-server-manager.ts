@@ -10,6 +10,7 @@ import type {
   ServerSummary,
   TeamRole,
 } from "@openbot/contracts/ipc";
+import { isDynamicRecord, isObjectValue, isString } from "@openbot/contracts/runtime-values";
 import { addressUpdatePayload, fingerprint } from "./team-store";
 
 interface StoredRemoteServer {
@@ -372,7 +373,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           { once: true },
         );
         socket.addEventListener("message", (message) => {
-          if (typeof message.data !== "string") return;
+          if (!isString(message.data)) return;
           try {
             this.emit("agent", serverId, JSON.parse(message.data) as AgentEvent);
           } catch {
@@ -545,7 +546,7 @@ async function requestJson<T>(
   const value = response.status === 204 ? undefined : ((await response.json()) as unknown);
   if (!response.ok) {
     const message =
-      value && typeof value === "object" && "error" in value && typeof value.error === "string"
+      value && isObjectValue(value) && "error" in value && isString(value.error)
         ? value.error
         : `Remote server request failed (${response.status}).`;
     throw new Error(message);
@@ -558,9 +559,9 @@ function addRemotePreviewUrls<T>(value: T, serverId: string): T {
     for (const item of value) addRemotePreviewUrls(item, serverId);
     return value;
   }
-  if (!value || typeof value !== "object") return value;
-  const record = value as Record<string, unknown>;
-  if ("previewUrl" in record && typeof record.id === "string") {
+  if (!isDynamicRecord(value)) return value;
+  const record = value as { [key: string]: unknown };
+  if ("previewUrl" in record && isString(record.id)) {
     record.previewUrl = remoteAttachmentPreviewUrl(serverId, record.id);
   }
   for (const item of Object.values(record)) addRemotePreviewUrls(item, serverId);

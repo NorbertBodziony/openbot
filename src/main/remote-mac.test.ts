@@ -3,6 +3,7 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:net";
+import { isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildCloudflaredAccessArgs,
@@ -68,7 +69,7 @@ describe("Remote Mac helpers", () => {
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
-    if (!address || typeof address === "string") throw new Error("Missing TCP address");
+    if (!address || isString(address)) throw new Error("Missing TCP address");
     await expect(probeRfbHandshake(address.port)).resolves.toBe(true);
   });
 

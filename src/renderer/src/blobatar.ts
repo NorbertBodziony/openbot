@@ -6,7 +6,7 @@ const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
 export type AvatarMotion = "hover" | "always";
 
-const BLOBATAR_SHAPES = ["round", "organic", "boxy", "nub", "cloud", "sun"] as const;
+const BLOBATAR_BODY_VARIANTS = ["round", "organic", "boxy", "nub", "cloud", "sun"] as const;
 
 export const AVATAR_HUE_OPTIONS: ReadonlyArray<{
   hue: BotAvatarHue;
@@ -32,15 +32,15 @@ export function avatarHueSwatch(hue: BotAvatarHue): string {
 
 export function avatarCandidateSeeds(botId: string, currentSeed: string, batch: number): string[] {
   const candidates = [currentSeed];
-  const missingShapes = new Set(BLOBATAR_SHAPES);
-  missingShapes.delete(layout(traits(currentSeed)).shape);
+  const missingBodyVariants = new Set(BLOBATAR_BODY_VARIANTS);
+  missingBodyVariants.delete(layout(traits(currentSeed)).shape);
   let index = 1;
 
-  while (missingShapes.size > 0) {
+  while (missingBodyVariants.size > 0) {
     const candidate = `${botId}:avatar:${batch}:${index}`;
     index += 1;
     if (candidates.includes(candidate)) continue;
-    if (!missingShapes.delete(layout(traits(candidate)).shape)) continue;
+    if (!missingBodyVariants.delete(layout(traits(candidate)).shape)) continue;
     candidates.push(candidate);
   }
 
@@ -67,11 +67,11 @@ export function buildAnimatedAvatarSvg(
 
   const reader = traits(seed);
   const resolvedLayout = layout(reader);
-  const eyeShapes = Array.from(eyesGroup.children);
-  if (eyeShapes.length !== resolvedLayout.eyes.length) return svgMarkup;
+  const eyeElements = Array.from(eyesGroup.children);
+  if (eyeElements.length !== resolvedLayout.eyes.length) return svgMarkup;
 
   eyesGroup.classList.add("mo-eyes");
-  eyeShapes.forEach((shape, index) => {
+  eyeElements.forEach((element, index) => {
     const eye = resolvedLayout.eyes[index];
     if (!eye) return;
     const wrapper = document.createElementNS(SVG_NAMESPACE, "g");
@@ -84,8 +84,8 @@ export function buildAnimatedAvatarSvg(
         `transform-origin:${round2(eye.cx)}px ${round2(eye.cy)}px`,
       ].join(";"),
     );
-    eyesGroup.insertBefore(wrapper, shape);
-    wrapper.append(shape);
+    eyesGroup.insertBefore(wrapper, element);
+    wrapper.append(element);
   });
 
   const root = document.createElementNS(SVG_NAMESPACE, "g");

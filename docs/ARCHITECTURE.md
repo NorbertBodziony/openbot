@@ -57,7 +57,8 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
 3. Keep provider-specific payloads inside the provider adapter. Translate them at ingestion.
 4. Keep database schema changes in the schema module and add migration tests.
 5. Keep Electron entry points small. New features use a service or a focused IPC input module.
-6. Do not add a second linter or formatter. Biome is the only repository lint and format tool.
+6. Do not add a second linter or formatter. Biome and its repository-owned anti-slop plugins are the
+   only repository lint and format tools.
 7. Do not add compatibility paths without a removal condition and a test for that condition.
 
 ## Required verification

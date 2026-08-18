@@ -12,6 +12,12 @@ import type {
   BrowserVisibilityInput,
 } from "@openbot/contracts/ipc";
 import {
+  type DynamicRecord,
+  isBoolean,
+  isNumber,
+  isString,
+} from "@openbot/contracts/runtime-values";
+import {
   app,
   type BrowserWindow,
   type Session,
@@ -518,9 +524,9 @@ export class BrowserHost {
     return {
       tabId: tab.id,
       revision,
-      title: typeof raw.title === "string" ? raw.title.slice(0, 500) : "",
-      url: typeof raw.url === "string" ? raw.url : tab.view.webContents.getURL(),
-      text: typeof raw.text === "string" ? raw.text.slice(0, 100_000) : "",
+      title: isString(raw.title) ? raw.title.slice(0, 500) : "",
+      url: isString(raw.url) ? raw.url : tab.view.webContents.getURL(),
+      text: isString(raw.text) ? raw.text.slice(0, 100_000) : "",
       elements: Array.isArray(raw.elements)
         ? raw.elements.filter(isSnapshotElement).slice(0, 500)
         : [],
@@ -576,7 +582,7 @@ export class BrowserHost {
     for (const listener of this.#listeners) listener(tabs, this.#activeTabId);
   }
 
-  #beginControl(params: DynamicToolCallParams, args: Record<string, unknown>): void {
+  #beginControl(params: DynamicToolCallParams, args: DynamicRecord): void {
     const id = controlSessionId(params.threadId, params.turnId);
     const timer = this.#controlTimers.get(id);
     if (timer) clearTimeout(timer);
@@ -587,7 +593,7 @@ export class BrowserHost {
       threadId: params.threadId,
       turnId: params.turnId,
       callId: params.callId,
-      tabId: typeof args.tabId === "string" ? args.tabId : null,
+      tabId: isString(args.tabId) ? args.tabId : null,
       action: browserControlAction(params.tool, args),
       phase: "acting",
       startedAt: previous?.startedAt ?? new Date().toISOString(),
@@ -658,7 +664,7 @@ function controlSessionId(threadId: string, turnId: string): string {
   return `${threadId}:${turnId}`;
 }
 
-function browserControlAction(tool: string, args: Record<string, unknown>): BrowserControlAction {
+function browserControlAction(tool: string, args: DynamicRecord): BrowserControlAction {
   switch (tool) {
     case "open":
       return "open";
@@ -690,7 +696,7 @@ function browserControlAction(tool: string, args: Record<string, unknown>): Brow
   }
 }
 
-function functionTool(name: string, description: string, inputSchema: Record<string, unknown>) {
+function functionTool(name: string, description: string, inputSchema: DynamicRecord) {
   return { type: "function" as const, name, description, inputSchema };
 }
 
@@ -776,7 +782,7 @@ async function readBrowserState(path: string): Promise<StoredBrowserState> {
       : [];
     return {
       version: 1,
-      activeTabId: typeof parsed.activeTabId === "string" ? parsed.activeTabId : null,
+      activeTabId: isString(parsed.activeTabId) ? parsed.activeTabId : null,
       tabs: tabs.filter(
         (tab, index) => tabs.findIndex((candidate) => candidate.id === tab.id) === index,
       ),
@@ -792,24 +798,23 @@ async function readBrowserState(path: string): Promise<StoredBrowserState> {
 function isStoredBrowserTab(value: unknown): value is StoredBrowserState["tabs"][number] {
   if (
     !isRecord(value) ||
-    typeof value.id !== "string" ||
+    !isString(value.id) ||
     !value.id ||
     value.id.length > INPUT_LIMITS.identifier ||
-    typeof value.url !== "string" ||
+    !isString(value.url) ||
     value.url.length > INPUT_LIMITS.browserUrl
   ) {
     return false;
   }
   if (
     value.ownerThreadId !== null &&
-    (typeof value.ownerThreadId !== "string" ||
-      value.ownerThreadId.length > INPUT_LIMITS.identifier)
+    (!isString(value.ownerThreadId) || value.ownerThreadId.length > INPUT_LIMITS.identifier)
   ) {
     return false;
   }
   if (
     value.ownerBotId !== null &&
-    (typeof value.ownerBotId !== "string" || value.ownerBotId.length > INPUT_LIMITS.identifier)
+    (!isString(value.ownerBotId) || value.ownerBotId.length > INPUT_LIMITS.identifier)
   ) {
     return false;
   }
@@ -991,9 +996,9 @@ async function performAction(contents: WebContents, action: BrowserAction): Prom
 function isInputPoint(value: unknown): value is { x: number; y: number; direct?: boolean } {
   return (
     isRecord(value) &&
-    typeof value.x === "number" &&
+    isNumber(value.x) &&
     Number.isFinite(value.x) &&
-    typeof value.y === "number" &&
+    isNumber(value.y) &&
     Number.isFinite(value.y)
   );
 }
@@ -1022,8 +1027,7 @@ function pressKey(contents: WebContents, key: string): void {
 }
 
 function parseAction(value: unknown): BrowserAction {
-  if (!isRecord(value) || typeof value.type !== "string")
-    throw new Error("Invalid browser action.");
+  if (!isRecord(value) || !isString(value.type)) throw new Error("Invalid browser action.");
   switch (value.type) {
     case "click":
       return { type: "click", ref: requiredString(value, "ref", INPUT_LIMITS.identifier) };
@@ -1047,14 +1051,14 @@ function parseAction(value: unknown): BrowserAction {
   }
 }
 
-function requiredString(value: Record<string, unknown>, key: string, maxLength: number): string {
-  if (typeof value[key] !== "string" || !value[key].trim()) throw new Error(`${key} is required.`);
+function requiredString(value: DynamicRecord, key: string, maxLength: number): string {
+  if (!isString(value[key]) || !value[key].trim()) throw new Error(`${key} is required.`);
   if (value[key].length > maxLength) throw new Error(`${key} is too long.`);
   return value[key];
 }
 
-function requiredNumber(value: Record<string, unknown>, key: string): number {
-  if (typeof value[key] !== "number" || !Number.isFinite(value[key])) {
+function requiredNumber(value: DynamicRecord, key: string): number {
+  if (!isNumber(value[key]) || !Number.isFinite(value[key])) {
     throw new Error(`${key} must be a number.`);
   }
   return value[key];
@@ -1063,11 +1067,11 @@ function requiredNumber(value: Record<string, unknown>, key: string): number {
 function isSnapshotElement(value: unknown): value is BrowserSnapshot["elements"][number] {
   return (
     isRecord(value) &&
-    typeof value.ref === "string" &&
-    typeof value.tag === "string" &&
-    (typeof value.role === "string" || value.role === null) &&
-    typeof value.name === "string" &&
-    typeof value.disabled === "boolean"
+    isString(value.ref) &&
+    isString(value.tag) &&
+    (isString(value.role) || value.role === null) &&
+    isString(value.name) &&
+    isBoolean(value.disabled)
   );
 }
 

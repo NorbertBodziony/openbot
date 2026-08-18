@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import type { AgentProviderId, AppSetupState } from "@openbot/contracts/ipc";
+import { isString } from "@openbot/contracts/runtime-values";
 
 interface StoredSetup {
   version: 2;
@@ -15,7 +16,7 @@ export async function readSetupState(path: string): Promise<AppSetupState> {
     if (
       parsed.version !== 2 ||
       (parsed.preferredProvider !== "codex" && parsed.preferredProvider !== "claude") ||
-      typeof parsed.completedAt !== "string"
+      !isString(parsed.completedAt)
     ) {
       return { ...EMPTY_SETUP };
     }

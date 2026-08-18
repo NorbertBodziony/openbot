@@ -1,4 +1,5 @@
 import { StringDecoder } from "node:string_decoder";
+import { isString } from "@openbot/contracts/runtime-values";
 import { isRpcMessage, type RpcMessage } from "./protocol";
 
 export class JsonLineDecoder {
@@ -6,13 +7,13 @@ export class JsonLineDecoder {
   #buffer = "";
 
   push(chunk: Uint8Array | string): RpcMessage[] {
-    this.#buffer += typeof chunk === "string" ? chunk : this.#decoder.write(Buffer.from(chunk));
+    this.#buffer += isString(chunk) ? chunk : this.#decoder.write(Buffer.from(chunk));
     return this.#drainCompleteLines();
   }
 
   end(chunk?: Uint8Array | string): RpcMessage[] {
     if (chunk) {
-      this.#buffer += typeof chunk === "string" ? chunk : this.#decoder.write(Buffer.from(chunk));
+      this.#buffer += isString(chunk) ? chunk : this.#decoder.write(Buffer.from(chunk));
     }
     this.#buffer += this.#decoder.end();
 

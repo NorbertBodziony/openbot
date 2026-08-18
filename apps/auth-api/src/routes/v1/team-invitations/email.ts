@@ -1,4 +1,5 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { isString } from "@openbot/contracts/runtime-values";
 import { createFileRoute } from "@tanstack/solid-router";
 import { normalizeEmail } from "../../../server/auth-service";
 import { readJsonObject } from "../../../server/json-body";
@@ -23,9 +24,9 @@ export const Route = createFileRoute("/v1/team-invitations/email")({
           if (!user) return apiError(401, "unauthorized", "The session is invalid.");
           const body = await readJsonObject(request);
           if (
-            typeof body.email !== "string" ||
-            typeof body.serverName !== "string" ||
-            typeof body.inviteUrl !== "string" ||
+            !isString(body.email) ||
+            !isString(body.serverName) ||
+            !isString(body.inviteUrl) ||
             (body.role !== "admin" && body.role !== "member")
           ) {
             return apiError(400, "invalid_invitation", "The invitation details are invalid.");

@@ -1,3 +1,4 @@
+import { isString } from "@openbot/contracts/runtime-values";
 import type { TeamTunnelProvider } from "./team-tunnel-service";
 
 interface CloudflareResponse<T> {
@@ -114,7 +115,7 @@ export class CloudflareTunnelProvider implements TeamTunnelProvider {
     const token = await this.#request<unknown>(
       `/accounts/${this.#accountId}/cfd_tunnel/${tunnelId}/token`,
     );
-    if (typeof token !== "string" || token.length < 40) {
+    if (!isString(token) || token.length < 40) {
       throw new CloudflareTunnelError("invalid_tunnel_token");
     }
     return token;
@@ -189,12 +190,12 @@ function requireIdentifier(value: string, label: string): string {
 }
 
 function isIdentifier(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{32}$/iu.test(value);
+  return isString(value) && /^[0-9a-f]{32}$/iu.test(value);
 }
 
 function isTunnelIdentifier(value: unknown): value is string {
   return (
-    typeof value === "string" &&
+    isString(value) &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value)
   );
 }

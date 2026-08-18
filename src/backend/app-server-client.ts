@@ -1,5 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { AgentProvider } from "./agent-client";
 import { JsonLineDecoder } from "./jsonl";
 import {
@@ -180,9 +181,8 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
     this.#pending.delete(message.id);
 
     if (message.error && isRecord(message.error)) {
-      const code = typeof message.error.code === "number" ? message.error.code : -1;
-      const text =
-        typeof message.error.message === "string" ? message.error.message : "Unknown error";
+      const code = isNumber(message.error.code) ? message.error.code : -1;
+      const text = isString(message.error.message) ? message.error.message : "Unknown error";
       pending.reject(new AppServerError(text, code, message.error.data));
       return;
     }

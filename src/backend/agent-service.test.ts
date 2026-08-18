@@ -6,6 +6,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent } from "@openbot/contracts/ipc";
+import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentService } from "./agent-service";
@@ -113,7 +114,7 @@ describe.sequential("AgentService", () => {
     const starts = requests.filter((message) => message.method === "thread/start");
     expect(starts).toHaveLength(2);
     for (const start of starts) {
-      const params = start.params as Record<string, unknown>;
+      const params = start.params as DynamicRecord;
       expect(params).toMatchObject({
         model: "gpt-5.6-luna",
         approvalPolicy: "never",
@@ -313,7 +314,7 @@ describe.sequential("AgentService", () => {
 
     const start = (await protocolMessages()).find((message) => message.method === "thread/start");
     const instructions = String(
-      (start?.params as Record<string, unknown> | undefined)?.developerInstructions ?? "",
+      (start?.params as DynamicRecord | undefined)?.developerInstructions ?? "",
     );
     expect(instructions).toContain('"title": "Research & writing"');
     expect(instructions).toContain(
@@ -509,10 +510,10 @@ describe.sequential("AgentService", () => {
 
     const starts = (await protocolMessages()).filter((message) => message.method === "turn/start");
     const salesStart = starts.find((message) =>
-      String((message.params as Record<string, unknown>).cwd).endsWith("/sales-outbound"),
+      String((message.params as DynamicRecord).cwd).endsWith("/sales-outbound"),
     );
-    const salesInput = (salesStart?.params as Record<string, unknown> | undefined)?.input as
-      | Array<Record<string, unknown>>
+    const salesInput = (salesStart?.params as DynamicRecord | undefined)?.input as
+      | DynamicRecord[]
       | undefined;
     expect(salesInput?.[0]?.text).toContain(
       "After completing the request, send a concise result back to Chief",
@@ -698,7 +699,7 @@ describe.sequential("AgentService", () => {
       requests.filter(
         (message) =>
           message.method === "thread/resume" &&
-          (message.params as Record<string, unknown>).threadId === externalThreadId,
+          (message.params as DynamicRecord).threadId === externalThreadId,
       ),
     ).toHaveLength(2);
     expect(events).not.toEqual(
@@ -852,9 +853,9 @@ function notification(method: string, params: unknown): AppServerNotification {
 }
 
 function stringParam(value: unknown, key: string): string {
-  if (typeof value !== "object" || value === null) throw new Error(`${key} is missing.`);
-  const result = (value as Record<string, unknown>)[key];
-  if (typeof result !== "string") throw new Error(`${key} is missing.`);
+  if (!isDynamicRecord(value)) throw new Error(`${key} is missing.`);
+  const result = value[key];
+  if (!isString(result)) throw new Error(`${key} is missing.`);
   return result;
 }
 
@@ -873,13 +874,14 @@ function fakeBrowser(): BrowserHost {
   } as unknown as BrowserHost;
 }
 
-async function protocolMessages(): Promise<Array<Record<string, unknown>>> {
+async function protocolMessages(): Promise<DynamicRecord[]> {
   try {
     return (await readFile(logPath, "utf8"))
       .trim()
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line));
+      .map((line) => JSON.parse(line) as unknown)
+      .filter(isDynamicRecord);
   } catch {
     return [];
   }

@@ -16,6 +16,7 @@ import type {
   QueueSnapshot,
 } from "@openbot/contracts/ipc";
 import { isMessageReaction } from "@openbot/contracts/ipc";
+import { isNumber, isString } from "@openbot/contracts/runtime-values";
 import { OpenBotDatabase } from "./openbot-database";
 import { isRecord } from "./protocol";
 
@@ -795,7 +796,7 @@ export class MailboxStore {
 
   async #readState(): Promise<StoredState> {
     try {
-      const value: unknown = JSON.parse(await readFile(this.#statePath, "utf8"));
+      const value = JSON.parse(await readFile(this.#statePath, "utf8")) as unknown;
       if (!isStoredState(value)) {
         throw new Error(
           "Mailbox state is corrupt or from a newer OpenBot version; refusing to overwrite it.",
@@ -964,9 +965,9 @@ function isStoredState(value: unknown): value is StoredState {
     Array.isArray(value.drafts) &&
     value.drafts.every(isStoredDraft) &&
     Array.isArray(value.pausedBotIds) &&
-    value.pausedBotIds.every((item) => typeof item === "string") &&
+    value.pausedBotIds.every((item) => isString(item)) &&
     isRecord(value.idempotency) &&
-    Object.values(value.idempotency).every((item) => typeof item === "string") &&
+    Object.values(value.idempotency).every((item) => isString(item)) &&
     Array.isArray(value.reactions) &&
     value.reactions.every(isStoredReaction)
   );
@@ -975,49 +976,49 @@ function isStoredState(value: unknown): value is StoredState {
 function isStoredAttachment(value: unknown): value is StoredAttachment {
   return (
     isRecord(value) &&
-    typeof value.id === "string" &&
-    typeof value.name === "string" &&
-    typeof value.size === "number" &&
+    isString(value.id) &&
+    isString(value.name) &&
+    isNumber(value.size) &&
     (value.kind === "image" || value.kind === "file") &&
-    typeof value.mimeType === "string" &&
+    isString(value.mimeType) &&
     (value.previewKind === "image" ||
       value.previewKind === "pdf" ||
       value.previewKind === "text" ||
       value.previewKind === "none") &&
-    (typeof value.previewUrl === "string" || value.previewUrl === undefined) &&
-    typeof value.path === "string" &&
-    typeof value.sha256 === "string"
+    (isString(value.previewUrl) || value.previewUrl === undefined) &&
+    isString(value.path) &&
+    isString(value.sha256)
   );
 }
 
 function isStoredDraft(value: unknown): value is StoredDraft {
   return (
     isStoredAttachment(value) &&
-    typeof (value as StoredAttachment & { createdAt?: unknown }).createdAt === "string"
+    isString((value as StoredAttachment & { createdAt?: unknown }).createdAt)
   );
 }
 
 function isStoredMessage(value: unknown): value is StoredMessage {
   return (
     isRecord(value) &&
-    typeof value.id === "string" &&
+    isString(value.id) &&
     isRecord(value.sender) &&
     (value.sender.kind === "user" ||
-      (value.sender.kind === "bot" && typeof value.sender.botId === "string")) &&
-    typeof value.text === "string" &&
+      (value.sender.kind === "bot" && isString(value.sender.botId))) &&
+    isString(value.text) &&
     Array.isArray(value.attachments) &&
     value.attachments.every(isStoredAttachment) &&
-    (typeof value.replyToMessageId === "string" || value.replyToMessageId === null) &&
-    typeof value.createdAt === "string"
+    (isString(value.replyToMessageId) || value.replyToMessageId === null) &&
+    isString(value.createdAt)
   );
 }
 
 function isStoredDelivery(value: unknown): value is StoredDelivery {
   return (
     isRecord(value) &&
-    typeof value.id === "string" &&
-    typeof value.messageId === "string" &&
-    typeof value.recipientBotId === "string" &&
+    isString(value.id) &&
+    isString(value.messageId) &&
+    isString(value.recipientBotId) &&
     (value.status === "queued" ||
       value.status === "starting" ||
       value.status === "running" ||
@@ -1025,19 +1026,19 @@ function isStoredDelivery(value: unknown): value is StoredDelivery {
       value.status === "failed" ||
       value.status === "interrupted" ||
       value.status === "cancelled") &&
-    (typeof value.turnId === "string" || value.turnId === null) &&
-    (typeof value.error === "string" || value.error === null) &&
-    typeof value.createdAt === "string"
+    (isString(value.turnId) || value.turnId === null) &&
+    (isString(value.error) || value.error === null) &&
+    isString(value.createdAt)
   );
 }
 
 function isStoredReaction(value: unknown): value is StoredReaction {
   return (
     isRecord(value) &&
-    typeof value.botId === "string" &&
-    typeof value.messageId === "string" &&
+    isString(value.botId) &&
+    isString(value.messageId) &&
     isMessageReaction(value.emoji) &&
-    typeof value.updatedAt === "string"
+    isString(value.updatedAt)
   );
 }
 

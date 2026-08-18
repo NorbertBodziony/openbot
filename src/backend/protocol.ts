@@ -1,3 +1,10 @@
+import {
+  type DynamicRecord,
+  isDynamicRecord,
+  isNumber,
+  isString,
+} from "@openbot/contracts/runtime-values";
+
 export type RequestId = string | number;
 
 export interface RpcRequest {
@@ -111,28 +118,25 @@ export interface TurnResponse {
   };
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+export function isRecord(value: unknown): value is DynamicRecord {
+  return isDynamicRecord(value);
 }
 
 export function isRpcMessage(value: unknown): value is RpcMessage {
   if (!isRecord(value)) return false;
 
   if ("method" in value) {
-    return typeof value.method === "string";
+    return isString(value.method);
   }
 
-  return (
-    (typeof value.id === "string" || typeof value.id === "number") &&
-    ("result" in value || "error" in value)
-  );
+  return (isString(value.id) || isNumber(value.id)) && ("result" in value || "error" in value);
 }
 
 export function getString(record: unknown, key: string): string | null {
-  return isRecord(record) && typeof record[key] === "string" ? record[key] : null;
+  return isRecord(record) && isString(record[key]) ? record[key] : null;
 }
 
-export function getRecord(record: unknown, key: string): Record<string, unknown> | null {
+export function getRecord(record: unknown, key: string): DynamicRecord | null {
   return isRecord(record) && isRecord(record[key]) ? record[key] : null;
 }
 

@@ -1,4 +1,5 @@
 import type { ConversationMessage, ConversationSnapshot } from "@openbot/contracts/ipc";
+import { isString } from "@openbot/contracts/runtime-values";
 import type { DeliveryContext } from "./mailbox-store";
 import type { ThreadResponse } from "./protocol";
 
@@ -11,7 +12,7 @@ export function snapshotFromThread(
   for (const turn of thread.turns ?? []) {
     const items = turn.items ?? [];
     const firstUserItem = items.find(
-      (item) => item.type === "userMessage" && typeof item.clientId === "string",
+      (item) => item.type === "userMessage" && isString(item.clientId),
     );
     const firstDelivery = firstUserItem?.clientId ? findDelivery(firstUserItem.clientId) : null;
     const deliveryTime = firstDelivery ? Date.parse(firstDelivery.delivery.createdAt) : Number.NaN;
@@ -23,10 +24,10 @@ export function snapshotFromThread(
         : Date.now();
     for (const [itemIndex, item] of items.entries()) {
       const createdAt = new Date(baseTime + itemIndex).toISOString();
-      if (item.type === "userMessage" && typeof item.id === "string") {
+      if (item.type === "userMessage" && isString(item.id)) {
         const delivery = item.clientId ? findDelivery(item.clientId) : null;
         const text = (item.content ?? [])
-          .filter((part) => part.type === "text" && typeof part.text === "string")
+          .filter((part) => part.type === "text" && isString(part.text))
           .map((part) => part.text)
           .join("\n");
         if (text) {
@@ -52,7 +53,7 @@ export function snapshotFromThread(
           });
         }
       }
-      if (item.type === "agentMessage" && typeof item.id === "string" && item.text) {
+      if (item.type === "agentMessage" && isString(item.id) && item.text) {
         messages.push({
           id: item.id,
           turnId: turn.id,
@@ -60,7 +61,7 @@ export function snapshotFromThread(
           text: item.text,
           createdAt,
           status: normalizeCompletionStatus(turn.status ?? "completed"),
-          itemType: typeof item.phase === "string" ? item.phase : "agentMessage",
+          itemType: isString(item.phase) ? item.phase : "agentMessage",
         });
       }
     }

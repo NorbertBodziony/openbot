@@ -4,6 +4,7 @@ import type {
   BrowserOpenInput,
   BrowserVisibilityInput,
 } from "@openbot/contracts/ipc";
+import { isBoolean, isNumber } from "@openbot/contracts/runtime-values";
 import { isObject, requireString } from "./validation";
 
 export function parseBrowserOpen(value: unknown): BrowserOpenInput {
@@ -22,7 +23,7 @@ export function parseBrowserOpen(value: unknown): BrowserOpenInput {
 }
 
 export function parseVisibility(value: unknown): BrowserVisibilityInput {
-  if (!isObject(value) || typeof value.visible !== "boolean") {
+  if (!isObject(value) || !isBoolean(value.visible)) {
     throw new Error("Invalid browser visibility request.");
   }
   return {
@@ -35,7 +36,7 @@ function parseBounds(value: unknown): BrowserBounds {
   if (!isObject(value)) throw new Error("Invalid browser bounds.");
   const fields = ["x", "y", "width", "height"] as const;
   for (const field of fields) {
-    if (typeof value[field] !== "number" || !Number.isFinite(value[field])) {
+    if (!isNumber(value[field]) || !Number.isFinite(value[field])) {
       throw new Error(`Invalid browser bound: ${field}.`);
     }
   }

@@ -3,9 +3,16 @@ import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
+import { isString } from "@openbot/contracts/runtime-values";
 
 const FUSE_DISABLED = 48;
 const FUSE_ENABLED = 49;
+
+interface WindowsVersionMetadata {
+  ProductName?: unknown;
+  FileDescription?: unknown;
+  ProductVersion?: unknown;
+}
 
 if (process.platform !== "win32") {
   throw new Error("The Windows package verifier must run on Windows.");
@@ -25,7 +32,7 @@ await Promise.all([
 ]);
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8")) as { version?: unknown };
-if (typeof packageJson.version !== "string") throw new Error("package.json version is missing.");
+if (!isString(packageJson.version)) throw new Error("package.json version is missing.");
 
 const executable = await readFile(executablePath);
 if (executable.toString("ascii", 0, 2) !== "MZ")
@@ -49,7 +56,7 @@ const versionInfo = JSON.parse(
     `$value = (Get-Item -LiteralPath '${powerShellLiteral(executablePath)}').VersionInfo; ` +
       "[pscustomobject]@{ ProductName = $value.ProductName; FileDescription = $value.FileDescription; ProductVersion = $value.ProductVersion } | ConvertTo-Json -Compress",
   ]),
-) as Record<string, unknown>;
+) as WindowsVersionMetadata;
 expectEqual(versionInfo.ProductName, "OpenBot", "product name");
 expectEqual(versionInfo.FileDescription, "OpenBot", "file description");
 if (!String(versionInfo.ProductVersion).startsWith(packageJson.version)) {

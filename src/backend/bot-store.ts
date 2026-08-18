@@ -12,6 +12,7 @@ import {
   isReasoningEffort,
   type UpdateBotInput,
 } from "@openbot/contracts/ipc";
+import { type DynamicRecord, isBoolean, isString } from "@openbot/contracts/runtime-values";
 import {
   OpenBotDatabase,
   type ProviderSession,
@@ -21,6 +22,7 @@ import {
 import { isRecord } from "./protocol";
 
 type StoredBot = BotSummary;
+type StoredBotBase = Omit<StoredBot, "avatarSeed" | "avatarHue"> & DynamicRecord;
 
 interface StoredState {
   version: 2;
@@ -33,7 +35,7 @@ type LegacyStoredBot = Omit<StoredBot, "avatarSeed" | "avatarHue"> & {
   avatarColor: string;
 };
 
-const LEGACY_AVATAR_SHAPES = [
+const LEGACY_AVATAR_VARIANTS = [
   "blob",
   "pebble",
   "squircle",
@@ -235,10 +237,10 @@ export class BotStore {
 
   async #readState(): Promise<StoredState> {
     try {
-      const parsed: unknown = JSON.parse(await readFile(this.#statePath, "utf8"));
+      const parsed = JSON.parse(await readFile(this.#statePath, "utf8")) as unknown;
       if (
         !isRecord(parsed) ||
-        typeof parsed.examplesInitialized !== "boolean" ||
+        !isBoolean(parsed.examplesInitialized) ||
         !Array.isArray(parsed.bots)
       ) {
         throw new Error(
@@ -332,44 +334,59 @@ function titleFromId(id: string): string {
     .join(" ");
 }
 
-function isStoredBotBase(value: unknown): value is Omit<StoredBot, "avatarSeed" | "avatarHue"> {
+function isStoredBotBase(value: unknown): value is StoredBotBase {
   return (
     isRecord(value) &&
-    typeof value.id === "string" &&
+    isString(value.id) &&
     isValidBotId(value.id) &&
-    typeof value.name === "string" &&
-    typeof value.role === "string" &&
-    typeof value.description === "string" &&
-    typeof value.notifications === "boolean" &&
+    isString(value.name) &&
+    isString(value.role) &&
+    isString(value.description) &&
+    isBoolean(value.notifications) &&
     isAgentModel(value.model) &&
     isReasoningEffort(value.reasoningEffort) &&
-    (typeof value.threadId === "string" || value.threadId === null) &&
-    typeof value.workspacePath === "string" &&
-    typeof value.preview === "string" &&
-    (typeof value.updatedAt === "string" || value.updatedAt === null)
+    (isString(value.threadId) || value.threadId === null) &&
+    isString(value.workspacePath) &&
+    isString(value.preview) &&
+    (isString(value.updatedAt) || value.updatedAt === null)
   );
 }
 
 function isStoredBot(value: unknown): value is StoredBot {
-  if (!isStoredBotBase(value) || !isRecord(value)) return false;
-  const record: Record<string, unknown> = value;
+  if (!isRecord(value) || !isStoredBotBase(value)) return false;
+  const record = value;
   return (
     isAvatarSeed(record.avatarSeed) && (record.avatarHue === null || isAvatarHue(record.avatarHue))
   );
 }
 
 function isLegacyStoredBot(value: unknown): value is LegacyStoredBot {
-  if (!isStoredBotBase(value) || !isRecord(value)) return false;
-  const record: Record<string, unknown> = value;
+  if (!isRecord(value) || !isStoredBotBase(value)) return false;
+  const record = value;
   return (
-    typeof record.avatarShape === "string" &&
-    LEGACY_AVATAR_SHAPES.includes(record.avatarShape as (typeof LEGACY_AVATAR_SHAPES)[number]) &&
-    typeof record.avatarColor === "string" &&
+    isString(record.avatarShape) &&
+    LEGACY_AVATAR_VARIANTS.includes(
+      record.avatarShape as (typeof LEGACY_AVATAR_VARIANTS)[number],
+    ) &&
+    isString(record.avatarColor) &&
     LEGACY_AVATAR_COLORS.includes(record.avatarColor as (typeof LEGACY_AVATAR_COLORS)[number])
   );
 }
 
 function migrateLegacyBot(bot: LegacyStoredBot): StoredBot {
-  const { avatarShape: _avatarShape, avatarColor: _avatarColor, ...rest } = bot;
-  return { ...rest, avatarSeed: bot.id, avatarHue: null };
+  return {
+    id: bot.id,
+    name: bot.name,
+    role: bot.role,
+    description: bot.description,
+    notifications: bot.notifications,
+    model: bot.model,
+    reasoningEffort: bot.reasoningEffort,
+    threadId: bot.threadId,
+    workspacePath: bot.workspacePath,
+    preview: bot.preview,
+    updatedAt: bot.updatedAt,
+    avatarSeed: bot.id,
+    avatarHue: null,
+  };
 }

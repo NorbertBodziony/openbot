@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { CentralAuthState, CentralAuthUser } from "@openbot/contracts/ipc";
+import { isString } from "@openbot/contracts/runtime-values";
 
 interface CentralAuthEvents {
   changed: [state: CentralAuthState];
@@ -304,7 +305,7 @@ class AuthApiError extends Error {
   static async fromResponse(response: Response): Promise<AuthApiError> {
     try {
       const value = (await response.json()) as { error?: { code?: unknown; message?: unknown } };
-      if (typeof value.error?.code === "string" && typeof value.error.message === "string") {
+      if (isString(value.error?.code) && isString(value.error.message)) {
         return new AuthApiError(response.status, value.error.code, value.error.message);
       }
     } catch {

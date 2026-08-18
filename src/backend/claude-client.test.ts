@@ -181,8 +181,8 @@ async function createHarness(): Promise<{
   return { client, notifications, output, threadId: thread.thread.id };
 }
 
-function startTurn(client: ClaudeAgentClient, threadId: string, turnId: string): Promise<unknown> {
-  return client.request("turn/start", {
+function startTurn(client: ClaudeAgentClient, threadId: string, turnId: string) {
+  return client.request<{ turn: { id: string; status?: string } }>("turn/start", {
     threadId,
     clientUserMessageId: turnId,
     input: [{ type: "text", text: "Hello" }],

@@ -8,6 +8,7 @@ import type {
   RemoteMacConnectInput,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
+import { isBoolean, isString } from "@openbot/contracts/runtime-values";
 import { isObject, requireString } from "./validation";
 
 export function parseHostConfig(value: unknown): ConfigureHostInput {
@@ -36,10 +37,10 @@ export function parseCreateTeamInvite(value: unknown): CreateTeamInviteInput {
   if (value.role !== "admin" && value.role !== "member") {
     throw new Error("Unknown team role.");
   }
-  if (value.email !== undefined && typeof value.email !== "string") {
+  if (value.email !== undefined && !isString(value.email)) {
     throw new Error("Invalid invitation email.");
   }
-  if (typeof value.email === "string" && value.email.length > INPUT_LIMITS.email) {
+  if (isString(value.email) && value.email.length > INPUT_LIMITS.email) {
     throw new Error("Invitation email is too long.");
   }
   return {
@@ -51,7 +52,7 @@ export function parseCreateTeamInvite(value: unknown): CreateTeamInviteInput {
 export function parseRemoteMacConnect(value: unknown): RemoteMacConnectInput {
   if (!isObject(value)) throw new Error("Remote Mac details are required.");
   const serverId = value.serverId;
-  if (serverId !== undefined && serverId !== null && typeof serverId !== "string") {
+  if (serverId !== undefined && serverId !== null && !isString(serverId)) {
     throw new Error("Invalid serverId.");
   }
   return {
@@ -74,7 +75,7 @@ export function parseUpdateTeamMember(value: unknown): UpdateTeamMemberInput {
   if (role !== undefined && role !== "admin" && role !== "member") {
     throw new Error("Invalid team member role.");
   }
-  if (disabled !== undefined && typeof disabled !== "boolean") {
+  if (disabled !== undefined && !isBoolean(disabled)) {
     throw new Error("Invalid team member state.");
   }
   return {

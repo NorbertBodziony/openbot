@@ -89,17 +89,21 @@ const LEFT_PANEL_DEFAULT = 275;
 const LEFT_PANEL_MIN = 220;
 const LEFT_PANEL_MAX = 360;
 
-const storeSetters = new WeakMap<object, StoreSetter<Record<string, unknown>>>();
+interface StoredObject {
+  [key: string]: unknown;
+}
+
+const storeSetters = new WeakMap<object, StoreSetter<StoredObject>>();
 
 function createStored<T extends object>(value: T): T {
-  const [store, setStore] = createStore(value as Record<string, unknown>);
+  const [store, setStore] = createStore(value as StoredObject);
   storeSetters.set(store, setStore);
   return store as T;
 }
 
 function updateStored<T extends object>(store: T, value: T): void {
   storeSetters.get(store)?.((draft) => {
-    Object.assign(draft, value as Record<string, unknown>);
+    Object.assign(draft, value as StoredObject);
   });
 }
 
