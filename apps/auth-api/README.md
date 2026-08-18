@@ -87,6 +87,10 @@ team server. Each server receives stable API and Remote Mac hostnames under
 `openbot.run`. The desktop app receives only the connector token for its tunnel.
 It never receives the Cloudflare account API token.
 
+Each OpenBot account can own one team server. The D1 database enforces this
+limit with a unique user constraint, including concurrent provisioning requests.
+Deleting the owned server releases the account so it can create a replacement.
+
 Create a scoped Cloudflare API token with these permissions:
 
 - Account · Cloudflare Tunnel · Edit for the OpenBot account.

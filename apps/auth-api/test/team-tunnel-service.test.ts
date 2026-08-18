@@ -8,6 +8,7 @@ import {
 } from "../src/server/team-tunnel-service";
 
 const serverId = "00000000-0000-4000-8000-000000000000";
+const secondServerId = "22222222-2222-4222-8222-222222222222";
 const tunnelId = "11111111-1111-4111-8111-111111111111";
 const user = { id: "user-1", email: "owner@example.com", name: null, avatarUrl: null };
 
@@ -106,6 +107,35 @@ describe("TeamTunnelService", () => {
     await expect(
       service.provision({ user, serverId, serverName: "Studio Mac" }),
     ).rejects.toMatchObject({ code: "team_tunnel_owner_mismatch", status: 403 });
+  });
+
+  it("allows one team server per OpenBot account", async () => {
+    const repository = new MemoryTeamTunnelRepository();
+    const provider = fakeProvider();
+    const service = new TeamTunnelService({ repository, provider, domain: "openbot.run" });
+    await service.provision({ user, serverId, serverName: "Studio Mac" });
+
+    await expect(
+      service.provision({ user, serverId: secondServerId, serverName: "Second Mac" }),
+    ).rejects.toMatchObject({ code: "team_server_limit_reached", status: 409 });
+    expect(provider.createTunnel).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows only one winner when the same account claims two servers concurrently", async () => {
+    const repository = new MemoryTeamTunnelRepository();
+    const provider = fakeProvider();
+    const service = new TeamTunnelService({ repository, provider, domain: "openbot.run" });
+    const results = await Promise.allSettled([
+      service.provision({ user, serverId, serverName: "Studio Mac" }),
+      service.provision({ user, serverId: secondServerId, serverName: "Second Mac" }),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({
+      reason: { code: "team_server_limit_reached", status: 409 },
+    });
+    expect(provider.createTunnel).toHaveBeenCalledTimes(1);
   });
 
   it("removes DNS and the tunnel only for its owner", async () => {

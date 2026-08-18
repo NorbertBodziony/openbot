@@ -94,6 +94,13 @@ export class TeamTunnelService {
         "This team server belongs to a different OpenBot account.",
       );
     }
+    if (claimed.serverId !== input.serverId.toLowerCase()) {
+      throw new TeamTunnelServiceError(
+        409,
+        "team_server_limit_reached",
+        "This OpenBot account already owns a team server.",
+      );
+    }
 
     let tunnelId = claimed.tunnelId;
     if (!tunnelId) {

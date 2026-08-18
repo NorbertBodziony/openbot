@@ -10,5 +10,5 @@ CREATE TABLE team_tunnels (
   updated_at INTEGER NOT NULL
 );
 
-CREATE INDEX team_tunnels_user_id ON team_tunnels(user_id);
+CREATE UNIQUE INDEX team_tunnels_user_id ON team_tunnels(user_id);
 CREATE INDEX team_tunnels_status ON team_tunnels(status);

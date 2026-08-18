@@ -35,9 +35,12 @@ export class D1TeamTunnelRepository implements TeamTunnelRepository {
     const row = await this.database
       .prepare(
         `SELECT server_id, user_id, tunnel_id, tunnel_name, api_hostname, vnc_hostname, status
-         FROM team_tunnels WHERE server_id = ?`,
+         FROM team_tunnels
+         WHERE server_id = ? OR user_id = ?
+         ORDER BY CASE WHEN server_id = ? THEN 0 ELSE 1 END
+         LIMIT 1`,
       )
-      .bind(input.serverId)
+      .bind(input.serverId, input.userId, input.serverId)
       .first<TeamTunnelRow>();
     if (!row) throw new Error("The team tunnel claim could not be stored.");
     return mapRow(row);
