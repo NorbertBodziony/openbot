@@ -94,8 +94,9 @@ bun run dev
 `codex:doctor` checks the CLI version, App Server handshake, ChatGPT login, and Computer Use plugin
 without starting a model turn.
 
-To reset only the local development state, quit the dev app and run `bun run dev:reset`. The command
-deletes the development state. It does not change agent workspaces or CLI sessions.
+To reset only the local development state, quit the dev app and host, then run `bun run dev:reset`.
+The command deletes both development profiles, including `openbot.db` and its WAL files. It does not
+change the production profile, agent workspaces, `~/.codex`, or `~/.claude`.
 
 ## Commands
 
@@ -109,7 +110,7 @@ deletes the development state. It does not change agent workspaces or CLI sessio
 | `bun run api:deploy` | Build and deploy the account API to Cloudflare Workers. |
 | `bun run host` | Start Electron in the separate host profile with renderer HMR. |
 | `bun run dev:all` | Start the API, Electron client, and Electron host together. |
-| `bun run dev:reset` | Delete the local development state. |
+| `bun run dev:reset` | Delete the local app and host development state. |
 | `bun run check` | Run Biome, both typechecks, offline tests, the browser smoke test, and the production build. |
 | `bun run test:backend` | Run backend tests only. |
 | `bun run test:browser` | Run the local embedded-browser smoke test. |
