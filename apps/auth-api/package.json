@@ -11,6 +11,7 @@
     "deploy": "dotenvx run -f .env.production -fk ../../.env.keys -- bun ../../scripts/deploy-auth-api.ts",
     "env:encrypt:dev": "dotenvx encrypt -f .env.dev -fk ../../.env.keys",
     "env:encrypt:prod": "dotenvx encrypt -f .env.production -fk ../../.env.keys",
+    "env:set:smtp": "bun ../../scripts/set-auth-smtp-secret.ts",
     "env:validate:dev": "dotenvx validate -f .env.dev -fk ../../.env.keys",
     "env:validate:prod": "dotenvx validate -f .env.production -fk ../../.env.keys",
     "cf:typegen": "wrangler types",

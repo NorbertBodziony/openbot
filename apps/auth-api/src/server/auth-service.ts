@@ -80,7 +80,8 @@ export class AuthService {
     });
     try {
       if (this.#delivery) await this.#delivery.send({ email, code, expiresAt });
-    } catch {
+    } catch (error) {
+      console.error("Email code delivery failed:", safeDeliveryError(error));
       await this.#repository.cancelEmailChallenge(challengeHash, now);
       throw new AuthServiceError(
         502,
@@ -146,6 +147,13 @@ export class AuthService {
       );
     }
   }
+}
+
+function safeDeliveryError(error: unknown): string {
+  if (!(error instanceof Error)) return "unknown_delivery_error";
+  return /^smtp_[a-z_]+$/u.test(error.message) || error.message === "email_delivery_webhook_failed"
+    ? error.message
+    : "unknown_delivery_error";
 }
 
 export class AuthServiceError extends Error {

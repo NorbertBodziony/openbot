@@ -45,6 +45,7 @@
     "api:migrate:remote": "bun run --cwd apps/auth-api db:migrate:remote",
     "env:encrypt:dev": "bun run --cwd apps/auth-api env:encrypt:dev",
     "env:encrypt:prod": "bun run --cwd apps/auth-api env:encrypt:prod",
+    "env:set:smtp": "bun run --cwd apps/auth-api env:set:smtp",
     "env:validate:dev": "bun run --cwd apps/auth-api env:validate:dev",
     "env:validate:prod": "bun run --cwd apps/auth-api env:validate:prod",
     "dev": "bun scripts/dev-services.ts app",

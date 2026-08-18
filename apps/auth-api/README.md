@@ -23,7 +23,7 @@ Update and validate the encrypted files with these commands:
 
 ```bash
 bunx dotenvx set AUTH_EXPOSE_DEVELOPMENT_CODE true -f apps/auth-api/.env.dev -fk .env.keys
-bunx dotenvx set EMAIL_SMTP_PASSWORD '<APP_PASSWORD>' -f apps/auth-api/.env.production -fk .env.keys
+printf '%s' '<APP_PASSWORD>' | bun run env:set:smtp
 bun run env:validate:dev
 bun run env:validate:prod
 ```
