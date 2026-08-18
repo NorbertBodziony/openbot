@@ -1,14 +1,27 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import {
-  type AgentEvent,
+  type AgentIpcRequest,
   type AttachmentImportEvent,
+  type DraftAttachment,
   type ImportAttachmentsInput,
   IPC_CHANNELS,
   type OpenBotDesktopApi,
+  type ScopedAgentEvent,
   type UpdateStatus,
 } from "../shared/ipc";
 
 const attachmentImportListeners = new Set<(event: AttachmentImportEvent) => void>();
+let selectedServerId = "local";
+
+function invokeAgent(channel: string, payload: unknown = null): Promise<unknown> {
+  const request: AgentIpcRequest = { serverId: selectedServerId, payload };
+  return ipcRenderer.invoke(channel, request);
+}
+
+function rememberActiveServer<T extends { id: string; active: boolean }[]>(servers: T): T {
+  selectedServerId = servers.find((server) => server.active)?.id ?? "local";
+  return servers;
+}
 
 function emitAttachmentImport(event: AttachmentImportEvent): void {
   for (const listener of attachmentImportListeners) listener(event);
@@ -31,7 +44,10 @@ async function importFiles(files: File[]): Promise<void> {
         });
       }
     }
-    const attachments = await ipcRenderer.invoke(IPC_CHANNELS.agentImportAttachments, input);
+    const attachments = (await invokeAgent(
+      IPC_CHANNELS.agentImportAttachments,
+      input,
+    )) as DraftAttachment[];
     emitAttachmentImport({ type: "completed", requestId, attachments });
   } catch (error) {
     emitAttachmentImport({
@@ -70,33 +86,78 @@ const openbotApi: OpenBotDesktopApi = {
     ipcRenderer.invoke(IPC_CHANNELS.requestMacPermission, permission),
   openExternal: (destination) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, destination),
   openUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.openUrl, url),
+  auth: {
+    getState: () => ipcRenderer.invoke(IPC_CHANNELS.authGetState),
+    requestEmailCode: (email) => ipcRenderer.invoke(IPC_CHANNELS.authRequestEmailCode, email),
+    verifyEmailCode: (challengeId, code) =>
+      ipcRenderer.invoke(IPC_CHANNELS.authVerifyEmailCode, { challengeId, code }),
+    logout: () => ipcRenderer.invoke(IPC_CHANNELS.authLogout),
+    onEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) =>
+        listener(state);
+      ipcRenderer.on(IPC_CHANNELS.authEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.authEvent, handler);
+    },
+  },
   agent: {
-    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.agentGetStatus),
-    getUsage: () => ipcRenderer.invoke(IPC_CHANNELS.agentGetUsage),
-    listModels: () => ipcRenderer.invoke(IPC_CHANNELS.agentListModels),
-    listBots: () => ipcRenderer.invoke(IPC_CHANNELS.agentListBots),
-    createBot: () => ipcRenderer.invoke(IPC_CHANNELS.agentCreateBot),
-    updateBot: (input) => ipcRenderer.invoke(IPC_CHANNELS.agentUpdateBot, input),
-    deleteBot: (botId) => ipcRenderer.invoke(IPC_CHANNELS.agentDeleteBot, botId),
-    readConversation: (botId) => ipcRenderer.invoke(IPC_CHANNELS.agentReadConversation, botId),
-    chooseAttachments: () => ipcRenderer.invoke(IPC_CHANNELS.agentChooseAttachments),
+    getStatus: () =>
+      invokeAgent(IPC_CHANNELS.agentGetStatus) as ReturnType<
+        OpenBotDesktopApi["agent"]["getStatus"]
+      >,
+    getUsage: () =>
+      invokeAgent(IPC_CHANNELS.agentGetUsage) as ReturnType<OpenBotDesktopApi["agent"]["getUsage"]>,
+    listModels: () =>
+      invokeAgent(IPC_CHANNELS.agentListModels) as ReturnType<
+        OpenBotDesktopApi["agent"]["listModels"]
+      >,
+    listBots: () =>
+      invokeAgent(IPC_CHANNELS.agentListBots) as ReturnType<OpenBotDesktopApi["agent"]["listBots"]>,
+    createBot: () =>
+      invokeAgent(IPC_CHANNELS.agentCreateBot) as ReturnType<
+        OpenBotDesktopApi["agent"]["createBot"]
+      >,
+    updateBot: (input) =>
+      invokeAgent(IPC_CHANNELS.agentUpdateBot, input) as ReturnType<
+        OpenBotDesktopApi["agent"]["updateBot"]
+      >,
+    deleteBot: (botId) => invokeAgent(IPC_CHANNELS.agentDeleteBot, botId) as Promise<void>,
+    readConversation: (botId) =>
+      invokeAgent(IPC_CHANNELS.agentReadConversation, botId) as ReturnType<
+        OpenBotDesktopApi["agent"]["readConversation"]
+      >,
+    chooseAttachments: () =>
+      invokeAgent(IPC_CHANNELS.agentChooseAttachments) as ReturnType<
+        OpenBotDesktopApi["agent"]["chooseAttachments"]
+      >,
     onAttachmentImport: (listener) => {
       attachmentImportListeners.add(listener);
       return () => attachmentImportListeners.delete(listener);
     },
     discardDraftAttachment: (attachmentId) =>
-      ipcRenderer.invoke(IPC_CHANNELS.agentDiscardDraftAttachment, attachmentId),
-    openAttachment: (input) => ipcRenderer.invoke(IPC_CHANNELS.agentOpenAttachment, input),
-    sendMessage: (input) => ipcRenderer.invoke(IPC_CHANNELS.agentSendMessage, input),
-    setMessageReaction: (input) => ipcRenderer.invoke(IPC_CHANNELS.agentSetMessageReaction, input),
-    listQueue: (botId) => ipcRenderer.invoke(IPC_CHANNELS.agentListQueue, botId),
+      invokeAgent(IPC_CHANNELS.agentDiscardDraftAttachment, attachmentId) as Promise<void>,
+    openAttachment: (input) =>
+      invokeAgent(IPC_CHANNELS.agentOpenAttachment, input) as Promise<void>,
+    sendMessage: (input) =>
+      invokeAgent(IPC_CHANNELS.agentSendMessage, input) as ReturnType<
+        OpenBotDesktopApi["agent"]["sendMessage"]
+      >,
+    setMessageReaction: (input) =>
+      invokeAgent(IPC_CHANNELS.agentSetMessageReaction, input) as Promise<void>,
+    listQueue: (botId) =>
+      invokeAgent(IPC_CHANNELS.agentListQueue, botId) as ReturnType<
+        OpenBotDesktopApi["agent"]["listQueue"]
+      >,
     cancelQueuedMessage: (input) =>
-      ipcRenderer.invoke(IPC_CHANNELS.agentCancelQueuedMessage, input),
-    setQueuePaused: (input) => ipcRenderer.invoke(IPC_CHANNELS.agentSetQueuePaused, input),
-    interrupt: (input) => ipcRenderer.invoke(IPC_CHANNELS.agentInterrupt, input),
-    respondToPrompt: (input) => ipcRenderer.invoke(IPC_CHANNELS.agentRespondToPrompt, input),
+      invokeAgent(IPC_CHANNELS.agentCancelQueuedMessage, input) as Promise<void>,
+    setQueuePaused: (input) =>
+      invokeAgent(IPC_CHANNELS.agentSetQueuePaused, input) as Promise<void>,
+    interrupt: (input) => invokeAgent(IPC_CHANNELS.agentInterrupt, input) as Promise<void>,
+    respondToPrompt: (input) =>
+      invokeAgent(IPC_CHANNELS.agentRespondToPrompt, input) as Promise<void>,
     onEvent: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, payload: AgentEvent) => listener(payload);
+      const handler = (_event: Electron.IpcRendererEvent, payload: ScopedAgentEvent) => {
+        if (payload.serverId === selectedServerId) listener(payload.event);
+      };
       ipcRenderer.on(IPC_CHANNELS.agentEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.agentEvent, handler);
     },
@@ -123,6 +184,69 @@ const openbotApi: OpenBotDesktopApi = {
   maintenance: {
     exportData: () => ipcRenderer.invoke(IPC_CHANNELS.maintenanceExportData),
     exportDiagnostics: () => ipcRenderer.invoke(IPC_CHANNELS.maintenanceExportDiagnostics),
+  },
+  servers: {
+    list: async () => rememberActiveServer(await ipcRenderer.invoke(IPC_CHANNELS.serversList)),
+    select: async (serverId) =>
+      rememberActiveServer(await ipcRenderer.invoke(IPC_CHANNELS.serversSelect, serverId)),
+    join: async (input) => {
+      const server = await ipcRenderer.invoke(IPC_CHANNELS.serversJoin, input);
+      selectedServerId = server.id;
+      return server;
+    },
+    login: async (input) => {
+      const server = await ipcRenderer.invoke(IPC_CHANNELS.serversLogin, input);
+      selectedServerId = server.id;
+      return server;
+    },
+    updateAddress: (updateUrl) => ipcRenderer.invoke(IPC_CHANNELS.serversUpdateAddress, updateUrl),
+    remove: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversRemove, serverId),
+    onEvent: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        servers: Parameters<typeof listener>[0],
+      ) => listener(rememberActiveServer(servers));
+      ipcRenderer.on(IPC_CHANNELS.serversEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.serversEvent, handler);
+    },
+    onInvite: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, inviteUrl: string) => listener(inviteUrl);
+      ipcRenderer.on(IPC_CHANNELS.serversInvite, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.serversInvite, handler);
+    },
+  },
+  host: {
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.hostGetStatus),
+    configure: (input) => ipcRenderer.invoke(IPC_CHANNELS.hostConfigure, input),
+    start: () => ipcRenderer.invoke(IPC_CHANNELS.hostStart),
+    stop: () => ipcRenderer.invoke(IPC_CHANNELS.hostStop),
+    listMembers: () => ipcRenderer.invoke(IPC_CHANNELS.hostListMembers),
+    updateMember: (input) => ipcRenderer.invoke(IPC_CHANNELS.hostUpdateMember, input),
+    listSessions: () => ipcRenderer.invoke(IPC_CHANNELS.hostListSessions),
+    revokeSession: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.hostRevokeSession, sessionId),
+    listInvites: () => ipcRenderer.invoke(IPC_CHANNELS.hostListInvites),
+    revokeInvite: (inviteId) => ipcRenderer.invoke(IPC_CHANNELS.hostRevokeInvite, inviteId),
+    createInvite: (role) => ipcRenderer.invoke(IPC_CHANNELS.hostCreateInvite, role),
+    createAddressUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.hostCreateAddressUpdate),
+    onEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: Parameters<typeof listener>[0]) =>
+        listener(status);
+      ipcRenderer.on(IPC_CHANNELS.hostEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.hostEvent, handler);
+    },
+  },
+  remoteMac: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.remoteMacList),
+    connect: (input) => ipcRenderer.invoke(IPC_CHANNELS.remoteMacConnect, input),
+    disconnect: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.remoteMacDisconnect, sessionId),
+    onEvent: (listener) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        sessions: Parameters<typeof listener>[0],
+      ) => listener(sessions);
+      ipcRenderer.on(IPC_CHANNELS.remoteMacEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.remoteMacEvent, handler);
+    },
   },
 };
 

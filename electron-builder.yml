@@ -1,5 +1,9 @@
 appId: app.openbot.desktop
 productName: OpenBot
+protocols:
+  - name: OpenBot invitations
+    schemes:
+      - openbot
 asar: true
 artifactName: ${productName}-${version}-${arch}.${ext}
 electronUpdaterCompatibility: ">=2.16"

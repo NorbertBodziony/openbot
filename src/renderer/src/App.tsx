@@ -21,15 +21,27 @@ import type {
   BotSummary,
   BrowserControlState,
   BrowserTab,
+  CentralAuthState,
   ConversationMessage,
   ConversationSnapshot,
+  HostStatus,
+  InviteSummary,
   QueueSnapshot,
+  RemoteMacSession,
+  ServerSummary,
+  TeamInviteSummary,
+  TeamMemberSummary,
+  TeamSessionSummary,
   UpdateBotInput,
   UpdateStatus,
 } from "../../shared/ipc";
 import { Conversation } from "./components/Conversation";
+import { HostPanel } from "./components/HostPanel";
 import { InitialSetup } from "./components/InitialSetup";
+import { JoinServerDialog } from "./components/JoinServerDialog";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./components/PanelResizer";
+import { RemoteMacPanel } from "./components/RemoteMacPanel";
+import { ServerRail } from "./components/ServerRail";
 import { Sidebar, type SidebarAgentState } from "./components/Sidebar";
 import type { BotMessage, BotProfile } from "./data";
 
@@ -52,6 +64,19 @@ const FALLBACK_UPDATE_STATUS: UpdateStatus = {
   availableVersion: null,
   progress: null,
   checkedAt: null,
+  message: null,
+};
+
+const FALLBACK_HOST_STATUS: HostStatus = {
+  phase: "unconfigured",
+  configured: false,
+  enabledOnLaunch: false,
+  serverId: null,
+  serverName: null,
+  apiUrl: null,
+  vncHostname: null,
+  apiOnline: false,
+  vncOnline: false,
   message: null,
 };
 
@@ -148,7 +173,18 @@ export function App() {
   );
   const [setupState, setSetupState] = createSignal<AppSetupState | null>(null);
   const [setupLoaded, setSetupLoaded] = createSignal(false);
+  const [centralAuth, setCentralAuth] = createSignal<CentralAuthState>({ status: "loading" });
   const [permissionsOpen, setPermissionsOpen] = createSignal(false);
+  const [servers, setServers] = createSignal<ServerSummary[]>([]);
+  const [joinServerOpen, setJoinServerOpen] = createSignal(false);
+  const [pendingInviteUrl, setPendingInviteUrl] = createSignal("");
+  const [hostOpen, setHostOpen] = createSignal(false);
+  const [hostStatus, setHostStatus] = createSignal<HostStatus>(FALLBACK_HOST_STATUS);
+  const [teamMembers, setTeamMembers] = createSignal<TeamMemberSummary[]>([]);
+  const [teamInvites, setTeamInvites] = createSignal<TeamInviteSummary[]>([]);
+  const [teamSessions, setTeamSessions] = createSignal<TeamSessionSummary[]>([]);
+  const [remoteMacOpen, setRemoteMacOpen] = createSignal(false);
+  const [remoteMacSessions, setRemoteMacSessions] = createSignal<RemoteMacSession[]>([]);
   const pendingConversationSnapshots = new Map<string, ConversationSnapshot>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let conversationFrame: number | undefined;
@@ -168,9 +204,32 @@ export function App() {
     const unsubscribeUpdate = window.openbot.update.onEvent((status) => {
       flush(() => setUpdateStatus(status));
     });
+    const unsubscribeAuth = window.openbot.auth.onEvent((state) => {
+      flush(() => setCentralAuth(state));
+    });
+    const unsubscribeServers = window.openbot.servers.onEvent((value) =>
+      flush(() => setServers(value)),
+    );
+    const unsubscribeInvite = window.openbot.servers.onInvite((inviteUrl) => {
+      flush(() => {
+        setPendingInviteUrl(inviteUrl);
+        setJoinServerOpen(true);
+      });
+    });
+    const unsubscribeHost = window.openbot.host.onEvent((status) =>
+      flush(() => setHostStatus(status)),
+    );
+    const unsubscribeRemoteMac = window.openbot.remoteMac.onEvent((sessions) =>
+      flush(() => setRemoteMacSessions(sessions)),
+    );
     const cleanup = () => {
       unsubscribe();
       unsubscribeUpdate();
+      unsubscribeAuth();
+      unsubscribeServers();
+      unsubscribeInvite();
+      unsubscribeHost();
+      unsubscribeRemoteMac();
       if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
       for (const timer of recentReplyTimers.values()) clearTimeout(timer);
       recentReplyTimers.clear();
@@ -179,6 +238,16 @@ export function App() {
       .getStatus()
       .then(setUpdateStatus)
       .catch(() => undefined);
+    void window.openbot.auth
+      .getState()
+      .then(setCentralAuth)
+      .catch(() =>
+        setCentralAuth({
+          status: "error",
+          code: "auth_unavailable",
+          message: "OpenBot could not load the account service.",
+        }),
+      );
     void window.openbot
       .getSetupState()
       .then(setSetupState)
@@ -214,6 +283,18 @@ export function App() {
     void window.openbot.browser
       .getControlState()
       .then(setBrowserControlState)
+      .catch(() => undefined);
+    void window.openbot.servers
+      .list()
+      .then(setServers)
+      .catch(() => undefined);
+    void window.openbot.host
+      .getStatus()
+      .then(setHostStatus)
+      .catch(() => undefined);
+    void window.openbot.remoteMac
+      .list()
+      .then(setRemoteMacSessions)
       .catch(() => undefined);
     return cleanup;
   });
@@ -643,6 +724,18 @@ export function App() {
     });
   }
 
+  async function requestEmailCode(email: string): Promise<void> {
+    setCentralAuth(await window.openbot.auth.requestEmailCode(email));
+  }
+
+  async function verifyEmailCode(challengeId: string, code: string): Promise<void> {
+    setCentralAuth(await window.openbot.auth.verifyEmailCode(challengeId, code));
+  }
+
+  async function logoutCentralAccount(): Promise<void> {
+    setCentralAuth(await window.openbot.auth.logout());
+  }
+
   async function runUpdateAction(): Promise<void> {
     const phase = updateStatus().phase;
     if (phase === "ready") {
@@ -656,6 +749,132 @@ export function App() {
     setUpdateStatus(status);
   }
 
+  async function selectServer(serverId: string): Promise<void> {
+    const nextServers = await window.openbot.servers.select(serverId);
+    setServers(nextServers);
+    setAgentPickerOpen(false);
+    setSettingsRequest(null);
+    setBotList([]);
+    setActiveBotId("");
+    setLiveMessages({});
+    setUiErrors({});
+    setConversationLoaded({});
+    setConversationRevisions({});
+    setQueues({});
+    const [storedBots, status, models, tabs, controlState] = await Promise.all([
+      window.openbot.agent.listBots(),
+      window.openbot.agent.getStatus(),
+      window.openbot.agent.listModels(),
+      window.openbot.browser.listTabs(),
+      window.openbot.browser.getControlState(),
+    ]);
+    setAgentStatus(status);
+    setModelOptions(models);
+    setBrowserTabs(tabs);
+    setActiveBrowserTabId(tabs[0]?.id ?? null);
+    setBrowserControlState(controlState);
+    applyStoredBots(storedBots);
+  }
+
+  async function joinServer(input: {
+    inviteUrl: string;
+    username: string;
+    password: string;
+  }): Promise<void> {
+    await window.openbot.servers.join(input);
+    setPendingInviteUrl("");
+    setJoinServerOpen(false);
+    await selectServer(
+      window.openbot
+        ? ((await window.openbot.servers.list()).find((item) => item.active)?.id ?? "local")
+        : "local",
+    );
+  }
+
+  async function refreshHostManagement(): Promise<void> {
+    if (!hostStatus().configured) {
+      setTeamMembers([]);
+      setTeamInvites([]);
+      setTeamSessions([]);
+      return;
+    }
+    try {
+      const [members, invites, sessions] = await Promise.all([
+        window.openbot.host.listMembers(),
+        window.openbot.host.listInvites(),
+        window.openbot.host.listSessions(),
+      ]);
+      setTeamMembers(members);
+      setTeamInvites(invites);
+      setTeamSessions(sessions);
+    } catch {
+      setTeamMembers([]);
+      setTeamInvites([]);
+      setTeamSessions([]);
+    }
+  }
+
+  function openHostPanel(): void {
+    setHostOpen(true);
+    void refreshHostManagement();
+  }
+
+  async function configureHost(input: {
+    serverName: string;
+    username: string;
+    password: string;
+  }): Promise<void> {
+    setHostStatus(await window.openbot.host.configure(input));
+    await refreshHostManagement();
+  }
+
+  async function startHost(): Promise<void> {
+    setHostStatus(await window.openbot.host.start());
+  }
+
+  async function stopHost(): Promise<void> {
+    setHostStatus(await window.openbot.host.stop());
+  }
+
+  async function createHostInvite(role: "admin" | "member"): Promise<InviteSummary> {
+    const invite = await window.openbot.host.createInvite(role);
+    await refreshHostManagement();
+    return invite;
+  }
+
+  async function updateHostMember(input: {
+    memberId: string;
+    role?: "admin" | "member";
+    disabled?: boolean;
+  }): Promise<void> {
+    await window.openbot.host.updateMember(input);
+    await refreshHostManagement();
+  }
+
+  async function revokeHostSession(sessionId: string): Promise<void> {
+    await window.openbot.host.revokeSession(sessionId);
+    await refreshHostManagement();
+  }
+
+  async function revokeHostInvite(inviteId: string): Promise<void> {
+    await window.openbot.host.revokeInvite(inviteId);
+    await refreshHostManagement();
+  }
+
+  async function copyHostAddressUpdate(): Promise<void> {
+    await navigator.clipboard.writeText(await window.openbot.host.createAddressUpdate());
+  }
+
+  async function connectRemoteMac(hostname: string, serverId: string | null): Promise<void> {
+    await window.openbot.remoteMac.connect({ hostname, serverId });
+  }
+
+  async function disconnectRemoteMac(sessionId: string): Promise<void> {
+    await window.openbot.remoteMac.disconnect(sessionId);
+  }
+
+  const activeServer = createMemo(() => servers().find((server) => server.active));
+
   return (
     <Show
       when={setupLoaded() && appInfo() !== null}
@@ -668,14 +887,34 @@ export function App() {
             state={setupState() ?? { completed: false, preferredProvider: null }}
             agentStatus={agentStatus()}
             platform={appInfo()?.platform ?? "darwin"}
+            authState={centralAuth()}
             onSave={saveSetup}
+            onRequestEmailCode={requestEmailCode}
+            onVerifyEmailCode={verifyEmailCode}
+            onLogout={logoutCentralAccount}
           />
         }
       >
         <div
-          class={["app-frame", { "app-frame-sidebar-collapsed": leftPanelCollapsed() }]}
+          class={[
+            "app-frame",
+            {
+              "app-frame-sidebar-collapsed": leftPanelCollapsed(),
+              "app-frame-with-server-rail": appInfo()?.platform === "darwin",
+            },
+          ]}
           style={`--left-panel-width: ${leftPanelCollapsed() ? 0 : leftPanelWidth()}px`}
         >
+          <Show when={appInfo()?.platform === "darwin"}>
+            <ServerRail
+              servers={servers()}
+              hostStatus={hostStatus()}
+              onSelect={(serverId) => void selectServer(serverId)}
+              onAdd={() => setJoinServerOpen(true)}
+              onOpenHost={openHostPanel}
+              onOpenRemoteMac={() => setRemoteMacOpen(true)}
+            />
+          </Show>
           <Show when={!leftPanelCollapsed()}>
             <Sidebar
               bots={botList()}
@@ -747,8 +986,48 @@ export function App() {
               state={setupState() ?? { completed: true, preferredProvider: "codex" }}
               agentStatus={agentStatus()}
               platform={appInfo()?.platform ?? "darwin"}
+              authState={centralAuth()}
               onSave={saveSetup}
+              onRequestEmailCode={requestEmailCode}
+              onVerifyEmailCode={verifyEmailCode}
+              onLogout={logoutCentralAccount}
               onClose={() => setPermissionsOpen(false)}
+            />
+          </Show>
+          <Show when={joinServerOpen()}>
+            <JoinServerDialog
+              inviteUrl={pendingInviteUrl()}
+              onClose={() => {
+                setJoinServerOpen(false);
+                setPendingInviteUrl("");
+              }}
+              onJoin={joinServer}
+            />
+          </Show>
+          <Show when={hostOpen()}>
+            <HostPanel
+              status={hostStatus()}
+              members={teamMembers()}
+              invites={teamInvites()}
+              sessions={teamSessions()}
+              onClose={() => setHostOpen(false)}
+              onConfigure={configureHost}
+              onStart={startHost}
+              onStop={stopHost}
+              onCreateInvite={createHostInvite}
+              onUpdateMember={updateHostMember}
+              onRevokeSession={revokeHostSession}
+              onRevokeInvite={revokeHostInvite}
+              onCopyAddressUpdate={copyHostAddressUpdate}
+            />
+          </Show>
+          <Show when={remoteMacOpen()}>
+            <RemoteMacPanel
+              server={activeServer()}
+              sessions={remoteMacSessions()}
+              onClose={() => setRemoteMacOpen(false)}
+              onConnect={connectRemoteMac}
+              onDisconnect={disconnectRemoteMac}
             />
           </Show>
         </div>

@@ -81,6 +81,21 @@ describe("OpenBot connected desktop shell", () => {
         }),
         openExternal: vi.fn().mockResolvedValue(undefined),
         openUrl: vi.fn().mockResolvedValue(undefined),
+        auth: {
+          getState: vi.fn().mockResolvedValue({ status: "signed_out" }),
+          requestEmailCode: vi.fn().mockResolvedValue({
+            status: "code_sent",
+            challengeId: "challenge-1",
+            email: "person@example.com",
+            expiresAt: Date.now() + 600_000,
+          }),
+          verifyEmailCode: vi.fn().mockResolvedValue({
+            status: "signed_in",
+            user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
+          }),
+          logout: vi.fn().mockResolvedValue({ status: "signed_out" }),
+          onEvent: vi.fn().mockReturnValue(() => undefined),
+        },
         agent: {
           getStatus: vi.fn().mockResolvedValue({
             phase: "ready",
@@ -245,6 +260,63 @@ describe("OpenBot connected desktop shell", () => {
           exportData: vi.fn().mockResolvedValue({ saved: true }),
           exportDiagnostics: vi.fn().mockResolvedValue({ saved: true }),
         },
+        servers: {
+          list: vi.fn().mockResolvedValue([
+            {
+              id: "local",
+              name: "Local",
+              kind: "local",
+              state: "online",
+              apiUrl: null,
+              vncHostname: null,
+              role: null,
+              active: true,
+            },
+          ]),
+          select: vi.fn().mockResolvedValue([
+            {
+              id: "local",
+              name: "Local",
+              kind: "local",
+              state: "online",
+              apiUrl: null,
+              vncHostname: null,
+              role: null,
+              active: true,
+            },
+          ]),
+          join: vi.fn().mockResolvedValue(undefined),
+          login: vi.fn().mockResolvedValue(undefined),
+          remove: vi.fn().mockResolvedValue(undefined),
+          onEvent: vi.fn(() => () => undefined),
+          onInvite: vi.fn(() => () => undefined),
+        },
+        host: {
+          getStatus: vi.fn().mockResolvedValue({
+            phase: "unconfigured",
+            configured: false,
+            enabledOnLaunch: false,
+            serverId: null,
+            serverName: null,
+            apiUrl: null,
+            vncHostname: null,
+            apiOnline: false,
+            vncOnline: false,
+            message: null,
+          }),
+          configure: vi.fn().mockResolvedValue(undefined),
+          start: vi.fn().mockResolvedValue(undefined),
+          stop: vi.fn().mockResolvedValue(undefined),
+          listMembers: vi.fn().mockResolvedValue([]),
+          createInvite: vi.fn().mockResolvedValue(undefined),
+          onEvent: vi.fn(() => () => undefined),
+        },
+        remoteMac: {
+          list: vi.fn().mockResolvedValue([]),
+          connect: vi.fn().mockResolvedValue(undefined),
+          disconnect: vi.fn().mockResolvedValue(undefined),
+          onEvent: vi.fn(() => () => undefined),
+        },
       },
     });
   });
@@ -267,6 +339,25 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Continue with Claude" }));
     expect(window.openbot.saveSetup).toHaveBeenCalledWith({ preferredProvider: "claude" });
     expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
+  });
+
+  it("lets a user request an email code from the initial screen", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    render(() => <App />);
+
+    await fireEvent.input(await screen.findByRole("textbox", { name: "Email address" }), {
+      target: { value: "person@example.com" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Send code" }));
+    expect(window.openbot.auth.requestEmailCode).toHaveBeenCalledWith("person@example.com");
+    await fireEvent.input(await screen.findByRole("textbox", { name: "Sign-in code" }), {
+      target: { value: "ABCD-EFGH" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Verify code" }));
+    expect(window.openbot.auth.verifyEmailCode).toHaveBeenCalledWith("challenge-1", "ABCD-EFGH");
   });
 
   it("lets the user choose a provider while provider checks are running", async () => {
@@ -2069,6 +2160,22 @@ describe("OpenBot connected desktop shell", () => {
       expect(window.openbot.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"),
     );
     await waitFor(() => expect(sales).not.toBeInTheDocument());
+  });
+
+  it("shows the macOS server rail and opens the join flow", async () => {
+    render(() => <App />);
+    expect(await screen.findByRole("complementary", { name: "Servers" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Add remote server" }));
+    expect(screen.getByRole("dialog", { name: "Join an OpenBot team" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Invitation link" })).toBeInTheDocument();
+  });
+
+  it("opens host controls from the bottom of the server rail", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "Open host controls" }));
+    expect(screen.getByRole("dialog", { name: "Host an OpenBot team" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Server name" })).toBeInTheDocument();
   });
 });
 

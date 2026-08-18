@@ -1,7 +1,16 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.8/schema.json",
   "files": {
-    "includes": ["**", "!node_modules", "!out", "!dist", "!coverage"]
+    "includes": [
+      "**",
+      "!node_modules",
+      "!out",
+      "!dist",
+      "!**/dist",
+      "!**/.wrangler",
+      "!**/routeTree.gen.ts",
+      "!coverage"
+    ]
   },
   "formatter": {
     "enabled": true,

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   app,
   BrowserWindow,
@@ -11,6 +11,7 @@ import {
   Notification,
   type OpenDialogOptions,
   protocol,
+  safeStorage,
   session,
   shell,
   systemPreferences,
@@ -22,6 +23,7 @@ import { BrowserHost } from "../backend/browser-host";
 import { MailboxStore } from "../backend/mailbox-store";
 import {
   type AgentEvent,
+  type AgentIpcRequest,
   type AgentProviderId,
   type AppInfo,
   type AppSetupState,
@@ -29,6 +31,8 @@ import {
   type BrowserOpenInput,
   type BrowserVisibilityInput,
   type CancelQueuedMessageInput,
+  type CentralAuthState,
+  type ConfigureHostInput,
   type ExternalDestination,
   type ImportAttachmentsInput,
   type InterruptTurnInput,
@@ -38,24 +42,39 @@ import {
   isAvatarSeed,
   isMessageReaction,
   isReasoningEffort,
+  type JoinServerInput,
+  type LoginServerInput,
   type MacPermissionId,
   type MacPermissionsState,
   type OpenAttachmentInput,
+  type RemoteMacConnectInput,
   type RespondToPromptInput,
   type SendMessageInput,
   type SetQueuePausedInput,
   type UpdateBotInput,
+  type UpdateTeamMemberInput,
 } from "../shared/ipc";
 import { AgentInitializationGate } from "./agent-initialization";
 import { notificationForAgentEvent } from "./agent-notifications";
+import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
+import {
+  developmentUserDataName,
+  readDevelopmentProfile,
+  shouldAutoStartHost,
+} from "./development-profile";
+import { HostService } from "./host-service";
 import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
+import { RemoteMacManager } from "./remote-mac";
+import { RemoteServerManager } from "./remote-server-manager";
 import { readSetupState, writeSetupState } from "./setup-store";
+import { TeamStore } from "./team-store";
 import { handleTrusted } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 import { supportsInstalledUpdates, UpdateService } from "./update-service";
 
 if (!app.isPackaged) {
-  app.setPath("userData", join(app.getPath("appData"), "OpenBot Dev"));
+  const profile = readDevelopmentProfile(process.env.OPENBOT_DEV_PROFILE);
+  app.setPath("userData", join(app.getPath("appData"), developmentUserDataName(profile)));
 }
 app.enableSandbox();
 if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
@@ -69,6 +88,10 @@ protocol.registerSchemesAsPrivileged([
     scheme: "openbot-attachment",
     privileges: { standard: true, secure: true, supportFetchAPI: true },
   },
+  {
+    scheme: "openbot-remote-attachment",
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
 ]);
 
 let mainWindow: BrowserWindow | null = null;
@@ -76,11 +99,20 @@ let browserHost: BrowserHost | null = null;
 let agentService: AgentService | null = null;
 let mailboxStore: MailboxStore | null = null;
 let updateService: UpdateService | null = null;
+let hostService: HostService | null = null;
+let remoteMacManager: RemoteMacManager | null = null;
+let remoteServerManager: RemoteServerManager | null = null;
+let centralAuthManager: CentralAuthManager | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
+let pendingInviteUrl: string | null = null;
+let pendingAddressUpdateUrl: string | null = null;
 
 const SETUP_FILE = "openbot-setup-v2.json";
 const BROWSER_STATE_FILE = "openbot-browser-state-v1.json";
+const TEAM_FILE = "openbot-team-server-v1.json";
+const REMOTE_SERVERS_FILE = "openbot-remote-servers-v1.json";
+const CENTRAL_AUTH_FILE = "openbot-central-auth-v1.bin";
 
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "agent-setup": "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
@@ -94,11 +126,11 @@ function configureContentSecurityPolicy(): void {
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: openbot-attachment: https:",
+    "img-src 'self' data: openbot-attachment: openbot-remote-attachment: https:",
     "font-src 'self' data:",
     `connect-src 'self'${developmentSources}`,
     "object-src 'none'",
-    "frame-src 'self' openbot-attachment:",
+    "frame-src 'self' openbot-attachment: openbot-remote-attachment:",
     "base-uri 'none'",
   ].join("; ");
 
@@ -119,6 +151,10 @@ function registerIpcHandlers(
   updater: UpdateService,
   setupFile: string,
   initializeAgent: () => Promise<void>,
+  host: HostService,
+  remoteMac: RemoteMacManager,
+  remoteServers: RemoteServerManager,
+  centralAuth: CentralAuthManager,
 ): void {
   handleTrusted(IPC_CHANNELS.getAppInfo, (): AppInfo => {
     const platform = process.platform;
@@ -152,6 +188,18 @@ function registerIpcHandlers(
     }
     return shell.openExternal(url.toString());
   });
+  handleTrusted(IPC_CHANNELS.authGetState, () => centralAuth.getState());
+  handleTrusted(IPC_CHANNELS.authRequestEmailCode, (email: unknown) =>
+    centralAuth.requestEmailCode(requireString(email, "email")),
+  );
+  handleTrusted(IPC_CHANNELS.authVerifyEmailCode, (input: unknown) => {
+    if (!isObject(input)) throw new Error("Sign-in code details are required.");
+    return centralAuth.verifyEmailCode(
+      requireString(input.challengeId, "challengeId"),
+      requireString(input.code, "code"),
+    );
+  });
+  handleTrusted(IPC_CHANNELS.authLogout, () => centralAuth.logout());
   handleTrusted(IPC_CHANNELS.updateGetStatus, () => updater.getStatus());
   handleTrusted(IPC_CHANNELS.updateCheck, () => updater.checkForUpdates());
   handleTrusted(IPC_CHANNELS.updateDownload, () => updater.downloadUpdate());
@@ -163,43 +211,176 @@ function registerIpcHandlers(
     exportDiagnostics({ service, browser, updater, parentWindow: mainWindow }),
   );
 
-  handleTrusted(IPC_CHANNELS.agentGetStatus, () => service.getStatus());
-  handleTrusted(IPC_CHANNELS.agentGetUsage, () => service.getUsage());
-  handleTrusted(IPC_CHANNELS.agentListModels, () => service.listModels());
-  handleTrusted(IPC_CHANNELS.agentListBots, () => service.listBots());
-  handleTrusted(IPC_CHANNELS.agentCreateBot, () => service.createBot());
-  handleTrusted(IPC_CHANNELS.agentUpdateBot, (input: unknown) =>
-    service.updateBot(parseUpdateBot(input)),
+  handleTrusted(IPC_CHANNELS.serversList, () => remoteServers.list());
+  handleTrusted(IPC_CHANNELS.serversSelect, (serverId: unknown) =>
+    remoteServers.select(requireString(serverId, "serverId")),
   );
-  handleTrusted(IPC_CHANNELS.agentDeleteBot, (botId: unknown) =>
-    service.deleteBot(requireString(botId, "botId")),
+  handleTrusted(IPC_CHANNELS.serversJoin, (input: unknown) =>
+    remoteServers.join(parseJoinServer(input)),
   );
-  handleTrusted(IPC_CHANNELS.agentReadConversation, (botId: unknown) =>
-    service.readConversation(requireString(botId, "botId")),
+  handleTrusted(IPC_CHANNELS.serversLogin, (input: unknown) =>
+    remoteServers.login(parseLoginServer(input)),
   );
-  handleTrusted(IPC_CHANNELS.agentSendMessage, (input: unknown) =>
-    service.sendMessage(parseSendMessage(input)),
+  handleTrusted(IPC_CHANNELS.serversUpdateAddress, (updateUrl: unknown) =>
+    remoteServers.updateAddress(requireString(updateUrl, "updateUrl")),
   );
-  handleTrusted(IPC_CHANNELS.agentSetMessageReaction, (input: unknown) => {
-    const parsed = parseMessageReaction(input);
-    return service.setMessageReaction(parsed);
+  handleTrusted(IPC_CHANNELS.serversRemove, (serverId: unknown) =>
+    remoteServers.remove(requireString(serverId, "serverId")),
+  );
+  handleTrusted(IPC_CHANNELS.hostGetStatus, () => host.getStatus());
+  handleTrusted(IPC_CHANNELS.hostConfigure, (input: unknown) =>
+    host.configure(parseHostConfig(input)),
+  );
+  handleTrusted(IPC_CHANNELS.hostStart, () => host.start());
+  handleTrusted(IPC_CHANNELS.hostStop, () => host.stop());
+  handleTrusted(IPC_CHANNELS.hostListMembers, () => host.listMembers());
+  handleTrusted(IPC_CHANNELS.hostUpdateMember, (input: unknown) =>
+    host.updateMember(parseUpdateTeamMember(input)),
+  );
+  handleTrusted(IPC_CHANNELS.hostListSessions, () => host.listSessions());
+  handleTrusted(IPC_CHANNELS.hostRevokeSession, (sessionId: unknown) =>
+    host.revokeSession(requireString(sessionId, "sessionId")),
+  );
+  handleTrusted(IPC_CHANNELS.hostListInvites, () => host.listInvites());
+  handleTrusted(IPC_CHANNELS.hostRevokeInvite, (inviteId: unknown) =>
+    host.revokeInvite(requireString(inviteId, "inviteId")),
+  );
+  handleTrusted(IPC_CHANNELS.hostCreateInvite, (role: unknown) => {
+    if (role !== "admin" && role !== "member") throw new Error("Unknown team role.");
+    return host.createInvite(role);
   });
-  handleTrusted(IPC_CHANNELS.agentChooseAttachments, async () => {
+  handleTrusted(IPC_CHANNELS.hostCreateAddressUpdate, () => host.createAddressUpdate());
+  handleTrusted(IPC_CHANNELS.remoteMacList, () => remoteMac.list());
+  handleTrusted(IPC_CHANNELS.remoteMacConnect, (input: unknown) =>
+    remoteMac.connect(parseRemoteMacConnect(input)),
+  );
+  handleTrusted(IPC_CHANNELS.remoteMacDisconnect, (sessionId: unknown) =>
+    remoteMac.disconnect(requireString(sessionId, "sessionId")),
+  );
+
+  handleTrusted(IPC_CHANNELS.agentGetStatus, (input: unknown) => {
+    const { serverId } = parseAgentRequest(input);
+    return serverId === "local"
+      ? service.getStatus()
+      : remoteServers.request("/v1/agents/status", {}, serverId);
+  });
+  handleTrusted(IPC_CHANNELS.agentGetUsage, (input: unknown) => {
+    const { serverId } = parseAgentRequest(input);
+    return serverId === "local"
+      ? service.getUsage()
+      : remoteServers.request("/v1/agents/usage", {}, serverId);
+  });
+  handleTrusted(IPC_CHANNELS.agentListModels, (input: unknown) => {
+    const { serverId } = parseAgentRequest(input);
+    return serverId === "local"
+      ? service.listModels()
+      : remoteServers.request("/v1/agents/models", {}, serverId);
+  });
+  handleTrusted(IPC_CHANNELS.agentListBots, (input: unknown) => {
+    const { serverId } = parseAgentRequest(input);
+    return serverId === "local"
+      ? service.listBots()
+      : remoteServers.request("/v1/agents", {}, serverId);
+  });
+  handleTrusted(IPC_CHANNELS.agentCreateBot, (input: unknown) => {
+    const { serverId } = parseAgentRequest(input);
+    return serverId === "local"
+      ? service.createBot()
+      : remoteServers.request("/v1/agents", { method: "POST", body: {} }, serverId);
+  });
+  handleTrusted(IPC_CHANNELS.agentUpdateBot, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    return routeUpdateBot(service, remoteServers, scoped.serverId, parseUpdateBot(scoped.payload));
+  });
+  handleTrusted(IPC_CHANNELS.agentDeleteBot, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    return routeDeleteBot(
+      service,
+      remoteServers,
+      scoped.serverId,
+      requireString(scoped.payload, "botId"),
+    );
+  });
+  handleTrusted(IPC_CHANNELS.agentReadConversation, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    return routeReadConversation(
+      service,
+      remoteServers,
+      scoped.serverId,
+      requireString(scoped.payload, "botId"),
+    );
+  });
+  handleTrusted(IPC_CHANNELS.agentSendMessage, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    return routeSendMessage(
+      service,
+      remoteServers,
+      scoped.serverId,
+      parseSendMessage(scoped.payload),
+    );
+  });
+  handleTrusted(IPC_CHANNELS.agentSetMessageReaction, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseMessageReaction(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.setMessageReaction(parsed)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/reactions`,
+          {
+            method: "POST",
+            body: parsed,
+          },
+          scoped.serverId,
+        );
+  });
+  handleTrusted(IPC_CHANNELS.agentChooseAttachments, async (input: unknown) => {
+    const { serverId } = parseAgentRequest(input);
     const options: OpenDialogOptions = { properties: ["openFile", "multiSelections"] };
     const result = mainWindow
       ? await dialog.showOpenDialog(mainWindow, options)
       : await dialog.showOpenDialog(options);
-    return result.canceled ? [] : service.prepareAttachments(result.filePaths);
+    if (result.canceled) return [];
+    if (serverId === "local") return service.prepareAttachments(result.filePaths);
+    return uploadRemotePaths(remoteServers, serverId, result.filePaths);
   });
   handleTrusted(IPC_CHANNELS.agentImportAttachments, (input: unknown) => {
-    const parsed = parseImportAttachments(input);
-    return service.prepareImportedAttachments(parsed.paths, parsed.data);
+    const scoped = parseAgentRequest(input);
+    const parsed = parseImportAttachments(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.prepareImportedAttachments(parsed.paths, parsed.data)
+      : uploadRemoteImports(remoteServers, scoped.serverId, parsed);
   });
-  handleTrusted(IPC_CHANNELS.agentDiscardDraftAttachment, (attachmentId: unknown) =>
-    service.discardDraftAttachment(requireString(attachmentId, "attachmentId")),
-  );
+  handleTrusted(IPC_CHANNELS.agentDiscardDraftAttachment, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const attachmentId = requireString(scoped.payload, "attachmentId");
+    return scoped.serverId === "local"
+      ? service.discardDraftAttachment(attachmentId)
+      : remoteServers.request(
+          `/v1/attachments/${encodeURIComponent(attachmentId)}`,
+          { method: "DELETE" },
+          scoped.serverId,
+        );
+  });
   handleTrusted(IPC_CHANNELS.agentOpenAttachment, async (input: unknown) => {
-    const parsed = parseOpenAttachment(input);
+    const scoped = parseAgentRequest(input);
+    const parsed = parseOpenAttachment(scoped.payload);
+    if (scoped.serverId !== "local") {
+      const downloaded = await remoteServers.downloadAttachment(
+        parsed.attachmentId,
+        scoped.serverId,
+      );
+      const cacheRoot = join(app.getPath("userData"), "remote-attachments");
+      await mkdir(cacheRoot, { recursive: true });
+      const safeName = `${parsed.attachmentId}-${basename(downloaded.name)}`;
+      const target = join(cacheRoot, safeName);
+      await writeFile(target, downloaded.bytes, { mode: 0o600 });
+      if (parsed.action === "reveal") shell.showItemInFolder(target);
+      else {
+        const openError = await shell.openPath(target);
+        if (openError) throw new Error(openError);
+      }
+      return;
+    }
     const attachment = await mailbox.resolveAttachment(parsed.attachmentId);
     if (!attachment) throw new Error("Attachment was not found.");
     if (parsed.action === "reveal") {
@@ -209,40 +390,105 @@ function registerIpcHandlers(
     const error = await shell.openPath(attachment.path);
     if (error) throw new Error(error);
   });
-  handleTrusted(IPC_CHANNELS.agentListQueue, (botId: unknown) =>
-    service.listQueue(requireString(botId, "botId")),
-  );
+  handleTrusted(IPC_CHANNELS.agentListQueue, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    return routeListQueue(
+      service,
+      remoteServers,
+      scoped.serverId,
+      requireString(scoped.payload, "botId"),
+    );
+  });
   handleTrusted(IPC_CHANNELS.agentCancelQueuedMessage, (input: unknown) => {
-    const parsed = parseCancelQueuedMessage(input);
-    return service.cancelQueuedMessage(parsed.botId, parsed.deliveryId);
+    const scoped = parseAgentRequest(input);
+    const parsed = parseCancelQueuedMessage(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.cancelQueuedMessage(parsed.botId, parsed.deliveryId)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/cancel`,
+          {
+            method: "POST",
+            body: { deliveryId: parsed.deliveryId },
+          },
+          scoped.serverId,
+        );
   });
   handleTrusted(IPC_CHANNELS.agentSetQueuePaused, (input: unknown) => {
-    const parsed = parseSetQueuePaused(input);
-    return service.setQueuePaused(parsed.botId, parsed.paused);
+    const scoped = parseAgentRequest(input);
+    const parsed = parseSetQueuePaused(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.setQueuePaused(parsed.botId, parsed.paused)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/pause`,
+          {
+            method: "POST",
+            body: { paused: parsed.paused },
+          },
+          scoped.serverId,
+        );
   });
   handleTrusted(IPC_CHANNELS.agentInterrupt, (input: unknown) => {
-    const parsed = parseInterrupt(input);
-    return service.interrupt(parsed.botId, parsed.turnId);
+    const scoped = parseAgentRequest(input);
+    const parsed = parseInterrupt(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.interrupt(parsed.botId, parsed.turnId)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/interrupt`,
+          {
+            method: "POST",
+            body: { turnId: parsed.turnId },
+          },
+          scoped.serverId,
+        );
   });
-  handleTrusted(IPC_CHANNELS.agentRespondToPrompt, (input: unknown) =>
-    service.respondToPrompt(parsePromptResponse(input)),
-  );
+  handleTrusted(IPC_CHANNELS.agentRespondToPrompt, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parsePromptResponse(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.respondToPrompt(parsed)
+      : remoteServers.request(
+          "/v1/prompts/respond",
+          { method: "POST", body: parsed },
+          scoped.serverId,
+        );
+  });
 
   handleTrusted(IPC_CHANNELS.browserOpen, (input: unknown) => {
     const parsed = parseBrowserOpen(input);
-    return browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null);
+    return remoteServers.activeServerId === "local"
+      ? browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null)
+      : remoteServers.request("/v1/browser/open", { method: "POST", body: parsed });
   });
   handleTrusted(IPC_CHANNELS.browserActivate, (tabId: unknown) =>
-    browser.activate(requireString(tabId, "tabId")),
+    remoteServers.activeServerId === "local"
+      ? browser.activate(requireString(tabId, "tabId"))
+      : remoteServers.request("/v1/browser/activate", {
+          method: "POST",
+          body: { tabId: requireString(tabId, "tabId") },
+        }),
   );
   handleTrusted(IPC_CHANNELS.browserClose, (tabId: unknown) =>
-    browser.close(requireString(tabId, "tabId")),
+    remoteServers.activeServerId === "local"
+      ? browser.close(requireString(tabId, "tabId"))
+      : remoteServers.request("/v1/browser/close", {
+          method: "POST",
+          body: { tabId: requireString(tabId, "tabId") },
+        }),
   );
-  handleTrusted(IPC_CHANNELS.browserListTabs, () => browser.listTabs());
-  handleTrusted(IPC_CHANNELS.browserGetControlState, () => browser.getControlState());
+  handleTrusted(IPC_CHANNELS.browserListTabs, () =>
+    remoteServers.activeServerId === "local"
+      ? browser.listTabs()
+      : remoteServers.request("/v1/browser/tabs"),
+  );
+  handleTrusted(IPC_CHANNELS.browserGetControlState, () =>
+    remoteServers.activeServerId === "local"
+      ? browser.getControlState()
+      : remoteServers.request("/v1/browser/control"),
+  );
   handleTrusted(IPC_CHANNELS.browserSetVisible, async (input: unknown) => {
     const parsed = parseVisibility(input);
-    await browser.setVisible(parsed);
+    if (remoteServers.activeServerId === "local") await browser.setVisible(parsed);
+    else await remoteServers.request("/v1/browser/visible", { method: "POST", body: parsed });
   });
 }
 
@@ -324,9 +570,9 @@ function configureApplicationMenu(service: AgentService, updater: UpdateService)
   );
 }
 
-function forwardAgentEvent(event: AgentEvent): void {
+function forwardAgentEvent(serverId: string, event: AgentEvent): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.agentEvent, event);
+  mainWindow.webContents.send(IPC_CHANNELS.agentEvent, { serverId, event });
   if (mainWindow.isFocused() || !Notification.isSupported()) return;
 
   const content = notificationForAgentEvent(event, agentService?.listBots() ?? []);
@@ -346,10 +592,67 @@ function forwardUpdateStatus(status: import("../shared/ipc").UpdateStatus): void
   mainWindow.webContents.send(IPC_CHANNELS.updateEvent, status);
 }
 
+function forwardHostStatus(status: import("../shared/ipc").HostStatus): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_CHANNELS.hostEvent, status);
+}
+
+function forwardRemoteMacSessions(sessions: import("../shared/ipc").RemoteMacSession[]): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_CHANNELS.remoteMacEvent, sessions);
+}
+
+function forwardServers(servers: import("../shared/ipc").ServerSummary[]): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_CHANNELS.serversEvent, servers);
+}
+
+function forwardCentralAuth(state: CentralAuthState): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_CHANNELS.authEvent, state);
+}
+
+function acceptInviteUrl(value: string): void {
+  if (!value.startsWith("openbot://join?")) return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send(IPC_CHANNELS.serversInvite, value);
+  } else {
+    pendingInviteUrl = value;
+  }
+}
+
+function acceptAddressUpdateUrl(value: string): void {
+  if (!value.startsWith("openbot://update?")) return;
+  if (!remoteServerManager) {
+    pendingAddressUpdateUrl = value;
+    return;
+  }
+  void remoteServerManager.updateAddress(value).catch((error) => {
+    const message = error instanceof Error ? error.message : "The server address was not updated.";
+    dialog.showErrorBox("OpenBot server update failed", message);
+  });
+}
+
+function acceptOpenbotUrl(value: string): void {
+  if (value.startsWith("openbot://join?")) acceptInviteUrl(value);
+  else if (value.startsWith("openbot://update?")) acceptAddressUpdateUrl(value);
+}
+
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  acceptOpenbotUrl(url);
+});
+
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv) => {
+    const deepLink = argv.find(
+      (value) => value.startsWith("openbot://join?") || value.startsWith("openbot://update?"),
+    );
+    if (deepLink) acceptOpenbotUrl(deepLink);
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -359,8 +662,22 @@ if (!hasSingleInstanceLock) {
   void app
     .whenReady()
     .then(async () => {
+      if (process.platform === "darwin") app.setAsDefaultProtocolClient("openbot");
       configureContentSecurityPolicy();
       mainWindow = createWindow();
+      centralAuthManager = new CentralAuthManager({
+        apiUrl: readCentralAuthApiUrl(process.env.OPENBOT_AUTH_API_URL),
+        storagePath: join(app.getPath("userData"), CENTRAL_AUTH_FILE),
+        encrypt: (value) => {
+          if (!safeStorage.isEncryptionAvailable()) {
+            throw new Error("macOS secure storage is unavailable.");
+          }
+          return safeStorage.encryptString(value);
+        },
+        decrypt: (value) => safeStorage.decryptString(value),
+      });
+      centralAuthManager.on("changed", forwardCentralAuth);
+      await centralAuthManager.initialize();
       const store = new BotStore(app.getPath("userData"), homedir());
       await store.initialize();
       mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot);
@@ -384,6 +701,44 @@ if (!hasSingleInstanceLock) {
         setupState.preferredProvider ?? "codex",
       );
       const service = agentService;
+      const teamStore = new TeamStore(join(app.getPath("userData"), TEAM_FILE));
+      await teamStore.initialize();
+      hostService = new HostService({
+        store: teamStore,
+        agents: service,
+        mailbox: mailboxStore,
+        browser: browserHost,
+        logDirectory: join(app.getPath("userData"), "logs", "remote"),
+      });
+      remoteMacManager = new RemoteMacManager({
+        openExternal: (url) => shell.openExternal(url),
+        logDirectory: join(app.getPath("userData"), "logs", "remote"),
+      });
+      remoteServerManager = new RemoteServerManager(
+        join(app.getPath("userData"), REMOTE_SERVERS_FILE),
+        {
+          encrypt: (value) => {
+            if (!safeStorage.isEncryptionAvailable()) {
+              throw new Error("macOS secure storage is unavailable.");
+            }
+            return safeStorage.encryptString(value);
+          },
+          decrypt: (value) => safeStorage.decryptString(value),
+        },
+      );
+      await remoteServerManager.initialize();
+      if (pendingAddressUpdateUrl) {
+        const updateUrl = pendingAddressUpdateUrl;
+        pendingAddressUpdateUrl = null;
+        void remoteServerManager.updateAddress(updateUrl).catch((error) => {
+          const message =
+            error instanceof Error ? error.message : "The server address was not updated.";
+          dialog.showErrorBox("OpenBot server update failed", message);
+        });
+      }
+      const host = hostService;
+      const remoteMac = remoteMacManager;
+      const remoteServers = remoteServerManager;
       const { autoUpdater } = electronUpdater;
       updateService = new UpdateService(autoUpdater, {
         currentVersion: app.getVersion(),
@@ -393,15 +748,49 @@ if (!hasSingleInstanceLock) {
           existsSync(join(process.resourcesPath, "app-update.yml")),
         beforeInstall: prepareForShutdown,
       });
-      service.on("event", forwardAgentEvent);
+      service.on("event", (event) => forwardAgentEvent("local", event));
+      host.on("changed", forwardHostStatus);
+      remoteMac.on("changed", forwardRemoteMacSessions);
+      remoteServers.on("changed", forwardServers);
+      remoteServers.on("agent", (serverId, event) => {
+        forwardAgentEvent(serverId, event);
+      });
       updateService.on("status", forwardUpdateStatus);
       updateService.start();
       const agentInitialization = new AgentInitializationGate(() => service.initialize());
-      registerIpcHandlers(service, mailboxStore, browserHost, updateService, setupFile, () =>
-        agentInitialization.start(),
+      registerIpcHandlers(
+        service,
+        mailboxStore,
+        browserHost,
+        updateService,
+        setupFile,
+        () => agentInitialization.start(),
+        host,
+        remoteMac,
+        remoteServers,
+        centralAuthManager,
       );
       configureApplicationMenu(service, updateService);
       await loadRenderer(mainWindow);
+      if (pendingInviteUrl) {
+        mainWindow.webContents.send(IPC_CHANNELS.serversInvite, pendingInviteUrl);
+        pendingInviteUrl = null;
+      }
+      const teamIdentity = teamStore.getIdentity();
+      const forcedHostStart = !app.isPackaged && process.env.OPENBOT_DEV_HOST_AUTO_START === "1";
+      if (
+        shouldAutoStartHost({
+          configured: Boolean(teamIdentity),
+          enabledOnLaunch: teamIdentity?.enabledOnLaunch ?? false,
+          forcedByDevelopmentScript: forcedHostStart,
+        })
+      ) {
+        void host
+          .start()
+          .catch((error) => console.error("Unable to restart the team server:", error));
+      } else if (forcedHostStart && !teamIdentity) {
+        console.info("Host profile is ready. Configure the team server in the Host panel first.");
+      }
       void agentInitialization.start().catch((error) => {
         console.error("Unable to initialize the local agent backend:", error);
       });
@@ -499,6 +888,9 @@ async function prepareForShutdown(): Promise<void> {
   shutdownStarted = true;
   isQuitting = true;
   updateService?.stop();
+  remoteServerManager?.stop();
+  await (remoteMacManager?.stop() ?? Promise.resolve());
+  await (hostService?.shutdown() ?? Promise.resolve());
   await (browserHost?.destroy() ?? Promise.resolve());
   await (agentService?.stop() ?? Promise.resolve());
 }
@@ -506,6 +898,203 @@ async function prepareForShutdown(): Promise<void> {
 function requireString(value: unknown, field: string): string {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${field} is required.`);
   return value;
+}
+
+function parseHostConfig(value: unknown): ConfigureHostInput {
+  if (!isObject(value)) throw new Error("Host configuration is required.");
+  return {
+    serverName: requireString(value.serverName, "serverName"),
+    username: requireString(value.username, "username"),
+    password: requireString(value.password, "password"),
+  };
+}
+
+function parseJoinServer(value: unknown): JoinServerInput {
+  if (!isObject(value)) throw new Error("Invitation details are required.");
+  return {
+    inviteUrl: requireString(value.inviteUrl, "inviteUrl"),
+    username: requireString(value.username, "username"),
+    password: requireString(value.password, "password"),
+  };
+}
+
+function parseLoginServer(value: unknown): LoginServerInput {
+  if (!isObject(value)) throw new Error("Login details are required.");
+  return {
+    serverId: requireString(value.serverId, "serverId"),
+    username: requireString(value.username, "username"),
+    password: requireString(value.password, "password"),
+  };
+}
+
+function parseRemoteMacConnect(value: unknown): RemoteMacConnectInput {
+  if (!isObject(value)) throw new Error("Remote Mac details are required.");
+  const serverId = value.serverId;
+  if (serverId !== undefined && serverId !== null && typeof serverId !== "string") {
+    throw new Error("Invalid serverId.");
+  }
+  return {
+    hostname: requireString(value.hostname, "hostname"),
+    serverId: serverId ?? null,
+  };
+}
+
+function parseAgentRequest(value: unknown): AgentIpcRequest {
+  if (!isObject(value)) throw new Error("Invalid agent request.");
+  return {
+    serverId: requireString(value.serverId, "serverId"),
+    payload: value.payload,
+  };
+}
+
+function routeUpdateBot(
+  service: AgentService,
+  remoteServers: RemoteServerManager,
+  serverId: string,
+  input: UpdateBotInput,
+) {
+  return serverId === "local"
+    ? service.updateBot(input)
+    : remoteServers.request(
+        `/v1/agents/${encodeURIComponent(input.botId)}`,
+        {
+          method: "PATCH",
+          body: input,
+        },
+        serverId,
+      );
+}
+
+function routeDeleteBot(
+  service: AgentService,
+  remoteServers: RemoteServerManager,
+  serverId: string,
+  botId: string,
+) {
+  return serverId === "local"
+    ? service.deleteBot(botId)
+    : remoteServers.request(
+        `/v1/agents/${encodeURIComponent(botId)}`,
+        { method: "DELETE" },
+        serverId,
+      );
+}
+
+function routeReadConversation(
+  service: AgentService,
+  remoteServers: RemoteServerManager,
+  serverId: string,
+  botId: string,
+) {
+  return serverId === "local"
+    ? service.readConversation(botId)
+    : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/conversation`, {}, serverId);
+}
+
+function routeSendMessage(
+  service: AgentService,
+  remoteServers: RemoteServerManager,
+  serverId: string,
+  input: SendMessageInput,
+) {
+  return serverId === "local"
+    ? service.sendMessage(input)
+    : remoteServers.request(
+        `/v1/agents/${encodeURIComponent(input.botId)}/messages`,
+        {
+          method: "POST",
+          body: input,
+        },
+        serverId,
+      );
+}
+
+function routeListQueue(
+  service: AgentService,
+  remoteServers: RemoteServerManager,
+  serverId: string,
+  botId: string,
+) {
+  return serverId === "local"
+    ? service.listQueue(botId)
+    : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/queue`, {}, serverId);
+}
+
+async function uploadRemotePaths(
+  remoteServers: RemoteServerManager,
+  serverId: string,
+  paths: string[],
+) {
+  if (paths.length > 10) throw new Error("Choose at most 10 files.");
+  const files = await Promise.all(
+    paths.map(async (path) => ({
+      name: basename(path),
+      bytes: new Uint8Array(await readFile(path)),
+    })),
+  );
+  const total = files.reduce((sum, file) => sum + file.bytes.byteLength, 0);
+  if (files.some((file) => file.bytes.byteLength > 100 * 1024 * 1024)) {
+    throw new Error("A file exceeds the 100 MB limit.");
+  }
+  if (total > 250 * 1024 * 1024) throw new Error("Attachments exceed the 250 MB total limit.");
+  return Promise.all(
+    files.map((file) =>
+      remoteServers.uploadAttachment(file.name, mimeTypeForName(file.name), file.bytes, serverId),
+    ),
+  );
+}
+
+async function uploadRemoteImports(
+  remoteServers: RemoteServerManager,
+  serverId: string,
+  input: ImportAttachmentsInput,
+) {
+  if (input.paths.length + input.data.length > 10) throw new Error("Choose at most 10 files.");
+  const pathFiles = await Promise.all(
+    input.paths.map(async (path) => ({
+      name: basename(path),
+      mimeType: mimeTypeForName(path),
+      bytes: new Uint8Array(await readFile(path)),
+    })),
+  );
+  const files = [
+    ...pathFiles,
+    ...input.data.map((item) => ({
+      name: basename(item.name),
+      mimeType: item.mimeType,
+      bytes: item.bytes,
+    })),
+  ];
+  if (files.some((file) => file.bytes.byteLength > 100 * 1024 * 1024)) {
+    throw new Error("A file exceeds the 100 MB limit.");
+  }
+  if (files.reduce((sum, file) => sum + file.bytes.byteLength, 0) > 250 * 1024 * 1024) {
+    throw new Error("Attachments exceed the 250 MB total limit.");
+  }
+  return Promise.all(
+    files.map((file) =>
+      remoteServers.uploadAttachment(file.name, file.mimeType, file.bytes, serverId),
+    ),
+  );
+}
+
+function mimeTypeForName(name: string): string {
+  switch (extname(name).toLowerCase()) {
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".pdf":
+      return "application/pdf";
+    case ".txt":
+    case ".md":
+      return "text/plain";
+    default:
+      return "application/octet-stream";
+  }
 }
 
 function parseSendMessage(value: unknown): SendMessageInput {
@@ -626,6 +1215,23 @@ function parseSetQueuePaused(value: unknown): SetQueuePausedInput {
   return { botId: requireString(value.botId, "botId"), paused: value.paused };
 }
 
+function parseUpdateTeamMember(value: unknown): UpdateTeamMemberInput {
+  if (!isObject(value)) throw new Error("Invalid team member update.");
+  const role = value.role;
+  const disabled = value.disabled;
+  if (role !== undefined && role !== "admin" && role !== "member") {
+    throw new Error("Invalid team member role.");
+  }
+  if (disabled !== undefined && typeof disabled !== "boolean") {
+    throw new Error("Invalid team member state.");
+  }
+  return {
+    memberId: requireString(value.memberId, "memberId"),
+    ...(role ? { role } : {}),
+    ...(disabled === undefined ? {} : { disabled }),
+  };
+}
+
 function configureAttachmentProtocol(mailbox: MailboxStore): void {
   session.defaultSession.protocol.handle("openbot-attachment", async (request) => {
     try {
@@ -634,6 +1240,27 @@ function configureAttachmentProtocol(mailbox: MailboxStore): void {
       const attachment = id ? await mailbox.resolveAttachment(id) : null;
       if (!attachment) return new Response("Not found", { status: 404 });
       return new Response(await readFile(attachment.path), {
+        headers: {
+          "Content-Type": attachment.mimeType,
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+          "Content-Disposition": "inline",
+        },
+      });
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+  session.defaultSession.protocol.handle("openbot-remote-attachment", async (request) => {
+    try {
+      const url = new URL(request.url);
+      const serverId = decodeURIComponent(url.hostname);
+      const attachmentId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
+      if (!remoteServerManager || !serverId || !attachmentId) {
+        return new Response("Not found", { status: 404 });
+      }
+      const attachment = await remoteServerManager.downloadAttachment(attachmentId, serverId);
+      return new Response(Buffer.from(attachment.bytes), {
         headers: {
           "Content-Type": attachment.mimeType,
           "Cache-Control": "no-store",

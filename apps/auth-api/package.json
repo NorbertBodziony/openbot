@@ -1,0 +1,39 @@
+{
+  "name": "@openbot/auth-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "dotenvx run -f .env.dev -fk ../../.env.keys -- vite dev --port 3100",
+    "start": "bun run build && bun run preview",
+    "build": "vite build",
+    "preview": "dotenvx run -f .env.production -fk ../../.env.keys -- vite preview --port 3100",
+    "deploy": "dotenvx run -f .env.production -fk ../../.env.keys -- bun ../../scripts/deploy-auth-api.ts",
+    "env:encrypt:dev": "dotenvx encrypt -f .env.dev -fk ../../.env.keys",
+    "env:encrypt:prod": "dotenvx encrypt -f .env.production -fk ../../.env.keys",
+    "env:validate:dev": "dotenvx validate -f .env.dev -fk ../../.env.keys",
+    "env:validate:prod": "dotenvx validate -f .env.production -fk ../../.env.keys",
+    "cf:typegen": "wrangler types",
+    "db:migrate:local": "wrangler d1 migrations apply openbot-auth --local",
+    "db:migrate:remote": "wrangler d1 migrations apply openbot-auth --remote",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@solidjs/signals": "2.0.0-rc.0",
+    "@solidjs/web": "2.0.0-rc.0",
+    "@tanstack/solid-router": "2.0.0-rc.0",
+    "@tanstack/solid-start": "2.0.0-rc.0",
+    "solid-js": "2.0.0-rc.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.52.1",
+    "@cloudflare/workers-types": "5.20260815.1",
+    "@solidjs/vite-plugin": "3.0.0-next.28",
+    "@types/node": "22.20.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vitest": "4.1.10",
+    "wrangler": "4.123.0"
+  }
+}

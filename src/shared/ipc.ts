@@ -6,6 +6,11 @@ export const IPC_CHANNELS = {
   requestMacPermission: "app:request-mac-permission",
   openExternal: "app:open-external",
   openUrl: "app:open-url",
+  authGetState: "auth:get-state",
+  authRequestEmailCode: "auth:request-email-code",
+  authVerifyEmailCode: "auth:verify-email-code",
+  authLogout: "auth:logout",
+  authEvent: "auth:event",
   updateGetStatus: "update:get-status",
   updateCheck: "update:check",
   updateDownload: "update:download",
@@ -39,9 +44,149 @@ export const IPC_CHANNELS = {
   browserListTabs: "browser:list-tabs",
   browserGetControlState: "browser:get-control-state",
   browserSetVisible: "browser:set-visible",
+  serversList: "servers:list",
+  serversSelect: "servers:select",
+  serversJoin: "servers:join",
+  serversLogin: "servers:login",
+  serversUpdateAddress: "servers:update-address",
+  serversRemove: "servers:remove",
+  serversEvent: "servers:event",
+  serversInvite: "servers:invite",
+  hostGetStatus: "host:get-status",
+  hostConfigure: "host:configure",
+  hostStart: "host:start",
+  hostStop: "host:stop",
+  hostListMembers: "host:list-members",
+  hostCreateInvite: "host:create-invite",
+  hostCreateAddressUpdate: "host:create-address-update",
+  hostListInvites: "host:list-invites",
+  hostRevokeInvite: "host:revoke-invite",
+  hostUpdateMember: "host:update-member",
+  hostListSessions: "host:list-sessions",
+  hostRevokeSession: "host:revoke-session",
+  hostEvent: "host:event",
+  remoteMacList: "remote-mac:list",
+  remoteMacConnect: "remote-mac:connect",
+  remoteMacDisconnect: "remote-mac:disconnect",
+  remoteMacEvent: "remote-mac:event",
 } as const;
 
 export type DesktopPlatform = "darwin" | "win32" | "linux";
+
+export type ServerConnectionState = "online" | "connecting" | "offline" | "error";
+export type TeamRole = "owner" | "admin" | "member";
+
+export interface ServerSummary {
+  id: string;
+  name: string;
+  kind: "local" | "remote";
+  state: ServerConnectionState;
+  apiUrl: string | null;
+  vncHostname: string | null;
+  role: TeamRole | null;
+  active: boolean;
+}
+
+export interface JoinServerInput {
+  inviteUrl: string;
+  username: string;
+  password: string;
+}
+
+export interface LoginServerInput {
+  serverId: string;
+  username: string;
+  password: string;
+}
+
+export type HostPhase = "unconfigured" | "idle" | "starting" | "online" | "stopping" | "error";
+
+export interface HostStatus {
+  phase: HostPhase;
+  configured: boolean;
+  enabledOnLaunch: boolean;
+  serverId: string | null;
+  serverName: string | null;
+  apiUrl: string | null;
+  vncHostname: string | null;
+  apiOnline: boolean;
+  vncOnline: boolean;
+  message: string | null;
+}
+
+export interface ConfigureHostInput {
+  serverName: string;
+  username: string;
+  password: string;
+}
+
+export interface TeamMemberSummary {
+  id: string;
+  username: string;
+  role: TeamRole;
+  createdAt: string;
+  disabled: boolean;
+}
+
+export interface InviteSummary {
+  id: string;
+  role: Exclude<TeamRole, "owner">;
+  expiresAt: string;
+  usedAt: string | null;
+  inviteUrl: string;
+}
+
+export interface TeamInviteSummary {
+  id: string;
+  role: Exclude<TeamRole, "owner">;
+  expiresAt: string;
+  usedAt: string | null;
+}
+
+export interface TeamSessionSummary {
+  id: string;
+  memberId: string;
+  username: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface UpdateTeamMemberInput {
+  memberId: string;
+  role?: Exclude<TeamRole, "owner">;
+  disabled?: boolean;
+}
+
+export type RemoteMacPhase =
+  | "idle"
+  | "starting_tunnel"
+  | "checking_vnc"
+  | "connected"
+  | "disconnecting";
+
+export type RemoteMacErrorCode =
+  | "cloudflared_not_found"
+  | "local_port_unavailable"
+  | "tunnel_timeout"
+  | "tunnel_disconnected"
+  | "invalid_vnc_handshake"
+  | "viewer_launch_failed";
+
+export interface RemoteMacSession {
+  id: string;
+  serverId: string | null;
+  hostname: string;
+  localPort: number | null;
+  phase: RemoteMacPhase;
+  errorCode: RemoteMacErrorCode | null;
+  message: string | null;
+  createdAt: string;
+}
+
+export interface RemoteMacConnectInput {
+  hostname: string;
+  serverId?: string | null;
+}
 
 export interface AppInfo {
   name: string;
@@ -102,6 +247,36 @@ export interface AppSetupState {
 
 export interface SaveSetupInput {
   preferredProvider: AgentProviderId;
+}
+
+export interface CentralAuthUser {
+  id: string;
+  email: string;
+  name: string | null;
+  avatarUrl: string | null;
+}
+
+export type CentralAuthState =
+  | { status: "loading" }
+  | { status: "signed_out" }
+  | { status: "signing_in" }
+  | {
+      status: "code_sent";
+      challengeId: string;
+      email: string;
+      expiresAt: number;
+      developmentCode?: string;
+      error?: string;
+    }
+  | { status: "signed_in"; user: CentralAuthUser }
+  | { status: "error"; code: string; message: string };
+
+export interface CentralAuthDesktopApi {
+  getState: () => Promise<CentralAuthState>;
+  requestEmailCode: (email: string) => Promise<CentralAuthState>;
+  verifyEmailCode: (challengeId: string, code: string) => Promise<CentralAuthState>;
+  logout: () => Promise<CentralAuthState>;
+  onEvent: (listener: (state: CentralAuthState) => void) => () => void;
 }
 
 export type MacPermissionId = "screen-recording" | "accessibility";
@@ -425,6 +600,16 @@ export type AgentEvent =
   | { type: "browser-control-changed"; state: BrowserControlState }
   | { type: "error"; botId?: string; code: string; message: string };
 
+export interface ScopedAgentEvent {
+  serverId: string;
+  event: AgentEvent;
+}
+
+export interface AgentIpcRequest<T = unknown> {
+  serverId: string;
+  payload: T;
+}
+
 export interface BrowserTab {
   id: string;
   title: string;
@@ -528,6 +713,40 @@ export interface MaintenanceDesktopApi {
   exportDiagnostics: () => Promise<ExportResult>;
 }
 
+export interface ServersDesktopApi {
+  list: () => Promise<ServerSummary[]>;
+  select: (serverId: string) => Promise<ServerSummary[]>;
+  join: (input: JoinServerInput) => Promise<ServerSummary>;
+  login: (input: LoginServerInput) => Promise<ServerSummary>;
+  updateAddress: (updateUrl: string) => Promise<ServerSummary>;
+  remove: (serverId: string) => Promise<void>;
+  onEvent: (listener: (servers: ServerSummary[]) => void) => () => void;
+  onInvite: (listener: (inviteUrl: string) => void) => () => void;
+}
+
+export interface HostDesktopApi {
+  getStatus: () => Promise<HostStatus>;
+  configure: (input: ConfigureHostInput) => Promise<HostStatus>;
+  start: () => Promise<HostStatus>;
+  stop: () => Promise<HostStatus>;
+  listMembers: () => Promise<TeamMemberSummary[]>;
+  updateMember: (input: UpdateTeamMemberInput) => Promise<TeamMemberSummary>;
+  listSessions: () => Promise<TeamSessionSummary[]>;
+  revokeSession: (sessionId: string) => Promise<void>;
+  listInvites: () => Promise<TeamInviteSummary[]>;
+  revokeInvite: (inviteId: string) => Promise<void>;
+  createInvite: (role: Exclude<TeamRole, "owner">) => Promise<InviteSummary>;
+  createAddressUpdate: () => Promise<string>;
+  onEvent: (listener: (status: HostStatus) => void) => () => void;
+}
+
+export interface RemoteMacDesktopApi {
+  list: () => Promise<RemoteMacSession[]>;
+  connect: (input: RemoteMacConnectInput) => Promise<RemoteMacSession>;
+  disconnect: (sessionId: string) => Promise<void>;
+  onEvent: (listener: (sessions: RemoteMacSession[]) => void) => () => void;
+}
+
 export interface OpenBotDesktopApi {
   getAppInfo: () => Promise<AppInfo>;
   getSetupState: () => Promise<AppSetupState>;
@@ -536,8 +755,12 @@ export interface OpenBotDesktopApi {
   requestMacPermission: (permission: MacPermissionId) => Promise<MacPermissionsState>;
   openExternal: (destination: ExternalDestination) => Promise<void>;
   openUrl: (url: string) => Promise<void>;
+  auth: CentralAuthDesktopApi;
   agent: AgentDesktopApi;
   browser: BrowserDesktopApi;
   update: UpdateDesktopApi;
   maintenance: MaintenanceDesktopApi;
+  servers: ServersDesktopApi;
+  host: HostDesktopApi;
+  remoteMac: RemoteMacDesktopApi;
 }

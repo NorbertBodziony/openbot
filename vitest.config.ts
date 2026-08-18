@@ -1,5 +1,5 @@
 import solidPlugin from "@solidjs/vite-plugin";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [solidPlugin()],
@@ -7,5 +7,6 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/renderer/src/setupTests.ts"],
+    exclude: [...configDefaults.exclude, "apps/**"],
   },
 });

@@ -25,7 +25,7 @@ messaging in one desktop app.
 - Optional Computer Use integration for macOS through a locally installed Codex plugin.
 - Per-agent model, reasoning, profile, notification, browser, and panel state.
 - Local data and privacy-safe diagnostics exports from the account menu.
-- No OpenBot cloud backend, account system, telemetry service, or copied CLI credentials.
+- Optional OpenBot accounts through one-time email codes. The account API runs on Cloudflare Workers and D1.
 
 OpenBot is local-first, not offline-only. Codex connects to OpenAI, Claude connects to Anthropic,
 visited pages use the network, and installed plugins may connect to their own services.
@@ -101,7 +101,14 @@ deletes the development state. It does not change agent workspaces or CLI sessio
 
 | Command | Purpose |
 | --- | --- |
-| `bun run dev` | Start Electron with renderer HMR. |
+| `bun run dev` | Start the Electron client with renderer HMR on its app profile. |
+| `bun run api` | Start the TanStack Start API and its local D1 database on `127.0.0.1:3100`. |
+| `bun run api:start` | Build and preview the Cloudflare Worker locally. |
+| `bun run api:migrate:local` | Apply D1 migrations to the local development database. |
+| `bun run api:migrate:remote` | Apply D1 migrations to the configured remote database. |
+| `bun run api:deploy` | Build and deploy the account API to Cloudflare Workers. |
+| `bun run host` | Start Electron in the separate host profile with renderer HMR. |
+| `bun run dev:all` | Start the API, Electron client, and Electron host together. |
 | `bun run dev:reset` | Delete the local development state. |
 | `bun run check` | Run Biome, both typechecks, offline tests, the browser smoke test, and the production build. |
 | `bun run test:backend` | Run backend tests only. |
@@ -118,6 +125,11 @@ deletes the development state. It does not change agent workspaces or CLI sessio
 | `bun run test:filesystem` | **Online/manual:** run a real full-access Codex filesystem turn. |
 | `bun run test:imagegen` | **Online/manual:** run a real full-access image-generation turn. |
 
+The host profile uses a separate Electron `userData` directory. Configure the team server in its
+Host panel on the first run. Later `bun run host` and `bun run dev:all` start the configured host
+automatically. Press `Ctrl+C` in the runner terminal to stop only the processes started by that
+runner.
+
 The normal `check` command is offline and uses a fake App Server. Manual smoke scripts may use the
 signed-in subscription and must not run in CI.
 
@@ -132,6 +144,10 @@ Electron main
 └── sandboxed WebContentsView browser host
     ↕ typed preload bridge
 SolidJS renderer
+
+Cloudflare Workers
+└── TanStack Start + Solid 2 account API
+    └── D1 users, OAuth flows, and hashed sessions
 ```
 
 - `src/main` owns the Electron lifecycle, window security, local protocol, and IPC registration.
@@ -139,6 +155,7 @@ SolidJS renderer
 - `src/preload` exposes only the typed `window.openbot` API.
 - `src/renderer` contains the SolidJS interface.
 - `src/shared` contains process-boundary contracts.
+- `apps/auth-api` contains the TanStack Start account API, one-time email codes, rate limits, and D1 migrations.
 
 ## Local data and network boundaries
 
@@ -149,9 +166,11 @@ SolidJS renderer
 - `~/.codex` — login and thread history managed exclusively by Codex CLI.
 - `~/.claude` — login and session history managed exclusively by Claude CLI.
 
-OpenBot does not open an application HTTP port. Electron communicates with local CLI processes over
-stdio. The embedded browser uses a separate sandboxed Electron session and cannot access
-`window.openbot` or managed local attachments.
+The Electron client does not open a public application HTTP port. It communicates with local CLI
+processes over stdio. The optional account flow connects to the configured HTTPS account API. The
+client stores only an encrypted OpenBot session token. One-time codes expire after 10 minutes and
+are stored only as hashes. The embedded browser uses a separate sandboxed Electron session and
+cannot access `window.openbot` or managed local attachments.
 
 ## Security
 

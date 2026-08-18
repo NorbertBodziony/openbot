@@ -83,7 +83,9 @@ async function main(): Promise<void> {
     process.stdout.write("BrowserHost: Electron ready.\n");
     const window = new BrowserWindow({ show: false, opacity: 0 });
     window.show();
+    app.focus({ steal: true });
     window.focus();
+    await new Promise((resolve) => setTimeout(resolve, 100));
     const downloadsRoot = join(temporaryRoot, "downloads");
     const statePath = join(temporaryRoot, "browser-tabs.json");
     const browser = new BrowserHost(window, downloadsRoot, statePath);

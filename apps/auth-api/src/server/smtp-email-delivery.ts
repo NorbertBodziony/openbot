@@ -1,0 +1,214 @@
+export interface SmtpEmailConfig {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  from: string;
+}
+
+export interface SmtpEmailMessage {
+  email: string;
+  code: string;
+  expiresAt: number;
+}
+
+interface SmtpSocket {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+  opened: Promise<unknown>;
+  close(): void | Promise<void>;
+}
+
+export type SmtpConnector = (
+  address: { hostname: string; port: number },
+  options: { secureTransport: "on"; allowHalfOpen: false },
+) => SmtpSocket;
+
+const SMTP_TIMEOUT_MS = 15_000;
+const EMAIL_PATTERN = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+$/iu;
+
+export async function sendPrivateEmailCode(
+  config: SmtpEmailConfig,
+  message: SmtpEmailMessage,
+  connector?: SmtpConnector,
+): Promise<void> {
+  validateConfig(config);
+  validateEmail(message.email, "recipient");
+  if (
+    !/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/u.test(
+      message.code,
+    )
+  ) {
+    throw new Error("smtp_invalid_code");
+  }
+
+  const connect = connector ?? (await loadCloudflareConnector());
+  const socket = connect(
+    { hostname: config.host, port: config.port },
+    { secureTransport: "on", allowHalfOpen: false },
+  );
+
+  try {
+    await withTimeout(runSmtpSession(socket, config, message), SMTP_TIMEOUT_MS);
+  } finally {
+    await Promise.resolve(socket.close()).catch(() => undefined);
+  }
+}
+
+async function runSmtpSession(
+  socket: SmtpSocket,
+  config: SmtpEmailConfig,
+  message: SmtpEmailMessage,
+): Promise<void> {
+  await socket.opened;
+  const reader = new SmtpResponseReader(socket.readable.getReader());
+  const writer = socket.writable.getWriter();
+
+  await reader.expect([220], "greeting");
+  await writeCommand(writer, "EHLO openbot.run");
+  await reader.expect([250], "ehlo");
+  await writeCommand(writer, "AUTH LOGIN");
+  await reader.expect([334], "auth_username");
+  await writeCommand(writer, encodeBase64(config.username));
+  await reader.expect([334], "auth_password");
+  await writeCommand(writer, encodeBase64(config.password));
+  await reader.expect([235], "auth");
+  await writeCommand(writer, `MAIL FROM:<${config.from}>`);
+  await reader.expect([250], "mail_from");
+  await writeCommand(writer, `RCPT TO:<${message.email}>`);
+  await reader.expect([250, 251], "recipient");
+  await writeCommand(writer, "DATA");
+  await reader.expect([354], "data");
+  await writeCommand(writer, `${createMimeMessage(config.from, message)}\r\n.`);
+  await reader.expect([250], "message");
+  await writeCommand(writer, "QUIT");
+  await reader.expect([221], "quit");
+}
+
+class SmtpResponseReader {
+  readonly #decoder = new TextDecoder();
+  #buffer = "";
+
+  constructor(private readonly reader: ReadableStreamDefaultReader<Uint8Array>) {}
+
+  async expect(expectedCodes: number[], stage: string): Promise<void> {
+    let responseCode: number | null = null;
+    while (true) {
+      const line = await this.#readLine();
+      const match = /^(\d{3})([ -])/u.exec(line);
+      if (!match) throw new Error(`smtp_${stage}_invalid_response`);
+      const lineCode = Number(match[1]);
+      responseCode ??= lineCode;
+      if (lineCode !== responseCode) throw new Error(`smtp_${stage}_invalid_response`);
+      if (match[2] === " ") break;
+    }
+    if (!expectedCodes.includes(responseCode)) throw new Error(`smtp_${stage}_failed`);
+  }
+
+  async #readLine(): Promise<string> {
+    while (true) {
+      const lineEnd = this.#buffer.indexOf("\r\n");
+      if (lineEnd >= 0) {
+        const line = this.#buffer.slice(0, lineEnd);
+        this.#buffer = this.#buffer.slice(lineEnd + 2);
+        return line;
+      }
+      const chunk = await this.reader.read();
+      if (chunk.done) throw new Error("smtp_connection_closed");
+      this.#buffer += this.#decoder.decode(chunk.value, { stream: true });
+      if (this.#buffer.length > 64 * 1024) throw new Error("smtp_response_too_large");
+    }
+  }
+}
+
+function createMimeMessage(from: string, message: SmtpEmailMessage): string {
+  const expiresInMinutes = Math.max(1, Math.ceil((message.expiresAt - Date.now()) / 60_000));
+  const body = [
+    "Use this code to sign in to OpenBot:",
+    "",
+    message.code,
+    "",
+    `This code expires in ${expiresInMinutes} minutes.`,
+    "If you did not request this code, ignore this email.",
+  ].join("\r\n");
+  return [
+    `From: OpenBot <${from}>`,
+    `To: <${message.email}>`,
+    "Subject: Your OpenBot sign-in code",
+    `Date: ${new Date().toUTCString()}`,
+    `Message-ID: <${crypto.randomUUID()}@openbot.run>`,
+    "MIME-Version: 1.0",
+    'Content-Type: text/plain; charset="UTF-8"',
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    dotStuff(body),
+  ].join("\r\n");
+}
+
+function dotStuff(value: string): string {
+  return value
+    .split("\r\n")
+    .map((line) => (line.startsWith(".") ? `.${line}` : line))
+    .join("\r\n");
+}
+
+async function writeCommand(
+  writer: WritableStreamDefaultWriter<Uint8Array>,
+  value: string,
+): Promise<void> {
+  await writer.write(new TextEncoder().encode(`${value}\r\n`));
+}
+
+function validateConfig(config: SmtpEmailConfig): void {
+  if (!isValidHostname(config.host)) throw new Error("smtp_invalid_host");
+  if (config.port !== 465) throw new Error("smtp_port_must_be_465");
+  validateEmail(config.username, "username");
+  validateEmail(config.from, "sender");
+  if (!config.password || hasHeaderBreak(config.password)) throw new Error("smtp_invalid_password");
+}
+
+function validateEmail(value: string, field: string): void {
+  if (value.length > 254 || hasHeaderBreak(value) || !EMAIL_PATTERN.test(value)) {
+    throw new Error(`smtp_invalid_${field}`);
+  }
+}
+
+function isValidHostname(value: string): boolean {
+  if (value.length > 253 || hasHeaderBreak(value)) return false;
+  return value
+    .split(".")
+    .every(
+      (label) =>
+        label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/iu.test(label),
+    );
+}
+
+function hasHeaderBreak(value: string): boolean {
+  return value.includes("\r") || value.includes("\n");
+}
+
+function encodeBase64(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function loadCloudflareConnector(): Promise<SmtpConnector> {
+  const { connect } = await import("cloudflare:sockets");
+  return connect as unknown as SmtpConnector;
+}
+
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("smtp_timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}

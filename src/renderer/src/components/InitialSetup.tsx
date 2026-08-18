@@ -13,6 +13,7 @@ import type {
   AgentProviderState,
   AgentStatus,
   AppSetupState,
+  CentralAuthState,
   DesktopPlatform,
   MacPermissionId,
   MacPermissionsState,
@@ -24,7 +25,11 @@ interface InitialSetupProps {
   state: AppSetupState;
   agentStatus: AgentStatus;
   platform: DesktopPlatform;
+  authState: CentralAuthState;
   onSave: (provider: AgentProviderId) => Promise<void>;
+  onRequestEmailCode: (email: string) => Promise<void>;
+  onVerifyEmailCode: (challengeId: string, code: string) => Promise<void>;
+  onLogout: () => Promise<void>;
   onClose?: () => void;
 }
 
@@ -72,6 +77,8 @@ export function InitialSetup(props: InitialSetupProps) {
   const [saving, setSaving] = createSignal(false);
   const [permissionBusy, setPermissionBusy] = createSignal<MacPermissionId | null>(null);
   const [error, setError] = createSignal("");
+  const [accountEmail, setAccountEmail] = createSignal("");
+  const [accountCode, setAccountCode] = createSignal("");
   const providerOptions = createMemo<ProviderPickerOption[]>(() =>
     PROVIDERS.map((provider) => {
       const status = props.agentStatus.providers?.find((candidate) => candidate.id === provider.id);
@@ -165,6 +172,115 @@ export function InitialSetup(props: InitialSetupProps) {
               : "New agents will use this provider by default. Each agent can use a different provider later."}
           </p>
         </header>
+
+        <section class="setup-account" aria-labelledby="setup-account-title">
+          <div class="setup-account-copy">
+            <p class="initial-setup-section-label">OpenBot account</p>
+            <h2 id="setup-account-title">
+              {props.authState.status === "signed_in"
+                ? props.authState.user.name || props.authState.user.email
+                : props.authState.status === "code_sent"
+                  ? "Enter your sign-in code"
+                  : "Sign in with your email"}
+            </h2>
+            <p>
+              {props.authState.status === "signed_in"
+                ? props.authState.user.email
+                : props.authState.status === "code_sent"
+                  ? `We sent an 8-character code to ${props.authState.email}.`
+                  : "Your verified email identifies you when a host grants access."}
+            </p>
+            <Show when={props.authState.status === "error"}>
+              <p class="setup-account-error" role="alert">
+                {props.authState.status === "error" ? props.authState.message : ""}
+              </p>
+            </Show>
+            <Show when={props.authState.status === "code_sent" && props.authState.error}>
+              <p class="setup-account-error" role="alert">
+                {props.authState.status === "code_sent" ? props.authState.error : ""}
+              </p>
+            </Show>
+            <Show when={props.authState.status === "code_sent" && props.authState.developmentCode}>
+              <p class="setup-account-development-code">
+                Development code:{" "}
+                {props.authState.status === "code_sent" ? props.authState.developmentCode : ""}
+              </p>
+            </Show>
+          </div>
+          <Show
+            when={props.authState.status === "signed_in"}
+            fallback={
+              <Show
+                when={props.authState.status === "code_sent"}
+                fallback={
+                  <form
+                    class="setup-account-form"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void props.onRequestEmailCode(accountEmail());
+                    }}
+                  >
+                    <input
+                      type="email"
+                      autocomplete="email"
+                      aria-label="Email address"
+                      placeholder="you@example.com"
+                      value={accountEmail()}
+                      onInput={(event) => setAccountEmail(event.currentTarget.value)}
+                      required
+                    />
+                    <button
+                      type="submit"
+                      class="setup-google-button"
+                      disabled={
+                        !accountEmail().trim() ||
+                        props.authState.status === "loading" ||
+                        props.authState.status === "signing_in"
+                      }
+                    >
+                      {props.authState.status === "signing_in" ? "Sending…" : "Send code"}
+                    </button>
+                  </form>
+                }
+              >
+                <form
+                  class="setup-account-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (props.authState.status !== "code_sent") return;
+                    void props.onVerifyEmailCode(props.authState.challengeId, accountCode());
+                  }}
+                >
+                  <input
+                    type="text"
+                    autocomplete="one-time-code"
+                    aria-label="Sign-in code"
+                    placeholder="XXXX-XXXX"
+                    maxlength={9}
+                    value={accountCode()}
+                    onInput={(event) => setAccountCode(event.currentTarget.value.toUpperCase())}
+                    required
+                  />
+                  <button
+                    type="submit"
+                    class="setup-google-button"
+                    disabled={accountCode().replace(/[\s-]/gu, "").length !== 8}
+                  >
+                    Verify code
+                  </button>
+                </form>
+              </Show>
+            }
+          >
+            <button
+              type="button"
+              class="setup-account-signout"
+              onClick={() => void props.onLogout()}
+            >
+              Sign out
+            </button>
+          </Show>
+        </section>
 
         <ProviderPicker
           value={selectedProvider()}
