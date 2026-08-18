@@ -768,9 +768,9 @@ textarea {
 .bot-row-avatar {
   position: relative;
   display: grid;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
   place-items: center;
 }
 
@@ -1085,25 +1085,36 @@ textarea {
 }
 
 .bot-row .bot-avatar {
-  width: 32px;
-  height: 32px;
+  width: 38px;
+  height: 38px;
 }
 
 .avatar-editor {
-  width: 100%;
-  margin: -18px 0 24px;
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 11px);
+  left: 50%;
+  width: min(284px, calc(var(--settings-panel-width, 296px) - 30px));
+  max-width: calc(100vw - 24px);
+  margin: 0;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 13px;
-  background: #191919;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
-  animation: avatar-editor-in 160ms ease-out both;
+  background: rgba(25, 25, 25, 0.98);
+  box-shadow:
+    0 22px 60px rgba(0, 0, 0, 0.52),
+    0 3px 12px rgba(0, 0, 0, 0.3),
+    inset 0 1px rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(18px);
+  translate: -50% 0;
+  transform-origin: top center;
+  animation: avatar-editor-in 150ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
 @keyframes avatar-editor-in {
   from {
     opacity: 0;
-    transform: translateY(-4px) scale(0.985);
+    transform: translateY(-5px) scale(0.97);
   }
   to {
     opacity: 1;
@@ -1867,11 +1878,21 @@ textarea {
   padding: 24px 15px 28px;
 }
 
-.agent-settings-avatar {
+.agent-settings-avatar-picker {
+  position: relative;
+  z-index: 30;
   display: grid;
   width: 62px;
   height: 62px;
   margin: 0 auto 36px;
+  place-items: center;
+}
+
+.agent-settings-avatar {
+  display: grid;
+  width: 62px;
+  height: 62px;
+  margin: 0;
   place-items: center;
   border: 0;
   border-radius: 50%;

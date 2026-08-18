@@ -882,10 +882,10 @@ describe("OpenBot connected desktop shell", () => {
     const avatarButton = within(settings).getByRole("button", { name: "Edit agent avatar" });
     await fireEvent.click(avatarButton);
 
-    const editor = within(settings).getByRole("region", { name: "Avatar editor" });
+    const editor = within(settings).getByRole("dialog", { name: "Avatar editor" });
     expect(within(editor).getAllByRole("button", { name: /Avatar option/ })).toHaveLength(11);
     const faceButtons = within(editor).getAllByRole("button", {
-      name: /Current avatar|Avatar option/,
+      name: /Selected avatar|Avatar option/,
     });
     expect(faceButtons).toHaveLength(12);
     for (const faceButton of faceButtons) {
@@ -893,7 +893,26 @@ describe("OpenBot connected desktop shell", () => {
       expect(faceButton.querySelector(".bot-avatar > svg .mo-root")).not.toBeNull();
       expect(faceButton.querySelector(".agent-mark")).toBeNull();
     }
-    await fireEvent.click(within(editor).getByRole("button", { name: "Avatar option 2" }));
+    const optionTwo = within(editor).getByRole("button", { name: "Avatar option 2" });
+    const faceMarkup = faceButtons.map((button) => button.innerHTML);
+    await fireEvent.click(optionTwo);
+    expect(optionTwo).toHaveAttribute("aria-pressed", "true");
+    expect(
+      within(editor).getAllByRole("button", { name: /Selected avatar|Avatar option/ })[1],
+    ).toBe(optionTwo);
+    expect(
+      within(editor)
+        .getAllByRole("button", { name: /Selected avatar|Avatar option/ })
+        .map((button) => button.innerHTML),
+    ).toEqual(faceMarkup);
+    const callsBeforeNewSet = vi.mocked(window.openbot.agent.updateBot).mock.calls.length;
+    await fireEvent.click(within(editor).getByRole("button", { name: "New set" }));
+    const nextFaceButtons = within(editor).getAllByRole("button", {
+      name: /Selected avatar|Avatar option/,
+    });
+    expect(nextFaceButtons[0]).toHaveAttribute("aria-pressed", "true");
+    expect(nextFaceButtons.map((button) => button.innerHTML)).not.toEqual(faceMarkup);
+    expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(callsBeforeNewSet);
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
@@ -918,6 +937,8 @@ describe("OpenBot connected desktop shell", () => {
     );
 
     const name = within(settings).getByRole("textbox", { name: "Agent name" });
+    await fireEvent.pointerDown(name);
+    expect(within(settings).queryByRole("dialog", { name: "Avatar editor" })).toBeNull();
     await fireEvent.input(name, { target: { value: "Coordinator" } });
     await fireEvent.blur(name);
     await waitFor(() =>

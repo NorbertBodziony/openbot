@@ -800,10 +800,11 @@ export function Conversation(props: ConversationProps) {
   const [avatarPickerOpen, setAvatarPickerOpen] = createSignal(false);
   const [avatarSeed, setAvatarSeed] = createSignal("agent");
   const [avatarHue, setAvatarHue] = createSignal<BotAvatarHue | null>(null);
+  const [avatarCandidateSeed, setAvatarCandidateSeed] = createSignal("agent");
   const [avatarBatch, setAvatarBatch] = createSignal(0);
   const avatarCandidates = createMemo(() => {
     const bot = props.bot;
-    return bot ? avatarCandidateSeeds(bot.id, avatarSeed(), avatarBatch()) : [];
+    return bot ? avatarCandidateSeeds(bot.id, avatarCandidateSeed(), avatarBatch()) : [];
   });
   const [browserAddress, setBrowserAddress] = createSignal("https://www.google.com");
   const [mediaPreview, setMediaPreview] = createSignal<MediaPreview | null>(null);
@@ -949,6 +950,7 @@ export function Conversation(props: ConversationProps) {
   let browserBoundsFrame: number | undefined;
   let browserVisibilityGeneration = 0;
   let pickerInput: HTMLInputElement | undefined;
+  let avatarPickerRoot: HTMLDivElement | undefined;
   let stickToLatest = true;
   let lastConversationBotId: string | undefined;
   let lastPanelBotId: string | undefined;
@@ -1079,8 +1081,13 @@ export function Conversation(props: ConversationProps) {
       setOpenMoreMessageId(null);
       setExpandedEmojiMessageId(null);
     };
+    const closeAvatarPicker = (event: PointerEvent) => {
+      if (!avatarPickerOpen() || avatarPickerRoot?.contains(event.target as Node)) return;
+      setAvatarPickerOpen(false);
+    };
     window.addEventListener("keydown", closeOnEscape);
     window.addEventListener("pointerdown", closeMessageMenus);
+    window.addEventListener("pointerdown", closeAvatarPicker);
     const scrollResizeObserver = new ResizeObserver(() => updateScrollFade());
     if (scrollElement) scrollResizeObserver.observe(scrollElement);
     requestAnimationFrame(() => updateScrollFade());
@@ -1089,6 +1096,7 @@ export function Conversation(props: ConversationProps) {
       unsubscribeImport();
       window.removeEventListener("keydown", closeOnEscape);
       window.removeEventListener("pointerdown", closeMessageMenus);
+      window.removeEventListener("pointerdown", closeAvatarPicker);
     };
   });
 
@@ -1181,6 +1189,7 @@ export function Conversation(props: ConversationProps) {
       setAvatarSeed(bot.avatarSeed);
       setAvatarHue(bot.avatarHue);
       if (botChanged) {
+        setAvatarCandidateSeed(bot.avatarSeed);
         setAvatarBatch(0);
         setAvatarPickerOpen(false);
       }
@@ -2327,109 +2336,129 @@ export function Conversation(props: ConversationProps) {
             </button>
           </header>
           <div class="agent-settings-content">
-            <button
-              type="button"
-              class="agent-settings-avatar"
-              aria-label="Edit agent avatar"
-              aria-expanded={avatarPickerOpen() ? "true" : "false"}
-              onClick={() => {
-                if (!avatarPickerOpen()) setAvatarBatch(0);
-                setAvatarPickerOpen((open) => !open);
-              }}
+            <div
+              ref={(element) => (avatarPickerRoot = element)}
+              class="agent-settings-avatar-picker"
             >
-              <AgentAvatar seed={avatarSeed()} hue={avatarHue()} motion="always" />
-            </button>
-            <Show when={avatarPickerOpen()}>
-              <section class="avatar-editor" aria-label="Avatar editor">
-                <div class="avatar-editor-heading">
-                  <span>Face</span>
-                  <div class="avatar-editor-actions">
-                    <Show when={props.bot && avatarSeed() !== props.bot.id}>
+              <button
+                type="button"
+                class="agent-settings-avatar"
+                aria-label="Edit agent avatar"
+                aria-haspopup="dialog"
+                aria-expanded={avatarPickerOpen() ? "true" : "false"}
+                onClick={() => {
+                  const nextOpen = !avatarPickerOpen();
+                  if (nextOpen) {
+                    setAvatarCandidateSeed(avatarSeed());
+                    setAvatarBatch(0);
+                  }
+                  setAvatarPickerOpen(nextOpen);
+                }}
+              >
+                <AgentAvatar seed={avatarSeed()} hue={avatarHue()} motion="always" />
+              </button>
+              <Show when={avatarPickerOpen()}>
+                <section class="avatar-editor" role="dialog" aria-label="Avatar editor">
+                  <div class="avatar-editor-heading">
+                    <span>Face</span>
+                    <div class="avatar-editor-actions">
+                      <Show when={props.bot && avatarSeed() !== props.bot.id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const botId = props.bot?.id;
+                            if (!botId) return;
+                            setAvatarSeed(botId);
+                            setAvatarCandidateSeed(botId);
+                            setAvatarBatch(0);
+                            void saveBotPatch({ avatarSeed: botId });
+                          }}
+                        >
+                          Reset to ID
+                        </button>
+                      </Show>
                       <button
                         type="button"
                         onClick={() => {
-                          const botId = props.bot?.id;
-                          if (!botId) return;
-                          setAvatarSeed(botId);
-                          void saveBotPatch({ avatarSeed: botId });
+                          setAvatarCandidateSeed(avatarSeed());
+                          setAvatarBatch((batch) => batch + 1);
                         }}
                       >
-                        Reset to ID
+                        New set
                       </button>
-                    </Show>
-                    <button type="button" onClick={() => setAvatarBatch((batch) => batch + 1)}>
-                      New set
-                    </button>
+                    </div>
                   </div>
-                </div>
-                <fieldset class="avatar-face-grid" aria-label="Generated avatar faces">
-                  <For each={avatarCandidates()}>
-                    {(seed, index) => (
-                      <button
-                        type="button"
-                        class={[
-                          "avatar-face-choice",
-                          { "avatar-choice-selected": avatarSeed() === seed },
-                        ]}
-                        aria-label={
-                          index() === 0 ? "Current avatar" : `Avatar option ${index() + 1}`
-                        }
-                        aria-pressed={avatarSeed() === seed ? "true" : "false"}
-                        onClick={() => {
-                          setAvatarSeed(seed);
-                          void saveBotPatch({ avatarSeed: seed });
-                        }}
-                      >
-                        <AgentAvatar seed={seed} hue={avatarHue()} />
-                      </button>
-                    )}
-                  </For>
-                </fieldset>
-                <div class="avatar-editor-divider" />
-                <div class="avatar-editor-heading">
-                  <span>Color</span>
-                </div>
-                <fieldset class="avatar-color-grid" aria-label="Avatar color">
-                  <button
-                    type="button"
-                    class={[
-                      "avatar-color-choice",
-                      { "avatar-choice-selected": avatarHue() === null },
-                    ]}
-                    aria-label="Automatic avatar color"
-                    aria-pressed={avatarHue() === null ? "true" : "false"}
-                    onClick={() => {
-                      setAvatarHue(null);
-                      void saveBotPatch({ avatarHue: null });
-                    }}
-                  >
-                    <span class="avatar-color-swatch avatar-color-swatch-auto">A</span>
-                  </button>
-                  <For each={AVATAR_HUE_OPTIONS}>
-                    {(option) => (
-                      <button
-                        type="button"
-                        class={[
-                          "avatar-color-choice",
-                          { "avatar-choice-selected": avatarHue() === option.hue },
-                        ]}
-                        aria-label={`${option.label} avatar color`}
-                        aria-pressed={avatarHue() === option.hue ? "true" : "false"}
-                        onClick={() => {
-                          setAvatarHue(option.hue);
-                          void saveBotPatch({ avatarHue: option.hue });
-                        }}
-                      >
-                        <span
-                          class="avatar-color-swatch"
-                          style={{ background: avatarHueSwatch(option.hue) }}
-                        />
-                      </button>
-                    )}
-                  </For>
-                </fieldset>
-              </section>
-            </Show>
+                  <fieldset class="avatar-face-grid" aria-label="Generated avatar faces">
+                    <For each={avatarCandidates()}>
+                      {(seed, index) => (
+                        <button
+                          type="button"
+                          class={[
+                            "avatar-face-choice",
+                            { "avatar-choice-selected": avatarSeed() === seed },
+                          ]}
+                          aria-label={
+                            avatarSeed() === seed
+                              ? "Selected avatar"
+                              : `Avatar option ${index() + 1}`
+                          }
+                          aria-pressed={avatarSeed() === seed ? "true" : "false"}
+                          onClick={() => {
+                            setAvatarSeed(seed);
+                            void saveBotPatch({ avatarSeed: seed });
+                          }}
+                        >
+                          <AgentAvatar seed={seed} hue={avatarHue()} />
+                        </button>
+                      )}
+                    </For>
+                  </fieldset>
+                  <div class="avatar-editor-divider" />
+                  <div class="avatar-editor-heading">
+                    <span>Color</span>
+                  </div>
+                  <fieldset class="avatar-color-grid" aria-label="Avatar color">
+                    <button
+                      type="button"
+                      class={[
+                        "avatar-color-choice",
+                        { "avatar-choice-selected": avatarHue() === null },
+                      ]}
+                      aria-label="Automatic avatar color"
+                      aria-pressed={avatarHue() === null ? "true" : "false"}
+                      onClick={() => {
+                        setAvatarHue(null);
+                        void saveBotPatch({ avatarHue: null });
+                      }}
+                    >
+                      <span class="avatar-color-swatch avatar-color-swatch-auto">A</span>
+                    </button>
+                    <For each={AVATAR_HUE_OPTIONS}>
+                      {(option) => (
+                        <button
+                          type="button"
+                          class={[
+                            "avatar-color-choice",
+                            { "avatar-choice-selected": avatarHue() === option.hue },
+                          ]}
+                          aria-label={`${option.label} avatar color`}
+                          aria-pressed={avatarHue() === option.hue ? "true" : "false"}
+                          onClick={() => {
+                            setAvatarHue(option.hue);
+                            void saveBotPatch({ avatarHue: option.hue });
+                          }}
+                        >
+                          <span
+                            class="avatar-color-swatch"
+                            style={{ background: avatarHueSwatch(option.hue) }}
+                          />
+                        </button>
+                      )}
+                    </For>
+                  </fieldset>
+                </section>
+              </Show>
+            </div>
             <label class="agent-settings-field">
               <span>Name</span>
               <input
