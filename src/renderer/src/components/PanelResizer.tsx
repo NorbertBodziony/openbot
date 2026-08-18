@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onMount } from "solid-js";
+import { createSignal, onSettled } from "solid-js";
 
 interface PanelResizerProps {
   label: string;
@@ -33,17 +33,17 @@ export function PanelResizer(props: PanelResizerProps) {
     if (next !== props.value) commit(next);
   };
 
-  onMount(() => {
+  onSettled(() => {
     window.addEventListener("resize", enforceBounds);
     if (handle?.parentElement) {
       parentResizeObserver = new ResizeObserver(enforceBounds);
       parentResizeObserver.observe(handle.parentElement);
     }
-  });
-  onCleanup(() => {
-    cleanupDrag?.();
-    parentResizeObserver?.disconnect();
-    window.removeEventListener("resize", enforceBounds);
+    return () => {
+      cleanupDrag?.();
+      parentResizeObserver?.disconnect();
+      window.removeEventListener("resize", enforceBounds);
+    };
   });
 
   const beginDrag = (event: PointerEvent) => {
@@ -109,7 +109,7 @@ export function PanelResizer(props: PanelResizerProps) {
     <hr
       ref={(element) => (handle = element)}
       class={`panel-resizer no-drag ${isResizing() ? "panel-resizer-active" : ""} ${props.class ?? ""}`}
-      tabIndex={0}
+      tabindex={0}
       aria-label={props.label}
       aria-controls={props.controls}
       aria-orientation="vertical"

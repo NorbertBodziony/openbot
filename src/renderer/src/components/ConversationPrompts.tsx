@@ -30,12 +30,18 @@ export function ChoiceCard(props: {
             <button
               type="button"
               role="option"
-              aria-selected={choice === props.customChoice ? customSelected() : answer() === choice}
-              class="choice-option"
-              classList={{
-                "choice-option-selected":
-                  choice === props.customChoice ? customSelected() : answer() === choice,
-              }}
+              aria-selected={
+                (choice === props.customChoice ? customSelected() : answer() === choice)
+                  ? "true"
+                  : "false"
+              }
+              class={[
+                "choice-option",
+                {
+                  "choice-option-selected":
+                    choice === props.customChoice ? customSelected() : answer() === choice,
+                },
+              ]}
               disabled={props.pending}
               onClick={() => {
                 if (choice === props.customChoice) {
@@ -102,10 +108,12 @@ export function PromptCard(props: {
                   {(option) => (
                     <button
                       type="button"
-                      class="choice-option"
-                      classList={{
-                        "choice-option-selected": answers()[question.id] === option.label,
-                      }}
+                      class={[
+                        "choice-option",
+                        {
+                          "choice-option-selected": answers()[question.id] === option.label,
+                        },
+                      ]}
                       onClick={() =>
                         setAnswers((current) => ({ ...current, [question.id]: option.label }))
                       }

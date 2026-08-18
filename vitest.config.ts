@@ -1,4 +1,4 @@
-import solidPlugin from "vite-plugin-solid";
+import solidPlugin from "@solidjs/vite-plugin";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({

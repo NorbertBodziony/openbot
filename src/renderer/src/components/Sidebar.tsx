@@ -1,5 +1,5 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
-import { Portal } from "solid-js/web";
+import { Portal } from "@solidjs/web";
+import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js";
 import type {
   AccountUsage,
   AgentStatus,
@@ -162,8 +162,7 @@ function UpdateIcon(props: { active: boolean }) {
     <svg
       aria-hidden="true"
       viewBox="0 0 20 20"
-      class="account-menu-icon"
-      classList={{ "account-menu-icon-spinning": props.active }}
+      class={["account-menu-icon", { "account-menu-icon-spinning": props.active }]}
     >
       <path d="M15.4 6.8A6 6 0 1 0 16 10" />
       <path d="M15.4 3.8v3h-3" />
@@ -276,12 +275,14 @@ export function Sidebar(props: SidebarProps) {
     setFadeAtBottom(remaining > 2);
   }
 
-  createEffect(() => {
-    filteredBots();
-    requestAnimationFrame(updateScrollFade);
-  });
+  createEffect(
+    () => filteredBots(),
+    () => {
+      requestAnimationFrame(updateScrollFade);
+    },
+  );
 
-  onMount(() => {
+  onSettled(() => {
     const closeMenu = () => {
       setContextMenu(null);
       setAccountMenuOpen(false);
@@ -299,13 +300,13 @@ export function Sidebar(props: SidebarProps) {
     const resizeObserver = new ResizeObserver(updateScrollFade);
     if (botList) resizeObserver.observe(botList);
     requestAnimationFrame(updateScrollFade);
-    onCleanup(() => {
+    return () => {
       resizeObserver.disconnect();
       window.removeEventListener("pointerdown", closeMenu);
       window.removeEventListener("blur", closeMenu);
       window.removeEventListener("resize", closeMenu);
       window.removeEventListener("keydown", closeOnEscape);
-    });
+    };
   });
 
   function openContextMenu(botId: string, x: number, y: number) {
@@ -413,11 +414,13 @@ export function Sidebar(props: SidebarProps) {
       <nav
         ref={(element) => (botList = element)}
         aria-label="Bot list"
-        class="bot-list"
-        classList={{
-          "scroll-fade-top": fadeAtTop(),
-          "scroll-fade-bottom": fadeAtBottom(),
-        }}
+        class={[
+          "bot-list",
+          {
+            "scroll-fade-top": fadeAtTop(),
+            "scroll-fade-bottom": fadeAtBottom(),
+          },
+        ]}
         onScroll={() => updateScrollFade()}
       >
         <Show
@@ -430,12 +433,14 @@ export function Sidebar(props: SidebarProps) {
             {(bot) => (
               <button
                 type="button"
-                class="bot-row"
-                classList={{
-                  "bot-row-active": props.activeBotId === bot.id,
-                  "bot-row-menu-open": contextMenu()?.botId === bot.id,
-                }}
-                aria-pressed={props.activeBotId === bot.id}
+                class={[
+                  "bot-row",
+                  {
+                    "bot-row-active": props.activeBotId === bot.id,
+                    "bot-row-menu-open": contextMenu()?.botId === bot.id,
+                  },
+                ]}
+                aria-pressed={props.activeBotId === bot.id ? "true" : "false"}
                 onClick={() => props.onSelectBot(bot.id)}
                 onContextMenu={(event) => {
                   event.preventDefault();
@@ -547,7 +552,7 @@ export function Sidebar(props: SidebarProps) {
           type="button"
           class="sidebar-footer"
           aria-label="Open account menu"
-          aria-expanded={accountMenuOpen()}
+          aria-expanded={accountMenuOpen() ? "true" : "false"}
           onClick={toggleAccountMenu}
           onPointerDown={(event) => event.stopPropagation()}
         >

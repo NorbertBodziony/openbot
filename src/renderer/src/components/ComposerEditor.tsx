@@ -1,5 +1,5 @@
+import { Portal } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { Portal } from "solid-js/web";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 
@@ -53,16 +53,17 @@ export function ComposerEditor(props: ComposerEditorProps) {
   let lastEmittedValue = "";
   let isComposing = false;
 
-  createEffect(() => {
-    const botId = props.botId;
-    const value = props.value;
-    if (!editor) return;
-    if (botId === lastBotId && value === lastEmittedValue) return;
-    lastBotId = botId;
-    lastEmittedValue = value;
-    renderEditorValue(editor, value, props.bots);
-    setMention(null);
-  });
+  createEffect(
+    () => ({ botId: props.botId, value: props.value, bots: props.bots }),
+    ({ botId, value, bots }) => {
+      if (!editor) return;
+      if (botId === lastBotId && value === lastEmittedValue) return;
+      lastBotId = botId;
+      lastEmittedValue = value;
+      renderEditorValue(editor, value, bots);
+      setMention(null);
+    },
+  );
 
   function emitValue() {
     if (!editor) return;
@@ -183,14 +184,15 @@ export function ComposerEditor(props: ComposerEditorProps) {
         </span>
       </Show>
       {/* biome-ignore lint/a11y/useSemanticElements: contenteditable is required for inline agent chips. */}
+      {/* biome-ignore lint/a11y/useFocusableInteractive: Solid 2 uses the lowercase tabindex DOM attribute. */}
       <div
         ref={(element) => (editor = element)}
         class="composer-editor-surface"
-        contentEditable={!props.disabled}
+        contenteditable={props.disabled ? "false" : "true"}
         role="textbox"
-        tabIndex={props.disabled ? -1 : 0}
+        tabindex={props.disabled ? -1 : 0}
         aria-label={props.ariaLabel}
-        aria-disabled={props.disabled}
+        aria-disabled={props.disabled ? "true" : "false"}
         aria-multiline="true"
         spellcheck="true"
         onInput={() => {
@@ -228,9 +230,11 @@ export function ComposerEditor(props: ComposerEditorProps) {
                 <button
                   type="button"
                   role="option"
-                  aria-selected={activeOption() === index()}
-                  class="mention-picker-option"
-                  classList={{ "mention-picker-option-active": activeOption() === index() }}
+                  aria-selected={activeOption() === index() ? "true" : "false"}
+                  class={[
+                    "mention-picker-option",
+                    { "mention-picker-option-active": activeOption() === index() },
+                  ]}
                   onPointerDown={(event) => event.preventDefault()}
                   onMouseEnter={() => setActiveOption(index())}
                   onClick={() => insertMention(bot)}

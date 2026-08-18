@@ -1,5 +1,13 @@
-import { batch, createEffect, createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { createMutable } from "solid-js/store";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  createStore,
+  flush,
+  onSettled,
+  Show,
+  type StoreSetter,
+} from "solid-js";
 import type {
   AccountUsage,
   AgentEvent,
@@ -54,6 +62,20 @@ const LEFT_PANEL_COLLAPSED_STORAGE_KEY = "openbot:left-panel-collapsed";
 const LEFT_PANEL_DEFAULT = 275;
 const LEFT_PANEL_MIN = 220;
 const LEFT_PANEL_MAX = 360;
+
+const storeSetters = new WeakMap<object, StoreSetter<Record<string, unknown>>>();
+
+function createStored<T extends object>(value: T): T {
+  const [store, setStore] = createStore(value as Record<string, unknown>);
+  storeSetters.set(store, setStore);
+  return store as T;
+}
+
+function updateStored<T extends object>(store: T, value: T): void {
+  storeSetters.get(store)?.((draft) => {
+    Object.assign(draft, value as Record<string, unknown>);
+  });
+}
 
 const ONBOARDING_PROFILES: Record<
   string,
@@ -139,16 +161,20 @@ export function App() {
     return bot ? [...(liveMessages()[bot.id] ?? []), ...(uiErrors()[bot.id] ?? [])] : [];
   });
 
-  onMount(() => {
-    const unsubscribe = window.openbot.agent.onEvent(handleAgentEvent);
-    const unsubscribeUpdate = window.openbot.update.onEvent(setUpdateStatus);
-    onCleanup(() => {
+  onSettled(() => {
+    const unsubscribe = window.openbot.agent.onEvent((event) => {
+      flush(() => handleAgentEvent(event));
+    });
+    const unsubscribeUpdate = window.openbot.update.onEvent((status) => {
+      flush(() => setUpdateStatus(status));
+    });
+    const cleanup = () => {
       unsubscribe();
       unsubscribeUpdate();
       if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
       for (const timer of recentReplyTimers.values()) clearTimeout(timer);
       recentReplyTimers.clear();
-    });
+    };
     void window.openbot.update
       .getStatus()
       .then(setUpdateStatus)
@@ -189,22 +215,24 @@ export function App() {
       .getControlState()
       .then(setBrowserControlState)
       .catch(() => undefined);
+    return cleanup;
   });
 
-  createEffect(() => {
-    const botId = activeBotId();
-    agentStatus().phase;
-    if (!botId) return;
-    void Promise.all([
-      window.openbot.agent.readConversation(botId),
-      window.openbot.agent.listQueue(botId),
-    ])
-      .then(([snapshot, queue]) => {
-        setQueues((current) => ({ ...current, [botId]: queue }));
-        scheduleConversation(snapshot);
-      })
-      .catch((error) => appendUiError(botId, error, "Load failed"));
-  });
+  createEffect(
+    () => ({ botId: activeBotId(), agentPhase: agentStatus().phase }),
+    ({ botId }) => {
+      if (!botId) return;
+      void Promise.all([
+        window.openbot.agent.readConversation(botId),
+        window.openbot.agent.listQueue(botId),
+      ])
+        .then(([snapshot, queue]) => {
+          setQueues((current) => ({ ...current, [botId]: queue }));
+          scheduleConversation(snapshot);
+        })
+        .catch((error) => appendUiError(botId, error, "Load failed"));
+    },
+  );
 
   function handleAgentEvent(event: AgentEvent) {
     switch (event.type) {
@@ -256,18 +284,15 @@ export function App() {
   }
 
   function applyStoredBots(storedBots: BotSummary[]) {
-    let profiles: BotProfile[] = [];
-    setBotList((current) => {
-      const currentById = new Map(current.map((bot) => [bot.id, bot]));
-      profiles = storedBots.map((stored) => {
-        const next = toBotProfile(stored);
-        const existing = currentById.get(next.id);
-        if (!existing) return createMutable(next);
-        Object.assign(existing, next);
-        return existing;
-      });
-      return profiles;
+    const currentById = new Map(botList().map((bot) => [bot.id, bot]));
+    const profiles = storedBots.map((stored) => {
+      const next = toBotProfile(stored);
+      const existing = currentById.get(next.id);
+      if (!existing) return createStored(next);
+      if (!botProfilesEqual(existing, next)) updateStored(existing, next);
+      return existing;
     });
+    setBotList(profiles);
     setActiveBotId((current) =>
       profiles.some((bot) => bot.id === current) ? current : (profiles[0]?.id ?? ""),
     );
@@ -285,9 +310,7 @@ export function App() {
       conversationFrame = undefined;
       const snapshots = [...pendingConversationSnapshots.values()];
       pendingConversationSnapshots.clear();
-      batch(() => {
-        for (const pending of snapshots) applyConversation(pending);
-      });
+      for (const pending of snapshots) applyConversation(pending);
     });
   }
 
@@ -298,10 +321,13 @@ export function App() {
 
     const existing = liveMessages()[event.botId]?.find((message) => message.id === event.messageId);
     if (existing) {
-      existing.body += event.delta;
-      existing.streaming = true;
+      updateStored(existing, {
+        ...existing,
+        body: existing.body + event.delta,
+        streaming: true,
+      });
     } else {
-      const message = createMutable<BotMessage>({
+      const message = createStored<BotMessage>({
         id: event.messageId,
         turnId: event.turnId,
         author: "bot",
@@ -330,8 +356,8 @@ export function App() {
       const mappedMessages = retainThinkingMessages(previous, toBotMessages(snapshot.messages));
       const next = mappedMessages.map((mapped) => {
         const existing = previousById.get(mapped.id);
-        if (!existing) return createMutable({ ...mapped, animate: !initialLoad });
-        if (!botMessagesEqual(existing, mapped)) Object.assign(existing, mapped);
+        if (!existing) return createStored({ ...mapped, animate: !initialLoad });
+        if (!botMessagesEqual(existing, mapped)) updateStored(existing, mapped);
         return existing;
       });
       if (
@@ -351,7 +377,7 @@ export function App() {
     setCreatingAgent(true);
     try {
       const stored = await window.openbot.agent.createBot();
-      const newAgent = createMutable(toBotProfile(stored));
+      const newAgent = createStored(toBotProfile(stored));
       setBotList((current) => [newAgent, ...current.filter((item) => item.id !== newAgent.id)]);
       setLiveMessages((current) => ({ ...current, [newAgent.id]: [] }));
       setConversationLoaded((current) => ({ ...current, [newAgent.id]: true }));
@@ -414,9 +440,14 @@ export function App() {
   async function updateBot(botId: string, updates: Omit<UpdateBotInput, "botId">) {
     try {
       const stored = await window.openbot.agent.updateBot({ botId, ...updates });
-      const existing = botList().find((bot) => bot.id === botId);
-      if (existing) Object.assign(existing, toBotProfile(stored));
-      else setBotList((current) => [...current, createMutable(toBotProfile(stored))]);
+      const next = toBotProfile(stored);
+      setBotList((current) => {
+        const existingIndex = current.findIndex((bot) => bot.id === botId);
+        if (existingIndex === -1) return [...current, createStored(next)];
+        const existing = current[existingIndex];
+        if (existing) updateStored(existing, next);
+        return current;
+      });
     } catch (error) {
       appendUiError(botId, error, "Settings failed");
       throw error;
@@ -606,8 +637,10 @@ export function App() {
 
   async function saveSetup(preferredProvider: AgentProviderId): Promise<void> {
     const state = await window.openbot.saveSetup({ preferredProvider });
-    setSetupState(state);
-    setPermissionsOpen(false);
+    flush(() => {
+      setSetupState(state);
+      setPermissionsOpen(false);
+    });
   }
 
   async function runUpdateAction(): Promise<void> {
@@ -640,8 +673,7 @@ export function App() {
         }
       >
         <div
-          class="app-frame"
-          classList={{ "app-frame-sidebar-collapsed": leftPanelCollapsed() }}
+          class={["app-frame", { "app-frame-sidebar-collapsed": leftPanelCollapsed() }]}
           style={`--left-panel-width: ${leftPanelCollapsed() ? 0 : leftPanelWidth()}px`}
         >
           <Show when={!leftPanelCollapsed()}>
@@ -818,6 +850,24 @@ function cleanPreview(preview: string): string {
     .replace(/\s{2,}/g, " ")
     .trim();
   return cleaned || "No messages yet";
+}
+
+function botProfilesEqual(left: BotProfile, right: BotProfile): boolean {
+  return (
+    left.id === right.id &&
+    left.name === right.name &&
+    left.role === right.role &&
+    left.description === right.description &&
+    left.notifications === right.notifications &&
+    left.model === right.model &&
+    left.reasoningEffort === right.reasoningEffort &&
+    left.threadId === right.threadId &&
+    left.accent === right.accent &&
+    left.avatarShape === right.avatarShape &&
+    left.avatarColor === right.avatarColor &&
+    left.time === right.time &&
+    left.preview === right.preview
+  );
 }
 
 function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {

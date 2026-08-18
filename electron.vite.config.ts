@@ -1,6 +1,6 @@
+import solidPlugin from "@solidjs/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
-import solidPlugin from "vite-plugin-solid";
 
 export default defineConfig({
   main: {

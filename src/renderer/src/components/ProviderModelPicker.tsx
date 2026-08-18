@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js";
 import type {
   AgentModelId,
   AgentModelOption,
@@ -29,7 +29,7 @@ const DEFAULT_MODELS: Record<AgentProviderId, AgentModelId> = {
 export function ProviderModelPicker(props: ProviderModelPickerProps) {
   const [open, setOpen] = createSignal(false);
   const [railProvider, setRailProvider] = createSignal<AgentProviderId>(
-    providerForModel(props.value),
+    untrack(() => providerForModel(props.value)),
   );
   const providerButtons = new Map<AgentProviderId, HTMLButtonElement>();
   const modelButtons = new Map<AgentModelId, HTMLButtonElement>();
@@ -47,22 +47,27 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
   );
   const railAvailable = createMemo(() => railStatus().state === "available");
 
-  createEffect(() => {
-    const provider = activeProvider();
-    if (!open()) setRailProvider(provider);
-  });
+  createEffect(
+    () => ({ provider: activeProvider(), open: open() }),
+    ({ provider, open }) => {
+      if (!open) setRailProvider(provider);
+    },
+  );
 
-  createEffect(() => {
-    if (props.disabled && open()) setOpen(false);
-  });
+  createEffect(
+    () => Boolean(props.disabled && open()),
+    (mustClose) => {
+      if (mustClose) setOpen(false);
+    },
+  );
 
-  onMount(() => {
+  onSettled(() => {
     const closeOnOutsidePointer = (event: PointerEvent) => {
       if (!open() || root?.contains(event.target as Node)) return;
       setOpen(false);
     };
     window.addEventListener("pointerdown", closeOnOutsidePointer);
-    onCleanup(() => window.removeEventListener("pointerdown", closeOnOutsidePointer));
+    return () => window.removeEventListener("pointerdown", closeOnOutsidePointer);
   });
 
   function setPickerOpen(next: boolean): void {
@@ -106,16 +111,14 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
   return (
     <div
       ref={(element) => (root = element)}
-      class="provider-model-picker"
-      classList={{ "provider-model-picker-field": field() }}
+      class={["provider-model-picker", { "provider-model-picker-field": field() }]}
     >
       <button
         type="button"
-        class="provider-model-trigger"
-        classList={{ "provider-model-trigger-field": field() }}
+        class={["provider-model-trigger", { "provider-model-trigger-field": field() }]}
         aria-label={`${props.ariaLabel ?? "Agent model"}: ${triggerModelName()}`}
         aria-haspopup="dialog"
-        aria-expanded={open()}
+        aria-expanded={open() ? "true" : "false"}
         disabled={props.disabled}
         title={
           props.disabled
@@ -174,15 +177,17 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                     ref={(element) => providerButtons.set(provider, element)}
                     type="button"
                     role="tab"
-                    class="provider-model-rail-button"
-                    classList={{
-                      "provider-model-rail-button-selected": selected(),
-                      "provider-model-rail-button-unavailable": status().state !== "available",
-                    }}
-                    aria-selected={selected()}
+                    class={[
+                      "provider-model-rail-button",
+                      {
+                        "provider-model-rail-button-selected": selected(),
+                        "provider-model-rail-button-unavailable": status().state !== "available",
+                      },
+                    ]}
+                    aria-selected={selected() ? "true" : "false"}
                     aria-controls="provider-model-panel"
                     aria-label={`${providerName(provider)}: ${providerSummary(provider, status())}`}
-                    tabIndex={selected() ? 0 : -1}
+                    tabindex={selected() ? 0 : -1}
                     title={`${providerName(provider)} · ${providerSummary(provider, status())}`}
                     onClick={() => setRailProvider(provider)}
                     onKeyDown={(event) => {
@@ -229,14 +234,16 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                       ref={(element) => modelButtons.set(model.id, element)}
                       type="button"
                       role="option"
-                      class="provider-model-option"
-                      classList={{ "provider-model-option-selected": selected() }}
+                      class={[
+                        "provider-model-option",
+                        { "provider-model-option-selected": selected() },
+                      ]}
                       aria-label={`${displayModelName(model.name, model.id)}${
                         model.id === DEFAULT_MODELS[railProvider()] ? ", default" : ""
                       }`}
-                      aria-selected={selected()}
+                      aria-selected={selected() ? "true" : "false"}
                       disabled={!railAvailable()}
-                      tabIndex={firstFocusable() ? 0 : -1}
+                      tabindex={firstFocusable() ? 0 : -1}
                       onClick={() => selectModel(model.id)}
                       onKeyDown={(event) => {
                         if (event.key === "ArrowDown") {
@@ -329,8 +336,10 @@ function ProviderMark(props: { provider: AgentProviderId; large?: boolean }) {
       when={props.provider === "claude"}
       fallback={
         <svg
-          class="provider-model-mark provider-model-mark-codex"
-          classList={{ "provider-model-mark-large": props.large }}
+          class={[
+            "provider-model-mark provider-model-mark-codex",
+            { "provider-model-mark-large": Boolean(props.large) },
+          ]}
           viewBox="0 0 256 260"
           aria-hidden="true"
         >
@@ -339,8 +348,10 @@ function ProviderMark(props: { provider: AgentProviderId; large?: boolean }) {
       }
     >
       <svg
-        class="provider-model-mark provider-model-mark-claude"
-        classList={{ "provider-model-mark-large": props.large }}
+        class={[
+          "provider-model-mark provider-model-mark-claude",
+          { "provider-model-mark-large": Boolean(props.large) },
+        ]}
         viewBox="0 0 248 248"
         aria-hidden="true"
       >

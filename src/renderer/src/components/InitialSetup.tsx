@@ -1,4 +1,13 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  flush,
+  onSettled,
+  Show,
+  untrack,
+} from "solid-js";
 import type {
   AgentProviderId,
   AgentProviderState,
@@ -57,7 +66,7 @@ const EMPTY_PERMISSIONS: MacPermissionsState = {
 
 export function InitialSetup(props: InitialSetupProps) {
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(
-    props.state.preferredProvider,
+    untrack(() => props.state.preferredProvider),
   );
   const [permissions, setPermissions] = createSignal(EMPTY_PERMISSIONS);
   const [saving, setSaving] = createSignal(false);
@@ -78,29 +87,35 @@ export function InitialSetup(props: InitialSetupProps) {
     providerOptions().filter((provider) => provider.state === "available"),
   );
 
-  createEffect(() => {
-    const options = providerOptions();
-    const available = availableProviders();
-    const selected = selectedProvider();
-    if (selected && options.some((provider) => provider.id === selected)) return;
-    const preferred = options.find((provider) => provider.id === props.state.preferredProvider);
-    setSelectedProvider(preferred?.id ?? available[0]?.id ?? null);
-  });
+  createEffect(
+    () => ({
+      options: providerOptions(),
+      available: availableProviders(),
+      selected: selectedProvider(),
+      preferredProvider: props.state.preferredProvider,
+    }),
+    ({ options, available, selected, preferredProvider }) => {
+      if (selected && options.some((provider) => provider.id === selected)) return;
+      const preferred = options.find((provider) => provider.id === preferredProvider);
+      setSelectedProvider(preferred?.id ?? available[0]?.id ?? null);
+    },
+  );
 
   async function refreshPermissions(): Promise<void> {
     if (props.platform !== "darwin") return;
     try {
-      setPermissions(await window.openbot.getMacPermissions());
+      const next = await window.openbot.getMacPermissions();
+      flush(() => setPermissions(next));
     } catch (cause) {
       setError(errorMessage(cause, "OpenBot could not read macOS permissions."));
     }
   }
 
-  onMount(() => {
+  onSettled(() => {
     void refreshPermissions();
     const handleFocus = () => void refreshPermissions();
     window.addEventListener("focus", handleFocus);
-    onCleanup(() => window.removeEventListener("focus", handleFocus));
+    return () => window.removeEventListener("focus", handleFocus);
   });
 
   async function requestPermission(permission: MacPermissionId): Promise<void> {
@@ -108,7 +123,8 @@ export function InitialSetup(props: InitialSetupProps) {
     setPermissionBusy(permission);
     setError("");
     try {
-      setPermissions(await window.openbot.requestMacPermission(permission));
+      const next = await window.openbot.requestMacPermission(permission);
+      flush(() => setPermissions(next));
     } catch (cause) {
       setError(errorMessage(cause, "OpenBot could not open this macOS permission."));
     } finally {
@@ -182,8 +198,10 @@ export function InitialSetup(props: InitialSetupProps) {
                       </span>
                       <button
                         type="button"
-                        class="mac-permission-action"
-                        classList={{ "mac-permission-allowed": state() === "granted" }}
+                        class={[
+                          "mac-permission-action",
+                          { "mac-permission-allowed": state() === "granted" },
+                        ]}
                         disabled={
                           permissionBusy() !== null ||
                           state() === "granted" ||

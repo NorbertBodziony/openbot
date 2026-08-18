@@ -411,7 +411,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(action).not.toBeNull();
     await fireEvent.click(action as HTMLButtonElement);
     expect(window.openbot.requestMacPermission).toHaveBeenCalledWith("screen-recording");
-    expect(action).toHaveTextContent("Allowed");
+    await waitFor(() => expect(action).toHaveTextContent("Allowed"));
 
     vi.mocked(window.openbot.getMacPermissions).mockResolvedValueOnce({
       screenRecording: "granted",

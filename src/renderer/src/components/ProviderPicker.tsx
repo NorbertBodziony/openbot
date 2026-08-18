@@ -26,24 +26,33 @@ export function ProviderPicker(props: ProviderPickerProps) {
   const inputs = new Map<AgentProviderId, HTMLInputElement>();
   let focused = false;
 
-  createEffect(() => {
-    if (!props.focusFirst || focused) return;
-    const first =
-      props.options.find((option) => option.state === "available") ??
-      (props.allowUnavailableSelection ? props.options[0] : undefined);
-    const input = first ? inputs.get(first.id) : undefined;
-    if (!input) return;
-    focused = true;
-    input.focus();
-  });
+  createEffect(
+    () => ({
+      focusFirst: props.focusFirst,
+      options: props.options,
+      allowUnavailableSelection: props.allowUnavailableSelection,
+    }),
+    ({ focusFirst, options, allowUnavailableSelection }) => {
+      if (!focusFirst || focused) return;
+      const first =
+        options.find((option) => option.state === "available") ??
+        (allowUnavailableSelection ? options[0] : undefined);
+      const input = first ? inputs.get(first.id) : undefined;
+      if (!input) return;
+      focused = true;
+      input.focus();
+    },
+  );
 
   return (
     <div
-      class="provider-picker"
-      classList={{
-        "provider-picker-standalone": !props.embedded,
-        "provider-picker-embedded": props.embedded,
-      }}
+      class={[
+        "provider-picker",
+        {
+          "provider-picker-standalone": !props.embedded,
+          "provider-picker-embedded": Boolean(props.embedded),
+        },
+      ]}
       role="radiogroup"
       aria-label={props.ariaLabel}
     >
@@ -56,13 +65,15 @@ export function ProviderPicker(props: ProviderPickerProps) {
             const available = () => option.state === "available";
             return (
               <label
-                class="provider-picker-option"
-                classList={{
-                  "provider-picker-option-selected": props.value === option.id,
-                  "provider-picker-option-unavailable": !available(),
-                  "provider-picker-option-selectable-unavailable":
-                    !available() && Boolean(props.allowUnavailableSelection),
-                }}
+                class={[
+                  "provider-picker-option",
+                  {
+                    "provider-picker-option-selected": props.value === option.id,
+                    "provider-picker-option-unavailable": !available(),
+                    "provider-picker-option-selectable-unavailable":
+                      !available() && Boolean(props.allowUnavailableSelection),
+                  },
+                ]}
                 title={option.message ?? undefined}
               >
                 <input
