@@ -6,10 +6,10 @@ const rendererPort = readRendererPort(process.env.OPENBOT_DEV_RENDERER_PORT);
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ["@openbot/contracts"] })],
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ["@openbot/contracts"] })],
     build: {
       rollupOptions: {
         output: {

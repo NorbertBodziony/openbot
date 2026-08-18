@@ -1,13 +1,13 @@
-import { Portal } from "@solidjs/web";
-import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js";
-import { INPUT_LIMITS } from "../../../shared/input-limits";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AccountUsage,
   AgentStatus,
   AppInfo,
   ExternalDestination,
   UpdateStatus,
-} from "../../../shared/ipc";
+} from "@openbot/contracts/ipc";
+import { Portal } from "@solidjs/web";
+import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 

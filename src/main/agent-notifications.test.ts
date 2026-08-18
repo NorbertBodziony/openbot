@@ -1,7 +1,7 @@
 // @vitest-environment node
 
+import type { AgentEvent, BotSummary } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
-import type { AgentEvent, BotSummary } from "../shared/ipc";
 import { notificationForAgentEvent } from "./agent-notifications";
 
 const bot = {

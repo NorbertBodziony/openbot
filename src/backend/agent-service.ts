@@ -19,8 +19,8 @@ import type {
   SendMessageInput,
   SetMessageReactionInput,
   UpdateBotInput,
-} from "../shared/ipc";
-import { isClaudeModel, isReasoningEffort } from "../shared/ipc";
+} from "@openbot/contracts/ipc";
+import { isClaudeModel, isReasoningEffort } from "@openbot/contracts/ipc";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AppServerError, CodexAppServerClient } from "./app-server-client";
 import type { BotStore } from "./bot-store";

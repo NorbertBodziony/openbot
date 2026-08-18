@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { INPUT_LIMITS } from "../shared/input-limits";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   type AgentModelId,
   type AgentReasoningEffort,
@@ -11,7 +11,7 @@ import {
   isAvatarSeed,
   isReasoningEffort,
   type UpdateBotInput,
-} from "../shared/ipc";
+} from "@openbot/contracts/ipc";
 import {
   OpenBotDatabase,
   type ProviderSession,

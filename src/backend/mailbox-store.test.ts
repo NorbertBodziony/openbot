@@ -3,8 +3,8 @@
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { INPUT_LIMITS } from "../shared/input-limits";
 import { MailboxStore } from "./mailbox-store";
 
 let root: string;

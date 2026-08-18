@@ -1,3 +1,14 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type {
+  AgentProviderId,
+  AgentProviderState,
+  AgentStatus,
+  AppSetupState,
+  DesktopPlatform,
+  JoinServerInput,
+  MacPermissionId,
+  MacPermissionsState,
+} from "@openbot/contracts/ipc";
 import {
   createEffect,
   createMemo,
@@ -8,17 +19,6 @@ import {
   Show,
   untrack,
 } from "solid-js";
-import { INPUT_LIMITS } from "../../../shared/input-limits";
-import type {
-  AgentProviderId,
-  AgentProviderState,
-  AgentStatus,
-  AppSetupState,
-  DesktopPlatform,
-  JoinServerInput,
-  MacPermissionId,
-  MacPermissionsState,
-} from "../../../shared/ipc";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 
 interface InitialSetupProps {

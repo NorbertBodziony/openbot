@@ -5,7 +5,7 @@ import type {
   AttachmentSummary,
   BotAvatarHue,
   MessageReaction,
-} from "../../shared/ipc";
+} from "@openbot/contracts/ipc";
 
 export type MessageKind = "text" | "thinking" | "exchange";
 

@@ -1,12 +1,12 @@
-import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js";
 import type {
   AgentModelId,
   AgentModelOption,
   AgentProviderId,
   AgentProviderStatus,
   AgentStatus,
-} from "../../../shared/ipc";
-import { isClaudeModel } from "../../../shared/ipc";
+} from "@openbot/contracts/ipc";
+import { isClaudeModel } from "@openbot/contracts/ipc";
+import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js";
 
 interface ProviderModelPickerProps {
   value: AgentModelId;

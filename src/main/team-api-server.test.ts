@@ -2,20 +2,33 @@
 
 import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { afterEach, describe, expect, it } from "vitest";
+import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
-import { INPUT_LIMITS } from "../shared/input-limits";
 import { TeamApiServer } from "./team-api-server";
 import { TeamStore } from "./team-store";
 
 const roots: string[] = [];
+const tcpServers: ReturnType<typeof createTcpServer>[] = [];
+const requireModule = createRequire(import.meta.url);
+const { WebSocket: NodeWebSocket } = requireModule(
+  join(dirname(requireModule.resolve("ws/package.json")), "index.js"),
+) as typeof Ws;
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(
+    tcpServers
+      .splice(0)
+      .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+  );
 });
 
 describe("TeamApiServer administration", () => {
@@ -215,7 +228,83 @@ describe("TeamApiServer administration", () => {
       await api.stop();
     }
   });
+
+  it("grants Remote Desktop through team membership and closes it after session revocation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-desktop-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const vnc = createTcpServer((socket) => {
+      socket.write("RFB 003.889\n");
+      socket.on("data", (chunk) => socket.write(Buffer.concat([Buffer.from("echo:"), chunk])));
+    });
+    tcpServers.push(vnc);
+    await new Promise<void>((resolve) => vnc.listen(0, "127.0.0.1", resolve));
+    const address = vnc.address();
+    if (!address || typeof address === "string") throw new Error("Missing VNC test port");
+    const api = new TeamApiServer({
+      store,
+      agents: new EventEmitter() as unknown as AgentService,
+      mailbox: {} as MailboxStore,
+      browser: {} as BrowserHost,
+      getRemoteMac: () => ({ hostname: "desktop.test", online: true }),
+      getRemoteDesktopPassword: () => "deskpass",
+      remoteDesktopPort: address.port,
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      const access = await jsonRequest<{ configured: boolean; password: string }>(
+        base,
+        "/v1/host/remote-desktop-access",
+        { token: login.sessionToken },
+      );
+      expect(access).toEqual({ configured: true, password: "deskpass" });
+
+      const desktop = new NodeWebSocket(`ws://127.0.0.1:${port}/v1/remote-desktop`, [
+        "openbot-desktop",
+        `openbot-token.${login.sessionToken}`,
+      ]);
+      await expect(nextWebSocketMessage(desktop)).resolves.toEqual(Buffer.from("RFB 003.889\n"));
+      desktop.send(Buffer.from("hello"));
+      await expect(nextWebSocketMessage(desktop)).resolves.toEqual(Buffer.from("echo:hello"));
+
+      const ownerSession = store.listSessions().find((session) => session.username === "owner");
+      if (!ownerSession) throw new Error("Missing owner session");
+      await store.revokeSession(ownerSession.id);
+      const closed = new Promise<number>((resolve) =>
+        desktop.once("close", (code) => resolve(code)),
+      );
+      desktop.send(Buffer.from("after-revoke"));
+      await expect(closed).resolves.toBe(1008);
+
+      const unauthorized = await fetch(`${base}/v1/host/remote-desktop-access`);
+      expect(unauthorized.status).toBe(401);
+    } finally {
+      await api.stop();
+    }
+  });
 });
+
+function nextWebSocketMessage(websocket: Ws.WebSocket): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    websocket.once("message", (data) => {
+      resolve(
+        Buffer.isBuffer(data)
+          ? data
+          : Array.isArray(data)
+            ? Buffer.concat(data)
+            : Buffer.from(data),
+      );
+    });
+    websocket.once("error", reject);
+  });
+}
 
 async function jsonRequest<T>(
   base: string,

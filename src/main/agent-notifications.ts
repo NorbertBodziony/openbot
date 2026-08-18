@@ -1,4 +1,4 @@
-import type { AgentEvent, BotSummary } from "../shared/ipc";
+import type { AgentEvent, BotSummary } from "@openbot/contracts/ipc";
 
 export interface AgentNotificationContent {
   title: string;

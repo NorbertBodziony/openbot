@@ -1,5 +1,5 @@
+import type { AgentProviderId, AgentProviderState } from "@openbot/contracts/ipc";
 import { createEffect, For, Show } from "solid-js";
-import type { AgentProviderId, AgentProviderState } from "../../../shared/ipc";
 
 export interface ProviderPickerOption {
   id: AgentProviderId;

@@ -1,12 +1,12 @@
-import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentEvent,
   AttachmentImportEvent,
   BotSummary,
   ConversationSnapshot,
   UpdateStatus,
-} from "../../shared/ipc";
+} from "@openbot/contracts/ipc";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
@@ -305,9 +305,11 @@ describe("OpenBot connected desktop shell", () => {
             vncHostname: null,
             apiOnline: false,
             vncOnline: false,
+            remoteDesktopCredentialConfigured: false,
             message: null,
           }),
           configure: vi.fn().mockResolvedValue(undefined),
+          configureRemoteDesktop: vi.fn().mockResolvedValue(undefined),
           start: vi.fn().mockResolvedValue(undefined),
           stop: vi.fn().mockResolvedValue(undefined),
           listMembers: vi.fn().mockResolvedValue([]),
@@ -318,6 +320,7 @@ describe("OpenBot connected desktop shell", () => {
           list: vi.fn().mockResolvedValue([]),
           connect: vi.fn().mockResolvedValue(undefined),
           disconnect: vi.fn().mockResolvedValue(undefined),
+          getCredentials: vi.fn().mockResolvedValue(null),
           onEvent: vi.fn(() => () => undefined),
         },
       },
@@ -372,6 +375,46 @@ describe("OpenBot connected desktop shell", () => {
     );
     await waitFor(() =>
       expect(window.openbot.saveSetup).toHaveBeenCalledWith({ preferredProvider: "codex" }),
+    );
+  });
+
+  it("opens the shared remote desktop inside the active remote host", async () => {
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
+      {
+        id: "remote-1",
+        name: "Studio Mac",
+        kind: "remote",
+        state: "online",
+        apiUrl: "https://h-example.openbot.run",
+        vncHostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+        role: "owner",
+        active: true,
+      },
+    ]);
+    vi.mocked(window.openbot.remoteMac.connect).mockResolvedValueOnce({
+      id: "desktop-1",
+      serverId: "remote-1",
+      hostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+      localPort: 5901,
+      websocketUrl: null,
+      phase: "starting_tunnel",
+      errorCode: null,
+      message: "Starting the secure tunnel…",
+      createdAt: "2026-08-18T12:00:00.000Z",
+    });
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "Open remote desktop" }));
+
+    expect(screen.getByRole("complementary", { name: "Remote desktop" })).toBeInTheDocument();
+    expect(screen.getByText("Shared by all agents on this host")).toBeInTheDocument();
+    expect(screen.getByText("Studio Mac")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.openbot.remoteMac.connect).toHaveBeenCalledWith({
+        hostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+        serverId: "remote-1",
+      }),
     );
   });
 

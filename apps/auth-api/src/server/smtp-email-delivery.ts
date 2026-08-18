@@ -1,3 +1,6 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { isValidHostname as isSharedValidHostname } from "@openbot/contracts/validation";
+
 export interface SmtpEmailConfig {
   host: string;
   port: number;
@@ -77,7 +80,7 @@ export function sendPrivateTeamInvite(
   validateEmail(message.inviterEmail, "inviter");
   if (
     !message.serverName.trim() ||
-    message.serverName.length > 64 ||
+    message.serverName.length > INPUT_LIMITS.serverName ||
     hasHeaderBreak(message.serverName)
   ) {
     throw new Error("smtp_invalid_server_name");
@@ -281,19 +284,13 @@ function validateConfig(config: SmtpEmailConfig): void {
 }
 
 function validateEmail(value: string, field: string): void {
-  if (value.length > 254 || hasHeaderBreak(value) || !EMAIL_PATTERN.test(value)) {
+  if (value.length > INPUT_LIMITS.email || hasHeaderBreak(value) || !EMAIL_PATTERN.test(value)) {
     throw new Error(`smtp_invalid_${field}`);
   }
 }
 
 function isValidHostname(value: string): boolean {
-  if (value.length > 253 || hasHeaderBreak(value)) return false;
-  return value
-    .split(".")
-    .every(
-      (label) =>
-        label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/iu.test(label),
-    );
+  return !hasHeaderBreak(value) && isSharedValidHostname(value, false);
 }
 
 function hasHeaderBreak(value: string): boolean {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { BotSummary, ConversationMessage } from "@openbot/contracts/ipc";
 import type { AgentClient, AgentProvider } from "../src/backend/agent-client";
 import { CodexAppServerClient } from "../src/backend/app-server-client";
 import { ClaudeAgentClient } from "../src/backend/claude-client";
@@ -13,7 +14,6 @@ import {
   type ThreadResponse,
   type TurnResponse,
 } from "../src/backend/protocol";
-import type { BotSummary, ConversationMessage } from "../src/shared/ipc";
 
 const EXPECTED = "OPENBOT_SQLITE_SMOKE_OK";
 const root = await mkdtemp(join(tmpdir(), "openbot-provider-storage-smoke-"));

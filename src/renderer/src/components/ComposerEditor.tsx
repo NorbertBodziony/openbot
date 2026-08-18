@@ -1,6 +1,6 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { Portal } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { INPUT_LIMITS } from "../../../shared/input-limits";
 import { buildAnimatedAvatarSvg } from "../blobatar";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";

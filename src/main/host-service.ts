@@ -1,11 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import type { AgentService } from "../backend/agent-service";
-import type { BrowserHost } from "../backend/browser-host";
-import type { MailboxStore } from "../backend/mailbox-store";
 import type {
   CentralAuthUser,
   ConfigureHostInput,
+  ConfigureRemoteDesktopInput,
   CreateTeamInviteInput,
   HostStatus,
   InviteSummary,
@@ -13,7 +11,10 @@ import type {
   TeamMemberSummary,
   TeamSessionSummary,
   UpdateTeamMemberInput,
-} from "../shared/ipc";
+} from "@openbot/contracts/ipc";
+import type { AgentService } from "../backend/agent-service";
+import type { BrowserHost } from "../backend/browser-host";
+import type { MailboxStore } from "../backend/mailbox-store";
 import type { ProvisionedTeamTunnel } from "./central-auth-manager";
 import {
   appendDiagnosticLog,
@@ -46,6 +47,8 @@ interface HostServiceOptions {
     inviteUrl: string;
     role: "admin" | "member";
   }) => Promise<void>;
+  getRemoteDesktopPassword: () => string | null;
+  setRemoteDesktopPassword: (password: string) => Promise<void>;
   provisionTeamTunnel: (input: {
     serverId: string;
     serverName: string;
@@ -93,6 +96,7 @@ export class HostService extends EventEmitter<HostEvents> {
       vncHostname: null,
       apiOnline: false,
       vncOnline: false,
+      remoteDesktopCredentialConfigured: options.getRemoteDesktopPassword() !== null,
       message: null,
     };
     this.#api = new TeamApiServer({
@@ -104,6 +108,7 @@ export class HostService extends EventEmitter<HostEvents> {
         hostname: this.#status.vncHostname,
         online: this.#status.vncOnline,
       }),
+      getRemoteDesktopPassword: options.getRemoteDesktopPassword,
       redeemCentralTicket: options.redeemCentralTicket,
     });
   }
@@ -144,6 +149,20 @@ export class HostService extends EventEmitter<HostEvents> {
     return this.getStatus();
   }
 
+  async configureRemoteDesktop(input: ConfigureRemoteDesktopInput): Promise<HostStatus> {
+    this.#options.store.assertOwnerAccount(this.#options.getSignedInUser());
+    await this.#options.setRemoteDesktopPassword(input.password);
+    const vncOnline = this.#status.apiOnline ? await probeRfbHandshake(5900, 2_000) : false;
+    this.#setStatus({
+      remoteDesktopCredentialConfigured: true,
+      vncOnline,
+      message: vncOnline
+        ? "Remote Desktop access is ready for all team members."
+        : "Password saved. Enable macOS Screen Sharing and use the same VNC password.",
+    });
+    return this.getStatus();
+  }
+
   async start(): Promise<HostStatus> {
     if (!this.#options.store.configured) throw new Error("Configure the team server first.");
     if (this.#status.phase === "online" || this.#status.phase === "starting") {
@@ -163,7 +182,8 @@ export class HostService extends EventEmitter<HostEvents> {
 
     try {
       const apiPort = await this.#api.start();
-      const vncReady = await probeRfbHandshake(5900, 2_000);
+      const screenSharingReady = await probeRfbHandshake(5900, 2_000);
+      const vncReady = screenSharingReady && this.#options.getRemoteDesktopPassword() !== null;
       this.#setStatus({ message: "Provisioning a stable openbot.run address…" });
       const identity = this.#options.store.getIdentity();
       if (!identity) throw new Error("Configure the team server first.");
@@ -171,7 +191,7 @@ export class HostService extends EventEmitter<HostEvents> {
         serverId: identity.serverId,
         serverName: identity.serverName,
         apiPort,
-        vncEnabled: vncReady,
+        vncEnabled: false,
       });
       const tunnel = this.#spawnTunnel(executable, provisioned.token);
       this.#tunnel = tunnel;
@@ -180,7 +200,7 @@ export class HostService extends EventEmitter<HostEvents> {
       }
       this.#setStatus({
         apiUrl: provisioned.apiUrl,
-        vncHostname: vncReady ? provisioned.vncHostname : null,
+        vncHostname: provisioned.vncHostname,
         message: "Publishing the secure host address…",
       });
       if (!(await waitForPublicApi(provisioned.apiUrl, this.#options.publicReadyTimeoutMs))) {
@@ -190,8 +210,10 @@ export class HostService extends EventEmitter<HostEvents> {
         apiOnline: true,
         vncOnline: vncReady,
         message: vncReady
-          ? "The team server and Remote Mac are online."
-          : "The team server is online. Enable macOS Screen Sharing to use Remote Mac.",
+          ? "The team server and Remote Desktop are online."
+          : !screenSharingReady
+            ? "The team server is online. Enable macOS Screen Sharing to use Remote Desktop."
+            : "The team server is online. Add the dedicated VNC password to enable Remote Desktop.",
       });
       await this.#options.store.setEnabledOnLaunch(true);
       this.#setStatus({ phase: "online", enabledOnLaunch: true });

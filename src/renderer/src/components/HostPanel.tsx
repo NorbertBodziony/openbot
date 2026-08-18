@@ -1,5 +1,4 @@
-import { createSignal, For, Show } from "solid-js";
-import { INPUT_LIMITS } from "../../../shared/input-limits";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   HostStatus,
   InviteSummary,
@@ -8,7 +7,8 @@ import type {
   TeamRole,
   TeamSessionSummary,
   UpdateTeamMemberInput,
-} from "../../../shared/ipc";
+} from "@openbot/contracts/ipc";
+import { createSignal, For, Show } from "solid-js";
 
 interface HostPanelProps {
   status: HostStatus;
@@ -18,6 +18,7 @@ interface HostPanelProps {
   accountEmail: string;
   onClose: () => void;
   onConfigure: (input: { serverName: string }) => Promise<void>;
+  onConfigureRemoteDesktop: (password: string) => Promise<void>;
   onStart: () => Promise<void>;
   onStop: () => Promise<void>;
   onCreateInvite: (input: {
@@ -38,6 +39,7 @@ export function HostPanel(props: HostPanelProps) {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [invite, setInvite] = createSignal<InviteSummary | null>(null);
+  const [remoteDesktopPassword, setRemoteDesktopPassword] = createSignal("");
 
   async function run(action: () => Promise<void>) {
     if (busy()) return;
@@ -167,6 +169,61 @@ export function HostPanel(props: HostPanelProps) {
               Copy address update
             </button>
           </div>
+          <section class="remote-desktop-access-card" aria-labelledby="desktop-access-title">
+            <div class="remote-section-heading">
+              <div>
+                <h3 id="desktop-access-title">Remote desktop access</h3>
+                <p>Team membership gives access. Members do not enter a second password.</p>
+              </div>
+              <span
+                class={[
+                  "remote-desktop-access-state",
+                  { ready: props.status.remoteDesktopCredentialConfigured },
+                ]}
+              >
+                {props.status.remoteDesktopCredentialConfigured ? "Managed" : "Setup needed"}
+              </span>
+            </div>
+            <div class="remote-desktop-access-instructions">
+              <span>On this Mac</span>
+              <p>
+                In System Settings, open General → Sharing → Screen Sharing. Enable “VNC viewers may
+                control screen with password” and enter the same dedicated password below.
+              </p>
+            </div>
+            <label class="remote-field remote-desktop-password-field">
+              <span>Dedicated VNC password</span>
+              <input
+                type="password"
+                autocomplete="new-password"
+                minlength={1}
+                maxlength={INPUT_LIMITS.remoteDesktopPassword}
+                value={remoteDesktopPassword()}
+                placeholder={
+                  props.status.remoteDesktopCredentialConfigured
+                    ? "Enter a new password to replace it"
+                    : "1–8 characters"
+                }
+                onInput={(event) => setRemoteDesktopPassword(event.currentTarget.value)}
+              />
+              <small>Do not use your macOS account password.</small>
+            </label>
+            <button
+              type="button"
+              class="remote-secondary-button remote-desktop-password-save"
+              disabled={busy() || !remoteDesktopPassword()}
+              onClick={() =>
+                void run(async () => {
+                  await props.onConfigureRemoteDesktop(remoteDesktopPassword());
+                  setRemoteDesktopPassword("");
+                })
+              }
+            >
+              {props.status.remoteDesktopCredentialConfigured
+                ? "Replace password"
+                : "Save password"}
+            </button>
+          </section>
           <section class="remote-invite-composer" aria-labelledby="invite-team-title">
             <div class="remote-section-heading">
               <div>

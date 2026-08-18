@@ -22,6 +22,7 @@
     "test": "vitest run --config vitest.config.ts"
   },
   "dependencies": {
+    "@openbot/contracts": "workspace:*",
     "@solidjs/signals": "2.0.0-rc.0",
     "@solidjs/web": "2.0.0-rc.0",
     "@tanstack/solid-router": "2.0.0-rc.0",

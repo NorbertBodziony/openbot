@@ -1,6 +1,7 @@
 import { randomBytes, verify } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { readFile, rename, writeFile } from "node:fs/promises";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AgentEvent,
   DraftAttachment,
@@ -8,7 +9,7 @@ import type {
   LoginServerInput,
   ServerSummary,
   TeamRole,
-} from "../shared/ipc";
+} from "@openbot/contracts/ipc";
 import { addressUpdatePayload, fingerprint } from "./team-store";
 
 interface StoredRemoteServer {
@@ -42,6 +43,12 @@ interface TokenCipher {
 interface CentralAccountSession {
   createTeamAuthTicket: (serverId: string) => Promise<string>;
   getEmail: () => string;
+}
+
+export interface RemoteDesktopAccess {
+  url: string;
+  protocols: string[];
+  password: string;
 }
 
 export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
@@ -219,6 +226,35 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return addRemotePreviewUrls(value, server.id);
   }
 
+  async getRemoteDesktopAccess(serverId: string): Promise<RemoteDesktopAccess> {
+    const server = this.#requireServer(serverId);
+    const token = this.#token(server);
+    const access = await requestJson<{ configured: boolean; password: string | null }>(
+      server.apiUrl,
+      "/v1/host/remote-desktop-access",
+      { token },
+    );
+    if (!access.configured || !access.password) {
+      throw new Error("The host owner must configure Remote Desktop access.");
+    }
+    if (
+      access.password.length > INPUT_LIMITS.remoteDesktopPassword ||
+      [...access.password].some((character) => {
+        const code = character.codePointAt(0) ?? 0;
+        return code < 32 || code === 127;
+      })
+    ) {
+      throw new Error("The host returned invalid Remote Desktop credentials.");
+    }
+    const url = new URL("/v1/remote-desktop", server.apiUrl);
+    url.protocol = "wss:";
+    return {
+      url: url.toString(),
+      protocols: ["openbot-desktop", `openbot-token.${token}`],
+      password: access.password,
+    };
+  }
+
   async uploadAttachment(
     name: string,
     mimeType: string,
@@ -303,12 +339,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async #refreshVnc(server: StoredRemoteServer): Promise<void> {
-    const remote = await requestJson<{ hostname: string | null }>(
+    const remote = await requestJson<{ hostname: string | null; online: boolean }>(
       server.apiUrl,
       "/v1/host/remote-mac",
       { token: this.#token(server) },
     );
-    server.vncHostname = remote.hostname;
+    server.vncHostname = remote.online ? remote.hostname : null;
   }
 
   async #connectEvents(serverId: string): Promise<void> {

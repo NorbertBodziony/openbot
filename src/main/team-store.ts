@@ -9,14 +9,15 @@ import {
 } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import { INPUT_LIMITS } from "../shared/input-limits";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   CentralAuthUser,
   TeamInviteSummary,
   TeamMemberSummary,
   TeamRole,
   TeamSessionSummary,
-} from "../shared/ipc";
+} from "@openbot/contracts/ipc";
+import { normalizeEmailAddress } from "@openbot/contracts/validation";
 
 const scrypt = promisify(scryptCallback);
 const INVITE_TTL_MS = 24 * 60 * 60 * 1_000;
@@ -557,26 +558,8 @@ function publicMember(member: StoredMember): TeamMemberSummary {
 }
 
 function normalizeEmail(value: string): string {
-  const normalized = value.trim().toLowerCase();
-  const [local, domain, extra] = normalized.split("@");
-  if (
-    normalized.length > 254 ||
-    extra !== undefined ||
-    !local ||
-    local.length > 64 ||
-    !domain?.includes(".") ||
-    !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/u.test(local) ||
-    !domain
-      .split(".")
-      .every(
-        (label) =>
-          label.length > 0 &&
-          label.length <= 63 &&
-          /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label),
-      )
-  ) {
-    throw new Error("Enter a valid email address.");
-  }
+  const normalized = normalizeEmailAddress(value);
+  if (!normalized) throw new Error("Enter a valid email address.");
   return normalized;
 }
 

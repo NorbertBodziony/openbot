@@ -8,6 +8,8 @@
         "@anthropic-ai/claude-agent-sdk": "0.3.232",
         "@anthropic-ai/sdk": "0.116.0",
         "@modelcontextprotocol/sdk": "1.30.0",
+        "@novnc/novnc": "1.7.0",
+        "@openbot/contracts": "workspace:*",
         "@solidjs/web": "2.0.0-rc.0",
         "blobatar": "0.2.0",
         "electron-updater": "6.8.9",
@@ -24,6 +26,7 @@
         "@tailwindcss/vite": "4.3.3",
         "@testing-library/jest-dom": "7.0.1",
         "@types/node": "22.20.1",
+        "@types/novnc__novnc": "1.6.0",
         "@types/ws": "8.18.1",
         "electron": "43.4.0",
         "electron-builder": "26.15.3",
@@ -39,6 +42,7 @@
       "name": "@openbot/auth-api",
       "version": "0.0.0",
       "dependencies": {
+        "@openbot/contracts": "workspace:*",
         "@solidjs/signals": "2.0.0-rc.0",
         "@solidjs/web": "2.0.0-rc.0",
         "@tanstack/solid-router": "2.0.0-rc.0",
@@ -54,6 +58,14 @@
         "vite": "7.3.6",
         "vitest": "4.1.10",
         "wrangler": "4.123.0",
+      },
+    },
+    "packages/contracts": {
+      "name": "@openbot/contracts",
+      "version": "0.0.0",
+      "devDependencies": {
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
       },
     },
   },
@@ -360,6 +372,8 @@
 
     "@nothing-but/utils": ["@nothing-but/utils@0.17.0", "", {}, "sha512-TuCHcHLOqDL0SnaAxACfuRHBNRgNJcNn9X0GiH5H3YSDBVquCr3qEIG3FOQAuMyZCbu9w8nk2CHhOsn7IvhIwQ=="],
 
+    "@novnc/novnc": ["@novnc/novnc@1.7.0", "", {}, "sha512-ucEJOx4T2avIRCleodk7YobZj5O2Ga2AeLfQ69A/yjG9HHba2+PDgwSkN3FttrmG+70ZGx21sElNFouK13RzyA=="],
+
     "@oozcitak/dom": ["@oozcitak/dom@2.0.2", "", { "dependencies": { "@oozcitak/infra": "^2.0.2", "@oozcitak/url": "^3.0.0", "@oozcitak/util": "^10.0.0" } }, "sha512-GjpKhkSYC3Mj4+lfwEyI1dqnsKTgwGy48ytZEhm4A/xnH/8z9M3ZVXKr/YGQi3uCLs1AEBS+x5T2JPiueEDW8w=="],
 
     "@oozcitak/infra": ["@oozcitak/infra@2.0.2", "", { "dependencies": { "@oozcitak/util": "^10.0.0" } }, "sha512-2g+E7hoE2dgCz/APPOEK5s3rMhJvNxSMBrP+U+j1OWsIbtSpWxxlUjq1lU8RIsFJNYv7NMlnVsCuHcUzJW+8vA=="],
@@ -369,6 +383,8 @@
     "@oozcitak/util": ["@oozcitak/util@10.0.0", "", {}, "sha512-hAX0pT/73190NLqBPPWSdBVGtbY6VOhWYK3qqHqtXQ1gK7kS2yz4+ivsN07hpJ6I3aeMtKP6J6npsEKOAzuTLA=="],
 
     "@openbot/auth-api": ["@openbot/auth-api@workspace:apps/auth-api"],
+
+    "@openbot/contracts": ["@openbot/contracts@workspace:packages/contracts"],
 
     "@peculiar/asn1-schema": ["@peculiar/asn1-schema@2.8.0", "", { "dependencies": { "@peculiar/utils": "^2.0.2", "asn1js": "^3.0.10", "tslib": "^2.8.1" } }, "sha512-7YT0U/ze0tF2QOBbE15gKZwy5tvgGyLRiRHLzhlbOpf7BT032oBSd0haZqXn5W6l26WLlu3dyxzjM+2638/z2Q=="],
 
@@ -577,6 +593,8 @@
     "@types/ms": ["@types/ms@2.1.0", "", {}, "sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA=="],
 
     "@types/node": ["@types/node@22.20.1", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q=="],
+
+    "@types/novnc__novnc": ["@types/novnc__novnc@1.6.0", "", {}, "sha512-kIH/PQACbf9qj6whiSXRKECpyzgs6IFNVsW4wohyqQUZfQHdLhuGRMLi9XEhBiISSh0lKCSbBa7kScuPu9Gk+Q=="],
 
     "@types/responselike": ["@types/responselike@1.0.3", "", { "dependencies": { "@types/node": "*" } }, "sha512-H/+L+UkTV33uf49PH5pCAUBVPNj2nDBXTN+qS1dOwyyg24l3CcicicCA7ca+HMvJBZcFgl5r8e+RR6elsb4Lyw=="],
 

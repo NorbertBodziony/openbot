@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import type { AgentService } from "../src/backend/agent-service";
 import type { BrowserHost } from "../src/backend/browser-host";
 import type { MailboxStore } from "../src/backend/mailbox-store";
@@ -12,7 +13,6 @@ import { resolveCloudflaredExecutable, stopOwnedProcess } from "../src/main/remo
 import { RemoteServerManager } from "../src/main/remote-server-manager";
 import { TeamApiServer } from "../src/main/team-api-server";
 import { TeamStore } from "../src/main/team-store";
-import type { CentralAuthUser } from "../src/shared/ipc";
 
 const AUTH_API_URL = process.env.OPENBOT_AUTH_API_URL ?? "http://127.0.0.1:3100";
 const REQUEST_TIMEOUT_MS = 15_000;

@@ -1,3 +1,4 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { createFileRoute } from "@tanstack/solid-router";
 import { normalizeEmail } from "../../../server/auth-service";
 import { readJsonObject } from "../../../server/json-body";
@@ -32,7 +33,7 @@ export const Route = createFileRoute("/v1/team-invitations/email")({
           const email = normalizeEmail(body.email);
           if (
             body.serverName.trim().length < 2 ||
-            body.serverName.trim().length > 64 ||
+            body.serverName.trim().length > INPUT_LIMITS.serverName ||
             /[\r\n]/u.test(body.serverName) ||
             !isValidInviteUrl(body.inviteUrl)
           ) {

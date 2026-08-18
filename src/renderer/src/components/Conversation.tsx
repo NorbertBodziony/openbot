@@ -1,14 +1,4 @@
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  onCleanup,
-  onSettled,
-  Show,
-  untrack,
-} from "solid-js";
-import { INPUT_LIMITS } from "../../../shared/input-limits";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AgentEvent,
   AgentModelId,
@@ -23,16 +13,50 @@ import type {
   DraftAttachment,
   MessageReaction,
   QueueSnapshot,
+  RemoteMacSession,
+  ServerSummary,
   UpdateBotInput,
-} from "../../../shared/ipc";
-import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "../../../shared/ipc";
+} from "@openbot/contracts/ipc";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  onCleanup,
+  onSettled,
+  Show,
+  untrack,
+} from "solid-js";
 import { AVATAR_HUE_OPTIONS, avatarCandidateSeeds, avatarHueSwatch } from "../blobatar";
 import type { BotMessage, BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
 import { ChoiceCard, PromptCard } from "./ConversationPrompts";
+import { AgentActivityIndicator, ThinkingDisclosure } from "./conversation/AgentActivity";
+import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
+import {
+  BackIcon,
+  BrowserBackIcon,
+  BrowserControlIcon,
+  BrowserForwardIcon,
+  BrowserReloadIcon,
+  CloseIcon,
+  ComputerIcon,
+  FileIcon,
+  PlusIcon,
+  RemoteDesktopIcon,
+  StopIcon,
+} from "./conversation/ConversationIcons";
+import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./PanelResizer";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import {
+  REMOTE_DESKTOP_PANEL_DEFAULT,
+  REMOTE_DESKTOP_PANEL_MAX,
+  REMOTE_DESKTOP_PANEL_MIN,
+  REMOTE_DESKTOP_PANEL_STORAGE_KEY,
+  RemoteMacPanel,
+} from "./RemoteMacPanel";
 import { SidebarToggleIcon } from "./Sidebar";
 
 interface ConversationProps {
@@ -51,6 +75,9 @@ interface ConversationProps {
   browserTabs: BrowserTab[];
   activeBrowserTabId: string | null;
   browserControlState: BrowserControlState;
+  server: ServerSummary | undefined;
+  remoteMacSession: RemoteMacSession | undefined;
+  remoteDesktopRequest: number;
   leftSidebarCollapsed: boolean;
   prompt: Extract<AgentEvent, { type: "prompt" }> | undefined;
   onCloseAgentPicker: () => void;
@@ -72,6 +99,8 @@ interface ConversationProps {
   onResumeQueue: () => void;
   onActivateBrowserTab: (tabId: string) => void;
   onCloseBrowserTab: (tabId: string) => void;
+  onConnectRemoteMac: (hostname: string, serverId: string | null) => Promise<void>;
+  onDisconnectRemoteMac: (sessionId: string) => Promise<void>;
   onToggleLeftSidebar: () => void;
   onOpenAgentSetup: () => Promise<void>;
   onStop: () => void;
@@ -90,7 +119,7 @@ interface MediaPreview {
   error: string | null;
 }
 
-type RightPanelMode = "none" | "browser" | "settings";
+type RightPanelMode = "none" | "browser" | "desktop" | "settings";
 
 const EMPTY_DRAFT: ComposerDraft = { text: "", attachments: [], replyToMessageId: null };
 const ONBOARDING_CHOICES = [
@@ -123,659 +152,6 @@ const BROWSER_ACTION_LABELS: Record<BrowserControlAction, string> = {
   screenshot: "Taking a screenshot…",
   "close-tab": "Closing a tab…",
 };
-
-function CloseIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="size-[14px] fill-none stroke-current">
-      <path d="m5 5 10 10M15 5 5 15" stroke-width="1.4" stroke-linecap="round" />
-    </svg>
-  );
-}
-
-function StopIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="size-[14px] fill-current">
-      <rect x="6" y="6" width="8" height="8" rx="1.5" />
-    </svg>
-  );
-}
-
-function BackIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="settings-back-icon fill-none stroke-current">
-      <path d="m12.5 4-6 6 6 6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="size-[14px] fill-none stroke-current">
-      <path d="M10 4v12M4 10h12" stroke-width="1.3" stroke-linecap="round" />
-    </svg>
-  );
-}
-
-function LinkIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16" class="message-link-fallback">
-      <path
-        d="M6.6 9.4 9.4 6.6M5.2 10.8l-1 .9a2.2 2.2 0 0 1-3.1-3.1l2.1-2.1a2.2 2.2 0 0 1 3.1 0M10.8 5.2l1-.9a2.2 2.2 0 1 1 3.1 3.1l-2.1 2.1a2.2 2.2 0 0 1-3.1 0"
-        fill="none"
-        stroke="currentColor"
-        stroke-linecap="round"
-        stroke-width="1.3"
-      />
-    </svg>
-  );
-}
-
-function FileIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="file-icon fill-none stroke-current">
-      <path d="M5 2.5h6l4 4V17.5H5z" stroke-width="1.2" stroke-linejoin="round" />
-      <path d="M11 2.5v4h4M7.5 11h5M7.5 14h5" stroke-width="1.2" stroke-linecap="round" />
-    </svg>
-  );
-}
-
-function ReactionIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20">
-      <circle cx="10" cy="10" r="7.25" />
-      <path d="M7.25 8h.01M12.75 8h.01M6.9 11.5c.85 1.25 1.88 1.85 3.1 1.85s2.25-.6 3.1-1.85" />
-    </svg>
-  );
-}
-
-function ReplyIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20">
-      <path d="m8.25 5-4.5 4.1 4.5 4.1V10c4.1 0 6.45 1.35 8 4.35-.25-5.2-2.9-7.65-8-7.65z" />
-    </svg>
-  );
-}
-
-function MoreIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20">
-      <circle cx="5" cy="10" r="1" />
-      <circle cx="10" cy="10" r="1" />
-      <circle cx="15" cy="10" r="1" />
-    </svg>
-  );
-}
-
-function CopyIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20">
-      <rect x="6.5" y="6.5" width="9" height="9" rx="1.5" />
-      <path d="M13 6.5V5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v6.5A1.5 1.5 0 0 0 5 13h1.5" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20">
-      <path d="m4.5 10.5 3.25 3.25L15.5 6" />
-    </svg>
-  );
-}
-
-function ComputerIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="size-[14px] fill-none stroke-current">
-      <rect x="2.5" y="3" width="15" height="10" rx="1.5" stroke-width="1.3" />
-      <path d="M7 17h6M10 13v4" stroke-width="1.3" stroke-linecap="round" />
-    </svg>
-  );
-}
-
-function BrowserControlIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16" class="browser-tab-control-icon">
-      <path d="M3.25 2.5 11 8.2 7.55 9.3l-1.5 3.45z" />
-      <circle cx="11.75" cy="3.75" r="1.45" />
-    </svg>
-  );
-}
-
-function BrowserBackIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      class="browser-toolbar-icon fill-none stroke-current"
-    >
-      <path d="m12 4-6 6 6 6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
-    </svg>
-  );
-}
-
-function BrowserForwardIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      class="browser-toolbar-icon fill-none stroke-current"
-    >
-      <path d="m8 4 6 6-6 6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
-    </svg>
-  );
-}
-
-function BrowserReloadIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      class="browser-toolbar-icon fill-none stroke-current"
-    >
-      <path d="M15.5 7.5A6 6 0 1 0 16 11" stroke-width="1.3" stroke-linecap="round" />
-      <path d="M15.5 4.5v3h-3" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-    </svg>
-  );
-}
-
-function AttachmentCards(props: {
-  attachments: AttachmentSummary[];
-  onPreview: (attachment: AttachmentSummary) => void;
-  onAction: (attachment: AttachmentSummary, action: "open" | "reveal") => void;
-}) {
-  return (
-    <div class="message-attachments">
-      <For each={props.attachments}>
-        {(attachment) => (
-          <div class="message-attachment">
-            <button
-              type="button"
-              class="attachment-preview-button"
-              disabled={attachment.previewKind === "none"}
-              aria-label={`Preview ${attachment.name}`}
-              onClick={() => props.onPreview(attachment)}
-            >
-              <Show
-                when={attachment.previewKind === "image"}
-                fallback={<span class="file-type-badge">{fileBadge(attachment)}</span>}
-              >
-                <img src={attachment.previewUrl ?? ""} alt="" />
-              </Show>
-              <span>
-                <strong>{attachment.name}</strong>
-                <small>{formatFileSize(attachment.size)}</small>
-              </span>
-            </button>
-            <div class="attachment-actions">
-              <button type="button" onClick={() => props.onAction(attachment, "open")}>
-                Open
-              </button>
-              <button type="button" onClick={() => props.onAction(attachment, "reveal")}>
-                Finder
-              </button>
-            </div>
-          </div>
-        )}
-      </For>
-    </div>
-  );
-}
-
-function ExchangeAgentAvatar(props: { bot: BotProfile | undefined }) {
-  return <AgentAvatar bot={props.bot} class="exchange-agent-avatar" />;
-}
-
-function ExchangeSystemRow(props: {
-  message: BotMessage;
-  bots: BotProfile[];
-  onSelectAgent: (botId: string) => void;
-}) {
-  const [agentsOpen, setAgentsOpen] = createSignal(false);
-  const exchange = () => props.message.exchange;
-  const recipients = () => exchange()?.recipientBotIds ?? [];
-  const sender = () => {
-    const senderId = exchange()?.senderBotId;
-    return props.bots.find((bot) => bot.id === senderId);
-  };
-  const singleRecipient = () => {
-    const recipientId = recipients()[0];
-    return recipientId ? props.bots.find((bot) => bot.id === recipientId) : undefined;
-  };
-  const agentCountLabel = () => `${recipients().length} agents`;
-
-  return (
-    <div class="exchange-system-row">
-      <Show
-        when={exchange()?.direction === "outgoing"}
-        fallback={
-          <>
-            <span class="exchange-system-label">Message from</span>
-            <button
-              type="button"
-              class="exchange-agent-trigger exchange-agent-trigger-incoming"
-              aria-label={`Open exchange with ${sender()?.name ?? exchange()?.senderBotId ?? "agent"}`}
-              onClick={() => {
-                const senderId = exchange()?.senderBotId;
-                if (senderId) props.onSelectAgent(senderId);
-              }}
-            >
-              <ExchangeAgentAvatar bot={sender()} />
-              <span>{sender()?.name ?? exchange()?.senderBotId ?? "Agent"}</span>
-            </button>
-          </>
-        }
-      >
-        <span class="exchange-system-label">Messaged</span>
-        <Show
-          when={recipients().length === 1}
-          fallback={
-            <div class="exchange-agent-picker">
-              <button
-                type="button"
-                class="exchange-agent-trigger exchange-agent-trigger-outgoing"
-                aria-haspopup="menu"
-                aria-expanded={agentsOpen() ? "true" : "false"}
-                aria-label={`${agentCountLabel()}, show list`}
-                onClick={() => setAgentsOpen((open) => !open)}
-              >
-                <span class="exchange-avatar-stack" aria-hidden="true">
-                  <For each={recipients().slice(0, 3)}>
-                    {(recipientId) => (
-                      <ExchangeAgentAvatar bot={props.bots.find((bot) => bot.id === recipientId)} />
-                    )}
-                  </For>
-                </span>
-                <span>{agentCountLabel()}</span>
-              </button>
-              <Show when={agentsOpen()}>
-                <div class="exchange-agent-menu" role="menu">
-                  <For each={recipients()}>
-                    {(recipientId) => {
-                      const recipient = () => props.bots.find((bot) => bot.id === recipientId);
-                      return (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          class="exchange-agent-menu-item"
-                          onClick={() => {
-                            setAgentsOpen(false);
-                            props.onSelectAgent(recipientId);
-                          }}
-                        >
-                          <ExchangeAgentAvatar bot={recipient()} />
-                          <span>{recipient()?.name ?? recipientId}</span>
-                        </button>
-                      );
-                    }}
-                  </For>
-                </div>
-              </Show>
-            </div>
-          }
-        >
-          <button
-            type="button"
-            class="exchange-agent-trigger exchange-agent-trigger-single"
-            aria-label={`Open exchange with ${singleRecipient()?.name ?? recipients()[0] ?? "agent"}`}
-            title={singleRecipient()?.name ?? recipients()[0] ?? "Agent"}
-            onClick={() => {
-              const recipientId = recipients()[0];
-              if (recipientId) props.onSelectAgent(recipientId);
-            }}
-          >
-            <ExchangeAgentAvatar bot={singleRecipient()} />
-            <span>{singleRecipient()?.name ?? recipients()[0] ?? "Agent"}</span>
-          </button>
-        </Show>
-      </Show>
-      <time datetime={props.message.time}>{props.message.time}</time>
-    </div>
-  );
-}
-
-function MessageBody(props: {
-  message: BotMessage;
-  referencedMessage?: BotMessage;
-  bots: BotProfile[];
-  onSelectAgent: (botId: string) => void;
-  onOpenLink: (url: string) => void;
-  onPreview: (attachment: AttachmentSummary) => void;
-  onAttachmentAction: (attachment: AttachmentSummary, action: "open" | "reveal") => void;
-}) {
-  return (
-    <>
-      <Show when={props.referencedMessage}>
-        {(referenced) => (
-          <div class="message-reply-context">
-            <span>{referenced().author === "you" ? "You" : "Agent"}</span>
-            <p>{referenced().body || "Attachment"}</p>
-          </div>
-        )}
-      </Show>
-      <Show when={props.message.body}>
-        <p class="message-copy">
-          <RichMessageText
-            body={props.message.body}
-            bots={props.bots}
-            onSelectAgent={props.onSelectAgent}
-            onOpenLink={props.onOpenLink}
-          />
-        </p>
-      </Show>
-      <Show when={props.message.status}>
-        <div class="message-status">
-          <span />
-          {props.message.status}
-        </div>
-      </Show>
-      <Show when={props.message.attachments?.length}>
-        <AttachmentCards
-          attachments={props.message.attachments ?? []}
-          onPreview={props.onPreview}
-          onAction={props.onAttachmentAction}
-        />
-      </Show>
-    </>
-  );
-}
-
-function MessageActions(props: {
-  message: BotMessage;
-  pickerOpen: boolean;
-  moreOpen: boolean;
-  expandedEmoji: boolean;
-  copied: boolean;
-  onTogglePicker: () => void;
-  onToggleMore: () => void;
-  onExpandEmoji: () => void;
-  onReact: (emoji: MessageReaction | null) => void;
-  onReply: () => void;
-  onCopy: () => void;
-}) {
-  return (
-    <div
-      class={["message-actions", { "message-actions-open": props.pickerOpen || props.moreOpen }]}
-      role="toolbar"
-      aria-label={`${props.message.author === "you" ? "User" : "Agent"} message actions`}
-    >
-      <div class="message-action-popover-anchor">
-        <button
-          type="button"
-          class="message-action-button"
-          aria-label="Add reaction"
-          aria-expanded={props.pickerOpen ? "true" : "false"}
-          onClick={props.onTogglePicker}
-        >
-          <ReactionIcon />
-        </button>
-        <Show when={props.pickerOpen}>
-          <div class="reaction-picker" role="menu" aria-label="Choose a reaction">
-            <div class="reaction-picker-row">
-              <For each={MESSAGE_REACTIONS}>
-                {(emoji) => (
-                  <button
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={props.message.reaction === emoji ? "true" : "false"}
-                    aria-label={`React with ${emoji}`}
-                    onClick={() => props.onReact(props.message.reaction === emoji ? null : emoji)}
-                  >
-                    {emoji}
-                  </button>
-                )}
-              </For>
-              <button
-                type="button"
-                class="reaction-more-button"
-                aria-label="More emoji"
-                aria-expanded={props.expandedEmoji ? "true" : "false"}
-                onClick={props.onExpandEmoji}
-              >
-                <PlusIcon />
-              </button>
-            </div>
-            <Show when={props.expandedEmoji}>
-              <div class="reaction-picker-row reaction-picker-more">
-                <For each={MORE_MESSAGE_REACTIONS}>
-                  {(emoji) => (
-                    <button
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={props.message.reaction === emoji ? "true" : "false"}
-                      aria-label={`React with ${emoji}`}
-                      onClick={() => props.onReact(props.message.reaction === emoji ? null : emoji)}
-                    >
-                      {emoji}
-                    </button>
-                  )}
-                </For>
-              </div>
-            </Show>
-          </div>
-        </Show>
-      </div>
-      <button
-        type="button"
-        class="message-action-button"
-        aria-label={`Reply to ${props.message.author === "you" ? "User" : "Agent"} message`}
-        onClick={props.onReply}
-      >
-        <ReplyIcon />
-      </button>
-      <div class="message-action-popover-anchor">
-        <button
-          type="button"
-          class="message-action-button"
-          aria-label="More message actions"
-          aria-expanded={props.moreOpen ? "true" : "false"}
-          onClick={props.onToggleMore}
-        >
-          <MoreIcon />
-        </button>
-        <Show when={props.moreOpen}>
-          <div class="message-more-menu" role="menu">
-            <button type="button" role="menuitem" onClick={props.onCopy}>
-              {props.copied ? <CheckIcon /> : <CopyIcon />}
-              <span>{props.copied ? "Copied" : "Copy"}</span>
-            </button>
-          </div>
-        </Show>
-      </div>
-    </div>
-  );
-}
-
-function RichMessageText(props: {
-  body: string;
-  bots: BotProfile[];
-  onSelectAgent: (botId: string) => void;
-  onOpenLink: (url: string) => void;
-}) {
-  const parts = createMemo(() => richMessageParts(props.body, props.bots));
-  return (
-    <For each={parts()}>
-      {(part) => {
-        if (part.url) {
-          return (
-            <a
-              class="message-link"
-              href={part.url}
-              title={part.url}
-              onClick={(event) => {
-                event.preventDefault();
-                props.onOpenLink(part.url ?? "");
-              }}
-            >
-              <span class="message-link-icon" aria-hidden="true">
-                <LinkIcon />
-                <img
-                  src={faviconUrl(part.url)}
-                  alt=""
-                  loading="lazy"
-                  decoding="async"
-                  referrerpolicy="no-referrer"
-                  onError={(event) => event.currentTarget.remove()}
-                />
-              </span>
-              {part.text}
-            </a>
-          );
-        }
-        if (part.bot) {
-          return (
-            <button
-              type="button"
-              class="message-agent-tag"
-              aria-label={`Open agent ${part.bot.name}`}
-              onClick={() => props.onSelectAgent(part.bot?.id ?? "")}
-            >
-              <AgentAvatar bot={part.bot} />
-              <span>{part.bot.name}</span>
-            </button>
-          );
-        }
-        return part.text;
-      }}
-    </For>
-  );
-}
-
-interface RichMessagePart {
-  text: string;
-  bot?: BotProfile;
-  url?: string;
-}
-
-function richMessageParts(body: string, bots: BotProfile[]): RichMessagePart[] {
-  const parts: RichMessagePart[] = [];
-  for (const part of linkedMessageParts(body)) {
-    if (part.url) parts.push(part);
-    else parts.push(...taggedMessageParts(part.text, bots));
-  }
-  return parts;
-}
-
-function linkedMessageParts(body: string): RichMessagePart[] {
-  const expression = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()]+)/giu;
-  const parts: RichMessagePart[] = [];
-  let cursor = 0;
-  for (const match of body.matchAll(expression)) {
-    const index = match.index ?? 0;
-    if (index > cursor) parts.push({ text: body.slice(cursor, index) });
-    const markdownUrl = match[2];
-    const rawUrl = match[3];
-    const rawLink = markdownUrl ?? rawUrl ?? "";
-    const cleanLink = rawLink.replace(/[.,!?;:]+$/u, "");
-    const url = safeBrowserUrl(cleanLink);
-    if (!url) {
-      parts.push({ text: match[0] });
-    } else {
-      parts.push({ text: match[1] ?? cleanLink, url });
-      const trailingText = rawLink.slice(cleanLink.length);
-      if (trailingText) parts.push({ text: trailingText });
-    }
-    cursor = index + match[0].length;
-  }
-  if (cursor < body.length) parts.push({ text: body.slice(cursor) });
-  return parts.length > 0 ? parts : [{ text: body }];
-}
-
-function safeBrowserUrl(value: string): string | null {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
-function faviconUrl(value: string): string {
-  return `${new URL(value).origin}/favicon.ico`;
-}
-
-function taggedMessageParts(body: string, bots: BotProfile[]) {
-  const orderedBots = [...bots].sort((left, right) => right.name.length - left.name.length);
-  if (orderedBots.length === 0) return [{ text: body, bot: undefined }];
-  const botsByName = new Map(orderedBots.map((bot) => [bot.name.toLocaleLowerCase(), bot]));
-  const expression = new RegExp(
-    `@(${orderedBots.map((bot) => escapeExpression(bot.name)).join("|")})(?=$|[\\s.,!?;:()\\[\\]{}])`,
-    "giu",
-  );
-  const parts: Array<{ text: string; bot: BotProfile | undefined }> = [];
-  let cursor = 0;
-  for (const match of body.matchAll(expression)) {
-    const index = match.index ?? 0;
-    if (index > cursor) parts.push({ text: body.slice(cursor, index), bot: undefined });
-    const name = match[1] ?? "";
-    const bot = botsByName.get(name.toLocaleLowerCase());
-    parts.push({ text: match[0], bot });
-    cursor = index + match[0].length;
-  }
-  if (cursor < body.length) parts.push({ text: body.slice(cursor), bot: undefined });
-  return parts.length > 0 ? parts : [{ text: body, bot: undefined }];
-}
-
-function escapeExpression(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function AgentActivityIndicator(props: {
-  bot: BotProfile | undefined;
-  state: "Queued" | "Working" | null;
-}) {
-  return (
-    <div
-      class={["agent-activity-entry", { "agent-activity-entry-visible": props.state !== null }]}
-      role="status"
-      aria-hidden={props.state === null ? "true" : "false"}
-      aria-label={
-        props.state ? `${props.bot?.name ?? "Agent"} is ${props.state.toLowerCase()}` : undefined
-      }
-    >
-      <AgentAvatar bot={props.bot} class="agent-activity-avatar" />
-      <div class="agent-activity-bubble" aria-hidden="true">
-        <span>{props.state ?? "Working"}</span>
-        <span class="agent-activity-dots">
-          <i />
-          <i />
-          <i />
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function ThinkingDisclosure(props: { message: BotMessage }) {
-  const stepCount = () => props.message.items?.length ?? 0;
-  return (
-    <article class="thinking-entry">
-      <details class="thinking-disclosure">
-        <summary aria-label="Show thinking details">
-          <span class="thinking-mark" aria-hidden="true">
-            <ThinkingIcon />
-          </span>
-          <span>Thinking</span>
-          <Show when={props.message.streaming}>
-            <span class="thinking-live-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-          </Show>
-          <Show when={!props.message.streaming && stepCount() > 1}>
-            <small>{stepCount()} steps</small>
-          </Show>
-          <span class="thinking-chevron" aria-hidden="true">
-            <ChevronIcon />
-          </span>
-        </summary>
-        <div class="thinking-details">
-          <For each={props.message.items ?? []}>{(item) => <p>{item}</p>}</For>
-        </div>
-      </details>
-    </article>
-  );
-}
 
 export function Conversation(props: ConversationProps) {
   const agentReady = () => props.agentStatus.phase === "ready";
@@ -831,6 +207,14 @@ export function Conversation(props: ConversationProps) {
       BROWSER_PANEL_MAX,
     ),
   );
+  const [remoteDesktopPanelWidth, setRemoteDesktopPanelWidth] = createSignal(
+    readPanelWidth(
+      REMOTE_DESKTOP_PANEL_STORAGE_KEY,
+      REMOTE_DESKTOP_PANEL_DEFAULT,
+      REMOTE_DESKTOP_PANEL_MIN,
+      REMOTE_DESKTOP_PANEL_MAX,
+    ),
+  );
   const selectedModel = createMemo(() =>
     props.modelOptions.find((option) => option.id === settingsModel()),
   );
@@ -868,6 +252,7 @@ export function Conversation(props: ConversationProps) {
     return botId ? (rightPanels()[botId] ?? "none") : "none";
   });
   const screenOpen = () => activeRightPanel() === "browser";
+  const remoteDesktopOpen = () => activeRightPanel() === "desktop";
   const settingsOpen = () => activeRightPanel() === "settings";
   const browserTabs = createMemo(() => {
     const bot = props.bot;
@@ -956,6 +341,7 @@ export function Conversation(props: ConversationProps) {
   let lastConversationBotId: string | undefined;
   let lastPanelBotId: string | undefined;
   let lastHandledSettingsRequestNonce: number | undefined;
+  let lastHandledRemoteDesktopRequest = 0;
   let lastHandledOnboardingRequestNonce: number | undefined;
   let lastSettingsSignature: string | undefined;
   let lastAvatarSettingsBotId: string | undefined;
@@ -1239,6 +625,15 @@ export function Conversation(props: ConversationProps) {
         return;
       lastHandledSettingsRequestNonce = request.nonce;
       setActiveRightPanel("settings");
+    },
+  );
+
+  createEffect(
+    () => props.remoteDesktopRequest,
+    (request) => {
+      if (!request || request === lastHandledRemoteDesktopRequest) return;
+      lastHandledRemoteDesktopRequest = request;
+      setActiveRightPanel("desktop");
     },
   );
 
@@ -1571,9 +966,10 @@ export function Conversation(props: ConversationProps) {
         {
           "conversation-drop-active": dropActive(),
           "browser-panel-active": screenOpen(),
+          "remote-desktop-panel-active": remoteDesktopOpen(),
         },
       ]}
-      style={`--settings-panel-width: ${settingsPanelWidth()}px; --browser-panel-width: ${browserPanelWidth()}px`}
+      style={`--settings-panel-width: ${settingsPanelWidth()}px; --browser-panel-width: ${browserPanelWidth()}px; --remote-desktop-panel-width: ${remoteDesktopPanelWidth()}px`}
       onDragEnter={(event) => {
         if (event.dataTransfer?.types.includes("Files")) setDropActive(true);
       }}
@@ -1638,6 +1034,20 @@ export function Conversation(props: ConversationProps) {
                     }
                     onChange={(model) => void selectAndConfirmModel(model)}
                   />
+                </Show>
+                <Show when={props.server?.kind === "remote"}>
+                  <button
+                    type="button"
+                    class="header-panel-toggle remote-desktop-button"
+                    aria-label={remoteDesktopOpen() ? "Hide remote desktop" : "Open remote desktop"}
+                    aria-expanded={remoteDesktopOpen() ? "true" : "false"}
+                    onClick={() => setActiveRightPanel(remoteDesktopOpen() ? "none" : "desktop")}
+                  >
+                    <RemoteDesktopIcon />
+                    <Show when={props.server?.state === "online"}>
+                      <span class="remote-desktop-button-dot" aria-hidden="true" />
+                    </Show>
+                  </button>
                 </Show>
                 <button
                   type="button"
@@ -2297,6 +1707,20 @@ export function Conversation(props: ConversationProps) {
         </aside>
       </Show>
 
+      <Show when={remoteDesktopOpen()}>
+        <RemoteMacPanel
+          server={props.server}
+          session={props.remoteMacSession}
+          width={remoteDesktopPanelWidth()}
+          maxWidth={() => conversationPanel?.clientWidth || window.innerWidth}
+          onResize={setRemoteDesktopPanelWidth}
+          onResizeEnd={(value) => savePanelWidth(REMOTE_DESKTOP_PANEL_STORAGE_KEY, value)}
+          onClose={() => setActiveRightPanel("none")}
+          onConnect={props.onConnectRemoteMac}
+          onDisconnect={props.onDisconnectRemoteMac}
+        />
+      </Show>
+
       <Show when={settingsOpen() && props.bot}>
         <aside id="settings-side-panel" class="agent-settings-panel" aria-label="Agent settings">
           <PanelResizer
@@ -2575,33 +1999,4 @@ export function Conversation(props: ConversationProps) {
 function reasoningLabel(effort: AgentReasoningEffort): string {
   if (effort === "xhigh") return "Extra high";
   return `${effort.slice(0, 1).toUpperCase()}${effort.slice(1)}`;
-}
-
-function ThinkingIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M8 1.75a4.65 4.65 0 0 0-2.85 8.33c.47.36.73.78.78 1.17h4.14c.05-.39.31-.81.78-1.17A4.65 4.65 0 0 0 8 1.75Z" />
-      <path d="M6.3 13h3.4M6.9 14.5h2.2" />
-    </svg>
-  );
-}
-
-function ChevronIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path d="m5.75 6.5 2.25 2.25 2.25-2.25" />
-    </svg>
-  );
-}
-
-function fileBadge(attachment: AttachmentSummary): string {
-  if (attachment.previewKind === "pdf") return "PDF";
-  if (attachment.previewKind === "text") return "TXT";
-  return attachment.name.split(".").at(-1)?.slice(0, 4).toUpperCase() || "FILE";
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

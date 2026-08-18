@@ -151,7 +151,7 @@ describe("TeamTunnelService", () => {
 });
 
 describe("CloudflareTunnelProvider", () => {
-  it("configures API and VNC ingress and creates stable DNS records", async () => {
+  it("configures authenticated API ingress and closes raw VNC ingress", async () => {
     const requests: Array<{ path: string; method: string; body: unknown; auth: string | null }> =
       [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -196,7 +196,7 @@ describe("CloudflareTunnelProvider", () => {
           },
           {
             hostname: "vnc-h-00000000000040008000000000000000.openbot.run",
-            service: "tcp://127.0.0.1:5900",
+            service: "http_status:404",
             originRequest: {},
           },
           { service: "http_status:404" },

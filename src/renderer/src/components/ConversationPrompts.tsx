@@ -1,6 +1,6 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type { AgentPromptQuestion } from "@openbot/contracts/ipc";
 import { createSignal, For, Show } from "solid-js";
-import { INPUT_LIMITS } from "../../../shared/input-limits";
-import type { AgentPromptQuestion } from "../../../shared/ipc";
 
 export function ChoiceCard(props: {
   title: string;

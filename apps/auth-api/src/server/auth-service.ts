@@ -1,3 +1,5 @@
+import { isUuidV4, normalizeEmailAddress } from "@openbot/contracts/validation";
+
 import { randomToken, sha256 } from "./crypto";
 import type { AuthRepository, AuthUser, EmailCodeDelivery, EmailVerificationResult } from "./types";
 
@@ -244,16 +246,8 @@ export function normalizeOneTimeCode(value: string): string {
 }
 
 export function normalizeEmail(value: string): string {
-  const normalized = value.trim().toLowerCase();
-  const parts = normalized.split("@");
-  if (
-    normalized.length > 254 ||
-    parts.length !== 2 ||
-    !parts[0] ||
-    parts[0].length > 64 ||
-    !/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/u.test(parts[0]) ||
-    !isValidDomain(parts[1])
-  ) {
+  const normalized = normalizeEmailAddress(value);
+  if (!normalized) {
     throw new AuthServiceError(400, "invalid_email", "Enter a valid email address.");
   }
   return normalized;
@@ -273,19 +267,9 @@ function normalizeSourceIp(value: string): string {
 }
 
 function validateServerId(value: string): void {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value)) {
+  if (!isUuidV4(value)) {
     throw new AuthServiceError(400, "invalid_server_id", "The team server ID is invalid.");
   }
-}
-
-function isValidDomain(value: string): boolean {
-  if (value.length > 253 || !value.includes(".")) return false;
-  return value
-    .split(".")
-    .every(
-      (label) =>
-        label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label),
-    );
 }
 
 function verificationResult(result: EmailVerificationResult): {

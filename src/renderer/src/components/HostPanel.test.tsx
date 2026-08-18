@@ -1,6 +1,6 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
-import { INPUT_LIMITS } from "../../../shared/input-limits";
 import { HostPanel } from "./HostPanel";
 
 describe("HostPanel", () => {
@@ -18,6 +18,7 @@ describe("HostPanel", () => {
           vncHostname: null,
           apiOnline: false,
           vncOnline: false,
+          remoteDesktopCredentialConfigured: false,
           message: "Configure this host.",
         }}
         members={[]}
@@ -25,6 +26,7 @@ describe("HostPanel", () => {
         sessions={[]}
         onClose={vi.fn()}
         onConfigure={vi.fn()}
+        onConfigureRemoteDesktop={vi.fn()}
         onStart={vi.fn()}
         onStop={vi.fn()}
         onCreateInvite={vi.fn()}
@@ -63,6 +65,7 @@ describe("HostPanel", () => {
           vncHostname: null,
           apiOnline: true,
           vncOnline: false,
+          remoteDesktopCredentialConfigured: false,
           message: "The team server is online.",
         }}
         members={[]}
@@ -70,6 +73,7 @@ describe("HostPanel", () => {
         sessions={[]}
         onClose={vi.fn()}
         onConfigure={vi.fn()}
+        onConfigureRemoteDesktop={vi.fn()}
         onStart={vi.fn()}
         onStop={vi.fn()}
         onCreateInvite={onCreateInvite}

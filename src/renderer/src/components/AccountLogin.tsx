@@ -1,6 +1,6 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type { CentralAuthState } from "@openbot/contracts/ipc";
 import { createSignal, Show } from "solid-js";
-import { INPUT_LIMITS } from "../../../shared/input-limits";
-import type { CentralAuthState } from "../../../shared/ipc";
 
 interface AccountLoginProps {
   state: CentralAuthState;

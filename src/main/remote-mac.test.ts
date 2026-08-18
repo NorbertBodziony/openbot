@@ -87,7 +87,6 @@ describe("Remote Mac helpers", () => {
 
   it("returns an actionable state when cloudflared is missing", async () => {
     const manager = new RemoteMacManager({
-      openExternal: vi.fn(async () => undefined),
       resolveCloudflared: async () => null,
     });
     const session = await manager.connect({ hostname: "demo.trycloudflare.com" });
@@ -96,5 +95,92 @@ describe("Remote Mac helpers", () => {
       errorCode: "cloudflared_not_found",
     });
     expect(session.message).toContain("brew install cloudflared");
+  });
+
+  it("reuses one host tunnel and closes its embedded desktop bridge", async () => {
+    const bridgeClose = vi.fn(async () => undefined);
+    const startBridge = vi.fn(async () => ({
+      url: "ws://127.0.0.1:62000/vnc/test-token",
+      close: bridgeClose,
+    }));
+    const spawnProcess = vi.fn((_executable: string, args: readonly string[]) => {
+      const port = Number(args.at(-1)?.split(":").at(-1));
+      const vnc = createServer((socket) => socket.end("RFB 003.889\n"));
+      servers.push(vnc);
+      vnc.listen(port, "127.0.0.1");
+      const child = new EventEmitter() as ChildProcess;
+      Object.assign(child, { exitCode: null, killed: false, stdout: null, stderr: null });
+      child.kill = vi.fn(() => {
+        Object.assign(child, { exitCode: 0, killed: true });
+        vnc.close();
+        queueMicrotask(() => child.emit("exit", 0, null));
+        return true;
+      });
+      return child;
+    });
+    const manager = new RemoteMacManager({
+      resolveCloudflared: async () => "/usr/local/bin/cloudflared",
+      spawnProcess: spawnProcess as unknown as typeof import("node:child_process").spawn,
+      startBridge,
+      timeoutMs: 2_000,
+    });
+    const input = {
+      hostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+      serverId: "host-1",
+    };
+
+    const first = await manager.connect(input);
+    const second = await manager.connect(input);
+
+    expect(first).toMatchObject({
+      phase: "connected",
+      websocketUrl: "ws://127.0.0.1:62000/vnc/test-token",
+    });
+    expect(second.id).toBe(first.id);
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
+    expect(startBridge).toHaveBeenCalledTimes(1);
+
+    await manager.disconnect(first.id);
+    expect(bridgeClose).toHaveBeenCalledOnce();
+    expect(manager.list()[0]).toMatchObject({ phase: "idle", websocketUrl: null });
+  });
+
+  it("uses team authorization and exposes managed credentials only for the active session", async () => {
+    const relayClose = vi.fn(async () => undefined);
+    const startRelay = vi.fn(async () => ({
+      url: "ws://127.0.0.1:62001/vnc/local-token",
+      close: relayClose,
+    }));
+    const resolveRemoteDesktop = vi.fn(async () => ({
+      url: "wss://h-00000000000040008000000000000000.openbot.run/v1/remote-desktop",
+      protocols: ["openbot-desktop", "openbot-token.team-secret"],
+      password: "deskpass",
+    }));
+    const manager = new RemoteMacManager({ resolveRemoteDesktop, startRelay });
+
+    const session = await manager.connect({
+      hostname: "h-00000000000040008000000000000000.openbot.run",
+      serverId: "host-1",
+    });
+
+    expect(session).toMatchObject({
+      phase: "connected",
+      localPort: null,
+      websocketUrl: "ws://127.0.0.1:62001/vnc/local-token",
+    });
+    expect(startRelay).toHaveBeenCalledWith({
+      url: "wss://h-00000000000040008000000000000000.openbot.run/v1/remote-desktop",
+      protocols: ["openbot-desktop", "openbot-token.team-secret"],
+    });
+    expect(manager.getCredentials(session.id)).toEqual({
+      username: "",
+      password: "deskpass",
+      target: "",
+    });
+    expect(JSON.stringify(session)).not.toContain("deskpass");
+
+    await manager.disconnect(session.id);
+    expect(relayClose).toHaveBeenCalledOnce();
+    expect(manager.getCredentials(session.id)).toBeNull();
   });
 });

@@ -2,6 +2,15 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type {
+  BrowserBounds,
+  BrowserControlAction,
+  BrowserControlSession,
+  BrowserControlState,
+  BrowserTab,
+  BrowserVisibilityInput,
+} from "@openbot/contracts/ipc";
 import {
   app,
   type BrowserWindow,
@@ -10,15 +19,6 @@ import {
   type WebContents,
   WebContentsView,
 } from "electron";
-import { INPUT_LIMITS } from "../shared/input-limits";
-import type {
-  BrowserBounds,
-  BrowserControlAction,
-  BrowserControlSession,
-  BrowserControlState,
-  BrowserTab,
-  BrowserVisibilityInput,
-} from "../shared/ipc";
 import { persistentBrowserUrl, xLoginUrlForLanding } from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
@@ -1003,7 +1003,11 @@ async function withDevToolsDebugger<T>(
   operation: () => Promise<T>,
 ): Promise<T> {
   const attachedHere = !contents.debugger.isAttached();
-  if (attachedHere) contents.debugger.attach("1.3");
+  if (attachedHere) {
+    contents.debugger.attach("1.3");
+    // Native input must also work while OpenBot is not the foreground application.
+    await contents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
+  }
   try {
     return await operation();
   } finally {

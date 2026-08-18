@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-import type { AgentProviderId, AppSetupState } from "../shared/ipc";
+import type { AgentProviderId, AppSetupState } from "@openbot/contracts/ipc";
 
 interface StoredSetup {
   version: 2;

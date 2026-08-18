@@ -1,5 +1,5 @@
+import type { HostStatus, ServerSummary } from "@openbot/contracts/ipc";
 import { For, Show } from "solid-js";
-import type { HostStatus, ServerSummary } from "../../../shared/ipc";
 
 interface ServerRailProps {
   servers: ServerSummary[];

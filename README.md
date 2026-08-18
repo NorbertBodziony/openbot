@@ -156,8 +156,11 @@ Cloudflare Workers
 - `src/backend` owns provider adapters, persistence, message scheduling, transfers, and the browser host.
 - `src/preload` exposes only the typed `window.openbot` API.
 - `src/renderer` contains the SolidJS interface.
-- `src/shared` contains process-boundary contracts.
 - `apps/auth-api` contains the TanStack Start account API, one-time email codes, rate limits, and D1 migrations.
+- `packages/contracts` contains process-boundary contracts, shared limits, and pure validation.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for dependency direction, state ownership, and
+rules for new modules.
 
 ## Local data and network boundaries
 

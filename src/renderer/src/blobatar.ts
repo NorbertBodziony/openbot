@@ -1,6 +1,6 @@
+import type { BotAvatarHue } from "@openbot/contracts/ipc";
 import { palette, traits } from "blobatar";
 import { blobatar, layout } from "blobatar/blob";
-import type { BotAvatarHue } from "../../shared/ipc";
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 

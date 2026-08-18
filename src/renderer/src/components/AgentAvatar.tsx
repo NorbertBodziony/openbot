@@ -1,5 +1,5 @@
+import type { BotAvatarHue } from "@openbot/contracts/ipc";
 import { createMemo } from "solid-js";
-import type { BotAvatarHue } from "../../../shared/ipc";
 import { type AvatarMotion, buildAnimatedAvatarSvg } from "../blobatar";
 import type { BotProfile } from "../data";
 

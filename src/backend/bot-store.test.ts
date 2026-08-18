@@ -3,8 +3,8 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { afterEach, describe, expect, it } from "vitest";
-import { INPUT_LIMITS } from "../shared/input-limits";
 import { BotStore } from "./bot-store";
 
 const temporaryRoots: string[] = [];

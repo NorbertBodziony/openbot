@@ -1,12 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
+import { createConnection, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
-import type * as Ws from "ws";
-import type { AgentService } from "../backend/agent-service";
-import type { BrowserHost } from "../backend/browser-host";
-import type { MailboxStore } from "../backend/mailbox-store";
-import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "../shared/input-limits";
+import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   type AgentEvent,
   type CentralAuthUser,
@@ -17,7 +14,11 @@ import {
   isReasoningEffort,
   type TeamMemberSummary,
   type UpdateBotInput,
-} from "../shared/ipc";
+} from "@openbot/contracts/ipc";
+import type * as Ws from "ws";
+import type { AgentService } from "../backend/agent-service";
+import type { BrowserHost } from "../backend/browser-host";
+import type { MailboxStore } from "../backend/mailbox-store";
 import type { TeamStore } from "./team-store";
 
 const JSON_LIMIT = 1024 * 1024;
@@ -32,6 +33,8 @@ interface TeamApiOptions {
   mailbox: MailboxStore;
   browser: BrowserHost;
   getRemoteMac: () => { hostname: string | null; online: boolean };
+  getRemoteDesktopPassword?: () => string | null;
+  remoteDesktopPort?: number;
   redeemCentralTicket?: (ticket: string, serverId: string) => Promise<CentralAuthUser | null>;
 }
 
@@ -44,9 +47,14 @@ export class TeamApiServer {
   readonly #options: TeamApiOptions;
   readonly #rateLimits = new Map<string, RateEntry>();
   readonly #eventClients = new Set<Ws.WebSocket>();
+  readonly #desktopClients = new Map<Ws.WebSocket, { token: string; target: Socket }>();
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
     handleProtocols: (protocols) => (protocols.has("openbot-events") ? "openbot-events" : false),
+  });
+  readonly #desktopWebSockets = new webSockets.WebSocketServer({
+    noServer: true,
+    handleProtocols: (protocols) => (protocols.has("openbot-desktop") ? "openbot-desktop" : false),
   });
   #server: Server | null = null;
   #port: number | null = null;
@@ -72,15 +80,31 @@ export class TeamApiServer {
       const encodedToken = protocols.find((value) => value.startsWith("openbot-token."));
       const token = encodedToken?.slice("openbot-token.".length) ?? "";
       const member = token.length <= 512 ? this.#options.store.authenticate(token) : null;
-      if (url.pathname !== "/v1/events" || !protocols.includes("openbot-events") || !member) {
+      if (!member) {
         socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
         socket.destroy();
         return;
       }
-      this.#webSockets.handleUpgrade(request, socket, head, (client) => {
-        this.#eventClients.add(client);
-        client.once("close", () => this.#eventClients.delete(client));
-      });
+      if (url.pathname === "/v1/events" && protocols.includes("openbot-events")) {
+        this.#webSockets.handleUpgrade(request, socket, head, (client) => {
+          this.#eventClients.add(client);
+          client.once("close", () => this.#eventClients.delete(client));
+        });
+        return;
+      }
+      if (url.pathname === "/v1/remote-desktop" && protocols.includes("openbot-desktop")) {
+        if (!this.#options.getRemoteMac().online || !this.#options.getRemoteDesktopPassword?.()) {
+          socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        this.#desktopWebSockets.handleUpgrade(request, socket, head, (client) => {
+          this.#connectDesktop(client, token);
+        });
+        return;
+      }
+      socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+      socket.destroy();
     });
     await new Promise<void>((resolve, reject) => {
       this.#server?.once("error", reject);
@@ -96,6 +120,12 @@ export class TeamApiServer {
         if (client.readyState === webSockets.WebSocket.OPEN) client.ping();
         else this.#eventClients.delete(client);
       }
+      for (const [client, connection] of this.#desktopClients) {
+        if (!this.#options.store.authenticate(connection.token)) {
+          client.close(1008, "Team access was revoked");
+          connection.target.destroy();
+        } else if (client.readyState === webSockets.WebSocket.OPEN) client.ping();
+      }
     }, 15_000);
     this.#heartbeat.unref?.();
     return this.#port;
@@ -108,6 +138,11 @@ export class TeamApiServer {
     this.#agentListener = null;
     for (const client of this.#eventClients) client.close(1001, "Server stopped");
     this.#eventClients.clear();
+    for (const [client, connection] of this.#desktopClients) {
+      client.close(1001, "Server stopped");
+      connection.target.destroy();
+    }
+    this.#desktopClients.clear();
     const server = this.#server;
     this.#server = null;
     this.#port = null;
@@ -209,6 +244,13 @@ export class TeamApiServer {
       if (method === "GET" && url.pathname === "/v1/host/remote-mac") {
         return this.#json(response, 200, this.#options.getRemoteMac());
       }
+      if (method === "GET" && url.pathname === "/v1/host/remote-desktop-access") {
+        const password = this.#options.getRemoteDesktopPassword?.() ?? null;
+        return this.#json(response, 200, {
+          configured: password !== null,
+          password,
+        });
+      }
       if (method === "GET" && url.pathname === "/v1/browser/tabs") {
         return this.#json(response, 200, this.#options.browser.listTabs());
       }
@@ -242,7 +284,7 @@ export class TeamApiServer {
         if (typeof body.visible !== "boolean") throw new HttpError(400, "visible is required.");
         await this.#options.browser.setVisible({
           visible: body.visible,
-          bounds: body.bounds as import("../shared/ipc").BrowserBounds | undefined,
+          bounds: body.bounds as import("@openbot/contracts/ipc").BrowserBounds | undefined,
         });
         return this.#empty(response, 204);
       }
@@ -459,6 +501,48 @@ export class TeamApiServer {
     for (const client of this.#eventClients) {
       if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
     }
+  }
+
+  #connectDesktop(client: Ws.WebSocket, token: string): void {
+    const target = createConnection({
+      host: "127.0.0.1",
+      port: this.#options.remoteDesktopPort ?? 5900,
+    });
+    const pending: Buffer[] = [];
+    this.#desktopClients.set(client, { token, target });
+
+    client.on("message", (data) => {
+      if (!this.#options.store.authenticate(token)) {
+        client.close(1008, "Team access was revoked");
+        target.destroy();
+        return;
+      }
+      const chunk = Buffer.isBuffer(data)
+        ? data
+        : Array.isArray(data)
+          ? Buffer.concat(data)
+          : Buffer.from(data);
+      if (target.connecting) pending.push(chunk);
+      else if (!target.destroyed) target.write(chunk);
+    });
+    client.on("close", () => target.destroy());
+    client.on("error", () => target.destroy());
+
+    target.on("connect", () => {
+      for (const chunk of pending.splice(0)) target.write(chunk);
+    });
+    target.on("data", (chunk) => {
+      if (client.readyState === webSockets.WebSocket.OPEN) client.send(chunk);
+    });
+    target.on("close", () => {
+      this.#desktopClients.delete(client);
+      if (client.readyState === webSockets.WebSocket.OPEN) client.close();
+    });
+    target.on("error", () => {
+      if (client.readyState === webSockets.WebSocket.OPEN) {
+        client.close(1011, "Remote Desktop is unavailable");
+      }
+    });
   }
 
   #json(response: ServerResponse, status: number, value: unknown): void {

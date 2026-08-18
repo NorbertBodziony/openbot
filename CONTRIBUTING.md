@@ -22,8 +22,8 @@ bun run dev
 ```
 
 The supported toolchain is pinned in `package.json`. Use Bun 1.3.11, TypeScript 5.9, Vite 7, and the
-existing Biome configuration. Do not add ESLint, Prettier, a second state library, or a UI kit without
-first discussing the architectural cost.
+existing Biome configuration. Biome is the only lint and format tool. Do not add a second linter,
+Prettier, a second state library, or a UI kit without first discussing the architectural cost.
 
 ## Pull requests
 

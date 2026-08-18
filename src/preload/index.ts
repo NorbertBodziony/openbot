@@ -1,4 +1,3 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
 import {
   type AgentIpcRequest,
   type AttachmentImportEvent,
@@ -8,7 +7,8 @@ import {
   type OpenBotDesktopApi,
   type ScopedAgentEvent,
   type UpdateStatus,
-} from "../shared/ipc";
+} from "@openbot/contracts/ipc";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 const attachmentImportListeners = new Set<(event: AttachmentImportEvent) => void>();
 let selectedServerId = "local";
@@ -218,6 +218,8 @@ const openbotApi: OpenBotDesktopApi = {
   host: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.hostGetStatus),
     configure: (input) => ipcRenderer.invoke(IPC_CHANNELS.hostConfigure, input),
+    configureRemoteDesktop: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.hostConfigureRemoteDesktop, input),
     start: () => ipcRenderer.invoke(IPC_CHANNELS.hostStart),
     stop: () => ipcRenderer.invoke(IPC_CHANNELS.hostStop),
     listMembers: () => ipcRenderer.invoke(IPC_CHANNELS.hostListMembers),
@@ -239,6 +241,8 @@ const openbotApi: OpenBotDesktopApi = {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.remoteMacList),
     connect: (input) => ipcRenderer.invoke(IPC_CHANNELS.remoteMacConnect, input),
     disconnect: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.remoteMacDisconnect, sessionId),
+    getCredentials: (sessionId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.remoteMacGetCredentials, sessionId),
     onEvent: (listener) => {
       const handler = (
         _event: Electron.IpcRendererEvent,

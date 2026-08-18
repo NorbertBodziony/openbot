@@ -16,7 +16,7 @@
 > **Sprawdzenie zmian repozytorium — wykonaj najpierw**:
 >
 > ```bash
-> git diff --stat 8229759..HEAD -- package.json bun.lock README.md CONTRIBUTING.md electron-builder.yml .github apps src/main src/preload src/renderer src/shared
+> git diff --stat 8229759..HEAD -- package.json bun.lock README.md CONTRIBUTING.md electron-builder.yml .github apps src/main src/preload src/renderer packages/contracts/src
 > git status --short
 > ```
 >
@@ -187,7 +187,7 @@ Istotne pliki i istniejący problem:
   `/v1/auth/login`, logout i zmianę lokalnego hasła.
 - `src/main/remote-server-manager.ts:105-172` przesyła username i password do
   hosta, a potem zapisuje zaszyfrowany token hosta.
-- `src/shared/ipc.ts:85-116` ma `JoinServerInput`, `LoginServerInput` i
+- `packages/contracts/src/ipc.ts:85-116` ma `JoinServerInput`, `LoginServerInput` i
   `ConfigureHostInput` z polami username/password.
 - `src/renderer/src/components/HostPanel.tsx:75-123` prosi o lokalne dane ownera.
 - `src/renderer/src/components/JoinServerDialog.tsx:3-73` prosi o username i
@@ -204,13 +204,13 @@ interface StoredMember extends TeamMemberSummary {
   passwordHash: string;
 }
 
-// src/shared/ipc.ts:85-116, skrót
+// packages/contracts/src/ipc.ts:85-116, skrót
 interface JoinServerInput { inviteUrl: string; username: string; password: string }
 interface LoginServerInput { serverId: string; username: string; password: string }
 interface ConfigureHostInput { serverName: string; username: string; password: string }
 ```
 
-Repozytorium używa TypeScript, jawnych kontraktów IPC w `src/shared/ipc.ts`,
+Repozytorium używa TypeScript, jawnych kontraktów IPC w `packages/contracts/src/ipc.ts`,
 testów Vitest obok modułów i `shell: false` dla procesów potomnych. Zachowaj te
 konwencje. Walidację Elysia zbuduj przez `t.Object` z jawnie opisanymi body,
 params, headers i response. Nie stosuj niezwalidowanych `unknown` na granicy
@@ -371,7 +371,7 @@ tę tabelę przed kodowaniem. Nie pomijaj odpowiedników tych kontroli.
   do hosta.
 - `src/main/index.ts` — lifecycle i IPC.
 - `src/preload/index.ts` — typowane API centralnego auth.
-- `src/shared/ipc.ts` — publiczne typy i eventy.
+- `packages/contracts/src/ipc.ts` — publiczne typy i eventy.
 - `src/renderer/src/App.tsx`, `src/renderer/src/App.test.tsx` — stan konta.
 - `src/renderer/src/components/CentralAuthDialog.tsx` i test — rejestracja,
   logowanie, weryfikacja i konto.
@@ -565,7 +565,7 @@ Utwórz `src/main/central-auth-manager.ts`. Manager odpowiada za:
 - trzymanie password tylko w zakresie pojedynczego requestu;
 - stały, zaufany `AUTH_API_URL` i zakaz downgrade HTTPS w produkcji.
 
-Dodaj typed IPC w `src/shared/ipc.ts`, handler w `src/main/index.ts` i metody
+Dodaj typed IPC w `packages/contracts/src/ipc.ts`, handler w `src/main/index.ts` i metody
 preload w `src/preload/index.ts`. Renderer nie wykonuje bezpośredniego fetch do
 centralnego API.
 
@@ -691,7 +691,7 @@ tożsamość hosta i fingerprint. Link nie zawiera centralnego tokenu ani emaila
 
 ```bash
 bun run test -- src/main/remote-server-manager.test.ts
-rg -n "LoginServerInput|/v1/auth/login|encryptedSessionToken|sessionToken" src/main/remote-server-manager.ts src/shared/ipc.ts src/preload/index.ts
+rg -n "LoginServerInput|/v1/auth/login|encryptedSessionToken|sessionToken" src/main/remote-server-manager.ts packages/contracts/src/ipc.ts src/preload/index.ts
 ```
 
 Oczekiwany wynik: testy przechodzą; `rg` nie znajduje usuniętego host-login ani

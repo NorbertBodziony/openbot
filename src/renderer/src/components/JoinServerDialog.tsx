@@ -1,5 +1,5 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { createSignal, Show } from "solid-js";
-import { INPUT_LIMITS } from "../../../shared/input-limits";
 
 interface JoinServerDialogProps {
   inviteUrl: string;

@@ -1,4 +1,4 @@
-import type { ConversationMessage, ConversationSnapshot } from "../shared/ipc";
+import type { ConversationMessage, ConversationSnapshot } from "@openbot/contracts/ipc";
 import type { DeliveryContext } from "./mailbox-store";
 import type { ThreadResponse } from "./protocol";
 

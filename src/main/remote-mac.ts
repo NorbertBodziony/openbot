@@ -5,7 +5,18 @@ import { constants as fsConstants } from "node:fs";
 import { access, appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { delimiter, join } from "node:path";
-import type { RemoteMacConnectInput, RemoteMacErrorCode, RemoteMacSession } from "../shared/ipc";
+import type {
+  RemoteMacConnectInput,
+  RemoteMacCredentials,
+  RemoteMacErrorCode,
+  RemoteMacSession,
+} from "@openbot/contracts/ipc";
+import {
+  type RemoteDesktopWebSocketTarget,
+  startVncWebSocketBridge,
+  startVncWebSocketRelay,
+  type VncWebSocketBridge,
+} from "./vnc-websocket-bridge";
 
 const FIRST_VNC_PORT = 5901;
 const LAST_VNC_PORT = 5999;
@@ -16,9 +27,13 @@ interface RemoteMacEvents {
 }
 
 interface RemoteMacOptions {
-  openExternal: (url: string) => Promise<void>;
   resolveCloudflared?: () => Promise<string | null>;
   spawnProcess?: typeof spawn;
+  startBridge?: (targetPort: number) => Promise<VncWebSocketBridge>;
+  resolveRemoteDesktop?: (
+    serverId: string,
+  ) => Promise<RemoteDesktopWebSocketTarget & { password: string }>;
+  startRelay?: (target: RemoteDesktopWebSocketTarget) => Promise<VncWebSocketBridge>;
   timeoutMs?: number;
   logDirectory?: string;
 }
@@ -26,6 +41,8 @@ interface RemoteMacOptions {
 interface ManagedSession {
   snapshot: RemoteMacSession;
   process: ChildProcess | null;
+  bridge: VncWebSocketBridge | null;
+  credentials: RemoteMacCredentials | null;
   stopping: boolean;
 }
 
@@ -141,10 +158,32 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
     return [...this.#sessions.values()].map(({ snapshot }) => ({ ...snapshot }));
   }
 
+  getCredentials(sessionId: string): RemoteMacCredentials | null {
+    const credentials = this.#sessions.get(sessionId)?.credentials;
+    return credentials ? { ...credentials } : null;
+  }
+
   async connect(input: RemoteMacConnectInput): Promise<RemoteMacSession> {
     const hostname = input.hostname.trim().toLowerCase();
-    if (!isValidTunnelHostname(hostname)) {
+    const useTeamAccess = Boolean(input.serverId && this.#options.resolveRemoteDesktop);
+    if (!useTeamAccess && !isValidTunnelHostname(hostname)) {
       throw new Error("Enter a valid OpenBot Remote Mac hostname.");
+    }
+    const existing = [...this.#sessions.values()].find(
+      ({ snapshot }) =>
+        snapshot.phase !== "idle" &&
+        (input.serverId ? snapshot.serverId === input.serverId : snapshot.hostname === hostname),
+    );
+    if (existing) return { ...existing.snapshot };
+    for (const [id, session] of this.#sessions) {
+      if (
+        session.snapshot.phase === "idle" &&
+        (input.serverId
+          ? session.snapshot.serverId === input.serverId
+          : session.snapshot.hostname === hostname)
+      ) {
+        this.#sessions.delete(id);
+      }
     }
     const managed: ManagedSession = {
       snapshot: {
@@ -152,18 +191,52 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
         serverId: input.serverId ?? null,
         hostname,
         localPort: null,
+        websocketUrl: null,
         phase: "starting_tunnel",
         errorCode: null,
         message: "Starting the secure tunnel…",
         createdAt: new Date().toISOString(),
       },
       process: null,
+      bridge: null,
+      credentials: null,
       stopping: false,
     };
     this.#sessions.set(managed.snapshot.id, managed);
     this.#emitChanged();
 
     try {
+      if (useTeamAccess && input.serverId) {
+        const resolveRemoteDesktop = this.#options.resolveRemoteDesktop;
+        if (!resolveRemoteDesktop) return this.#fail(managed, "desktop_access_denied");
+        let access: RemoteDesktopWebSocketTarget & { password: string };
+        try {
+          access = await resolveRemoteDesktop(input.serverId);
+        } catch (error) {
+          return this.#fail(
+            managed,
+            error instanceof Error && error.message.includes("must configure")
+              ? "desktop_access_not_configured"
+              : "desktop_access_denied",
+          );
+        }
+        managed.credentials = { username: "", password: access.password, target: "" };
+        try {
+          managed.bridge = await (this.#options.startRelay ?? startVncWebSocketRelay)({
+            url: access.url,
+            protocols: access.protocols,
+          });
+        } catch {
+          return this.#fail(managed, "desktop_bridge_unavailable");
+        }
+        this.#patch(managed, {
+          phase: "connected",
+          websocketUrl: managed.bridge.url,
+          message: "Remote desktop is ready.",
+        });
+        return { ...managed.snapshot };
+      }
+
       const executable = await (this.#options.resolveCloudflared?.() ??
         resolveCloudflaredExecutable());
       if (!executable) return this.#fail(managed, "cloudflared_not_found");
@@ -225,11 +298,15 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
       }
 
       try {
-        await this.#options.openExternal(`vnc://127.0.0.1:${port}`);
+        managed.bridge = await (this.#options.startBridge ?? startVncWebSocketBridge)(port);
       } catch {
-        return this.#fail(managed, "viewer_launch_failed");
+        return this.#fail(managed, "desktop_bridge_unavailable");
       }
-      this.#patch(managed, { phase: "connected", message: "Screen Sharing is open." });
+      this.#patch(managed, {
+        websocketUrl: managed.bridge.url,
+        phase: "connected",
+        message: "Remote desktop is ready.",
+      });
       return { ...managed.snapshot };
     } catch {
       return this.#fail(managed, "tunnel_disconnected");
@@ -241,11 +318,15 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
     if (!managed) return;
     managed.stopping = true;
     this.#patch(managed, { phase: "disconnecting", message: "Closing the tunnel…" });
+    if (managed.bridge) await managed.bridge.close();
+    managed.bridge = null;
+    managed.credentials = null;
     if (managed.process) await stopOwnedProcess(managed.process);
     if (managed.snapshot.localPort !== null) this.#reservedPorts.delete(managed.snapshot.localPort);
     this.#patch(managed, {
       phase: "idle",
       localPort: null,
+      websocketUrl: null,
       errorCode: null,
       message: "Disconnected.",
     });
@@ -280,10 +361,20 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
       tunnel_timeout: "The tunnel did not become ready within 15 seconds.",
       tunnel_disconnected: "cloudflared stopped before the connection was ready.",
       invalid_vnc_handshake: "The remote service did not return an RFB VNC handshake.",
-      viewer_launch_failed: "OpenBot could not open macOS Screen Sharing.",
+      desktop_bridge_unavailable: "OpenBot could not start the local remote desktop bridge.",
+      desktop_access_not_configured: "The host owner must configure Remote Desktop access.",
+      desktop_access_denied: "Your team session could not open this remote desktop.",
     };
     if (managed.snapshot.localPort !== null) this.#reservedPorts.delete(managed.snapshot.localPort);
-    this.#patch(managed, { phase: "idle", errorCode: code, message: messages[code] });
+    if (managed.bridge) void managed.bridge.close();
+    managed.bridge = null;
+    managed.credentials = null;
+    this.#patch(managed, {
+      phase: "idle",
+      websocketUrl: null,
+      errorCode: code,
+      message: messages[code],
+    });
     if (managed.process && managed.process.exitCode === null && !managed.stopping) {
       managed.stopping = true;
       void stopOwnedProcess(managed.process);

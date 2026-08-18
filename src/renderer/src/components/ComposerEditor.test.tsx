@@ -1,7 +1,7 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
-import { INPUT_LIMITS } from "../../../shared/input-limits";
 import type { BotProfile } from "../data";
 import { ComposerEditor } from "./ComposerEditor";
 

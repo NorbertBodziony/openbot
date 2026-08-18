@@ -1,13 +1,3 @@
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  createStore,
-  flush,
-  onSettled,
-  Show,
-  type StoreSetter,
-} from "solid-js";
 import type {
   AccountUsage,
   AgentEvent,
@@ -34,14 +24,23 @@ import type {
   TeamSessionSummary,
   UpdateBotInput,
   UpdateStatus,
-} from "../../shared/ipc";
+} from "@openbot/contracts/ipc";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  createStore,
+  flush,
+  onSettled,
+  Show,
+  type StoreSetter,
+} from "solid-js";
 import { AccountLogin } from "./components/AccountLogin";
 import { Conversation } from "./components/Conversation";
 import { HostPanel } from "./components/HostPanel";
 import { InitialSetup } from "./components/InitialSetup";
 import { JoinServerDialog } from "./components/JoinServerDialog";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./components/PanelResizer";
-import { RemoteMacPanel } from "./components/RemoteMacPanel";
 import { ServerRail } from "./components/ServerRail";
 import { Sidebar, type SidebarAgentState } from "./components/Sidebar";
 import type { BotMessage, BotProfile } from "./data";
@@ -78,6 +77,7 @@ const FALLBACK_HOST_STATUS: HostStatus = {
   vncHostname: null,
   apiOnline: false,
   vncOnline: false,
+  remoteDesktopCredentialConfigured: false,
   message: null,
 };
 
@@ -184,7 +184,7 @@ export function App() {
   const [teamMembers, setTeamMembers] = createSignal<TeamMemberSummary[]>([]);
   const [teamInvites, setTeamInvites] = createSignal<TeamInviteSummary[]>([]);
   const [teamSessions, setTeamSessions] = createSignal<TeamSessionSummary[]>([]);
-  const [remoteMacOpen, setRemoteMacOpen] = createSignal(false);
+  const [remoteDesktopRequest, setRemoteDesktopRequest] = createSignal(0);
   const [remoteMacSessions, setRemoteMacSessions] = createSignal<RemoteMacSession[]>([]);
   const pendingConversationSnapshots = new Map<string, ConversationSnapshot>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -833,6 +833,10 @@ export function App() {
     setHostStatus(await window.openbot.host.start());
   }
 
+  async function configureRemoteDesktop(password: string): Promise<void> {
+    setHostStatus(await window.openbot.host.configureRemoteDesktop({ password }));
+  }
+
   async function stopHost(): Promise<void> {
     setHostStatus(await window.openbot.host.stop());
   }
@@ -870,7 +874,11 @@ export function App() {
   }
 
   async function connectRemoteMac(hostname: string, serverId: string | null): Promise<void> {
-    await window.openbot.remoteMac.connect({ hostname, serverId });
+    const session = await window.openbot.remoteMac.connect({ hostname, serverId });
+    setRemoteMacSessions((current) => [
+      ...current.filter((item) => item.id !== session.id),
+      session,
+    ]);
   }
 
   async function disconnectRemoteMac(sessionId: string): Promise<void> {
@@ -878,6 +886,13 @@ export function App() {
   }
 
   const activeServer = createMemo(() => servers().find((server) => server.active));
+  const activeRemoteMacSession = createMemo(() => {
+    const server = activeServer();
+    if (!server) return undefined;
+    return [...remoteMacSessions()]
+      .filter((session) => session.serverId === server.id)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+  });
   const signedInAccount = createMemo(() => {
     const state = centralAuth();
     return state.status === "signed_in" ? state.user : null;
@@ -931,7 +946,7 @@ export function App() {
                   onSelect={(serverId) => void selectServer(serverId)}
                   onAdd={() => setJoinServerOpen(true)}
                   onOpenHost={openHostPanel}
-                  onOpenRemoteMac={() => setRemoteMacOpen(true)}
+                  onOpenRemoteMac={() => setRemoteDesktopRequest((current) => current + 1)}
                 />
               </Show>
               <Show when={!leftPanelCollapsed()}>
@@ -977,6 +992,9 @@ export function App() {
                 browserTabs={browserTabs()}
                 activeBrowserTabId={activeBrowserTabId()}
                 browserControlState={browserControlState()}
+                server={activeServer()}
+                remoteMacSession={activeRemoteMacSession()}
+                remoteDesktopRequest={remoteDesktopRequest()}
                 leftSidebarCollapsed={leftPanelCollapsed()}
                 prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
                 activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
@@ -995,6 +1013,8 @@ export function App() {
                 onResumeQueue={resumeQueue}
                 onActivateBrowserTab={activateBrowserTab}
                 onCloseBrowserTab={closeBrowserTab}
+                onConnectRemoteMac={connectRemoteMac}
+                onDisconnectRemoteMac={disconnectRemoteMac}
                 onToggleLeftSidebar={() => setSidebarCollapsed(false)}
                 onOpenAgentSetup={() => window.openbot.openExternal("agent-setup")}
                 onStop={stopActiveTurn}
@@ -1032,6 +1052,7 @@ export function App() {
                   accountEmail={account().email}
                   onClose={() => setHostOpen(false)}
                   onConfigure={configureHost}
+                  onConfigureRemoteDesktop={configureRemoteDesktop}
                   onStart={startHost}
                   onStop={stopHost}
                   onCreateInvite={createHostInvite}
@@ -1039,15 +1060,6 @@ export function App() {
                   onRevokeSession={revokeHostSession}
                   onRevokeInvite={revokeHostInvite}
                   onCopyAddressUpdate={copyHostAddressUpdate}
-                />
-              </Show>
-              <Show when={remoteMacOpen()}>
-                <RemoteMacPanel
-                  server={activeServer()}
-                  sessions={remoteMacSessions()}
-                  onClose={() => setRemoteMacOpen(false)}
-                  onConnect={connectRemoteMac}
-                  onDisconnect={disconnectRemoteMac}
                 />
               </Show>
             </div>

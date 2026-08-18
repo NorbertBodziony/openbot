@@ -1,0 +1,19 @@
+{
+  "name": "@openbot/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./input-limits": "./src/input-limits.ts",
+    "./ipc": "./src/ipc.ts",
+    "./validation": "./src/validation.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts src"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

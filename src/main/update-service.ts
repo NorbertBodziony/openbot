@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
+import type { UpdateStatus } from "@openbot/contracts/ipc";
 import type { AppUpdater, ProgressInfo, UpdateInfo } from "electron-updater";
-import type { UpdateStatus } from "../shared/ipc";
 
 type UpdateAdapter = Pick<
   AppUpdater,

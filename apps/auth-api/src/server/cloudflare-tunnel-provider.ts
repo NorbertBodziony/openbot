@@ -69,7 +69,7 @@ export class CloudflareTunnelProvider implements TeamTunnelProvider {
               },
               {
                 hostname: input.vncHostname,
-                service: input.vncEnabled ? "tcp://127.0.0.1:5900" : "http_status:503",
+                service: "http_status:404",
                 originRequest: {},
               },
               { service: "http_status:404" },

@@ -1,3 +1,6 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { isUuidV4, isValidHostname } from "@openbot/contracts/validation";
+
 import type { AuthUser } from "./types";
 
 export interface TeamTunnelRecord {
@@ -170,14 +173,18 @@ export class TeamTunnelServiceError extends Error {
 }
 
 function validateServerId(value: string): void {
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value)) {
+  if (!isUuidV4(value)) {
     throw new TeamTunnelServiceError(400, "invalid_server_id", "The team server ID is invalid.");
   }
 }
 
 function validateServerName(value: string): void {
   const normalized = value.trim();
-  if (normalized.length < 2 || normalized.length > 64 || /[\r\n]/u.test(normalized)) {
+  if (
+    normalized.length < 2 ||
+    normalized.length > INPUT_LIMITS.serverName ||
+    /[\r\n]/u.test(normalized)
+  ) {
     throw new TeamTunnelServiceError(
       400,
       "invalid_server_name",
@@ -191,11 +198,7 @@ function normalizeDomain(value: string): string {
     .trim()
     .toLowerCase()
     .replace(/^\.+|\.+$/gu, "");
-  if (
-    normalized.length > 253 ||
-    !normalized.includes(".") ||
-    normalized.split(".").some((label) => !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label))
-  ) {
+  if (normalized.length > INPUT_LIMITS.hostname || !isValidHostname(normalized)) {
     throw new Error("The Cloudflare tunnel domain is invalid.");
   }
   return normalized;

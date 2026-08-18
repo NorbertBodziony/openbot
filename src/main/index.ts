@@ -2,6 +2,20 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import {
+  type AgentEvent,
+  type AppInfo,
+  type AppSetupState,
+  type CentralAuthState,
+  type ExternalDestination,
+  type ImportAttachmentsInput,
+  IPC_CHANNELS,
+  type MacPermissionId,
+  type MacPermissionsState,
+  type SendMessageInput,
+  type UpdateBotInput,
+} from "@openbot/contracts/ipc";
 import {
   app,
   BrowserWindow,
@@ -21,41 +35,6 @@ import { AgentService } from "../backend/agent-service";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
 import { MailboxStore } from "../backend/mailbox-store";
-import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "../shared/input-limits";
-import {
-  type AgentEvent,
-  type AgentIpcRequest,
-  type AgentProviderId,
-  type AppInfo,
-  type AppSetupState,
-  type BrowserBounds,
-  type BrowserOpenInput,
-  type BrowserVisibilityInput,
-  type CancelQueuedMessageInput,
-  type CentralAuthState,
-  type ConfigureHostInput,
-  type CreateTeamInviteInput,
-  type ExternalDestination,
-  type ImportAttachmentsInput,
-  type InterruptTurnInput,
-  IPC_CHANNELS,
-  isAgentModel,
-  isAvatarHue,
-  isAvatarSeed,
-  isMessageReaction,
-  isReasoningEffort,
-  type JoinServerInput,
-  type LoginServerInput,
-  type MacPermissionId,
-  type MacPermissionsState,
-  type OpenAttachmentInput,
-  type RemoteMacConnectInput,
-  type RespondToPromptInput,
-  type SendMessageInput,
-  type SetQueuePausedInput,
-  type UpdateBotInput,
-  type UpdateTeamMemberInput,
-} from "../shared/ipc";
 import { AgentInitializationGate } from "./agent-initialization";
 import { notificationForAgentEvent } from "./agent-notifications";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
@@ -65,7 +44,32 @@ import {
   shouldAutoStartHost,
 } from "./development-profile";
 import { HostService } from "./host-service";
+import {
+  parseAgentRequest,
+  parseCancelQueuedMessage,
+  parseImportAttachments,
+  parseInterrupt,
+  parseMessageReaction,
+  parseOpenAttachment,
+  parsePromptResponse,
+  parseSendMessage,
+  parseSetQueuePaused,
+  parseUpdateBot,
+} from "./ipc/agent-inputs";
+import { parseMacPermission, parseProvider } from "./ipc/app-inputs";
+import { parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
+import {
+  parseCreateTeamInvite,
+  parseHostConfig,
+  parseJoinServer,
+  parseLoginServer,
+  parseRemoteDesktopConfig,
+  parseRemoteMacConnect,
+  parseUpdateTeamMember,
+} from "./ipc/server-inputs";
+import { isObject, requireString } from "./ipc/validation";
 import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
+import { RemoteDesktopCredentialStore } from "./remote-desktop-credential-store";
 import { RemoteMacManager } from "./remote-mac";
 import { RemoteServerManager } from "./remote-server-manager";
 import { readSetupState, writeSetupState } from "./setup-store";
@@ -115,6 +119,7 @@ const BROWSER_STATE_FILE = "openbot-browser-state-v1.json";
 const TEAM_FILE = "openbot-team-server-v1.json";
 const REMOTE_SERVERS_FILE = "openbot-remote-servers-v1.json";
 const CENTRAL_AUTH_FILE = "openbot-central-auth-v1.bin";
+const REMOTE_DESKTOP_CREDENTIAL_FILE = "openbot-remote-desktop-credential-v1.json";
 
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "agent-setup": "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
@@ -130,7 +135,7 @@ function configureContentSecurityPolicy(): void {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: openbot-attachment: openbot-remote-attachment: https:",
     "font-src 'self' data:",
-    `connect-src 'self'${developmentSources}`,
+    `connect-src 'self' ws://127.0.0.1:*${developmentSources}`,
     "object-src 'none'",
     "frame-src 'self' openbot-attachment: openbot-remote-attachment:",
     "base-uri 'none'",
@@ -233,6 +238,9 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.hostConfigure, (input: unknown) =>
     host.configure(parseHostConfig(input)),
   );
+  handleTrusted(IPC_CHANNELS.hostConfigureRemoteDesktop, (input: unknown) =>
+    host.configureRemoteDesktop(parseRemoteDesktopConfig(input)),
+  );
   handleTrusted(IPC_CHANNELS.hostStart, () => host.start());
   handleTrusted(IPC_CHANNELS.hostStop, () => host.stop());
   handleTrusted(IPC_CHANNELS.hostListMembers, () => host.listMembers());
@@ -257,6 +265,9 @@ function registerIpcHandlers(
   );
   handleTrusted(IPC_CHANNELS.remoteMacDisconnect, (sessionId: unknown) =>
     remoteMac.disconnect(requireString(sessionId, "sessionId")),
+  );
+  handleTrusted(IPC_CHANNELS.remoteMacGetCredentials, (sessionId: unknown) =>
+    remoteMac.getCredentials(requireString(sessionId, "sessionId")),
   );
 
   handleTrusted(IPC_CHANNELS.agentGetStatus, (input: unknown) => {
@@ -588,22 +599,24 @@ function forwardAgentEvent(serverId: string, event: AgentEvent): void {
   notification.show();
 }
 
-function forwardUpdateStatus(status: import("../shared/ipc").UpdateStatus): void {
+function forwardUpdateStatus(status: import("@openbot/contracts/ipc").UpdateStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.updateEvent, status);
 }
 
-function forwardHostStatus(status: import("../shared/ipc").HostStatus): void {
+function forwardHostStatus(status: import("@openbot/contracts/ipc").HostStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.hostEvent, status);
 }
 
-function forwardRemoteMacSessions(sessions: import("../shared/ipc").RemoteMacSession[]): void {
+function forwardRemoteMacSessions(
+  sessions: import("@openbot/contracts/ipc").RemoteMacSession[],
+): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.remoteMacEvent, sessions);
 }
 
-function forwardServers(servers: import("../shared/ipc").ServerSummary[]): void {
+function forwardServers(servers: import("@openbot/contracts/ipc").ServerSummary[]): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.serversEvent, servers);
 }
@@ -704,6 +717,19 @@ if (!hasSingleInstanceLock) {
       const service = agentService;
       const teamStore = new TeamStore(join(app.getPath("userData"), TEAM_FILE));
       await teamStore.initialize();
+      const remoteDesktopCredentials = new RemoteDesktopCredentialStore(
+        join(app.getPath("userData"), REMOTE_DESKTOP_CREDENTIAL_FILE),
+        {
+          encrypt: (value) => {
+            if (!safeStorage.isEncryptionAvailable()) {
+              throw new Error("macOS secure storage is unavailable.");
+            }
+            return safeStorage.encryptString(value);
+          },
+          decrypt: (value) => safeStorage.decryptString(value),
+        },
+      );
+      await remoteDesktopCredentials.initialize();
       hostService = new HostService({
         store: teamStore,
         agents: service,
@@ -722,14 +748,12 @@ if (!hasSingleInstanceLock) {
           if (!centralAuthManager) throw new Error("The account service is not ready.");
           return centralAuthManager.sendTeamInviteEmail(input);
         },
+        getRemoteDesktopPassword: () => remoteDesktopCredentials.getPassword(),
+        setRemoteDesktopPassword: (password) => remoteDesktopCredentials.setPassword(password),
         provisionTeamTunnel: (input) => {
           if (!centralAuthManager) throw new Error("The account service is not ready.");
           return centralAuthManager.provisionTeamTunnel(input);
         },
-      });
-      remoteMacManager = new RemoteMacManager({
-        openExternal: (url) => shell.openExternal(url),
-        logDirectory: join(app.getPath("userData"), "logs", "remote"),
       });
       remoteServerManager = new RemoteServerManager(
         join(app.getPath("userData"), REMOTE_SERVERS_FILE),
@@ -754,6 +778,13 @@ if (!hasSingleInstanceLock) {
         },
       );
       await remoteServerManager.initialize();
+      remoteMacManager = new RemoteMacManager({
+        logDirectory: join(app.getPath("userData"), "logs", "remote"),
+        resolveRemoteDesktop: (serverId) => {
+          if (!remoteServerManager) throw new Error("The remote server service is not ready.");
+          return remoteServerManager.getRemoteDesktopAccess(serverId);
+        },
+      });
       if (pendingAddressUpdateUrl) {
         const updateUrl = pendingAddressUpdateUrl;
         pendingAddressUpdateUrl = null;
@@ -885,20 +916,6 @@ async function requestMacPermission(permission: MacPermissionId): Promise<MacPer
   return readMacPermissions();
 }
 
-function parseProvider(input: unknown): AgentProviderId {
-  if (!input || typeof input !== "object") throw new Error("Setup input is required.");
-  const provider = Reflect.get(input, "preferredProvider");
-  if (provider !== "codex" && provider !== "claude") throw new Error("Unknown provider.");
-  return provider;
-}
-
-function parseMacPermission(input: unknown): MacPermissionId {
-  if (input !== "screen-recording" && input !== "accessibility") {
-    throw new Error("Unknown macOS permission.");
-  }
-  return input;
-}
-
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
@@ -920,74 +937,6 @@ async function prepareForShutdown(): Promise<void> {
   await (hostService?.shutdown() ?? Promise.resolve());
   await (browserHost?.destroy() ?? Promise.resolve());
   await (agentService?.stop() ?? Promise.resolve());
-}
-
-function requireString(
-  value: unknown,
-  field: string,
-  maxLength: number = INPUT_LIMITS.identifier,
-): string {
-  if (typeof value !== "string" || !value.trim()) throw new Error(`${field} is required.`);
-  if (value.length > maxLength) throw new Error(`${field} is too long.`);
-  return value;
-}
-
-function parseHostConfig(value: unknown): ConfigureHostInput {
-  if (!isObject(value)) throw new Error("Host configuration is required.");
-  return {
-    serverName: requireString(value.serverName, "serverName", INPUT_LIMITS.serverName),
-  };
-}
-
-function parseJoinServer(value: unknown): JoinServerInput {
-  if (!isObject(value)) throw new Error("Invitation details are required.");
-  return {
-    inviteUrl: requireString(value.inviteUrl, "inviteUrl", INPUT_LIMITS.inviteUrl),
-  };
-}
-
-function parseLoginServer(value: unknown): LoginServerInput {
-  if (!isObject(value)) throw new Error("Login details are required.");
-  return {
-    serverId: requireString(value.serverId, "serverId"),
-  };
-}
-
-function parseCreateTeamInvite(value: unknown): CreateTeamInviteInput {
-  if (!isObject(value)) throw new Error("Invitation details are required.");
-  if (value.role !== "admin" && value.role !== "member") {
-    throw new Error("Unknown team role.");
-  }
-  if (value.email !== undefined && typeof value.email !== "string") {
-    throw new Error("Invalid invitation email.");
-  }
-  if (typeof value.email === "string" && value.email.length > INPUT_LIMITS.email) {
-    throw new Error("Invitation email is too long.");
-  }
-  return {
-    role: value.role,
-    ...(value.email?.trim() ? { email: value.email.trim() } : {}),
-  };
-}
-
-function parseRemoteMacConnect(value: unknown): RemoteMacConnectInput {
-  if (!isObject(value)) throw new Error("Remote Mac details are required.");
-  const serverId = value.serverId;
-  if (serverId !== undefined && serverId !== null && typeof serverId !== "string") {
-    throw new Error("Invalid serverId.");
-  }
-  return {
-    hostname: requireString(value.hostname, "hostname", INPUT_LIMITS.hostname),
-    serverId: serverId ?? null,
-  };
-}
-
-function parseAgentRequest(value: unknown): AgentIpcRequest {
-  if (!isObject(value)) throw new Error("Invalid agent request.");
-  return {
-    serverId: requireString(value.serverId, "serverId"),
-    payload: value.payload,
-  };
 }
 
 function routeUpdateBot(
@@ -1146,165 +1095,6 @@ function mimeTypeForName(name: string): string {
   }
 }
 
-function parseSendMessage(value: unknown): SendMessageInput {
-  if (!isObject(value)) throw new Error("Invalid send message request.");
-  const attachmentDraftIds = value.attachmentDraftIds ?? [];
-  if (
-    !Array.isArray(attachmentDraftIds) ||
-    attachmentDraftIds.length > INPUT_LIMITS.attachments ||
-    !attachmentDraftIds.every(
-      (item) => typeof item === "string" && item.length <= INPUT_LIMITS.identifier,
-    )
-  ) {
-    throw new Error("Invalid attachment drafts.");
-  }
-  if (typeof value.text !== "string") throw new Error("text is required.");
-  if (value.text.length > INPUT_LIMITS.messageText) throw new Error("Message is too long.");
-  if (!value.text.trim() && attachmentDraftIds.length === 0) {
-    throw new Error("A message or attachment is required.");
-  }
-  const replyToMessageId = value.replyToMessageId ?? null;
-  if (
-    replyToMessageId !== null &&
-    (typeof replyToMessageId !== "string" || replyToMessageId.length > INPUT_LIMITS.identifier)
-  ) {
-    throw new Error("Invalid reply target.");
-  }
-  return {
-    botId: requireString(value.botId, "botId"),
-    text: value.text,
-    attachmentDraftIds,
-    replyToMessageId: replyToMessageId?.trim() || null,
-  };
-}
-
-function parseMessageReaction(value: unknown) {
-  if (!isObject(value)) throw new Error("Invalid message reaction request.");
-  const emoji = value.emoji;
-  if (emoji !== null && !isMessageReaction(emoji)) {
-    throw new Error("Invalid message reaction.");
-  }
-  return {
-    botId: requireString(value.botId, "botId"),
-    messageId: requireString(value.messageId, "messageId"),
-    emoji,
-  };
-}
-
-function parseUpdateBot(value: unknown): UpdateBotInput {
-  if (!isObject(value)) throw new Error("Invalid bot update request.");
-  const result: UpdateBotInput = { botId: requireString(value.botId, "botId") };
-  const limits = {
-    name: INPUT_LIMITS.agentName,
-    role: INPUT_LIMITS.agentTitle,
-    description: INPUT_LIMITS.agentDescription,
-  } as const;
-  for (const field of ["name", "role", "description"] as const) {
-    if (value[field] !== undefined && typeof value[field] !== "string") {
-      throw new Error(`Invalid ${field}.`);
-    }
-    if (typeof value[field] === "string") {
-      if (value[field].length > limits[field]) throw new Error(`${field} is too long.`);
-      result[field] = value[field];
-    }
-  }
-  if (value.notifications !== undefined) {
-    if (typeof value.notifications !== "boolean") throw new Error("Invalid notifications value.");
-    result.notifications = value.notifications;
-  }
-  if (value.model !== undefined) {
-    if (!isAgentModel(value.model)) throw new Error("Invalid agent model.");
-    result.model = value.model;
-  }
-  if (value.reasoningEffort !== undefined) {
-    if (!isReasoningEffort(value.reasoningEffort)) throw new Error("Invalid reasoning effort.");
-    result.reasoningEffort = value.reasoningEffort;
-  }
-  if (value.avatarSeed !== undefined) {
-    if (!isAvatarSeed(value.avatarSeed)) throw new Error("Invalid avatar seed.");
-    result.avatarSeed = value.avatarSeed;
-  }
-  if (value.avatarHue !== undefined) {
-    if (value.avatarHue !== null && !isAvatarHue(value.avatarHue)) {
-      throw new Error("Invalid avatar hue.");
-    }
-    result.avatarHue = value.avatarHue;
-  }
-  return result;
-}
-
-function parseImportAttachments(value: unknown): ImportAttachmentsInput {
-  if (!isObject(value) || !Array.isArray(value.paths) || !Array.isArray(value.data)) {
-    throw new Error("Invalid attachment import.");
-  }
-  if (value.paths.length + value.data.length > INPUT_LIMITS.attachments) {
-    throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
-  }
-  if (
-    !value.paths.every(
-      (path) => typeof path === "string" && path.length > 0 && path.length <= INPUT_LIMITS.path,
-    )
-  ) {
-    throw new Error("Invalid attachment path.");
-  }
-  const data = value.data.map((item) => {
-    if (
-      !isObject(item) ||
-      typeof item.name !== "string" ||
-      item.name.length > INPUT_LIMITS.attachmentName ||
-      typeof item.mimeType !== "string" ||
-      item.mimeType.length > INPUT_LIMITS.mimeType ||
-      !(item.bytes instanceof Uint8Array)
-    ) {
-      throw new Error("Invalid attachment data.");
-    }
-    return { name: item.name, mimeType: item.mimeType, bytes: item.bytes };
-  });
-  return { paths: value.paths, data };
-}
-
-function parseOpenAttachment(value: unknown): OpenAttachmentInput {
-  if (!isObject(value) || (value.action !== "open" && value.action !== "reveal")) {
-    throw new Error("Invalid attachment action.");
-  }
-  return {
-    attachmentId: requireString(value.attachmentId, "attachmentId"),
-    action: value.action,
-  };
-}
-
-function parseCancelQueuedMessage(value: unknown): CancelQueuedMessageInput {
-  if (!isObject(value)) throw new Error("Invalid queue cancellation request.");
-  return {
-    botId: requireString(value.botId, "botId"),
-    deliveryId: requireString(value.deliveryId, "deliveryId"),
-  };
-}
-
-function parseSetQueuePaused(value: unknown): SetQueuePausedInput {
-  if (!isObject(value) || typeof value.paused !== "boolean") {
-    throw new Error("Invalid queue pause request.");
-  }
-  return { botId: requireString(value.botId, "botId"), paused: value.paused };
-}
-
-function parseUpdateTeamMember(value: unknown): UpdateTeamMemberInput {
-  if (!isObject(value)) throw new Error("Invalid team member update.");
-  const role = value.role;
-  const disabled = value.disabled;
-  if (role !== undefined && role !== "admin" && role !== "member") {
-    throw new Error("Invalid team member role.");
-  }
-  if (disabled !== undefined && typeof disabled !== "boolean") {
-    throw new Error("Invalid team member state.");
-  }
-  return {
-    memberId: requireString(value.memberId, "memberId"),
-    ...(role ? { role } : {}),
-    ...(disabled === undefined ? {} : { disabled }),
-  };
-}
-
 function configureAttachmentProtocol(mailbox: MailboxStore): void {
   session.defaultSession.protocol.handle("openbot-attachment", async (request) => {
     try {
@@ -1389,91 +1179,4 @@ function applicationContentType(path: string): string {
     default:
       return "application/octet-stream";
   }
-}
-
-function parseInterrupt(value: unknown): InterruptTurnInput {
-  if (!isObject(value)) throw new Error("Invalid interrupt request.");
-  return {
-    botId: requireString(value.botId, "botId"),
-    turnId: requireString(value.turnId, "turnId"),
-  };
-}
-
-function parsePromptResponse(value: unknown): RespondToPromptInput {
-  if (
-    !isObject(value) ||
-    (typeof value.requestId !== "string" && typeof value.requestId !== "number")
-  ) {
-    throw new Error("Invalid prompt response.");
-  }
-  if (
-    (typeof value.requestId === "string" &&
-      (value.requestId.length === 0 || value.requestId.length > INPUT_LIMITS.identifier)) ||
-    (typeof value.requestId === "number" && !Number.isSafeInteger(value.requestId))
-  ) {
-    throw new Error("Invalid prompt response.");
-  }
-  if (!isObject(value.answers)) throw new Error("Prompt answers are required.");
-  const entries = Object.entries(value.answers);
-  if (entries.length > INPUT_LIMITS.promptQuestions) throw new Error("Too many prompt answers.");
-  const answers: Record<string, string[]> = {};
-  for (const [key, answer] of entries) {
-    if (
-      key.length > INPUT_LIMITS.identifier ||
-      !Array.isArray(answer) ||
-      answer.length > INPUT_LIMITS.promptAnswersPerQuestion ||
-      !answer.every(
-        (item) => typeof item === "string" && item.length <= INPUT_LIMITS.promptAnswerText,
-      )
-    ) {
-      throw new Error("Invalid prompt answer.");
-    }
-    answers[key] = answer;
-  }
-  return { requestId: value.requestId, answers };
-}
-
-function parseBrowserOpen(value: unknown): BrowserOpenInput {
-  if (!isObject(value)) throw new Error("Invalid browser open request.");
-  return {
-    url: requireString(value.url, "url", INPUT_LIMITS.browserUrl),
-    ownerThreadId:
-      value.ownerThreadId === null || value.ownerThreadId === undefined
-        ? null
-        : requireString(value.ownerThreadId, "ownerThreadId"),
-    ownerBotId:
-      value.ownerBotId === null || value.ownerBotId === undefined
-        ? null
-        : requireString(value.ownerBotId, "ownerBotId"),
-  };
-}
-
-function parseVisibility(value: unknown): BrowserVisibilityInput {
-  if (!isObject(value) || typeof value.visible !== "boolean") {
-    throw new Error("Invalid browser visibility request.");
-  }
-  return {
-    visible: value.visible,
-    bounds: value.bounds === undefined ? undefined : parseBounds(value.bounds),
-  };
-}
-
-function parseBounds(value: unknown): BrowserBounds {
-  if (!isObject(value)) throw new Error("Invalid browser bounds.");
-  const fields = ["x", "y", "width", "height"] as const;
-  for (const field of fields) {
-    if (typeof value[field] !== "number" || !Number.isFinite(value[field])) {
-      throw new Error(`Invalid browser bound: ${field}.`);
-    }
-  }
-  return {
-    x: value.x as number,
-    y: value.y as number,
-    width: value.width as number,
-    height: value.height as number,
-  };
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

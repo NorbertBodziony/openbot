@@ -1286,6 +1286,61 @@ textarea:focus-visible {
   padding: 15px;
   background: #101216;
 }
+
+.remote-desktop-access-card {
+  margin-top: 20px;
+  border: 1px solid rgba(111, 219, 159, 0.14);
+  border-radius: 12px;
+  padding: 15px;
+  background: linear-gradient(135deg, rgba(111, 219, 159, 0.055), transparent 48%), #101216;
+}
+
+.remote-desktop-access-state {
+  flex: 0 0 auto;
+  border: 1px solid rgba(216, 183, 107, 0.22);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: rgba(216, 183, 107, 0.08);
+  color: #d8b76b;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.remote-desktop-access-state.ready {
+  border-color: rgba(111, 219, 159, 0.22);
+  background: rgba(111, 219, 159, 0.08);
+  color: #79d6a1;
+}
+
+.remote-desktop-access-instructions {
+  display: grid;
+  gap: 5px;
+  margin-top: 14px;
+  border-left: 2px solid rgba(255, 255, 255, 0.12);
+  padding-left: 11px;
+}
+
+.remote-desktop-access-instructions > span {
+  color: #b8bdc6;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.remote-desktop-access-instructions p {
+  color: #7f8590;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.remote-desktop-password-field {
+  margin-bottom: 10px;
+}
+
+.remote-desktop-password-save {
+  width: 100%;
+}
 .remote-section-heading {
   display: flex;
   align-items: flex-start;
@@ -2586,6 +2641,309 @@ textarea {
 
 .conversation-panel.browser-panel-active {
   padding-right: var(--browser-panel-width, 380px);
+}
+
+.remote-desktop-panel {
+  position: absolute;
+  z-index: 16;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: var(--remote-desktop-panel-width, 520px);
+  min-width: 0;
+  flex-direction: column;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  background: #090a0b;
+  color: var(--openbot-white);
+  animation: settings-panel-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.remote-desktop-panel:fullscreen {
+  width: 100vw;
+  border-left: 0;
+}
+
+.conversation-panel.remote-desktop-panel-active {
+  padding-right: var(--remote-desktop-panel-width, 520px);
+}
+
+.remote-desktop-header {
+  display: flex;
+  height: 48px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0 10px 0 14px;
+  background: #0c0d0e;
+}
+
+.remote-desktop-heading,
+.remote-desktop-actions {
+  display: flex;
+  align-items: center;
+}
+
+.remote-desktop-heading {
+  min-width: 0;
+  gap: 9px;
+}
+
+.remote-desktop-heading > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.remote-desktop-heading strong {
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 16px;
+}
+
+.remote-desktop-heading span:not(.remote-desktop-status) {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 10px;
+  line-height: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-desktop-status {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.24);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.05);
+}
+
+.remote-desktop-status-connected {
+  background: #6fdb9f;
+  box-shadow: 0 0 0 3px rgba(111, 219, 159, 0.12);
+}
+
+.remote-desktop-status-connecting {
+  background: #d8b76b;
+  box-shadow: 0 0 0 3px rgba(216, 183, 107, 0.12);
+}
+
+.remote-desktop-status-error {
+  background: #ed7474;
+  box-shadow: 0 0 0 3px rgba(237, 116, 116, 0.12);
+}
+
+.remote-desktop-actions {
+  gap: 4px;
+}
+
+.remote-desktop-icon-button,
+.remote-desktop-mode,
+.remote-desktop-footer button {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.52);
+}
+
+.remote-desktop-icon-button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 7px;
+}
+
+.remote-desktop-icon-button:hover,
+.remote-desktop-mode:hover,
+.remote-desktop-footer button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.remote-desktop-icon-button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.35;
+}
+
+.remote-desktop-mode {
+  height: 26px;
+  border-radius: 999px;
+  padding: 0 9px;
+  font-size: 10px;
+}
+
+.remote-desktop-mode-active {
+  background: rgba(111, 219, 159, 0.1);
+  color: #9be8bc;
+}
+
+.remote-desktop-shared-note {
+  display: flex;
+  min-height: 31px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: #0b0c0d;
+  color: rgba(255, 255, 255, 0.38);
+  font-size: 10px;
+}
+
+.remote-desktop-shared-note svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.3;
+}
+
+.remote-desktop-stage {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  background: #050607;
+}
+
+.remote-desktop-viewer,
+.remote-desktop-viewer > div {
+  width: 100%;
+  height: 100%;
+}
+
+.remote-desktop-viewer {
+  overflow: hidden;
+}
+
+.remote-desktop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 7px;
+  background: rgba(7, 8, 9, 0.94);
+  padding: 24px;
+  text-align: center;
+}
+
+.remote-desktop-overlay strong {
+  max-width: 330px;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.remote-desktop-overlay > span:not(.remote-desktop-spinner):not(.remote-desktop-empty-mark) {
+  max-width: 330px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.remote-desktop-empty-mark {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  margin-bottom: 5px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.remote-desktop-empty-mark svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
+}
+
+.remote-desktop-spinner {
+  width: 18px;
+  height: 18px;
+  margin-bottom: 5px;
+  border: 1.5px solid rgba(255, 255, 255, 0.14);
+  border-top-color: rgba(255, 255, 255, 0.72);
+  border-radius: 50%;
+  animation: remote-desktop-spin 720ms linear infinite;
+}
+
+.remote-desktop-overlay > button {
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.remote-desktop-overlay > button:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.remote-desktop-overlay > button {
+  min-width: 92px;
+  margin-top: 5px;
+  padding: 0 13px;
+}
+
+.remote-desktop-footer {
+  display: flex;
+  min-height: 31px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 0 10px 0 13px;
+  background: #0b0c0d;
+  color: rgba(255, 255, 255, 0.32);
+  font-size: 9px;
+}
+
+.remote-desktop-footer button {
+  height: 22px;
+  border-radius: 5px;
+  padding: 0 7px;
+  font-size: 9px;
+}
+
+.remote-desktop-button {
+  position: relative;
+}
+
+.remote-desktop-button[aria-expanded="true"] {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.remote-desktop-button-dot {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 5px;
+  height: 5px;
+  border: 1px solid #111;
+  border-radius: 50%;
+  background: #6fdb9f;
 }
 
 .browser-panel-header {
@@ -5310,6 +5668,12 @@ textarea {
   width: 100%;
 }
 
+.conversation-panel:has(.remote-desktop-panel) .conversation-header,
+.conversation-panel:has(.remote-desktop-panel) .conversation-scroll,
+.conversation-panel:has(.remote-desktop-panel) .composer-wrap {
+  width: 100%;
+}
+
 @keyframes message-in {
   from {
     opacity: 0;
@@ -5368,6 +5732,12 @@ textarea {
   }
 }
 
+@keyframes remote-desktop-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes browser-tab-control-glow {
   0%,
   100% {
@@ -5384,6 +5754,7 @@ textarea {
 
 @media (prefers-reduced-motion: reduce) {
   .browser-panel,
+  .remote-desktop-panel,
   .message-entry,
   .exchange-message-entry,
   .agent-activity-entry,
@@ -5400,6 +5771,10 @@ textarea {
   .browser-tab-control-acting,
   .computer-control-dot {
     animation: none;
+  }
+
+  .remote-desktop-spinner {
+    animation-duration: 1.4s;
   }
 }
 

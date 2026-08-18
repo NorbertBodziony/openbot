@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { CentralAuthState, CentralAuthUser } from "../shared/ipc";
+import type { CentralAuthState, CentralAuthUser } from "@openbot/contracts/ipc";
 
 interface CentralAuthEvents {
   changed: [state: CentralAuthState];

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
-import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "../shared/input-limits";
+import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AttachmentDataInput,
   AttachmentKind,
@@ -14,8 +14,8 @@ import type {
   QueueDeliveryStatus,
   QueuedMessageReceipt,
   QueueSnapshot,
-} from "../shared/ipc";
-import { isMessageReaction } from "../shared/ipc";
+} from "@openbot/contracts/ipc";
+import { isMessageReaction } from "@openbot/contracts/ipc";
 import { OpenBotDatabase } from "./openbot-database";
 import { isRecord } from "./protocol";
 

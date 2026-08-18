@@ -4,11 +4,11 @@ import { copyFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promise
 import { arch, release as osRelease, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import type { BotSummary, ExportResult } from "@openbot/contracts/ipc";
 import { app, type BrowserWindow, dialog } from "electron";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
-import type { BotSummary, ExportResult } from "../shared/ipc";
 import type { UpdateService } from "./update-service";
 
 const execFileAsync = promisify(execFile);
