@@ -10,6 +10,7 @@ import {
 } from "./conversation/UnreadMessages";
 import { TeamPersonAvatar, teamMemberName } from "./TeamPersonAvatar";
 import { TypingDots } from "./TypingDots";
+import { Button, Textarea } from "./ui";
 
 interface DirectConversationProps {
   member: TeamPresenceMember;
@@ -263,7 +264,7 @@ export function DirectConversation(props: DirectConversationProps) {
         </Show>
         <Show when={error()}>{(message) => <p class="direct-message-error">{message()}</p>}</Show>
         <div class="direct-composer">
-          <textarea
+          <Textarea
             value={text()}
             rows="1"
             maxlength={INPUT_LIMITS.directMessageText}
@@ -277,14 +278,14 @@ export function DirectConversation(props: DirectConversationProps) {
               void send();
             }}
           />
-          <button
+          <Button
             type="button"
             aria-label="Send direct message"
             disabled={!text().trim() || sending()}
             onClick={() => void send()}
           >
             {sending() ? "…" : "↑"}
-          </button>
+          </Button>
         </div>
       </div>
     </main>

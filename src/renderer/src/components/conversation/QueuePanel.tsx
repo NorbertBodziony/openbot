@@ -1,5 +1,6 @@
 import type { QueueDelivery } from "@openbot/contracts/ipc";
-import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
+import { Button, DropdownMenu } from "../ui";
 import { DragHandleIcon, EditIcon, MoreIcon, QueueIcon, SteerIcon, TrashIcon } from "./ConversationIcons";
 
 interface QueuePanelProps {
@@ -14,10 +15,8 @@ interface QueuePanelProps {
 }
 
 export function QueuePanel(props: QueuePanelProps) {
-  const [openMenuId, setOpenMenuId] = createSignal<string | null>(null);
   const [draggedId, setDraggedId] = createSignal<string | null>(null);
   const [dragOverId, setDragOverId] = createSignal<string | null>(null);
-  let panel: HTMLElement | undefined;
 
   const visibleDeliveries = createMemo(() =>
     props.deliveries
@@ -34,20 +33,6 @@ export function QueuePanel(props: QueuePanelProps) {
       .filter((delivery) => delivery.status === "queued")
       .map((delivery) => delivery.id),
   );
-
-  const closeMenu = (event: PointerEvent) => {
-    const target = event.target;
-    if (panel && target instanceof Node && !panel.contains(target)) setOpenMenuId(null);
-  };
-  const handleKeyDown = (event: KeyboardEvent) => {
-    if (event.key === "Escape") setOpenMenuId(null);
-  };
-  document.addEventListener("pointerdown", closeMenu);
-  document.addEventListener("keydown", handleKeyDown);
-  onCleanup(() => {
-    document.removeEventListener("pointerdown", closeMenu);
-    document.removeEventListener("keydown", handleKeyDown);
-  });
 
   function moveDelivery(deliveryId: string, direction: -1 | 1) {
     const ids = [...queueIds()];
@@ -75,7 +60,7 @@ export function QueuePanel(props: QueuePanelProps) {
   }
 
   return (
-    <section class="agent-queue-panel" aria-label="Message queue" ref={(element) => (panel = element)}>
+    <section class="agent-queue-panel" aria-label="Message queue">
       <div class="agent-queue-panel-list">
         <For each={visibleDeliveries()}>
           {(delivery) => (
@@ -137,7 +122,7 @@ export function QueuePanel(props: QueuePanelProps) {
                 {messagePreview(delivery)}
               </span>
               <div class="agent-queue-actions">
-                <button
+                <Button
                   type="button"
                   class="agent-queue-steer"
                   disabled={!props.canSteer || delivery.status !== "queued"}
@@ -146,8 +131,8 @@ export function QueuePanel(props: QueuePanelProps) {
                 >
                   <SteerIcon />
                   <span>{delivery.status === "starting" ? "Steering" : "Steer"}</span>
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
                   class="agent-queue-icon-button"
                   disabled={delivery.status !== "queued"}
@@ -156,33 +141,22 @@ export function QueuePanel(props: QueuePanelProps) {
                   title="Delete queued message"
                 >
                   <TrashIcon />
-                </button>
+                </Button>
                 <div class="agent-queue-menu-anchor">
-                  <button
-                    type="button"
-                    class="agent-queue-icon-button"
-                    aria-expanded={openMenuId() === delivery.id ? "true" : "false"}
-                    aria-haspopup="menu"
-                    aria-label={`More actions for queued message ${delivery.position ?? ""}`}
-                    onClick={() => setOpenMenuId((current) => (current === delivery.id ? null : delivery.id))}
-                  >
-                    <MoreIcon />
-                  </button>
-                  <Show when={openMenuId() === delivery.id}>
-                    <div class="agent-queue-menu" role="menu">
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setOpenMenuId(null);
-                          props.onEdit(delivery);
-                        }}
-                      >
+                  <DropdownMenu.Root placement="bottom-end" gutter={4} modal={false}>
+                    <DropdownMenu.Trigger
+                      class="agent-queue-icon-button"
+                      aria-label={`More actions for queued message ${delivery.position ?? ""}`}
+                    >
+                      <MoreIcon />
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Content class="agent-queue-menu">
+                      <DropdownMenu.Item onSelect={() => props.onEdit(delivery)}>
                         <EditIcon />
                         Edit message
-                      </button>
-                    </div>
-                  </Show>
+                      </DropdownMenu.Item>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Root>
                 </div>
               </div>
             </fieldset>
@@ -192,9 +166,9 @@ export function QueuePanel(props: QueuePanelProps) {
       <Show when={props.paused}>
         <div class="agent-queue-panel-footer">
           <span>Queue paused</span>
-          <button type="button" onClick={props.onResume}>
+          <Button type="button" onClick={props.onResume}>
             Resume queue
-          </button>
+          </Button>
         </div>
       </Show>
     </section>

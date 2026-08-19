@@ -2,12 +2,13 @@ import { attachmentReferenceIds, serializeAttachmentReference } from "@openbot/c
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { DraftAttachment } from "@openbot/contracts/ipc";
 import { Portal } from "@solidjs/web";
-import { createEffect, createMemo, createSignal, createUniqueId, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, createUniqueId, Show } from "solid-js";
 import { buildAnimatedAvatarSvg } from "../blobatar";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 import { AnchoredTooltip } from "./conversation/AnchoredTooltip";
 import { AttachmentReferenceVisual, appendAttachmentReferenceVisual } from "./conversation/AttachmentReference";
+import { Listbox } from "./ui";
 
 interface ComposerEditorProps {
   botId: string | undefined;
@@ -44,6 +45,14 @@ export function expandComposerMentions(value: string): string {
 
 type PickerOption = { type: "bot"; bot: BotProfile } | { type: "attachment"; attachment: DraftAttachment };
 
+function pickerOptionKey(option: PickerOption): string {
+  return option.type === "bot" ? `bot:${option.bot.id}` : `attachment:${option.attachment.id}`;
+}
+
+function pickerOptionText(option: PickerOption): string {
+  return option.type === "bot" ? `${option.bot.name} Agent` : `${option.attachment.name} File`;
+}
+
 export function ComposerEditor(props: ComposerEditorProps) {
   const [mention, setMention] = createSignal<MentionContext | null>(null);
   const [activeOption, setActiveOption] = createSignal(0);
@@ -78,6 +87,10 @@ export function ComposerEditor(props: ComposerEditorProps) {
       attachment,
     })),
   ]);
+  const activePickerValue = createMemo(() => {
+    const option = matchingOptions()[activeOption()];
+    return option ? new Set([pickerOptionKey(option)]) : new Set<string>();
+  });
   let editor: HTMLDivElement | undefined;
   let lastBotId: string | undefined;
   let lastAttachmentKey = "";
@@ -287,65 +300,65 @@ export function ComposerEditor(props: ComposerEditorProps) {
       />
       <Portal>
         <Show when={mention() && matchingOptions().length > 0}>
-          <div
+          <Listbox.Root<PickerOption>
+            as="div"
             class="mention-picker"
-            role="listbox"
             aria-label="Insert mention"
+            options={matchingOptions()}
+            optionValue={pickerOptionKey}
+            optionTextValue={pickerOptionText}
+            selectionMode="single"
+            disallowEmptySelection={true}
+            allowDuplicateSelectionEvents={true}
+            shouldUseVirtualFocus={true}
+            shouldFocusOnHover={true}
+            shouldSelectOnPressUp={true}
+            value={activePickerValue()}
+            onChange={(keys) => {
+              const key = keys.values().next().value;
+              const option = matchingOptions().find((candidate) => pickerOptionKey(candidate) === key);
+              if (option) insertOption(option);
+            }}
+            renderItem={(item) => {
+              const option = item.rawValue;
+              const optionIndex = () =>
+                matchingOptions().findIndex((candidate) => pickerOptionKey(candidate) === item.key);
+              const firstAttachmentIndex = () => matchingBots().length;
+              return (
+                <>
+                  <Show when={option.type === "bot" && item.index === 0}>
+                    <div class="mention-picker-section">Agents</div>
+                  </Show>
+                  <Show when={option.type === "attachment" && item.index === firstAttachmentIndex()}>
+                    <div class="mention-picker-section">Files</div>
+                  </Show>
+                  <Listbox.Item
+                    item={item}
+                    aria-label={pickerOptionText(option)}
+                    class={["mention-picker-option", { "mention-picker-file-option": option.type === "attachment" }]}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setActiveOption(optionIndex())}
+                  >
+                    <Show
+                      when={option.type === "bot" ? option.bot : undefined}
+                      fallback={
+                        <AttachmentReferenceVisual name={option.type === "attachment" ? option.attachment.name : ""} />
+                      }
+                    >
+                      {(bot) => <AgentAvatar bot={bot()} />}
+                    </Show>
+                    <strong>{option.type === "bot" ? option.bot.name : option.attachment.name}</strong>
+                    <span>{option.type === "bot" ? "Agent" : "File"}</span>
+                  </Listbox.Item>
+                </>
+              );
+            }}
             style={{
               bottom: `${pickerPosition().bottom}px`,
               left: `${pickerPosition().left}px`,
               width: `${pickerPosition().width}px`,
             }}
-          >
-            <Show when={matchingBots().length > 0}>
-              <div class="mention-picker-section">Agents</div>
-            </Show>
-            <For each={matchingBots()}>
-              {(bot, index) => (
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={activeOption() === index() ? "true" : "false"}
-                  class={["mention-picker-option", { "mention-picker-option-active": activeOption() === index() }]}
-                  onPointerDown={(event) => event.preventDefault()}
-                  onMouseEnter={() => setActiveOption(index())}
-                  onClick={() => insertOption({ type: "bot", bot })}
-                >
-                  <AgentAvatar bot={bot} />
-                  <strong>{bot.name}</strong>
-                  <span>Agent</span>
-                </button>
-              )}
-            </For>
-            <Show when={matchingAttachments().length > 0}>
-              <div class="mention-picker-section">Files</div>
-            </Show>
-            <For each={matchingAttachments()}>
-              {(attachment, index) => {
-                const optionIndex = () => matchingBots().length + index();
-                return (
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={activeOption() === optionIndex() ? "true" : "false"}
-                    aria-label={`${attachment.name} File`}
-                    class={[
-                      "mention-picker-option",
-                      "mention-picker-file-option",
-                      { "mention-picker-option-active": activeOption() === optionIndex() },
-                    ]}
-                    onPointerDown={(event) => event.preventDefault()}
-                    onMouseEnter={() => setActiveOption(optionIndex())}
-                    onClick={() => insertOption({ type: "attachment", attachment })}
-                  >
-                    <AttachmentReferenceVisual name={attachment.name} />
-                    <strong>{attachment.name}</strong>
-                    <span>File</span>
-                  </button>
-                );
-              }}
-            </For>
-          </div>
+          />
         </Show>
       </Portal>
       <Show when={attachmentTooltip()}>

@@ -39,6 +39,58 @@ function codeSentState(overrides: Partial<Extract<CentralAuthState, { status: "c
 
 export const SignIn: Story = {};
 
+export const Interactive: Story = {
+  render: (storyArgs) => {
+    const [state, setState] = createSignal<CentralAuthState>({ status: "signed_out" });
+    return (
+      <AccountLogin
+        {...storyArgs}
+        state={state()}
+        onRetry={async () => {
+          setState({ status: "signed_out" });
+        }}
+        onRequestEmailCode={async (email) => {
+          await delay(500);
+          setState(
+            codeSentState({
+              challengeId: `challenge-${Date.now()}`,
+              email,
+              developmentCode: "ABCD-EFGH",
+            }),
+          );
+        }}
+        onVerifyEmailCode={async (_challengeId, code) => {
+          const activeState = state();
+          if (activeState.status !== "code_sent") return;
+          await delay(650);
+          if (code === "ABCD-EFGH") {
+            setState({
+              status: "signed_in",
+              user: { id: "story-user", email: activeState.email, name: null, avatarUrl: null },
+            });
+            return;
+          }
+          setState({
+            ...activeState,
+            issue: { code: "invalid_sign_in_code", message: "The sign-in code is incorrect." },
+          });
+        }}
+        onReset={async () => {
+          await delay(250);
+          setState({ status: "signed_out" });
+        }}
+      />
+    );
+  },
+  parameters: {
+    docs: {
+      description: {
+        story: "Use ABCD-EFGH to complete the simulated sign-in. Any other complete code shows the error state.",
+      },
+    },
+  },
+};
+
 export const HappyPath: Story = {
   render: (storyArgs) => {
     const [state, setState] = createSignal(storyArgs.state);
@@ -49,6 +101,12 @@ export const HappyPath: Story = {
         onRequestEmailCode={async (email) => {
           setState(codeSentState({ email }));
         }}
+        onVerifyEmailCode={async () => {
+          setState({
+            status: "signed_in",
+            user: { id: "story-user", email: "person@example.com", name: null, avatarUrl: null },
+          });
+        }}
       />
     );
   },
@@ -57,6 +115,8 @@ export const HappyPath: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Send sign-in code" }));
     await expect(canvas.getByRole("heading", { name: "Check your inbox" })).toBeInTheDocument();
     await expect(canvas.getByText(/person@example.com/)).toBeInTheDocument();
+    await userEvent.type(canvas.getByRole("textbox", { name: "One-time code" }), "ABCDEFGH");
+    await expect(canvas.getByText("Verified. Opening OpenBot…")).toBeInTheDocument();
   },
 };
 
@@ -122,3 +182,7 @@ export const ServiceUnavailable: Story = {
     },
   },
 };
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}

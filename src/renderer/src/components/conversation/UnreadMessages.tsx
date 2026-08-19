@@ -1,3 +1,4 @@
+import { Button } from "../ui";
 import { preferredMessageScrollBehavior } from "./MessageNavigation";
 
 export function UnreadMessagesBanner(props: {
@@ -9,17 +10,17 @@ export function UnreadMessagesBanner(props: {
   const label = () => `${props.count} new ${props.count === 1 ? "message" : "messages"}`;
   return (
     <div class="unread-messages-banner" role="status" aria-label={label()}>
-      <button
+      <Button
         class="unread-messages-jump"
         type="button"
         aria-label={`Jump to ${label()}`}
         onClick={props.onJumpToUnread}
       >
         {label()}
-      </button>
-      <button class="unread-messages-mark-read" type="button" disabled={props.busy} onClick={props.onMarkRead}>
+      </Button>
+      <Button class="unread-messages-mark-read" type="button" disabled={props.busy} onClick={props.onMarkRead}>
         {props.busy ? "Marking…" : "Mark as read"}
-      </button>
+      </Button>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { createSignal, Show, untrack } from "solid-js";
+import { Button, Dialog, Textarea } from "./ui";
 
 interface JoinServerDialogProps {
   inviteUrl: string;
@@ -27,56 +28,58 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
   }
 
   return (
-    <div
-      class="remote-dialog-backdrop"
-      role="presentation"
-      onPointerDown={(event) => {
-        if (event.currentTarget === event.target && !busy()) props.onClose();
-      }}
-    >
-      <section class="remote-dialog" role="dialog" aria-modal="true" aria-labelledby="join-title">
-        <header>
-          <div>
-            <span class="remote-dialog-eyebrow">Remote server</span>
-            <h2 id="join-title">Join an OpenBot team</h2>
-          </div>
-          <button type="button" aria-label="Close" onClick={props.onClose}>
-            ×
-          </button>
-        </header>
-        <p>Paste the one-time invitation link. You will join with your signed-in OpenBot account.</p>
-        <label class="remote-field">
-          <span>Invitation link</span>
-          <textarea
-            value={inviteUrl()}
-            onInput={(event) => setInviteUrl(event.currentTarget.value)}
-            rows="3"
-            maxlength={INPUT_LIMITS.inviteUrl}
-            spellcheck={false}
-          />
-        </label>
-        <div class="remote-account-chip">
-          <span aria-hidden="true">@</span>
-          <div>
-            <small>Joining as</small>
-            <strong>{props.accountEmail}</strong>
-          </div>
-        </div>
-        <Show when={error()}>{(message) => <p class="remote-dialog-error">{message()}</p>}</Show>
-        <footer>
-          <button
-            type="button"
-            class="remote-secondary-button"
-            disabled={busy() || !inviteUrl().trim()}
-            onClick={props.onClose}
-          >
-            Cancel
-          </button>
-          <button type="button" class="remote-primary-button" disabled={busy()} onClick={() => void join()}>
-            {busy() ? "Joining…" : "Join server"}
-          </button>
-        </footer>
-      </section>
-    </div>
+    <Dialog.Root open onOpenChange={(open) => !open && !busy() && props.onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay class="remote-dialog-backdrop">
+          <Dialog.Content as="section" class="remote-dialog">
+            <header>
+              <div>
+                <span class="remote-dialog-eyebrow">Remote server</span>
+                <Dialog.Title as="h2" id="join-title">
+                  Join an OpenBot team
+                </Dialog.Title>
+              </div>
+              <Button type="button" aria-label="Close" disabled={busy()} onClick={props.onClose}>
+                ×
+              </Button>
+            </header>
+            <Dialog.Description>
+              Paste the one-time invitation link. You will join with your signed-in OpenBot account.
+            </Dialog.Description>
+            <label class="remote-field">
+              <span>Invitation link</span>
+              <Textarea
+                value={inviteUrl()}
+                onInput={(event) => setInviteUrl(event.currentTarget.value)}
+                rows="3"
+                maxlength={INPUT_LIMITS.inviteUrl}
+                spellcheck={false}
+              />
+            </label>
+            <div class="remote-account-chip">
+              <span aria-hidden="true">@</span>
+              <div>
+                <small>Joining as</small>
+                <strong>{props.accountEmail}</strong>
+              </div>
+            </div>
+            <Show when={error()}>{(message) => <p class="remote-dialog-error">{message()}</p>}</Show>
+            <footer>
+              <Button
+                type="button"
+                class="remote-secondary-button"
+                disabled={busy() || !inviteUrl().trim()}
+                onClick={props.onClose}
+              >
+                Cancel
+              </Button>
+              <Button type="button" class="remote-primary-button" disabled={busy()} onClick={() => void join()}>
+                {busy() ? "Joining…" : "Join server"}
+              </Button>
+            </footer>
+          </Dialog.Content>
+        </Dialog.Overlay>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

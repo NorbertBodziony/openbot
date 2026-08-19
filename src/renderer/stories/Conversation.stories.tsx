@@ -9,7 +9,7 @@ import type {
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, onCleanup } from "solid-js";
-import { expect, fn } from "storybook/test";
+import { expect, fn, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { Conversation } from "../src/components/Conversation";
 import type { BotMessage as RendererBotMessage } from "../src/data";
@@ -415,12 +415,12 @@ export const NarrowRichConversation: Story = {
     browserControlState: { sessions: [] },
   },
   render: (storyArgs) => (
-    <section aria-label="Narrow conversation sample" style={{ width: "360px", height: "820px", overflow: "hidden" }}>
+    <section data-testid="narrow-conversation-sample" style={{ width: "360px", height: "820px", overflow: "hidden" }}>
       <MockedConversation args={storyArgs} />
     </section>
   ),
   play: async ({ canvas }) => {
-    const sample = canvas.getByLabelText("Narrow conversation sample");
+    const sample = canvas.getByTestId("narrow-conversation-sample");
     const reference = canvas.getByRole("button", {
       name: `Open attached file ${STORY_ATTACHMENTS[0].name}`,
     });
@@ -487,10 +487,12 @@ export const ImageGenerationCompletedInChat: Story = {
     activeBrowserTabId: null,
     browserControlState: { sessions: [] },
   },
-  play: async ({ canvas }) => {
+  play: async ({ canvas, canvasElement }) => {
     expect(canvas.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument();
     await canvas.getByRole("button", { name: "Preview generated image" }).click();
-    await expect(canvas.findByRole("dialog", { name: "generated-image.png" })).resolves.toBeInTheDocument();
+    await expect(
+      within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "generated-image.png" }),
+    ).resolves.toBeInTheDocument();
   },
 };
 

@@ -5,13 +5,17 @@ import { mergeConfig, type PluginOption } from "vite";
 
 const config = {
   stories: ["../src/renderer/**/*.stories.@(ts|tsx)"],
-  addons: ["@storybook/addon-vitest"],
+  addons: ["@storybook/addon-vitest", "@storybook/addon-a11y"],
   framework: {
     name: "storybook-solidjs-vite",
   },
   viteFinal: async (viteConfig) => {
     const mergedConfig = mergeConfig(viteConfig, {
-      plugins: [solidPlugin(), tailwindcss()],
+      plugins: [solidPlugin(), tailwindcss({ optimize: false })],
+      build: {
+        // Storybook bundles axe and its preview runtime into intentionally large development-only chunks.
+        chunkSizeWarningLimit: 1_200,
+      },
       resolve: {
         alias: [{ find: "solid-js/web", replacement: "@solidjs/web" }],
       },

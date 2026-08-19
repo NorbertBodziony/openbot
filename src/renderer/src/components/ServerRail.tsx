@@ -1,5 +1,6 @@
 import type { HostStatus, ServerSummary } from "@openbot/contracts/ipc";
 import { For, Show } from "solid-js";
+import { Button } from "./ui";
 
 interface ServerRailProps {
   platform: "darwin" | "win32" | "linux";
@@ -18,7 +19,7 @@ export function ServerRail(props: ServerRailProps) {
       <div class="server-rail-list">
         <For each={props.servers}>
           {(server) => (
-            <button
+            <Button
               type="button"
               class={["server-rail-button", { "server-rail-button-active": server.active }]}
               aria-label={`${server.name} server${server.state === "online" ? "" : `, ${server.state}`}`}
@@ -31,10 +32,10 @@ export function ServerRail(props: ServerRailProps) {
                 {server.kind === "local" ? "O" : initials(server.name)}
               </span>
               <span class={`server-rail-state server-rail-state-${server.state}`} />
-            </button>
+            </Button>
           )}
         </For>
-        <button
+        <Button
           type="button"
           class="server-rail-button server-rail-action"
           aria-label="Add remote server"
@@ -42,11 +43,11 @@ export function ServerRail(props: ServerRailProps) {
           onClick={props.onAdd}
         >
           <span class="server-rail-monogram">+</span>
-        </button>
+        </Button>
       </div>
       <div class="server-rail-tools">
         <Show when={props.platform === "darwin" && activeRemote()}>
-          <button
+          <Button
             type="button"
             class="server-rail-button server-rail-action"
             aria-label="Open Remote Mac"
@@ -57,9 +58,9 @@ export function ServerRail(props: ServerRailProps) {
               <rect x="3" y="4" width="14" height="10" rx="2" />
               <path d="M7 17h6M10 14v3" />
             </svg>
-          </button>
+          </Button>
         </Show>
-        <button
+        <Button
           type="button"
           class="server-rail-button server-rail-action"
           aria-label="Open publishing controls"
@@ -75,7 +76,7 @@ export function ServerRail(props: ServerRailProps) {
           <Show when={props.hostStatus.phase === "online"}>
             <span class="server-rail-state server-rail-state-online" />
           </Show>
-        </button>
+        </Button>
       </div>
     </aside>
   );

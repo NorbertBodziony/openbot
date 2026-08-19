@@ -1,13 +1,10 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { AppVariant, CentralAuthIssue, CentralAuthState } from "@openbot/contracts/ipc";
-import {
-  normalizeEmailAddress,
-  normalizeOneTimeCode,
-  ONE_TIME_CODE_ALPHABET,
-  ONE_TIME_CODE_LENGTH,
-} from "@openbot/contracts/validation";
+import { normalizeEmailAddress, normalizeOneTimeCode } from "@openbot/contracts/validation";
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { AppLogo } from "./AppLogo";
+import { OtpInput, type OtpInputStatus } from "./OtpInput";
+import { ArrowLeft, Button, Input, RefreshCw } from "./ui";
 
 interface AccountLoginProps {
   variant: AppVariant;
@@ -19,8 +16,15 @@ interface AccountLoginProps {
 }
 
 type PendingAction = "retry" | "send" | "verify" | "resend" | "reset";
+type LoginStep = "email" | "code";
+type LoginTransition = "none" | "forward" | "back";
 
-const FIELD_ISSUES = new Set(["invalid_email", "invalid_sign_in_code"]);
+const FIELD_ISSUES = new Set([
+  "invalid_email",
+  "invalid_sign_in_code",
+  "sign_in_code_expired",
+  "too_many_code_attempts",
+]);
 const NEW_CODE_ISSUES = new Set(["sign_in_code_expired", "too_many_code_attempts"]);
 
 export function AccountLogin(props: AccountLoginProps) {
@@ -34,13 +38,15 @@ export function AccountLogin(props: AccountLoginProps) {
   const [issueVisible, setIssueVisible] = createSignal(true);
   const [issueBlockedUntil, setIssueBlockedUntil] = createSignal(0);
   const [now, setNow] = createSignal(Date.now());
+  const [loginTransition, setLoginTransition] = createSignal<LoginTransition>("none");
   let emailInput: HTMLInputElement | undefined;
-  let codeInput: HTMLInputElement | undefined;
 
   const clock = window.setInterval(() => setNow(Date.now()), 1_000);
   onCleanup(() => window.clearInterval(clock));
 
   const codeSent = () => props.state.status === "code_sent";
+  const verified = () => props.state.status === "signed_in";
+  const loginStep = (): LoginStep => (codeSent() || verified() ? "code" : "email");
   const challenge = () => (props.state.status === "code_sent" ? props.state : undefined);
   const connecting = () => props.state.status === "loading";
   const currentIssue = (): CentralAuthIssue | undefined => {
@@ -52,7 +58,7 @@ export function AccountLogin(props: AccountLoginProps) {
   const unavailableIssue = () => (unavailable() && props.state.status === "error" ? props.state.issue : undefined);
   const codeExpiresIn = () => (props.state.status === "code_sent" ? secondsUntil(props.state.expiresAt, now()) : 0);
   const codeNeedsReplacement = () => {
-    const issue = displayedIssue();
+    const issue = currentIssue();
     return Boolean(issue && NEW_CODE_ISSUES.has(issue.code)) || (codeSent() && codeExpiresIn() === 0);
   };
   const resendAvailableIn = () => {
@@ -60,7 +66,7 @@ export function AccountLogin(props: AccountLoginProps) {
     return secondsUntil(Math.max(props.state.resendAvailableAt, issueBlockedUntil()), now());
   };
   const emailRetryIn = () => {
-    const issue = displayedIssue();
+    const issue = currentIssue();
     return issue?.retryAfterSeconds ? secondsUntil(issueBlockedUntil(), now()) : 0;
   };
   const emailBusy = () => pendingAction() === "send" || props.state.status === "signing_in";
@@ -75,13 +81,31 @@ export function AccountLogin(props: AccountLoginProps) {
     return emailError() ?? (issue?.code === "invalid_email" ? issue.message : null);
   };
   const displayedCodeError = () => {
-    const issue = displayedIssue();
-    return codeError() ?? (issue?.code === "invalid_sign_in_code" ? issue.message : null);
+    const visibleIssue = displayedIssue();
+    const issue = currentIssue();
+    if (codeError()) return codeError();
+    if (visibleIssue?.code === "invalid_sign_in_code") return visibleIssue.message;
+    return issue && NEW_CODE_ISSUES.has(issue.code) ? issue.message : null;
   };
+  const otpStatus = (): OtpInputStatus => {
+    if (verified()) return "success";
+    if (codeBusy()) return "verifying";
+    if (displayedCodeError()) return "error";
+    return "idle";
+  };
+
+  createEffect(
+    () => loginStep(),
+    (step, previousStep) => {
+      if (!previousStep || step === previousStep) return;
+      setLoginTransition(step === "code" ? "forward" : "back");
+    },
+  );
 
   createEffect(
     () => currentIssue(),
     (issue) => {
+      setNow(Date.now());
       setIssueVisible(true);
       setIssueBlockedUntil(issue?.retryAfterSeconds ? Date.now() + issue.retryAfterSeconds * 1_000 : 0);
     },
@@ -90,10 +114,11 @@ export function AccountLogin(props: AccountLoginProps) {
   createEffect(
     () => (props.state.status === "code_sent" ? props.state.challengeId : null),
     (challengeId, previousChallengeId) => {
-      if (!challengeId || !previousChallengeId || challengeId === previousChallengeId) return;
+      if (!challengeId) return;
+      setNow(Date.now());
+      if (!previousChallengeId || challengeId === previousChallengeId) return;
       setCode("");
       setCodeError(null);
-      queueMicrotask(() => codeInput?.focus());
     },
   );
 
@@ -120,15 +145,14 @@ export function AccountLogin(props: AccountLoginProps) {
   }
 
   function handleCodeInput(value: string): void {
-    const formatted = formatCode(value);
-    setCode(formatted);
+    setCode(value);
     setIssueVisible(false);
     setLocalError(null);
-    if (codeError()) setCodeError(normalizeOneTimeCode(formatted) ? null : "Enter the full 8-character code.");
+    setCodeError(null);
   }
 
   async function submitEmail(): Promise<void> {
-    if (emailBusy() || emailRetryIn() > 0) return;
+    if (pendingAction() || emailBusy() || emailRetryIn() > 0) return;
     setEmailTouched(true);
     const validationError = validateEmail(email());
     setEmailError(validationError);
@@ -151,12 +175,11 @@ export function AccountLogin(props: AccountLoginProps) {
     }
   }
 
-  async function submitCode(): Promise<void> {
-    if (props.state.status !== "code_sent" || codeBusy() || codeNeedsReplacement()) return;
-    const normalizedCode = normalizeOneTimeCode(code());
+  async function submitCode(value = code()): Promise<void> {
+    if (props.state.status !== "code_sent" || pendingAction() || codeBusy() || codeNeedsReplacement()) return;
+    const normalizedCode = normalizeOneTimeCode(value);
     if (!normalizedCode) {
       setCodeError("Enter the full 8-character code.");
-      codeInput?.focus();
       return;
     }
     setCodeError(null);
@@ -173,7 +196,7 @@ export function AccountLogin(props: AccountLoginProps) {
   }
 
   async function resendCode(): Promise<void> {
-    if (props.state.status !== "code_sent" || resendBusy() || resendAvailableIn() > 0) return;
+    if (props.state.status !== "code_sent" || pendingAction() || resendBusy() || resendAvailableIn() > 0) return;
     setIssueVisible(false);
     setLocalError(null);
     setPendingAction("resend");
@@ -219,46 +242,48 @@ export function AccountLogin(props: AccountLoginProps) {
     <main class="account-login-screen">
       <div class="account-login-shell">
         <header class="account-login-brand-lockup">
-          <span class="account-login-brand" aria-hidden="true">
-            <AppLogo variant={props.variant} animation="blink" class="account-login-logo" />
-          </span>
+          <AppLogo variant={props.variant} animation="blink" interactive class="account-login-logo" />
           <span class="account-login-wordmark">OpenBot</span>
         </header>
 
         <section
           class="account-login"
+          data-step={loginStep()}
+          data-transition={loginTransition()}
           aria-labelledby="account-login-title"
           aria-describedby="account-login-description"
         >
-          <div class="account-login-heading">
-            <h1 id="account-login-title">
-              {connecting()
-                ? "Connecting to OpenBot"
-                : unavailable()
-                  ? "Service unavailable"
+          <h1 id="account-login-title" class="account-login-title">
+            {connecting()
+              ? "Connecting to OpenBot"
+              : unavailable()
+                ? "Service unavailable"
+                : verified()
+                  ? "You’re signed in"
                   : codeSent()
                     ? "Check your inbox"
                     : "Sign in to OpenBot"}
-            </h1>
-            <p id="account-login-description" class="account-login-description">
-              <Show
-                when={challenge()}
-                fallback={
-                  connecting()
-                    ? "Starting the account service. This usually takes a moment."
-                    : unavailable()
-                      ? "OpenBot can’t reach the account service right now."
-                      : "Enter your email and we’ll send you a one-time sign-in code."
-                }
-              >
-                {(activeChallenge) => (
-                  <>
-                    We sent an 8-character code to <strong>{activeChallenge().email}</strong>.
-                  </>
-                )}
-              </Show>
-            </p>
-          </div>
+          </h1>
+          <p id="account-login-description" class="account-login-description">
+            <Show
+              when={challenge() || verified()}
+              fallback={
+                connecting()
+                  ? "Starting the account service. This usually takes a moment."
+                  : unavailable()
+                    ? (currentIssue()?.message ?? "OpenBot can’t reach the account service right now.")
+                    : "We’ll email you a one-time code."
+              }
+            >
+              {verified() ? (
+                "Your code was accepted."
+              ) : (
+                <>
+                  We sent a code to <strong>{challenge()?.email}</strong>.
+                </>
+              )}
+            </Show>
+          </p>
 
           <Show when={connecting()}>
             <div class="account-login-loader" role="status" aria-live="polite">
@@ -268,33 +293,33 @@ export function AccountLogin(props: AccountLoginProps) {
           </Show>
 
           <Show when={unavailableIssue()}>
-            {(issue) => (
-              <div class="account-login-stack">
-                <AuthNotice message={issue().message} />
-                <Show when={localError()}>{(message) => <AuthNotice message={message()} />}</Show>
-                <button
-                  type="button"
-                  class="account-login-primary"
-                  disabled={pendingAction() === "retry"}
-                  onClick={() => void retryConnection()}
-                >
-                  <Show when={pendingAction() === "retry"} fallback="Try again">
-                    <span class="account-login-button-content">
-                      <span class="account-login-button-spinner" aria-hidden="true" />
-                      Connecting…
-                    </span>
-                  </Show>
-                </button>
-              </div>
-            )}
+            <Show when={localError()}>
+              {(message) => (
+                <p class="account-login-error" role="alert">
+                  {message()}
+                </p>
+              )}
+            </Show>
+            <Button
+              type="button"
+              class="account-login-primary"
+              disabled={pendingAction() === "retry"}
+              onClick={() => void retryConnection()}
+            >
+              <Show when={pendingAction() === "retry"} fallback="Try again">
+                <span class="account-login-button-spinner" aria-hidden="true" />
+                Connecting…
+              </Show>
+            </Button>
           </Show>
 
           <Show when={!connecting() && !unavailable()}>
             <Show
-              when={challenge()}
+              when={challenge() || verified()}
               fallback={
                 <form
                   class="account-login-form"
+                  data-auth-panel="email"
                   aria-busy={emailBusy() ? "true" : "false"}
                   novalidate
                   onSubmit={(event) => {
@@ -302,41 +327,53 @@ export function AccountLogin(props: AccountLoginProps) {
                     void submitEmail();
                   }}
                 >
-                  <div class="account-login-field">
-                    <label for="account-email">Email</label>
-                    <input
-                      ref={(element) => (emailInput = element)}
-                      id="account-email"
-                      type="email"
-                      autocomplete="email"
-                      autocapitalize="none"
-                      inputmode="email"
-                      spellcheck={false}
-                      placeholder="you@example.com"
-                      maxlength={INPUT_LIMITS.email}
-                      value={email()}
-                      aria-invalid={displayedEmailError() ? "true" : undefined}
-                      aria-describedby={displayedEmailError() ? "account-email-error" : undefined}
-                      autofocus
-                      onBlur={() => {
-                        setEmailTouched(true);
-                        setEmailError(validateEmail(email()));
-                      }}
-                      onInput={(event) => handleEmailInput(event.currentTarget.value)}
-                    />
-                    <Show when={displayedEmailError()}>
-                      {(message) => (
-                        <p id="account-email-error" class="account-login-field-error" role="alert">
-                          {message()}
-                        </p>
-                      )}
-                    </Show>
-                  </div>
+                  <label class="sr-only" for="account-email">
+                    Email
+                  </label>
+                  <Input
+                    ref={(element) => (emailInput = element)}
+                    id="account-email"
+                    type="email"
+                    autocomplete="email"
+                    autocapitalize="none"
+                    inputmode="email"
+                    spellcheck={false}
+                    placeholder="you@example.com"
+                    maxlength={INPUT_LIMITS.email}
+                    value={email()}
+                    aria-invalid={displayedEmailError() ? "true" : undefined}
+                    aria-describedby={displayedEmailError() ? "account-email-error" : undefined}
+                    autofocus
+                    onBlur={() => {
+                      setEmailTouched(true);
+                      setEmailError(validateEmail(email()));
+                    }}
+                    onInput={(event) => handleEmailInput(event.currentTarget.value)}
+                  />
+                  <Show when={displayedEmailError()}>
+                    {(message) => (
+                      <p id="account-email-error" class="account-login-field-error" role="alert">
+                        {message()}
+                      </p>
+                    )}
+                  </Show>
 
-                  <Show when={formIssue()}>{(issue) => <AuthNotice message={issue().message} />}</Show>
-                  <Show when={localError()}>{(message) => <AuthNotice message={message()} />}</Show>
+                  <Show when={formIssue()}>
+                    {(issue) => (
+                      <p class="account-login-error" role="alert">
+                        {issue().message}
+                      </p>
+                    )}
+                  </Show>
+                  <Show when={localError()}>
+                    {(message) => (
+                      <p class="account-login-error" role="alert">
+                        {message()}
+                      </p>
+                    )}
+                  </Show>
 
-                  <button
+                  <Button
                     type="submit"
                     class="account-login-primary"
                     disabled={emailBusy() || !email().trim() || emailRetryIn() > 0}
@@ -347,78 +384,56 @@ export function AccountLogin(props: AccountLoginProps) {
                         emailRetryIn() > 0 ? `Try again in ${formatTimer(emailRetryIn())}` : "Send sign-in code"
                       }
                     >
-                      <span class="account-login-button-content">
-                        <span class="account-login-button-spinner" aria-hidden="true" />
-                        Sending code…
-                      </span>
+                      <span class="account-login-button-spinner" aria-hidden="true" />
+                      Sending code…
                     </Show>
-                  </button>
+                  </Button>
                 </form>
               }
             >
-              {(challenge) => (
-                <form
-                  class="account-login-form"
-                  aria-busy={codeBusy() || resendBusy() ? "true" : "false"}
-                  novalidate
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void submitCode();
-                  }}
-                >
-                  <div class="account-login-field">
-                    <label for="account-code">One-time code</label>
-                    <input
-                      ref={(element) => (codeInput = element)}
-                      id="account-code"
-                      class="account-login-code"
-                      type="text"
-                      autocomplete="one-time-code"
-                      autocapitalize="characters"
-                      inputmode="text"
-                      spellcheck={false}
-                      placeholder="XXXX-XXXX"
-                      maxlength={ONE_TIME_CODE_LENGTH + 1}
-                      value={code()}
-                      aria-invalid={displayedCodeError() ? "true" : undefined}
-                      aria-describedby={displayedCodeError() ? "account-code-error" : "account-code-meta"}
-                      autofocus
-                      onInput={(event) => handleCodeInput(event.currentTarget.value)}
-                    />
-                    <Show when={displayedCodeError()}>
-                      {(message) => (
-                        <p id="account-code-error" class="account-login-field-error" role="alert">
-                          {message()}
-                        </p>
-                      )}
-                    </Show>
-                  </div>
+              <div
+                class="account-login-form"
+                data-auth-panel="code"
+                aria-busy={codeBusy() || resendBusy() ? "true" : "false"}
+              >
+                <OtpInput
+                  value={code()}
+                  status={otpStatus()}
+                  hint="Enter all 8 characters to continue."
+                  errorMessage={displayedCodeError()}
+                  successMessage="Verified. Opening OpenBot…"
+                  disabled={codeNeedsReplacement() || resendBusy()}
+                  autofocus
+                  onChange={handleCodeInput}
+                  onComplete={(value) => void submitCode(value)}
+                />
 
-                  <Show when={challenge().developmentCode}>
-                    {(developmentCode) => (
-                      <p class="account-login-development-code">Development code: {developmentCode()}</p>
-                    )}
-                  </Show>
-                  <Show when={formIssue()}>{(issue) => <AuthNotice message={issue().message} />}</Show>
-                  <Show when={localError()}>{(message) => <AuthNotice message={message()} />}</Show>
+                <Show when={challenge()?.developmentCode}>
+                  {(developmentCode) => (
+                    <p class="account-login-development-code">Development code: {developmentCode()}</p>
+                  )}
+                </Show>
+                <Show when={formIssue()}>
+                  {(issue) => (
+                    <p class="account-login-error" role="alert">
+                      {issue().message}
+                    </p>
+                  )}
+                </Show>
+                <Show when={localError()}>
+                  {(message) => (
+                    <p class="account-login-error" role="alert">
+                      {message()}
+                    </p>
+                  )}
+                </Show>
 
-                  <Show
-                    when={codeNeedsReplacement()}
-                    fallback={
-                      <button type="submit" class="account-login-primary" disabled={codeBusy() || resendBusy()}>
-                        <Show when={codeBusy()} fallback="Verify code">
-                          <span class="account-login-button-content">
-                            <span class="account-login-button-spinner" aria-hidden="true" />
-                            Verifying…
-                          </span>
-                        </Show>
-                      </button>
-                    }
-                  >
-                    <button
+                <Show when={!verified()}>
+                  <Show when={codeNeedsReplacement()}>
+                    <Button
                       type="button"
                       class="account-login-primary"
-                      disabled={resendBusy() || resendAvailableIn() > 0}
+                      disabled={pendingAction() !== null || resendAvailableIn() > 0}
                       onClick={() => void resendCode()}
                     >
                       <Show
@@ -429,64 +444,53 @@ export function AccountLogin(props: AccountLoginProps) {
                             : "Send a new code"
                         }
                       >
-                        <span class="account-login-button-content">
-                          <span class="account-login-button-spinner" aria-hidden="true" />
-                          Sending new code…
-                        </span>
+                        <span class="account-login-button-spinner" aria-hidden="true" />
+                        Sending new code…
                       </Show>
-                    </button>
+                    </Button>
                   </Show>
 
-                  <div id="account-code-meta" class="account-login-code-meta">
-                    <span>{codeExpiresIn() > 0 ? `Expires in ${formatTimer(codeExpiresIn())}` : "Code expired"}</span>
-                    <button
+                  <div class="account-login-code-actions">
+                    <Button
                       type="button"
-                      disabled={resendBusy() || resendAvailableIn() > 0}
-                      onClick={() => void resendCode()}
+                      class="account-login-code-action account-login-code-action-change"
+                      variant="ghost"
+                      size="sm"
+                      disabled={pendingAction() !== null}
+                      onClick={() => void resetEmail()}
                     >
-                      {resendAvailableIn() > 0 ? `Resend in ${formatTimer(resendAvailableIn())}` : "Resend code"}
-                    </button>
+                      <ArrowLeft size={14} aria-hidden="true" />
+                      Change email
+                    </Button>
+                    <Show when={!codeNeedsReplacement()}>
+                      <Button
+                        type="button"
+                        class="account-login-code-action account-login-code-action-resend"
+                        variant="ghost"
+                        size="sm"
+                        disabled={pendingAction() !== null || resendAvailableIn() > 0}
+                        loading={resendBusy()}
+                        loadingLabel="Sending…"
+                        onClick={() => void resendCode()}
+                      >
+                        <RefreshCw size={14} aria-hidden="true" />
+                        {resendAvailableIn() > 0 ? `Resend in ${formatTimer(resendAvailableIn())}` : "Resend code"}
+                      </Button>
+                    </Show>
                   </div>
-
-                  <button
-                    type="button"
-                    class="account-login-link"
-                    disabled={pendingAction() !== null}
-                    onClick={() => void resetEmail()}
-                  >
-                    Use a different email
-                  </button>
-                </form>
-              )}
+                </Show>
+              </div>
             </Show>
           </Show>
         </section>
-
         <p class="account-login-note">Passwordless sign-in · Codes expire after 10 minutes</p>
       </div>
     </main>
   );
 }
 
-function AuthNotice(props: { message: string }) {
-  return (
-    <div class="account-login-error" role="alert">
-      <span class="account-login-error-mark" aria-hidden="true">
-        !
-      </span>
-      <span>{props.message}</span>
-    </div>
-  );
-}
-
 function formatCode(value: string): string {
-  const compact = value
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/gu, "")
-    .split("")
-    .filter((character) => ONE_TIME_CODE_ALPHABET.includes(character))
-    .join("")
-    .slice(0, ONE_TIME_CODE_LENGTH);
+  const compact = normalizeOneTimeCode(value) ?? value.replaceAll("-", "");
   return compact.length > 4 ? `${compact.slice(0, 4)}-${compact.slice(4)}` : compact;
 }
 

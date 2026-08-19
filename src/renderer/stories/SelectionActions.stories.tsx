@@ -64,8 +64,13 @@ export const CustomInstruction: Story = {
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     await selectionActionsReady(page);
+    const toolbar = page.getByRole("toolbar", { name: "Actions for selected text" });
     const input = await page.findByRole("textbox", { name: "Describe edits" });
-    await userEvent.type(input, "Make this friendlier");
+    const initialWidth = toolbar.getBoundingClientRect().width;
+    await userEvent.type(input, "M");
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    expect(Math.abs(toolbar.getBoundingClientRect().width - initialWidth)).toBeLessThan(1);
+    await userEvent.type(input, "ake this friendlier");
     await expect(page.getByRole("button", { name: "Send edit instruction" })).toBeVisible();
   },
 };

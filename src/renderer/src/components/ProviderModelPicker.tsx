@@ -7,6 +7,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { isClaudeModel } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js";
+import { Listbox, Popover, Tabs } from "./ui";
 
 interface ProviderModelPickerProps {
   value: AgentModelId;
@@ -30,28 +31,15 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
   const [open, setOpen] = createSignal(false);
   const [railProvider, setRailProvider] = createSignal<AgentProviderId>(untrack(() => providerForModel(props.value)));
   const providerButtons = new Map<AgentProviderId, HTMLButtonElement>();
-  const modelButtons = new Map<AgentModelId, HTMLButtonElement>();
   let root: HTMLDivElement | undefined;
 
   const selectedModel = createMemo(() => props.modelOptions.find((option) => option.id === props.value));
   const activeProvider = createMemo(() => providerForModel(props.value));
-  const railModels = createMemo(() =>
-    props.modelOptions.filter((option) => providerForModel(option.id) === railProvider()),
-  );
-  const railStatus = createMemo(() => providerAvailability(props.agentStatus, props.modelOptions, railProvider()));
-  const railAvailable = createMemo(() => railStatus().state === "available");
 
   createEffect(
     () => ({ provider: activeProvider(), open: open() }),
     ({ provider, open }) => {
       if (!open) setRailProvider(provider);
-    },
-  );
-
-  createEffect(
-    () => Boolean(props.disabled && open()),
-    (mustClose) => {
-      if (mustClose) setOpen(false);
     },
   );
 
@@ -65,37 +53,21 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
     return () => window.removeEventListener("pointerdown", closeOnOutsidePointer);
   });
 
+  createEffect(
+    () => Boolean(props.disabled && open()),
+    (mustClose) => {
+      if (mustClose) setOpen(false);
+    },
+  );
+
   function setPickerOpen(next: boolean): void {
     if (props.disabled) return;
     if (next) setRailProvider(activeProvider());
     setOpen(next);
   }
 
-  function focusModel(model?: AgentModelId): void {
-    requestAnimationFrame(() => {
-      const preferred = model ? modelButtons.get(model) : undefined;
-      (preferred ?? modelButtons.get(railModels()[0]?.id ?? props.value))?.focus();
-    });
-  }
-
-  function moveProvider(delta: number): void {
-    const current = PROVIDERS.indexOf(railProvider());
-    const provider = PROVIDERS[(current + delta + PROVIDERS.length) % PROVIDERS.length];
-    if (!provider) return;
-    setRailProvider(provider);
-    providerButtons.get(provider)?.focus();
-  }
-
-  function moveModel(model: AgentModelId, delta: number): void {
-    if (!railAvailable()) return;
-    const models = railModels();
-    const current = models.findIndex((option) => option.id === model);
-    const next = models[(current + delta + models.length) % models.length];
-    if (next) modelButtons.get(next.id)?.focus();
-  }
-
-  function selectModel(model: AgentModelId): void {
-    if (!railAvailable()) return;
+  function selectModel(model: AgentModelId, provider: AgentProviderId): void {
+    if (providerAvailability(props.agentStatus, props.modelOptions, provider).state !== "available") return;
     setOpen(false);
     props.onChange(model);
   }
@@ -108,153 +80,145 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
       ref={(element) => (root = element)}
       class={["provider-model-picker", { "provider-model-picker-field": field() }]}
     >
-      <button
-        type="button"
-        class={["provider-model-trigger", { "provider-model-trigger-field": field() }]}
-        aria-label={`${props.ariaLabel ?? "Agent model"}: ${triggerModelName()}`}
-        aria-haspopup="dialog"
-        aria-expanded={open() ? "true" : "false"}
-        disabled={props.disabled}
-        title={props.disabled ? props.disabledReason : `${providerName(activeProvider())} · ${triggerModelName()}`}
-        onClick={() => setPickerOpen(!open())}
-        onKeyDown={(event) => {
-          if (event.key === "Escape" && open()) {
-            event.preventDefault();
-            event.stopPropagation();
-            setOpen(false);
-            return;
-          }
-          if (event.key !== "ArrowDown") return;
-          event.preventDefault();
-          setPickerOpen(true);
-          focusModel(props.value);
-        }}
-      >
-        <Show when={field()}>
-          <span class="provider-model-field-label">{props.label ?? "Model"}</span>
-        </Show>
-        <span class="provider-model-trigger-value">
-          <ProviderMark provider={activeProvider()} />
-          <span class="provider-model-trigger-name">{triggerModelName()}</span>
-        </span>
-        <ChevronDownIcon />
-      </button>
-
-      <Show when={open()}>
-        <div
-          class="provider-model-popover"
-          role="dialog"
-          aria-label="Choose agent model"
+      <Popover.Root open={open()} onOpenChange={setPickerOpen} placement="bottom-end" gutter={8} sameWidth={field()}>
+        <Popover.Trigger
+          type="button"
+          class={["provider-model-trigger", { "provider-model-trigger-field": field() }]}
+          aria-label={`${props.ariaLabel ?? "Agent model"}: ${triggerModelName()}`}
+          disabled={props.disabled}
+          title={props.disabled ? props.disabledReason : `${providerName(activeProvider())} · ${triggerModelName()}`}
           onKeyDown={(event) => {
-            if (event.key !== "Escape") return;
+            if (event.key !== "ArrowDown") return;
             event.preventDefault();
-            event.stopPropagation();
-            setOpen(false);
+            setPickerOpen(true);
           }}
         >
-          <div class="provider-model-rail" role="tablist" aria-label="Model providers" aria-orientation="vertical">
-            <For each={PROVIDERS}>
-              {(provider) => {
-                const status = () => providerAvailability(props.agentStatus, props.modelOptions, provider);
-                const selected = () => railProvider() === provider;
-                return (
-                  <button
-                    ref={(element) => providerButtons.set(provider, element)}
-                    type="button"
-                    role="tab"
-                    class={[
-                      "provider-model-rail-button",
-                      {
-                        "provider-model-rail-button-selected": selected(),
-                        "provider-model-rail-button-unavailable": status().state !== "available",
-                      },
-                    ]}
-                    aria-selected={selected() ? "true" : "false"}
-                    aria-controls="provider-model-panel"
-                    aria-label={`${providerName(provider)}: ${providerSummary(provider, status())}`}
-                    tabindex={selected() ? 0 : -1}
-                    title={`${providerName(provider)} · ${providerSummary(provider, status())}`}
-                    onClick={() => setRailProvider(provider)}
-                    onKeyDown={(event) => {
-                      if (event.key === "ArrowDown" || event.key === "ArrowRight") {
-                        event.preventDefault();
-                        moveProvider(1);
-                      } else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
-                        event.preventDefault();
-                        moveProvider(-1);
-                      }
-                    }}
-                  >
-                    <ProviderMark provider={provider} large />
-                  </button>
-                );
-              }}
-            </For>
-          </div>
+          <Show when={field()}>
+            <span class="provider-model-field-label">{props.label ?? "Model"}</span>
+          </Show>
+          <span class="provider-model-trigger-value">
+            <ProviderMark provider={activeProvider()} />
+            <span class="provider-model-trigger-name">{triggerModelName()}</span>
+          </span>
+          <ChevronDownIcon />
+        </Popover.Trigger>
 
-          <div
-            id="provider-model-panel"
-            class="provider-model-panel"
-            role="tabpanel"
-            aria-label={`${providerName(railProvider())} models`}
+        <Popover.Content
+          class="provider-model-popover"
+          aria-hidden={open() ? undefined : "true"}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setOpen(false);
+          }}
+        >
+          <Popover.Title class="sr-only">Choose agent model</Popover.Title>
+          <Tabs.Root
+            value={railProvider()}
+            onChange={(value) => {
+              const provider = PROVIDERS.find((candidate) => candidate === value);
+              if (provider) setRailProvider(provider);
+            }}
+            orientation="vertical"
+            activationMode="automatic"
+            class="provider-model-layout"
           >
-            <div class="provider-model-heading">
-              <strong>{providerName(railProvider())}</strong>
-              <span>{providerSummary(railProvider(), railStatus())}</span>
-            </div>
-            <div class="provider-model-list" role="listbox" aria-label={`${providerName(railProvider())} models`}>
-              <For each={railModels()}>
-                {(model, index) => {
-                  const selected = () => props.value === model.id;
-                  const firstFocusable = () =>
-                    railAvailable() &&
-                    (selected() || (!railModels().some((option) => option.id === props.value) && index() === 0));
+            <Tabs.List class="provider-model-rail" aria-label="Model providers">
+              <For each={PROVIDERS}>
+                {(provider) => {
+                  const status = () => providerAvailability(props.agentStatus, props.modelOptions, provider);
                   return (
-                    <button
-                      ref={(element) => modelButtons.set(model.id, element)}
-                      type="button"
-                      role="option"
-                      class={["provider-model-option", { "provider-model-option-selected": selected() }]}
-                      aria-label={`${displayModelName(model.name, model.id)}${
-                        model.id === DEFAULT_MODELS[railProvider()] ? ", default" : ""
-                      }`}
-                      aria-selected={selected() ? "true" : "false"}
-                      disabled={!railAvailable()}
-                      tabindex={firstFocusable() ? 0 : -1}
-                      onClick={() => selectModel(model.id)}
+                    <Tabs.Trigger
+                      ref={(element) => providerButtons.set(provider, element)}
+                      value={provider}
+                      class={[
+                        "provider-model-rail-button",
+                        {
+                          "provider-model-rail-button-selected": railProvider() === provider,
+                          "provider-model-rail-button-unavailable": status().state !== "available",
+                        },
+                      ]}
+                      aria-label={`${providerName(provider)}: ${providerSummary(provider, status())}`}
+                      title={`${providerName(provider)} · ${providerSummary(provider, status())}`}
                       onKeyDown={(event) => {
-                        if (event.key === "ArrowDown") {
-                          event.preventDefault();
-                          moveModel(model.id, 1);
-                        } else if (event.key === "ArrowUp") {
-                          event.preventDefault();
-                          moveModel(model.id, -1);
-                        } else if (event.key === "Home") {
-                          event.preventDefault();
-                          modelButtons.get(railModels()[0]?.id ?? model.id)?.focus();
-                        } else if (event.key === "End") {
-                          event.preventDefault();
-                          modelButtons.get(railModels().at(-1)?.id ?? model.id)?.focus();
-                        }
+                        const delta =
+                          event.key === "ArrowDown" || event.key === "ArrowRight"
+                            ? 1
+                            : event.key === "ArrowUp" || event.key === "ArrowLeft"
+                              ? -1
+                              : 0;
+                        if (!delta) return;
+                        const current = PROVIDERS.indexOf(provider);
+                        const next = PROVIDERS[(current + delta + PROVIDERS.length) % PROVIDERS.length];
+                        if (next) providerButtons.get(next)?.focus();
                       }}
                     >
-                      <span class="provider-model-option-name">
-                        <span>{displayModelName(model.name, model.id)}</span>
-                        <Show when={model.id === DEFAULT_MODELS[railProvider()]}>
-                          <small>default</small>
-                        </Show>
-                      </span>
-                      <Show when={selected()}>
-                        <CheckIcon />
-                      </Show>
-                    </button>
+                      <ProviderMark provider={provider} large />
+                    </Tabs.Trigger>
                   );
                 }}
               </For>
-            </div>
-          </div>
-        </div>
-      </Show>
+            </Tabs.List>
+
+            <For each={PROVIDERS}>
+              {(provider) => {
+                const status = () => providerAvailability(props.agentStatus, props.modelOptions, provider);
+                const models = () => props.modelOptions.filter((option) => providerForModel(option.id) === provider);
+                const available = () => status().state === "available";
+                return (
+                  <Tabs.Content
+                    value={provider}
+                    class="provider-model-panel"
+                    aria-label={`${providerName(provider)} models`}
+                  >
+                    <div class="provider-model-heading">
+                      <strong>{providerName(provider)}</strong>
+                      <span>{providerSummary(provider, status())}</span>
+                    </div>
+                    <Listbox.Root
+                      class="provider-model-list"
+                      aria-label={`${providerName(provider)} models`}
+                      options={models()}
+                      optionValue="id"
+                      optionTextValue={(model) => displayModelName(model.name, model.id)}
+                      optionDisabled={() => !available()}
+                      value={[props.value]}
+                      selectionMode="single"
+                      disallowEmptySelection
+                      shouldFocusWrap
+                      renderItem={(item) => {
+                        const model = item.rawValue;
+                        const selected = () => props.value === model.id;
+                        return (
+                          <Listbox.Item
+                            as="button"
+                            item={item}
+                            type="button"
+                            class={["provider-model-option", { "provider-model-option-selected": selected() }]}
+                            aria-label={`${displayModelName(model.name, model.id)}${
+                              model.id === DEFAULT_MODELS[provider] ? ", default" : ""
+                            }`}
+                            disabled={!available()}
+                            onClick={() => selectModel(model.id, provider)}
+                          >
+                            <span class="provider-model-option-name">
+                              <span>{displayModelName(model.name, model.id)}</span>
+                              <Show when={model.id === DEFAULT_MODELS[provider]}>
+                                <small>default</small>
+                              </Show>
+                            </span>
+                            <Show when={selected()}>
+                              <CheckIcon />
+                            </Show>
+                          </Listbox.Item>
+                        );
+                      }}
+                    />
+                  </Tabs.Content>
+                );
+              }}
+            </For>
+          </Tabs.Root>
+        </Popover.Content>
+      </Popover.Root>
     </div>
   );
 }

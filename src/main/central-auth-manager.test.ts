@@ -207,6 +207,32 @@ describe("CentralAuthManager", () => {
     });
   });
 
+  it("accepts an HTTP-date Retry-After value", async () => {
+    const root = await createRoot();
+    const retryAt = new Date(Date.now() + 60_000).toUTCString();
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: vi.fn(async () =>
+        Response.json(
+          { error: { code: "rate_limited", message: "Try again later." } },
+          { status: 429, headers: { "Retry-After": retryAt } },
+        ),
+      ),
+    });
+
+    const state = await manager.requestEmailCode("person@example.com");
+    expect(state).toMatchObject({
+      status: "error",
+      issue: { code: "rate_limited" },
+    });
+    if (state.status !== "error") throw new Error("Expected a rate-limited state.");
+    expect(state.issue.retryAfterSeconds).toBeGreaterThanOrEqual(59);
+    expect(state.issue.retryAfterSeconds).toBeLessThanOrEqual(60);
+  });
+
   it("waits for the health endpoint before showing a signed-out state", async () => {
     const root = await createRoot();
     const startedAt = Date.now();

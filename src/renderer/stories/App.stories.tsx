@@ -1,5 +1,5 @@
 import { onCleanup } from "solid-js";
-import { expect } from "storybook/test";
+import { expect, fireEvent } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { App } from "../src/App";
 import { STORY_AGENT_STATUS, STORY_BOT_SUMMARIES } from "./fixtures";
@@ -36,10 +36,17 @@ export const Playground: Story = {
 
     const editor = canvas.getByRole("textbox", { name: "Message Chief" });
     await userEvent.click(editor);
-    await userEvent.type(editor, "Show me the next step");
+    editor.textContent = "Show me the next step";
+    await fireEvent.input(editor);
+    await expect(editor).toHaveTextContent("Show me the next step");
     await userEvent.click(canvas.getByRole("button", { name: "Send message" }));
+    await expect(
+      canvas.findByText("Show me the next step", undefined, { timeout: 3_000 }),
+    ).resolves.toBeInTheDocument();
 
-    await expect(canvas.findByText(/Mock reply from Chief: I received/)).resolves.toBeInTheDocument();
+    await expect(
+      canvas.findByText(/Mock reply from Chief: I received/, undefined, { timeout: 3_000 }),
+    ).resolves.toBeInTheDocument();
   },
 };
 

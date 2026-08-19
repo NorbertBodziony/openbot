@@ -477,8 +477,15 @@ function centralAuthIssue(error: unknown, fallbackCode: string, fallbackMessage:
 
 function parseRetryAfterSeconds(value: string | null): number | undefined {
   if (value === null) return undefined;
-  const seconds = Number.parseInt(value, 10);
-  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+  const trimmed = value.trim();
+  if (/^\d+$/u.test(trimmed)) {
+    const seconds = Number.parseInt(trimmed, 10);
+    return seconds > 0 ? seconds : undefined;
+  }
+  const retryAt = Date.parse(trimmed);
+  if (!Number.isFinite(retryAt)) return undefined;
+  const seconds = Math.ceil((retryAt - Date.now()) / 1_000);
+  return seconds > 0 ? seconds : undefined;
 }
 
 function decodeRecord(value: unknown, label: string): DynamicRecord {

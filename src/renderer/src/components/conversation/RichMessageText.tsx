@@ -3,6 +3,7 @@ import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js";
 import type { BotProfile, MessageCitation } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
+import { Button } from "../ui";
 import { AnchoredTooltip } from "./AnchoredTooltip";
 import { AttachmentReferenceVisual } from "./AttachmentReference";
 import { LinkIcon } from "./ConversationIcons";
@@ -60,7 +61,7 @@ export function RichMessageText(props: {
           const attachment = part.attachment;
           if (attachment) {
             return (
-              <button
+              <Button
                 type="button"
                 class="message-file-reference"
                 aria-label={`Open attached file ${attachment.name}`}
@@ -80,7 +81,7 @@ export function RichMessageText(props: {
               >
                 <AttachmentReferenceVisual name={attachment.name} />
                 <span class="inline-file-reference-name">{attachment.name}</span>
-              </button>
+              </Button>
             );
           }
           if (part.url) {
@@ -111,7 +112,7 @@ export function RichMessageText(props: {
           }
           if (part.bot) {
             return (
-              <button
+              <Button
                 type="button"
                 class="message-agent-tag"
                 aria-label={`Open agent ${part.bot.name}`}
@@ -119,7 +120,7 @@ export function RichMessageText(props: {
               >
                 <AgentAvatar bot={part.bot} />
                 <span>{part.bot.name}</span>
-              </button>
+              </Button>
             );
           }
           if (part.citation) {

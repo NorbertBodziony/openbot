@@ -5,6 +5,9 @@ import "../src/renderer/src/styles.css";
 const preview: Preview = {
   parameters: {
     layout: "fullscreen",
+    a11y: {
+      test: "error",
+    },
     controls: {
       expanded: true,
     },

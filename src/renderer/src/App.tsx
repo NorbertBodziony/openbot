@@ -98,6 +98,7 @@ const LEFT_PANEL_STORAGE_KEY = "openbot:left-panel-width";
 const LEFT_PANEL_COLLAPSED_STORAGE_KEY = "openbot:left-panel-collapsed";
 const LEFT_PANEL_DEFAULT = 280;
 const LEFT_PANEL_MIN = 240;
+const AUTH_SUCCESS_HOLD_MS = 600;
 const LEFT_PANEL_MAX = 400;
 const LEFT_PANEL_COMPACT = 88;
 const LEFT_PANEL_COLLAPSE_THRESHOLD = 210;
@@ -202,6 +203,7 @@ export function App() {
   const [centralAuth, setCentralAuth] = createSignal<CentralAuthState>({
     status: "loading",
   });
+  const [authSuccessVisible, setAuthSuccessVisible] = createSignal(false);
   const [permissionsOpen, setPermissionsOpen] = createSignal(false);
   const [servers, setServers] = createSignal<ServerSummary[]>([]);
   const [joinServerOpen, setJoinServerOpen] = createSignal(false);
@@ -228,6 +230,24 @@ export function App() {
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let conversationFrame: number | undefined;
   let directConversationRequest = 0;
+  let authSuccessTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function applyCentralAuthState(state: CentralAuthState): void {
+    const completedCodeChallenge = centralAuth().status === "code_sent" && state.status === "signed_in";
+    if (state.status !== "signed_in") {
+      if (authSuccessTimer !== undefined) clearTimeout(authSuccessTimer);
+      authSuccessTimer = undefined;
+      setAuthSuccessVisible(false);
+    } else if (completedCodeChallenge) {
+      if (authSuccessTimer !== undefined) clearTimeout(authSuccessTimer);
+      setAuthSuccessVisible(true);
+      authSuccessTimer = setTimeout(() => {
+        authSuccessTimer = undefined;
+        setAuthSuccessVisible(false);
+      }, AUTH_SUCCESS_HOLD_MS);
+    }
+    setCentralAuth(state);
+  }
 
   const leftPanelCompact = createMemo(() => leftPanelCollapsed() || leftPanelAutoCompact());
 
@@ -310,7 +330,7 @@ export function App() {
       flush(() => setUpdateStatus(status));
     });
     const unsubscribeAuth = window.openbot.auth.onEvent((state) => {
-      flush(() => setCentralAuth(state));
+      flush(() => applyCentralAuthState(state));
     });
     const unsubscribeServers = window.openbot.servers.onEvent((value) => flush(() => setServers(value)));
     const unsubscribePresence = window.openbot.servers.onPresence((snapshot) => flush(() => setTeamPresence(snapshot)));
@@ -344,6 +364,7 @@ export function App() {
       if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
       for (const timer of recentReplyTimers.values()) clearTimeout(timer);
       recentReplyTimers.clear();
+      if (authSuccessTimer !== undefined) clearTimeout(authSuccessTimer);
     };
     void window.openbot.update
       .getStatus()
@@ -1193,24 +1214,24 @@ export function App() {
   }
 
   async function requestEmailCode(email: string): Promise<void> {
-    setCentralAuth(await window.openbot.auth.requestEmailCode(email));
+    applyCentralAuthState(await window.openbot.auth.requestEmailCode(email));
   }
 
   async function retryCentralAccount(): Promise<void> {
-    setCentralAuth({ status: "loading" });
-    setCentralAuth(await window.openbot.auth.retry());
+    applyCentralAuthState({ status: "loading" });
+    applyCentralAuthState(await window.openbot.auth.retry());
   }
 
   async function verifyEmailCode(challengeId: string, code: string): Promise<void> {
-    setCentralAuth(await window.openbot.auth.verifyEmailCode(challengeId, code));
+    applyCentralAuthState(await window.openbot.auth.verifyEmailCode(challengeId, code));
   }
 
   async function logoutCentralAccount(): Promise<void> {
-    setCentralAuth(await window.openbot.auth.logout());
+    applyCentralAuthState(await window.openbot.auth.logout());
   }
 
   async function updateAccountAvatar(image: AvatarImageInput | null): Promise<void> {
-    setCentralAuth(await window.openbot.auth.updateAvatar(image));
+    applyCentralAuthState(await window.openbot.auth.updateAvatar(image));
   }
 
   async function runUpdateAction(): Promise<void> {
@@ -1392,6 +1413,7 @@ export function App() {
     const state = centralAuth();
     return state.status === "signed_in" ? state.user : null;
   });
+  const visibleSignedInAccount = createMemo(() => (authSuccessVisible() ? null : signedInAccount()));
 
   return (
     <Show
@@ -1399,7 +1421,7 @@ export function App() {
       fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}
     >
       <Show
-        when={signedInAccount()}
+        when={visibleSignedInAccount()}
         fallback={
           <AccountLogin
             variant={appInfo()?.variant ?? "production"}

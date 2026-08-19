@@ -69,6 +69,9 @@ import {
   RemoteMacPanel,
 } from "./RemoteMacPanel";
 import { TypingDots } from "./TypingDots";
+import { Button, Combobox, Dialog, Input, NativeSelect, Popover, Switch, Tabs, Textarea } from "./ui";
+
+type AgentPickerOption = { kind: "create" } | { kind: "bot"; bot: BotProfile };
 
 interface ConversationProps {
   agentStatus: AgentStatus;
@@ -211,8 +214,6 @@ export function Conversation(props: ConversationProps) {
   });
   const [browserAddress, setBrowserAddress] = createSignal("https://www.google.com");
   const [mediaPreview, setMediaPreview] = createSignal<MediaPreview | null>(null);
-  const [pickerQuery, setPickerQuery] = createSignal("");
-  const [activePickerOption, setActivePickerOption] = createSignal(0);
   const [openReactionMessageId, setOpenReactionMessageId] = createSignal<string | null>(null);
   const [openMoreMessageId, setOpenMoreMessageId] = createSignal<string | null>(null);
   const [expandedEmojiMessageId, setExpandedEmojiMessageId] = createSignal<string | null>(null);
@@ -275,10 +276,10 @@ export function Conversation(props: ConversationProps) {
     const id = currentDraft().replyToMessageId;
     return id ? props.messages.find((message) => message.id === id) : undefined;
   });
-  const filteredPickerBots = createMemo(() => {
-    const query = pickerQuery().trim().toLowerCase();
-    return query ? props.bots.filter((bot) => `${bot.name} ${bot.role}`.toLowerCase().includes(query)) : props.bots;
-  });
+  const agentPickerOptions = createMemo<AgentPickerOption[]>(() => [
+    { kind: "create" },
+    ...props.bots.map((bot) => ({ kind: "bot" as const, bot })),
+  ]);
   const activeRightPanel = createMemo<RightPanelMode>(() => {
     if (props.agentPickerOpen) return "none";
     const botId = props.bot?.id;
@@ -343,7 +344,7 @@ export function Conversation(props: ConversationProps) {
     }
     return null;
   });
-  const visibleAgentActivity = createMemo<"Queued" | "Working" | null>(() => {
+  const visibleAgentActivity = (): "Queued" | "Working" | null => {
     const activity = agentActivity();
     if (activity !== "Working") return activity;
     const activeTurnId = props.activeTurnId;
@@ -352,10 +353,13 @@ export function Conversation(props: ConversationProps) {
       (message) =>
         message.itemType === "image_generation" &&
         message.turnId === activeTurnId &&
-        (message.status === "completed" || message.status === "failed" || message.status === "interrupted"),
+        (message.status === "completed" ||
+          message.status === "failed" ||
+          message.status === "interrupted" ||
+          (message.attachments?.length ?? 0) > 0),
     );
     return imageGenerationFinished ? null : activity;
-  });
+  };
   const queueBarVisible = createMemo(
     () =>
       Boolean(props.queue?.paused) ||
@@ -754,8 +758,6 @@ export function Conversation(props: ConversationProps) {
     () => props.agentPickerOpen,
     (open) => {
       if (!open) return;
-      setPickerQuery("");
-      setActivePickerOption(0);
       requestAnimationFrame(() => pickerInput?.focus());
     },
   );
@@ -1195,22 +1197,6 @@ export function Conversation(props: ConversationProps) {
       .catch((error) => setComposerError(error instanceof Error ? error.message : String(error)));
   }
 
-  function handlePickerKeyDown(event: KeyboardEvent) {
-    const optionCount = filteredPickerBots().length + 1;
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setActivePickerOption((current) => (current + 1) % optionCount);
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setActivePickerOption((current) => (current - 1 + optionCount) % optionCount);
-    } else if (event.key === "Enter") {
-      event.preventDefault();
-      const bot = filteredPickerBots()[activePickerOption() - 1];
-      if (activePickerOption() === 0) props.onCreateAgent();
-      else if (bot) props.onSelectAgent(bot.id);
-    } else if (event.key === "Escape") props.onCloseAgentPicker();
-  }
-
   return (
     <main
       ref={(element) => (conversationPanel = element)}
@@ -1254,7 +1240,7 @@ export function Conversation(props: ConversationProps) {
               <div class="conversation-heading-group">
                 <Show when={props.bot}>
                   {(bot) => (
-                    <button
+                    <Button
                       type="button"
                       class="conversation-title no-drag"
                       aria-label="View agent settings"
@@ -1264,7 +1250,7 @@ export function Conversation(props: ConversationProps) {
                     >
                       <AgentAvatar bot={bot()} />
                       <h1>{bot().name}</h1>
-                    </button>
+                    </Button>
                   )}
                 </Show>
               </div>
@@ -1284,7 +1270,7 @@ export function Conversation(props: ConversationProps) {
                   />
                 </Show>
                 <Show when={props.server?.kind === "remote"}>
-                  <button
+                  <Button
                     type="button"
                     class="header-panel-toggle remote-desktop-button"
                     aria-label={remoteDesktopOpen() ? "Hide remote desktop" : "Open remote desktop"}
@@ -1295,9 +1281,9 @@ export function Conversation(props: ConversationProps) {
                     <Show when={props.server?.state === "online"}>
                       <span class="remote-desktop-button-dot" aria-hidden="true" />
                     </Show>
-                  </button>
+                  </Button>
                 </Show>
-                <button
+                <Button
                   type="button"
                   class={[
                     "header-panel-toggle computer-button",
@@ -1322,58 +1308,79 @@ export function Conversation(props: ConversationProps) {
                   <Show when={activeBrowserControl()}>
                     <span class="computer-control-dot" aria-hidden="true" />
                   </Show>
-                </button>
+                </Button>
               </div>
             </>
           }
         >
           <div class="agent-picker-root no-drag">
-            <label class="agent-recipient-field">
-              <span>To:</span>
-              <input
-                ref={(element) => (pickerInput = element)}
-                role="combobox"
-                aria-label="To:"
-                aria-expanded="true"
-                placeholder="Search or create agents"
-                maxlength={INPUT_LIMITS.agentName}
-                value={pickerQuery()}
-                onInput={(event) => {
-                  setPickerQuery(event.currentTarget.value);
-                  setActivePickerOption(0);
-                }}
-                onKeyDown={handlePickerKeyDown}
-              />
-            </label>
-            <div class="agent-picker-menu" role="listbox">
-              <button
-                type="button"
-                role="option"
-                aria-selected={activePickerOption() === 0 ? "true" : "false"}
-                class="agent-picker-option agent-picker-create"
-                disabled={props.creatingAgent}
-                onClick={props.onCreateAgent}
-              >
-                <span class="agent-picker-plus">
-                  <PlusIcon />
-                </span>
-                <span>{props.creatingAgent ? "Creating agent…" : "Create new agent"}</span>
-              </button>
-              <For each={filteredPickerBots()}>
-                {(bot, index) => (
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={activePickerOption() === index() + 1 ? "true" : "false"}
-                    class="agent-picker-option"
-                    onClick={() => props.onSelectAgent(bot.id)}
+            <Combobox.Root<AgentPickerOption>
+              options={agentPickerOptions()}
+              open={true}
+              modal={false}
+              triggerMode="input"
+              closeOnSelection={false}
+              shouldFocusWrap={true}
+              defaultFilter={(option, inputValue) =>
+                option.kind === "create" ||
+                `${option.bot.name} ${option.bot.role}`.toLocaleLowerCase().includes(inputValue.toLocaleLowerCase())
+              }
+              optionValue={(option) => (option.kind === "create" ? "create" : option.bot.id)}
+              optionTextValue={(option) =>
+                option.kind === "create" ? "Create new agent" : `${option.bot.name} ${option.bot.role}`
+              }
+              optionLabel={(option) => (option.kind === "create" ? "Create new agent" : option.bot.name)}
+              optionDisabled={(option) => option.kind === "create" && props.creatingAgent}
+              onChange={(option) => {
+                if (!option) return;
+                if (option.kind === "create") props.onCreateAgent();
+                else props.onSelectAgent(option.bot.id);
+              }}
+              itemComponent={(itemProps) => {
+                const option = itemProps.item.rawValue;
+                return (
+                  <Combobox.Item
+                    item={itemProps.item}
+                    class={["agent-picker-option", { "agent-picker-create": option.kind === "create" }]}
                   >
-                    <AgentAvatar bot={bot} />
-                    <span>{bot.name}</span>
-                  </button>
-                )}
-              </For>
-            </div>
+                    <Show
+                      when={option.kind === "bot" ? option.bot : undefined}
+                      fallback={
+                        <span class="agent-picker-plus">
+                          <PlusIcon />
+                        </span>
+                      }
+                    >
+                      {(bot) => <AgentAvatar bot={bot()} />}
+                    </Show>
+                    <Combobox.ItemLabel>
+                      {option.kind === "create"
+                        ? props.creatingAgent
+                          ? "Creating agent…"
+                          : "Create new agent"
+                        : option.bot.name}
+                    </Combobox.ItemLabel>
+                  </Combobox.Item>
+                );
+              }}
+            >
+              <Combobox.Control class="agent-recipient-field">
+                <Combobox.Label>To:</Combobox.Label>
+                <Combobox.Input
+                  as={Input}
+                  ref={(element) => (pickerInput = element)}
+                  aria-label="To:"
+                  placeholder="Search or create agents"
+                  maxlength={INPUT_LIMITS.agentName}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") props.onCloseAgentPicker();
+                  }}
+                />
+              </Combobox.Control>
+              <Combobox.Content class="agent-picker-menu" aria-hidden={props.agentPickerOpen ? undefined : "true"}>
+                <Combobox.Listbox />
+              </Combobox.Content>
+            </Combobox.Root>
           </div>
         </Show>
       </header>
@@ -1420,7 +1427,7 @@ export function Conversation(props: ConversationProps) {
                 </p>
               </div>
               <Show when={props.agentStatus.phase !== "starting" && props.agentStatus.phase !== "restarting"}>
-                <button
+                <Button
                   type="button"
                   onClick={() =>
                     void props
@@ -1429,7 +1436,7 @@ export function Conversation(props: ConversationProps) {
                   }
                 >
                   Setup guide
-                </button>
+                </Button>
               </Show>
             </section>
           </Show>
@@ -1554,14 +1561,14 @@ export function Conversation(props: ConversationProps) {
                             </div>
                             <Show when={message.reaction}>
                               {(reaction) => (
-                                <button
+                                <Button
                                   type="button"
                                   class="message-reaction-pill"
                                   aria-label={`Remove reaction ${reaction()}`}
                                   onClick={() => void reactToMessage(message, null)}
                                 >
                                   {reaction()}
-                                </button>
+                                </Button>
                               )}
                             </Show>
                           </article>
@@ -1623,10 +1630,10 @@ export function Conversation(props: ConversationProps) {
           </Show>
           <Show when={showAttachments()}>
             <div class="attachment-menu">
-              <button type="button" disabled={attachmentBusy()} onClick={() => void chooseAttachments()}>
+              <Button type="button" disabled={attachmentBusy()} onClick={() => void chooseAttachments()}>
                 <FileIcon />
                 {attachmentBusy() ? "Importing…" : "Attach files"}
-              </button>
+              </Button>
               <span class="attachment-menu-hint">You can also drop files or paste an image</span>
             </div>
           </Show>
@@ -1642,13 +1649,13 @@ export function Conversation(props: ConversationProps) {
                   <strong>{attachment.name}</strong>
                   <small>{formatFileSize(attachment.size)}</small>
                 </span>
-                <button
+                <Button
                   type="button"
                   aria-label={`Remove ${attachment.name}`}
                   onClick={() => removeAttachment(attachment.id)}
                 >
                   <CloseIcon />
-                </button>
+                </Button>
               </div>
             )}
           </For>
@@ -1659,13 +1666,13 @@ export function Conversation(props: ConversationProps) {
                   <span>Replying to {message().author === "you" ? "your message" : "Agent"}</span>
                   <p>{message().body || "Attachment"}</p>
                 </div>
-                <button
+                <Button
                   type="button"
                   aria-label="Cancel reply"
                   onClick={() => updateCurrentDraft({ replyToMessageId: null })}
                 >
                   <CloseIcon />
-                </button>
+                </Button>
               </div>
             )}
           </Show>
@@ -1701,15 +1708,15 @@ export function Conversation(props: ConversationProps) {
                     <span>Editing queued message</span>
                     <p>{delivery()?.text || "Attachment"}</p>
                   </div>
-                  <button type="button" aria-label="Cancel queued message edit" onClick={cancelQueuedMessageEdit}>
+                  <Button type="button" aria-label="Cancel queued message edit" onClick={cancelQueuedMessageEdit}>
                     <CloseIcon />
-                  </button>
+                  </Button>
                 </div>
               );
             }}
           </Show>
           <div class="composer">
-            <button
+            <Button
               type="button"
               class="composer-button"
               aria-label="Attach a file"
@@ -1717,7 +1724,7 @@ export function Conversation(props: ConversationProps) {
               onClick={() => setShowAttachments((value) => !value)}
             >
               <PlusIcon />
-            </button>
+            </Button>
             <div class="composer-input-label">
               <ComposerEditor
                 botId={props.bot?.id}
@@ -1756,7 +1763,7 @@ export function Conversation(props: ConversationProps) {
             <Show
               when={props.activeTurnId && !editingDeliveryId()}
               fallback={
-                <button
+                <Button
                   type="button"
                   class="voice-button"
                   aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
@@ -1764,75 +1771,82 @@ export function Conversation(props: ConversationProps) {
                   onClick={() => void submitMessage()}
                 >
                   {submitting() ? "…" : "↑"}
-                </button>
+                </Button>
               }
             >
-              <button
+              <Button
                 type="button"
                 class="voice-button voice-button-active"
                 aria-label="Stop agent"
                 onClick={props.onStop}
               >
                 <StopIcon />
-              </button>
+              </Button>
             </Show>
           </div>
         </div>
       </Show>
 
-      <Show when={mediaPreview()}>
-        {(preview) => (
-          <div class="media-backdrop" role="presentation">
-            <button
-              type="button"
-              class="media-dismiss"
-              aria-label="Close media preview"
-              onClick={() => setMediaPreview(null)}
-            />
-            <section class="media-modal" role="dialog" aria-modal="true" aria-label={preview().attachment.name}>
-              <button
-                type="button"
-                class="media-close"
-                aria-label="Close media preview"
-                onClick={() => setMediaPreview(null)}
-              >
-                <CloseIcon />
-              </button>
-              <Show when={preview().attachment.previewKind === "image"}>
-                <img class="media-image" src={preview().attachment.previewUrl ?? ""} alt={preview().attachment.name} />
-              </Show>
-              <Show when={preview().attachment.previewKind === "pdf"}>
-                <iframe
-                  class="media-document"
-                  title={preview().attachment.name}
-                  src={preview().attachment.previewUrl ?? ""}
-                />
-              </Show>
-              <Show when={preview().attachment.previewKind === "text"}>
-                <pre class="media-text">{preview().loading ? "Loading…" : (preview().error ?? preview().text)}</pre>
-              </Show>
-              <div class="media-caption">
-                <span>{preview().attachment.name}</span>
-                <button type="button" onClick={() => attachmentAction(preview().attachment, "open")}>
-                  Open
-                </button>
-                <button type="button" onClick={() => attachmentAction(preview().attachment, "download")}>
-                  Download
-                </button>
-                <button type="button" onClick={() => attachmentAction(preview().attachment, "reveal")}>
-                  Show in Finder
-                </button>
-              </div>
-            </section>
-          </div>
-        )}
-      </Show>
+      <Dialog.Root open={Boolean(mediaPreview())} onOpenChange={(open) => !open && setMediaPreview(null)}>
+        <Show when={mediaPreview()}>
+          {(preview) => (
+            <Dialog.Portal>
+              <Dialog.Overlay class="media-backdrop">
+                <Dialog.Content as="section" class="media-modal">
+                  <Dialog.Title class="sr-only">{preview().attachment.name}</Dialog.Title>
+                  <Button
+                    type="button"
+                    class="media-close"
+                    aria-label="Close media preview"
+                    onClick={() => setMediaPreview(null)}
+                  >
+                    <CloseIcon />
+                  </Button>
+                  <Show when={preview().attachment.previewKind === "image"}>
+                    <img
+                      class="media-image"
+                      src={preview().attachment.previewUrl ?? ""}
+                      alt={preview().attachment.name}
+                    />
+                  </Show>
+                  <Show when={preview().attachment.previewKind === "pdf"}>
+                    <iframe
+                      class="media-document"
+                      title={preview().attachment.name}
+                      src={preview().attachment.previewUrl ?? ""}
+                    />
+                  </Show>
+                  <Show when={preview().attachment.previewKind === "text"}>
+                    <pre class="media-text">{preview().loading ? "Loading…" : (preview().error ?? preview().text)}</pre>
+                  </Show>
+                  <div class="media-caption">
+                    <span>{preview().attachment.name}</span>
+                    <Button type="button" onClick={() => attachmentAction(preview().attachment, "open")}>
+                      Open
+                    </Button>
+                    <Button type="button" onClick={() => attachmentAction(preview().attachment, "download")}>
+                      Download
+                    </Button>
+                    <Button type="button" onClick={() => attachmentAction(preview().attachment, "reveal")}>
+                      Show in Finder
+                    </Button>
+                  </div>
+                </Dialog.Content>
+              </Dialog.Overlay>
+            </Dialog.Portal>
+          )}
+        </Show>
+      </Dialog.Root>
 
       <Show when={screenOpen()}>
-        <aside
+        <Tabs.Root
+          as="aside"
           id="browser-side-panel"
           class={["browser-panel", { "browser-panel-controlled": Boolean(activeBrowserControl()) }]}
           aria-label="Browser"
+          value={activeBrowserTab()?.id ?? "__empty"}
+          onChange={props.onActivateBrowserTab}
+          activationMode="automatic"
         >
           <PanelResizer
             class="right-panel-resizer"
@@ -1856,28 +1870,30 @@ export function Conversation(props: ConversationProps) {
           />
           <header class="browser-panel-header">
             <div class="browser-tabs">
-              <div class="browser-tab-strip" role="tablist" aria-label="Browser tabs">
+              <Tabs.List class="browser-tab-strip" aria-label="Browser tabs">
                 <For each={browserTabs()}>
                   {(tab) => {
                     const control = () => browserControlForTab(tab);
                     const controller = () => browserControllerForTab(tab);
                     const title = () => (tab.loading ? "Loading…" : tab.title || tab.url);
                     return (
-                      <div class={["browser-tab-wrap", { "browser-tab-controlled": Boolean(control()) }]}>
-                        <button
-                          type="button"
-                          role="tab"
+                      <div
+                        role="presentation"
+                        class={["browser-tab-wrap", { "browser-tab-controlled": Boolean(control()) }]}
+                      >
+                        <Tabs.Trigger
+                          as={Button}
+                          value={tab.id}
                           aria-label={
                             control() ? `${title()}, controlled by ${controller()?.name ?? "agent"}` : title()
                           }
-                          aria-selected={props.activeBrowserTabId === tab.id ? "true" : "false"}
-                          class={[
-                            "browser-tab",
-                            {
-                              "browser-tab-active": activeBrowserTab()?.id === tab.id,
-                            },
-                          ]}
-                          onClick={() => props.onActivateBrowserTab(tab.id)}
+                          aria-description="Press Delete to close"
+                          class="browser-tab"
+                          onKeyDown={(event) => {
+                            if (event.key !== "Delete") return;
+                            event.preventDefault();
+                            props.onCloseBrowserTab(tab.id);
+                          }}
                         >
                           <Show when={control()}>
                             {(session) => (
@@ -1895,75 +1911,85 @@ export function Conversation(props: ConversationProps) {
                             )}
                           </Show>
                           <span class="browser-tab-title">{title()}</span>
-                        </button>
-                        <button
-                          type="button"
-                          class="browser-tab-close"
-                          aria-label={`Close ${tab.title || "browser tab"}`}
-                          onClick={() => props.onCloseBrowserTab(tab.id)}
-                        >
-                          <CloseIcon />
-                        </button>
+                          <span
+                            class="browser-tab-close"
+                            aria-hidden="true"
+                            title={`Close ${tab.title || "browser tab"}`}
+                            onPointerDown={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                            }}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              props.onCloseBrowserTab(tab.id);
+                            }}
+                          >
+                            <CloseIcon />
+                          </span>
+                        </Tabs.Trigger>
                       </div>
                     );
                   }}
                 </For>
-                <button
-                  type="button"
-                  class="browser-new-tab"
-                  aria-label="New browser tab"
-                  onClick={() => {
-                    setBrowserAddress("https://www.google.com");
-                    void openBrowserAddress("https://www.google.com");
-                  }}
-                >
-                  <PlusIcon />
-                </button>
-              </div>
+              </Tabs.List>
+              <Button
+                type="button"
+                class="browser-new-tab"
+                aria-label="New browser tab"
+                onClick={() => {
+                  setBrowserAddress("https://www.google.com");
+                  void openBrowserAddress("https://www.google.com");
+                }}
+              >
+                <PlusIcon />
+              </Button>
             </div>
           </header>
-          <div class="browser-toolbar">
-            <button type="button" aria-label="Go back" class="browser-toolbar-button" disabled>
-              <BrowserBackIcon />
-            </button>
-            <button type="button" aria-label="Go forward" class="browser-toolbar-button" disabled>
-              <BrowserForwardIcon />
-            </button>
-            <button
-              type="button"
-              aria-label="Reload page"
-              class="browser-toolbar-button"
-              onClick={() => void openBrowserAddress()}
-            >
-              <BrowserReloadIcon />
-            </button>
-            <form
-              class="browser-address-bar"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void openBrowserAddress();
-              }}
-            >
-              <input
-                value={browserAddress()}
-                aria-label="Browser address"
-                maxlength={INPUT_LIMITS.browserUrl}
-                onInput={(event) => setBrowserAddress(event.currentTarget.value)}
-              />
-            </form>
-            <button type="button" class="browser-toolbar-button" aria-label="Browser menu">
-              <span class="browser-menu-dots">•••</span>
-            </button>
-          </div>
-          <div class="browser-surface" ref={(element) => (browserSurface = element)}>
-            <Show when={browserTabs().length === 0}>
-              <div class="browser-empty-state">
-                <strong>Open a page</strong>
-                <span>The agent can browse here while it works.</span>
-              </div>
-            </Show>
-          </div>
-        </aside>
+          <Tabs.Content forceMount value={activeBrowserTab()?.id ?? "__empty"} class="browser-tab-panel">
+            <div class="browser-toolbar">
+              <Button type="button" aria-label="Go back" class="browser-toolbar-button" disabled>
+                <BrowserBackIcon />
+              </Button>
+              <Button type="button" aria-label="Go forward" class="browser-toolbar-button" disabled>
+                <BrowserForwardIcon />
+              </Button>
+              <Button
+                type="button"
+                aria-label="Reload page"
+                class="browser-toolbar-button"
+                onClick={() => void openBrowserAddress()}
+              >
+                <BrowserReloadIcon />
+              </Button>
+              <form
+                class="browser-address-bar"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void openBrowserAddress();
+                }}
+              >
+                <Input
+                  value={browserAddress()}
+                  aria-label="Browser address"
+                  maxlength={INPUT_LIMITS.browserUrl}
+                  onInput={(event) => setBrowserAddress(event.currentTarget.value)}
+                />
+              </form>
+              <Button type="button" class="browser-toolbar-button" aria-label="Browser menu">
+                <span class="browser-menu-dots">•••</span>
+              </Button>
+            </div>
+            <div class="browser-surface" ref={(element) => (browserSurface = element)}>
+              <Show when={browserTabs().length === 0}>
+                <div class="browser-empty-state">
+                  <strong>Open a page</strong>
+                  <span>The agent can browse here while it works.</span>
+                </div>
+              </Show>
+            </div>
+          </Tabs.Content>
+        </Tabs.Root>
       </Show>
 
       <Show when={remoteDesktopOpen()}>
@@ -2003,49 +2029,48 @@ export function Conversation(props: ConversationProps) {
             onResizeEnd={(value) => savePanelWidth(SETTINGS_PANEL_STORAGE_KEY, value)}
           />
           <header class="agent-settings-header">
-            <button
+            <Button
               type="button"
               class="agent-settings-nav-button"
               aria-label="Back to details"
               onClick={() => setActiveRightPanel("none")}
             >
               <BackIcon />
-            </button>
+            </Button>
             <h2>Settings</h2>
-            <button
+            <Button
               type="button"
               class="agent-settings-nav-button"
               aria-label="Close details"
               onClick={() => setActiveRightPanel("none")}
             >
               <SettingsForwardIcon />
-            </button>
+            </Button>
           </header>
           <div class="agent-settings-content">
             <div ref={(element) => (avatarPickerRoot = element)} class="agent-settings-avatar-picker">
-              <button
-                type="button"
-                class="agent-settings-avatar"
-                aria-label="Edit agent avatar"
-                aria-haspopup="dialog"
-                aria-expanded={avatarPickerOpen() ? "true" : "false"}
-                onClick={() => {
-                  const nextOpen = !avatarPickerOpen();
-                  if (nextOpen) {
+              <Popover.Root
+                open={avatarPickerOpen()}
+                placement="bottom"
+                gutter={11}
+                onOpenChange={(open) => {
+                  if (open) {
                     setAvatarCandidateSeed(avatarSeed());
                     setAvatarBatch(0);
                   }
-                  setAvatarPickerOpen(nextOpen);
+                  setAvatarPickerOpen(open);
                 }}
               >
-                <AgentAvatar seed={avatarSeed()} hue={avatarHue()} url={avatarUrl()} motion="always" />
-              </button>
-              <Show when={avatarPickerOpen()}>
-                <section class="avatar-editor" role="dialog" aria-label="Avatar editor">
-                  <input
+                <Popover.Trigger class="agent-settings-avatar" aria-label="Edit agent avatar">
+                  <AgentAvatar seed={avatarSeed()} hue={avatarHue()} url={avatarUrl()} motion="always" />
+                </Popover.Trigger>
+                <Popover.Content class="avatar-editor" aria-hidden={avatarPickerOpen() ? undefined : "true"}>
+                  <Popover.Title class="sr-only">Avatar editor</Popover.Title>
+                  <Input
                     ref={(element) => (avatarFileInput = element)}
                     class="sr-only"
                     type="file"
+                    aria-label="Attach files"
                     accept="image/png,image/jpeg,image/webp"
                     onChange={(event) => void uploadAgentAvatar(event.currentTarget.files?.[0])}
                   />
@@ -2053,13 +2078,13 @@ export function Conversation(props: ConversationProps) {
                     <span>Image</span>
                     <div class="avatar-editor-actions">
                       <Show when={avatarUrl()}>
-                        <button type="button" disabled={avatarUploadBusy()} onClick={() => void setCustomAvatar(null)}>
+                        <Button type="button" disabled={avatarUploadBusy()} onClick={() => void setCustomAvatar(null)}>
                           Remove
-                        </button>
+                        </Button>
                       </Show>
                     </div>
                   </div>
-                  <button
+                  <Button
                     type="button"
                     class={["avatar-image-upload", { "avatar-image-upload-active": Boolean(avatarUrl()) }]}
                     disabled={avatarUploadBusy()}
@@ -2081,13 +2106,13 @@ export function Conversation(props: ConversationProps) {
                       <strong>{avatarUrl() ? "Replace image" : "Upload image"}</strong>
                       <small>PNG, JPEG or WebP · square crop</small>
                     </span>
-                  </button>
+                  </Button>
                   <div class="avatar-editor-divider" />
                   <div class="avatar-editor-heading">
                     <span>Generated face</span>
                     <div class="avatar-editor-actions">
                       <Show when={props.bot && avatarSeed() !== props.bot.id}>
-                        <button
+                        <Button
                           type="button"
                           onClick={() => {
                             const botId = props.bot?.id;
@@ -2098,9 +2123,9 @@ export function Conversation(props: ConversationProps) {
                           }}
                         >
                           Reset to ID
-                        </button>
+                        </Button>
                       </Show>
-                      <button
+                      <Button
                         type="button"
                         onClick={() => {
                           setAvatarCandidateSeed(avatarSeed());
@@ -2108,13 +2133,13 @@ export function Conversation(props: ConversationProps) {
                         }}
                       >
                         New set
-                      </button>
+                      </Button>
                     </div>
                   </div>
                   <fieldset class="avatar-face-grid" aria-label="Generated avatar faces">
                     <For each={avatarCandidates()}>
                       {(seed, index) => (
-                        <button
+                        <Button
                           type="button"
                           class={[
                             "avatar-face-choice",
@@ -2129,7 +2154,7 @@ export function Conversation(props: ConversationProps) {
                           onClick={() => void selectGeneratedAvatar(seed)}
                         >
                           <AgentAvatar seed={seed} hue={avatarHue()} />
-                        </button>
+                        </Button>
                       )}
                     </For>
                   </fieldset>
@@ -2138,7 +2163,7 @@ export function Conversation(props: ConversationProps) {
                     <span>Color</span>
                   </div>
                   <fieldset class="avatar-color-grid" aria-label="Avatar color">
-                    <button
+                    <Button
                       type="button"
                       class={["avatar-color-choice", { "avatar-choice-selected": avatarHue() === null }]}
                       aria-label="Automatic avatar color"
@@ -2149,10 +2174,10 @@ export function Conversation(props: ConversationProps) {
                       }}
                     >
                       <span class="avatar-color-swatch avatar-color-swatch-auto">A</span>
-                    </button>
+                    </Button>
                     <For each={AVATAR_HUE_OPTIONS}>
                       {(option) => (
-                        <button
+                        <Button
                           type="button"
                           class={[
                             "avatar-color-choice",
@@ -2168,16 +2193,16 @@ export function Conversation(props: ConversationProps) {
                           }}
                         >
                           <span class="avatar-color-swatch" style={{ background: avatarHueSwatch(option.hue) }} />
-                        </button>
+                        </Button>
                       )}
                     </For>
                   </fieldset>
-                </section>
-              </Show>
+                </Popover.Content>
+              </Popover.Root>
             </div>
             <label class="agent-settings-field">
               <span>Name</span>
-              <input
+              <Input
                 value={settingsName()}
                 aria-label="Agent name"
                 maxlength={INPUT_LIMITS.agentName}
@@ -2187,7 +2212,7 @@ export function Conversation(props: ConversationProps) {
             </label>
             <label class="agent-settings-field">
               <span>Title</span>
-              <input
+              <Input
                 value={settingsTitle()}
                 aria-label="Agent title"
                 placeholder="Describe what your agent does"
@@ -2198,7 +2223,7 @@ export function Conversation(props: ConversationProps) {
             </label>
             <label class="agent-settings-field agent-settings-description">
               <span>Description</span>
-              <textarea
+              <Textarea
                 rows="4"
                 value={settingsDescription()}
                 aria-label="Agent description"
@@ -2235,7 +2260,7 @@ export function Conversation(props: ConversationProps) {
                 </div>
                 <label class="agent-settings-model-row agent-settings-thinking-row">
                   <span>Reasoning</span>
-                  <select
+                  <NativeSelect
                     value={settingsReasoning()}
                     aria-label="Agent reasoning level"
                     onChange={(event) => {
@@ -2248,7 +2273,7 @@ export function Conversation(props: ConversationProps) {
                     <For each={reasoningOptions()}>
                       {(effort) => <option value={effort}>{reasoningLabel(effort)}</option>}
                     </For>
-                  </select>
+                  </NativeSelect>
                 </label>
               </div>
             </section>
@@ -2264,20 +2289,15 @@ export function Conversation(props: ConversationProps) {
                 <strong>Notifications</strong>
                 <span>Get notified when this agent finishes or needs input</span>
               </div>
-              <button
-                type="button"
-                role="switch"
-                class={["settings-switch", { "settings-switch-on": settingsNotifications() }]}
+              <Switch
+                size="sm"
                 aria-label="Notifications"
-                aria-checked={settingsNotifications() ? "true" : "false"}
-                onClick={() => {
-                  const next = !settingsNotifications();
+                checked={settingsNotifications()}
+                onChange={(next) => {
                   setSettingsNotifications(next);
                   saveBotPatch({ notifications: next });
                 }}
-              >
-                <span />
-              </button>
+              />
             </div>
           </div>
         </aside>

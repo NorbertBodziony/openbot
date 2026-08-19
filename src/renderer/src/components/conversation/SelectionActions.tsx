@@ -2,6 +2,7 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { Portal } from "@solidjs/web";
 import type { Element as SolidElement } from "solid-js";
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js";
+import { Button, Input } from "../ui";
 
 const MESSAGE_TEXT_SELECTOR = ".message-copy[data-selection-message-id]";
 const INTERACTIVE_SELECTOR =
@@ -217,6 +218,7 @@ export function SelectionActionsBar(props: {
   const [position, setPosition] = createSignal<SelectionActionsPosition | null>(null);
   const [highlightRects, setHighlightRects] = createSignal<SelectionRect[]>([]);
   const [barWidth, setBarWidth] = createSignal<number | null>(null);
+  const [typingWidth, setTypingWidth] = createSignal<number | null>(null);
   let bar: HTMLDivElement | undefined;
   let content: HTMLDivElement | undefined;
   let animationFrame: number | undefined;
@@ -254,9 +256,27 @@ export function SelectionActionsBar(props: {
 
   const updateWidth = () => {
     if (!content) return;
+    const heldTypingWidth = typingWidth();
+    if (mode() === "idle" && hasPrompt() && heldTypingWidth !== null) {
+      const nextWidth = Math.min(window.innerWidth - VIEWPORT_MARGIN * 2, heldTypingWidth);
+      setBarWidth(Math.max(44, nextWidth));
+      schedulePosition();
+      return;
+    }
     const nextWidth = Math.min(window.innerWidth - VIEWPORT_MARGIN * 2, Math.ceil(content.scrollWidth) + 8);
     setBarWidth(Math.max(44, nextWidth));
     schedulePosition();
+  };
+
+  const updatePrompt = (value: string) => {
+    if (!hasPrompt() && value.trim().length > 0 && bar) {
+      const currentWidth = Math.ceil(bar.getBoundingClientRect().width);
+      setTypingWidth(currentWidth);
+      setBarWidth(currentWidth);
+    } else if (value.trim().length === 0) {
+      setTypingWidth(null);
+    }
+    setPrompt(value);
   };
 
   createEffect(
@@ -264,6 +284,7 @@ export function SelectionActionsBar(props: {
     (key) => {
       if (previousSelectionKey && previousSelectionKey !== key) {
         setPrompt("");
+        setTypingWidth(null);
         setExpanded(false);
         setMode("idle");
         setLastInstruction("");
@@ -274,7 +295,7 @@ export function SelectionActionsBar(props: {
   );
 
   createEffect(
-    () => [prompt(), expanded(), mode()],
+    () => [prompt(), expanded(), mode(), typingWidth()],
     () => {
       queueMicrotask(updateWidth);
     },
@@ -290,7 +311,7 @@ export function SelectionActionsBar(props: {
       observer.observe(content);
       content
         .querySelectorAll<HTMLElement>(
-          ".selection-actions-form, .selection-actions-presets, .selection-actions-more-presets",
+          ".selection-actions-form-shell, .selection-actions-form, .selection-actions-presets, .selection-actions-more-presets, .selection-actions-send-shell",
         )
         .forEach((element) => {
           observer.observe(element);
@@ -360,7 +381,16 @@ export function SelectionActionsBar(props: {
           aria-label="Actions for selected text"
           style={{ width: barWidth() ? `${barWidth()}px` : undefined }}
         >
-          <div ref={(element) => (content = element)} class="selection-actions-content">
+          <div
+            ref={(element) => (content = element)}
+            class="selection-actions-content"
+            style={{
+              width:
+                mode() === "idle" && hasPrompt() && typingWidth() !== null
+                  ? `${Math.max(1, (typingWidth() ?? 8) - 8)}px`
+                  : undefined,
+            }}
+          >
             <Show when={mode() === "sending"}>
               <span class="selection-actions-status" role="status">
                 <span class="selection-actions-spinner" aria-hidden="true" />
@@ -372,7 +402,7 @@ export function SelectionActionsBar(props: {
               <span class="selection-actions-error" role="alert">
                 Couldn’t send
               </span>
-              <button
+              <Button
                 type="button"
                 class="selection-actions-control"
                 onPointerDown={(event) => event.preventDefault()}
@@ -380,8 +410,8 @@ export function SelectionActionsBar(props: {
               >
                 <RetryIcon />
                 <span class="selection-actions-label">Retry</span>
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 class="selection-actions-icon-button"
                 aria-label="Close selected text actions"
@@ -389,25 +419,40 @@ export function SelectionActionsBar(props: {
                 onClick={props.onDismiss}
               >
                 <CloseSelectionIcon />
-              </button>
+              </Button>
             </Show>
 
             <Show when={mode() === "idle"}>
-              <form
-                class={["selection-actions-form", { "selection-actions-form-hidden": expanded() }]}
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void submit(prompt());
+              <div
+                class={["selection-actions-form-shell", { "selection-actions-form-shell-hidden": expanded() }]}
+                style={{
+                  "max-width": expanded()
+                    ? "0px"
+                    : hasPrompt() && typingWidth() !== null
+                      ? `${Math.max(1, (typingWidth() ?? 40) - 40)}px`
+                      : "145px",
                 }}
               >
-                <input
-                  value={prompt()}
-                  aria-label="Describe edits"
-                  placeholder="Describe edits"
-                  maxlength={maximumInstructionLength()}
-                  onInput={(event) => setPrompt(event.currentTarget.value)}
-                />
-              </form>
+                <form
+                  class="selection-actions-form"
+                  style={{
+                    width:
+                      hasPrompt() && typingWidth() !== null ? `${Math.max(1, (typingWidth() ?? 40) - 40)}px` : "145px",
+                  }}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void submit(prompt());
+                  }}
+                >
+                  <Input
+                    value={prompt()}
+                    aria-label="Describe edits"
+                    placeholder="Describe edits"
+                    maxlength={maximumInstructionLength()}
+                    onInput={(event) => updatePrompt(event.currentTarget.value)}
+                  />
+                </form>
+              </div>
 
               <div
                 class={[
@@ -417,6 +462,7 @@ export function SelectionActionsBar(props: {
                     "selection-actions-presets-expanded": expanded(),
                   },
                 ]}
+                style={{ "max-width": hasPrompt() ? "0px" : expanded() ? "462px" : "224px" }}
               >
                 <Show when={!expanded()}>
                   <span class="selection-actions-divider" aria-hidden="true" />
@@ -431,25 +477,27 @@ export function SelectionActionsBar(props: {
                   icon={<ImproveIcon />}
                   onSelect={() => void submit(SELECTION_ACTION_INSTRUCTIONS.Improve)}
                 />
-                <div class="selection-actions-more-presets" aria-hidden={expanded() ? undefined : "true"}>
-                  <PresetButton
-                    label="Shorten"
-                    icon={<ShortenIcon />}
-                    onSelect={() => void submit(SELECTION_ACTION_INSTRUCTIONS.Shorten)}
-                  />
-                  <PresetButton
-                    label="Tone"
-                    icon={<ToneIcon />}
-                    onSelect={() => void submit(SELECTION_ACTION_INSTRUCTIONS.Tone)}
-                  />
-                  <PresetButton
-                    label="Grammar"
-                    icon={<GrammarIcon />}
-                    onSelect={() => void submit(SELECTION_ACTION_INSTRUCTIONS.Grammar)}
-                  />
-                </div>
+                <Show when={expanded()}>
+                  <div class="selection-actions-more-presets">
+                    <PresetButton
+                      label="Shorten"
+                      icon={<ShortenIcon />}
+                      onSelect={() => void submit(SELECTION_ACTION_INSTRUCTIONS.Shorten)}
+                    />
+                    <PresetButton
+                      label="Tone"
+                      icon={<ToneIcon />}
+                      onSelect={() => void submit(SELECTION_ACTION_INSTRUCTIONS.Tone)}
+                    />
+                    <PresetButton
+                      label="Grammar"
+                      icon={<GrammarIcon />}
+                      onSelect={() => void submit(SELECTION_ACTION_INSTRUCTIONS.Grammar)}
+                    />
+                  </div>
+                </Show>
                 <span class="selection-actions-divider selection-actions-more-divider" aria-hidden="true" />
-                <button
+                <Button
                   type="button"
                   class="selection-actions-icon-button selection-actions-expand"
                   aria-label={expanded() ? "Show fewer actions" : "Show more actions"}
@@ -458,20 +506,24 @@ export function SelectionActionsBar(props: {
                   onClick={() => setExpanded((value) => !value)}
                 >
                   <ChevronIcon />
-                </button>
+                </Button>
               </div>
 
-              <Show when={hasPrompt()}>
-                <button
+              <div
+                class={["selection-actions-send-shell", { "selection-actions-send-shell-visible": hasPrompt() }]}
+                aria-hidden={hasPrompt() ? undefined : "true"}
+              >
+                <Button
                   type="button"
                   class="selection-actions-send"
                   aria-label="Send edit instruction"
+                  tabindex={hasPrompt() ? undefined : -1}
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={() => void submit(prompt())}
                 >
                   <SendIcon />
-                </button>
-              </Show>
+                </Button>
+              </div>
             </Show>
           </div>
         </div>
@@ -482,7 +534,7 @@ export function SelectionActionsBar(props: {
 
 function PresetButton(props: { label: string; icon: SolidElement; onSelect: () => void }) {
   return (
-    <button
+    <Button
       type="button"
       class="selection-actions-control"
       aria-label={props.label}
@@ -491,7 +543,7 @@ function PresetButton(props: { label: string; icon: SolidElement; onSelect: () =
     >
       {props.icon}
       <span class="selection-actions-label">{props.label}</span>
-    </button>
+    </Button>
   );
 }
 

@@ -1,5 +1,6 @@
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import { For, Show } from "solid-js";
+import { Button } from "../ui";
 
 export function AttachmentCards(props: {
   attachments: AttachmentSummary[];
@@ -11,7 +12,7 @@ export function AttachmentCards(props: {
       <For each={props.attachments}>
         {(attachment) => (
           <div class="message-attachment">
-            <button
+            <Button
               type="button"
               class="attachment-preview-button"
               disabled={attachment.previewKind === "none"}
@@ -34,8 +35,8 @@ export function AttachmentCards(props: {
                 <strong>{attachment.name}</strong>
                 <small>{formatFileSize(attachment.size)}</small>
               </span>
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               class="attachment-open-button"
               aria-label={`Open ${attachment.name}`}
@@ -43,7 +44,7 @@ export function AttachmentCards(props: {
               onClick={() => props.onAction(attachment, "open")}
             >
               <AttachmentOpenIcon />
-            </button>
+            </Button>
           </div>
         )}
       </For>

@@ -1,5 +1,6 @@
 import type { AttachmentSummary, ImageGenerationAspectRatio } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, Show } from "solid-js";
+import { Button } from "../ui";
 import { DownloadIcon } from "./ConversationIcons";
 
 export type ImageGenerationStatus = "generating" | "completed" | "failed" | "interrupted";
@@ -84,7 +85,7 @@ export function ImageGeneration(props: ImageGenerationProps) {
           <span class="image-generation-resolution">{props.resolution}</span>
         </div>
         <Show when={Boolean(props.attachment?.previewUrl) && !previewError()}>
-          <button
+          <Button
             type="button"
             class={["image-generation-preview", { "image-generation-preview-visible": hasImage() }]}
             aria-label="Preview generated image"
@@ -101,10 +102,10 @@ export function ImageGeneration(props: ImageGenerationProps) {
               }}
               onError={() => setPreviewError(true)}
             />
-          </button>
+          </Button>
         </Show>
         <Show when={hasImage() && props.attachment && props.onDownload}>
-          <button
+          <Button
             type="button"
             class="image-generation-hover-download"
             aria-label="Download generated image"
@@ -116,7 +117,7 @@ export function ImageGeneration(props: ImageGenerationProps) {
           >
             <DownloadIcon />
             Download
-          </button>
+          </Button>
         </Show>
       </div>
       <Show when={!hasImage()}>

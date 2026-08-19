@@ -1,0 +1,130 @@
+diff --git a/dist/create-dom-collection/OK7882aq.js b/dist/create-dom-collection/OK7882aq.js
+index 6b8a3617f27946fec9535b14e108400de48a4bf2..5f82241798c3a67d64be6c373b4718551418cb9b 100644
+--- a/dist/create-dom-collection/OK7882aq.js
++++ b/dist/create-dom-collection/OK7882aq.js
+@@ -91,7 +91,7 @@ function createSortBasedOnDOMPosition(items, setItems) {
+ //#endregion
+ //#region src/primitives/create-dom-collection/create-dom-collection.ts
+ function createDomCollection(props = {}) {
+-	const [items, setItems] = createSignal([]);
++	const [items, setItems] = createSignal([], { ownedWrite: true });
+ 	createSortBasedOnDOMPosition(items, setItems);
+ 	createEffect(() => items(), (currentItems) => {
+ 		props.onItemsChange?.(currentItems);
+diff --git a/dist/create-dom-collection/OK7882aq.jsx b/dist/create-dom-collection/OK7882aq.jsx
+index 6b8a3617f27946fec9535b14e108400de48a4bf2..5f82241798c3a67d64be6c373b4718551418cb9b 100644
+--- a/dist/create-dom-collection/OK7882aq.jsx
++++ b/dist/create-dom-collection/OK7882aq.jsx
+@@ -91,7 +91,7 @@ function createSortBasedOnDOMPosition(items, setItems) {
+ //#endregion
+ //#region src/primitives/create-dom-collection/create-dom-collection.ts
+ function createDomCollection(props = {}) {
+-	const [items, setItems] = createSignal([]);
++	const [items, setItems] = createSignal([], { ownedWrite: true });
+ 	createSortBasedOnDOMPosition(items, setItems);
+ 	createEffect(() => items(), (currentItems) => {
+ 		props.onItemsChange?.(currentItems);
+diff --git a/dist/menu-sub-trigger/CUZ7UcrE.js b/dist/menu-sub-trigger/CUZ7UcrE.js
+index 2304a4c0cedafe7d0b501e14a6097c19cc1de6ab..a045f64440f9cbc973ed9698ee69dd08dfc86781 100644
+--- a/dist/menu-sub-trigger/CUZ7UcrE.js
++++ b/dist/menu-sub-trigger/CUZ7UcrE.js
+@@ -129,7 +129,7 @@ function Menu(props) {
+ 	const [focusStrategy, setFocusStrategy] = createSignal(true);
+ 	const [currentPlacement, setCurrentPlacement] = createSignal(others.placement);
+ 	const [nestedMenus, setNestedMenus] = createSignal([]);
+-	const [items, setItems] = createSignal([]);
++	const [items, setItems] = createSignal([], { ownedWrite: true });
+ 	const { DomCollectionProvider } = createDomCollection({
+ 		items,
+ 		onItemsChange: setItems
+diff --git a/dist/menu-sub-trigger/Cj4RVVP4.jsx b/dist/menu-sub-trigger/Cj4RVVP4.jsx
+index b0a38568346e4997cc03f97803f316dd5cdebae1..2dc530b10b317d5ee1ab0131d84b5f6b216fd49c 100644
+--- a/dist/menu-sub-trigger/Cj4RVVP4.jsx
++++ b/dist/menu-sub-trigger/Cj4RVVP4.jsx
+@@ -129,7 +129,7 @@ function Menu(props) {
+ 	const [focusStrategy, setFocusStrategy] = createSignal(true);
+ 	const [currentPlacement, setCurrentPlacement] = createSignal(others.placement);
+ 	const [nestedMenus, setNestedMenus] = createSignal([]);
+-	const [items, setItems] = createSignal([]);
++	const [items, setItems] = createSignal([], { ownedWrite: true });
+ 	const { DomCollectionProvider } = createDomCollection({
+ 		items,
+ 		onItemsChange: setItems
+diff --git a/dist/rating/index.js b/dist/rating/index.js
+index 51d9efaf61c467b127ffbc21b9719c632c8bc931..afb1a2e131c915ac00a1e76fe7ec4307d44584c4 100644
+--- a/dist/rating/index.js
++++ b/dist/rating/index.js
+@@ -351,7 +351,7 @@ function RatingRoot(props) {
+ 	}, props);
+ 	const formControlProps = omit(mergedProps, "ref", "value", "defaultValue", "onChange", "allowHalf", "orientation", "aria-labelledby", "aria-describedby");
+ 	const others = omit(mergedProps, "ref", "value", "defaultValue", "onChange", "allowHalf", "orientation", "aria-labelledby", "aria-describedby", ...FORM_CONTROL_PROP_NAMES);
+-	const [items, setItems] = createSignal([]);
++	const [items, setItems] = createSignal([], { ownedWrite: true });
+ 	const { DomCollectionProvider } = createDomCollection({
+ 		items,
+ 		onItemsChange: setItems
+diff --git a/dist/rating/index.jsx b/dist/rating/index.jsx
+index 37fab336dc4866a58d11de9d0953319b51bb61f2..1add17f7eb3dc64697b6a7b76da226066ffbddc9 100644
+--- a/dist/rating/index.jsx
++++ b/dist/rating/index.jsx
+@@ -280,7 +280,7 @@ function RatingRoot(props) {
+ 	}, props);
+ 	const formControlProps = omit(mergedProps, "ref", "value", "defaultValue", "onChange", "allowHalf", "orientation", "aria-labelledby", "aria-describedby");
+ 	const others = omit(mergedProps, "ref", "value", "defaultValue", "onChange", "allowHalf", "orientation", "aria-labelledby", "aria-describedby", ...FORM_CONTROL_PROP_NAMES);
+-	const [items, setItems] = createSignal([]);
++	const [items, setItems] = createSignal([], { ownedWrite: true });
+ 	const { DomCollectionProvider } = createDomCollection({
+ 		items,
+ 		onItemsChange: setItems
+diff --git a/dist/tabs/Bcy3rD0-.js b/dist/tabs/Bcy3rD0-.js
+index b50c5e60030cac03d97ab8f0b3749004568625f8..60fcab2897a2006c6b22a59b34bb91593fb542c5 100644
+--- a/dist/tabs/Bcy3rD0-.js
++++ b/dist/tabs/Bcy3rD0-.js
+@@ -251,7 +251,7 @@ function TabsRoot(props) {
+ 		activationMode: "automatic"
+ 	}, props);
+ 	const others = omit(mergedProps, "value", "defaultValue", "onChange", "orientation", "activationMode", "disabled");
+-	const [items, setItems] = createSignal([]);
++	const [items, setItems] = createSignal([], { ownedWrite: true });
+ 	const [selectedTab, setSelectedTab] = createSignal();
+ 	const { DomCollectionProvider } = createDomCollection({
+ 		items,
+diff --git a/dist/tabs/CezyXMlG.jsx b/dist/tabs/CezyXMlG.jsx
+index 6386365bd6e1ef3d76be952cd214f54dfa53e937..1340875aca7764e70cbb93093254e51cac13658b 100644
+--- a/dist/tabs/CezyXMlG.jsx
++++ b/dist/tabs/CezyXMlG.jsx
+@@ -192,7 +192,7 @@ function TabsRoot(props) {
+ 		activationMode: "automatic"
+ 	}, props);
+ 	const others = omit(mergedProps, "value", "defaultValue", "onChange", "orientation", "activationMode", "disabled");
+-	const [items, setItems] = createSignal([]);
++	const [items, setItems] = createSignal([], { ownedWrite: true });
+ 	const [selectedTab, setSelectedTab] = createSignal();
+ 	const { DomCollectionProvider } = createDomCollection({
+ 		items,
+diff --git a/dist/toggle-group/BlH1G1LS.js b/dist/toggle-group/BlH1G1LS.js
+index 4f4e9ab172a08be4772adda3b49a05bdeb233cf2..639f8bc6de5882b0fbbab4c508b6a3d3f6b2b1a9 100644
+--- a/dist/toggle-group/BlH1G1LS.js
++++ b/dist/toggle-group/BlH1G1LS.js
+@@ -83,7 +83,7 @@ function ToggleGroupBase(props) {
+ 		orientation: "horizontal"
+ 	}, props);
+ 	const others = omit(mergedProps, "ref", "value", "defaultValue", "disabled", "orientation", "selectionMode", "onChange", "onKeyDown", "onMouseDown", "onFocusIn", "onFocusOut");
+-	const [items, setItems] = createSignal([]);
++	const [items, setItems] = createSignal([], { ownedWrite: true });
+ 	const { DomCollectionProvider } = createDomCollection({
+ 		items,
+ 		onItemsChange: setItems
+diff --git a/dist/toggle-group/CPNWpItg.jsx b/dist/toggle-group/CPNWpItg.jsx
+index 2de0aa7c76c766b076336b82e1d916366eb2d517..98d5f56053478b18d1120a3bd40d6b3cc5c91dcf 100644
+--- a/dist/toggle-group/CPNWpItg.jsx
++++ b/dist/toggle-group/CPNWpItg.jsx
+@@ -52,7 +52,7 @@ function ToggleGroupBase(props) {
+ 		orientation: "horizontal"
+ 	}, props);
+ 	const others = omit(mergedProps, "ref", "value", "defaultValue", "disabled", "orientation", "selectionMode", "onChange", "onKeyDown", "onMouseDown", "onFocusIn", "onFocusOut");
+-	const [items, setItems] = createSignal([]);
++	const [items, setItems] = createSignal([], { ownedWrite: true });
+ 	const { DomCollectionProvider } = createDomCollection({
+ 		items,
+ 		onItemsChange: setItems

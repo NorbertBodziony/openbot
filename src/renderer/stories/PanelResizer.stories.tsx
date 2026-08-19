@@ -29,7 +29,12 @@ export const Resizable: Story = {
     const [width, setWidth] = createSignal(280);
     return (
       <div class="flex h-screen">
-        <aside style={{ width: `${width()}px` }} class="sidebar" aria-label="Resizable sidebar" />
+        <aside
+          id="resizable-sidebar"
+          style={{ width: `${width()}px` }}
+          class="sidebar"
+          aria-label="Resizable sidebar"
+        />
         <PanelResizer
           label="Resize sidebar"
           controls="resizable-sidebar"
@@ -54,7 +59,12 @@ export const CompactSnap: Story = {
     const [compact, setCompact] = createSignal(false);
     return (
       <div class="flex h-screen">
-        <aside style={{ width: `${compact() ? 88 : width()}px` }} class="sidebar" aria-label="Snapping sidebar" />
+        <aside
+          id="snapping-sidebar"
+          style={{ width: `${compact() ? 88 : width()}px` }}
+          class="sidebar"
+          aria-label="Snapping sidebar"
+        />
         <PanelResizer
           label="Resize snapping sidebar"
           controls="snapping-sidebar"

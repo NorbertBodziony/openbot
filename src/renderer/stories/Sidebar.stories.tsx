@@ -1,5 +1,5 @@
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
-import { fn } from "storybook/test";
+import { fn, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import type { SidebarAgentState } from "../src/components/Sidebar";
 import { Sidebar } from "../src/components/Sidebar";
@@ -80,9 +80,9 @@ export const Empty: Story = {
 };
 
 export const AccountMenu: Story = {
-  play: async ({ canvas, userEvent }) => {
+  play: async ({ canvas, canvasElement, userEvent }) => {
     await userEvent.click(canvas.getByRole("button", { name: "Open account menu" }));
-    await canvas.findByLabelText("Account menu");
+    await within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "Account" });
   },
 };
 

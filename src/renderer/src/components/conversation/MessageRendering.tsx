@@ -1,10 +1,11 @@
 import { attachmentReferenceIds } from "@openbot/contracts/attachment-references";
 import type { AttachmentSummary, MessageReaction } from "@openbot/contracts/ipc";
 import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "@openbot/contracts/ipc";
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createMemo, For, Show } from "solid-js";
 import { avatarHeadColor } from "../../blobatar";
 import type { BotMessage, BotProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
+import { Button, DropdownMenu } from "../ui";
 import { AttachmentCards } from "./AttachmentCards";
 import { ComparisonTable } from "./ComparisonTable";
 import { CheckIcon, CopyIcon, MoreIcon, PlusIcon, ReactionIcon, ReplyIcon } from "./ConversationIcons";
@@ -36,7 +37,6 @@ export function ExchangeSystemRow(props: {
   bots: BotProfile[];
   onSelectAgent: (botId: string) => void;
 }) {
-  const [agentsOpen, setAgentsOpen] = createSignal(false);
   const exchange = () => props.message.exchange;
   const recipients = () => exchange()?.recipientBotIds ?? [];
   const sender = () => {
@@ -56,7 +56,7 @@ export function ExchangeSystemRow(props: {
         fallback={
           <>
             <span class="exchange-system-label">Message from</span>
-            <button
+            <Button
               type="button"
               class="exchange-agent-trigger exchange-agent-trigger-incoming"
               style={exchangeAgentStyle(sender())}
@@ -68,7 +68,7 @@ export function ExchangeSystemRow(props: {
             >
               <ExchangeAgentAvatar bot={sender()} />
               <span>{sender()?.name ?? exchange()?.senderBotId ?? "Agent"}</span>
-            </button>
+            </Button>
           </>
         }
       >
@@ -77,51 +77,42 @@ export function ExchangeSystemRow(props: {
           when={recipients().length === 1}
           fallback={
             <div class="exchange-agent-picker">
-              <button
-                type="button"
-                class="exchange-agent-trigger exchange-agent-trigger-outgoing"
-                style={exchangeAgentsStyle(
-                  recipients().map((recipientId) => props.bots.find((bot) => bot.id === recipientId)),
-                )}
-                aria-haspopup="menu"
-                aria-expanded={agentsOpen() ? "true" : "false"}
-                aria-label={`${agentCountLabel()}, show list`}
-                onClick={() => setAgentsOpen((open) => !open)}
-              >
-                <span class="exchange-avatar-stack" aria-hidden="true">
-                  <For each={recipients().slice(0, 3)}>
-                    {(recipientId) => <ExchangeAgentAvatar bot={props.bots.find((bot) => bot.id === recipientId)} />}
-                  </For>
-                </span>
-                <span>{agentCountLabel()}</span>
-              </button>
-              <Show when={agentsOpen()}>
-                <div class="exchange-agent-menu" role="menu">
+              <DropdownMenu.Root placement="bottom" gutter={8} modal={false}>
+                <DropdownMenu.Trigger
+                  class="exchange-agent-trigger exchange-agent-trigger-outgoing"
+                  style={exchangeAgentsStyle(
+                    recipients().map((recipientId) => props.bots.find((bot) => bot.id === recipientId)),
+                  )}
+                  aria-label={`${agentCountLabel()}, show list`}
+                >
+                  <span class="exchange-avatar-stack" aria-hidden="true">
+                    <For each={recipients().slice(0, 3)}>
+                      {(recipientId) => <ExchangeAgentAvatar bot={props.bots.find((bot) => bot.id === recipientId)} />}
+                    </For>
+                  </span>
+                  <span>{agentCountLabel()}</span>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content class="exchange-agent-menu">
                   <For each={recipients()}>
                     {(recipientId) => {
                       const recipient = () => props.bots.find((bot) => bot.id === recipientId);
                       return (
-                        <button
-                          type="button"
-                          role="menuitem"
+                        <DropdownMenu.Item
                           class="exchange-agent-menu-item"
-                          onClick={() => {
-                            setAgentsOpen(false);
-                            props.onSelectAgent(recipientId);
-                          }}
+                          onSelect={() => props.onSelectAgent(recipientId)}
                         >
                           <ExchangeAgentAvatar bot={recipient()} />
                           <span>{recipient()?.name ?? recipientId}</span>
-                        </button>
+                        </DropdownMenu.Item>
                       );
                     }}
                   </For>
-                </div>
-              </Show>
+                </DropdownMenu.Content>
+              </DropdownMenu.Root>
             </div>
           }
         >
-          <button
+          <Button
             type="button"
             class="exchange-agent-trigger exchange-agent-trigger-single"
             style={exchangeAgentStyle(singleRecipient())}
@@ -134,7 +125,7 @@ export function ExchangeSystemRow(props: {
           >
             <ExchangeAgentAvatar bot={singleRecipient()} />
             <span>{singleRecipient()?.name ?? recipients()[0] ?? "Agent"}</span>
-          </button>
+          </Button>
         </Show>
       </Show>
       <time datetime={props.message.time}>{props.message.time}</time>
@@ -284,87 +275,83 @@ export function MessageActions(props: {
       aria-label={`${props.message.author === "you" ? "User" : "Agent"} message actions`}
     >
       <div class="message-action-popover-anchor">
-        <button
-          type="button"
-          class="message-action-button"
-          aria-label="Add reaction"
-          aria-expanded={props.pickerOpen ? "true" : "false"}
-          onClick={props.onTogglePicker}
+        <DropdownMenu.Root
+          onOpenChange={props.onTogglePicker}
+          placement={props.message.author === "you" ? "top-end" : "top-start"}
+          gutter={6}
+          modal={false}
         >
-          <ReactionIcon />
-        </button>
-        <Show when={props.pickerOpen}>
-          <div class="reaction-picker" role="menu" aria-label="Choose a reaction">
+          <DropdownMenu.Trigger class="message-action-button" aria-label="Add reaction">
+            <ReactionIcon />
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content
+            class="reaction-picker"
+            aria-label="Choose a reaction"
+            aria-hidden={props.pickerOpen ? undefined : "true"}
+          >
             <div class="reaction-picker-row">
-              <For each={MESSAGE_REACTIONS}>
-                {(emoji) => (
-                  <button
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={props.message.reaction === emoji ? "true" : "false"}
-                    aria-label={`React with ${emoji}`}
-                    onClick={() => props.onReact(props.message.reaction === emoji ? null : emoji)}
-                  >
-                    {emoji}
-                  </button>
-                )}
-              </For>
-              <button
-                type="button"
+              <DropdownMenu.RadioGroup value={props.message.reaction ?? ""}>
+                <For each={MESSAGE_REACTIONS}>
+                  {(emoji) => (
+                    <DropdownMenu.RadioItem
+                      value={emoji}
+                      aria-label={`React with ${emoji}`}
+                      onSelect={() => props.onReact(props.message.reaction === emoji ? null : emoji)}
+                    >
+                      {emoji}
+                    </DropdownMenu.RadioItem>
+                  )}
+                </For>
+              </DropdownMenu.RadioGroup>
+              <DropdownMenu.Item
                 class="reaction-more-button"
                 aria-label="More emoji"
-                aria-expanded={props.expandedEmoji ? "true" : "false"}
-                onClick={props.onExpandEmoji}
+                closeOnSelect={false}
+                onSelect={props.onExpandEmoji}
               >
                 <PlusIcon />
-              </button>
+              </DropdownMenu.Item>
             </div>
             <Show when={props.expandedEmoji}>
               <div class="reaction-picker-row reaction-picker-more">
-                <For each={MORE_MESSAGE_REACTIONS}>
-                  {(emoji) => (
-                    <button
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={props.message.reaction === emoji ? "true" : "false"}
-                      aria-label={`React with ${emoji}`}
-                      onClick={() => props.onReact(props.message.reaction === emoji ? null : emoji)}
-                    >
-                      {emoji}
-                    </button>
-                  )}
-                </For>
+                <DropdownMenu.RadioGroup value={props.message.reaction ?? ""}>
+                  <For each={MORE_MESSAGE_REACTIONS}>
+                    {(emoji) => (
+                      <DropdownMenu.RadioItem
+                        value={emoji}
+                        aria-label={`React with ${emoji}`}
+                        onSelect={() => props.onReact(props.message.reaction === emoji ? null : emoji)}
+                      >
+                        {emoji}
+                      </DropdownMenu.RadioItem>
+                    )}
+                  </For>
+                </DropdownMenu.RadioGroup>
               </div>
             </Show>
-          </div>
-        </Show>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
       </div>
-      <button
+      <Button
         type="button"
         class="message-action-button"
         aria-label={`Reply to ${props.message.author === "you" ? "User" : "Agent"} message`}
         onClick={props.onReply}
       >
         <ReplyIcon />
-      </button>
+      </Button>
       <div class="message-action-popover-anchor">
-        <button
-          type="button"
-          class="message-action-button"
-          aria-label="More message actions"
-          aria-expanded={props.moreOpen ? "true" : "false"}
-          onClick={props.onToggleMore}
-        >
-          <MoreIcon />
-        </button>
-        <Show when={props.moreOpen}>
-          <div class="message-more-menu" role="menu">
-            <button type="button" role="menuitem" onClick={props.onCopy}>
+        <DropdownMenu.Root onOpenChange={props.onToggleMore} placement="top-end" gutter={6} modal={false}>
+          <DropdownMenu.Trigger class="message-action-button" aria-label="More message actions">
+            <MoreIcon />
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content class="message-more-menu" aria-hidden={props.moreOpen ? undefined : "true"}>
+            <DropdownMenu.Item onSelect={props.onCopy}>
               {props.copied ? <CheckIcon /> : <CopyIcon />}
               <span>{props.copied ? "Copied" : "Copy"}</span>
-            </button>
-          </div>
-        </Show>
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
       </div>
     </div>
   );

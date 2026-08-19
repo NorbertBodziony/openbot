@@ -20,7 +20,7 @@ export default defineConfig({
     },
   },
   renderer: {
-    plugins: [solidPlugin(), tailwindcss()],
+    plugins: [solidPlugin(), tailwindcss({ optimize: false })],
     server: rendererPort ? { port: rendererPort, strictPort: true } : undefined,
   },
 });

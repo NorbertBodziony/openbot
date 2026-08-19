@@ -1,4 +1,4 @@
-import { fn } from "storybook/test";
+import { fn, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { HostPanel } from "../src/components/HostPanel";
 import { STORY_HOST_STATUS, STORY_INVITES, STORY_PRESENCE, STORY_SESSIONS, STORY_TEAM_MEMBERS } from "./fixtures";
@@ -44,9 +44,10 @@ type Story = StoryObj<typeof meta>;
 export const Published: Story = {};
 
 export const Overview: Story = {
-  play: async ({ canvas, userEvent }) => {
-    await userEvent.click(canvas.getByRole("button", { name: "People" }));
-    await canvas.findByText("Alice Chen");
+  play: async ({ canvasElement, userEvent }) => {
+    const portal = within(canvasElement.ownerDocument.body);
+    await userEvent.click(portal.getByRole("button", { name: "People" }));
+    await portal.findByText("Alice Chen");
   },
 };
 

@@ -1,11 +1,14 @@
 {
   "extends": "./tsconfig.web.json",
   "compilerOptions": {
-    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom", "node"]
+    "types": ["vite/client", "vitest/globals", "vitest/browser", "@testing-library/jest-dom", "node"]
   },
   "include": [
     ".storybook/**/*.ts",
     ".storybook/**/*.tsx",
+    "tests/visual/**/*.ts",
+    "tests/visual/**/*.tsx",
+    "vitest.visual.config.ts",
     "src/renderer/**/*.ts",
     "src/renderer/**/*.tsx",
     "packages/contracts/src/**/*.ts"

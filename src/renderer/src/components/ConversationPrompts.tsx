@@ -1,6 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { AgentApproval, AgentPromptQuestion } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { Button, Input, RadioGroup } from "./ui";
 
 export function ChoiceCard(props: {
   title: string;
@@ -13,6 +14,7 @@ export function ChoiceCard(props: {
   const [answer, setAnswer] = createSignal("");
   const [customSelected, setCustomSelected] = createSignal(false);
   let customInput: HTMLInputElement | undefined;
+  const selectedChoice = () => (customSelected() ? (props.customChoice ?? "") : answer());
   const submit = async () => {
     const value = answer().trim();
     if (value && !props.pending) await props.onSubmit(value);
@@ -25,41 +27,43 @@ export function ChoiceCard(props: {
           <span>{props.hint ?? "Pick whatever fits, or type your own."}</span>
         </div>
       </div>
-      <div class="choice-options" role="listbox" aria-label={props.title}>
+      <RadioGroup.Root
+        class="choice-options"
+        aria-label={props.title}
+        value={selectedChoice()}
+        disabled={props.pending}
+        onChange={(choice) => {
+          if (choice === props.customChoice) {
+            setAnswer("");
+            setCustomSelected(true);
+            queueMicrotask(() => customInput?.focus());
+            return;
+          }
+          setCustomSelected(false);
+          setAnswer(choice);
+          void props.onSubmit(choice);
+        }}
+      >
         <For each={props.choices}>
           {(choice, index) => (
-            <button
-              type="button"
-              role="option"
-              aria-selected={
-                (choice === props.customChoice ? customSelected() : answer() === choice) ? "true" : "false"
-              }
-              class={[
-                "choice-option",
-                {
-                  "choice-option-selected": choice === props.customChoice ? customSelected() : answer() === choice,
-                },
-              ]}
-              disabled={props.pending}
-              onClick={() => {
-                if (choice === props.customChoice) {
-                  setAnswer("");
-                  setCustomSelected(true);
-                  customInput?.focus();
-                  return;
-                }
-                setCustomSelected(false);
-                setAnswer(choice);
-                void props.onSubmit(choice);
-              }}
-            >
-              <span class="choice-key">{String.fromCharCode(65 + index())}</span>
-              <span>{choice}</span>
-            </button>
+            <RadioGroup.Item class="choice-option-item" value={choice} disabled={props.pending}>
+              <RadioGroup.ItemInput aria-label={choice} />
+              <RadioGroup.ItemControl
+                class={[
+                  "choice-option",
+                  {
+                    "choice-option-selected": choice === props.customChoice ? customSelected() : answer() === choice,
+                  },
+                ]}
+              >
+                <span class="choice-key">{String.fromCharCode(65 + index())}</span>
+                <span>{choice}</span>
+              </RadioGroup.ItemControl>
+            </RadioGroup.Item>
           )}
         </For>
-      </div>
-      <input
+      </RadioGroup.Root>
+      <Input
         ref={(element) => (customInput = element)}
         class="choice-input"
         value={answer()}
@@ -171,7 +175,7 @@ export function ApprovalCard(props: {
                   <legend class="sr-only">{question().question}</legend>
                   <For each={question().options ?? []}>
                     {(option, index) => (
-                      <button
+                      <Button
                         type="button"
                         aria-pressed={
                           answers()[question().id] === option.label && !customSelected()[question().id]
@@ -195,13 +199,13 @@ export function ApprovalCard(props: {
                             <small>{option.description}</small>
                           </Show>
                         </span>
-                      </button>
+                      </Button>
                     )}
                   </For>
                   <Show
                     when={customEditing()[question().id]}
                     fallback={
-                      <button
+                      <Button
                         type="button"
                         class={[
                           "approval-custom-option",
@@ -220,7 +224,7 @@ export function ApprovalCard(props: {
                           <PencilIcon />
                         </span>
                         <span class="approval-custom-label">{answers()[question().id] || "Something else…"}</span>
-                      </button>
+                      </Button>
                     }
                   >
                     <label
@@ -236,7 +240,7 @@ export function ApprovalCard(props: {
                       <span class="approval-custom-icon">
                         <PencilIcon />
                       </span>
-                      <input
+                      <Input
                         ref={(element) => (customInput = element)}
                         type={question().isSecret ? "password" : "text"}
                         value={answers()[question().id] ?? ""}
@@ -256,7 +260,7 @@ export function ApprovalCard(props: {
         </div>
         <footer class="approval-card-footer">
           <nav class="approval-question-nav" aria-label={`Question ${step() + 1} of ${questionCount()}`}>
-            <button
+            <Button
               type="button"
               class="approval-icon-button"
               aria-label="Previous question"
@@ -264,11 +268,11 @@ export function ApprovalCard(props: {
               onClick={() => setStep((current) => Math.max(0, current - 1))}
             >
               <ArrowIcon direction="left" />
-            </button>
+            </Button>
             <span>{step() + 1}</span>
             <span class="approval-question-divider">/</span>
             <span>{questionCount()}</span>
-            <button
+            <Button
               type="button"
               class="approval-icon-button"
               aria-label="Next question"
@@ -276,18 +280,18 @@ export function ApprovalCard(props: {
               onClick={() => setStep((current) => Math.min(current + 1, questionCount() - 1))}
             >
               <ArrowIcon direction="right" />
-            </button>
+            </Button>
           </nav>
           <div class="approval-card-actions">
-            <button
+            <Button
               type="button"
               class="approval-button approval-button-ghost"
               disabled={submitting()}
               onClick={() => void submitQuestions(true)}
             >
               Skip
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               class="approval-button approval-button-primary"
               disabled={!canAdvance()}
@@ -298,7 +302,7 @@ export function ApprovalCard(props: {
             >
               {submitting() ? "Sending…" : step() === questionCount() - 1 ? "Continue" : "Next"}
               <ReturnIcon />
-            </button>
+            </Button>
           </div>
         </footer>
       </Show>
@@ -330,15 +334,15 @@ export function ApprovalCard(props: {
             </div>
             <footer class="approval-card-footer approval-card-footer-end">
               <div class="approval-card-actions">
-                <button
+                <Button
                   type="button"
                   class="approval-button approval-button-ghost"
                   disabled={submitting()}
                   onClick={() => void submitApproval("decline")}
                 >
                   {submitting() ? "Waiting…" : "Reject"}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
                   class="approval-button approval-button-primary"
                   disabled={submitting()}
@@ -346,7 +350,7 @@ export function ApprovalCard(props: {
                 >
                   {submitting() ? "Sending…" : "Approve"}
                   <ReturnIcon />
-                </button>
+                </Button>
               </div>
             </footer>
           </>

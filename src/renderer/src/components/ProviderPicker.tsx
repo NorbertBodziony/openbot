@@ -1,5 +1,6 @@
 import type { AgentProviderId, AgentProviderState } from "@openbot/contracts/ipc";
 import { createEffect, For, Show } from "solid-js";
+import { Badge, Input } from "./ui";
 
 export interface ProviderPickerOption {
   id: AgentProviderId;
@@ -73,7 +74,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
                 ]}
                 title={option.message ?? undefined}
               >
-                <input
+                <Input
                   ref={(element) => inputs.set(option.id, element)}
                   type="radio"
                   name={props.ariaLabel}
@@ -86,10 +87,14 @@ export function ProviderPicker(props: ProviderPickerProps) {
                   <span class="provider-picker-name">{option.name}</span>
                   <Show when={option.email}>{(email) => <small class="provider-picker-email">{email()}</small>}</Show>
                 </span>
-                <span class={`provider-picker-status provider-picker-status-${option.state}`}>
-                  <i aria-hidden="true" />
+                <Badge
+                  class={`provider-picker-status provider-picker-status-${option.state}`}
+                  tone={providerStatusTone(option.state)}
+                  shape="pill"
+                  dot
+                >
                   {providerStatusLabel(option.state)}
-                </span>
+                </Badge>
               </label>
             );
           }}
@@ -98,6 +103,13 @@ export function ProviderPicker(props: ProviderPickerProps) {
       <Show when={props.hint}>{(hint) => <p class="provider-picker-hint">{hint()}</p>}</Show>
     </div>
   );
+}
+
+function providerStatusTone(state: AgentProviderState): "success" | "warning" | "danger" | "neutral" {
+  if (state === "available") return "success";
+  if (state === "error") return "danger";
+  if (state === "sign-in-required" || state === "outdated") return "warning";
+  return "neutral";
 }
 
 function providerStatusLabel(

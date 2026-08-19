@@ -11,6 +11,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, flush, onCleanup, Show, untrack } from "solid-js";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
+import { Button, Dialog, Textarea } from "./ui";
 
 interface InitialSetupProps {
   reviewing?: boolean;
@@ -182,203 +183,201 @@ export function InitialSetup(props: InitialSetupProps) {
   };
 
   return (
-    <main class="initial-setup-screen">
-      <section
-        class="initial-setup"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="initial-setup-title"
-        aria-describedby="initial-setup-description"
-      >
-        <header class="initial-setup-header">
-          <div class="initial-setup-account-row">
-            <Show when={!props.reviewing && route()}>
-              <button
-                type="button"
-                class="initial-setup-back"
-                aria-label="Back to connection choice"
-                onClick={() => {
-                  setError("");
-                  setRoute(null);
-                }}
-              >
-                <svg viewBox="0 0 20 20" aria-hidden="true">
-                  <path d="m12.5 4.5-5 5 5 5" />
-                </svg>
-              </button>
-            </Show>
-            <span class="initial-setup-account">
-              <i aria-hidden="true" />
-              {props.accountEmail}
-            </span>
-            <button type="button" class="initial-setup-signout" onClick={() => void props.onLogout()}>
-              Sign out
-            </button>
-          </div>
-          <p class="initial-setup-eyebrow">OpenBot setup</p>
-          <h1 id="initial-setup-title">{title()}</h1>
-          <p id="initial-setup-description" class="initial-setup-intro">
-            {description()}
-          </p>
-        </header>
-
-        <Show when={!props.reviewing && route() === null}>
-          <ul class="setup-route-list" aria-label="Connection type">
-            <li>
-              <button type="button" class="setup-route-button" onClick={() => chooseRoute("local")}>
-                <span class="setup-route-icon setup-route-icon-local" aria-hidden="true">
-                  <svg viewBox="0 0 24 24">
-                    <title>Local computer</title>
-                    <rect x="3" y="4" width="18" height="13" rx="2.5" />
-                    <path d="M8 21h8M12 17v4" />
+    <Dialog.Root open onOpenChange={(open) => !open && props.onClose?.()}>
+      <main class="initial-setup-screen">
+        <Dialog.Content as="section" class="initial-setup">
+          <header class="initial-setup-header">
+            <div class="initial-setup-account-row">
+              <Show when={!props.reviewing && route()}>
+                <Button
+                  type="button"
+                  class="initial-setup-back"
+                  aria-label="Back to connection choice"
+                  onClick={() => {
+                    setError("");
+                    setRoute(null);
+                  }}
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="m12.5 4.5-5 5 5 5" />
                   </svg>
-                  <i />
-                </span>
-                <span class="setup-route-copy">
-                  <strong>Use this computer</strong>
-                  <small>Run Codex or Claude locally. Keep all OpenBot data here.</small>
-                </span>
-                <RouteArrow />
-              </button>
-            </li>
-            <li>
-              <button type="button" class="setup-route-button" onClick={() => chooseRoute("remote")}>
-                <span class="setup-route-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24">
-                    <title>Remote host</title>
-                    <rect x="3" y="3" width="18" height="7" rx="2.5" />
-                    <rect x="3" y="14" width="18" height="7" rx="2.5" />
-                    <path d="M7 6.5h.01M7 17.5h.01" />
-                  </svg>
-                  <i />
-                </span>
-                <span class="setup-route-copy">
-                  <strong>Connect to a host</strong>
-                  <small>Use agents and conversations from an existing OpenBot host.</small>
-                </span>
-                <RouteArrow />
-              </button>
-            </li>
-          </ul>
-        </Show>
+                </Button>
+              </Show>
+              <span class="initial-setup-account">
+                <i aria-hidden="true" />
+                {props.accountEmail}
+              </span>
+              <Button type="button" class="initial-setup-signout" onClick={() => void props.onLogout()}>
+                Sign out
+              </Button>
+            </div>
+            <p class="initial-setup-eyebrow">OpenBot setup</p>
+            <Dialog.Title as="h1" id="initial-setup-title">
+              {title()}
+            </Dialog.Title>
+            <Dialog.Description as="p" id="initial-setup-description" class="initial-setup-intro">
+              {description()}
+            </Dialog.Description>
+          </header>
 
-        <Show when={route() === "local"}>
-          <div class="setup-local-content">
-            <ProviderPicker
-              value={selectedProvider()}
-              options={providerOptions()}
-              ariaLabel="Default provider"
-              label="Default provider"
-              hint="Used for new local agents. You can change it for each agent later."
-              disabled={saving()}
-              allowUnavailableSelection
-              focusFirst
-              onChange={setSelectedProvider}
-            />
+          <Show when={!props.reviewing && route() === null}>
+            <ul class="setup-route-list" aria-label="Connection type">
+              <li>
+                <Button type="button" class="setup-route-button" onClick={() => chooseRoute("local")}>
+                  <span class="setup-route-icon setup-route-icon-local" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <title>Local computer</title>
+                      <rect x="3" y="4" width="18" height="13" rx="2.5" />
+                      <path d="M8 21h8M12 17v4" />
+                    </svg>
+                    <i />
+                  </span>
+                  <span class="setup-route-copy">
+                    <strong>Use this computer</strong>
+                    <small>Run Codex or Claude locally. Keep all OpenBot data here.</small>
+                  </span>
+                  <RouteArrow />
+                </Button>
+              </li>
+              <li>
+                <Button type="button" class="setup-route-button" onClick={() => chooseRoute("remote")}>
+                  <span class="setup-route-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <title>Remote host</title>
+                      <rect x="3" y="3" width="18" height="7" rx="2.5" />
+                      <rect x="3" y="14" width="18" height="7" rx="2.5" />
+                      <path d="M7 6.5h.01M7 17.5h.01" />
+                    </svg>
+                    <i />
+                  </span>
+                  <span class="setup-route-copy">
+                    <strong>Connect to a host</strong>
+                    <small>Use agents and conversations from an existing OpenBot host.</small>
+                  </span>
+                  <RouteArrow />
+                </Button>
+              </li>
+            </ul>
+          </Show>
 
-            <Show when={props.platform === "darwin"}>
-              <section class="mac-permissions" aria-labelledby="mac-permissions-title">
-                <div class="mac-permissions-heading">
-                  <div>
-                    <h2 id="mac-permissions-title">Mac permissions</h2>
-                    <p>Optional. Computer Use needs both permissions.</p>
-                  </div>
-                </div>
-                <div class="mac-permission-list">
-                  <For each={PERMISSIONS}>
-                    {(permission) => {
-                      const state = () => permissionState(permissions(), permission.id);
-                      return (
-                        <div class="mac-permission-row">
-                          <span class="mac-permission-copy">
-                            <strong>{permission.title}</strong>
-                            <small>{permission.description}</small>
-                          </span>
-                          <button
-                            type="button"
-                            class={["mac-permission-action", { "mac-permission-allowed": state() === "granted" }]}
-                            disabled={permissionBusy() !== null || state() === "granted" || state() === "restricted"}
-                            onClick={() => void requestPermission(permission.id)}
-                          >
-                            {permissionBusy() === permission.id ? "Checking…" : permissionLabel(state())}
-                          </button>
-                        </div>
-                      );
-                    }}
-                  </For>
-                </div>
-              </section>
-            </Show>
-          </div>
-        </Show>
-
-        <Show when={!props.reviewing && route() === "remote"}>
-          <form
-            class="setup-remote-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void connectRemote();
-            }}
-          >
-            <label>
-              <span>Host invitation</span>
-              <textarea
-                rows="3"
-                maxlength={INPUT_LIMITS.inviteUrl}
-                value={inviteUrl()}
-                onInput={(event) => setInviteUrl(event.currentTarget.value)}
-                placeholder="Paste an openbot:// invitation link"
-                spellcheck={false}
-                autofocus
-                required
+          <Show when={route() === "local"}>
+            <div class="setup-local-content">
+              <ProviderPicker
+                value={selectedProvider()}
+                options={providerOptions()}
+                ariaLabel="Default provider"
+                label="Default provider"
+                hint="Used for new local agents. You can change it for each agent later."
+                disabled={saving()}
+                allowUnavailableSelection
+                focusFirst
+                onChange={setSelectedProvider}
               />
-            </label>
-            <p class="setup-remote-note">
-              You will join as <strong>{props.accountEmail}</strong>. Email invitations only work for the address that
-              received them.
-            </p>
-          </form>
-        </Show>
 
-        <Show when={error()}>
-          <p class="initial-setup-error" role="alert">
-            {error()}
-          </p>
-        </Show>
+              <Show when={props.platform === "darwin"}>
+                <section class="mac-permissions" aria-labelledby="mac-permissions-title">
+                  <div class="mac-permissions-heading">
+                    <div>
+                      <h2 id="mac-permissions-title">Mac permissions</h2>
+                      <p>Optional. Computer Use needs both permissions.</p>
+                    </div>
+                  </div>
+                  <div class="mac-permission-list">
+                    <For each={PERMISSIONS}>
+                      {(permission) => {
+                        const state = () => permissionState(permissions(), permission.id);
+                        return (
+                          <div class="mac-permission-row">
+                            <span class="mac-permission-copy">
+                              <strong>{permission.title}</strong>
+                              <small>{permission.description}</small>
+                            </span>
+                            <Button
+                              type="button"
+                              class={["mac-permission-action", { "mac-permission-allowed": state() === "granted" }]}
+                              disabled={permissionBusy() !== null || state() === "granted" || state() === "restricted"}
+                              onClick={() => void requestPermission(permission.id)}
+                            >
+                              {permissionBusy() === permission.id ? "Checking…" : permissionLabel(state())}
+                            </Button>
+                          </div>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </section>
+              </Show>
+            </div>
+          </Show>
 
-        <Show when={route() !== null}>
-          <div class="initial-setup-actions">
-            <Show when={props.reviewing}>
-              <button type="button" class="initial-setup-secondary" onClick={props.onClose}>
-                Cancel
-              </button>
-            </Show>
-            <button
-              type="button"
-              class="initial-setup-save"
-              disabled={
-                saving() ||
-                (route() === "local" && !selectedProvider()) ||
-                (route() === "remote" && !inviteUrl().trim())
-              }
-              onClick={() => (route() === "local" ? void saveLocal() : void connectRemote())}
+          <Show when={!props.reviewing && route() === "remote"}>
+            <form
+              class="setup-remote-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void connectRemote();
+              }}
             >
-              {saving()
-                ? route() === "remote"
-                  ? "Connecting…"
-                  : "Saving…"
-                : props.reviewing
-                  ? "Save changes"
-                  : route() === "remote"
-                    ? "Connect to host"
-                    : selectedProvider()
-                      ? `Continue with ${providerName(selectedProvider())}`
-                      : "Choose a provider"}
-            </button>
-          </div>
-        </Show>
-      </section>
-    </main>
+              <label>
+                <span>Host invitation</span>
+                <Textarea
+                  rows="3"
+                  maxlength={INPUT_LIMITS.inviteUrl}
+                  value={inviteUrl()}
+                  onInput={(event) => setInviteUrl(event.currentTarget.value)}
+                  placeholder="Paste an openbot:// invitation link"
+                  spellcheck={false}
+                  autofocus
+                  required
+                />
+              </label>
+              <p class="setup-remote-note">
+                You will join as <strong>{props.accountEmail}</strong>. Email invitations only work for the address that
+                received them.
+              </p>
+            </form>
+          </Show>
+
+          <Show when={error()}>
+            <p class="initial-setup-error" role="alert">
+              {error()}
+            </p>
+          </Show>
+
+          <Show when={route() !== null}>
+            <div class="initial-setup-actions">
+              <Show when={props.reviewing}>
+                <Button type="button" class="initial-setup-secondary" onClick={props.onClose}>
+                  Cancel
+                </Button>
+              </Show>
+              <Button
+                type="button"
+                class="initial-setup-save"
+                disabled={
+                  saving() ||
+                  (route() === "local" && !selectedProvider()) ||
+                  (route() === "remote" && !inviteUrl().trim())
+                }
+                onClick={() => (route() === "local" ? void saveLocal() : void connectRemote())}
+              >
+                {saving()
+                  ? route() === "remote"
+                    ? "Connecting…"
+                    : "Saving…"
+                  : props.reviewing
+                    ? "Save changes"
+                    : route() === "remote"
+                      ? "Connect to host"
+                      : selectedProvider()
+                        ? `Continue with ${providerName(selectedProvider())}`
+                        : "Choose a provider"}
+              </Button>
+            </div>
+          </Show>
+        </Dialog.Content>
+      </main>
+    </Dialog.Root>
   );
 }
 

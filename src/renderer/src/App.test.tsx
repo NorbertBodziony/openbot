@@ -62,7 +62,7 @@ async function confirmOnboardingModel(): Promise<void> {
   await fireEvent.click(trigger);
   const picker = screen.getByRole("dialog", { name: "Choose agent model" });
   await fireEvent.click(within(picker).getByRole("option", { name: "Luna, default" }));
-  await screen.findByRole("listbox", { name: "What do you want me helping with most?" });
+  await screen.findByRole("radiogroup", { name: "What do you want me helping with most?" });
 }
 
 describe("OpenBot connected desktop shell", () => {
@@ -418,6 +418,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
 
     expect(await screen.findByRole("dialog", { name: "Where will OpenBot run?" })).toBeInTheDocument();
+    expect(screen.queryByText("Verified. Opening OpenBot…")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
@@ -516,8 +517,9 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.input(await screen.findByRole("textbox", { name: "One-time code" }), {
       target: { value: "ABCD-EFGH" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Verify code" }));
     expect(window.openbot.auth.verifyEmailCode).toHaveBeenCalledWith("challenge-1", "ABCD-EFGH");
+    expect(await screen.findByText("Verified. Opening OpenBot…")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Where will OpenBot run?" })).not.toBeInTheDocument();
     expect(await screen.findByRole("dialog", { name: "Where will OpenBot run?" })).toBeInTheDocument();
   });
 
@@ -655,7 +657,7 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("heading", { name: "Chief" });
 
     await fireEvent.click(screen.getByRole("button", { name: "Open account menu" }));
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Providers & permissions" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Providers & permissions" }));
 
     expect(screen.getByRole("dialog", { name: "Providers & permissions" })).toBeInTheDocument();
     const providers = screen.getByRole("radiogroup", { name: "Default provider" });
@@ -752,13 +754,15 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
     expect(await screen.findByText("Choose a model to get started.")).toBeInTheDocument();
-    expect(screen.queryByRole("listbox", { name: "What do you want me helping with most?" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("radiogroup", { name: "What do you want me helping with most?" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "false");
     expect(screen.getByRole("button", { name: "Attach a file" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
 
     await confirmOnboardingModel();
-    expect(screen.getByRole("listbox", { name: "What do you want me helping with most?" })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "What do you want me helping with most?" })).toBeInTheDocument();
     expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "true");
     expect(screen.getByRole("button", { name: "Attach a file" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
@@ -797,15 +801,15 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByText(/Developer preview/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Lifetime/i)).not.toBeInTheDocument();
 
-    expect(screen.queryByRole("menuitem", { name: "Export data" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("menuitem", { name: "Export diagnostics" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export data" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export diagnostics" })).not.toBeInTheDocument();
 
-    await screen.findByRole("menuitem", { name: "Send feedback" });
-    fireEvent.click(screen.getByRole("menuitem", { name: "Send feedback" }));
+    await screen.findByRole("button", { name: "Send feedback" });
+    fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("feedback"));
 
     fireEvent.click(accountButton);
-    fireEvent.click(screen.getByRole("menuitem", { name: "Message" }));
+    fireEvent.click(screen.getByRole("button", { name: "Message" }));
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("message"));
   });
 
@@ -830,7 +834,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     const accountButton = await screen.findByRole("button", { name: "Open account menu" });
     await fireEvent.click(accountButton);
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     await waitFor(() => expect(window.openbot.auth.logout).toHaveBeenCalledOnce());
     expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
@@ -850,7 +854,7 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByText("Update")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open account menu" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Download update/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
     await waitFor(() => expect(window.openbot.update.download).toHaveBeenCalledOnce());
 
     emitUpdateStatus?.({
@@ -861,7 +865,7 @@ describe("OpenBot connected desktop shell", () => {
       checkedAt: "2026-08-12T22:00:00.000Z",
       message: null,
     });
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Restart to update/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Restart to update/ }));
     await waitFor(() => expect(window.openbot.update.install).toHaveBeenCalledOnce());
   });
 
@@ -1010,7 +1014,9 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByRole("heading", { name: "New agent" })).toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "Agent settings" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("listbox", { name: "What do you want me helping with most?" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("radiogroup", { name: "What do you want me helping with most?" }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText("Message New agent")).toHaveAttribute("contenteditable", "true");
   });
 
@@ -1149,7 +1155,9 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not change model. Try again.");
     expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
-    expect(screen.queryByRole("listbox", { name: "What do you want me helping with most?" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("radiogroup", { name: "What do you want me helping with most?" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "false");
   });
 
@@ -1528,10 +1536,13 @@ describe("OpenBot connected desktop shell", () => {
       name: "Local smoke page, controlled by Chief",
     });
     expect(controlledTab.closest(".browser-tab-wrap")).toHaveClass("browser-tab-controlled");
+    expect(controlledTab).toHaveAttribute("aria-description", "Press Delete to close");
     expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-controlled");
     const browserTabStrip = document.querySelector(".browser-tab-strip");
     expect(browserTabStrip?.querySelectorAll(".browser-tab-wrap")).toHaveLength(3);
-    expect(browserTabStrip?.lastElementChild).toBe(screen.getByRole("button", { name: "New browser tab" }));
+    expect(browserTabStrip).not.toContainElement(screen.getByRole("button", { name: "New browser tab" }));
+    await fireEvent.keyDown(screen.getByRole("tab", { name: "Third page" }), { key: "Delete" });
+    expect(window.openbot.browser.close).toHaveBeenCalledWith("tab-3");
     expect(screen.queryByRole("button", { name: "Hide browser panel" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "New browser tab" }));
     expect(window.openbot.browser.open).toHaveBeenCalledWith({
@@ -1890,7 +1901,9 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("Show this message", { selector: ".message-copy" })).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.queryByText("Choose a model to get started.")).not.toBeInTheDocument();
-      expect(screen.queryByRole("listbox", { name: "What do you want me helping with most?" })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("radiogroup", { name: "What do you want me helping with most?" }),
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -2019,16 +2032,16 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     await screen.findByText("Ready to ship.");
-    await fireEvent.click(screen.getByRole("button", { name: "Add reaction" }));
-    await fireEvent.click(screen.getByRole("menuitemradio", { name: "React with ❤️" }));
+    await fireEvent.pointerDown(screen.getByRole("button", { name: "Add reaction" }), { button: 0 });
+    await fireEvent.pointerUp(screen.getByRole("menuitemradio", { name: "React with ❤️" }), { button: 0 });
     expect(window.openbot.agent.setMessageReaction).toHaveBeenCalledWith({
       botId: "chief",
       messageId: "assistant-actions",
       emoji: "❤️",
     });
 
-    await fireEvent.click(screen.getByRole("button", { name: "More message actions" }));
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Copy" }));
+    await fireEvent.pointerDown(screen.getByRole("button", { name: "More message actions" }), { button: 0 });
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Copy" }), { button: 0 });
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("Ready to ship."));
   });
 
@@ -2487,7 +2500,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
-    await fireEvent.click(screen.getByRole("option", { name: /Work & projects/ }));
+    await fireEvent.click(screen.getByRole("radio", { name: /Work & projects/ }));
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
@@ -2514,7 +2527,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
-    await fireEvent.click(await screen.findByRole("option", { name: /Something else/ }));
+    await fireEvent.click(await screen.findByRole("radio", { name: /Something else/ }));
     expect(window.openbot.agent.sendMessage).not.toHaveBeenCalled();
 
     const customAnswer = screen.getByRole("textbox", { name: "Custom answer" });
@@ -2904,7 +2917,7 @@ describe("OpenBot connected desktop shell", () => {
       clientX: 120,
       clientY: 90,
     });
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Edit agent" }));
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Edit agent" }), { button: 0 });
     expect(await screen.findByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
   });
@@ -2914,7 +2927,7 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("heading", { name: "Chief" });
     const sales = screen.getByRole("button", { name: /Sales Outbound/ });
     await fireEvent.contextMenu(sales, { clientX: 120, clientY: 90 });
-    await fireEvent.click(screen.getByRole("menuitem", { name: "Delete agent" }));
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Delete agent" }), { button: 0 });
     expect(screen.getByRole("alertdialog", { name: "Delete Sales Outbound?" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(window.openbot.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"));

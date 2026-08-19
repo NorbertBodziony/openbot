@@ -1,5 +1,6 @@
 import type { CentralAuthState } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { AccountLogin } from "./AccountLogin";
 
@@ -33,12 +34,12 @@ function renderLogin(
 }
 
 describe("AccountLogin", () => {
-  it("renders a page-level sign-in form with a decorative brand logo", () => {
-    const view = renderLogin();
+  it("renders a page-level sign-in form with an interactive brand logo", () => {
+    renderLogin();
 
     expect(screen.getByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(view.container.querySelector(".account-login-logo")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("button", { name: "Animate OpenBot logo" })).toBeInTheDocument();
   });
 
   it("validates and normalizes an email before requesting a code", async () => {
@@ -56,7 +57,7 @@ describe("AccountLogin", () => {
     expect(onRequestEmailCode).toHaveBeenCalledWith("person.name+tag@example.com");
   });
 
-  it("formats a pasted safe code and verifies it once", async () => {
+  it("formats a pasted safe code and verifies it once automatically", async () => {
     let finishVerification: (() => void) | undefined;
     const onVerifyEmailCode = vi.fn(
       () =>
@@ -67,26 +68,23 @@ describe("AccountLogin", () => {
     renderLogin(codeSentState(), { onVerifyEmailCode });
     const code = screen.getByRole("textbox", { name: "One-time code" });
 
-    await fireEvent.input(code, { target: { value: "abcd efgh" } });
-    expect(code).toHaveValue("ABCD-EFGH");
-    await fireEvent.click(screen.getByRole("button", { name: "Verify code" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Verifying…" }));
+    await fireEvent.paste(code, { clipboardData: { getData: () => "abcd efgh" } });
+    await fireEvent.input(code, { target: { value: "abcdefgh" } });
 
     expect(onVerifyEmailCode).toHaveBeenCalledOnce();
     expect(onVerifyEmailCode).toHaveBeenCalledWith("challenge-1", "ABCD-EFGH");
     finishVerification?.();
   });
 
-  it("rejects incomplete or ambiguous one-time codes locally", async () => {
+  it("filters ambiguous characters without submitting an incomplete code", async () => {
     const onVerifyEmailCode = vi.fn().mockResolvedValue(undefined);
     renderLogin(codeSentState(), { onVerifyEmailCode });
     const code = screen.getByRole("textbox", { name: "One-time code" });
 
     await fireEvent.input(code, { target: { value: "ABCD-EF0I" } });
-    expect(code).toHaveValue("ABCD-EF");
-    await fireEvent.click(screen.getByRole("button", { name: "Verify code" }));
 
-    expect(screen.getByRole("alert")).toHaveTextContent("Enter the full 8-character code.");
+    expect(screen.getByText("Enter all 8 characters to continue.")).toBeInTheDocument();
+    expect(document.querySelectorAll('.otp-input-slot[data-filled="true"]')).toHaveLength(6);
     expect(onVerifyEmailCode).not.toHaveBeenCalled();
   });
 
@@ -101,7 +99,8 @@ describe("AccountLogin", () => {
       { onRequestEmailCode },
     );
 
-    expect(screen.getByText("Code expired")).toBeInTheDocument();
+    expect(screen.queryByText("Code expired")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("The sign-in code expired.");
     await fireEvent.click(screen.getByRole("button", { name: "Send a new code" }));
     expect(onRequestEmailCode).toHaveBeenCalledWith("person@example.com");
   });
@@ -118,6 +117,145 @@ describe("AccountLogin", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("Too many sign-in attempts");
     expect(screen.getByRole("button", { name: /Try again in 1:3\d/u })).toBeDisabled();
+  });
+
+  it("keeps a rate-limit countdown active while the email is edited", async () => {
+    renderLogin({
+      status: "error",
+      issue: {
+        code: "rate_limited",
+        message: "Too many sign-in attempts. Try again later.",
+        retryAfterSeconds: 90,
+      },
+    });
+
+    await fireEvent.input(screen.getByRole("textbox", { name: "Email" }), {
+      target: { value: "person@example.com" },
+    });
+
+    expect(screen.getByRole("button", { name: /Try again in 1:3\d/u })).toBeDisabled();
+  });
+
+  it("does not allow resend to overlap an in-flight verification", async () => {
+    const onVerifyEmailCode = vi.fn(() => new Promise<void>(() => undefined));
+    const onRequestEmailCode = vi.fn().mockResolvedValue(undefined);
+    renderLogin(codeSentState({ resendAvailableAt: Date.now() - 1_000 }), {
+      onVerifyEmailCode,
+      onRequestEmailCode,
+    });
+
+    await fireEvent.input(screen.getByRole("textbox", { name: "One-time code" }), {
+      target: { value: "ABCD-EFGH" },
+    });
+
+    expect(screen.getByRole("button", { name: "Resend code" })).toBeDisabled();
+    expect(onRequestEmailCode).not.toHaveBeenCalled();
+  });
+
+  it("keeps resend unavailable for 60 seconds after a code is sent", async () => {
+    const onRequestEmailCode = vi.fn().mockResolvedValue(undefined);
+    renderLogin(codeSentState({ resendAvailableAt: Date.now() + 60_000 }), { onRequestEmailCode });
+
+    const resend = screen.getByRole("button", { name: /Resend in (1:00|0:5\d)/u });
+    expect(resend).toBeDisabled();
+    await fireEvent.click(resend);
+    expect(onRequestEmailCode).not.toHaveBeenCalled();
+  });
+
+  it("starts a newly issued resend countdown at exactly one minute", async () => {
+    let currentTime = 1_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => currentTime);
+
+    try {
+      render(() => {
+        const [state, setState] = createSignal<CentralAuthState>({ status: "signed_out" });
+        return (
+          <AccountLogin
+            variant="production"
+            state={state()}
+            onRetry={async () => undefined}
+            onRequestEmailCode={async (email) => {
+              currentTime += 500;
+              setState(codeSentState({ email, resendAvailableAt: currentTime + 60_000 }));
+            }}
+            onVerifyEmailCode={async () => undefined}
+            onReset={async () => undefined}
+          />
+        );
+      });
+
+      await fireEvent.input(screen.getByRole("textbox", { name: "Email" }), {
+        target: { value: "person@example.com" },
+      });
+      await fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+
+      expect(await screen.findByRole("button", { name: "Resend in 1:00" })).toBeDisabled();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("marks email and code navigation with directional transitions", async () => {
+    const view = render(() => {
+      const [state, setState] = createSignal<CentralAuthState>({ status: "signed_out" });
+      return (
+        <AccountLogin
+          variant="production"
+          state={state()}
+          onRetry={async () => undefined}
+          onRequestEmailCode={async (email) => {
+            setState(codeSentState({ email }));
+          }}
+          onVerifyEmailCode={async () => undefined}
+          onReset={async () => {
+            setState({ status: "signed_out" });
+          }}
+        />
+      );
+    });
+    const login = () => view.container.querySelector(".account-login");
+
+    await fireEvent.input(screen.getByRole("textbox", { name: "Email" }), {
+      target: { value: "person@example.com" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+    expect(login()).toHaveAttribute("data-transition", "forward");
+    expect(view.container.querySelector('[data-auth-panel="code"]')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "One-time code" })).toHaveFocus());
+
+    const changeEmail = screen.getByRole("button", { name: "Change email" });
+    const resend = screen.getByRole("button", { name: /Resend in/u });
+    expect(changeEmail).toHaveAttribute("data-variant", "ghost");
+    expect(resend).toHaveAttribute("data-variant", "ghost");
+    await waitFor(() => expect(changeEmail).toBeEnabled());
+    await fireEvent.click(changeEmail);
+    await waitFor(() => expect(login()).toHaveAttribute("data-transition", "back"));
+    expect(view.container.querySelector('[data-auth-panel="email"]')).toBeInTheDocument();
+  });
+
+  it("retries a changed complete code after an invalid-code response", async () => {
+    const onVerifyEmailCode = vi.fn().mockResolvedValue(undefined);
+    const state = codeSentState({
+      issue: { code: "invalid_sign_in_code", message: "The sign-in code is incorrect." },
+    });
+    renderLogin(state, { onVerifyEmailCode });
+    const input = screen.getByRole("textbox", { name: "One-time code" });
+
+    await fireEvent.input(input, { target: { value: "ABCDEFGH" } });
+    expect(onVerifyEmailCode).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the entered code after a verification network failure", async () => {
+    const onVerifyEmailCode = vi.fn().mockRejectedValue(new Error("offline"));
+    const view = renderLogin(codeSentState(), { onVerifyEmailCode });
+
+    await fireEvent.input(screen.getByRole("textbox", { name: "One-time code" }), {
+      target: { value: "ABCDEFGH" },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong while verifying");
+    expect(view.container.querySelectorAll('.otp-input-slot[data-filled="true"]')).toHaveLength(8);
   });
 
   it("offers a dedicated retry state when the account service is unavailable", async () => {

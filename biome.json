@@ -42,6 +42,14 @@
     "enabled": true,
     "rules": {
       "preset": "recommended",
+      "a11y": {
+        "noLabelWithoutControl": {
+          "level": "error",
+          "options": {
+            "inputComponents": ["Input", "Textarea", "NativeSelect"]
+          }
+        }
+      },
       "complexity": {
         "noBannedTypes": "error",
         "noUselessTypeConstraint": "error"
@@ -67,6 +75,18 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["src/renderer/src/styles/app-shell.css", "src/renderer/src/styles/conversation.css"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noDescendingSpecificity": "off"
+          }
+        }
+      }
+    }
+  ],
   "javascript": {
     "formatter": {
       "quoteStyle": "double",

@@ -11,6 +11,7 @@ import type {
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Element as SolidElement } from "solid-js";
+import { Badge, Button, Dialog, Input, NativeSelect, Tabs } from "./ui";
 
 type AdminSection = "overview" | "people" | "desktop";
 
@@ -113,378 +114,394 @@ export function HostPanel(props: HostPanelProps) {
   }
 
   return (
-    <div class="remote-dialog-backdrop" role="presentation">
-      <section
-        class={["remote-dialog remote-host-dialog", { "remote-host-dialog-setup": !props.status.configured }]}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="host-title"
-      >
-        <header class="remote-admin-header">
-          <div>
-            <span class="remote-dialog-eyebrow">{props.status.configured ? "Published access" : "This OpenBot"}</span>
-            <h2 id="host-title">
-              {props.status.configured ? (props.status.serverName ?? "OpenBot server") : "Publish this OpenBot"}
-            </h2>
-          </div>
-          <button type="button" aria-label="Close" onClick={props.onClose}>
-            ×
-          </button>
-        </header>
-
-        <Show
-          when={props.status.configured}
-          fallback={
-            <HostSetup
-              accountEmail={props.accountEmail}
-              serverName={serverName()}
-              busy={busy()}
-              onServerName={setServerName}
-              onCreate={() => void run(() => props.onConfigure({ serverName: serverName().trim() }))}
-            />
-          }
-        >
-          <div class="remote-admin-shell">
-            <nav class="remote-admin-nav" aria-label="Published access administration">
-              <AdminNavButton
-                active={section() === "overview"}
-                label="Publishing"
-                icon="pulse"
-                onSelect={() => setSection("overview")}
-              />
-              <AdminNavButton
-                active={section() === "people"}
-                label="People"
-                count={props.members.length}
-                icon="people"
-                onSelect={() => setSection("people")}
-              />
-              <Show when={props.platform === "darwin"}>
-                <AdminNavButton
-                  active={section() === "desktop"}
-                  label="Remote desktop"
-                  icon="screen"
-                  onSelect={() => setSection("desktop")}
-                />
-              </Show>
-              <div class="remote-admin-nav-state">
-                <i class={online() ? "online" : ""} />
-                <span>{online() ? "Public" : "Private"}</span>
+    <Dialog.Root open onOpenChange={(open) => !open && !busy() && props.onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay class="remote-dialog-backdrop">
+          <Dialog.Content
+            as="section"
+            class={["remote-dialog remote-host-dialog", { "remote-host-dialog-setup": !props.status.configured }]}
+          >
+            <header class="remote-admin-header">
+              <div>
+                <span class="remote-dialog-eyebrow">
+                  {props.status.configured ? "Published access" : "This OpenBot"}
+                </span>
+                <Dialog.Title as="h2" id="host-title">
+                  {props.status.configured ? (props.status.serverName ?? "OpenBot server") : "Publish this OpenBot"}
+                </Dialog.Title>
               </div>
-            </nav>
+              <Button type="button" aria-label="Close" onClick={props.onClose}>
+                ×
+              </Button>
+            </header>
+            <Dialog.Description class="sr-only">
+              Configure publishing, access, people, and remote desktop settings for this OpenBot.
+            </Dialog.Description>
 
-            <main class="remote-admin-content">
-              <Show when={section() === "overview"}>
-                <section class="remote-admin-view" aria-labelledby="server-overview-title">
-                  <div class="remote-admin-view-heading">
-                    <div>
-                      <span class="remote-admin-kicker">This OpenBot</span>
-                      <h3 id="server-overview-title">Published access</h3>
-                      <p>Control the secure public address for this local OpenBot instance.</p>
-                    </div>
-                    <span class={["remote-admin-status-pill", { online: online() }]}>
-                      {online() ? "Public" : "Private"}
-                    </span>
-                  </div>
-                  <div class="remote-status-grid">
-                    <StatusCard
-                      label="Public API"
-                      online={props.status.apiOnline}
-                      value={props.status.apiUrl ?? "Not running"}
+            <Show
+              when={props.status.configured}
+              fallback={
+                <HostSetup
+                  accountEmail={props.accountEmail}
+                  serverName={serverName()}
+                  busy={busy()}
+                  onServerName={setServerName}
+                  onCreate={() => void run(() => props.onConfigure({ serverName: serverName().trim() }))}
+                />
+              }
+            >
+              <div class="remote-admin-shell">
+                <nav class="remote-admin-nav" aria-label="Published access administration">
+                  <AdminNavButton
+                    active={section() === "overview"}
+                    label="Publishing"
+                    icon="pulse"
+                    onSelect={() => setSection("overview")}
+                  />
+                  <AdminNavButton
+                    active={section() === "people"}
+                    label="People"
+                    count={props.members.length}
+                    icon="people"
+                    onSelect={() => setSection("people")}
+                  />
+                  <Show when={props.platform === "darwin"}>
+                    <AdminNavButton
+                      active={section() === "desktop"}
+                      label="Remote desktop"
+                      icon="screen"
+                      onSelect={() => setSection("desktop")}
                     />
-                    <Show when={props.platform === "darwin"}>
-                      <StatusCard
-                        label="Remote Mac"
-                        online={props.status.vncOnline}
-                        value={props.status.vncHostname ?? "Not available"}
-                      />
-                    </Show>
+                  </Show>
+                  <div class="remote-admin-nav-state">
+                    <i class={online() ? "online" : ""} />
+                    <span>{online() ? "Public" : "Private"}</span>
                   </div>
-                  <fieldset class="remote-admin-metrics">
-                    <legend class="sr-only">Server access summary</legend>
-                    <Metric value={props.members.length} label="People" />
-                    <Metric value={activeInvites().length} label="Pending invites" />
-                    <Metric value={props.sessions.length} label="Active sessions" />
-                  </fieldset>
-                  <section class="remote-admin-control-card">
-                    <div>
-                      <h3>Publishing controls</h3>
-                      <p>{props.status.message ?? "The address is public, but only invited people can sign in."}</p>
-                    </div>
-                    <div class="remote-host-actions">
-                      <Show
-                        when={online()}
-                        fallback={
-                          <button
-                            type="button"
-                            class="remote-primary-button"
-                            disabled={busy() || props.status.phase === "starting"}
-                            onClick={() => void run(props.onStart)}
-                          >
-                            {props.status.phase === "starting" ? "Publishing…" : "Make public"}
-                          </button>
-                        }
-                      >
-                        <button
-                          type="button"
-                          class="remote-secondary-button"
-                          disabled={busy()}
-                          onClick={() => void run(props.onStop)}
+                </nav>
+
+                <main class="remote-admin-content">
+                  <Show when={section() === "overview"}>
+                    <section class="remote-admin-view" aria-labelledby="server-overview-title">
+                      <div class="remote-admin-view-heading">
+                        <div>
+                          <span class="remote-admin-kicker">This OpenBot</span>
+                          <h3 id="server-overview-title">Published access</h3>
+                          <p>Control the secure public address for this local OpenBot instance.</p>
+                        </div>
+                        <Badge
+                          class={["remote-admin-status-pill", { online: online() }]}
+                          tone={online() ? "success" : "neutral"}
+                          shape="pill"
+                          dot
                         >
-                          Make private
-                        </button>
-                      </Show>
-                      <button
-                        type="button"
-                        class="remote-secondary-button"
-                        disabled={!props.status.apiOnline || busy()}
-                        onClick={() => void run(props.onCopyAddressUpdate)}
-                      >
-                        Copy address update
-                      </button>
-                    </div>
-                  </section>
-                </section>
-              </Show>
-
-              <Show when={section() === "people"}>
-                <section class="remote-admin-view" aria-labelledby="people-access-title">
-                  <div class="remote-admin-view-heading">
-                    <div>
-                      <span class="remote-admin-kicker">Access control</span>
-                      <h3 id="people-access-title">People and invitations</h3>
-                      <p>Add people by email or create a private one-time link.</p>
-                    </div>
-                  </div>
-
-                  <section class="remote-invite-composer" aria-labelledby="invite-team-title">
-                    <div class="remote-section-heading">
-                      <div>
-                        <h3 id="invite-team-title">Invite a person</h3>
-                        <p>Each invitation can be used once and expires automatically.</p>
+                          {online() ? "Public" : "Private"}
+                        </Badge>
                       </div>
-                      <label>
-                        <span>Role</span>
-                        <select
-                          aria-label="Invitation role"
-                          value={inviteRole()}
-                          onChange={(event) => setInviteRole(readTeamRole(event.currentTarget.value))}
+                      <div class="remote-status-grid">
+                        <StatusCard
+                          label="Public API"
+                          online={props.status.apiOnline}
+                          value={props.status.apiUrl ?? "Not running"}
+                        />
+                        <Show when={props.platform === "darwin"}>
+                          <StatusCard
+                            label="Remote Mac"
+                            online={props.status.vncOnline}
+                            value={props.status.vncHostname ?? "Not available"}
+                          />
+                        </Show>
+                      </div>
+                      <fieldset class="remote-admin-metrics">
+                        <legend class="sr-only">Server access summary</legend>
+                        <Metric value={props.members.length} label="People" />
+                        <Metric value={activeInvites().length} label="Pending invites" />
+                        <Metric value={props.sessions.length} label="Active sessions" />
+                      </fieldset>
+                      <section class="remote-admin-control-card">
+                        <div>
+                          <h3>Publishing controls</h3>
+                          <p>{props.status.message ?? "The address is public, but only invited people can sign in."}</p>
+                        </div>
+                        <div class="remote-host-actions">
+                          <Show
+                            when={online()}
+                            fallback={
+                              <Button
+                                type="button"
+                                class="remote-primary-button"
+                                disabled={busy() || props.status.phase === "starting"}
+                                onClick={() => void run(props.onStart)}
+                              >
+                                {props.status.phase === "starting" ? "Publishing…" : "Make public"}
+                              </Button>
+                            }
+                          >
+                            <Button
+                              type="button"
+                              class="remote-secondary-button"
+                              disabled={busy()}
+                              onClick={() => void run(props.onStop)}
+                            >
+                              Make private
+                            </Button>
+                          </Show>
+                          <Button
+                            type="button"
+                            class="remote-secondary-button"
+                            disabled={!props.status.apiOnline || busy()}
+                            onClick={() => void run(props.onCopyAddressUpdate)}
+                          >
+                            Copy address update
+                          </Button>
+                        </div>
+                      </section>
+                    </section>
+                  </Show>
+
+                  <Show when={section() === "people"}>
+                    <section class="remote-admin-view" aria-labelledby="people-access-title">
+                      <div class="remote-admin-view-heading">
+                        <div>
+                          <span class="remote-admin-kicker">Access control</span>
+                          <h3 id="people-access-title">People and invitations</h3>
+                          <p>Add people by email or create a private one-time link.</p>
+                        </div>
+                      </div>
+
+                      <section class="remote-invite-composer" aria-labelledby="invite-team-title">
+                        <div class="remote-section-heading">
+                          <div>
+                            <h3 id="invite-team-title">Invite a person</h3>
+                            <p>Each invitation can be used once and expires automatically.</p>
+                          </div>
+                          <label>
+                            <span>Role</span>
+                            <NativeSelect
+                              aria-label="Invitation role"
+                              value={inviteRole()}
+                              onChange={(event) => setInviteRole(readTeamRole(event.currentTarget.value))}
+                            >
+                              <option value="member">Member</option>
+                              <option value="admin">Admin</option>
+                            </NativeSelect>
+                          </label>
+                        </div>
+                        <Tabs.Root
+                          value={inviteMode()}
+                          onChange={(value) => {
+                            if (value !== "link" && value !== "email") return;
+                            setInviteMode(value);
+                            setInvite(null);
+                          }}
                         >
-                          <option value="member">Member</option>
-                          <option value="admin">Admin</option>
-                        </select>
-                      </label>
-                    </div>
-                    <div class="remote-invite-tabs" role="tablist" aria-label="Invitation method">
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={inviteMode() === "link" ? "true" : "false"}
-                        class={inviteMode() === "link" ? "active" : ""}
-                        onClick={() => {
-                          setInviteMode("link");
-                          setInvite(null);
-                        }}
-                      >
-                        Invitation link
-                      </button>
-                      <button
-                        type="button"
-                        role="tab"
-                        aria-selected={inviteMode() === "email" ? "true" : "false"}
-                        class={inviteMode() === "email" ? "active" : ""}
-                        onClick={() => {
-                          setInviteMode("email");
-                          setInvite(null);
-                        }}
-                      >
-                        Email invitation
-                      </button>
-                    </div>
-                    <Show when={inviteMode() === "email"}>
-                      <label class="remote-field remote-invite-email">
-                        <span>Email address</span>
-                        <input
-                          type="email"
-                          aria-label="Email address"
-                          autocomplete="email"
-                          maxlength={INPUT_LIMITS.email}
-                          value={inviteEmail()}
-                          placeholder="person@company.com"
-                          onInput={(event) => setInviteEmail(event.currentTarget.value)}
-                        />
-                        <small>Only this email address can accept the invitation.</small>
-                      </label>
-                    </Show>
-                    <button
-                      type="button"
-                      class="remote-primary-button remote-invite-submit"
-                      disabled={
-                        !props.status.apiOnline || busy() || (inviteMode() === "email" && !inviteEmail().trim())
-                      }
-                      onClick={() => void createInvite()}
-                    >
-                      {busy()
-                        ? "Creating…"
-                        : inviteMode() === "email"
-                          ? "Send email invitation"
-                          : "Create invitation link"}
-                    </button>
-                    <Show when={!props.status.apiOnline}>
-                      <p class="remote-inline-note">Make this OpenBot public before inviting people.</p>
-                    </Show>
-                    <Show when={invite()}>
-                      {(item) => (
-                        <InviteResult invite={item()} copied={inviteCopied()} onCopy={() => void copyInvite(item())} />
-                      )}
-                    </Show>
-                  </section>
-
-                  <AdminList title="Members" count={props.members.length}>
-                    <For each={props.members}>
-                      {(member) => (
-                        <MemberRow
-                          member={member}
-                          online={props.presence.members.find((item) => item.id === member.id)?.online ?? false}
-                          typing={Boolean(props.presence.members.find((item) => item.id === member.id)?.typingBotId)}
-                          busy={busy()}
-                          confirmingRemoval={removeMemberId() === member.id}
-                          onChangeRole={(role) => void run(() => props.onUpdateMember({ memberId: member.id, role }))}
-                          onToggleAccess={() =>
-                            void run(() =>
-                              props.onUpdateMember({
-                                memberId: member.id,
-                                disabled: !member.disabled,
-                              }),
-                            )
+                          <Tabs.List class="remote-invite-tabs" aria-label="Invitation method">
+                            <Tabs.Trigger value="link" class={inviteMode() === "link" ? "active" : ""}>
+                              Invitation link
+                            </Tabs.Trigger>
+                            <Tabs.Trigger value="email" class={inviteMode() === "email" ? "active" : ""}>
+                              Email invitation
+                            </Tabs.Trigger>
+                          </Tabs.List>
+                          <Tabs.Content value="email">
+                            <label class="remote-field remote-invite-email">
+                              <span>Email address</span>
+                              <Input
+                                type="email"
+                                aria-label="Email address"
+                                autocomplete="email"
+                                maxlength={INPUT_LIMITS.email}
+                                value={inviteEmail()}
+                                placeholder="person@company.com"
+                                onInput={(event) => setInviteEmail(event.currentTarget.value)}
+                              />
+                              <small>Only this email address can accept the invitation.</small>
+                            </label>
+                          </Tabs.Content>
+                        </Tabs.Root>
+                        <Button
+                          type="button"
+                          class="remote-primary-button remote-invite-submit"
+                          disabled={
+                            !props.status.apiOnline || busy() || (inviteMode() === "email" && !inviteEmail().trim())
                           }
-                          onAskRemove={() => setRemoveMemberId(member.id)}
-                          onCancelRemove={() => setRemoveMemberId(null)}
-                          onRemove={() => void removeMember(member.id)}
-                        />
-                      )}
-                    </For>
-                  </AdminList>
+                          onClick={() => void createInvite()}
+                        >
+                          {busy()
+                            ? "Creating…"
+                            : inviteMode() === "email"
+                              ? "Send email invitation"
+                              : "Create invitation link"}
+                        </Button>
+                        <Show when={!props.status.apiOnline}>
+                          <p class="remote-inline-note">Make this OpenBot public before inviting people.</p>
+                        </Show>
+                        <Show when={invite()}>
+                          {(item) => (
+                            <InviteResult
+                              invite={item()}
+                              copied={inviteCopied()}
+                              onCopy={() => void copyInvite(item())}
+                            />
+                          )}
+                        </Show>
+                      </section>
 
-                  <AdminList title="Pending invitations" count={activeInvites().length}>
-                    <Show
-                      when={activeInvites().length > 0}
-                      fallback={<EmptyAdminList>New invitations will appear here.</EmptyAdminList>}
-                    >
-                      <For each={activeInvites()}>
-                        {(item) => (
-                          <div class="remote-access-row">
-                            <IdentityMark value={item.email ?? "Link"} muted />
-                            <div class="remote-access-copy">
-                              <strong>{item.email ?? "Shareable invitation link"}</strong>
-                              <span>
-                                {roleLabel(item.role)} · Expires {formatDate(item.expiresAt)}
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              class="remote-text-button remote-text-button-danger"
-                              disabled={busy()}
-                              onClick={() => void run(() => props.onRevokeInvite(item.id))}
-                            >
-                              Revoke
-                            </button>
-                          </div>
-                        )}
-                      </For>
-                    </Show>
-                  </AdminList>
+                      <AdminList title="Members" count={props.members.length}>
+                        <For each={props.members}>
+                          {(member) => (
+                            <MemberRow
+                              member={member}
+                              online={props.presence.members.find((item) => item.id === member.id)?.online ?? false}
+                              typing={Boolean(
+                                props.presence.members.find((item) => item.id === member.id)?.typingBotId,
+                              )}
+                              busy={busy()}
+                              confirmingRemoval={removeMemberId() === member.id}
+                              onChangeRole={(role) =>
+                                void run(() => props.onUpdateMember({ memberId: member.id, role }))
+                              }
+                              onToggleAccess={() =>
+                                void run(() =>
+                                  props.onUpdateMember({
+                                    memberId: member.id,
+                                    disabled: !member.disabled,
+                                  }),
+                                )
+                              }
+                              onAskRemove={() => setRemoveMemberId(member.id)}
+                              onCancelRemove={() => setRemoveMemberId(null)}
+                              onRemove={() => void removeMember(member.id)}
+                            />
+                          )}
+                        </For>
+                      </AdminList>
 
-                  <AdminList title="Active sessions" count={props.sessions.length}>
-                    <Show
-                      when={props.sessions.length > 0}
-                      fallback={<EmptyAdminList>No active member sessions.</EmptyAdminList>}
-                    >
-                      <For each={props.sessions}>
-                        {(item) => (
-                          <div class="remote-access-row">
-                            <IdentityMark value={item.username} muted />
-                            <div class="remote-access-copy">
-                              <strong>{item.username}</strong>
-                              <span>Expires {formatDate(item.expiresAt)}</span>
-                            </div>
-                            <button
-                              type="button"
-                              class="remote-text-button"
-                              disabled={busy()}
-                              onClick={() => void run(() => props.onRevokeSession(item.id))}
-                            >
-                              Sign out
-                            </button>
-                          </div>
-                        )}
-                      </For>
-                    </Show>
-                  </AdminList>
-                </section>
-              </Show>
+                      <AdminList title="Pending invitations" count={activeInvites().length}>
+                        <Show
+                          when={activeInvites().length > 0}
+                          fallback={<EmptyAdminList>New invitations will appear here.</EmptyAdminList>}
+                        >
+                          <For each={activeInvites()}>
+                            {(item) => (
+                              <div class="remote-access-row">
+                                <IdentityMark value={item.email ?? "Link"} muted />
+                                <div class="remote-access-copy">
+                                  <strong>{item.email ?? "Shareable invitation link"}</strong>
+                                  <span>
+                                    {roleLabel(item.role)} · Expires {formatDate(item.expiresAt)}
+                                  </span>
+                                </div>
+                                <Button
+                                  type="button"
+                                  class="remote-text-button remote-text-button-danger"
+                                  disabled={busy()}
+                                  onClick={() => void run(() => props.onRevokeInvite(item.id))}
+                                >
+                                  Revoke
+                                </Button>
+                              </div>
+                            )}
+                          </For>
+                        </Show>
+                      </AdminList>
 
-              <Show when={props.platform === "darwin" && section() === "desktop"}>
-                <section class="remote-admin-view" aria-labelledby="desktop-access-title">
-                  <div class="remote-admin-view-heading">
-                    <div>
-                      <span class="remote-admin-kicker">Screen control</span>
-                      <h3 id="desktop-access-title">Remote desktop access</h3>
-                      <p>Every active server member can control this Mac without a second login.</p>
-                    </div>
-                    <span
-                      class={["remote-desktop-access-state", { ready: props.status.remoteDesktopCredentialConfigured }]}
-                    >
-                      {props.status.remoteDesktopCredentialConfigured ? "Managed" : "Setup needed"}
-                    </span>
-                  </div>
-                  <section class="remote-desktop-access-card">
-                    <div class="remote-desktop-access-instructions">
-                      <span>Set the same password on this Mac</span>
-                      <p>
-                        Open System Settings → General → Sharing → Screen Sharing. Enable “VNC viewers may control
-                        screen with password”, then enter the same dedicated password below.
-                      </p>
-                    </div>
-                    <label class="remote-field remote-desktop-password-field">
-                      <span>Dedicated VNC password</span>
-                      <input
-                        type="password"
-                        autocomplete="new-password"
-                        minlength={1}
-                        maxlength={INPUT_LIMITS.remoteDesktopPassword}
-                        value={remoteDesktopPassword()}
-                        placeholder={
-                          props.status.remoteDesktopCredentialConfigured
-                            ? "Enter a new password to replace it"
-                            : "1–8 characters"
-                        }
-                        onInput={(event) => setRemoteDesktopPassword(event.currentTarget.value)}
-                      />
-                      <small>Do not use your macOS account password.</small>
-                    </label>
-                    <button
-                      type="button"
-                      class="remote-primary-button remote-desktop-password-save"
-                      disabled={busy() || !remoteDesktopPassword()}
-                      onClick={() =>
-                        void run(async () => {
-                          await props.onConfigureRemoteDesktop(remoteDesktopPassword());
-                          setRemoteDesktopPassword("");
-                        })
-                      }
-                    >
-                      {props.status.remoteDesktopCredentialConfigured ? "Replace VNC password" : "Save VNC password"}
-                    </button>
-                  </section>
-                </section>
-              </Show>
-            </main>
-          </div>
-        </Show>
-        <Show when={error()}>{(message) => <p class="remote-dialog-error">{message()}</p>}</Show>
-      </section>
-    </div>
+                      <AdminList title="Active sessions" count={props.sessions.length}>
+                        <Show
+                          when={props.sessions.length > 0}
+                          fallback={<EmptyAdminList>No active member sessions.</EmptyAdminList>}
+                        >
+                          <For each={props.sessions}>
+                            {(item) => (
+                              <div class="remote-access-row">
+                                <IdentityMark value={item.username} muted />
+                                <div class="remote-access-copy">
+                                  <strong>{item.username}</strong>
+                                  <span>Expires {formatDate(item.expiresAt)}</span>
+                                </div>
+                                <Button
+                                  type="button"
+                                  class="remote-text-button"
+                                  disabled={busy()}
+                                  onClick={() => void run(() => props.onRevokeSession(item.id))}
+                                >
+                                  Sign out
+                                </Button>
+                              </div>
+                            )}
+                          </For>
+                        </Show>
+                      </AdminList>
+                    </section>
+                  </Show>
+
+                  <Show when={props.platform === "darwin" && section() === "desktop"}>
+                    <section class="remote-admin-view" aria-labelledby="desktop-access-title">
+                      <div class="remote-admin-view-heading">
+                        <div>
+                          <span class="remote-admin-kicker">Screen control</span>
+                          <h3 id="desktop-access-title">Remote desktop access</h3>
+                          <p>Every active server member can control this Mac without a second login.</p>
+                        </div>
+                        <span
+                          class={[
+                            "remote-desktop-access-state",
+                            { ready: props.status.remoteDesktopCredentialConfigured },
+                          ]}
+                        >
+                          {props.status.remoteDesktopCredentialConfigured ? "Managed" : "Setup needed"}
+                        </span>
+                      </div>
+                      <section class="remote-desktop-access-card">
+                        <div class="remote-desktop-access-instructions">
+                          <span>Set the same password on this Mac</span>
+                          <p>
+                            Open System Settings → General → Sharing → Screen Sharing. Enable “VNC viewers may control
+                            screen with password”, then enter the same dedicated password below.
+                          </p>
+                        </div>
+                        <label class="remote-field remote-desktop-password-field">
+                          <span>Dedicated VNC password</span>
+                          <Input
+                            type="password"
+                            autocomplete="new-password"
+                            minlength={1}
+                            maxlength={INPUT_LIMITS.remoteDesktopPassword}
+                            value={remoteDesktopPassword()}
+                            placeholder={
+                              props.status.remoteDesktopCredentialConfigured
+                                ? "Enter a new password to replace it"
+                                : "1–8 characters"
+                            }
+                            onInput={(event) => setRemoteDesktopPassword(event.currentTarget.value)}
+                          />
+                          <small>Do not use your macOS account password.</small>
+                        </label>
+                        <Button
+                          type="button"
+                          class="remote-primary-button remote-desktop-password-save"
+                          disabled={busy() || !remoteDesktopPassword()}
+                          onClick={() =>
+                            void run(async () => {
+                              await props.onConfigureRemoteDesktop(remoteDesktopPassword());
+                              setRemoteDesktopPassword("");
+                            })
+                          }
+                        >
+                          {props.status.remoteDesktopCredentialConfigured
+                            ? "Replace VNC password"
+                            : "Save VNC password"}
+                        </Button>
+                      </section>
+                    </section>
+                  </Show>
+                </main>
+              </div>
+            </Show>
+            <Show when={error()}>{(message) => <p class="remote-dialog-error">{message()}</p>}</Show>
+          </Dialog.Content>
+        </Dialog.Overlay>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -503,7 +520,7 @@ function HostSetup(props: {
       </p>
       <label class="remote-field">
         <span>Server name</span>
-        <input
+        <Input
           value={props.serverName}
           minlength={INPUT_LIMITS.serverNameMin}
           maxlength={INPUT_LIMITS.serverName}
@@ -518,14 +535,14 @@ function HostSetup(props: {
           <strong>{props.accountEmail}</strong>
         </div>
       </div>
-      <button
+      <Button
         type="button"
         class="remote-primary-button"
         disabled={props.busy || props.serverName.trim().length < INPUT_LIMITS.serverNameMin}
         onClick={props.onCreate}
       >
         {props.busy ? "Publishing…" : "Publish this OpenBot"}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -538,7 +555,7 @@ function AdminNavButton(props: {
   onSelect: () => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
       class={["remote-admin-nav-button", { active: props.active }]}
       aria-current={props.active ? "page" : undefined}
@@ -549,7 +566,7 @@ function AdminNavButton(props: {
       <Show when={props.count !== undefined}>
         <small aria-hidden="true">{props.count}</small>
       </Show>
-    </button>
+    </Button>
   );
 }
 
@@ -635,22 +652,29 @@ function MemberRow(props: {
             {props.typing ? "Typing now" : props.online ? "Online" : "Offline"}
           </small>
         </div>
-        <Show when={props.member.role !== "owner"} fallback={<span class="remote-role-badge">Owner</span>}>
+        <Show
+          when={props.member.role !== "owner"}
+          fallback={
+            <Badge class="remote-role-badge" tone="accent">
+              Owner
+            </Badge>
+          }
+        >
           <label class="remote-role-select">
             <span class="sr-only">Role for {displayName()}</span>
-            <select
+            <NativeSelect
               value={props.member.role}
               disabled={props.busy || props.member.disabled}
               onChange={(event) => props.onChangeRole(readTeamRole(event.currentTarget.value))}
             >
               <option value="member">Member</option>
               <option value="admin">Admin</option>
-            </select>
+            </NativeSelect>
           </label>
-          <button type="button" class="remote-text-button" disabled={props.busy} onClick={props.onToggleAccess}>
+          <Button type="button" class="remote-text-button" disabled={props.busy} onClick={props.onToggleAccess}>
             {props.member.disabled ? "Restore access" : "Pause access"}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             class="remote-more-button"
             aria-label={`Remove ${displayName()}`}
@@ -661,18 +685,18 @@ function MemberRow(props: {
               <circle cx="7.2" cy="6.2" r="2.4" />
               <path d="M2.9 14.7c.4-2.7 1.9-4 4.4-4 1.2 0 2.2.3 3 .9M12.4 13.2h4.7" />
             </svg>
-          </button>
+          </Button>
         </Show>
       </div>
       <Show when={props.confirmingRemoval}>
         <div class="remote-remove-confirmation" role="alert">
           <span>Remove this person and end all active sessions?</span>
-          <button type="button" onClick={props.onCancelRemove} disabled={props.busy}>
+          <Button type="button" onClick={props.onCancelRemove} disabled={props.busy}>
             Cancel
-          </button>
-          <button type="button" class="danger" onClick={props.onRemove} disabled={props.busy}>
+          </Button>
+          <Button type="button" class="danger" onClick={props.onRemove} disabled={props.busy}>
             Remove person
-          </button>
+          </Button>
         </div>
       </Show>
     </div>
@@ -710,9 +734,9 @@ function InviteResult(props: { invite: InviteSummary; copied: boolean; onCopy: (
           <strong>{props.copied ? "Link copied" : "Invitation link ready"}</strong>
           <span>It expires {formatDate(props.invite.expiresAt)}.</span>
         </div>
-        <button type="button" onClick={props.onCopy}>
+        <Button type="button" onClick={props.onCopy}>
           {props.copied ? "Copy again" : "Copy link"}
-        </button>
+        </Button>
       </Show>
     </div>
   );

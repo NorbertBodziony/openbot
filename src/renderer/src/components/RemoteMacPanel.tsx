@@ -2,6 +2,7 @@ import RFB from "@novnc/novnc";
 import type { RemoteMacSession, ServerSummary } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { PanelResizer } from "./PanelResizer";
+import { Button } from "./ui";
 
 export const REMOTE_DESKTOP_PANEL_STORAGE_KEY = "openbot:remote-desktop-panel-width";
 export const REMOTE_DESKTOP_PANEL_DEFAULT = 520;
@@ -216,31 +217,31 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
         </div>
         <div class="remote-desktop-actions">
           <Show when={viewerState() === "connected"}>
-            <button
+            <Button
               type="button"
               class={["remote-desktop-mode", { "remote-desktop-mode-active": !viewOnly() }]}
               aria-label={viewOnly() ? "Enable remote control" : "Use view-only mode"}
               onClick={() => setViewOnly((current) => !current)}
             >
               {viewOnly() ? "View only" : "Control"}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               class="remote-desktop-icon-button"
               aria-label="Enter remote desktop full screen"
               onClick={() => void panelElement?.requestFullscreen()}
             >
               <FullscreenIcon />
-            </button>
+            </Button>
           </Show>
-          <button
+          <Button
             type="button"
             class="remote-desktop-icon-button"
             aria-label="Close remote desktop"
             onClick={props.onClose}
           >
             <CloseIcon />
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -272,9 +273,9 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
           <div class="remote-desktop-overlay remote-desktop-error" role="alert">
             <strong>Could not open the desktop</strong>
             <span>{viewerError() ?? props.session?.message}</span>
-            <button type="button" onClick={() => void retry()}>
+            <Button type="button" onClick={() => void retry()}>
               Try again
-            </button>
+            </Button>
           </div>
         </Show>
         <Show
@@ -286,9 +287,9 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
             </span>
             <strong>Desktop disconnected</strong>
             <span>Reconnect when you want to view or control this Mac again.</span>
-            <button type="button" onClick={() => void connect(props.server, props.onConnect, true)}>
+            <Button type="button" onClick={() => void connect(props.server, props.onConnect, true)}>
               Connect
-            </button>
+            </Button>
           </div>
         </Show>
       </div>
@@ -297,9 +298,9 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
         <span>{viewOnly() ? "View only" : "Keyboard and pointer control enabled"}</span>
         <Show when={props.session?.phase === "connected" ? props.session : undefined}>
           {(session) => (
-            <button type="button" onClick={() => void props.onDisconnect(session().id)}>
+            <Button type="button" onClick={() => void props.onDisconnect(session().id)}>
               Disconnect
-            </button>
+            </Button>
           )}
         </Show>
       </footer>

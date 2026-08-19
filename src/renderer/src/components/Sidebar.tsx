@@ -10,13 +10,13 @@ import type {
   TeamPresenceMember,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
-import { Portal } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js";
 import { normalizeAvatarFile } from "../avatar-image";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 import { TeamPersonAvatar, teamMemberName } from "./TeamPersonAvatar";
 import { TypingDots } from "./TypingDots";
+import { AlertDialog, Badge, Button, ContextMenu, Input, Popover } from "./ui";
 
 interface SidebarProps {
   bots: BotProfile[];
@@ -73,15 +73,6 @@ function SidebarAgentIndicator(props: { state: SidebarAgentState }) {
     </span>
   );
 }
-
-interface BotContextMenu {
-  botId: string;
-  x: number;
-  y: number;
-}
-
-const BOT_CONTEXT_MENU_WIDTH = 184;
-const BOT_CONTEXT_MENU_HEIGHT = 86;
 
 function SearchIcon() {
   return (
@@ -196,7 +187,6 @@ function LogoutIcon() {
 
 export function Sidebar(props: SidebarProps) {
   const [query, setQuery] = createSignal("");
-  const [contextMenu, setContextMenu] = createSignal<BotContextMenu | null>(null);
   const [deleteTargetId, setDeleteTargetId] = createSignal<string | null>(null);
   const [deleting, setDeleting] = createSignal(false);
   const [deleteError, setDeleteError] = createSignal<string | null>(null);
@@ -208,7 +198,6 @@ export function Sidebar(props: SidebarProps) {
   const [avatarUploadBusy, setAvatarUploadBusy] = createSignal(false);
   const [accountAvatarFailed, setAccountAvatarFailed] = createSignal(false);
   const [loggingOut, setLoggingOut] = createSignal(false);
-  let firstMenuItem: HTMLButtonElement | undefined;
   let botList: HTMLElement | undefined;
   let searchInput: HTMLInputElement | undefined;
   let accountAvatarInput: HTMLInputElement | undefined;
@@ -320,41 +309,13 @@ export function Sidebar(props: SidebarProps) {
   );
 
   onSettled(() => {
-    const closeMenu = () => {
-      setContextMenu(null);
-      setAccountMenuOpen(false);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (deleteTargetId()) setDeleteTargetId(null);
-      else if (accountMenuOpen()) setAccountMenuOpen(false);
-      else closeMenu();
-    };
-    window.addEventListener("pointerdown", closeMenu);
-    window.addEventListener("blur", closeMenu);
-    window.addEventListener("resize", closeMenu);
-    window.addEventListener("keydown", closeOnEscape);
     const resizeObserver = new ResizeObserver(updateScrollFade);
     if (botList) resizeObserver.observe(botList);
     requestAnimationFrame(updateScrollFade);
     return () => {
       resizeObserver.disconnect();
-      window.removeEventListener("pointerdown", closeMenu);
-      window.removeEventListener("blur", closeMenu);
-      window.removeEventListener("resize", closeMenu);
-      window.removeEventListener("keydown", closeOnEscape);
     };
   });
-
-  function openContextMenu(botId: string, x: number, y: number) {
-    setDeleteError(null);
-    setContextMenu({
-      botId,
-      x: Math.max(8, Math.min(x, window.innerWidth - BOT_CONTEXT_MENU_WIDTH - 8)),
-      y: Math.max(8, Math.min(y, window.innerHeight - BOT_CONTEXT_MENU_HEIGHT - 8)),
-    });
-    requestAnimationFrame(() => firstMenuItem?.focus());
-  }
 
   async function confirmDelete() {
     const botId = deleteTargetId();
@@ -382,13 +343,6 @@ export function Sidebar(props: SidebarProps) {
     } finally {
       setUsageLoading(false);
     }
-  }
-
-  function toggleAccountMenu() {
-    const opening = !accountMenuOpen();
-    setAccountMenuOpen(opening);
-    setAccountError(null);
-    if (opening) void refreshUsage();
   }
 
   function openExternal(destination: ExternalDestination) {
@@ -470,7 +424,7 @@ export function Sidebar(props: SidebarProps) {
       class={["sidebar panel-edge", { "sidebar-compact": props.compact }]}
     >
       <div class="window-drag sidebar-topbar">
-        <button
+        <Button
           type="button"
           class="sidebar-icon-button sidebar-toggle-button no-drag"
           onClick={() => (props.compact ? props.onExpand() : props.onCollapse())}
@@ -480,8 +434,8 @@ export function Sidebar(props: SidebarProps) {
           title={props.compact ? "Expand sidebar" : "Collapse sidebar"}
         >
           <SidebarToggleIcon />
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           class="sidebar-icon-button sidebar-new-button no-drag"
           onClick={props.onCreateBot}
@@ -490,14 +444,14 @@ export function Sidebar(props: SidebarProps) {
           tabindex={props.compact ? -1 : 0}
         >
           <PlusIcon />
-        </button>
+        </Button>
       </div>
 
       <div class="sidebar-search-wrap">
         <label class="search-field" aria-hidden={props.compact ? "true" : undefined}>
           <span class="sr-only">Search chats</span>
           <SearchIcon />
-          <input
+          <Input
             ref={(element) => (searchInput = element)}
             type="search"
             value={query()}
@@ -508,7 +462,7 @@ export function Sidebar(props: SidebarProps) {
             maxlength={INPUT_LIMITS.agentName}
           />
         </label>
-        <button
+        <Button
           type="button"
           class="sidebar-compact-search"
           aria-label="Expand sidebar and search chats"
@@ -517,7 +471,7 @@ export function Sidebar(props: SidebarProps) {
           onClick={expandToSearch}
         >
           <SearchIcon />
-        </button>
+        </Button>
       </div>
 
       <nav
@@ -549,7 +503,7 @@ export function Sidebar(props: SidebarProps) {
                 {(member) => {
                   const thread = () => directThreadByMember().get(member.id);
                   return (
-                    <button
+                    <Button
                       type="button"
                       class={[
                         "bot-row person-row",
@@ -564,9 +518,9 @@ export function Sidebar(props: SidebarProps) {
                       <span class="bot-row-avatar">
                         <TeamPersonAvatar member={member} />
                         <Show when={(thread()?.unreadCount ?? 0) > 0}>
-                          <span class="person-unread-badge" aria-hidden="true">
+                          <Badge class="person-unread-badge" tone="accent" shape="pill" aria-hidden="true">
                             {Math.min(thread()?.unreadCount ?? 0, 99)}
-                          </span>
+                          </Badge>
                         </Show>
                       </span>
                       <span class="bot-row-copy">
@@ -581,7 +535,7 @@ export function Sidebar(props: SidebarProps) {
                       <Show when={(thread()?.unreadCount ?? 0) > 0}>
                         <span class="sr-only">{thread()?.unreadCount} unread direct messages</span>
                       </Show>
-                    </button>
+                    </Button>
                   );
                 }}
               </For>
@@ -602,57 +556,66 @@ export function Sidebar(props: SidebarProps) {
                 {(bot) => {
                   const role = () => bot.role.trim();
                   return (
-                    <button
-                      type="button"
-                      class={[
-                        "bot-row",
-                        {
-                          "bot-row-active": props.activeBotId === bot.id,
-                          "bot-row-menu-open": contextMenu()?.botId === bot.id,
-                        },
-                      ]}
-                      aria-label={`${bot.name}${role() ? `, ${role()}` : ""}. ${bot.preview}`}
-                      aria-pressed={props.activeBotId === bot.id ? "true" : "false"}
-                      onClick={() => props.onSelectBot(bot.id)}
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        openContextMenu(bot.id, event.clientX, event.clientY);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) {
-                          return;
-                        }
-                        event.preventDefault();
-                        const bounds = event.currentTarget.getBoundingClientRect();
-                        openContextMenu(bot.id, bounds.left + 28, bounds.top + 32);
-                      }}
-                    >
-                      <span class="bot-row-avatar">
-                        <AgentAvatar bot={bot} />
-                        <Show when={props.agentStates[bot.id]}>
-                          {(state) => <SidebarAgentIndicator state={state()} />}
-                        </Show>
-                      </span>
-                      <span class="bot-row-copy">
-                        <span class="bot-row-heading">
-                          <span class="bot-row-title">
-                            <strong>{bot.name}</strong>
-                            <Show when={role()}>
-                              {(label) => (
-                                <span class="bot-role-badge" title={label()}>
-                                  {label()}
-                                </span>
-                              )}
-                            </Show>
-                          </span>
-                          <span class="bot-row-time">{bot.time}</span>
+                    <ContextMenu.Root modal={false}>
+                      <ContextMenu.Trigger
+                        as={Button}
+                        type="button"
+                        class={["bot-row", { "bot-row-active": props.activeBotId === bot.id }]}
+                        aria-label={`${bot.name}${role() ? `, ${role()}` : ""}. ${bot.preview}`}
+                        aria-pressed={props.activeBotId === bot.id ? "true" : "false"}
+                        onClick={() => props.onSelectBot(bot.id)}
+                      >
+                        <span class="bot-row-avatar">
+                          <AgentAvatar bot={bot} />
+                          <Show when={props.agentStates[bot.id]}>
+                            {(state) => <SidebarAgentIndicator state={state()} />}
+                          </Show>
                         </span>
-                        <span class="bot-row-preview">{bot.preview}</span>
-                      </span>
-                      <Show when={props.agentStates[bot.id]}>
-                        {(state) => <span class="sr-only">{sidebarAgentStateLabel(state())}</span>}
-                      </Show>
-                    </button>
+                        <span class="bot-row-copy">
+                          <span class="bot-row-heading">
+                            <span class="bot-row-title">
+                              <strong>{bot.name}</strong>
+                              <Show when={role()}>
+                                {(label) => (
+                                  <Badge class="bot-role-badge" size="sm" title={label()}>
+                                    {label()}
+                                  </Badge>
+                                )}
+                              </Show>
+                            </span>
+                            <span class="bot-row-time">{bot.time}</span>
+                          </span>
+                          <span class="bot-row-preview">{bot.preview}</span>
+                        </span>
+                        <Show when={props.agentStates[bot.id]}>
+                          {(state) => <span class="sr-only">{sidebarAgentStateLabel(state())}</span>}
+                        </Show>
+                      </ContextMenu.Trigger>
+                      <ContextMenu.Portal>
+                        <ContextMenu.Content class="bot-context-menu" aria-label="Agent actions">
+                          <ContextMenu.Item
+                            onSelect={() => {
+                              setDeleteError(null);
+                              props.onEditBot(bot.id);
+                            }}
+                          >
+                            <EditIcon />
+                            <span>Edit agent</span>
+                          </ContextMenu.Item>
+                          <ContextMenu.Separator class="bot-context-separator" />
+                          <ContextMenu.Item
+                            class="bot-context-danger"
+                            onSelect={() => {
+                              setDeleteError(null);
+                              setDeleteTargetId(bot.id);
+                            }}
+                          >
+                            <DeleteIcon />
+                            <span>Delete agent</span>
+                          </ContextMenu.Item>
+                        </ContextMenu.Content>
+                      </ContextMenu.Portal>
+                    </ContextMenu.Root>
                   );
                 }}
               </For>
@@ -662,222 +625,181 @@ export function Sidebar(props: SidebarProps) {
       </nav>
 
       <div class="sidebar-account">
-        <Show when={accountMenuOpen()}>
-          <div
-            class="account-popover"
-            role="menu"
-            aria-label="Account menu"
-            onPointerDown={(event) => event.stopPropagation()}
+        <Popover.Root
+          open={accountMenuOpen()}
+          onOpenChange={(open) => {
+            setAccountMenuOpen(open);
+            if (open) {
+              setAccountError(null);
+              void refreshUsage();
+            }
+          }}
+          placement="top-start"
+          gutter={8}
+        >
+          <Popover.Trigger
+            as={Button}
+            type="button"
+            class="sidebar-footer"
+            aria-label="Open account menu"
+            aria-expanded={accountMenuOpen() ? "true" : "false"}
           >
-            <div class="account-profile-card">
-              <input
-                ref={(element) => (accountAvatarInput = element)}
-                class="sr-only"
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                onChange={(event) => void uploadAccountAvatar(event.currentTarget.files?.[0])}
-              />
-              {accountAvatar("account-profile-avatar")}
-              <div class="account-profile-copy">
-                <strong>{accountName()}</strong>
-                <span>{props.account.email}</span>
-                <div class="account-profile-actions">
-                  <button type="button" onClick={() => accountAvatarInput?.click()} disabled={avatarUploadBusy()}>
-                    {avatarUploadBusy() ? "Saving…" : props.account.avatarUrl ? "Replace photo" : "Upload photo"}
-                  </button>
-                  <Show when={props.account.avatarUrl}>
-                    <button
-                      type="button"
-                      class="account-profile-remove"
-                      onClick={() => void updateAccountAvatar(null)}
-                      disabled={avatarUploadBusy()}
-                    >
-                      Remove
-                    </button>
-                  </Show>
+            {accountAvatar("profile-dot")}
+            <span class="profile-copy">
+              <strong>{accountName()}</strong>
+              <Show when={props.appInfo}>
+                {(info) => (
+                  <span class="sr-only" data-testid="app-version">
+                    Version {info().version} · {info().platform}
+                  </span>
+                )}
+              </Show>
+            </span>
+            <Show when={updateAvailable()}>
+              <Badge class="sidebar-update-pill" tone="accent" shape="pill">
+                Update
+              </Badge>
+              <span class="sr-only">OpenBot update available</span>
+            </Show>
+          </Popover.Trigger>
+          <Popover.Portal>
+            <Popover.Content class="account-popover" aria-hidden={accountMenuOpen() ? undefined : "true"}>
+              <Popover.Title class="sr-only">Account</Popover.Title>
+              <div class="account-profile-card">
+                <Input
+                  ref={(element) => (accountAvatarInput = element)}
+                  class="sr-only"
+                  type="file"
+                  aria-label="Account profile photo"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(event) => void uploadAccountAvatar(event.currentTarget.files?.[0])}
+                />
+                {accountAvatar("account-profile-avatar")}
+                <div class="account-profile-copy">
+                  <strong>{accountName()}</strong>
+                  <span>{props.account.email}</span>
+                  <div class="account-profile-actions">
+                    <Button type="button" onClick={() => accountAvatarInput?.click()} disabled={avatarUploadBusy()}>
+                      {avatarUploadBusy() ? "Saving…" : props.account.avatarUrl ? "Replace photo" : "Upload photo"}
+                    </Button>
+                    <Show when={props.account.avatarUrl}>
+                      <Button
+                        type="button"
+                        class="account-profile-remove"
+                        onClick={() => void updateAccountAvatar(null)}
+                        disabled={avatarUploadBusy()}
+                      >
+                        Remove
+                      </Button>
+                    </Show>
+                  </div>
                 </div>
               </div>
-            </div>
-            <div class="account-menu-separator" />
-            <Show when={props.updateStatus.phase !== "unsupported"}>
-              <button
-                type="button"
-                role="menuitem"
-                class="account-menu-row account-update-row"
-                onClick={runUpdateAction}
-                disabled={updateBusy()}
-              >
-                <UpdateIcon active={updateBusy()} />
-                <span>{updateLabel()}</span>
-                <small>{updateDetail()}</small>
-              </button>
               <div class="account-menu-separator" />
-            </Show>
-            <button
-              type="button"
-              role="menuitem"
-              class="account-menu-row"
-              onClick={() => void refreshUsage()}
-              disabled={usageLoading() || props.agentStatus.phase !== "ready"}
-            >
-              <UsageIcon />
-              <span>{usageLoading() ? "Updating usage…" : "Weekly usage"}</span>
-              <small>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</small>
-            </button>
-            <div class="account-menu-separator" />
-            <button
-              type="button"
-              role="menuitem"
-              class="account-menu-row"
-              onClick={() => {
-                setAccountMenuOpen(false);
-                props.onOpenPermissions();
-              }}
-            >
-              <PermissionsIcon />
-              <span>Providers &amp; permissions</span>
-            </button>
-            <div class="account-menu-separator" />
-            <button type="button" role="menuitem" class="account-menu-row" onClick={() => openExternal("feedback")}>
-              <FeedbackIcon />
-              <span>Send feedback</span>
-            </button>
-            <button type="button" role="menuitem" class="account-menu-row" onClick={() => openExternal("message")}>
-              <MessageIcon />
-              <span>Message</span>
-            </button>
-            <div class="account-menu-separator" />
-            <button
-              type="button"
-              role="menuitem"
-              class="account-menu-row account-menu-danger"
-              onClick={() => void logout()}
-              disabled={loggingOut()}
-            >
-              <LogoutIcon />
-              <span>{loggingOut() ? "Signing out…" : "Sign out"}</span>
-            </button>
-            <Show when={popoverError()}>{(message) => <p class="account-popover-error">{message()}</p>}</Show>
-          </div>
-        </Show>
-
-        <button
-          type="button"
-          class="sidebar-footer"
-          aria-label="Open account menu"
-          aria-expanded={accountMenuOpen() ? "true" : "false"}
-          onClick={toggleAccountMenu}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          {accountAvatar("profile-dot")}
-          <span class="profile-copy">
-            <strong>{accountName()}</strong>
-            <Show when={props.appInfo}>
-              {(info) => (
-                <span class="sr-only" data-testid="app-version">
-                  Version {info().version} · {info().platform}
-                </span>
-              )}
-            </Show>
-          </span>
-          <Show when={updateAvailable()}>
-            <span class="sidebar-update-pill">Update</span>
-            <span class="sr-only">OpenBot update available</span>
-          </Show>
-        </button>
+              <Show when={props.updateStatus.phase !== "unsupported"}>
+                <Button
+                  type="button"
+                  class="account-menu-row account-update-row"
+                  onClick={runUpdateAction}
+                  disabled={updateBusy()}
+                >
+                  <UpdateIcon active={updateBusy()} />
+                  <span>{updateLabel()}</span>
+                  <small>{updateDetail()}</small>
+                </Button>
+                <div class="account-menu-separator" />
+              </Show>
+              <Button
+                type="button"
+                class="account-menu-row"
+                onClick={() => void refreshUsage()}
+                disabled={usageLoading() || props.agentStatus.phase !== "ready"}
+              >
+                <UsageIcon />
+                <span>{usageLoading() ? "Updating usage…" : "Weekly usage"}</span>
+                <small>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</small>
+              </Button>
+              <div class="account-menu-separator" />
+              <Button
+                type="button"
+                class="account-menu-row"
+                onClick={() => {
+                  setAccountMenuOpen(false);
+                  props.onOpenPermissions();
+                }}
+              >
+                <PermissionsIcon />
+                <span>Providers &amp; permissions</span>
+              </Button>
+              <div class="account-menu-separator" />
+              <Button type="button" class="account-menu-row" onClick={() => openExternal("feedback")}>
+                <FeedbackIcon />
+                <span>Send feedback</span>
+              </Button>
+              <Button type="button" class="account-menu-row" onClick={() => openExternal("message")}>
+                <MessageIcon />
+                <span>Message</span>
+              </Button>
+              <div class="account-menu-separator" />
+              <Button
+                type="button"
+                class="account-menu-row account-menu-danger"
+                onClick={() => void logout()}
+                disabled={loggingOut()}
+              >
+                <LogoutIcon />
+                <span>{loggingOut() ? "Signing out…" : "Sign out"}</span>
+              </Button>
+              <Show when={popoverError()}>{(message) => <p class="account-popover-error">{message()}</p>}</Show>
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
       </div>
 
-      <Show when={contextMenu()}>
-        {(menu) => (
-          <Portal>
-            <div
-              class="bot-context-menu"
-              role="menu"
-              aria-label="Agent actions"
-              style={{ left: `${menu().x}px`, top: `${menu().y}px` }}
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <button
-                ref={(element) => (firstMenuItem = element)}
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  const botId = menu().botId;
-                  setContextMenu(null);
-                  props.onEditBot(botId);
-                }}
-              >
-                <EditIcon />
-                <span>Edit agent</span>
-              </button>
-              <div class="bot-context-separator" />
-              <button
-                type="button"
-                role="menuitem"
-                class="bot-context-danger"
-                onClick={() => {
-                  const botId = menu().botId;
-                  setContextMenu(null);
-                  setDeleteTargetId(botId);
-                }}
-              >
-                <DeleteIcon />
-                <span>Delete agent</span>
-              </button>
-            </div>
-          </Portal>
-        )}
-      </Show>
-
-      <Show when={deleteTarget()}>
-        {(bot) => (
-          <Portal>
-            <div
-              class="bot-delete-backdrop"
-              role="presentation"
-              onPointerDown={(event) => {
-                if (event.currentTarget === event.target && !deleting()) setDeleteTargetId(null);
-              }}
-            >
-              <section
-                class="bot-delete-dialog"
-                role="alertdialog"
-                aria-modal="true"
-                aria-labelledby="bot-delete-title"
-                aria-describedby="bot-delete-description"
-              >
-                <AgentAvatar
-                  bot={bot()}
-                  style={{
-                    width: "44px",
-                    height: "44px",
-                    "margin-bottom": "15px",
-                  }}
-                />
-                <h2 id="bot-delete-title">Delete {bot().name}?</h2>
-                <p id="bot-delete-description">
-                  This removes the agent, its OpenBot queue, and managed files used only by that conversation. Its
-                  workspace and CLI history stay on your Mac.
-                </p>
-                <Show when={deleteError()}>{(message) => <p class="bot-delete-error">{message()}</p>}</Show>
-                <div class="bot-delete-actions">
-                  <button type="button" disabled={deleting()} onClick={() => setDeleteTargetId(null)}>
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    class="bot-delete-confirm"
-                    disabled={deleting()}
-                    onClick={() => void confirmDelete()}
-                  >
-                    {deleting() ? "Deleting…" : "Delete"}
-                  </button>
-                </div>
-              </section>
-            </div>
-          </Portal>
-        )}
-      </Show>
+      <AlertDialog.Root
+        open={Boolean(deleteTarget())}
+        onOpenChange={(open) => {
+          if (!open && !deleting()) setDeleteTargetId(null);
+        }}
+      >
+        <Show when={deleteTarget()}>
+          {(bot) => (
+            <AlertDialog.Portal>
+              <AlertDialog.Overlay class="bot-delete-backdrop">
+                <AlertDialog.Content class="bot-delete-dialog">
+                  <AgentAvatar
+                    bot={bot()}
+                    style={{
+                      width: "44px",
+                      height: "44px",
+                      "margin-bottom": "15px",
+                    }}
+                  />
+                  <AlertDialog.Title>Delete {bot().name}?</AlertDialog.Title>
+                  <AlertDialog.Description>
+                    This removes the agent, its OpenBot queue, and managed files used only by that conversation. Its
+                    workspace and CLI history stay on your Mac.
+                  </AlertDialog.Description>
+                  <Show when={deleteError()}>{(message) => <p class="bot-delete-error">{message()}</p>}</Show>
+                  <div class="bot-delete-actions">
+                    <Button type="button" disabled={deleting()} onClick={() => setDeleteTargetId(null)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      class="bot-delete-confirm"
+                      disabled={deleting()}
+                      onClick={() => void confirmDelete()}
+                    >
+                      {deleting() ? "Deleting…" : "Delete"}
+                    </Button>
+                  </div>
+                </AlertDialog.Content>
+              </AlertDialog.Overlay>
+            </AlertDialog.Portal>
+          )}
+        </Show>
+      </AlertDialog.Root>
     </aside>
   );
 }

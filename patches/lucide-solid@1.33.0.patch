@@ -1,0 +1,67 @@
+diff --git a/node_modules/lucide-solid/.bun-tag-b4f9aa613f712e31 b/.bun-tag-b4f9aa613f712e31
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/dist/source/Icon.jsx b/dist/source/Icon.jsx
+index e0193a183c4e1e9893507409749955b2df3df602..51349b76bf420903b418148961c9af01a5fd09c0 100644
+--- a/dist/source/Icon.jsx
++++ b/dist/source/Icon.jsx
+@@ -6,8 +6,8 @@
+ */
+ 
+ // src/Icon.tsx
+-import { For, splitProps, useContext } from "solid-js";
+-import { Dynamic } from "solid-js/web";
++import { For, omit, useContext } from "solid-js";
++import { Dynamic } from "@solidjs/web";
+ import defaultAttributes from "./defaultAttributes";
+ import { LucideContext } from "./context";
+ 
+@@ -43,7 +43,8 @@ var toPascalCase = (string) => {
+ 
+ // src/Icon.tsx
+ var Icon = (props) => {
+-  const [localProps, rest] = splitProps(props, [
++  const localProps = props;
++  const rest = omit(props,
+     "color",
+     "size",
+     "strokeWidth",
+@@ -52,7 +53,7 @@ var Icon = (props) => {
+     "name",
+     "iconNode",
+     "absoluteStrokeWidth"
+-  ]);
++  );
+   const globalProps = useContext(LucideContext);
+   return <svg
+     {...defaultAttributes}
+diff --git a/dist/source/context.jsx b/dist/source/context.jsx
+index 961f032b34e697f8ad417f72fa4e39551f2b7678..714e7f8bd0496c0dd1d242e4cf608b41dc1a4dd5 100644
+--- a/dist/source/context.jsx
++++ b/dist/source/context.jsx
+@@ -6,7 +6,7 @@
+ */
+ 
+ // src/context.tsx
+-import { createContext, splitProps } from "solid-js";
++import { createContext, omit } from "solid-js";
+ var LucideContext = createContext({
+   size: 24,
+   color: "currentColor",
+@@ -15,13 +15,14 @@ var LucideContext = createContext({
+   class: ""
+ });
+ function LucideProvider(props) {
+-  const [value, rest] = splitProps(props, [
++  const value = props;
++  const rest = omit(props,
+     "size",
+     "color",
+     "strokeWidth",
+     "absoluteStrokeWidth",
+     "class"
+-  ]);
++  );
+   return <LucideContext.Provider value={value}>{rest.children}</LucideContext.Provider>;
+ }
+ export {

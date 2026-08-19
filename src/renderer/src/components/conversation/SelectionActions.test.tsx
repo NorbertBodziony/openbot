@@ -135,6 +135,38 @@ describe("SelectionActionsBar", () => {
     expect(onDismiss).toHaveBeenCalledOnce();
   });
 
+  it("holds the toolbar width when typing starts", async () => {
+    const root = testParagraph("Selected sentence", "message-1");
+    const range = positionedRange(root);
+    render(() => (
+      <SelectionActionsBar
+        selection={{ messageId: "message-1", text: "Selected sentence", range }}
+        onSend={vi.fn().mockResolvedValue(true)}
+        onDismiss={vi.fn()}
+      />
+    ));
+
+    const toolbar = await screen.findByRole("toolbar", { name: "Actions for selected text" });
+    vi.spyOn(toolbar, "getBoundingClientRect").mockReturnValue({
+      width: 312.4,
+      height: 36,
+      top: 0,
+      right: 312.4,
+      bottom: 36,
+      left: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    await fireEvent.input(screen.getByRole("textbox", { name: "Describe edits" }), {
+      target: { value: "M" },
+    });
+
+    await waitFor(() => expect(toolbar).toHaveStyle({ width: "313px" }));
+    expect(toolbar.querySelector(".selection-actions-form")).toHaveStyle({ width: "273px" });
+  });
+
   it("expands presets and keeps the action available after a failed send", async () => {
     const root = testParagraph("Selected sentence", "message-1");
     const range = positionedRange(root);
