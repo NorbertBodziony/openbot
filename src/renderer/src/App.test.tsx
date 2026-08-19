@@ -1400,14 +1400,80 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
     const name = screen.getByRole("textbox", { name: "Agent name" });
+    await fireEvent.focus(name);
     await fireEvent.input(name, { target: { value: "Draft coordinator name" } });
-
     emitAgentEvent?.({
       type: "bots-changed",
-      bots: BOTS.map((bot) => (bot.id === "chief" ? { ...bot, preview: "A new backend preview" } : bot)),
+      bots: BOTS.map((bot) =>
+        bot.id === "chief" ? { ...bot, preview: "A new backend preview", notifications: !bot.notifications } : bot,
+      ),
     });
 
-    expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue("Draft coordinator name");
+    expect(screen.getByRole("textbox", { name: "Agent name" })).toBe(name);
+    expect(name).toHaveValue("Draft coordinator name");
+  });
+
+  it("opens conversation search with the primary Find shortcut and restores focus on Escape", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const searchReturnTarget = screen.getByRole("button", { name: "View agent settings" });
+    searchReturnTarget.focus();
+
+    await fireEvent.keyDown(searchReturnTarget, { key: "f", metaKey: true });
+
+    const search = screen.getByRole("search", { name: "Search conversation" });
+    const input = screen.getByRole("searchbox", { name: "Search messages" });
+    expect(search).toBeVisible();
+    await waitFor(() => expect(input).toHaveFocus());
+
+    await fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("search", { name: "Search conversation" })).not.toBeInTheDocument();
+    await waitFor(() => expect(searchReturnTarget).toHaveFocus());
+  });
+
+  it("opens global search with Command K and navigates to bot and message results", async () => {
+    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) => ({
+      botId,
+      threadId: null,
+      activeTurnId: null,
+      revision: 1,
+      messages:
+        botId === "sales-outbound"
+          ? [
+              {
+                id: "sales-search-result",
+                author: "assistant",
+                source: "assistant",
+                text: "Quarterly launch notes are ready for review.",
+                createdAt: "2026-08-20T09:30:00.000Z",
+                status: "completed",
+              },
+            ]
+          : [],
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    }));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.keyDown(window, { key: "k", metaKey: true });
+
+    const dialog = await screen.findByRole("dialog", { name: "Search OpenBot" });
+    const input = screen.getByRole("combobox", { name: "Search OpenBot" });
+    expect(dialog).toBeVisible();
+    await waitFor(() => expect(input).toHaveFocus());
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Messages" }));
+    await fireEvent.input(input, { target: { value: "quarterly" } });
+    const messageResult = await screen.findByRole("option", { name: /Quarterly launch notes/ });
+    await fireEvent.click(messageResult);
+    await screen.findByRole("heading", { name: "Sales Outbound" });
+
+    await fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await fireEvent.click(screen.getByRole("tab", { name: "Bots" }));
+    const botSearch = screen.getByRole("combobox", { name: "Search OpenBot" });
+    await fireEvent.input(botSearch, { target: { value: "chief" } });
+    await fireEvent.click(await screen.findByRole("option", { name: /Chief/ }));
+    await screen.findByRole("heading", { name: "Chief" });
   });
 
   it("keeps an accessible compact sidebar and expands search without losing its width", async () => {
@@ -1536,7 +1602,7 @@ describe("OpenBot connected desktop shell", () => {
       name: "Local smoke page, controlled by Chief",
     });
     expect(controlledTab.closest(".browser-tab-wrap")).toHaveClass("browser-tab-controlled");
-    expect(controlledTab).toHaveAttribute("aria-description", "Press Delete to close");
+    expect(controlledTab).toHaveAttribute("aria-description", "Press Delete or Control/Command W to close");
     expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-controlled");
     const browserTabStrip = document.querySelector(".browser-tab-strip");
     expect(browserTabStrip?.querySelectorAll(".browser-tab-wrap")).toHaveLength(3);
@@ -1583,6 +1649,69 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
     expect(controlledTab.closest(".browser-tab-wrap")).not.toHaveClass("browser-tab-controlled");
     expect(screen.getByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-controlled");
+  });
+
+  it("closes browser tabs with the middle mouse button and Control W, then closes the panel", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const firstTab = {
+      id: "tab-shortcut-1",
+      title: "First page",
+      url: "https://example.com/first",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const secondTab = {
+      id: "tab-shortcut-2",
+      title: "Second page",
+      url: "https://example.com/second",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [firstTab, secondTab],
+      activeTabId: firstTab.id,
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await fireEvent.pointerDown(screen.getByRole("tab", { name: "Second page" }), { button: 1 });
+    expect(window.openbot.browser.close).toHaveBeenCalledWith(secondTab.id);
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [firstTab], activeTabId: firstTab.id });
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "Second page" })).not.toBeInTheDocument());
+    await fireEvent.keyDown(window, { key: "w", ctrlKey: true });
+    expect(window.openbot.browser.close).toHaveBeenLastCalledWith(firstTab.id);
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+    expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
+  });
+
+  it("closes the browser panel when its last tab is closed from the embedded page", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-embedded-shortcut",
+          title: "Focused page",
+          url: "https://example.com",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-embedded-shortcut",
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(screen.getByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [], activeTabId: null });
+
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+    expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
   });
 
   it("updates embedded browser bounds when the window moves browser surface", async () => {

@@ -560,7 +560,7 @@ export function Sidebar(props: SidebarProps) {
                       <ContextMenu.Trigger
                         as={Button}
                         type="button"
-                        class={["bot-row", { "bot-row-active": props.activeBotId === bot.id }]}
+                        class={["bot-row agent-row", { "bot-row-active": props.activeBotId === bot.id }]}
                         aria-label={`${bot.name}${role() ? `, ${role()}` : ""}. ${bot.preview}`}
                         aria-pressed={props.activeBotId === bot.id ? "true" : "false"}
                         onClick={() => props.onSelectBot(bot.id)}

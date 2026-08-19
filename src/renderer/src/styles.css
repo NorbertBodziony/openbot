@@ -17,6 +17,7 @@
   --openbot-bg-control-active: #3a3a3a;
   --openbot-bg-switch: #5f5f5f;
   --openbot-bg-overlay: rgba(7, 7, 7, 0.92);
+  --openbot-command-overlay: rgba(7, 7, 7, 0.76);
   --openbot-bg-glass: rgba(38, 38, 38, 0.76);
   --openbot-bg-host-canvas: #14161b;
   --openbot-bg-host-header: #15171c;

@@ -13,6 +13,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { app, type BrowserWindow, type Session, session, type WebContents, WebContentsView } from "electron";
+import { isCloseBrowserTabShortcut, isGlobalSearchShortcut } from "./browser-shortcuts";
 import { persistentBrowserUrl, xLoginUrlForLanding } from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
@@ -219,6 +220,10 @@ export class BrowserHost {
     return this.#activeTabId;
   }
 
+  get visible(): boolean {
+    return this.#visible;
+  }
+
   async open(url: string, ownerThreadId: string | null = null, ownerBotId: string | null = null): Promise<BrowserTab> {
     if (this.#tabs.size >= INPUT_LIMITS.browserTabs) {
       throw new Error(`The browser can have up to ${INPUT_LIMITS.browserTabs} open tabs.`);
@@ -263,12 +268,14 @@ export class BrowserHost {
 
   async close(tabId: string): Promise<void> {
     const tab = this.#requireTab(tabId);
+    const tabIds = [...this.#tabs.keys()];
+    const closedIndex = tabIds.indexOf(tabId);
     this.#unmountView(tab.view);
     this.#tabs.delete(tabId);
     tab.view.webContents.close();
 
     if (this.#activeTabId === tabId) {
-      this.#activeTabId = this.#tabs.keys().next().value ?? null;
+      this.#activeTabId = tabIds[closedIndex + 1] ?? tabIds[closedIndex - 1] ?? null;
     }
     this.#syncAttachedView();
     this.#emitChanged();
@@ -437,6 +444,19 @@ export class BrowserHost {
   #bindTabEvents(tab: InternalTab): void {
     const contents = tab.view.webContents;
     const changed = () => this.#emitChanged();
+    contents.on("before-input-event", (event, input) => {
+      if (isGlobalSearchShortcut(input)) {
+        event.preventDefault();
+        this.#window.webContents.focus();
+        const modifiers: Array<"meta" | "control"> = [input.meta ? "meta" : "control"];
+        this.#window.webContents.sendInputEvent({ type: "keyDown", keyCode: "K", modifiers });
+        this.#window.webContents.sendInputEvent({ type: "keyUp", keyCode: "K", modifiers });
+        return;
+      }
+      if (!isCloseBrowserTabShortcut(input)) return;
+      event.preventDefault();
+      setImmediate(() => void this.close(tab.id).catch(() => undefined));
+    });
     contents.on("did-start-loading", changed);
     contents.on("did-stop-loading", () => {
       changed();

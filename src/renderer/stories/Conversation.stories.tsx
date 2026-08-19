@@ -9,7 +9,7 @@ import type {
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, onCleanup } from "solid-js";
-import { expect, fn, within } from "storybook/test";
+import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { Conversation } from "../src/components/Conversation";
 import type { BotMessage as RendererBotMessage } from "../src/data";
@@ -351,9 +351,11 @@ const args: Parameters<typeof Conversation>[0] = {
   loaded: true,
   activeTurnId: null,
   agentPickerOpen: false,
+  globalOverlayOpen: false,
   creatingAgent: false,
   settingsRequest: null,
   onboardingRequest: null,
+  messageFocusRequest: null,
   queue: undefined,
   browserTabs: STORY_BROWSER_TABS,
   activeBrowserTabId: STORY_BROWSER_TABS[0].id,
@@ -406,6 +408,47 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const RichConversation: Story = {};
+
+export const SearchConversation: Story = {
+  name: "Search conversation",
+  args: {
+    browserTabs: [],
+    activeBrowserTabId: null,
+    browserControlState: { sessions: [] },
+  },
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const storyWindow = canvasElement.ownerDocument.defaultView;
+    if (!storyWindow) throw new Error("Story window is missing.");
+    const searchReturnTarget = canvas.getByRole("button", { name: "View agent settings" });
+    fireEvent.keyDown(searchReturnTarget, { key: "f", ctrlKey: true });
+
+    const search = await canvas.findByRole("search", { name: "Search conversation" });
+    const input = canvas.getByRole("searchbox", { name: "Search messages" });
+    await expect(search).toBeVisible();
+    await waitFor(() => expect(input).toHaveFocus());
+    await userEvent.type(input, "milestone");
+    await expect(canvas.findByText("1/2")).resolves.toBeVisible();
+
+    await userEvent.click(canvas.getByRole("button", { name: "Next match" }));
+    await expect(canvas.findByText("2/2")).resolves.toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect(canvas.queryByRole("search", { name: "Search conversation" })).not.toBeInTheDocument();
+  },
+};
+
+export const AttachFilesPopover: Story = {
+  name: "Attach files popover",
+  args: {
+    browserTabs: [],
+    activeBrowserTabId: null,
+    browserControlState: { sessions: [] },
+  },
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    await userEvent.click(canvas.getByRole("button", { name: "Attach a file" }));
+    const popover = await within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "Attach file" });
+    await waitFor(() => expect(popover).toBeVisible());
+  },
+};
 
 export const NarrowRichConversation: Story = {
   name: "Narrow rich conversation",

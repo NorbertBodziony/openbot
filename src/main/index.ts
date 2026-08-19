@@ -34,6 +34,7 @@ import electronUpdater from "electron-updater";
 import { AgentService } from "../backend/agent-service";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
+import { isCloseBrowserTabShortcut } from "../backend/browser-shortcuts";
 import { MailboxStore } from "../backend/mailbox-store";
 import { TeamChatStore } from "../backend/team-chat-store";
 import { AgentInitializationGate } from "./agent-initialization";
@@ -692,6 +693,12 @@ function createWindow(): BrowserWindow {
   });
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("before-input-event", (event, input) => {
+    const tabId = browserHost?.activeTabId;
+    if (!browserHost?.visible || !tabId || !isCloseBrowserTabShortcut(input)) return;
+    event.preventDefault();
+    setImmediate(() => void browserHost?.close(tabId).catch(() => undefined));
+  });
   window.webContents.on("will-navigate", (event, targetUrl) => {
     if (!isTrustedRendererUrl(targetUrl)) event.preventDefault();
   });

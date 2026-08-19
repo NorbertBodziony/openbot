@@ -23,17 +23,47 @@ export type InputProps = ComponentProps<"input"> & ControlOptions;
 export function Input(props: InputProps): JSX.Element {
   const local = props;
   const field = useContext(FieldContext);
-  const others = omit(props, "class", "size", "invalid", "id", "aria-describedby", "aria-invalid", "required");
+  const others = omit(
+    props,
+    "class",
+    "size",
+    "invalid",
+    "id",
+    "aria-describedby",
+    "aria-invalid",
+    "required",
+    "value",
+    "onInput",
+    "onChange",
+  );
   const describedBy = () => [local["aria-describedby"], field?.describedBy].filter(Boolean).join(" ") || undefined;
+  if (!("value" in props)) {
+    return (
+      <input
+        {...others}
+        class={cx("ui-input", local.class)}
+        data-size={local.size ?? "md"}
+        id={local.id ?? field?.controlId}
+        aria-describedby={describedBy()}
+        aria-invalid={local["aria-invalid"] ?? (local.invalid || field?.invalid ? "true" : undefined)}
+        required={local.required ?? field?.required}
+        onInput={local.onInput}
+        onChange={local.onChange}
+      />
+    );
+  }
   return (
     <input
+      {...others}
       class={cx("ui-input", local.class)}
       data-size={local.size ?? "md"}
       id={local.id ?? field?.controlId}
       aria-describedby={describedBy()}
       aria-invalid={local["aria-invalid"] ?? (local.invalid || field?.invalid ? "true" : undefined)}
       required={local.required ?? field?.required}
-      {...others}
+      value={local.value}
+      onInput={local.onInput}
+      onChange={local.onChange}
     />
   );
 }
@@ -43,17 +73,47 @@ export type TextareaProps = ComponentProps<"textarea"> & ControlOptions;
 export function Textarea(props: TextareaProps): JSX.Element {
   const local = props;
   const field = useContext(FieldContext);
-  const others = omit(props, "class", "size", "invalid", "id", "aria-describedby", "aria-invalid", "required");
+  const others = omit(
+    props,
+    "class",
+    "size",
+    "invalid",
+    "id",
+    "aria-describedby",
+    "aria-invalid",
+    "required",
+    "value",
+    "onInput",
+    "onChange",
+  );
   const describedBy = () => [local["aria-describedby"], field?.describedBy].filter(Boolean).join(" ") || undefined;
+  if (!("value" in props)) {
+    return (
+      <textarea
+        {...others}
+        class={cx("ui-textarea", local.class)}
+        data-size={local.size ?? "md"}
+        id={local.id ?? field?.controlId}
+        aria-describedby={describedBy()}
+        aria-invalid={local["aria-invalid"] ?? (local.invalid || field?.invalid ? "true" : undefined)}
+        required={local.required ?? field?.required}
+        onInput={local.onInput}
+        onChange={local.onChange}
+      />
+    );
+  }
   return (
     <textarea
+      {...others}
       class={cx("ui-textarea", local.class)}
       data-size={local.size ?? "md"}
       id={local.id ?? field?.controlId}
       aria-describedby={describedBy()}
       aria-invalid={local["aria-invalid"] ?? (local.invalid || field?.invalid ? "true" : undefined)}
       required={local.required ?? field?.required}
-      {...others}
+      value={local.value}
+      onInput={local.onInput}
+      onChange={local.onChange}
     />
   );
 }
@@ -63,17 +123,47 @@ export type NativeSelectProps = ComponentProps<"select"> & ControlOptions;
 export function NativeSelect(props: NativeSelectProps): JSX.Element {
   const local = props;
   const field = useContext(FieldContext);
-  const others = omit(props, "class", "size", "invalid", "id", "aria-describedby", "aria-invalid", "required");
+  const others = omit(
+    props,
+    "class",
+    "size",
+    "invalid",
+    "id",
+    "aria-describedby",
+    "aria-invalid",
+    "required",
+    "value",
+    "onInput",
+    "onChange",
+  );
   const describedBy = () => [local["aria-describedby"], field?.describedBy].filter(Boolean).join(" ") || undefined;
+  if (!("value" in props)) {
+    return (
+      <select
+        {...others}
+        class={cx("ui-native-select", local.class)}
+        data-size={local.size ?? "md"}
+        id={local.id ?? field?.controlId}
+        aria-describedby={describedBy()}
+        aria-invalid={local["aria-invalid"] ?? (local.invalid || field?.invalid ? "true" : undefined)}
+        required={local.required ?? field?.required}
+        onInput={local.onInput}
+        onChange={local.onChange}
+      />
+    );
+  }
   return (
     <select
+      {...others}
       class={cx("ui-native-select", local.class)}
       data-size={local.size ?? "md"}
       id={local.id ?? field?.controlId}
       aria-describedby={describedBy()}
       aria-invalid={local["aria-invalid"] ?? (local.invalid || field?.invalid ? "true" : undefined)}
       required={local.required ?? field?.required}
-      {...others}
+      value={local.value}
+      onInput={local.onInput}
+      onChange={local.onChange}
     />
   );
 }

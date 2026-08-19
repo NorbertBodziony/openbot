@@ -35,6 +35,7 @@ import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
 import { ApprovalCard, ChoiceCard } from "./ConversationPrompts";
 import { AgentActivityIndicator, ThinkingDisclosure } from "./conversation/AgentActivity";
 import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
+import { ChatSearch } from "./conversation/ChatSearch";
 import {
   BackIcon,
   BrowserBackIcon,
@@ -43,12 +44,17 @@ import {
   BrowserReloadIcon,
   CloseIcon,
   ComputerIcon,
-  FileIcon,
   PlusIcon,
   RemoteDesktopIcon,
   SettingsForwardIcon,
   StopIcon,
 } from "./conversation/ConversationIcons";
+import {
+  type ChatSearchMatch,
+  clearChatSearchHighlights,
+  findChatSearchMatches,
+  renderChatSearchHighlights,
+} from "./conversation/chat-search";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
 import { QueuePanel } from "./conversation/QueuePanel";
@@ -69,7 +75,7 @@ import {
   RemoteMacPanel,
 } from "./RemoteMacPanel";
 import { TypingDots } from "./TypingDots";
-import { Button, Combobox, Dialog, Input, NativeSelect, Popover, Switch, Tabs, Textarea } from "./ui";
+import { Button, Combobox, Dialog, Input, NativeSelect, Paperclip, Popover, Switch, Tabs, Textarea } from "./ui";
 
 type AgentPickerOption = { kind: "create" } | { kind: "bot"; bot: BotProfile };
 
@@ -84,9 +90,11 @@ interface ConversationProps {
   loaded: boolean;
   activeTurnId: string | null | undefined;
   agentPickerOpen: boolean;
+  globalOverlayOpen: boolean;
   creatingAgent: boolean;
   settingsRequest: { botId: string; nonce: number } | null;
   onboardingRequest: { botId: string; nonce: number } | null;
+  messageFocusRequest: { botId: string; messageId: string; nonce: number } | null;
   queue: QueueSnapshot | undefined;
   browserTabs: BrowserTab[];
   activeBrowserTabId: string | null;
@@ -124,7 +132,7 @@ interface ConversationProps {
   onReorderQueue: (deliveryIds: string[]) => void;
   onResumeQueue: () => void;
   onActivateBrowserTab: (tabId: string) => void;
-  onCloseBrowserTab: (tabId: string) => void;
+  onCloseBrowserTab: (tabId: string) => void | Promise<void>;
   onConnectRemoteMac: (hostname: string, serverId: string | null) => Promise<void>;
   onDisconnectRemoteMac: (sessionId: string) => Promise<void>;
   onOpenAgentSetup: () => Promise<void>;
@@ -195,6 +203,9 @@ export function Conversation(props: ConversationProps) {
   const [settingsName, setSettingsName] = createSignal("");
   const [settingsTitle, setSettingsTitle] = createSignal("");
   const [settingsDescription, setSettingsDescription] = createSignal("");
+  let settingsNameDirty = false;
+  let settingsTitleDirty = false;
+  let settingsDescriptionDirty = false;
   const [settingsNotifications, setSettingsNotifications] = createSignal(true);
   const [settingsModel, setSettingsModel] = createSignal<AgentModelId>("gpt-5.6-luna");
   const [settingsReasoning, setSettingsReasoning] = createSignal<AgentReasoningEffort>("medium");
@@ -218,6 +229,10 @@ export function Conversation(props: ConversationProps) {
   const [openMoreMessageId, setOpenMoreMessageId] = createSignal<string | null>(null);
   const [expandedEmojiMessageId, setExpandedEmojiMessageId] = createSignal<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = createSignal<string | null>(null);
+  const [chatSearchOpen, setChatSearchOpen] = createSignal(false);
+  const [chatSearchQuery, setChatSearchQuery] = createSignal("");
+  const [chatSearchMatches, setChatSearchMatches] = createSignal<ChatSearchMatch[]>([]);
+  const [activeChatSearchIndex, setActiveChatSearchIndex] = createSignal(-1);
   let typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
   let typingBotId: string | null = null;
   const [settingsPanelWidth, setSettingsPanelWidth] = createSignal(
@@ -297,6 +312,15 @@ export function Conversation(props: ConversationProps) {
   });
   const activeBrowserTab = createMemo(
     () => browserTabs().find((tab) => tab.id === props.activeBrowserTabId) ?? browserTabs()[0],
+  );
+  let previousBrowserTabCount = 0;
+  createEffect(
+    () => ({ count: browserTabs().length, open: screenOpen() }),
+    ({ count, open }) => {
+      const browserWasClosed = open && previousBrowserTabCount > 0 && count === 0;
+      previousBrowserTabCount = count;
+      if (browserWasClosed) hideBrowserPanel();
+    },
   );
   const activeBrowserControl = createMemo(() => {
     const sessions = props.browserControlState.sessions;
@@ -382,6 +406,13 @@ export function Conversation(props: ConversationProps) {
   let browserBoundsFrame: number | undefined;
   let browserVisibilityGeneration = 0;
   let pickerInput: HTMLInputElement | undefined;
+  let chatSearchInput: HTMLInputElement | undefined;
+  let chatSearchReturnFocus: HTMLElement | undefined;
+  let chatSearchFrame: number | undefined;
+  let lastChatSearchQuery = "";
+  let settingsNameInput: HTMLInputElement | undefined;
+  let settingsTitleInput: HTMLInputElement | undefined;
+  let settingsDescriptionInput: HTMLTextAreaElement | undefined;
   let avatarPickerRoot: HTMLDivElement | undefined;
   let avatarFileInput: HTMLInputElement | undefined;
   let stickToLatest = true;
@@ -390,12 +421,59 @@ export function Conversation(props: ConversationProps) {
   let lastHandledSettingsRequestNonce: number | undefined;
   let lastHandledRemoteDesktopRequest = 0;
   let lastHandledOnboardingRequestNonce: number | undefined;
+  let lastHandledMessageFocusNonce: number | undefined;
   let lastSettingsSignature: string | undefined;
   let lastAvatarSettingsBotId: string | undefined;
+  let controlledBrowserBotIds = new Set<string>();
   const importTargetBots = new Map<string, string>();
 
-  async function saveBotPatch(updates: Omit<UpdateBotInput, "botId">): Promise<boolean> {
-    const botId = props.bot?.id;
+  function openChatSearch(): void {
+    if (!chatSearchOpen() && document.activeElement instanceof HTMLElement) {
+      chatSearchReturnFocus = document.activeElement;
+    }
+    setChatSearchOpen(true);
+    requestAnimationFrame(() => {
+      chatSearchInput?.focus();
+      chatSearchInput?.select();
+    });
+  }
+
+  function closeChatSearch(restoreFocus = true): void {
+    setChatSearchOpen(false);
+    setChatSearchQuery("");
+    setChatSearchMatches([]);
+    setActiveChatSearchIndex(-1);
+    clearChatSearchHighlights();
+    const returnFocus = chatSearchReturnFocus;
+    if (restoreFocus && returnFocus?.isConnected) {
+      requestAnimationFrame(() => returnFocus.focus());
+    }
+    chatSearchReturnFocus = undefined;
+  }
+
+  function moveChatSearch(direction: 1 | -1): void {
+    const total = chatSearchMatches().length;
+    if (total === 0) return;
+    setActiveChatSearchIndex((current) => (current + direction + total) % total);
+  }
+
+  function handleChatSearchShortcut(event: KeyboardEvent): void {
+    const primaryModifier = event.metaKey || event.ctrlKey;
+    const key = event.key.toLocaleLowerCase();
+    if (primaryModifier && !event.altKey && !event.shiftKey && key === "f") {
+      event.preventDefault();
+      event.stopPropagation();
+      openChatSearch();
+      return;
+    }
+    if (!chatSearchOpen() || !primaryModifier || event.altKey || key !== "g") return;
+    event.preventDefault();
+    event.stopPropagation();
+    moveChatSearch(event.shiftKey ? -1 : 1);
+  }
+
+  async function saveBotPatch(updates: Omit<UpdateBotInput, "botId">, targetBotId = props.bot?.id): Promise<boolean> {
+    const botId = targetBotId;
     if (!botId) return false;
     setSettingsSaveError(null);
     try {
@@ -405,6 +483,45 @@ export function Conversation(props: ConversationProps) {
       setSettingsSaveError(error instanceof Error ? error.message : "Could not save agent settings.");
       return false;
     }
+  }
+
+  function saveSettingsName(): void {
+    const botId = props.bot?.id;
+    if (!botId) return;
+    const name = settingsName().trim() || "New agent";
+    setSettingsName(name);
+    if (settingsNameInput) settingsNameInput.value = name;
+    setTimeout(() => {
+      void saveBotPatch({ name }, botId).then((saved) => {
+        if (saved && props.bot?.id === botId && settingsName() === name) settingsNameDirty = false;
+      });
+    }, 0);
+  }
+
+  function saveSettingsTitle(): void {
+    const botId = props.bot?.id;
+    if (!botId) return;
+    const role = settingsTitle().trim();
+    setSettingsTitle(role);
+    if (settingsTitleInput) settingsTitleInput.value = role;
+    setTimeout(() => {
+      void saveBotPatch({ role }, botId).then((saved) => {
+        if (saved && props.bot?.id === botId && settingsTitle() === role) settingsTitleDirty = false;
+      });
+    }, 0);
+  }
+
+  function saveSettingsDescription(): void {
+    const botId = props.bot?.id;
+    if (!botId) return;
+    const description = settingsDescription();
+    setTimeout(() => {
+      void saveBotPatch({ description }, botId).then((saved) => {
+        if (saved && props.bot?.id === botId && settingsDescription() === description) {
+          settingsDescriptionDirty = false;
+        }
+      });
+    }, 0);
   }
 
   async function setCustomAvatar(image: AvatarImageInput | null): Promise<boolean> {
@@ -557,6 +674,11 @@ export function Conversation(props: ConversationProps) {
     });
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (chatSearchOpen()) {
+        event.preventDefault();
+        closeChatSearch();
+        return;
+      }
       if (editingDeliveryId()) {
         cancelQueuedMessageEdit();
         return;
@@ -569,6 +691,22 @@ export function Conversation(props: ConversationProps) {
       setAvatarPickerOpen(false);
       props.onCloseAgentPicker();
     };
+    const closeActiveBrowserTab = (event: KeyboardEvent) => {
+      if (
+        !screenOpen() ||
+        event.key.toLowerCase() !== "w" ||
+        (!event.ctrlKey && !event.metaKey) ||
+        event.altKey ||
+        event.shiftKey
+      ) {
+        return;
+      }
+      const tab = activeBrowserTab();
+      if (!tab) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void closeBrowserTab(tab.id);
+    };
     const closeMessageMenus = (event: MouseEvent) => {
       if (event.target instanceof Element && event.target.closest(".message-actions")) return;
       setOpenReactionMessageId(null);
@@ -580,7 +718,11 @@ export function Conversation(props: ConversationProps) {
       if (event.target instanceof Node && avatarPickerRoot?.contains(event.target)) return;
       setAvatarPickerOpen(false);
     };
-    window.addEventListener("keydown", closeOnEscape);
+    const keyboardTarget = conversationPanel?.ownerDocument ?? document;
+    const keyboardWindow = keyboardTarget.defaultView ?? window;
+    keyboardTarget.addEventListener("keydown", closeOnEscape);
+    keyboardWindow.addEventListener("keydown", closeActiveBrowserTab);
+    keyboardTarget.addEventListener("keydown", handleChatSearchShortcut);
     window.addEventListener("pointerdown", closeMessageMenus);
     window.addEventListener("pointerdown", closeAvatarPicker);
     const scrollResizeObserver = new ResizeObserver(() => {
@@ -598,10 +740,90 @@ export function Conversation(props: ConversationProps) {
       if (unreadVisibilityFrame !== undefined) cancelAnimationFrame(unreadVisibilityFrame);
       scrollResizeObserver.disconnect();
       unsubscribeImport();
-      window.removeEventListener("keydown", closeOnEscape);
+      keyboardTarget.removeEventListener("keydown", closeOnEscape);
+      keyboardWindow.removeEventListener("keydown", closeActiveBrowserTab);
+      keyboardTarget.removeEventListener("keydown", handleChatSearchShortcut);
       window.removeEventListener("pointerdown", closeMessageMenus);
       window.removeEventListener("pointerdown", closeAvatarPicker);
     };
+  });
+
+  createEffect(
+    () => ({
+      open: chatSearchOpen(),
+      query: chatSearchQuery(),
+      messageSignature: props.messages
+        .map((message) => `${message.id}:${message.body}:${message.items?.join("\u0000") ?? ""}`)
+        .join("\u0001"),
+    }),
+    ({ open, query }) => {
+      if (chatSearchFrame !== undefined) cancelAnimationFrame(chatSearchFrame);
+      const queryChanged = query !== lastChatSearchQuery;
+      lastChatSearchQuery = query;
+      if (!open || !query.trim()) {
+        setChatSearchMatches([]);
+        setActiveChatSearchIndex(-1);
+        clearChatSearchHighlights();
+        return;
+      }
+      chatSearchFrame = requestAnimationFrame(() => {
+        chatSearchFrame = undefined;
+        if (!scrollElement) return;
+        const matches = findChatSearchMatches(scrollElement, query);
+        setChatSearchMatches(matches);
+        setActiveChatSearchIndex((current) => {
+          if (matches.length === 0) return -1;
+          if (queryChanged || current < 0) return 0;
+          return Math.min(current, matches.length - 1);
+        });
+      });
+    },
+  );
+
+  createEffect(
+    () => ({
+      request: props.messageFocusRequest,
+      botId: props.bot?.id,
+      loaded: props.loaded,
+      messageIds: props.messages.map((message) => message.id).join("\u0000"),
+    }),
+    ({ request, botId, loaded }) => {
+      if (!request || request.botId !== botId || !loaded || request.nonce === lastHandledMessageFocusNonce) return;
+      requestAnimationFrame(() => {
+        const target = scrollElement?.querySelector<HTMLElement>(
+          `[data-chat-search-message="${CSS.escape(request.messageId)}"]`,
+        );
+        if (!target) return;
+        lastHandledMessageFocusNonce = request.nonce;
+        stickToLatest = false;
+        target.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+      });
+    },
+  );
+
+  createEffect(
+    () => ({
+      open: chatSearchOpen(),
+      matches: chatSearchMatches(),
+      activeIndex: activeChatSearchIndex(),
+    }),
+    ({ open, matches, activeIndex }) => {
+      if (!open) return;
+      renderChatSearchHighlights(matches, activeIndex);
+      const match = matches[activeIndex];
+      if (!match) return;
+      stickToLatest = false;
+      match.message.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "center",
+        inline: "nearest",
+      });
+    },
+  );
+
+  onCleanup(() => {
+    if (chatSearchFrame !== undefined) cancelAnimationFrame(chatSearchFrame);
+    clearChatSearchHighlights();
   });
 
   createEffect(
@@ -639,6 +861,7 @@ export function Conversation(props: ConversationProps) {
     ({ botId, unreadCount }) => {
       currentUnreadCount = unreadCount;
       if (botId !== lastConversationBotId) {
+        if (lastConversationBotId !== undefined) closeChatSearch(false);
         lastConversationBotId = botId;
         stickToLatest = true;
         setEditingDeliveryId(null);
@@ -685,9 +908,23 @@ export function Conversation(props: ConversationProps) {
       const botChanged = bot.id !== lastAvatarSettingsBotId;
       lastSettingsSignature = bot.signature;
       lastAvatarSettingsBotId = bot.id;
-      setSettingsName(bot.name);
-      setSettingsTitle(bot.role);
-      setSettingsDescription(bot.description);
+      if (botChanged) {
+        settingsNameDirty = false;
+        settingsTitleDirty = false;
+        settingsDescriptionDirty = false;
+      }
+      if (botChanged || !settingsNameDirty) {
+        setSettingsName(bot.name);
+        if (settingsNameInput) settingsNameInput.value = bot.name;
+      }
+      if (botChanged || !settingsTitleDirty) {
+        setSettingsTitle(bot.role);
+        if (settingsTitleInput) settingsTitleInput.value = bot.role;
+      }
+      if (botChanged || !settingsDescriptionDirty) {
+        setSettingsDescription(bot.description);
+        if (settingsDescriptionInput) settingsDescriptionInput.value = bot.description;
+      }
       setSettingsNotifications(bot.notifications);
       setSettingsModel(bot.model);
       setSettingsReasoning(bot.reasoningEffort);
@@ -786,11 +1023,13 @@ export function Conversation(props: ConversationProps) {
           .filter((botId): botId is string => Boolean(botId)),
       ),
     (controlledBotIds) => {
-      if (controlledBotIds.size === 0) return;
+      const newlyControlledBotIds = [...controlledBotIds].filter((botId) => !controlledBrowserBotIds.has(botId));
+      controlledBrowserBotIds = controlledBotIds;
+      if (newlyControlledBotIds.length === 0) return;
       setRightPanels((current) => {
         const next = { ...current };
         let changed = false;
-        for (const botId of controlledBotIds) {
+        for (const botId of newlyControlledBotIds) {
           if (next[botId] === "browser") continue;
           next[botId] = "browser";
           changed = true;
@@ -801,7 +1040,7 @@ export function Conversation(props: ConversationProps) {
   );
 
   createEffect(
-    () => ({ botId: props.bot?.id, visible: screenOpen() }),
+    () => ({ botId: props.bot?.id, visible: screenOpen() && !props.globalOverlayOpen }),
     ({ botId, visible }) => {
       const generation = ++browserVisibilityGeneration;
       if (browserVisibilityFrame !== undefined) cancelAnimationFrame(browserVisibilityFrame);
@@ -909,6 +1148,7 @@ export function Conversation(props: ConversationProps) {
 
   async function chooseAttachments() {
     if (attachmentBusy()) return;
+    setShowAttachments(false);
     setAttachmentBusy(true);
     setComposerError(null);
     try {
@@ -1155,6 +1395,12 @@ export function Conversation(props: ConversationProps) {
     void window.openbot.browser.setVisible({ visible: false });
   }
 
+  async function closeBrowserTab(tabId: string) {
+    const closesLastTab = browserTabs().length === 1 && browserTabs()[0]?.id === tabId;
+    await props.onCloseBrowserTab(tabId);
+    if (closesLastTab) hideBrowserPanel();
+  }
+
   function setActiveRightPanel(mode: RightPanelMode, botId = props.bot?.id) {
     if (!botId) return;
     setRightPanels((current) => (current[botId] === mode ? current : { ...current, [botId]: mode }));
@@ -1201,6 +1447,7 @@ export function Conversation(props: ConversationProps) {
     <main
       ref={(element) => (conversationPanel = element)}
       aria-label="Conversation"
+      onKeyDown={handleChatSearchShortcut}
       class={[
         "conversation-panel",
         {
@@ -1385,6 +1632,19 @@ export function Conversation(props: ConversationProps) {
         </Show>
       </header>
 
+      <Show when={chatSearchOpen()}>
+        <ChatSearch
+          query={chatSearchQuery()}
+          current={activeChatSearchIndex()}
+          total={chatSearchMatches().length}
+          inputRef={(element) => (chatSearchInput = element)}
+          onQueryChange={setChatSearchQuery}
+          onPrevious={() => moveChatSearch(-1)}
+          onNext={() => moveChatSearch(1)}
+          onClose={closeChatSearch}
+        />
+      </Show>
+
       <Show when={props.unreadCount > 0 && !unreadDividerVisible()}>
         <UnreadMessagesBanner
           count={props.unreadCount}
@@ -1504,6 +1764,7 @@ export function Conversation(props: ConversationProps) {
                         when={message.kind === "thinking"}
                         fallback={
                           <article
+                            data-chat-search-message={message.id}
                             class={[
                               "message-entry",
                               {
@@ -1574,7 +1835,10 @@ export function Conversation(props: ConversationProps) {
                           </article>
                         }
                       >
-                        <div class={{ "thinking-entry-animated": animateEntrance }}>
+                        <div
+                          data-chat-search-message={message.id}
+                          class={{ "thinking-entry-animated": animateEntrance }}
+                        >
                           <ThinkingDisclosure message={message} />
                         </div>
                       </Show>
@@ -1582,6 +1846,7 @@ export function Conversation(props: ConversationProps) {
                   >
                     {(exchange) => (
                       <article
+                        data-chat-search-message={message.id}
                         class={["exchange-message-entry", { "exchange-message-entry-animated": animateEntrance }]}
                       >
                         <ExchangeSystemRow message={message} bots={props.bots} onSelectAgent={props.onSelectAgent} />
@@ -1626,15 +1891,6 @@ export function Conversation(props: ConversationProps) {
             <div class="team-typing-indicator" role="status" aria-live="polite">
               <TypingDots class="team-typing-dots" />
               {typingLabel()}
-            </div>
-          </Show>
-          <Show when={showAttachments()}>
-            <div class="attachment-menu">
-              <Button type="button" disabled={attachmentBusy()} onClick={() => void chooseAttachments()}>
-                <FileIcon />
-                {attachmentBusy() ? "Importing…" : "Attach files"}
-              </Button>
-              <span class="attachment-menu-hint">You can also drop files or paste an image</span>
             </div>
           </Show>
           <For each={unreferencedDraftAttachments()}>
@@ -1716,15 +1972,26 @@ export function Conversation(props: ConversationProps) {
             }}
           </Show>
           <div class="composer">
-            <Button
-              type="button"
-              class="composer-button"
-              aria-label="Attach a file"
-              disabled={props.agentPickerOpen || attachmentBusy() || !agentReady() || onboardingModelRequired()}
-              onClick={() => setShowAttachments((value) => !value)}
-            >
-              <PlusIcon />
-            </Button>
+            <Popover.Root open={showAttachments()} placement="top-start" gutter={4} onOpenChange={setShowAttachments}>
+              <Popover.Trigger
+                as={Button}
+                type="button"
+                class="composer-button"
+                aria-label="Attach a file"
+                disabled={props.agentPickerOpen || attachmentBusy() || !agentReady() || onboardingModelRequired()}
+              >
+                <PlusIcon />
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content class="attachment-menu">
+                  <Popover.Title class="sr-only">Attach file</Popover.Title>
+                  <Button type="button" disabled={attachmentBusy()} onClick={() => void chooseAttachments()}>
+                    <Paperclip aria-hidden="true" />
+                    {attachmentBusy() ? "Importing…" : "Attach files"}
+                  </Button>
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
             <div class="composer-input-label">
               <ComposerEditor
                 botId={props.bot?.id}
@@ -1887,12 +2154,18 @@ export function Conversation(props: ConversationProps) {
                           aria-label={
                             control() ? `${title()}, controlled by ${controller()?.name ?? "agent"}` : title()
                           }
-                          aria-description="Press Delete to close"
+                          aria-description="Press Delete or Control/Command W to close"
                           class="browser-tab"
+                          onPointerDown={(event) => {
+                            if (event.button !== 1) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+                            void closeBrowserTab(tab.id);
+                          }}
                           onKeyDown={(event) => {
                             if (event.key !== "Delete") return;
                             event.preventDefault();
-                            props.onCloseBrowserTab(tab.id);
+                            void closeBrowserTab(tab.id);
                           }}
                         >
                           <Show when={control()}>
@@ -1918,11 +2191,12 @@ export function Conversation(props: ConversationProps) {
                             onPointerDown={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
+                              if (event.button === 1) void closeBrowserTab(tab.id);
                             }}
                             onClick={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
-                              props.onCloseBrowserTab(tab.id);
+                              void closeBrowserTab(tab.id);
                             }}
                           >
                             <CloseIcon />
@@ -2111,7 +2385,7 @@ export function Conversation(props: ConversationProps) {
                   <div class="avatar-editor-heading">
                     <span>Generated face</span>
                     <div class="avatar-editor-actions">
-                      <Show when={props.bot && avatarSeed() !== props.bot.id}>
+                      <Show when={props.bot?.id && avatarSeed() !== props.bot?.id}>
                         <Button
                           type="button"
                           onClick={() => {
@@ -2203,34 +2477,46 @@ export function Conversation(props: ConversationProps) {
             <label class="agent-settings-field">
               <span>Name</span>
               <Input
-                value={settingsName()}
+                ref={(element) => (settingsNameInput = element)}
+                defaultValue={settingsName()}
                 aria-label="Agent name"
                 maxlength={INPUT_LIMITS.agentName}
-                onInput={(event) => setSettingsName(event.currentTarget.value)}
-                onBlur={() => saveBotPatch({ name: settingsName().trim() || "New agent" })}
+                onInput={(event) => {
+                  setSettingsName(event.currentTarget.value);
+                  settingsNameDirty = true;
+                }}
+                onBlur={saveSettingsName}
               />
             </label>
             <label class="agent-settings-field">
               <span>Title</span>
               <Input
-                value={settingsTitle()}
+                ref={(element) => (settingsTitleInput = element)}
+                defaultValue={settingsTitle()}
                 aria-label="Agent title"
                 placeholder="Describe what your agent does"
                 maxlength={INPUT_LIMITS.agentTitle}
-                onInput={(event) => setSettingsTitle(event.currentTarget.value)}
-                onBlur={() => saveBotPatch({ role: settingsTitle().trim() })}
+                onInput={(event) => {
+                  setSettingsTitle(event.currentTarget.value);
+                  settingsTitleDirty = true;
+                }}
+                onBlur={saveSettingsTitle}
               />
             </label>
             <label class="agent-settings-field agent-settings-description">
               <span>Description</span>
               <Textarea
+                ref={(element) => (settingsDescriptionInput = element)}
                 rows="4"
-                value={settingsDescription()}
+                defaultValue={settingsDescription()}
                 aria-label="Agent description"
                 placeholder="What this agent is for"
                 maxlength={INPUT_LIMITS.agentDescription}
-                onInput={(event) => setSettingsDescription(event.currentTarget.value)}
-                onBlur={() => saveBotPatch({ description: settingsDescription() })}
+                onInput={(event) => {
+                  setSettingsDescription(event.currentTarget.value);
+                  settingsDescriptionDirty = true;
+                }}
+                onBlur={saveSettingsDescription}
               />
             </label>
             <section class="agent-settings-model" aria-labelledby="agent-model-heading">

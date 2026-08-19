@@ -38,6 +38,7 @@ import { createEffect, createMemo, createSignal, createStore, flush, onSettled, 
 import { AccountLogin } from "./components/AccountLogin";
 import { Conversation } from "./components/Conversation";
 import { DirectConversation } from "./components/DirectConversation";
+import { GlobalSearch } from "./components/GlobalSearch";
 import { HostPanel } from "./components/HostPanel";
 import { InitialSetup } from "./components/InitialSetup";
 import { JoinServerDialog } from "./components/JoinServerDialog";
@@ -209,6 +210,12 @@ export function App() {
   const [joinServerOpen, setJoinServerOpen] = createSignal(false);
   const [pendingInviteUrl, setPendingInviteUrl] = createSignal("");
   const [hostOpen, setHostOpen] = createSignal(false);
+  const [globalSearchOpen, setGlobalSearchOpen] = createSignal(false);
+  const [messageFocusRequest, setMessageFocusRequest] = createSignal<{
+    botId: string;
+    messageId: string;
+    nonce: number;
+  } | null>(null);
   const [hostStatus, setHostStatus] = createSignal<HostStatus>(FALLBACK_HOST_STATUS);
   const [teamMembers, setTeamMembers] = createSignal<TeamMemberSummary[]>([]);
   const [teamInvites, setTeamInvites] = createSignal<TeamInviteSummary[]>([]);
@@ -350,6 +357,22 @@ export function App() {
     const unsubscribeRemoteMac = window.openbot.remoteMac.onEvent((sessions) =>
       flush(() => setRemoteMacSessions(sessions)),
     );
+    const handleGlobalSearchShortcut = (event: KeyboardEvent) => {
+      if (
+        event.key.toLocaleLowerCase() !== "k" ||
+        (!event.metaKey && !event.ctrlKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        centralAuth().status !== "signed_in" ||
+        setupState()?.completed !== true
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setGlobalSearchVisibility(!globalSearchOpen());
+    };
+    window.addEventListener("keydown", handleGlobalSearchShortcut);
     const cleanup = () => {
       unsubscribe();
       unsubscribeUpdate();
@@ -361,6 +384,7 @@ export function App() {
       unsubscribeInvite();
       unsubscribeHost();
       unsubscribeRemoteMac();
+      window.removeEventListener("keydown", handleGlobalSearchShortcut);
       if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
       for (const timer of recentReplyTimers.values()) clearTimeout(timer);
       recentReplyTimers.clear();
@@ -717,6 +741,24 @@ export function App() {
     setActiveBotId(botId);
   }
 
+  function setGlobalSearchVisibility(open: boolean): void {
+    setGlobalSearchOpen(open);
+    if (open) void loadGlobalSearchConversations();
+  }
+
+  async function loadGlobalSearchConversations(): Promise<void> {
+    const missingBots = botList().filter((bot) => conversationLoaded()[bot.id] !== true);
+    const snapshots = await Promise.allSettled(missingBots.map((bot) => window.openbot.agent.readConversation(bot.id)));
+    for (const result of snapshots) {
+      if (result.status === "fulfilled") scheduleConversation(result.value);
+    }
+  }
+
+  function selectGlobalSearchMessage(botId: string, messageId: string): void {
+    selectBot(botId);
+    setMessageFocusRequest({ botId, messageId, nonce: Date.now() });
+  }
+
   async function refreshDirectThreads(): Promise<void> {
     if (!currentTeamMember()) {
       setDirectThreads([]);
@@ -897,8 +939,8 @@ export function App() {
     void window.openbot.browser.activate(tabId);
   }
 
-  function closeBrowserTab(tabId: string) {
-    void window.openbot.browser.close(tabId);
+  async function closeBrowserTab(tabId: string) {
+    await window.openbot.browser.close(tabId);
   }
 
   async function updateBot(botId: string, updates: Omit<UpdateBotInput, "botId">) {
@@ -1558,9 +1600,11 @@ export function App() {
                   approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
                   activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
                   agentPickerOpen={agentPickerOpen()}
+                  globalOverlayOpen={globalSearchOpen()}
                   creatingAgent={creatingAgent()}
                   settingsRequest={settingsRequest()}
                   onboardingRequest={onboardingRequest()}
+                  messageFocusRequest={messageFocusRequest()}
                   onCloseAgentPicker={() => setAgentPickerOpen(false)}
                   onCreateAgent={() => void createAgent()}
                   onSelectAgent={selectBot}
@@ -1634,6 +1678,16 @@ export function App() {
                   onRevokeSession={revokeHostSession}
                   onRevokeInvite={revokeHostInvite}
                   onCopyAddressUpdate={copyHostAddressUpdate}
+                />
+              </Show>
+              <Show when={globalSearchOpen()}>
+                <GlobalSearch
+                  open={true}
+                  bots={botList()}
+                  messagesByBot={liveMessages()}
+                  onOpenChange={setGlobalSearchVisibility}
+                  onSelectBot={selectBot}
+                  onSelectMessage={selectGlobalSearchMessage}
                 />
               </Show>
             </div>

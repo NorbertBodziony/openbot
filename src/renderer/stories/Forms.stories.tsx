@@ -1,3 +1,5 @@
+import { createSignal } from "solid-js";
+import { expect } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { Button, Field, Heading, Input, NativeSelect, Textarea } from "../src/components/ui";
 
@@ -41,4 +43,36 @@ export const Gallery: Story = {
       </form>
     </main>
   ),
+};
+
+export const ControlledTyping: Story = {
+  render: () => {
+    const [name, setName] = createSignal("");
+    const [description, setDescription] = createSignal("");
+    return (
+      <main class="foundation-story">
+        <Heading as="h1" size="lg">
+          Controlled text fields
+        </Heading>
+        <Field label="Agent name" htmlFor="controlled-agent-name">
+          <Input id="controlled-agent-name" value={name()} onInput={(event) => setName(event.currentTarget.value)} />
+        </Field>
+        <Field label="Description" htmlFor="controlled-agent-description">
+          <Textarea
+            id="controlled-agent-description"
+            value={description()}
+            onInput={(event) => setDescription(event.currentTarget.value)}
+          />
+        </Field>
+      </main>
+    );
+  },
+  play: async ({ canvas, userEvent }) => {
+    const name = canvas.getByRole("textbox", { name: "Agent name" });
+    const description = canvas.getByRole("textbox", { name: "Description" });
+    await userEvent.type(name, "Fast typing stays intact");
+    await userEvent.type(description, "Every character remains editable.");
+    await expect(name).toHaveValue("Fast typing stays intact");
+    await expect(description).toHaveValue("Every character remains editable.");
+  },
 };

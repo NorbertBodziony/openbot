@@ -19,6 +19,241 @@
   grid-template-columns: 64px var(--left-panel-width, 280px) 0 minmax(0, 1fr);
 }
 
+.global-search-overlay {
+  position: fixed;
+  z-index: var(--openbot-layer-dialog);
+  inset: 0;
+  background: var(--openbot-command-overlay);
+}
+
+.global-search-dialog {
+  position: fixed;
+  z-index: calc(var(--openbot-layer-dialog) + 1);
+  top: 50%;
+  left: 50%;
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 68px);
+  overflow: hidden;
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: var(--openbot-radius-lg);
+  outline: 0;
+  background: var(--openbot-bg-control);
+  box-shadow: 0 28px 90px var(--openbot-shadow-dialog);
+  color: var(--openbot-text-primary);
+  transform: translate(-50%, -50%);
+}
+
+.global-search-control {
+  display: flex;
+  height: 54px;
+  align-items: center;
+  gap: var(--openbot-space-3);
+  border-bottom: 1px solid var(--openbot-border);
+  padding: 0 var(--openbot-space-4);
+  color: var(--openbot-text-muted);
+}
+
+.global-search-control > svg {
+  width: var(--openbot-icon-lg);
+  height: var(--openbot-icon-lg);
+  flex: 0 0 auto;
+  stroke-width: 1.65;
+}
+
+.global-search-control .global-search-input {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-xl);
+  line-height: var(--openbot-leading-xl);
+}
+
+.global-search-control .global-search-input:focus {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+.global-search-control .global-search-input::placeholder {
+  color: var(--openbot-text-muted);
+}
+
+.global-search-tabs {
+  border-bottom: 1px solid var(--openbot-border);
+  padding: var(--openbot-space-2) var(--openbot-space-3);
+}
+
+.global-search-tabs [role="tablist"] {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-1);
+}
+
+.global-search-tabs [role="tab"] {
+  height: var(--openbot-control-md);
+  border: 0;
+  border-radius: var(--openbot-radius-md);
+  background: transparent;
+  padding: 0 var(--openbot-space-3);
+  color: var(--openbot-text-muted);
+  font-family: inherit;
+  font-size: var(--openbot-text-lg);
+  line-height: var(--openbot-leading-lg);
+  transition:
+    background-color var(--openbot-duration-fast) ease,
+    color var(--openbot-duration-fast) ease,
+    transform var(--openbot-duration-fast) var(--openbot-ease-out);
+}
+
+.global-search-tabs [role="tab"][data-selected] {
+  background: var(--openbot-bg-surface);
+  color: var(--openbot-text-primary);
+}
+
+.global-search-tabs [role="tab"]:focus-visible {
+  outline: 0;
+  box-shadow: var(--openbot-focus-ring);
+}
+
+.global-search-tabs [role="tab"]:active {
+  transform: scale(0.97);
+}
+
+.global-search-results {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  max-height: min(430px, calc(100vh - 190px));
+  overflow-y: auto;
+  background: transparent;
+  padding: var(--openbot-space-2);
+  transform: none;
+  scrollbar-width: none;
+}
+
+.global-search-dialog [data-popper-positioner] {
+  /* biome-ignore lint/complexity/noImportantStyles: Kobalte's positioner uses an inline declaration. */
+  position: relative !important;
+  /* biome-ignore lint/complexity/noImportantStyles: Kobalte's positioner uses inline coordinates. */
+  inset: auto !important;
+  /* biome-ignore lint/complexity/noImportantStyles: Kobalte's positioner uses an inline anchor width. */
+  width: 100% !important;
+  /* biome-ignore lint/complexity/noImportantStyles: Kobalte's positioner uses an inline minimum width. */
+  min-width: 0 !important;
+  /* biome-ignore lint/complexity/noImportantStyles: Kobalte's positioner uses an inline popper transform. */
+  transform: none !important;
+}
+
+.global-search-results::-webkit-scrollbar {
+  display: none;
+}
+
+.global-search-results [role="listbox"] {
+  display: grid;
+  gap: var(--openbot-space-0-5);
+  outline: 0;
+}
+
+.global-search-result {
+  display: flex;
+  width: 100%;
+  min-height: 50px;
+  align-items: center;
+  gap: var(--openbot-space-3);
+  border-radius: var(--openbot-radius-md);
+  padding: var(--openbot-space-2) var(--openbot-space-3);
+  color: var(--openbot-text-primary);
+  cursor: default;
+  outline: 0;
+}
+
+.global-search-result[data-highlighted],
+.global-search-result[data-selected],
+.global-search-results
+  [role="listbox"]:not(:has(.global-search-result[data-highlighted]))
+  .global-search-result:first-child {
+  background: var(--openbot-bg-control-active);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .global-search-result:hover {
+    background: var(--openbot-bg-control-hover);
+  }
+}
+
+.global-search-avatar.bot-avatar {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+}
+
+.global-search-result-copy {
+  min-width: 0;
+  display: grid;
+  flex: 1;
+  gap: var(--openbot-space-0-5);
+}
+
+.global-search-result-title,
+.global-search-result-description {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.global-search-result-title {
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-lg);
+  font-weight: var(--openbot-weight-medium);
+  line-height: var(--openbot-leading-lg);
+}
+
+.global-search-result-description {
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-md);
+  line-height: var(--openbot-leading-md);
+}
+
+.global-search-result-shortcut {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--openbot-space-1);
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+}
+
+.global-search-result-shortcut .ui-kbd {
+  border: 0;
+  background: var(--openbot-bg-surface);
+}
+
+.global-search-empty {
+  display: grid;
+  min-height: 124px;
+  place-items: center;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-md);
+}
+
+@media (max-width: 640px) {
+  .global-search-dialog {
+    width: calc(100vw - 24px);
+    max-height: calc(100vh - 24px);
+  }
+
+  .global-search-result-shortcut {
+    display: none;
+  }
+}
+
 .server-rail {
   position: relative;
   z-index: 45;
@@ -1691,11 +1926,12 @@ textarea {
 .bot-context-menu {
   position: relative;
   z-index: 90;
-  width: 184px;
+  width: 200px;
   border: 0;
   border-radius: var(--openbot-radius-md);
-  background: var(--openbot-bg-control);
-  padding: 6px;
+  background: var(--openbot-bg-surface);
+  padding: var(--openbot-space-1);
+  outline: 0;
   box-shadow:
     inset 0 0 0 0.5px var(--openbot-border),
     0 10px 20px -3px var(--openbot-shadow-popover-ambient),
@@ -1707,16 +1943,17 @@ textarea {
 .bot-context-menu [role="menuitem"] {
   display: flex;
   width: 100%;
-  height: 32px;
+  min-height: 26px;
   align-items: center;
-  gap: 4px;
+  gap: var(--openbot-space-2);
   border: 0;
-  border-radius: var(--openbot-radius-sm);
+  border-radius: var(--openbot-radius-xs);
   background: transparent;
-  padding: 0 8px;
+  padding: var(--openbot-space-1) var(--openbot-space-2);
   color: var(--openbot-text-primary);
-  font-size: var(--openbot-text-lg);
-  font-weight: 400;
+  font-size: var(--openbot-text-md);
+  font-weight: var(--openbot-weight-regular);
+  line-height: var(--openbot-leading-md);
   text-align: left;
   transition:
     background-color var(--openbot-duration-fast) ease,
@@ -1740,23 +1977,23 @@ textarea {
 
 .bot-context-separator {
   height: 1px;
-  margin: 4px 8px;
-  background: var(--openbot-border-strong);
+  margin: 3px -3px 2px;
+  background: var(--openbot-border);
 }
 
 .bot-context-menu .bot-context-danger {
-  color: var(--openbot-danger-strong);
+  color: var(--openbot-danger);
 }
 
 .bot-context-danger-icon {
-  color: var(--openbot-danger-strong);
+  color: var(--openbot-danger);
 }
 
 .bot-context-menu .bot-context-danger:hover,
 .bot-context-menu .bot-context-danger:focus-visible,
 .bot-context-menu .bot-context-danger[data-highlighted] {
   background-color: var(--openbot-bg-control-hover);
-  color: var(--openbot-danger-strong);
+  color: var(--openbot-danger);
 }
 
 .bot-delete-backdrop {
@@ -2249,6 +2486,13 @@ textarea {
   line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The reference list extends agent tiles beyond the chat-list inset while the
+   shared row anatomy supplies its 54px row and 36px avatar proportions. */
+.sidebar:not(.sidebar-compact) .agent-row {
+  width: calc(100% + var(--openbot-space-2));
+  margin-inline: calc(var(--openbot-space-1) * -1);
 }
 
 .empty-search {
@@ -2808,11 +3052,11 @@ textarea {
 
 .bot-context-menu .bot-context-danger,
 .bot-context-danger-icon {
-  color: var(--openbot-danger-strong);
+  color: var(--openbot-danger);
 }
 
 .bot-context-menu .bot-context-danger:hover,
 .bot-context-menu .bot-context-danger:focus-visible {
   background: var(--openbot-bg-control-hover);
-  color: var(--openbot-danger-strong);
+  color: var(--openbot-danger);
 }
