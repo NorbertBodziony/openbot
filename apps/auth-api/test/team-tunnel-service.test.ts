@@ -2,6 +2,7 @@ import { isString } from "@openbot/contracts/runtime-values";
 import { describe, expect, it, vi } from "vitest";
 import { CloudflareTunnelProvider } from "../src/server/cloudflare-tunnel-provider";
 import {
+  TeamTunnelClaimConflict,
   type TeamTunnelProvider,
   type TeamTunnelRecord,
   type TeamTunnelRepository,
@@ -15,10 +16,15 @@ const user = { id: "user-1", email: "owner@example.com", name: null, avatarUrl: 
 
 class MemoryTeamTunnelRepository implements TeamTunnelRepository {
   record: TeamTunnelRecord | null = null;
+  hostnameConflicts = 0;
 
   async claim(
     input: Omit<TeamTunnelRecord, "tunnelId" | "status"> & { now: number },
   ): Promise<TeamTunnelRecord> {
+    if (this.hostnameConflicts > 0) {
+      this.hostnameConflicts -= 1;
+      throw new TeamTunnelClaimConflict();
+    }
     this.record ??= { ...input, tunnelId: null, status: "provisioning" };
     return { ...this.record };
   }
@@ -63,6 +69,7 @@ describe("TeamTunnelService", () => {
       provider,
       domain: "openbot.run",
       now: () => 1_000,
+      randomSuffix: () => "k7m4q2pz",
     });
     const first = await service.provision({
       user,
@@ -75,15 +82,15 @@ describe("TeamTunnelService", () => {
     expect(first).toMatchObject({
       tunnelId,
       tunnelName: "openbot-00000000000040008000000000000000",
-      apiUrl: "https://h-00000000000040008000000000000000.openbot.run",
-      vncHostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+      apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
+      vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
     });
     expect(second.tunnelId).toBe(tunnelId);
     expect(provider.createTunnel).toHaveBeenCalledTimes(1);
     expect(provider.configureTunnel).toHaveBeenNthCalledWith(1, {
       tunnelId,
-      apiHostname: "h-00000000000040008000000000000000.openbot.run",
-      vncHostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+      apiHostname: "studio-mac-k7m4q2pz-host.openbot.run",
+      vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
       apiPort: 43_123,
       vncEnabled: true,
     });
@@ -96,8 +103,8 @@ describe("TeamTunnelService", () => {
       userId: "other-user",
       tunnelId,
       tunnelName: "openbot-00000000000040008000000000000000",
-      apiHostname: "h-00000000000040008000000000000000.openbot.run",
-      vncHostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+      apiHostname: "studio-mac-k7m4q2pz-host.openbot.run",
+      vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
       status: "active",
     };
     const service = new TeamTunnelService({
@@ -120,6 +127,26 @@ describe("TeamTunnelService", () => {
       service.provision({ user, serverId: secondServerId, serverName: "Second Mac" }),
     ).rejects.toMatchObject({ code: "team_server_limit_reached", status: 409 });
     expect(provider.createTunnel).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a random hostname collision", async () => {
+    const repository = new MemoryTeamTunnelRepository();
+    repository.hostnameConflicts = 2;
+    const provider = fakeProvider();
+    const suffixes = ["aaaaaaaa", "bbbbbbbb", "k7m4q2pz"];
+    const service = new TeamTunnelService({
+      repository,
+      provider,
+      domain: "openbot.run",
+      randomSuffix: () => suffixes.shift() ?? "cccccccc",
+    });
+
+    await expect(
+      service.provision({ user, serverId, serverName: "Studio Mac" }),
+    ).resolves.toMatchObject({
+      apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
+      vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
+    });
   });
 
   it("allows only one winner when the same account claims two servers concurrently", async () => {
@@ -180,23 +207,23 @@ describe("CloudflareTunnelProvider", () => {
     });
     await provider.configureTunnel({
       tunnelId,
-      apiHostname: "h-00000000000040008000000000000000.openbot.run",
-      vncHostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+      apiHostname: "studio-mac-k7m4q2pz-host.openbot.run",
+      vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
       apiPort: 43_123,
       vncEnabled: true,
     });
-    await provider.ensureDns("h-00000000000040008000000000000000.openbot.run", tunnelId);
+    await provider.ensureDns("studio-mac-k7m4q2pz-host.openbot.run", tunnelId);
     await expect(provider.getTunnelToken(tunnelId)).resolves.toHaveLength(80);
     expect(requests[0]?.body).toEqual({
       config: {
         ingress: [
           {
-            hostname: "h-00000000000040008000000000000000.openbot.run",
+            hostname: "studio-mac-k7m4q2pz-host.openbot.run",
             service: "http://127.0.0.1:43123",
             originRequest: {},
           },
           {
-            hostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+            hostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
             service: "http_status:404",
             originRequest: {},
           },

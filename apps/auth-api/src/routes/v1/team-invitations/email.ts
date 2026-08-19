@@ -33,7 +33,7 @@ export const Route = createFileRoute("/v1/team-invitations/email")({
           }
           const email = normalizeEmail(body.email);
           if (
-            body.serverName.trim().length < 2 ||
+            body.serverName.trim().length < INPUT_LIMITS.serverNameMin ||
             body.serverName.trim().length > INPUT_LIMITS.serverName ||
             /[\r\n]/u.test(body.serverName) ||
             !isValidInviteUrl(body.inviteUrl)

@@ -47,8 +47,8 @@ describe("CentralAuthManager", () => {
         return Response.json({
           tunnelId: "11111111-1111-4111-8111-111111111111",
           tunnelName: "openbot-00000000000040008000000000000000",
-          apiUrl: "https://h-00000000000040008000000000000000.teams.openbot.run",
-          vncHostname: "vnc-h-00000000000040008000000000000000.teams.openbot.run",
+          apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
+          vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
           token: "x".repeat(40),
         });
       }
@@ -95,7 +95,7 @@ describe("CentralAuthManager", () => {
         vncEnabled: true,
       }),
     ).resolves.toMatchObject({
-      apiUrl: "https://h-00000000000040008000000000000000.teams.openbot.run",
+      apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
     });
     expect(requests[1]?.body).toEqual({ challengeId: "challenge-1", code: "ABCD-EFGH" });
     expect(await readFile(storagePath, "utf8")).not.toContain("session-secret");

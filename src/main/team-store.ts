@@ -18,7 +18,7 @@ import type {
   TeamSessionSummary,
 } from "@openbot/contracts/ipc";
 import { isObjectValue, isString } from "@openbot/contracts/runtime-values";
-import { normalizeEmailAddress } from "@openbot/contracts/validation";
+import { normalizeEmailAddress, slugifyTeamServerName } from "@openbot/contracts/validation";
 
 const scrypt = promisify(scryptCallback);
 const INVITE_TTL_MS = 24 * 60 * 60 * 1_000;
@@ -628,8 +628,16 @@ function normalizeAvatarUrl(value: string | null): string | null {
 
 function validateServerName(value: string): void {
   const normalized = value.trim();
-  if (normalized.length < 2 || normalized.length > INPUT_LIMITS.serverName) {
-    throw new Error(`Server name must contain 2 to ${INPUT_LIMITS.serverName} characters.`);
+  if (
+    normalized.length < INPUT_LIMITS.serverNameMin ||
+    normalized.length > INPUT_LIMITS.serverName
+  ) {
+    throw new Error(
+      `Server name must contain ${INPUT_LIMITS.serverNameMin} to ${INPUT_LIMITS.serverName} characters.`,
+    );
+  }
+  if (slugifyTeamServerName(normalized).length < INPUT_LIMITS.serverNameMin) {
+    throw new Error("Server name must produce a valid public hostname.");
   }
 }
 

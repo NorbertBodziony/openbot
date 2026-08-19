@@ -212,7 +212,7 @@ export class HostService extends EventEmitter<HostEvents> {
       const apiPort = await this.#api.start();
       const screenSharingReady = await probeRfbHandshake(5900, 2_000);
       const vncReady = screenSharingReady && this.#options.getRemoteDesktopPassword() !== null;
-      this.#setStatus({ message: "Provisioning a stable teams.openbot.run address…" });
+      this.#setStatus({ message: "Provisioning a stable openbot.run address…" });
       const identity = this.#options.store.getIdentity();
       if (!identity) throw new Error("Name this OpenBot before publishing it.");
       const provisioned = await this.#options.provisionTeamTunnel({

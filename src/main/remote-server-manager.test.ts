@@ -11,12 +11,8 @@ import {
 describe("remote server links", () => {
   it("accepts only supported root HTTPS tunnel URLs", () => {
     expect(isValidRemoteApiUrl("https://team-host.trycloudflare.com/")).toBe(true);
-    expect(isValidRemoteApiUrl("https://h-00000000000040008000000000000000.openbot.run/")).toBe(
-      true,
-    );
-    expect(
-      isValidRemoteApiUrl("https://h-00000000000040008000000000000000.teams.openbot.run/"),
-    ).toBe(true);
+    expect(isValidRemoteApiUrl("https://studio-mac-k7m4q2pz-host.openbot.run/")).toBe(true);
+    expect(isValidRemoteApiUrl("https://studio-mac-k7m4q2pz-host.teams.openbot.run/")).toBe(false);
     expect(isValidRemoteApiUrl("http://team-host.trycloudflare.com/")).toBe(false);
     expect(isValidRemoteApiUrl("https://team-host.trycloudflare.com/path")).toBe(false);
     expect(isValidRemoteApiUrl("https://example.com/")).toBe(false);
@@ -37,7 +33,7 @@ describe("remote server links", () => {
   });
 
   it("parses a stable openbot.run invitation", () => {
-    const apiUrl = "https://h-00000000000040008000000000000000.teams.openbot.run/";
+    const apiUrl = "https://studio-mac-k7m4q2pz-host.openbot.run/";
     const url = new URL("openbot://join");
     url.searchParams.set("api", apiUrl);
     url.searchParams.set("server", "00000000-0000-4000-8000-000000000000");

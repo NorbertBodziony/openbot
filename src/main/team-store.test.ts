@@ -25,7 +25,7 @@ describe("TeamStore", () => {
         name: "Owner",
         avatarUrl: null,
       }),
-    ).rejects.toThrow(`2 to ${INPUT_LIMITS.serverName} characters`);
+    ).rejects.toThrow(`${INPUT_LIMITS.serverNameMin} to ${INPUT_LIMITS.serverName} characters`);
     expect(store.configured).toBe(false);
   });
 

@@ -558,7 +558,7 @@ function HostSetup(props: {
         <span>Server name</span>
         <input
           value={props.serverName}
-          minlength={2}
+          minlength={INPUT_LIMITS.serverNameMin}
           maxlength={INPUT_LIMITS.serverName}
           placeholder="Design studio"
           onInput={(event) => props.onServerName(event.currentTarget.value)}
@@ -574,7 +574,7 @@ function HostSetup(props: {
       <button
         type="button"
         class="remote-primary-button"
-        disabled={props.busy || props.serverName.trim().length < 2}
+        disabled={props.busy || props.serverName.trim().length < INPUT_LIMITS.serverNameMin}
         onClick={props.onCreate}
       >
         {props.busy ? "Publishing…" : "Publish this OpenBot"}

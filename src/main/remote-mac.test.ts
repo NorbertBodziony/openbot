@@ -32,9 +32,9 @@ describe("Remote Mac helpers", () => {
     ["pty-vacuum.trycloudflare.com/path", false],
     ["PTY.trycloudflare.com", false],
     ["-bad.trycloudflare.com", false],
-    ["vnc-h-00000000000040008000000000000000.openbot.run", true],
-    ["vnc-h-00000000000040008000000000000000.teams.openbot.run", true],
-    ["h-00000000000040008000000000000000.openbot.run", false],
+    ["vnc-studio-mac-k7m4q2pz-host.openbot.run", true],
+    ["vnc-studio-mac-k7m4q2pz-host.teams.openbot.run", false],
+    ["studio-mac-k7m4q2pz-host.openbot.run", false],
     ["vnc-h-not-a-server.openbot.run", false],
     ["example.com", false],
   ])("validates %s as %s", (hostname, expected) => {
@@ -42,7 +42,7 @@ describe("Remote Mac helpers", () => {
   });
 
   it("builds a shell-free argument array", () => {
-    const hostname = "vnc-h-00000000000040008000000000000000.openbot.run";
+    const hostname = "vnc-studio-mac-k7m4q2pz-host.openbot.run";
     expect(buildCloudflaredAccessArgs(hostname, 5907)).toEqual([
       "access",
       "tcp",
@@ -127,7 +127,7 @@ describe("Remote Mac helpers", () => {
       timeoutMs: 2_000,
     });
     const input = {
-      hostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+      hostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
       serverId: "host-1",
     };
 
@@ -154,14 +154,14 @@ describe("Remote Mac helpers", () => {
       close: relayClose,
     }));
     const resolveRemoteDesktop = vi.fn(async () => ({
-      url: "wss://h-00000000000040008000000000000000.openbot.run/v1/remote-desktop",
+      url: "wss://studio-mac-k7m4q2pz-host.openbot.run/v1/remote-desktop",
       protocols: ["openbot-desktop", "openbot-token.team-secret"],
       password: "deskpass",
     }));
     const manager = new RemoteMacManager({ resolveRemoteDesktop, startRelay });
 
     const session = await manager.connect({
-      hostname: "h-00000000000040008000000000000000.openbot.run",
+      hostname: "studio-mac-k7m4q2pz-host.openbot.run",
       serverId: "host-1",
     });
 
@@ -171,7 +171,7 @@ describe("Remote Mac helpers", () => {
       websocketUrl: "ws://127.0.0.1:62001/vnc/local-token",
     });
     expect(startRelay).toHaveBeenCalledWith({
-      url: "wss://h-00000000000040008000000000000000.openbot.run/v1/remote-desktop",
+      url: "wss://studio-mac-k7m4q2pz-host.openbot.run/v1/remote-desktop",
       protocols: ["openbot-desktop", "openbot-token.team-secret"],
     });
     expect(manager.getCredentials(session.id)).toEqual({

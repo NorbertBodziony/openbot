@@ -16,8 +16,12 @@ import { isObject, requireString } from "./validation";
 
 export function parseHostConfig(value: unknown): ConfigureHostInput {
   if (!isObject(value)) throw new Error("Host configuration is required.");
+  const serverName = requireString(value.serverName, "serverName", INPUT_LIMITS.serverName);
+  if (serverName.trim().length < INPUT_LIMITS.serverNameMin) {
+    throw new Error(`Server name must contain at least ${INPUT_LIMITS.serverNameMin} characters.`);
+  }
   return {
-    serverName: requireString(value.serverName, "serverName", INPUT_LIMITS.serverName),
+    serverName,
   };
 }
 

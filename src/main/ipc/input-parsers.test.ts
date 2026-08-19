@@ -55,6 +55,10 @@ describe("server IPC input parsing", () => {
     expect(parseRemoteDesktopConfig({ password: "secret" })).toEqual({ password: "secret" });
   });
 
+  it("requires a six-character host name", () => {
+    expect(() => parseHostConfig({ serverName: "short" })).toThrowError("at least 6 characters");
+  });
+
   it("normalizes optional invitation and member fields", () => {
     expect(parseCreateTeamInvite({ role: "member", email: " user@example.com " })).toEqual({
       role: "member",

@@ -1,5 +1,5 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import { isUuidV4, isValidHostname } from "@openbot/contracts/validation";
+import { isUuidV4, isValidHostname, slugifyTeamServerName } from "@openbot/contracts/validation";
 
 import type { AuthUser } from "./types";
 
@@ -52,19 +52,26 @@ interface TeamTunnelServiceOptions {
   provider: TeamTunnelProvider;
   domain: string;
   now?: () => number;
+  randomSuffix?: () => string;
 }
+
+const MAX_HOSTNAME_ATTEMPTS = 10;
+const HOST_SUFFIX_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
+const MAX_HOST_SLUG_LENGTH = 44;
 
 export class TeamTunnelService {
   readonly #repository: TeamTunnelRepository;
   readonly #provider: TeamTunnelProvider;
   readonly #domain: string;
   readonly #now: () => number;
+  readonly #randomSuffix: () => string;
 
   constructor(options: TeamTunnelServiceOptions) {
     this.#repository = options.repository;
     this.#provider = options.provider;
     this.#domain = normalizeDomain(options.domain);
     this.#now = options.now ?? Date.now;
+    this.#randomSuffix = options.randomSuffix ?? createRandomHostSuffix;
   }
 
   async provision(input: {
@@ -75,21 +82,40 @@ export class TeamTunnelService {
     vncEnabled?: boolean;
   }): Promise<ProvisionedTeamTunnel> {
     validateServerId(input.serverId);
-    validateServerName(input.serverName);
+    const slug = validateServerName(input.serverName);
     const apiPort = input.apiPort ?? null;
     if (apiPort !== null && (!Number.isInteger(apiPort) || apiPort < 1 || apiPort > 65_535)) {
       throw new TeamTunnelServiceError(400, "invalid_api_port", "The host API port is invalid.");
     }
     const compactId = input.serverId.replaceAll("-", "").toLowerCase();
     const now = this.#now();
-    const claimed = await this.#repository.claim({
-      serverId: input.serverId.toLowerCase(),
-      userId: input.user.id,
-      tunnelName: `openbot-${compactId}`,
-      apiHostname: `h-${compactId}.${this.#domain}`,
-      vncHostname: `vnc-h-${compactId}.${this.#domain}`,
-      now,
-    });
+    const serverId = input.serverId.toLowerCase();
+    let claimed: TeamTunnelRecord | null = null;
+    for (let attempt = 0; attempt < MAX_HOSTNAME_ATTEMPTS; attempt += 1) {
+      const hostnames = buildTeamHostnames(slug, this.#randomSuffix(), this.#domain);
+      try {
+        claimed = await this.#repository.claim({
+          serverId,
+          userId: input.user.id,
+          tunnelName: `openbot-${compactId}`,
+          apiHostname: hostnames.apiHostname,
+          vncHostname: hostnames.vncHostname,
+          now,
+        });
+        break;
+      } catch (error) {
+        if (!(error instanceof TeamTunnelClaimConflict) || attempt === MAX_HOSTNAME_ATTEMPTS - 1) {
+          throw error instanceof TeamTunnelClaimConflict
+            ? new TeamTunnelServiceError(
+                503,
+                "team_tunnel_hostname_unavailable",
+                "A unique OpenBot host address could not be reserved.",
+              )
+            : error;
+        }
+      }
+    }
+    if (!claimed) throw new Error("The team tunnel claim could not be stored.");
     if (claimed.userId !== input.user.id) {
       throw new TeamTunnelServiceError(
         403,
@@ -172,16 +198,22 @@ export class TeamTunnelServiceError extends Error {
   }
 }
 
+export class TeamTunnelClaimConflict extends Error {
+  constructor() {
+    super("team_tunnel_hostname_conflict");
+  }
+}
+
 function validateServerId(value: string): void {
   if (!isUuidV4(value)) {
     throw new TeamTunnelServiceError(400, "invalid_server_id", "The team server ID is invalid.");
   }
 }
 
-function validateServerName(value: string): void {
+function validateServerName(value: string): string {
   const normalized = value.trim();
   if (
-    normalized.length < 2 ||
+    normalized.length < INPUT_LIMITS.serverNameMin ||
     normalized.length > INPUT_LIMITS.serverName ||
     /[\r\n]/u.test(normalized)
   ) {
@@ -191,6 +223,47 @@ function validateServerName(value: string): void {
       "The team server name is invalid.",
     );
   }
+  const slug = slugifyTeamServerName(normalized);
+  if (slug.length < INPUT_LIMITS.serverNameMin) {
+    throw new TeamTunnelServiceError(
+      400,
+      "invalid_server_name",
+      "The team server name must produce a valid public hostname.",
+    );
+  }
+  return slug.slice(0, MAX_HOST_SLUG_LENGTH).replace(/-+$/gu, "");
+}
+
+function buildTeamHostnames(
+  slug: string,
+  suffix: string,
+  domain: string,
+): { apiHostname: string; vncHostname: string } {
+  if (!/^[a-z2-7]{8}$/u.test(suffix)) {
+    throw new Error("The generated team tunnel suffix is invalid.");
+  }
+  const stem = `${slug}-${suffix}-host`;
+  return {
+    apiHostname: `${stem}.${domain}`,
+    vncHostname: `vnc-${stem}.${domain}`,
+  };
+}
+
+function createRandomHostSuffix(): string {
+  const bytes = new Uint8Array(5);
+  globalThis.crypto.getRandomValues(bytes);
+  let buffer = 0;
+  let bits = 0;
+  let suffix = "";
+  for (const byte of bytes) {
+    buffer = (buffer << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      suffix += HOST_SUFFIX_ALPHABET[(buffer >>> bits) & 31];
+    }
+  }
+  return suffix;
 }
 
 function normalizeDomain(value: string): string {

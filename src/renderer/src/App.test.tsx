@@ -444,8 +444,8 @@ describe("OpenBot connected desktop shell", () => {
         name: "Studio Mac",
         kind: "remote",
         state: "online",
-        apiUrl: "https://h-example.openbot.run",
-        vncHostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+        apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
+        vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
         role: "owner",
         active: true,
       },
@@ -453,7 +453,7 @@ describe("OpenBot connected desktop shell", () => {
     vi.mocked(window.openbot.remoteMac.connect).mockResolvedValueOnce({
       id: "desktop-1",
       serverId: "remote-1",
-      hostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+      hostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
       localPort: 5901,
       websocketUrl: null,
       phase: "starting_tunnel",
@@ -471,7 +471,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByText("Studio Mac")).toBeInTheDocument();
     await waitFor(() =>
       expect(window.openbot.remoteMac.connect).toHaveBeenCalledWith({
-        hostname: "vnc-h-00000000000040008000000000000000.openbot.run",
+        hostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
         serverId: "remote-1",
       }),
     );
@@ -2552,7 +2552,7 @@ describe("OpenBot connected desktop shell", () => {
       enabledOnLaunch: false,
       serverId: "server-1",
       serverName: "Design studio",
-      apiUrl: "https://design-studio.teams.openbot.run",
+      apiUrl: "https://design-studio-k7m4q2pz-host.openbot.run",
       vncHostname: null,
       apiOnline: false,
       vncOnline: false,

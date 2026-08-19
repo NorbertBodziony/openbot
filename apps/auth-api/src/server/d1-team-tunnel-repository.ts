@@ -1,4 +1,8 @@
-import type { TeamTunnelRecord, TeamTunnelRepository } from "./team-tunnel-service";
+import {
+  TeamTunnelClaimConflict,
+  type TeamTunnelRecord,
+  type TeamTunnelRepository,
+} from "./team-tunnel-service";
 
 interface TeamTunnelRow {
   server_id: string;
@@ -42,7 +46,19 @@ export class D1TeamTunnelRepository implements TeamTunnelRepository {
       )
       .bind(input.serverId, input.userId, input.serverId)
       .first<TeamTunnelRow>();
-    if (!row) throw new Error("The team tunnel claim could not be stored.");
+    if (!row) {
+      const hostnameConflict = await this.database
+        .prepare(
+          `SELECT server_id
+           FROM team_tunnels
+           WHERE api_hostname = ? OR vnc_hostname = ?
+           LIMIT 1`,
+        )
+        .bind(input.apiHostname, input.vncHostname)
+        .first<{ server_id: string }>();
+      if (hostnameConflict) throw new TeamTunnelClaimConflict();
+      throw new Error("The team tunnel claim could not be stored.");
+    }
     return mapRow(row);
   }
 

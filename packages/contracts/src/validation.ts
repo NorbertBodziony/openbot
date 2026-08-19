@@ -3,8 +3,10 @@ import { INPUT_LIMITS } from "./input-limits";
 const DOMAIN_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/iu;
 const EMAIL_LOCAL_PART_PATTERN = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/u;
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const OPENBOT_TEAM_API_HOST_PATTERN = /^h-[0-9a-f]{32}\.(?:teams\.)?openbot\.run$/u;
-const OPENBOT_TEAM_VNC_HOST_PATTERN = /^vnc-h-[0-9a-f]{32}\.(?:teams\.)?openbot\.run$/u;
+const TEAM_HOST_PATTERN =
+  /^(vnc-)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)-([a-z2-7]{8})-host\.openbot\.run$/u;
+const TEAM_HOST_SLUG_MIN_LENGTH = 6;
+const TEAM_HOST_SLUG_MAX_LENGTH = 44;
 
 export function isValidHostname(value: string, requireDot = true): boolean {
   if (
@@ -41,9 +43,33 @@ export function isUuidV4(value: string): boolean {
 }
 
 export function isOpenBotTeamApiHostname(value: string): boolean {
-  return OPENBOT_TEAM_API_HOST_PATTERN.test(value);
+  const match = TEAM_HOST_PATTERN.exec(value);
+  return Boolean(match && !match[1] && isValidTeamHostSlug(match[2]));
 }
 
 export function isOpenBotTeamVncHostname(value: string): boolean {
-  return OPENBOT_TEAM_VNC_HOST_PATTERN.test(value);
+  const match = TEAM_HOST_PATTERN.exec(value);
+  return Boolean(match && match[1] === "vnc-" && isValidTeamHostSlug(match[2]));
+}
+
+export function slugifyTeamServerName(value: string): string {
+  const normalized = value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/gu, "")
+    .toLowerCase();
+  return normalized
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "")
+    .slice(0, TEAM_HOST_SLUG_MAX_LENGTH)
+    .replace(/-+$/gu, "");
+}
+
+function isValidTeamHostSlug(value: string | undefined): boolean {
+  return Boolean(
+    value &&
+      value.length >= TEAM_HOST_SLUG_MIN_LENGTH &&
+      value.length <= TEAM_HOST_SLUG_MAX_LENGTH &&
+      !value.includes("--") &&
+      DOMAIN_LABEL_PATTERN.test(value),
+  );
 }
