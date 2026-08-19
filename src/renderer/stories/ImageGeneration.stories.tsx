@@ -22,7 +22,6 @@ const baseArgs: ImageGenerationProps = {
   aspectRatio: "square",
   onPreview: fn(),
   onDownload: fn(),
-  onRetry: fn(),
 };
 
 const meta = {

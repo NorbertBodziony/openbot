@@ -501,6 +501,8 @@ describe.sequential("AgentService", () => {
     expect(instructions).toContain('"title": "Research & writing"');
     expect(instructions).toContain('"description": "Researches topics and turns findings into clear writing."');
     expect(instructions).toContain("openbot.ask_user");
+    expect(instructions).toContain("GitHub-flavored Markdown tables");
+    expect(instructions).toContain("at least three dashes per column");
     expect(instructions).toContain("standing remit");
   });
 

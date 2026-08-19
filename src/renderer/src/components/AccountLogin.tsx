@@ -30,8 +30,8 @@ export function AccountLogin(props: AccountLoginProps) {
         aria-labelledby="account-login-title"
         aria-describedby="account-login-description"
       >
-        <div class="account-login-brand" aria-hidden="true">
-          <AppLogo variant={props.variant} animation="blink" class="account-login-logo" />
+        <div class="account-login-brand">
+          <AppLogo variant={props.variant} animation="blink" interactive class="account-login-logo" />
         </div>
         <p class="account-login-wordmark">OpenBot</p>
         <h1 id="account-login-title">

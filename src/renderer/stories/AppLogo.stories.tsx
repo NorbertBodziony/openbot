@@ -13,6 +13,20 @@ const meta = {
   args: {
     variant: "production",
     animation: "blink",
+    interactive: true,
+  },
+  argTypes: {
+    variant: {
+      control: "select",
+      options: ["production", "dev", "preview"],
+    },
+    animation: {
+      control: "select",
+      options: ["none", "blink", "look-around", "surprised"],
+    },
+    interactive: {
+      control: "boolean",
+    },
   },
   parameters: { layout: "centered" },
   render: (args) => (
@@ -25,6 +39,17 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+export const InteractivePlayground: Story = {
+  render: (args) => (
+    <figure class="app-logo-gallery-item">
+      <div class="app-logo-gallery-preview">
+        <AppLogo {...args} class="app-logo-gallery-logo" />
+      </div>
+      <figcaption>Move the cursor · click to wink</figcaption>
+    </figure>
+  ),
+};
+
 export const AllAnimations: Story = {
   parameters: { controls: { exclude: ["animation"] } },
   render: (args) => (
@@ -32,7 +57,12 @@ export const AllAnimations: Story = {
       {ANIMATIONS.map(({ animation, label }) => (
         <figure class="app-logo-gallery-item">
           <div class="app-logo-gallery-preview">
-            <AppLogo variant={args.variant} animation={animation} class="app-logo-gallery-logo" />
+            <AppLogo
+              variant={args.variant}
+              animation={animation}
+              interactive={args.interactive}
+              class="app-logo-gallery-logo"
+            />
           </div>
           <figcaption>{label}</figcaption>
         </figure>

@@ -1452,10 +1452,6 @@ export function Conversation(props: ConversationProps) {
                                   onPreview={(attachment) => void previewAttachment(attachment)}
                                   onAttachmentAction={attachmentAction}
                                   onDownload={(attachment) => attachmentAction(attachment, "download")}
-                                  onRetry={() => {
-                                    const prompt = message.imageGeneration?.prompt?.trim();
-                                    if (prompt) void submitMessage(prompt);
-                                  }}
                                 />
                               </div>
                               <MessageActions

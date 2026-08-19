@@ -117,6 +117,58 @@ describe("MessageBody", () => {
     await fireEvent.click(reference);
     expect(onPreview).toHaveBeenCalledWith(attachments[0]);
   });
+
+  it("renders a Markdown table in an agent response without exposing its syntax", () => {
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-table",
+          author: "bot",
+          body: [
+            "Model comparison:",
+            "",
+            "| Model | Context | $/1M in |",
+            "| --- | --- | ---: |",
+            "| gpt-4o | 128k | $5.00 |",
+            "| claude-3.5 | 200k | $3.00 |",
+          ].join("\n"),
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByText("Model comparison:")).toBeInTheDocument();
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getAllByRole("columnheader")).toHaveLength(3);
+    expect(screen.getAllByRole("cell")).toHaveLength(6);
+    expect(screen.queryByText("| --- | --- | ---: |")).toBeNull();
+  });
+
+  it("keeps Markdown tables in user messages as plain text", () => {
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-user-table",
+          author: "you",
+          body: "| A | B |\n| --- | --- |\n| 1 | 2 |",
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getByText(/\| --- \| --- \|/u)).toBeInTheDocument();
+  });
 });
 
 describe("ImageGeneration", () => {
@@ -140,7 +192,7 @@ describe("ImageGeneration", () => {
       />
     ));
 
-    expect(screen.getByRole("status")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("img", { name: "Generating image" })).toHaveAttribute("aria-busy", "true");
     expect(screen.getByText("Generating image")).toBeInTheDocument();
     expect(
       document
@@ -172,8 +224,7 @@ describe("ImageGeneration", () => {
     expect(onDownload).toHaveBeenCalledWith(attachment);
   });
 
-  it("keeps the canvas and offers retry when the preview cannot load", async () => {
-    const onRetry = vi.fn();
+  it("shows the failure mark when the preview cannot load", async () => {
     render(() => (
       <ImageGeneration
         status="completed"
@@ -181,31 +232,33 @@ describe("ImageGeneration", () => {
         resolution="1024 × 1024"
         aspectRatio="square"
         attachment={attachment}
-        onRetry={onRetry}
       />
     ));
 
     await fireEvent.error(screen.getByAltText("A quiet observatory"));
     expect(screen.getByRole("alert")).toHaveTextContent("preview is unavailable");
-    await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(onRetry).toHaveBeenCalledOnce();
+    expect(screen.getByRole("img", { name: "Image unavailable" })).toBeInTheDocument();
+    expect(screen.getByText("×")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 
-  it("keeps the canvas for errors and offers an accessible retry", async () => {
-    const onRetry = vi.fn();
+  it.each([
+    ["failed", "Image generation failed"],
+    ["interrupted", "Image generation interrupted"],
+  ] as const)("shows a failure mark for %s without retry", (status, label) => {
     render(() => (
       <ImageGeneration
-        status="failed"
+        status={status}
         prompt="A quiet observatory"
         resolution="1024 × 1024"
         aspectRatio="landscape"
         error="Provider timeout"
-        onRetry={onRetry}
       />
     ));
 
     expect(screen.getByRole("alert")).toHaveTextContent("Provider timeout");
-    await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(onRetry).toHaveBeenCalledOnce();
+    expect(screen.getByRole("img", { name: label })).toBeInTheDocument();
+    expect(screen.getByText("×")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 });

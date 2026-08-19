@@ -12,7 +12,6 @@ export interface ImageGenerationProps {
   error?: string;
   onPreview?: (attachment: AttachmentSummary) => void;
   onDownload?: (attachment: AttachmentSummary) => void;
-  onRetry?: () => void;
 }
 
 export function ImageGeneration(props: ImageGenerationProps) {
@@ -33,6 +32,13 @@ export function ImageGeneration(props: ImageGenerationProps) {
       ? "The generated image preview is unavailable."
       : (props.error ??
         (props.status === "interrupted" ? "Image generation was interrupted." : "Image generation did not complete."));
+  const label = () => {
+    if (props.status === "generating") return "Generating image";
+    if (previewError() || previewUnavailable()) return "Image unavailable";
+    if (props.status === "interrupted") return "Image generation interrupted";
+    if (props.status === "failed") return "Image generation failed";
+    return "Generated image";
+  };
 
   return (
     <section
@@ -44,41 +50,27 @@ export function ImageGeneration(props: ImageGenerationProps) {
         },
       ]}
       aria-label={hasImage() ? "Generated image" : "Image generation"}
+      aria-live={props.status === "generating" ? "polite" : undefined}
     >
       <div class="image-generation-stage" style={`--image-generation-ratio: ${ratioValue(props.aspectRatio)}`}>
         <div
           class={["image-generation-canvas", { "image-generation-canvas-visible": !hasImage() }]}
-          role={props.status === "generating" ? "status" : undefined}
-          aria-live={props.status === "generating" ? "polite" : undefined}
+          role="img"
+          aria-label={label()}
           aria-busy={props.status === "generating" ? "true" : undefined}
         >
-          <div class="image-generation-dots" aria-hidden="true" />
-          <div class="image-generation-glow" aria-hidden="true" />
-          <div class="image-generation-canvas-content">
-            <div class="image-generation-topline">
-              <span class="image-generation-spark" aria-hidden="true">
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="M8 1.5 9.4 6.6 14.5 8l-5.1 1.4L8 14.5l-1.4-5.1L1.5 8l5.1-1.4L8 1.5Z" />
-                </svg>
+          <Show
+            when={!hasFailure()}
+            fallback={
+              <span class="image-generation-failure-mark" aria-hidden="true">
+                ×
               </span>
-              <span>
-                {props.status === "generating"
-                  ? "Generating image"
-                  : hasFailure()
-                    ? "Image unavailable"
-                    : "Image generation"}
-              </span>
-              <span class="image-generation-resolution">{props.resolution}</span>
-            </div>
-            <Show when={props.prompt}>
-              <p class="image-generation-prompt">“{props.prompt}”</p>
-            </Show>
-            <Show when={hasFailure()}>
-              <p class="image-generation-error" role="alert">
-                {failure()}
-              </p>
-            </Show>
-          </div>
+            }
+          >
+            <div class="image-generation-dots" aria-hidden="true" />
+            <div class="image-generation-glow" aria-hidden="true" />
+          </Show>
+          <span class="image-generation-resolution">{props.resolution}</span>
         </div>
         <Show when={Boolean(props.attachment?.previewUrl) && !previewError()}>
           <button
@@ -97,6 +89,17 @@ export function ImageGeneration(props: ImageGenerationProps) {
           </button>
         </Show>
       </div>
+      <div class="image-generation-meta">
+        <span class="image-generation-label">{label()}</span>
+        <Show when={props.prompt}>
+          <span class="image-generation-prompt">“{props.prompt}”</span>
+        </Show>
+        <Show when={hasFailure()}>
+          <span class="image-generation-error" role="alert">
+            {failure()}
+          </span>
+        </Show>
+      </div>
       <Show when={hasImage() && props.attachment && props.onDownload}>
         <div class="image-generation-actions">
           <button
@@ -109,11 +112,6 @@ export function ImageGeneration(props: ImageGenerationProps) {
             Download
           </button>
         </div>
-      </Show>
-      <Show when={hasFailure() && props.onRetry}>
-        <button type="button" class="image-generation-retry" onClick={props.onRetry}>
-          Try again
-        </button>
       </Show>
     </section>
   );

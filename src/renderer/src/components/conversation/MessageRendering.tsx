@@ -7,6 +7,7 @@ import type { BotMessage, BotProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import { AttachmentCards } from "./AttachmentCards";
 import { CheckIcon, CopyIcon, MoreIcon, PlusIcon, ReactionIcon, ReplyIcon } from "./ConversationIcons";
+import { DataTable, type MessageContentBlock, messageContentBlocks } from "./DataTable";
 import { ImageGeneration } from "./ImageGeneration";
 import { RichMessageText } from "./RichMessageText";
 
@@ -148,7 +149,6 @@ export function MessageBody(props: {
   onPreview: (attachment: AttachmentSummary) => void;
   onAttachmentAction: (attachment: AttachmentSummary, action: "open" | "reveal" | "download") => void;
   onDownload?: (attachment: AttachmentSummary) => void;
-  onRetry?: () => void;
 }) {
   const standaloneAttachments = createMemo(() => {
     const referencedIds = attachmentReferenceIds(props.message.body);
@@ -156,6 +156,18 @@ export function MessageBody(props: {
     return (props.message.attachments ?? []).filter(
       (attachment) => !referencedIds.has(attachment.id) && attachment.id !== generatedAttachmentId,
     );
+  });
+  const contentBlocks = createMemo<MessageContentBlock[]>(() =>
+    props.message.author === "bot"
+      ? messageContentBlocks(props.message.body, props.message.streaming === true)
+      : [{ type: "text", text: props.message.body }],
+  );
+  const lastTextBlockIndex = createMemo(() => {
+    const blocks = contentBlocks();
+    for (let index = blocks.length - 1; index >= 0; index -= 1) {
+      if (blocks[index]?.type === "text") return index;
+    }
+    return -1;
   });
 
   return (
@@ -169,21 +181,31 @@ export function MessageBody(props: {
         )}
       </Show>
       <Show when={props.message.body}>
-        <p class="message-copy">
-          <RichMessageText
-            body={props.message.body}
-            bots={props.bots}
-            attachments={props.message.attachments}
-            citations={props.message.citations}
-            onSelectAgent={props.onSelectAgent}
-            onOpenLink={props.onOpenLink}
-            onOpenAttachment={(attachment) =>
-              attachment.previewKind === "none"
-                ? props.onAttachmentAction(attachment, "open")
-                : props.onPreview(attachment)
-            }
-          />
-        </p>
+        <div class="message-content-blocks">
+          <For each={contentBlocks()}>
+            {(block, index) => {
+              if (block.type === "table") return <DataTable table={block} />;
+              return (
+                <p class="message-copy">
+                  <RichMessageText
+                    body={block.text}
+                    bots={props.bots}
+                    attachments={props.message.attachments}
+                    citations={props.message.citations}
+                    onSelectAgent={props.onSelectAgent}
+                    onOpenLink={props.onOpenLink}
+                    onOpenAttachment={(attachment) =>
+                      attachment.previewKind === "none"
+                        ? props.onAttachmentAction(attachment, "open")
+                        : props.onPreview(attachment)
+                    }
+                    showCitationFooter={index() === lastTextBlockIndex()}
+                  />
+                </p>
+              );
+            }}
+          </For>
+        </div>
       </Show>
       <Show when={props.message.imageGeneration}>
         {(imageGeneration) => (
@@ -196,7 +218,6 @@ export function MessageBody(props: {
             error={imageGeneration().error}
             onPreview={props.onPreview}
             onDownload={props.onDownload}
-            onRetry={props.onRetry}
           />
         )}
       </Show>

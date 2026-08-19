@@ -15,6 +15,7 @@ export function RichMessageText(props: {
   onSelectAgent: (botId: string) => void;
   onOpenLink: (url: string) => void;
   onOpenAttachment?: (attachment: AttachmentSummary) => void;
+  showCitationFooter?: boolean;
 }) {
   const citationsByNumber = createMemo(
     () => new Map((props.citations ?? []).map((citation) => [citation.number, citation])),
@@ -150,7 +151,7 @@ export function RichMessageText(props: {
           return part.text;
         }}
       </For>
-      <Show when={citations().length > 0}>
+      <Show when={props.showCitationFooter !== false && citations().length > 0}>
         <span class="message-citation-footer">
           <For each={citations()}>
             {(citation) => (
