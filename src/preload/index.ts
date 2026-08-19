@@ -91,6 +91,7 @@ const openbotApi: OpenBotDesktopApi = {
   openUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.openUrl, url),
   auth: {
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.authGetState),
+    retry: () => ipcRenderer.invoke(IPC_CHANNELS.authRetry),
     requestEmailCode: (email) => ipcRenderer.invoke(IPC_CHANNELS.authRequestEmailCode, email),
     verifyEmailCode: (challengeId, code) =>
       ipcRenderer.invoke(IPC_CHANNELS.authVerifyEmailCode, { challengeId, code }),

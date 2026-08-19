@@ -211,6 +211,7 @@ function registerIpcHandlers(
     return shell.openExternal(url.toString());
   });
   handleTrusted(IPC_CHANNELS.authGetState, () => centralAuth.getState());
+  handleTrusted(IPC_CHANNELS.authRetry, () => centralAuth.retry());
   handleTrusted(IPC_CHANNELS.authRequestEmailCode, (email: unknown) =>
     centralAuth.requestEmailCode(requireString(email, "email", INPUT_LIMITS.email)),
   );
@@ -784,7 +785,7 @@ if (!hasSingleInstanceLock) {
         decrypt: (value) => safeStorage.decryptString(value),
       });
       centralAuthManager.on("changed", forwardCentralAuth);
-      await centralAuthManager.initialize();
+      void centralAuthManager.initialize();
       const store = new BotStore(app.getPath("userData"), homedir());
       await store.initialize();
       mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot, store.database);

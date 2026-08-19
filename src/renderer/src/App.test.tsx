@@ -2,6 +2,7 @@ import type {
   AgentEvent,
   AttachmentImportEvent,
   BotSummary,
+  CentralAuthState,
   ConversationSnapshot,
   DirectConversationSnapshot,
   DirectMessageRealtimeEvent,
@@ -16,6 +17,7 @@ import { App } from "./App";
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
 let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
 let emitUpdateStatus: ((status: UpdateStatus) => void) | undefined;
+let emitAuth: ((state: CentralAuthState) => void) | undefined;
 let emitPresence: ((snapshot: TeamPresenceSnapshot) => void) | undefined;
 let emitDirectMessage: ((event: DirectMessageRealtimeEvent) => void) | undefined;
 let emitDirectTyping: ((event: DirectTypingRealtimeEvent) => void) | undefined;
@@ -68,6 +70,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent = undefined;
     emitAttachmentImport = undefined;
     emitUpdateStatus = undefined;
+    emitAuth = undefined;
     emitPresence = undefined;
     emitDirectMessage = undefined;
     emitDirectTyping = undefined;
@@ -98,6 +101,7 @@ describe("OpenBot connected desktop shell", () => {
             status: "signed_in",
             user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
           }),
+          retry: vi.fn().mockResolvedValue({ status: "signed_out" }),
           requestEmailCode: vi.fn().mockResolvedValue({
             status: "code_sent",
             challengeId: "challenge-1",
@@ -113,7 +117,10 @@ describe("OpenBot connected desktop shell", () => {
             user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
           }),
           logout: vi.fn().mockResolvedValue({ status: "signed_out" }),
-          onEvent: vi.fn().mockReturnValue(() => undefined),
+          onEvent: vi.fn((listener) => {
+            emitAuth = listener;
+            return () => undefined;
+          }),
         },
         agent: {
           getStatus: vi.fn().mockResolvedValue({
@@ -501,6 +508,43 @@ describe("OpenBot connected desktop shell", () => {
     expect(
       await screen.findByRole("dialog", { name: "Where will OpenBot run?" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows a soft loader until the account API becomes available", async () => {
+    vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({ status: "loading" });
+    render(() => <App />);
+
+    expect(await screen.findByRole("dialog", { name: "Connecting…" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Waiting for API…");
+    expect(screen.queryByRole("textbox", { name: "Email" })).not.toBeInTheDocument();
+
+    emitAuth?.({ status: "signed_out" });
+    expect(await screen.findByRole("dialog", { name: "Sign in" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Email" })).toBeInTheDocument();
+  });
+
+  it("lets the user retry after the account API startup timeout", async () => {
+    let finishRetry: ((state: CentralAuthState) => void) | undefined;
+    vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({
+      status: "error",
+      code: "auth_api_unavailable",
+      message: "OpenBot could not reach the account service.",
+    });
+    vi.mocked(window.openbot.auth.retry).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishRetry = resolve;
+      }),
+    );
+    render(() => <App />);
+
+    expect(await screen.findByRole("dialog", { name: "Couldn’t connect" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Email" })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(window.openbot.auth.retry).toHaveBeenCalledOnce();
+    expect(screen.getByRole("dialog", { name: "Connecting…" })).toBeInTheDocument();
+    finishRetry?.({ status: "signed_out" });
+    expect(await screen.findByRole("dialog", { name: "Sign in" })).toBeInTheDocument();
   });
 
   it("requires account sign-in before opening a completed workspace", async () => {

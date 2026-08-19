@@ -939,6 +939,11 @@ export function App() {
     setCentralAuth(await window.openbot.auth.requestEmailCode(email));
   }
 
+  async function retryCentralAccount(): Promise<void> {
+    setCentralAuth({ status: "loading" });
+    setCentralAuth(await window.openbot.auth.retry());
+  }
+
   async function verifyEmailCode(challengeId: string, code: string): Promise<void> {
     setCentralAuth(await window.openbot.auth.verifyEmailCode(challengeId, code));
   }
@@ -1150,6 +1155,7 @@ export function App() {
         fallback={
           <AccountLogin
             state={centralAuth()}
+            onRetry={retryCentralAccount}
             onRequestEmailCode={requestEmailCode}
             onVerifyEmailCode={verifyEmailCode}
             onReset={logoutCentralAccount}

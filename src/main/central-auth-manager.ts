@@ -16,12 +16,21 @@ interface CentralAuthManagerOptions {
   encrypt: (value: string) => Buffer;
   decrypt: (value: Buffer) => string;
   fetch?: typeof fetch;
+  startupRetryWindowMs?: number;
+  startupRequestTimeoutMs?: number;
+  startupRetryDelaysMs?: readonly number[];
 }
 
 interface SessionResponse {
   sessionToken: string;
   user: CentralAuthUser;
 }
+
+const STARTUP_RETRY_WINDOW_MS = 30_000;
+const STARTUP_REQUEST_TIMEOUT_MS = 3_000;
+const STARTUP_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000] as const;
+const AUTH_API_UNAVAILABLE_MESSAGE =
+  "OpenBot could not reach the account service. Check that the API is running, then try again.";
 
 export interface ProvisionedTeamTunnel {
   tunnelId: string;
@@ -35,10 +44,17 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   readonly #options: Required<CentralAuthManagerOptions>;
   #state: CentralAuthState = { status: "loading" };
   #sessionToken: string | null = null;
+  #initializationPromise: Promise<CentralAuthState> | null = null;
 
   constructor(options: CentralAuthManagerOptions) {
     super();
-    this.#options = { ...options, fetch: options.fetch ?? fetch };
+    this.#options = {
+      ...options,
+      fetch: options.fetch ?? fetch,
+      startupRetryWindowMs: options.startupRetryWindowMs ?? STARTUP_RETRY_WINDOW_MS,
+      startupRequestTimeoutMs: options.startupRequestTimeoutMs ?? STARTUP_REQUEST_TIMEOUT_MS,
+      startupRetryDelaysMs: options.startupRetryDelaysMs ?? STARTUP_RETRY_DELAYS_MS,
+    };
   }
 
   getState(): CentralAuthState {
@@ -124,7 +140,22 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     return result;
   }
 
-  async initialize(): Promise<CentralAuthState> {
+  initialize(): Promise<CentralAuthState> {
+    if (this.#initializationPromise) return this.#initializationPromise;
+    const pending = this.#initialize().catch((error) => this.#setInitializationError(error));
+    this.#initializationPromise = pending;
+    void pending.then(() => {
+      if (this.#initializationPromise === pending) this.#initializationPromise = null;
+    });
+    return pending;
+  }
+
+  retry(): Promise<CentralAuthState> {
+    return this.initialize();
+  }
+
+  async #initialize(): Promise<CentralAuthState> {
+    this.#setState({ status: "loading" });
     try {
       const encrypted = Buffer.from(await readFile(this.#options.storagePath, "utf8"), "base64");
       this.#sessionToken = this.#options.decrypt(encrypted);
@@ -132,21 +163,24 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       if (!isMissing(error)) {
         await this.#clearStoredSession();
       }
+    }
+    if (!this.#sessionToken) {
+      await this.#startupRequest("/health/live", { method: "GET" });
       return this.#setState({ status: "signed_out" });
     }
     try {
-      const user = await this.#authorizedRequest<CentralAuthUser>("/v1/me", { method: "GET" });
+      const user = await this.#startupRequest<CentralAuthUser>(
+        "/v1/me",
+        { method: "GET" },
+        this.#sessionToken,
+      );
       return this.#setState({ status: "signed_in", user: this.#resolveUserAvatar(user) });
     } catch (error) {
       if (error instanceof AuthApiError && error.status === 401) {
         await this.#clearStoredSession();
         return this.#setState({ status: "signed_out" });
       }
-      return this.#setState({
-        status: "error",
-        code: "auth_api_unavailable",
-        message: errorMessage(error, "OpenBot could not reach the account service."),
-      });
+      throw error;
     }
   }
 
@@ -249,6 +283,38 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     return (await response.json()) as T;
   }
 
+  async #startupRequest<T>(path: string, init: RequestInit, sessionToken?: string): Promise<T> {
+    const deadline = Date.now() + this.#options.startupRetryWindowMs;
+    let retryIndex = 0;
+    while (true) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) throw new Error(AUTH_API_UNAVAILABLE_MESSAGE);
+      try {
+        return await this.#request<T>(
+          path,
+          {
+            ...init,
+            headers: sessionToken
+              ? { ...init.headers, Authorization: `Bearer ${sessionToken}` }
+              : init.headers,
+          },
+          Math.max(1, Math.min(this.#options.startupRequestTimeoutMs, remainingMs)),
+        );
+      } catch (error) {
+        if (!isTransientStartupError(error)) throw error;
+        const delayMs = Math.min(
+          this.#options.startupRetryDelaysMs[
+            Math.min(retryIndex, this.#options.startupRetryDelaysMs.length - 1)
+          ],
+          Math.max(0, deadline - Date.now()),
+        );
+        if (delayMs <= 0) throw error;
+        await delay(delayMs);
+        retryIndex += 1;
+      }
+    }
+  }
+
   #authorizedRequest<T>(path: string, init: RequestInit, timeoutMs?: number): Promise<T> {
     if (!this.#sessionToken) throw new AuthApiError(401, "unauthorized", "Sign in is required.");
     return this.#request<T>(
@@ -291,6 +357,16 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     const copy = this.getState();
     this.emit("changed", copy);
     return copy;
+  }
+
+  #setInitializationError(error: unknown): CentralAuthState {
+    const apiError = error instanceof AuthApiError ? error : null;
+    const unavailable = !apiError || apiError.status >= 500;
+    return this.#setState({
+      status: "error",
+      code: unavailable ? "auth_api_unavailable" : apiError.code,
+      message: unavailable ? AUTH_API_UNAVAILABLE_MESSAGE : apiError.message,
+    });
   }
 }
 
@@ -353,4 +429,12 @@ function isMissing(error: unknown): error is NodeJS.ErrnoException {
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+function isTransientStartupError(error: unknown): boolean {
+  return !(error instanceof AuthApiError) || error.status >= 500;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

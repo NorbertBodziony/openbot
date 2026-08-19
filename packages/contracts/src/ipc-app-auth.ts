@@ -65,6 +65,7 @@ export type CentralAuthState =
 
 export interface CentralAuthDesktopApi {
   getState: () => Promise<CentralAuthState>;
+  retry: () => Promise<CentralAuthState>;
   requestEmailCode: (email: string) => Promise<CentralAuthState>;
   verifyEmailCode: (challengeId: string, code: string) => Promise<CentralAuthState>;
   updateAvatar: (image: AvatarImageInput | null) => Promise<CentralAuthState>;

@@ -147,6 +147,53 @@ textarea {
   text-align: left;
 }
 
+.account-login-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 26px;
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 12px;
+}
+
+.account-login-spinner {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid rgba(255, 255, 255, 0.16);
+  border-top-color: rgba(255, 255, 255, 0.72);
+  border-radius: 50%;
+  animation: account-login-spin 900ms linear infinite;
+}
+
+.account-login-retry {
+  min-width: 132px;
+  height: 44px;
+  margin-top: 22px;
+  border: 0;
+  border-radius: 12px;
+  background: #f4f4f2;
+  color: #111;
+  font-size: 13px;
+  font-weight: 650;
+  transition:
+    background-color 140ms ease,
+    transform 100ms ease;
+}
+
+.account-login-retry:hover {
+  background: #fff;
+}
+
+.account-login-retry:active {
+  transform: scale(0.985);
+}
+
+@keyframes account-login-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .account-login-form {
   width: 100%;
   display: grid;
@@ -852,6 +899,12 @@ textarea {
       opacity: 0;
       transform: translateY(6px);
     }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-login-spinner {
+    animation: none;
   }
 }
 

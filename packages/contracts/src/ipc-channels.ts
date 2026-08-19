@@ -7,6 +7,7 @@ export const IPC_CHANNELS = {
   openExternal: "app:open-external",
   openUrl: "app:open-url",
   authGetState: "auth:get-state",
+  authRetry: "auth:retry",
   authRequestEmailCode: "auth:request-email-code",
   authVerifyEmailCode: "auth:verify-email-code",
   authUpdateAvatar: "auth:update-avatar",

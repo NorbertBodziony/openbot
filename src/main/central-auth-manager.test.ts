@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isString } from "@openbot/contracts/runtime-values";
@@ -8,6 +8,7 @@ import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manage
 const roots: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   const { rm } = await import("node:fs/promises");
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -97,21 +98,22 @@ describe("CentralAuthManager", () => {
     ).resolves.toMatchObject({
       apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
     });
-    expect(requests[1]?.body).toEqual({ challengeId: "challenge-1", code: "ABCD-EFGH" });
+    expect(requests[0]).toMatchObject({ path: "/health/live", authorization: null });
+    expect(requests[2]?.body).toEqual({ challengeId: "challenge-1", code: "ABCD-EFGH" });
     expect(await readFile(storagePath, "utf8")).not.toContain("session-secret");
-    expect(requests[2]).toMatchObject({
+    expect(requests[3]).toMatchObject({
       path: "/v1/team-auth/ticket",
       authorization: "Bearer session-secret",
     });
-    expect(requests[3]).toMatchObject({
+    expect(requests[4]).toMatchObject({
       path: "/v1/team-auth/redeem",
       authorization: null,
     });
-    expect(requests[4]).toMatchObject({
+    expect(requests[5]).toMatchObject({
       path: "/v1/team-invitations/email",
       authorization: "Bearer session-secret",
     });
-    expect(requests[5]).toMatchObject({
+    expect(requests[6]).toMatchObject({
       path: "/v1/team-tunnels/provision",
       authorization: "Bearer session-secret",
       body: { serverId, serverName: "Studio Mac", apiPort: 43_123, vncEnabled: true },
@@ -149,6 +151,125 @@ describe("CentralAuthManager", () => {
       challengeId: "challenge-1",
       error: "The sign-in code is incorrect.",
     });
+  });
+
+  it("waits for the health endpoint before showing a signed-out state", async () => {
+    const root = await createRoot();
+    const startedAt = Date.now();
+    const attempts: number[] = [];
+    const fetchMock = vi
+      .fn(async (input: string | URL | Request) => {
+        attempts.push(Date.now() - startedAt);
+        expect(new URL(input.toString()).pathname).toBe("/health/live");
+        if (attempts.length < 3) throw new TypeError("fetch failed");
+        return Response.json({ service: "openbot-auth-api", status: "ok" });
+      })
+      .mockName("health fetch");
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: fetchMock as typeof fetch,
+      startupRetryWindowMs: 100,
+      startupRequestTimeoutMs: 20,
+      startupRetryDelaysMs: [10, 20],
+    });
+
+    const initialization = manager.initialize();
+    expect(manager.getState()).toEqual({ status: "loading" });
+
+    await expect(initialization).resolves.toEqual({ status: "signed_out" });
+    expect(attempts).toHaveLength(3);
+    expect(attempts[1] - attempts[0]).toBeGreaterThanOrEqual(8);
+    expect(attempts[2] - attempts[1]).toBeGreaterThanOrEqual(18);
+  });
+
+  it("retries session restoration without discarding the stored token", async () => {
+    const root = await createRoot();
+    const storagePath = join(root, "session.bin");
+    await writeFile(storagePath, Buffer.from("session-secret").toString("base64"));
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(
+        Response.json({
+          id: "user-1",
+          email: "person@example.com",
+          name: null,
+          avatarUrl: null,
+        }),
+      );
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath,
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: fetchMock as typeof fetch,
+      startupRetryWindowMs: 50,
+      startupRequestTimeoutMs: 10,
+      startupRetryDelaysMs: [1],
+    });
+
+    const initialization = manager.initialize();
+
+    await expect(initialization).resolves.toMatchObject({ status: "signed_in" });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer session-secret");
+    }
+    expect(await readFile(storagePath, "utf8")).not.toBe("");
+  });
+
+  it("handles an unauthorized stored session without retrying", async () => {
+    const root = await createRoot();
+    const storagePath = join(root, "session.bin");
+    await writeFile(storagePath, Buffer.from("expired-session").toString("base64"));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json(
+          { error: { code: "unauthorized", message: "The session has expired." } },
+          { status: 401 },
+        ),
+      );
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath,
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: fetchMock as typeof fetch,
+    });
+
+    await expect(manager.initialize()).resolves.toEqual({ status: "signed_out" });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await expect(readFile(storagePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("shows an unavailable error after 30 seconds and supports a shared manual retry", async () => {
+    const root = await createRoot();
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: fetchMock as typeof fetch,
+      startupRetryWindowMs: 25,
+      startupRequestTimeoutMs: 5,
+      startupRetryDelaysMs: [5, 10],
+    });
+
+    const initialization = manager.initialize();
+    expect(manager.retry()).toBe(initialization);
+    await expect(initialization).resolves.toMatchObject({
+      status: "error",
+      code: "auth_api_unavailable",
+      message: expect.stringContaining("Check that the API is running"),
+    });
+
+    fetchMock.mockResolvedValueOnce(Response.json({ service: "openbot-auth-api", status: "ok" }));
+    await expect(manager.retry()).resolves.toEqual({ status: "signed_out" });
   });
 
   it("uploads and removes the signed-in account avatar", async () => {
