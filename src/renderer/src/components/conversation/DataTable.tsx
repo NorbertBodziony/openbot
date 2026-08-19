@@ -9,12 +9,18 @@ export interface DataTableBlock {
   rows: string[][];
 }
 
+export interface ComparisonTableBlock {
+  type: "comparison-table";
+  headers: string[];
+  rows: string[][];
+}
+
 export interface MessageTextBlock {
   type: "text";
   text: string;
 }
 
-export type MessageContentBlock = DataTableBlock | MessageTextBlock;
+export type MessageContentBlock = ComparisonTableBlock | DataTableBlock | MessageTextBlock;
 
 export function DataTable(props: { table: DataTableBlock }) {
   return (
@@ -25,7 +31,7 @@ export function DataTable(props: { table: DataTableBlock }) {
             <For each={props.table.headers}>
               {(header, index) => (
                 <th scope="col" data-align={props.table.alignments[index()]}>
-                  {header}
+                  <span class="message-data-table-cell-text">{header}</span>
                 </th>
               )}
             </For>
@@ -35,7 +41,13 @@ export function DataTable(props: { table: DataTableBlock }) {
           <For each={props.table.rows}>
             {(row) => (
               <tr>
-                <For each={row}>{(cell, index) => <td data-align={props.table.alignments[index()]}>{cell}</td>}</For>
+                <For each={row}>
+                  {(cell, index) => (
+                    <td data-align={props.table.alignments[index()]}>
+                      <span class="message-data-table-cell-text">{cell}</span>
+                    </td>
+                  )}
+                </For>
               </tr>
             )}
           </For>
@@ -80,7 +92,7 @@ function parseTableAt(
   lines: string[],
   startIndex: number,
   incompleteLastLine: boolean,
-): { block: DataTableBlock; nextIndex: number } | null {
+): { block: ComparisonTableBlock | DataTableBlock; nextIndex: number } | null {
   if (startIndex + 2 >= lines.length) return null;
   if (incompleteLastLine && startIndex + 1 === lines.length - 1) return null;
 
@@ -111,6 +123,17 @@ function parseTableAt(
   }
   if (rows.length === 0) return null;
 
+  if (headers.length >= 3 && rows.every((row) => row.slice(1).every(isComparisonValue))) {
+    return {
+      block: {
+        type: "comparison-table",
+        headers,
+        rows,
+      },
+      nextIndex,
+    };
+  }
+
   return {
     block: {
       type: "table",
@@ -120,6 +143,10 @@ function parseTableAt(
     },
     nextIndex,
   };
+}
+
+function isComparisonValue(value: string): boolean {
+  return value === "✓" || value === "—";
 }
 
 function parseRow(line: string): string[] | null {

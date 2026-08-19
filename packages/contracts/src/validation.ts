@@ -2,6 +2,8 @@ import { INPUT_LIMITS } from "./input-limits";
 
 const DOMAIN_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/iu;
 const EMAIL_LOCAL_PART_PATTERN = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/u;
+export const ONE_TIME_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+export const ONE_TIME_CODE_LENGTH = 8;
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const TEAM_HOST_PATTERN = /^(vnc-)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)-([a-z2-7]{8})-host\.openbot\.run$/u;
 const TEAM_HOST_SLUG_MIN_LENGTH = 6;
@@ -29,6 +31,14 @@ export function normalizeEmailAddress(value: string): string | null {
     return null;
   }
   return normalized;
+}
+
+export function normalizeOneTimeCode(value: string): string | null {
+  const normalized = value.toUpperCase().replace(/[\s-]/gu, "");
+  return normalized.length === ONE_TIME_CODE_LENGTH &&
+    [...normalized].every((character) => ONE_TIME_CODE_ALPHABET.includes(character))
+    ? normalized
+    : null;
 }
 
 export function isUuidV4(value: string): boolean {

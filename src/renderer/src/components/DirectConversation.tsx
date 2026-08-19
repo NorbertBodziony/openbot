@@ -1,8 +1,13 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { DirectConversationSnapshot, DirectMessage, TeamPresenceMember } from "@openbot/contracts/ipc";
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
-import { scrollToUnreadBoundary, UnreadMessagesBanner, UnreadMessagesDivider } from "./conversation/UnreadMessages";
+import {
+  scrollToUnreadBoundary,
+  UnreadMessagesBanner,
+  UnreadMessagesDivider,
+  unreadMessagesDividerIsVisible,
+} from "./conversation/UnreadMessages";
 import { TeamPersonAvatar, teamMemberName } from "./TeamPersonAvatar";
 import { TypingDots } from "./TypingDots";
 
@@ -24,17 +29,24 @@ export function DirectConversation(props: DirectConversationProps) {
   const [error, setError] = createSignal<string | null>(null);
   const [markingRead, setMarkingRead] = createSignal(false);
   const [showScrollToLatest, setShowScrollToLatest] = createSignal(false);
+  const [unreadDividerVisible, setUnreadDividerVisible] = createSignal(false);
   let messageList: HTMLDivElement | undefined;
   let unreadMessagesDivider: HTMLDivElement | undefined;
+  let unreadVisibilityFrame: number | undefined;
+  let currentUnreadCount = 0;
   let typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
   let stickToLatest = true;
   let lastThreadId: string | undefined;
 
   createEffect(
-    () =>
-      `${props.snapshot?.threadId ?? "none"}:${props.snapshot?.revision ?? -1}:${props.snapshot?.messages.length ?? 0}`,
-    () => {
-      const threadId = props.snapshot?.threadId;
+    () => ({
+      threadId: props.snapshot?.threadId,
+      revision: props.snapshot?.revision ?? -1,
+      messageCount: props.snapshot?.messages.length ?? 0,
+      unreadCount: props.snapshot?.readState?.unreadCount ?? 0,
+    }),
+    ({ threadId, unreadCount }) => {
+      currentUnreadCount = unreadCount;
       if (threadId !== lastThreadId) {
         lastThreadId = threadId;
         stickToLatest = true;
@@ -43,13 +55,21 @@ export function DirectConversation(props: DirectConversationProps) {
         if (!messageList) return;
         if (stickToLatest) messageList.scrollTop = messageList.scrollHeight;
         updateScrollState(messageList);
+        updateUnreadDividerVisibility();
       });
     },
   );
 
   onCleanup(() => {
     if (typingIdleTimer) clearTimeout(typingIdleTimer);
+    if (unreadVisibilityFrame !== undefined) cancelAnimationFrame(unreadVisibilityFrame);
     props.onTypingChange(false);
+  });
+
+  onSettled(() => {
+    const resizeObserver = new ResizeObserver(updateUnreadDividerVisibility);
+    if (messageList) resizeObserver.observe(messageList);
+    return () => resizeObserver.disconnect();
   });
 
   function updateText(value: string): void {
@@ -66,6 +86,25 @@ export function DirectConversation(props: DirectConversationProps) {
   function updateScrollState(element: HTMLElement): void {
     const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
     setShowScrollToLatest(remaining > 80);
+  }
+
+  function updateUnreadDividerVisibility(): void {
+    setUnreadDividerVisible(
+      Boolean(
+        currentUnreadCount > 0 &&
+          messageList &&
+          unreadMessagesDivider &&
+          unreadMessagesDividerIsVisible(messageList, unreadMessagesDivider),
+      ),
+    );
+  }
+
+  function scheduleUnreadDividerVisibilityUpdate(): void {
+    if (unreadVisibilityFrame !== undefined) cancelAnimationFrame(unreadVisibilityFrame);
+    unreadVisibilityFrame = requestAnimationFrame(() => {
+      unreadVisibilityFrame = undefined;
+      updateUnreadDividerVisibility();
+    });
   }
 
   async function send(): Promise<void> {
@@ -139,7 +178,7 @@ export function DirectConversation(props: DirectConversationProps) {
         </span>
       </header>
 
-      <Show when={(props.snapshot?.readState?.unreadCount ?? 0) > 0}>
+      <Show when={(props.snapshot?.readState?.unreadCount ?? 0) > 0 && !unreadDividerVisible()}>
         <UnreadMessagesBanner
           count={props.snapshot?.readState?.unreadCount ?? 0}
           busy={markingRead()}
@@ -156,6 +195,7 @@ export function DirectConversation(props: DirectConversationProps) {
           const element = event.currentTarget;
           stickToLatest = element.scrollHeight - element.scrollTop - element.clientHeight <= 80;
           updateScrollState(element);
+          updateUnreadDividerVisibility();
         }}
       >
         <Show when={showScrollToLatest()}>
@@ -189,7 +229,12 @@ export function DirectConversation(props: DirectConversationProps) {
                   return (
                     <>
                       <Show when={message.id === props.snapshot?.readState?.firstUnreadMessageId}>
-                        <UnreadMessagesDivider elementRef={(element) => (unreadMessagesDivider = element)} />
+                        <UnreadMessagesDivider
+                          elementRef={(element) => {
+                            unreadMessagesDivider = element;
+                            scheduleUnreadDividerVisibilityUpdate();
+                          }}
+                        />
                       </Show>
                       <article
                         class={["direct-message", { own: own(), grouped: grouped() }]}

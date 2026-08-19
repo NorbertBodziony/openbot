@@ -46,6 +46,31 @@ export const WithReplyContext: Story = {
   },
 };
 
+export const WithSelectedTextInstruction: Story = {
+  args: {
+    message: {
+      ...message,
+      id: "message-selected-text-instruction",
+      author: "you",
+      body: "Make this more concise.\n\n> The selected sentence keeps all of the original context.",
+      replyToMessageId: "message-reference",
+      status: undefined,
+      attachments: [],
+    },
+    referencedMessage: {
+      id: "message-reference",
+      author: "bot",
+      body: "A longer agent response containing the selected sentence and supporting context.",
+      time: "09:55",
+    },
+  },
+  render: (storyArgs) => (
+    <div class="user-bubble" style={{ width: "360px", "max-width": "calc(100vw - 32px)" }}>
+      <MessageBody {...storyArgs} />
+    </div>
+  ),
+};
+
 export const AttachmentOnly: Story = {
   args: {
     message: { ...message, body: "", status: undefined },
@@ -58,8 +83,6 @@ export const DataTable: Story = {
       ...message,
       id: "message-data-table",
       body: [
-        "Current model pricing:",
-        "",
         "| Model | Context | $/1M in |",
         "| --- | --- | ---: |",
         "| gpt-4o | 128k | $5.00 |",
@@ -71,7 +94,7 @@ export const DataTable: Story = {
     },
   },
   render: (storyArgs) => (
-    <div class="bot-bubble" style={{ width: "680px", "max-width": "calc(100vw - 32px)" }}>
+    <div class="bot-bubble" style={{ width: "460px", "max-width": "calc(100vw - 32px)" }}>
       <MessageBody {...storyArgs} />
     </div>
   ),
@@ -104,6 +127,63 @@ export const DataTableNarrow: Story = {
   ),
   play: async ({ canvas }) => {
     const region = canvas.getByRole("region", { name: "Data table" });
+    await expect(region.scrollWidth).toBeGreaterThan(region.clientWidth);
+  },
+};
+
+export const ComparisonTable: Story = {
+  args: {
+    message: {
+      ...message,
+      id: "message-comparison-table",
+      body: [
+        "| Feature | Personal | Enterprise |",
+        "| --- | --- | --- |",
+        "| Unlimited projects | ✓ | ✓ |",
+        "| All components | ✓ | ✓ |",
+        "| Team-wide usage | — | ✓ |",
+        "| Priority support | — | ✓ |",
+      ].join("\n"),
+      status: undefined,
+      attachments: [],
+    },
+  },
+  render: (storyArgs) => (
+    <div class="bot-bubble" style={{ width: "460px", "max-width": "calc(100vw - 32px)" }}>
+      <MessageBody {...storyArgs} />
+    </div>
+  ),
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole("region", { name: "Comparison table" })).toBeInTheDocument();
+    await expect(canvas.getAllByRole("columnheader")).toHaveLength(3);
+    await expect(canvas.getAllByText("✓")).toHaveLength(6);
+    await expect(canvas.getAllByText("—")).toHaveLength(2);
+  },
+};
+
+export const ComparisonTableNarrow: Story = {
+  args: {
+    message: {
+      ...message,
+      id: "message-comparison-table-narrow",
+      body: [
+        "| Feature | Free | Personal | Business | Enterprise |",
+        "| --- | --- | --- | --- | --- |",
+        "| Unlimited projects | — | ✓ | ✓ | ✓ |",
+        "| Team-wide usage | — | — | ✓ | ✓ |",
+        "| Priority support | — | — | — | ✓ |",
+      ].join("\n"),
+      status: undefined,
+      attachments: [],
+    },
+  },
+  render: (storyArgs) => (
+    <div class="bot-bubble" style={{ width: "320px", "max-width": "calc(100vw - 32px)" }}>
+      <MessageBody {...storyArgs} />
+    </div>
+  ),
+  play: async ({ canvas }) => {
+    const region = canvas.getByRole("region", { name: "Comparison table" });
     await expect(region.scrollWidth).toBeGreaterThan(region.clientWidth);
   },
 };

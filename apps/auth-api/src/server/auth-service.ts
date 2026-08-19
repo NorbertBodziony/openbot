@@ -1,10 +1,14 @@
-import { isUuidV4, normalizeEmailAddress } from "@openbot/contracts/validation";
+import {
+  isUuidV4,
+  normalizeEmailAddress,
+  normalizeOneTimeCode as normalizeSharedOneTimeCode,
+  ONE_TIME_CODE_ALPHABET,
+  ONE_TIME_CODE_LENGTH,
+} from "@openbot/contracts/validation";
 
 import { randomToken, sha256 } from "./crypto";
 import type { AuthRepository, AuthUser, EmailCodeDelivery, EmailVerificationResult } from "./types";
 
-const CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-const CODE_LENGTH = 8;
 const CHALLENGE_TTL_MS = 10 * 60_000;
 const RESEND_COOLDOWN_MS = 60_000;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
@@ -21,6 +25,7 @@ interface AuthServiceOptions {
 export interface EmailSignInStart {
   challengeId: string;
   expiresAt: number;
+  resendAt: number;
   developmentCode?: string;
 }
 
@@ -85,6 +90,7 @@ export class AuthService {
     return {
       challengeId,
       expiresAt,
+      resendAt: now + RESEND_COOLDOWN_MS,
       ...(this.#exposeDevelopmentCode ? { developmentCode: code } : {}),
     };
   }
@@ -217,15 +223,15 @@ export class AuthServiceError extends Error {
 }
 
 export function generateOneTimeCode(): string {
-  const bytes = new Uint8Array(CODE_LENGTH);
+  const bytes = new Uint8Array(ONE_TIME_CODE_LENGTH);
   crypto.getRandomValues(bytes);
-  const raw = [...bytes].map((byte) => CODE_ALPHABET[byte & 31]).join("");
+  const raw = [...bytes].map((byte) => ONE_TIME_CODE_ALPHABET[byte & 31]).join("");
   return `${raw.slice(0, 4)}-${raw.slice(4)}`;
 }
 
 export function normalizeOneTimeCode(value: string): string {
-  const normalized = value.toUpperCase().replace(/[\s-]/gu, "");
-  if (normalized.length !== CODE_LENGTH || [...normalized].some((character) => !CODE_ALPHABET.includes(character))) {
+  const normalized = normalizeSharedOneTimeCode(value);
+  if (!normalized) {
     throw new AuthServiceError(400, "invalid_sign_in_code", "The sign-in code is invalid.");
   }
   return normalized;

@@ -5,6 +5,7 @@ import {
   isUuidV4,
   isValidHostname,
   normalizeEmailAddress,
+  normalizeOneTimeCode,
   slugifyTeamServerName,
 } from "./validation";
 
@@ -16,6 +17,13 @@ describe("shared boundary validation", () => {
   it("rejects malformed email addresses", () => {
     expect(normalizeEmailAddress("user@localhost")).toBeNull();
     expect(normalizeEmailAddress("user@@example.com")).toBeNull();
+  });
+
+  it("normalizes valid one-time codes and rejects ambiguous characters", () => {
+    expect(normalizeOneTimeCode("abcd-efgh")).toBe("ABCDEFGH");
+    expect(normalizeOneTimeCode("ABCD EFGH")).toBe("ABCDEFGH");
+    expect(normalizeOneTimeCode("ABCD-EFG0")).toBeNull();
+    expect(normalizeOneTimeCode("ABC-DEFG")).toBeNull();
   });
 
   it("supports public domains and local SMTP hostnames", () => {

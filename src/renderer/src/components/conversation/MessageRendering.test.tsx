@@ -169,6 +169,65 @@ describe("MessageBody", () => {
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.getByText(/\| --- \| --- \|/u)).toBeInTheDocument();
   });
+
+  it("renders a selected-text instruction as a compact quote while preserving reply context", () => {
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-selection-reply",
+          author: "you",
+          body: "Make this more concise.\n\n> This is the exact selected sentence.",
+          replyToMessageId: "message-agent-source",
+          time: "10:01",
+        }}
+        referencedMessage={{
+          id: "message-agent-source",
+          author: "bot",
+          body: "A longer answer containing this exact selected sentence.",
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByText("Make this more concise.", { selector: ".message-copy" })).toBeInTheDocument();
+    expect(screen.getByText("This is the exact selected sentence.", { selector: "blockquote" })).toBeInTheDocument();
+    expect(screen.getByText("A longer answer containing this exact selected sentence.")).toBeInTheDocument();
+    expect(screen.queryByText(/^> This is/u)).toBeNull();
+  });
+
+  it("renders a Markdown feature matrix as a comparison table", () => {
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-comparison-table",
+          author: "bot",
+          body: [
+            "Plan comparison:",
+            "",
+            "| Feature | Personal | Enterprise |",
+            "| --- | --- | --- |",
+            "| Unlimited projects | ✓ | ✓ |",
+            "| Priority support | — | ✓ |",
+          ].join("\n"),
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByText("Plan comparison:")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Comparison table" })).toBeInTheDocument();
+    expect(screen.queryByText("| --- | --- | --- |")).toBeNull();
+  });
 });
 
 describe("ImageGeneration", () => {
@@ -220,8 +279,30 @@ describe("ImageGeneration", () => {
     await fireEvent.click(preview);
     expect(onPreview).toHaveBeenCalledWith(attachment);
     expect(screen.getByAltText("A quiet observatory")).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    expect(screen.queryByText("Generated image")).toBeNull();
+    expect(screen.queryByText("A quiet observatory")).toBeNull();
+    expect(screen.getByRole("button", { name: "Download generated image" }).querySelector("svg")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Download generated image" }));
     expect(onDownload).toHaveBeenCalledWith(attachment);
+  });
+
+  it("uses the loaded image dimensions for the completed canvas", async () => {
+    render(() => (
+      <ImageGeneration status="completed" resolution="1024 × 1024" aspectRatio="square" attachment={attachment} />
+    ));
+
+    const image = screen.getByAltText("Generated image");
+    Object.defineProperties(image, {
+      naturalWidth: { configurable: true, value: 1536 },
+      naturalHeight: { configurable: true, value: 1024 },
+    });
+    await fireEvent.load(image);
+
+    expect(
+      document
+        .querySelector<HTMLElement>(".image-generation-stage")
+        ?.style.getPropertyValue("--image-generation-ratio"),
+    ).toBe("1536 / 1024");
   });
 
   it("shows the failure mark when the preview cannot load", async () => {

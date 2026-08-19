@@ -52,7 +52,13 @@ import {
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
 import { QueuePanel } from "./conversation/QueuePanel";
-import { scrollToUnreadBoundary, UnreadMessagesBanner, UnreadMessagesDivider } from "./conversation/UnreadMessages";
+import { MessageSelectionActions } from "./conversation/SelectionActions";
+import {
+  scrollToUnreadBoundary,
+  UnreadMessagesBanner,
+  UnreadMessagesDivider,
+  unreadMessagesDividerIsVisible,
+} from "./conversation/UnreadMessages";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./PanelResizer";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import {
@@ -180,6 +186,7 @@ export function Conversation(props: ConversationProps) {
   const [markingRead, setMarkingRead] = createSignal(false);
   const [settingsSaveError, setSettingsSaveError] = createSignal<string | null>(null);
   const [submitting, setSubmitting] = createSignal(false);
+  const [selectionSending, setSelectionSending] = createSignal(false);
   const [dropActive, setDropActive] = createSignal(false);
   const [rightPanels, setRightPanels] = createSignal<Record<string, RightPanelMode>>({});
   const [settingsName, setSettingsName] = createSignal("");
@@ -336,6 +343,19 @@ export function Conversation(props: ConversationProps) {
     }
     return null;
   });
+  const visibleAgentActivity = createMemo<"Queued" | "Working" | null>(() => {
+    const activity = agentActivity();
+    if (activity !== "Working") return activity;
+    const activeTurnId = props.activeTurnId;
+    if (!activeTurnId) return activity;
+    const imageGenerationFinished = props.messages.some(
+      (message) =>
+        message.itemType === "image_generation" &&
+        message.turnId === activeTurnId &&
+        (message.status === "completed" || message.status === "failed" || message.status === "interrupted"),
+    );
+    return imageGenerationFinished ? null : activity;
+  });
   const queueBarVisible = createMemo(
     () =>
       Boolean(props.queue?.paused) ||
@@ -345,8 +365,11 @@ export function Conversation(props: ConversationProps) {
   const [fadeAtTop, setFadeAtTop] = createSignal(false);
   const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
   const [showScrollToLatest, setShowScrollToLatest] = createSignal(false);
+  const [unreadDividerVisible, setUnreadDividerVisible] = createSignal(false);
   let scrollElement: HTMLDivElement | undefined;
   let unreadMessagesDivider: HTMLDivElement | undefined;
+  let unreadVisibilityFrame: number | undefined;
+  let currentUnreadCount = 0;
   let conversationPanel: HTMLElement | undefined;
   let browserSurface: HTMLDivElement | undefined;
   let browserResizeObserver: ResizeObserver | undefined;
@@ -469,6 +492,25 @@ export function Conversation(props: ConversationProps) {
     setShowScrollToLatest(remaining > 80);
   }
 
+  function updateUnreadDividerVisibility(): void {
+    setUnreadDividerVisible(
+      Boolean(
+        currentUnreadCount > 0 &&
+          scrollElement &&
+          unreadMessagesDivider &&
+          unreadMessagesDividerIsVisible(scrollElement, unreadMessagesDivider),
+      ),
+    );
+  }
+
+  function scheduleUnreadDividerVisibilityUpdate(): void {
+    if (unreadVisibilityFrame !== undefined) cancelAnimationFrame(unreadVisibilityFrame);
+    unreadVisibilityFrame = requestAnimationFrame(() => {
+      unreadVisibilityFrame = undefined;
+      updateUnreadDividerVisibility();
+    });
+  }
+
   const markMessageSeen = (messageId: string): boolean => {
     const key = `${props.bot?.id ?? "none"}:${messageId}`;
     if (seenMessageIds.has(key)) return false;
@@ -537,14 +579,19 @@ export function Conversation(props: ConversationProps) {
     window.addEventListener("keydown", closeOnEscape);
     window.addEventListener("pointerdown", closeMessageMenus);
     window.addEventListener("pointerdown", closeAvatarPicker);
-    const scrollResizeObserver = new ResizeObserver(() => updateScrollFade());
+    const scrollResizeObserver = new ResizeObserver(() => {
+      updateScrollFade();
+      updateUnreadDividerVisibility();
+    });
     if (scrollElement) scrollResizeObserver.observe(scrollElement);
     requestAnimationFrame(() => {
       if (!scrollElement) return;
       if (stickToLatest) scrollElement.scrollTop = scrollElement.scrollHeight;
       updateScrollFade(scrollElement);
+      updateUnreadDividerVisibility();
     });
     return () => {
+      if (unreadVisibilityFrame !== undefined) cancelAnimationFrame(unreadVisibilityFrame);
       scrollResizeObserver.disconnect();
       unsubscribeImport();
       window.removeEventListener("keydown", closeOnEscape);
@@ -582,9 +629,11 @@ export function Conversation(props: ConversationProps) {
         loaded: props.loaded,
         agentPickerOpen: props.agentPickerOpen,
         prompt: props.prompt,
+        unreadCount: props.unreadCount,
       };
     },
-    ({ botId }) => {
+    ({ botId, unreadCount }) => {
+      currentUnreadCount = unreadCount;
       if (botId !== lastConversationBotId) {
         lastConversationBotId = botId;
         stickToLatest = true;
@@ -595,6 +644,7 @@ export function Conversation(props: ConversationProps) {
         if (!scrollElement) return;
         if (stickToLatest) scrollElement.scrollTop = scrollElement.scrollHeight;
         updateScrollFade(scrollElement);
+        updateUnreadDividerVisibility();
       });
     },
   );
@@ -938,6 +988,7 @@ export function Conversation(props: ConversationProps) {
   }
 
   async function submitMessage(override?: string) {
+    if (selectionSending()) return;
     if (!override && editingDeliveryId()) {
       await saveQueuedMessageEdit();
       return;
@@ -960,6 +1011,18 @@ export function Conversation(props: ConversationProps) {
     if (sent) {
       setDrafts((current) => ({ ...current, [botId]: EMPTY_DRAFT }));
       finishOnboarding(botId);
+    }
+  }
+
+  async function sendSelectionInstruction(messageId: string, body: string): Promise<boolean> {
+    if (!props.bot || submitting() || selectionSending() || !agentReady() || onboardingModelRequired()) {
+      return false;
+    }
+    setSelectionSending(true);
+    try {
+      return await props.onSendMessage(body, [], messageId);
+    } finally {
+      setSelectionSending(false);
     }
   }
 
@@ -1175,6 +1238,11 @@ export function Conversation(props: ConversationProps) {
         setDropActive(false);
       }}
     >
+      <MessageSelectionActions
+        contextKey={props.bot?.id}
+        disabled={!props.bot || !agentReady() || onboardingModelRequired() || submitting()}
+        onSend={sendSelectionInstruction}
+      />
       <Show when={dropActive()}>
         <div class="attachment-drop-overlay">Drop files to attach</div>
       </Show>
@@ -1310,7 +1378,7 @@ export function Conversation(props: ConversationProps) {
         </Show>
       </header>
 
-      <Show when={props.unreadCount > 0}>
+      <Show when={props.unreadCount > 0 && !unreadDividerVisible()}>
         <UnreadMessagesBanner
           count={props.unreadCount}
           busy={markingRead()}
@@ -1332,6 +1400,7 @@ export function Conversation(props: ConversationProps) {
           const element = event.currentTarget;
           stickToLatest = element.scrollHeight - element.scrollTop - element.clientHeight <= 80;
           updateScrollFade(element);
+          updateUnreadDividerVisibility();
         }}
       >
         <Show when={showScrollToLatest()}>
@@ -1414,7 +1483,12 @@ export function Conversation(props: ConversationProps) {
               return (
                 <>
                   <Show when={message.id === props.firstUnreadMessageId}>
-                    <UnreadMessagesDivider elementRef={(element) => (unreadMessagesDivider = element)} />
+                    <UnreadMessagesDivider
+                      elementRef={(element) => {
+                        unreadMessagesDivider = element;
+                        scheduleUnreadDividerVisibilityUpdate();
+                      }}
+                    />
                   </Show>
                   <Show
                     when={message.exchange}
@@ -1520,7 +1594,7 @@ export function Conversation(props: ConversationProps) {
               );
             }}
           </For>
-          <AgentActivityIndicator bot={props.bot} state={agentActivity()} />
+          <AgentActivityIndicator bot={props.bot} state={visibleAgentActivity()} />
           <Show when={props.prompt}>
             {(prompt) => (
               <ApprovalCard variant="questions" questions={prompt().questions} onSubmit={props.onAnswerPrompt} />
@@ -1650,7 +1724,13 @@ export function Conversation(props: ConversationProps) {
                 bots={props.bots}
                 attachments={currentDraft().attachments}
                 value={currentDraft().text}
-                disabled={props.agentPickerOpen || submitting() || !agentReady() || onboardingModelRequired()}
+                disabled={
+                  props.agentPickerOpen ||
+                  submitting() ||
+                  selectionSending() ||
+                  !agentReady() ||
+                  onboardingModelRequired()
+                }
                 placeholder={
                   !agentReady()
                     ? "Complete agent CLI setup to start"
@@ -1680,7 +1760,7 @@ export function Conversation(props: ConversationProps) {
                   type="button"
                   class="voice-button"
                   aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
-                  disabled={submitting() || !agentReady() || onboardingModelRequired()}
+                  disabled={submitting() || selectionSending() || !agentReady() || onboardingModelRequired()}
                   onClick={() => void submitMessage()}
                 >
                   {submitting() ? "…" : "↑"}

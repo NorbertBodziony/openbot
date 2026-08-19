@@ -6,6 +6,19 @@ export function CloseIcon() {
   );
 }
 
+export function DownloadIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="image-generation-download-icon fill-none stroke-current">
+      <path
+        d="M10 3.5v8m0 0 3.25-3.25M10 11.5 6.75 8.25M4 14.5v1.75h12V14.5"
+        stroke-width="1.35"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function StopIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20" class="size-[14px] fill-current">

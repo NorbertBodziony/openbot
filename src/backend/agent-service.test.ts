@@ -503,6 +503,8 @@ describe.sequential("AgentService", () => {
     expect(instructions).toContain("openbot.ask_user");
     expect(instructions).toContain("GitHub-flavored Markdown tables");
     expect(instructions).toContain("at least three dashes per column");
+    expect(instructions).toContain("put exactly ✓ or — in every option cell");
+    expect(instructions).toContain("render that Markdown as a comparison table");
     expect(instructions).toContain("standing remit");
   });
 

@@ -31,6 +31,34 @@ describe("messageContentBlocks", () => {
     expect(blocks).toContainEqual({ type: "text", text: "Between" });
   });
 
+  it("recognizes a feature matrix when every option cell uses comparison markers", () => {
+    expect(
+      messageContentBlocks(
+        [
+          "| Feature | Personal | Enterprise |",
+          "| --- | --- | --- |",
+          "| Unlimited projects | ✓ | ✓ |",
+          "| Priority support | — | ✓ |",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      {
+        type: "comparison-table",
+        headers: ["Feature", "Personal", "Enterprise"],
+        rows: [
+          ["Unlimited projects", "✓", "✓"],
+          ["Priority support", "—", "✓"],
+        ],
+      },
+    ]);
+  });
+
+  it("keeps mixed-value matrices as regular data tables", () => {
+    expect(
+      messageContentBlocks("| Feature | Personal | Enterprise |\n| --- | --- | --- |\n| Projects | 3 | ✓ |"),
+    ).toMatchObject([{ type: "table" }]);
+  });
+
   it.each([
     "| A | B |\n| -- | --- |\n| 1 | 2 |",
     "| A | B |\n| --- | --- |\n| 1 | 2 | 3 |",

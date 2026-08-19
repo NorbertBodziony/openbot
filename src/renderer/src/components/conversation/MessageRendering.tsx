@@ -6,10 +6,12 @@ import { avatarHeadColor } from "../../blobatar";
 import type { BotMessage, BotProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import { AttachmentCards } from "./AttachmentCards";
+import { ComparisonTable } from "./ComparisonTable";
 import { CheckIcon, CopyIcon, MoreIcon, PlusIcon, ReactionIcon, ReplyIcon } from "./ConversationIcons";
 import { DataTable, type MessageContentBlock, messageContentBlocks } from "./DataTable";
 import { ImageGeneration } from "./ImageGeneration";
 import { RichMessageText } from "./RichMessageText";
+import { parseSelectionInstruction } from "./SelectionActions";
 
 function ExchangeAgentAvatar(props: { bot: BotProfile | undefined }) {
   return <AgentAvatar bot={props.bot} class="exchange-agent-avatar" />;
@@ -150,6 +152,11 @@ export function MessageBody(props: {
   onAttachmentAction: (attachment: AttachmentSummary, action: "open" | "reveal" | "download") => void;
   onDownload?: (attachment: AttachmentSummary) => void;
 }) {
+  const selectionInstruction = createMemo(() =>
+    props.message.author === "you" && props.message.replyToMessageId
+      ? parseSelectionInstruction(props.message.body)
+      : null,
+  );
   const standaloneAttachments = createMemo(() => {
     const referencedIds = attachmentReferenceIds(props.message.body);
     const generatedAttachmentId = props.message.imageGeneration ? props.message.attachments?.[0]?.id : undefined;
@@ -160,7 +167,7 @@ export function MessageBody(props: {
   const contentBlocks = createMemo<MessageContentBlock[]>(() =>
     props.message.author === "bot"
       ? messageContentBlocks(props.message.body, props.message.streaming === true)
-      : [{ type: "text", text: props.message.body }],
+      : [{ type: "text", text: selectionInstruction()?.instruction ?? props.message.body }],
   );
   const lastTextBlockIndex = createMemo(() => {
     const blocks = contentBlocks();
@@ -184,9 +191,15 @@ export function MessageBody(props: {
         <div class="message-content-blocks">
           <For each={contentBlocks()}>
             {(block, index) => {
+              if (block.type === "comparison-table") return <ComparisonTable table={block} />;
               if (block.type === "table") return <DataTable table={block} />;
               return (
-                <p class="message-copy">
+                <p
+                  class="message-copy"
+                  data-selection-message-id={
+                    props.message.author === "bot" && props.message.streaming !== true ? props.message.id : undefined
+                  }
+                >
                   <RichMessageText
                     body={block.text}
                     bots={props.bots}
@@ -205,6 +218,9 @@ export function MessageBody(props: {
               );
             }}
           </For>
+          <Show when={selectionInstruction()}>
+            {(selection) => <blockquote class="message-selection-quote">{selection().quote}</blockquote>}
+          </Show>
         </div>
       </Show>
       <Show when={props.message.imageGeneration}>

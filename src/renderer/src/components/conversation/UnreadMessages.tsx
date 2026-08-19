@@ -43,3 +43,10 @@ export function scrollToUnreadBoundary(
     boundary.getBoundingClientRect().top - scrollElement.getBoundingClientRect().top + scrollElement.scrollTop;
   scrollElement.scrollTo({ top: Math.max(0, top), behavior });
 }
+
+export function unreadMessagesDividerIsVisible(scrollElement: HTMLElement, divider: HTMLElement): boolean {
+  if (!divider.isConnected) return false;
+  const scrollBounds = scrollElement.getBoundingClientRect();
+  const dividerBounds = divider.getBoundingClientRect();
+  return dividerBounds.bottom > scrollBounds.top && dividerBounds.top < scrollBounds.bottom;
+}

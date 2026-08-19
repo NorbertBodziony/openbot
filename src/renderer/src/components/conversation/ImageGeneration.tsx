@@ -1,5 +1,6 @@
 import type { AttachmentSummary, ImageGenerationAspectRatio } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, Show } from "solid-js";
+import { DownloadIcon } from "./ConversationIcons";
 
 export type ImageGenerationStatus = "generating" | "completed" | "failed" | "interrupted";
 
@@ -16,10 +17,12 @@ export interface ImageGenerationProps {
 
 export function ImageGeneration(props: ImageGenerationProps) {
   const [previewError, setPreviewError] = createSignal(false);
+  const [imageRatio, setImageRatio] = createSignal<string | null>(null);
   createEffect(
-    () => props.attachment?.id,
+    () => `${props.attachment?.id ?? ""}:${props.attachment?.previewUrl ?? ""}`,
     () => {
       setPreviewError(false);
+      setImageRatio(null);
     },
   );
 
@@ -39,6 +42,7 @@ export function ImageGeneration(props: ImageGenerationProps) {
     if (props.status === "failed") return "Image generation failed";
     return "Generated image";
   };
+  const stageRatio = () => (hasImage() && imageRatio() ? imageRatio() : ratioValue(props.aspectRatio));
 
   return (
     <section
@@ -52,11 +56,18 @@ export function ImageGeneration(props: ImageGenerationProps) {
       aria-label={hasImage() ? "Generated image" : "Image generation"}
       aria-live={props.status === "generating" ? "polite" : undefined}
     >
-      <div class="image-generation-stage" style={`--image-generation-ratio: ${ratioValue(props.aspectRatio)}`}>
+      <div class="image-generation-stage" style={`--image-generation-ratio: ${stageRatio()}`}>
         <div
-          class={["image-generation-canvas", { "image-generation-canvas-visible": !hasImage() }]}
+          class={[
+            "image-generation-canvas",
+            {
+              "image-generation-canvas-visible": !hasImage(),
+              "image-generation-canvas-failed": hasFailure(),
+            },
+          ]}
           role="img"
           aria-label={label()}
+          aria-hidden={hasImage() ? "true" : undefined}
           aria-busy={props.status === "generating" ? "true" : undefined}
         >
           <Show
@@ -84,33 +95,41 @@ export function ImageGeneration(props: ImageGenerationProps) {
             <img
               src={props.attachment?.previewUrl ?? ""}
               alt={props.prompt ?? "Generated image"}
+              onLoad={(event) => {
+                const { naturalHeight, naturalWidth } = event.currentTarget;
+                if (naturalWidth > 0 && naturalHeight > 0) setImageRatio(`${naturalWidth} / ${naturalHeight}`);
+              }}
               onError={() => setPreviewError(true)}
             />
           </button>
         </Show>
-      </div>
-      <div class="image-generation-meta">
-        <span class="image-generation-label">{label()}</span>
-        <Show when={props.prompt}>
-          <span class="image-generation-prompt">“{props.prompt}”</span>
-        </Show>
-        <Show when={hasFailure()}>
-          <span class="image-generation-error" role="alert">
-            {failure()}
-          </span>
-        </Show>
-      </div>
-      <Show when={hasImage() && props.attachment && props.onDownload}>
-        <div class="image-generation-actions">
+        <Show when={hasImage() && props.attachment && props.onDownload}>
           <button
             type="button"
-            class="image-generation-download"
-            onClick={() => {
+            class="image-generation-hover-download"
+            aria-label="Download generated image"
+            title="Download generated image"
+            onClick={(event) => {
+              event.stopPropagation();
               if (props.attachment) props.onDownload?.(props.attachment);
             }}
           >
+            <DownloadIcon />
             Download
           </button>
+        </Show>
+      </div>
+      <Show when={!hasImage()}>
+        <div class="image-generation-meta">
+          <span class="image-generation-label">{label()}</span>
+          <Show when={props.prompt}>
+            <span class="image-generation-prompt">“{props.prompt}”</span>
+          </Show>
+          <Show when={hasFailure()}>
+            <span class="image-generation-error" role="alert">
+              {failure()}
+            </span>
+          </Show>
         </div>
       </Show>
     </section>

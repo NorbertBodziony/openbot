@@ -149,7 +149,61 @@ describe("CentralAuthManager", () => {
     expect(await manager.verifyEmailCode("challenge-1", "AAAA-AAAA")).toMatchObject({
       status: "code_sent",
       challengeId: "challenge-1",
-      error: "The sign-in code is incorrect.",
+      issue: {
+        code: "invalid_sign_in_code",
+        message: "The sign-in code is incorrect.",
+      },
+    });
+  });
+
+  it("keeps the active challenge and Retry-After metadata when resend is throttled", async () => {
+    const root = await createRoot();
+    let startRequests = 0;
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: vi.fn(async () => {
+        startRequests += 1;
+        if (startRequests === 1) {
+          return Response.json({
+            challengeId: "challenge-1",
+            expiresAt: 610_000,
+            resendAt: 61_000,
+          });
+        }
+        if (startRequests === 2) {
+          return Response.json(
+            { error: { code: "code_recently_sent", message: "Wait 42 seconds before requesting another code." } },
+            { status: 429, headers: { "Retry-After": "42" } },
+          );
+        }
+        return Response.json({
+          challengeId: "challenge-2",
+          expiresAt: 1_210_000,
+          resendAt: 661_000,
+        });
+      }),
+    });
+
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "code_sent",
+      challengeId: "challenge-1",
+      resendAvailableAt: 61_000,
+    });
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "code_sent",
+      challengeId: "challenge-1",
+      issue: {
+        code: "code_recently_sent",
+        retryAfterSeconds: 42,
+      },
+    });
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "code_sent",
+      challengeId: "challenge-2",
+      resendAvailableAt: 661_000,
     });
   });
 
@@ -261,8 +315,10 @@ describe("CentralAuthManager", () => {
     expect(manager.retry()).toBe(initialization);
     await expect(initialization).resolves.toMatchObject({
       status: "error",
-      code: "auth_api_unavailable",
-      message: expect.stringContaining("Check that the API is running"),
+      issue: {
+        code: "auth_api_unavailable",
+        message: expect.stringContaining("Check that the API is running"),
+      },
     });
 
     fetchMock.mockResolvedValueOnce(Response.json({ service: "openbot-auth-api", status: "ok" }));

@@ -25,7 +25,21 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const SignIn: Story = {
+function codeSentState(overrides: Partial<Extract<CentralAuthState, { status: "code_sent" }>> = {}): CentralAuthState {
+  const now = Date.now();
+  return {
+    status: "code_sent",
+    challengeId: "challenge-story",
+    email: "person@example.com",
+    expiresAt: now + 600_000,
+    resendAvailableAt: now + 60_000,
+    ...overrides,
+  };
+}
+
+export const SignIn: Story = {};
+
+export const HappyPath: Story = {
   render: (storyArgs) => {
     const [state, setState] = createSignal(storyArgs.state);
     return (
@@ -33,31 +47,63 @@ export const SignIn: Story = {
         {...storyArgs}
         state={state()}
         onRequestEmailCode={async (email) => {
-          setState({
-            status: "code_sent",
-            challengeId: "challenge-story",
-            email,
-            expiresAt: Date.now() + 600_000,
-          });
+          setState(codeSentState({ email }));
         }}
       />
     );
   },
   play: async ({ canvas, userEvent }) => {
-    await userEvent.type(canvas.getByLabelText("Email"), "person@example.com");
-    await userEvent.click(canvas.getByRole("button", { name: "Continue" }));
-    await expect(canvas.getByRole("heading", { name: "Check your email" })).toBeInTheDocument();
+    await userEvent.type(canvas.getByLabelText("Email"), "Person@Example.com");
+    await userEvent.click(canvas.getByRole("button", { name: "Send sign-in code" }));
+    await expect(canvas.getByRole("heading", { name: "Check your inbox" })).toBeInTheDocument();
+    await expect(canvas.getByText(/person@example.com/)).toBeInTheDocument();
+  },
+};
+
+export const SendingCode: Story = {
+  args: { state: { status: "signing_in" } },
+};
+
+export const InvalidEmail: Story = {
+  play: async ({ canvas, userEvent }) => {
+    await userEvent.type(canvas.getByLabelText("Email"), "not-an-email");
+    await userEvent.click(canvas.getByRole("button", { name: "Send sign-in code" }));
+    await expect(canvas.getByRole("alert")).toHaveTextContent("Enter a valid email address.");
   },
 };
 
 export const CodeSent: Story = {
+  args: { state: codeSentState() },
+};
+
+export const InvalidCode: Story = {
   args: {
-    state: {
-      status: "code_sent",
-      challengeId: "challenge-story",
-      email: "person@example.com",
-      expiresAt: Date.now() + 600_000,
-    },
+    state: codeSentState({
+      issue: { code: "invalid_sign_in_code", message: "The sign-in code is incorrect." },
+    }),
+  },
+};
+
+export const ExpiredCode: Story = {
+  args: {
+    state: codeSentState({
+      expiresAt: Date.now() - 1_000,
+      resendAvailableAt: Date.now() - 1_000,
+      issue: { code: "sign_in_code_expired", message: "The sign-in code expired." },
+    }),
+  },
+};
+
+export const ResendRateLimited: Story = {
+  args: {
+    state: codeSentState({
+      resendAvailableAt: Date.now() + 42_000,
+      issue: {
+        code: "code_recently_sent",
+        message: "Wait 42 seconds before requesting another code.",
+        retryAfterSeconds: 42,
+      },
+    }),
   },
 };
 
@@ -65,12 +111,14 @@ export const Connecting: Story = {
   args: { state: { status: "loading" }, onRetry: fn() },
 };
 
-export const ErrorState: Story = {
+export const ServiceUnavailable: Story = {
   args: {
     state: {
       status: "error",
-      code: "auth_api_unavailable",
-      message: "The account service did not become available in time.",
+      issue: {
+        code: "auth_api_unavailable",
+        message: "OpenBot could not reach the account service. Check your connection and try again.",
+      },
     },
   },
 };

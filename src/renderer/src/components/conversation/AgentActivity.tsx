@@ -5,22 +5,25 @@ import { ChevronIcon, ThinkingIcon } from "./ConversationIcons";
 
 export function AgentActivityIndicator(props: { bot: BotProfile | undefined; state: "Queued" | "Working" | null }) {
   return (
-    <div
-      class={["agent-activity-entry", { "agent-activity-entry-visible": props.state !== null }]}
-      role="status"
-      aria-hidden={props.state === null ? "true" : "false"}
-      aria-label={props.state ? `${props.bot?.name ?? "Agent"} is ${props.state.toLowerCase()}` : undefined}
-    >
-      <AgentAvatar bot={props.bot} class="agent-activity-avatar" />
-      <div class="agent-activity-bubble" aria-hidden="true">
-        <span>{props.state ?? "Working"}</span>
-        <span class="agent-activity-dots">
-          <i />
-          <i />
-          <i />
-        </span>
+    <Show when={props.state !== null}>
+      <div
+        class="agent-activity-entry agent-activity-entry-visible"
+        role="status"
+        aria-label={`${props.bot?.name ?? "Agent"} is ${props.state?.toLowerCase()}`}
+      >
+        <Show when={props.state !== "Working"}>
+          <AgentAvatar bot={props.bot} class="agent-activity-avatar" />
+        </Show>
+        <div class="agent-activity-bubble" aria-hidden="true">
+          <span>{props.state}</span>
+          <span class="agent-activity-dots">
+            <i />
+            <i />
+            <i />
+          </span>
+        </div>
       </div>
-    </div>
+    </Show>
   );
 }
 

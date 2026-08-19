@@ -160,6 +160,7 @@ describe("email one-time codes", () => {
 
     const challenge = await service.startEmailSignIn(" Person@Example.com ", "203.0.113.4");
     expect(challenge.developmentCode).toBeUndefined();
+    expect(challenge.resendAt).toBe(61_000);
     const session = await service.verifyEmailCode({
       challengeId: challenge.challengeId,
       code: deliveredCode,

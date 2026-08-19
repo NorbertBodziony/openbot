@@ -111,6 +111,7 @@ describe("OpenBot connected desktop shell", () => {
             challengeId: "challenge-1",
             email: "person@example.com",
             expiresAt: Date.now() + 600_000,
+            resendAvailableAt: Date.now() + 60_000,
           }),
           verifyEmailCode: vi.fn().mockResolvedValue({
             status: "signed_in",
@@ -504,13 +505,13 @@ describe("OpenBot connected desktop shell", () => {
     vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({ status: "signed_out" });
     render(() => <App />);
 
-    expect(await screen.findByRole("dialog", { name: "Sign in" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
     expect(screen.queryByRole("radiogroup", { name: "Default provider" })).not.toBeInTheDocument();
 
     await fireEvent.input(screen.getByRole("textbox", { name: "Email" }), {
       target: { value: "person@example.com" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
     expect(window.openbot.auth.requestEmailCode).toHaveBeenCalledWith("person@example.com");
     await fireEvent.input(await screen.findByRole("textbox", { name: "One-time code" }), {
       target: { value: "ABCD-EFGH" },
@@ -524,12 +525,12 @@ describe("OpenBot connected desktop shell", () => {
     vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({ status: "loading" });
     render(() => <App />);
 
-    expect(await screen.findByRole("dialog", { name: "Connecting…" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent("Waiting for API…");
+    expect(await screen.findByRole("heading", { name: "Connecting to OpenBot" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Connecting securely…");
     expect(screen.queryByRole("textbox", { name: "Email" })).not.toBeInTheDocument();
 
     emitAuth?.({ status: "signed_out" });
-    expect(await screen.findByRole("dialog", { name: "Sign in" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Email" })).toBeInTheDocument();
   });
 
@@ -537,8 +538,10 @@ describe("OpenBot connected desktop shell", () => {
     let finishRetry: ((state: CentralAuthState) => void) | undefined;
     vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({
       status: "error",
-      code: "auth_api_unavailable",
-      message: "OpenBot could not reach the account service.",
+      issue: {
+        code: "auth_api_unavailable",
+        message: "OpenBot could not reach the account service.",
+      },
     });
     vi.mocked(window.openbot.auth.retry).mockReturnValueOnce(
       new Promise((resolve) => {
@@ -547,21 +550,21 @@ describe("OpenBot connected desktop shell", () => {
     );
     render(() => <App />);
 
-    expect(await screen.findByRole("dialog", { name: "Couldn’t connect" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Service unavailable" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Email" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
 
     expect(window.openbot.auth.retry).toHaveBeenCalledOnce();
-    expect(screen.getByRole("dialog", { name: "Connecting…" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Connecting to OpenBot" })).toBeInTheDocument();
     finishRetry?.({ status: "signed_out" });
-    expect(await screen.findByRole("dialog", { name: "Sign in" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
   });
 
   it("requires account sign-in before opening a completed workspace", async () => {
     vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({ status: "signed_out" });
     render(() => <App />);
 
-    expect(await screen.findByRole("dialog", { name: "Sign in" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
     expect(screen.queryByText("Codex")).not.toBeInTheDocument();
   });
@@ -830,7 +833,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
 
     await waitFor(() => expect(window.openbot.auth.logout).toHaveBeenCalledOnce());
-    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
     expect(window.openbot.agent.deleteBot).not.toHaveBeenCalled();
   });
 
@@ -1773,7 +1776,14 @@ describe("OpenBot connected desktop shell", () => {
     const incomingMessage = await screen.findByText("Hi. I am here.");
     expect(incomingMessage).toBeInTheDocument();
     expect(incomingMessage.closest(".direct-message")?.querySelector(".person-avatar")).toBeNull();
-    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.openbot.servers.markDirectRead).toHaveBeenCalledWith({
+        memberId: "member-alice",
+        throughSequence: 2,
+      }),
+    );
   });
 
   it("does not expose team conversations when the signed-in account is not a member", async () => {
@@ -1923,6 +1933,62 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByText("Replying to Agent")).not.toBeInTheDocument());
+  });
+
+  it("sends an action for selected agent text without clearing the composer draft", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const answer = "The launch note needs a friendlier closing sentence.";
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "assistant-selection",
+            author: "assistant",
+            text: answer,
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      },
+    });
+
+    const message = await screen.findByText(answer);
+    const composer = screen.getByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Keep this draft";
+    await fireEvent.input(composer);
+
+    const text = message.firstChild;
+    if (!text) throw new Error("Agent message did not render a text node");
+    const quote = "friendlier closing sentence";
+    const start = answer.indexOf(quote);
+    const range = document.createRange();
+    range.setStart(text, start);
+    range.setEnd(text, start + quote.length);
+    Object.defineProperty(range, "getClientRects", {
+      configurable: true,
+      value: () => [{ top: 100, right: 320, bottom: 120, left: 120, width: 200, height: 20 }],
+    });
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    await fireEvent.pointerUp(message);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Improve" }));
+    await waitFor(() =>
+      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: "Improve this selected text.\n\n> friendlier closing sentence",
+        attachmentDraftIds: [],
+        replyToMessageId: "assistant-selection",
+      }),
+    );
+    expect(composer).toHaveTextContent("Keep this draft");
   });
 
   it("reacts and copies from agent hover actions", async () => {
@@ -2114,8 +2180,96 @@ describe("OpenBot connected desktop shell", () => {
       status: "completed",
     });
     await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
-    expect(document.querySelector(".agent-activity-entry")).toBe(workingIndicator);
-    expect(workingIndicator).toHaveAttribute("aria-hidden", "true");
+    expect(document.querySelector(".agent-activity-entry")).toBeNull();
+  });
+
+  it("replaces a live image-generation placeholder with the completed image", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const turnId = "turn-image-live";
+    const imageAttachment = attachment("image-live", "generated-image.png", "image");
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: turnId,
+        revision: 1,
+        messages: [
+          {
+            id: "user-image-live",
+            turnId,
+            author: "user",
+            text: "Create a landscape image of a quiet observatory.",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "image-live",
+            turnId,
+            author: "assistant",
+            text: "",
+            createdAt: "2026-08-12T10:00:01.000Z",
+            status: "streaming",
+            itemType: "image_generation",
+            imageGeneration: {
+              prompt: "A quiet observatory above the clouds at blue hour",
+              resolution: "1536 × 1024",
+              aspectRatio: "landscape",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(await screen.findByRole("img", { name: "Generating image" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: turnId,
+        revision: 2,
+        messages: [
+          {
+            id: "user-image-live",
+            turnId,
+            author: "user",
+            text: "Create a landscape image of a quiet observatory.",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "image-live",
+            turnId,
+            author: "assistant",
+            text: "",
+            createdAt: "2026-08-12T10:00:01.000Z",
+            status: "completed",
+            itemType: "image_generation",
+            imageGeneration: {
+              prompt: "A quiet observatory above the clouds at blue hour",
+              resolution: "1536 × 1024",
+              aspectRatio: "landscape",
+            },
+            attachments: [imageAttachment],
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Preview generated image" })).toBeInTheDocument());
+    expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Generating image")).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Download generated image" }));
+    expect(window.openbot.agent.openAttachment).toHaveBeenCalledWith({
+      attachmentId: imageAttachment.id,
+      action: "download",
+    });
   });
 
   it("groups commentary into a collapsed thinking disclosure", async () => {
@@ -2898,8 +3052,20 @@ describe("OpenBot connected desktop shell", () => {
     scrollElement.scrollTop = 720;
     Object.defineProperty(scrollElement, "getBoundingClientRect", {
       configurable: true,
-      value: () => ({ top: 100 }),
+      value: () => ({ top: 100, bottom: 700 }),
     });
+    Object.defineProperty(divider, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 200, bottom: 212 }),
+    });
+    await fireEvent.scroll(scrollElement);
+    await waitFor(() => expect(screen.queryByRole("status", { name: "2 new messages" })).not.toBeInTheDocument());
+    Object.defineProperty(divider, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 80, bottom: 92 }),
+    });
+    await fireEvent.scroll(scrollElement);
+    expect(await screen.findByRole("status", { name: "2 new messages" })).toBeInTheDocument();
     Object.defineProperty(firstUnreadMessage, "getBoundingClientRect", {
       configurable: true,
       value: () => ({ top: 100 + 1080 - scrollElement.scrollTop }),
@@ -2921,6 +3087,33 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("status", { name: "2 new messages" })).not.toBeInTheDocument());
     await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 1080 }));
     expect(scrollElement.scrollTop).toBe(1080);
+  });
+
+  it("keeps a message read when it arrives in the open agent chat", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(window.openbot.agent.readConversation).toHaveBeenCalledWith("chief"));
+
+    emitAgentEvent?.({
+      type: "conversation-delta",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live",
+      messageId: "agent-visible-answer",
+      delta: "Visible as it arrives",
+      createdAt: "2026-08-19T09:03:00.000Z",
+      revision: 1,
+    });
+
+    expect(await screen.findByText("Visible as it arrives")).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "agent-visible-answer",
+      }),
+    );
   });
 
   it("keeps the agent unread state when marking it fails", async () => {

@@ -275,7 +275,8 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           challengeId: "mock-challenge",
           email,
           expiresAt: Date.now() + 600_000,
-          developmentCode: "123456",
+          resendAvailableAt: Date.now() + 60_000,
+          developmentCode: "2345-6789",
         };
         return clone(authState);
       },

@@ -50,6 +50,12 @@ export interface CentralAuthUser {
   avatarUrl: string | null;
 }
 
+export interface CentralAuthIssue {
+  code: string;
+  message: string;
+  retryAfterSeconds?: number;
+}
+
 export type CentralAuthState =
   | { status: "loading" }
   | { status: "signed_out" }
@@ -59,11 +65,12 @@ export type CentralAuthState =
       challengeId: string;
       email: string;
       expiresAt: number;
+      resendAvailableAt: number;
       developmentCode?: string;
-      error?: string;
+      issue?: CentralAuthIssue;
     }
   | { status: "signed_in"; user: CentralAuthUser }
-  | { status: "error"; code: string; message: string };
+  | { status: "error"; issue: CentralAuthIssue };
 
 export interface CentralAuthDesktopApi {
   getState: () => Promise<CentralAuthState>;

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { AvatarImageInput, CentralAuthState, CentralAuthUser } from "@openbot/contracts/ipc";
+import type { AvatarImageInput, CentralAuthIssue, CentralAuthState, CentralAuthUser } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { isOpenBotTeamApiHostname, isOpenBotTeamVncHostname } from "@openbot/contracts/validation";
 
@@ -31,6 +31,7 @@ interface SessionResponse {
 const STARTUP_RETRY_WINDOW_MS = 30_000;
 const STARTUP_REQUEST_TIMEOUT_MS = 3_000;
 const STARTUP_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000] as const;
+const RESEND_FALLBACK_DELAY_MS = 60_000;
 const AUTH_API_UNAVAILABLE_MESSAGE =
   "OpenBot could not reach the account service. Check that the API is running, then try again.";
 
@@ -191,7 +192,12 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   }
 
   async requestEmailCode(email: string): Promise<CentralAuthState> {
-    this.#setState({ status: "signing_in" });
+    const existingChallenge = this.#state.status === "code_sent" ? this.#state : null;
+    if (existingChallenge) {
+      this.#setState({ ...existingChallenge, issue: undefined });
+    } else {
+      this.#setState({ status: "signing_in" });
+    }
     try {
       const result = await this.#request(
         "/v1/auth/email/start",
@@ -210,19 +216,24 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
         challengeId: result.challengeId,
         email: email.trim().toLowerCase(),
         expiresAt: result.expiresAt,
+        resendAvailableAt: result.resendAt ?? Math.min(result.expiresAt, Date.now() + RESEND_FALLBACK_DELAY_MS),
         ...(result.developmentCode ? { developmentCode: result.developmentCode } : {}),
       });
     } catch (error) {
+      const issue = centralAuthIssue(error, "email_sign_in_start_failed", "OpenBot could not send the sign-in code.");
+      if (existingChallenge) {
+        return this.#setState({ ...existingChallenge, issue });
+      }
       return this.#setState({
         status: "error",
-        code: error instanceof AuthApiError ? error.code : "email_sign_in_start_failed",
-        message: errorMessage(error, "OpenBot could not send the sign-in code."),
+        issue,
       });
     }
   }
 
   async verifyEmailCode(challengeId: string, code: string): Promise<CentralAuthState> {
     const challenge = this.#state.status === "code_sent" ? this.#state : null;
+    if (challenge) this.#setState({ ...challenge, issue: undefined });
     try {
       const session = await this.#request(
         "/v1/auth/email/verify",
@@ -244,13 +255,12 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       if (challenge) {
         return this.#setState({
           ...challenge,
-          error: errorMessage(error, "The sign-in code could not be verified."),
+          issue: centralAuthIssue(error, "email_sign_in_failed", "The sign-in code could not be verified."),
         });
       }
       return this.#setState({
         status: "error",
-        code: error instanceof AuthApiError ? error.code : "email_sign_in_failed",
-        message: errorMessage(error, "The sign-in code could not be verified."),
+        issue: centralAuthIssue(error, "email_sign_in_failed", "The sign-in code could not be verified."),
       });
     }
   }
@@ -389,8 +399,11 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     const unavailable = !apiError || apiError.status >= 500;
     return this.#setState({
       status: "error",
-      code: unavailable ? "auth_api_unavailable" : apiError.code,
-      message: unavailable ? AUTH_API_UNAVAILABLE_MESSAGE : apiError.message,
+      issue: {
+        code: unavailable ? "auth_api_unavailable" : apiError.code,
+        message: unavailable ? AUTH_API_UNAVAILABLE_MESSAGE : apiError.message,
+        ...(apiError?.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: apiError.retryAfterSeconds }),
+      },
     });
   }
 }
@@ -424,24 +437,48 @@ class AuthApiError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly retryAfterSeconds?: number,
   ) {
     super(message);
   }
 
   static async fromResponse(response: Response): Promise<AuthApiError> {
+    const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get("Retry-After"));
     try {
       const value = await response.json();
       if (!isDynamicRecord(value) || !isDynamicRecord(value.error)) {
         throw new Error("Invalid error response.");
       }
       if (isString(value.error.code) && isString(value.error.message)) {
-        return new AuthApiError(response.status, value.error.code, value.error.message);
+        return new AuthApiError(response.status, value.error.code, value.error.message, retryAfterSeconds);
       }
     } catch {
       // Use a generic error when the server did not return the API error shape.
     }
-    return new AuthApiError(response.status, "auth_api_error", "The account service returned an error.");
+    return new AuthApiError(
+      response.status,
+      "auth_api_error",
+      "The account service returned an error.",
+      retryAfterSeconds,
+    );
   }
+}
+
+function centralAuthIssue(error: unknown, fallbackCode: string, fallbackMessage: string): CentralAuthIssue {
+  if (error instanceof AuthApiError) {
+    return {
+      code: error.code,
+      message: error.message,
+      ...(error.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: error.retryAfterSeconds }),
+    };
+  }
+  return { code: fallbackCode, message: errorMessage(error, fallbackMessage) };
+}
+
+function parseRetryAfterSeconds(value: string | null): number | undefined {
+  if (value === null) return undefined;
+  const seconds = Number.parseInt(value, 10);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
 }
 
 function decodeRecord(value: unknown, label: string): DynamicRecord {
@@ -498,17 +535,21 @@ function decodeProvisionedTeamTunnel(value: unknown): ProvisionedTeamTunnel {
 function decodeEmailChallenge(value: unknown): {
   challengeId: string;
   expiresAt: number;
+  resendAt?: number;
   developmentCode?: string;
 } {
   const record = decodeRecord(value, "email challenge");
   if (!isNumber(record.expiresAt)) throw new Error("Invalid email challenge expiration.");
   const developmentCode = record.developmentCode;
+  const resendAt = record.resendAt;
   if (developmentCode !== undefined && !isString(developmentCode)) {
     throw new Error("Invalid development code.");
   }
+  if (resendAt !== undefined && !isNumber(resendAt)) throw new Error("Invalid email resend time.");
   return {
     challengeId: requiredString(record, "challengeId"),
     expiresAt: record.expiresAt,
+    ...(resendAt === undefined ? {} : { resendAt }),
     ...(developmentCode === undefined ? {} : { developmentCode }),
   };
 }

@@ -220,7 +220,11 @@ export function App() {
   const [directTypingMemberIds, setDirectTypingMemberIds] = createSignal<Set<string>>(new Set());
   const [remoteDesktopRequest, setRemoteDesktopRequest] = createSignal(0);
   const [remoteMacSessions, setRemoteMacSessions] = createSignal<RemoteMacSession[]>([]);
-  const pendingConversationSnapshots = new Map<string, ConversationSnapshot>();
+  const pendingConversationSnapshots = new Map<
+    string,
+    { snapshot: ConversationSnapshot; markNewMessagesRead: boolean }
+  >();
+  const autoReadAgentMessageIds = new Map<string, string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let conversationFrame: number | undefined;
   let directConversationRequest = 0;
@@ -351,8 +355,10 @@ export function App() {
       .catch(() =>
         setCentralAuth({
           status: "error",
-          code: "auth_unavailable",
-          message: "OpenBot could not load the account service.",
+          issue: {
+            code: "auth_unavailable",
+            message: "OpenBot could not load the account service.",
+          },
         }),
       );
     void window.openbot
@@ -454,7 +460,7 @@ export function App() {
         applyStoredBots(event.bots);
         return;
       case "conversation":
-        scheduleConversation(event.snapshot);
+        scheduleConversation(event.snapshot, isAgentChatOpen(event.snapshot.botId));
         return;
       case "conversation-delta":
         applyConversationDelta(event);
@@ -523,19 +529,44 @@ export function App() {
     setUnreadReplies((current) => ({ ...current, [botId]: state.unreadCount }));
   }
 
-  function scheduleConversation(snapshot: ConversationSnapshot) {
+  function scheduleConversation(snapshot: ConversationSnapshot, markNewMessagesRead = false) {
     const botId = snapshot.botId;
     const appliedRevision = conversationRevisions()[botId] ?? -1;
-    const pendingRevision = pendingConversationSnapshots.get(botId)?.revision ?? -1;
+    const pending = pendingConversationSnapshots.get(botId);
+    const pendingRevision = pending?.snapshot.revision ?? -1;
     if (snapshot.revision < Math.max(appliedRevision, pendingRevision)) return;
-    pendingConversationSnapshots.set(botId, snapshot);
+    pendingConversationSnapshots.set(botId, {
+      snapshot,
+      markNewMessagesRead: markNewMessagesRead || (pending?.markNewMessagesRead ?? false),
+    });
     if (conversationFrame !== undefined) return;
     conversationFrame = requestAnimationFrame(() => {
       conversationFrame = undefined;
       const snapshots = [...pendingConversationSnapshots.values()];
       pendingConversationSnapshots.clear();
-      for (const pending of snapshots) applyConversation(pending);
+      for (const pendingSnapshot of snapshots) {
+        applyConversation(pendingSnapshot.snapshot, pendingSnapshot.markNewMessagesRead);
+      }
     });
+  }
+
+  function isAgentChatOpen(botId: string): boolean {
+    return !agentPickerOpen() && !activeDirectMemberId() && activeBot()?.id === botId;
+  }
+
+  function autoMarkAgentMessageRead(botId: string, messageId: string): void {
+    if (autoReadAgentMessageIds.get(botId) === messageId) return;
+    const current = conversationReads()[botId];
+    if (current && current.unreadCount > 0) return;
+    autoReadAgentMessageIds.set(botId, messageId);
+    if (current) {
+      applyConversationReadState(botId, {
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: messageId,
+      });
+    }
+    void markAgentMessagesRead(botId, messageId).catch((error) => appendUiError(botId, error, "Read state failed"));
   }
 
   function applyConversationDelta(event: Extract<AgentEvent, { type: "conversation-delta" }>) {
@@ -569,7 +600,9 @@ export function App() {
         [event.botId]: [...(current[event.botId] ?? []), message],
       }));
       const readState = conversationReads()[event.botId];
-      if (readState) {
+      if (isAgentChatOpen(event.botId)) {
+        autoMarkAgentMessageRead(event.botId, event.messageId);
+      } else if (readState) {
         applyConversationReadState(event.botId, {
           ...readState,
           unreadCount: readState.unreadCount + 1,
@@ -580,7 +613,7 @@ export function App() {
     setConversationLoaded((current) => ({ ...current, [event.botId]: true }));
   }
 
-  function applyConversation(snapshot: ConversationSnapshot) {
+  function applyConversation(snapshot: ConversationSnapshot, markNewMessagesRead = false) {
     const botId = snapshot.botId;
     if (snapshot.revision < (conversationRevisions()[botId] ?? -1)) return;
     const initialLoad = conversationLoaded()[botId] !== true;
@@ -609,7 +642,14 @@ export function App() {
       [botId]: snapshot.activeTurnId,
     }));
     const readState = conversationReads()[botId];
-    if (readState) {
+    const latestIncomingMessage = markNewMessagesRead
+      ? [...snapshot.messages]
+          .reverse()
+          .find((message) => message.author !== "user" && message.itemType !== "commentary")
+      : undefined;
+    if (latestIncomingMessage) {
+      autoMarkAgentMessageRead(botId, latestIncomingMessage.id);
+    } else if (readState) {
       applyConversationReadState(botId, readStateForMessages(readState, snapshot.messages));
     }
   }
@@ -743,8 +783,16 @@ export function App() {
     if (!currentMemberId || !event.memberIds.includes(currentMemberId)) return;
     const otherMemberId =
       event.message.senderMemberId === currentMemberId ? event.message.recipientMemberId : event.message.senderMemberId;
+    const markVisibleMessageRead =
+      event.message.senderMemberId !== currentMemberId &&
+      activeDirectMemberId() === otherMemberId &&
+      (directConversations()[otherMemberId]?.readState?.unreadCount ?? 0) === 0;
     mergeDirectMessage(otherMemberId, event.message);
-    void refreshDirectThreads();
+    if (markVisibleMessageRead) {
+      void markDirectMessagesRead(otherMemberId, event.message.sequence).catch(() => undefined);
+    } else {
+      void refreshDirectThreads();
+    }
   }
 
   function handleDirectTypingEvent(event: DirectTypingRealtimeEvent): void {
@@ -774,19 +822,28 @@ export function App() {
       };
       const incomingUnread =
         message.senderMemberId !== currentTeamMember()?.id && message.sequence > readState.throughSequence;
+      const visibleIncomingMessage = incomingUnread && activeDirectMemberId() === memberId;
+      let nextReadState = readState;
+      if (visibleIncomingMessage && readState.unreadCount === 0) {
+        nextReadState = {
+          unreadCount: 0,
+          firstUnreadMessageId: null,
+          throughSequence: message.sequence,
+        };
+      } else if (incomingUnread && !visibleIncomingMessage) {
+        nextReadState = {
+          ...readState,
+          unreadCount: readState.unreadCount + 1,
+          firstUnreadMessageId: readState.firstUnreadMessageId ?? message.id,
+        };
+      }
       return {
         ...current,
         [memberId]: {
           ...snapshot,
           messages: [...snapshot.messages, message].sort((left, right) => left.sequence - right.sequence),
           revision: Math.max(snapshot.revision, message.sequence),
-          readState: incomingUnread
-            ? {
-                ...readState,
-                unreadCount: readState.unreadCount + 1,
-                firstUnreadMessageId: readState.firstUnreadMessageId ?? message.id,
-              }
-            : readState,
+          readState: nextReadState,
         },
       };
     });

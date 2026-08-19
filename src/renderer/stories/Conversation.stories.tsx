@@ -3,6 +3,7 @@ import type {
   AgentEvent,
   AgentModelId,
   AgentReasoningEffort,
+  AttachmentSummary,
   AvatarImageInput,
   QueueSnapshot,
   UpdateBotInput,
@@ -100,6 +101,7 @@ const imageGenerationMessages: RendererBotMessage[] = [
     author: "bot",
     body: "",
     time: "10:02",
+    turnId: "turn-image-generation",
     itemType: "image_generation",
     status: "streaming",
     streaming: true,
@@ -109,6 +111,85 @@ const imageGenerationMessages: RendererBotMessage[] = [
       resolution: "1024 × 1024",
       aspectRatio: "square",
     },
+  },
+];
+
+const generatedImagePreview = new URL("../src/assets/openbot-logo-production.png", import.meta.url).href;
+const generatedImageAttachment: AttachmentSummary = {
+  id: "generated-image-in-chat",
+  name: "generated-image.png",
+  size: 184_320,
+  kind: "image",
+  mimeType: "image/png",
+  previewKind: "image",
+  previewUrl: generatedImagePreview,
+};
+
+const completedImageGenerationMessages: RendererBotMessage[] = imageGenerationMessages.map((message) =>
+  message.id === "image-generation-in-chat"
+    ? {
+        ...message,
+        status: "completed",
+        streaming: false,
+        attachments: [generatedImageAttachment],
+      }
+    : message,
+);
+const completedImageGenerationPresence = {
+  ...STORY_PRESENCE,
+  members: STORY_PRESENCE.members.map((member) =>
+    member.typingBotId === "chief" ? { ...member, typingBotId: null } : member,
+  ),
+};
+
+const dataTableMessages: RendererBotMessage[] = [
+  {
+    id: "data-table-user",
+    author: "you",
+    body: "Compare the available models by context window and input price.",
+    time: "10:02",
+    kind: "text",
+  },
+  {
+    id: "data-table-agent",
+    author: "bot",
+    body: [
+      "Here’s a compact comparison:",
+      "",
+      "| Model | Context | $/1M in |",
+      "| --- | --- | ---: |",
+      "| gpt-4o | 128k | $5.00 |",
+      "| claude-3.5 | 200k | $3.00 |",
+      "| llama-3.1 | 128k | $0.90 |",
+    ].join("\n"),
+    time: "10:03",
+    kind: "text",
+  },
+];
+
+const comparisonTableMessages: RendererBotMessage[] = [
+  {
+    id: "comparison-table-user",
+    author: "you",
+    body: "Compare the Personal and Enterprise plans feature by feature.",
+    time: "10:02",
+    kind: "text",
+  },
+  {
+    id: "comparison-table-agent",
+    author: "bot",
+    body: [
+      "Here’s the feature breakdown:",
+      "",
+      "| Feature | Personal | Enterprise |",
+      "| --- | --- | --- |",
+      "| Unlimited projects | ✓ | ✓ |",
+      "| All components | ✓ | ✓ |",
+      "| Team-wide usage | — | ✓ |",
+      "| Priority support | — | ✓ |",
+    ].join("\n"),
+    time: "10:03",
+    kind: "text",
   },
 ];
 
@@ -393,6 +474,53 @@ export const ImageGenerationInChat: Story = {
     browserTabs: [],
     activeBrowserTabId: null,
     browserControlState: { sessions: [] },
+  },
+};
+
+export const ImageGenerationCompletedInChat: Story = {
+  name: "Image generation completed in chat",
+  args: {
+    messages: completedImageGenerationMessages,
+    activeTurnId: "turn-image-generation",
+    presence: completedImageGenerationPresence,
+    browserTabs: [],
+    activeBrowserTabId: null,
+    browserControlState: { sessions: [] },
+  },
+  play: async ({ canvas }) => {
+    expect(canvas.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument();
+    await canvas.getByRole("button", { name: "Preview generated image" }).click();
+    await expect(canvas.findByRole("dialog", { name: "generated-image.png" })).resolves.toBeInTheDocument();
+  },
+};
+
+export const DataTableInChat: Story = {
+  name: "Data table in chat",
+  args: {
+    messages: dataTableMessages,
+    browserTabs: [],
+    activeBrowserTabId: null,
+    browserControlState: { sessions: [] },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText("Compare the available models by context window and input price.")).toBeVisible();
+    await expect(canvas.getByRole("table")).toBeVisible();
+    await expect(canvas.getAllByRole("columnheader")).toHaveLength(3);
+  },
+};
+
+export const ComparisonTableInChat: Story = {
+  name: "Comparison table in chat",
+  args: {
+    messages: comparisonTableMessages,
+    browserTabs: [],
+    activeBrowserTabId: null,
+    browserControlState: { sessions: [] },
+  },
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText("Compare the Personal and Enterprise plans feature by feature.")).toBeVisible();
+    await expect(canvas.getByRole("region", { name: "Comparison table" })).toBeVisible();
+    await expect(canvas.getAllByRole("columnheader")).toHaveLength(3);
   },
 };
 
