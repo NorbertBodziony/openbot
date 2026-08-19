@@ -2,16 +2,20 @@ import { EventEmitter } from "node:events";
 import type { UpdateStatus } from "@openbot/contracts/ipc";
 import type { AppUpdater, ProgressInfo, UpdateInfo } from "electron-updater";
 
-type UpdateAdapter = Pick<
-  AppUpdater,
-  | "allowPrerelease"
-  | "autoDownload"
-  | "autoInstallOnAppQuit"
-  | "checkForUpdates"
-  | "downloadUpdate"
-  | "on"
-  | "quitAndInstall"
->;
+type UpdateAdapter = {
+  allowPrerelease: boolean;
+  autoDownload: boolean;
+  autoInstallOnAppQuit: boolean;
+  checkForUpdates: () => Promise<Awaited<ReturnType<AppUpdater["checkForUpdates"]>>>;
+  downloadUpdate: () => Promise<unknown>;
+  on(event: "checking-for-update", listener: () => void): unknown;
+  on(event: "update-available", listener: (info: UpdateInfo) => void): unknown;
+  on(event: "update-not-available", listener: (info: UpdateInfo) => void): unknown;
+  on(event: "download-progress", listener: (progress: ProgressInfo) => void): unknown;
+  on(event: "update-downloaded", listener: (info: UpdateInfo) => void): unknown;
+  on(event: "error", listener: (error: Error) => void): unknown;
+  quitAndInstall: (isSilent?: boolean, isForceRunAfter?: boolean) => void;
+};
 
 interface UpdateServiceEvents {
   status: [status: UpdateStatus];

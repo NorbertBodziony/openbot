@@ -3,9 +3,47 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Query, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import { ClaudeAgentClient } from "./claude-client";
+import {
+  decodeAccountReadResult,
+  decodeRecordResponse,
+  decodeThreadResponse,
+  decodeTurnResponse,
+  getRecord,
+  getString,
+} from "./protocol";
+
+type TestStreamMessage =
+  | {
+      type: "stream_event";
+      parent_tool_use_id: null;
+      session_id: string;
+      uuid: string;
+      event: {
+        type: "content_block_delta";
+        index: number;
+        delta: { type: "text_delta"; text: string };
+      };
+    }
+  | {
+      type: "assistant";
+      parent_tool_use_id: string | null;
+      session_id: string;
+      uuid: string;
+      message: { content: Array<{ type: "text"; text: string }> };
+    }
+  | {
+      type: "result";
+      subtype: "success";
+      result: string;
+      terminal_reason: "completed";
+      errors: string[];
+      session_id: string;
+      uuid: string;
+    };
 
 let root: string | null = null;
 
@@ -28,62 +66,65 @@ fi
     );
     await chmod(executable, 0o755);
 
-    const output = new TestQueue<SDKMessage>();
+    const output = new TestQueue<TestStreamMessage>();
     let prompt: AsyncIterable<SDKUserMessage> | null = null;
-    const generator = output[Symbol.asyncIterator]() as Query;
-    Object.assign(generator, {
-      [Symbol.asyncIterator]: () => generator,
-      interrupt: async () => undefined,
-      setModel: async () => undefined,
-      setMaxThinkingTokens: async () => undefined,
-      close: () => output.close(),
-    });
+    const generator = new TestQuery(output);
     const client = new ClaudeAgentClient({ executable, version: "2.1.231" }, (params) => {
-      prompt = params.prompt as AsyncIterable<SDKUserMessage>;
+      if (!isString(params.prompt)) prompt = params.prompt;
       return generator;
     });
     const notifications: Array<{ method: string; params: unknown }> = [];
     client.on("notification", (notification) => notifications.push(notification));
     client.start();
 
-    await expect(client.request("account/read", {})).resolves.toMatchObject({
+    await expect(client.request("account/read", {}, decodeAccountReadResult)).resolves.toMatchObject({
       account: { type: "claude", email: "claude@example.com", planType: "max" },
     });
-    const thread = await client.request<{ thread: { id: string } }>("thread/start", {
-      cwd: root,
-      model: "claude-sonnet-5",
-      developerInstructions: "Be concise.",
-      runtimeWorkspaceRoots: [root],
-    });
+    const thread = await client.request(
+      "thread/start",
+      {
+        cwd: root,
+        model: "claude-sonnet-5",
+        developerInstructions: "Be concise.",
+        runtimeWorkspaceRoots: [root],
+      },
+      decodeThreadResponse,
+    );
     const deliveryId = "8bf58506-96a8-4d96-837c-3ab807b79d1f";
-    await client.request("turn/start", {
-      threadId: thread.thread.id,
-      clientUserMessageId: deliveryId,
-      input: [{ type: "text", text: "Hello" }],
-    });
+    await client.request(
+      "turn/start",
+      {
+        threadId: thread.thread.id,
+        clientUserMessageId: deliveryId,
+        input: [{ type: "text", text: "Hello" }],
+      },
+      decodeTurnResponse,
+    );
 
-    expect(prompt).not.toBeNull();
-    const sent = await (prompt as unknown as AsyncIterable<SDKUserMessage>)
-      [Symbol.asyncIterator]()
-      .next();
-    expect(sent?.value).toMatchObject({ uuid: deliveryId, message: { content: "Hello" } });
+    if (prompt === null) throw new Error("Claude prompt was not initialized.");
+    const promptStream: AsyncIterable<SDKUserMessage> = prompt;
+    let sent: SDKUserMessage | undefined;
+    for await (const message of promptStream) {
+      sent = message;
+      break;
+    }
+    expect(sent).toMatchObject({ uuid: deliveryId, message: { content: "Hello" } });
     output.push({
       type: "stream_event",
       parent_tool_use_id: null,
       session_id: thread.thread.id,
       uuid: deliveryId,
       event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } },
-    } as SDKMessage);
+    });
     output.push({
       type: "result",
       subtype: "success",
-      is_error: false,
       result: "Hi",
       terminal_reason: "completed",
       errors: [],
       session_id: thread.thread.id,
       uuid: deliveryId,
-    } as unknown as SDKMessage);
+    });
     await waitFor(() => notifications.some((event) => event.method === "turn/completed"));
 
     expect(notifications).toEqual(
@@ -122,17 +163,21 @@ fi
     const { client, prompt, threadId } = await createHarness();
     const turnId = "44444444-4444-4444-8444-444444444444";
     await startTurn(client, threadId, turnId);
-    const iterator = (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]();
+    const iterator = prompt[Symbol.asyncIterator]();
     const first = await iterator.next();
     expect(first.value).toMatchObject({ uuid: turnId, message: { content: "Hello" } });
 
     await expect(
-      client.request("turn/steer", {
-        threadId,
-        expectedTurnId: turnId,
-        clientUserMessageId: "55555555-5555-4555-8555-555555555555",
-        input: [{ type: "text", text: "Also check the queue." }],
-      }),
+      client.request(
+        "turn/steer",
+        {
+          threadId,
+          expectedTurnId: turnId,
+          clientUserMessageId: "55555555-5555-4555-8555-555555555555",
+          input: [{ type: "text", text: "Also check the queue." }],
+        },
+        decodeRecordResponse,
+      ),
     ).resolves.toEqual({ turnId });
     const steered = await iterator.next();
     expect(steered.value).toMatchObject({
@@ -176,57 +221,55 @@ fi
 async function createHarness(): Promise<{
   client: ClaudeAgentClient;
   notifications: Array<{ method: string; params: unknown }>;
-  output: TestQueue<SDKMessage>;
+  output: TestQueue<TestStreamMessage>;
   prompt: AsyncIterable<SDKUserMessage>;
   threadId: string;
 }> {
   root = await mkdtemp(join(tmpdir(), "openbot-claude-client-"));
-  const output = new TestQueue<SDKMessage>();
+  const output = new TestQueue<TestStreamMessage>();
   let prompt: AsyncIterable<SDKUserMessage> | null = null;
-  const generator = output[Symbol.asyncIterator]() as Query;
-  Object.assign(generator, {
-    [Symbol.asyncIterator]: () => generator,
-    interrupt: async () => undefined,
-    setModel: async () => undefined,
-    setMaxThinkingTokens: async () => undefined,
-    close: () => output.close(),
+  const generator = new TestQuery(output);
+  const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.231" }, (params) => {
+    if (!isString(params.prompt)) prompt = params.prompt;
+    return generator;
   });
-  const client = new ClaudeAgentClient(
-    { executable: "/bin/true", version: "2.1.231" },
-    (params) => {
-      prompt = params.prompt as AsyncIterable<SDKUserMessage>;
-      return generator;
-    },
-  );
   const notifications: Array<{ method: string; params: unknown }> = [];
   client.on("notification", (notification) => notifications.push(notification));
   client.start();
-  const thread = await client.request<{ thread: { id: string } }>("thread/start", {
-    cwd: root,
-    model: "claude-sonnet-5",
-    developerInstructions: "Be concise.",
-    runtimeWorkspaceRoots: [root],
-  });
+  const thread = await client.request(
+    "thread/start",
+    {
+      cwd: root,
+      model: "claude-sonnet-5",
+      developerInstructions: "Be concise.",
+      runtimeWorkspaceRoots: [root],
+    },
+    decodeThreadResponse,
+  );
   if (!prompt) throw new Error("Claude prompt was not initialized.");
   return { client, notifications, output, prompt, threadId: thread.thread.id };
 }
 
 function startTurn(client: ClaudeAgentClient, threadId: string, turnId: string) {
-  return client.request<{ turn: { id: string; status?: string } }>("turn/start", {
-    threadId,
-    clientUserMessageId: turnId,
-    input: [{ type: "text", text: "Hello" }],
-  });
+  return client.request(
+    "turn/start",
+    {
+      threadId,
+      clientUserMessageId: turnId,
+      input: [{ type: "text", text: "Hello" }],
+    },
+    decodeTurnResponse,
+  );
 }
 
-function streamDelta(threadId: string, turnId: string, text: string): SDKMessage {
+function streamDelta(threadId: string, turnId: string, text: string): TestStreamMessage {
   return {
     type: "stream_event",
     parent_tool_use_id: null,
     session_id: threadId,
     uuid: turnId,
     event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
-  } as SDKMessage;
+  };
 }
 
 function assistantMessage(
@@ -234,38 +277,38 @@ function assistantMessage(
   messageId: string,
   text: string,
   parentToolUseId: string | null = null,
-): SDKMessage {
+): TestStreamMessage {
   return {
     type: "assistant",
     parent_tool_use_id: parentToolUseId,
     session_id: threadId,
     uuid: messageId,
     message: { content: [{ type: "text", text }] },
-  } as unknown as SDKMessage;
+  };
 }
 
-function resultMessage(threadId: string, turnId: string, result: string): SDKMessage {
+function resultMessage(threadId: string, turnId: string, result: string): TestStreamMessage {
   return {
     type: "result",
     subtype: "success",
-    is_error: false,
     result,
     terminal_reason: "completed",
     errors: [],
     session_id: threadId,
     uuid: turnId,
-  } as unknown as SDKMessage;
+  };
 }
 
 function notificationDeltas(notifications: Array<{ method: string; params: unknown }>): string[] {
   return notifications
     .filter((event) => event.method === "item/agentMessage/delta")
-    .map((event) => (event.params as { delta: string }).delta);
+    .map((event) => getString(event.params, "delta") ?? "");
 }
 
 function completedText(notifications: Array<{ method: string; params: unknown }>): string {
   const completed = notifications.find((event) => event.method === "item/completed");
-  return (completed?.params as { item?: { text?: string } } | undefined)?.item?.text ?? "";
+  const item = getRecord(completed?.params, "item");
+  return getString(item, "text") ?? "";
 }
 
 class TestQueue<T> implements AsyncIterable<T> {
@@ -293,6 +336,29 @@ class TestQueue<T> implements AsyncIterable<T> {
         return new Promise((resolve) => this.#waiters.push(resolve));
       },
     };
+  }
+}
+
+class TestQuery implements AsyncIterable<TestStreamMessage> {
+  constructor(private readonly output: TestQueue<TestStreamMessage>) {}
+
+  [Symbol.asyncIterator](): AsyncIterator<TestStreamMessage> {
+    return this.output[Symbol.asyncIterator]();
+  }
+
+  async interrupt(): Promise<undefined> {
+    return undefined;
+  }
+
+  async setModel(_model?: string): Promise<void> {}
+
+  async setMaxThinkingTokens(
+    _maxThinkingTokens: number | null,
+    _thinkingDisplay?: "summarized" | "omitted" | null,
+  ): Promise<void> {}
+
+  close(): void {
+    this.output.close();
   }
 }
 

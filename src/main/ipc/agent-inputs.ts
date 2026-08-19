@@ -9,6 +9,7 @@ import {
   isAvatarSeed,
   isMessageReaction,
   isReasoningEffort,
+  type MarkConversationReadInput,
   type OpenAttachmentInput,
   type ReorderQueueInput,
   type RespondToApprovalInput,
@@ -49,10 +50,7 @@ export function parseSendMessage(value: unknown): SendMessageInput {
     throw new Error("A message or attachment is required.");
   }
   const replyToMessageId = value.replyToMessageId ?? null;
-  if (
-    replyToMessageId !== null &&
-    (!isString(replyToMessageId) || replyToMessageId.length > INPUT_LIMITS.identifier)
-  ) {
+  if (replyToMessageId !== null && (!isString(replyToMessageId) || replyToMessageId.length > INPUT_LIMITS.identifier)) {
     throw new Error("Invalid reply target.");
   }
   return {
@@ -73,6 +71,19 @@ export function parseMessageReaction(value: unknown): SetMessageReactionInput {
     botId: requireString(value.botId, "botId"),
     messageId: requireString(value.messageId, "messageId"),
     emoji,
+  };
+}
+
+export function parseMarkConversationRead(value: unknown): MarkConversationReadInput {
+  if (!isObject(value)) throw new Error("Invalid conversation read request.");
+  const throughMessageId = value.throughMessageId;
+  if (throughMessageId !== null && !isString(throughMessageId)) {
+    throw new Error("Invalid conversation read boundary.");
+  }
+  return {
+    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    throughMessageId:
+      throughMessageId === null ? null : requireString(throughMessageId, "throughMessageId", INPUT_LIMITS.identifier),
   };
 }
 
@@ -133,11 +144,7 @@ export function parseImportAttachments(value: unknown): ImportAttachmentsInput {
   if (value.paths.length + value.data.length > INPUT_LIMITS.attachments) {
     throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
   }
-  if (
-    !value.paths.every(
-      (path) => isString(path) && path.length > 0 && path.length <= INPUT_LIMITS.path,
-    )
-  ) {
+  if (!value.paths.every((path) => isString(path) && path.length > 0 && path.length <= INPUT_LIMITS.path)) {
     throw new Error("Invalid attachment path.");
   }
   const data = value.data.map((item) => {
@@ -242,8 +249,7 @@ export function parsePromptResponse(value: unknown): RespondToPromptInput {
     throw new Error("Invalid prompt response.");
   }
   if (
-    (isString(value.requestId) &&
-      (value.requestId.length === 0 || value.requestId.length > INPUT_LIMITS.identifier)) ||
+    (isString(value.requestId) && (value.requestId.length === 0 || value.requestId.length > INPUT_LIMITS.identifier)) ||
     (isNumber(value.requestId) && !Number.isSafeInteger(value.requestId))
   ) {
     throw new Error("Invalid prompt response.");
@@ -271,8 +277,7 @@ export function parseApprovalResponse(value: unknown): RespondToApprovalInput {
     throw new Error("Invalid approval response.");
   }
   if (
-    (isString(value.requestId) &&
-      (value.requestId.length === 0 || value.requestId.length > INPUT_LIMITS.identifier)) ||
+    (isString(value.requestId) && (value.requestId.length === 0 || value.requestId.length > INPUT_LIMITS.identifier)) ||
     (isNumber(value.requestId) && !Number.isSafeInteger(value.requestId))
   ) {
     throw new Error("Invalid approval response.");

@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -84,6 +84,18 @@ const SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS thread_messages_order
     ON projection_thread_messages(thread_id, created_at, ordinal);
+  CREATE TABLE IF NOT EXISTS projection_thread_reads (
+    thread_id TEXT NOT NULL REFERENCES projection_threads(thread_id) ON DELETE CASCADE,
+    member_id TEXT NOT NULL,
+    through_message_id TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(thread_id, member_id)
+  );
+  CREATE TABLE IF NOT EXISTS projection_thread_read_baselines (
+    thread_id TEXT PRIMARY KEY REFERENCES projection_threads(thread_id) ON DELETE CASCADE,
+    through_message_id TEXT,
+    initialized_at TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS projection_thread_activities (
     activity_id TEXT PRIMARY KEY,
     thread_id TEXT NOT NULL REFERENCES projection_threads(thread_id) ON DELETE CASCADE,
@@ -190,17 +202,38 @@ const SCHEMA_SQL = `
   );
 `;
 
-export function migrateOpenBotDatabase(
-  db: DatabaseSync,
-  appliedAt = new Date().toISOString(),
-): void {
+export function migrateOpenBotDatabase(db: DatabaseSync, appliedAt = new Date().toISOString()): void {
   db.exec(SCHEMA_SQL);
-  const applied = db
-    .prepare("SELECT version FROM schema_migrations WHERE version = ?")
-    .get(SCHEMA_VERSION);
+  const applied = db.prepare("SELECT version FROM schema_migrations WHERE version = ?").get(SCHEMA_VERSION);
   if (applied) return;
-  db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(
-    SCHEMA_VERSION,
-    appliedAt,
-  );
+  db.prepare(
+    `INSERT OR IGNORE INTO projection_thread_read_baselines (
+       thread_id, through_message_id, initialized_at
+     )
+     SELECT thread.thread_id,
+       (
+         SELECT message.message_id
+         FROM projection_thread_messages message
+         WHERE message.thread_id = thread.thread_id
+         ORDER BY message.created_at DESC, message.ordinal DESC, message.message_id DESC
+         LIMIT 1
+       ),
+       ?
+     FROM projection_threads thread`,
+  ).run(appliedAt);
+  db.prepare(
+    `INSERT OR IGNORE INTO projection_direct_reads (
+       thread_id, member_id, last_read_sequence, updated_at
+     )
+     SELECT thread_id, member_a_id, last_event_sequence, ?
+     FROM projection_direct_threads`,
+  ).run(appliedAt);
+  db.prepare(
+    `INSERT OR IGNORE INTO projection_direct_reads (
+       thread_id, member_id, last_read_sequence, updated_at
+     )
+     SELECT thread_id, member_b_id, last_event_sequence, ?
+     FROM projection_direct_threads`,
+  ).run(appliedAt);
+  db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(SCHEMA_VERSION, appliedAt);
 }

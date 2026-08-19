@@ -3,16 +3,10 @@ import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
-import { isString } from "@openbot/contracts/runtime-values";
+import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 
 const FUSE_DISABLED = 48;
 const FUSE_ENABLED = 49;
-
-interface WindowsVersionMetadata {
-  ProductName?: unknown;
-  FileDescription?: unknown;
-  ProductVersion?: unknown;
-}
 
 if (process.platform !== "win32") {
   throw new Error("The Windows package verifier must run on Windows.");
@@ -31,21 +25,19 @@ await Promise.all([
   access(resolve(resourcesPath, "licenses/LICENSES.chromium.html")),
 ]);
 
-const packageJson = JSON.parse(await readFile("package.json", "utf8")) as { version?: unknown };
+const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+if (!isDynamicRecord(packageJson)) throw new Error("package.json is not a JSON object.");
 if (!isString(packageJson.version)) throw new Error("package.json version is missing.");
 
 const executable = await readFile(executablePath);
-if (executable.toString("ascii", 0, 2) !== "MZ")
-  throw new Error("The executable has no MZ header.");
+if (executable.toString("ascii", 0, 2) !== "MZ") throw new Error("The executable has no MZ header.");
 const peOffset = executable.readUInt32LE(0x3c);
 if (executable.toString("ascii", peOffset, peOffset + 4) !== "PE\0\0") {
   throw new Error("The executable has no PE header.");
 }
 const machine = executable.readUInt16LE(peOffset + 4);
 if (machine !== 0x8664) {
-  throw new Error(
-    `Expected a Windows x64 executable, but its machine type is 0x${machine.toString(16)}.`,
-  );
+  throw new Error(`Expected a Windows x64 executable, but its machine type is 0x${machine.toString(16)}.`);
 }
 
 const versionInfo = JSON.parse(
@@ -56,7 +48,8 @@ const versionInfo = JSON.parse(
     `$value = (Get-Item -LiteralPath '${powerShellLiteral(executablePath)}').VersionInfo; ` +
       "[pscustomobject]@{ ProductName = $value.ProductName; FileDescription = $value.FileDescription; ProductVersion = $value.ProductVersion } | ConvertTo-Json -Compress",
   ]),
-) as WindowsVersionMetadata;
+);
+if (!isDynamicRecord(versionInfo)) throw new Error("Windows version metadata is invalid.");
 expectEqual(versionInfo.ProductName, "OpenBot", "product name");
 expectEqual(versionInfo.FileDescription, "OpenBot", "file description");
 if (!String(versionInfo.ProductVersion).startsWith(packageJson.version)) {
@@ -136,9 +129,7 @@ async function verifyLaunch(executable: string): Promise<void> {
       new Promise<never>((_, reject) => {
         child.once("exit", (code, signal) => {
           reject(
-            new Error(
-              `Packaged OpenBot exited during launch (${signal ?? `code ${String(code)}`}): ${stderr.trim()}`,
-            ),
+            new Error(`Packaged OpenBot exited during launch (${signal ?? `code ${String(code)}`}): ${stderr.trim()}`),
           );
         });
       }),

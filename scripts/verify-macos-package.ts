@@ -3,19 +3,10 @@ import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
+import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 
 const FUSE_DISABLED = 48;
 const FUSE_ENABLED = 49;
-
-interface MacBundleMetadata {
-  CFBundleDisplayName?: unknown;
-  CFBundleExecutable?: unknown;
-  CFBundleIdentifier?: unknown;
-  CFBundleIconFile?: unknown;
-  CFBundleShortVersionString?: unknown;
-  LSMinimumSystemVersion?: unknown;
-  ElectronAsarIntegrity?: unknown;
-}
 
 const appPath = resolve(process.argv[2] ?? "dist/mac-arm64/OpenBot.app");
 const contentsPath = resolve(appPath, "Contents");
@@ -31,9 +22,8 @@ await Promise.all([
   access(resolve(resourcesPath, "licenses/LICENSES.chromium.html")),
 ]);
 
-const plist = JSON.parse(
-  run("plutil", ["-convert", "json", "-o", "-", plistPath]),
-) as MacBundleMetadata;
+const plist = JSON.parse(run("plutil", ["-convert", "json", "-o", "-", plistPath]));
+if (!isDynamicRecord(plist)) throw new Error("Info.plist is not a JSON object.");
 expectEqual(plist.CFBundleDisplayName, "OpenBot", "display name");
 expectEqual(plist.CFBundleExecutable, "OpenBot", "executable name");
 expectEqual(plist.CFBundleIdentifier, "app.openbot.desktop", "bundle identifier");
@@ -41,12 +31,12 @@ expectEqual(plist.CFBundleIconFile, "icon.icns", "application icon");
 expectEqual(plist.LSMinimumSystemVersion, "12.0", "minimum macOS version");
 if (!plist.ElectronAsarIntegrity) throw new Error("ASAR integrity metadata is missing.");
 
-const packageJson = JSON.parse(await readFile("package.json", "utf8")) as { version?: unknown };
+const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+if (!isDynamicRecord(packageJson)) throw new Error("package.json is not a JSON object.");
 expectEqual(plist.CFBundleShortVersionString, packageJson.version, "application version");
 
 const architecture = run("file", [executablePath]);
-if (!architecture.includes("arm64"))
-  throw new Error(`Expected an ARM64 executable: ${architecture}`);
+if (!architecture.includes("arm64")) throw new Error(`Expected an ARM64 executable: ${architecture}`);
 
 const fuses = await getCurrentFuseWire(executablePath);
 const expectedFuses: Array<[FuseV1Options, number]> = [
@@ -99,9 +89,7 @@ async function verifyLaunch(executable: string): Promise<void> {
       new Promise<never>((_, reject) => {
         child.once("exit", (code, signal) => {
           reject(
-            new Error(
-              `Packaged OpenBot exited during launch (${signal ?? `code ${String(code)}`}): ${stderr.trim()}`,
-            ),
+            new Error(`Packaged OpenBot exited during launch (${signal ?? `code ${String(code)}`}): ${stderr.trim()}`),
           );
         });
       }),

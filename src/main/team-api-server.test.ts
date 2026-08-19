@@ -7,13 +7,10 @@ import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { TeamPresenceSnapshot } from "@openbot/contracts/ipc";
-import { isString } from "@openbot/contracts/runtime-values";
+import type { BotSummary, ConversationWithReadState, TeamPresenceSnapshot } from "@openbot/contracts/ipc";
+import { isBoolean, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import type * as Ws from "ws";
-import type { AgentService } from "../backend/agent-service";
-import type { BrowserHost } from "../backend/browser-host";
-import type { MailboxStore } from "../backend/mailbox-store";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { TeamChatStore } from "../backend/team-chat-store";
 import { TeamApiServer } from "./team-api-server";
@@ -21,23 +18,85 @@ import { TeamStore } from "./team-store";
 
 const roots: string[] = [];
 const tcpServers: ReturnType<typeof createTcpServer>[] = [];
+type TeamApiOptions = ConstructorParameters<typeof TeamApiServer>[0];
+type TestAgents = TeamApiOptions["agents"];
+type TestMailbox = TeamApiOptions["mailbox"];
+type TestBrowser = TeamApiOptions["browser"];
 const requireModule = createRequire(import.meta.url);
-const { WebSocket: NodeWebSocket } = requireModule(
+const { WebSocket: NodeWebSocket }: typeof Ws = requireModule(
   join(dirname(requireModule.resolve("ws/package.json")), "index.js"),
-) as typeof Ws;
+);
 
 interface TestRealtimeEvent {
   type: string;
   code?: string;
-  snapshot?: TeamPresenceSnapshot;
+  snapshot?: unknown;
+  message?: unknown;
+  senderMemberId?: string;
+  recipientMemberId?: string;
+  typing?: boolean;
+}
+
+function unimplemented(..._arguments_: unknown[]): never {
+  throw new Error("This operation is not used by this test.");
+}
+
+function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmitter()): TestAgents {
+  return {
+    on: (event, listener) => {
+      events.on(event, listener);
+    },
+    off: (event, listener) => {
+      events.off(event, listener);
+    },
+    getStatus: unimplemented,
+    getUsage: unimplemented,
+    listModels: unimplemented,
+    listBots: unimplemented,
+    listConversationReads: unimplemented,
+    createBot: unimplemented,
+    updateBot: unimplemented,
+    deleteBot: unimplemented,
+    setAvatar: unimplemented,
+    resolveAvatar: unimplemented,
+    readConversationFor: unimplemented,
+    markConversationRead: unimplemented,
+    prepareImportedAttachments: unimplemented,
+    discardDraftAttachment: unimplemented,
+    sendMessage: unimplemented,
+    listQueue: unimplemented,
+    setMessageReaction: unimplemented,
+    cancelQueuedMessage: unimplemented,
+    setQueuePaused: unimplemented,
+    steerQueuedMessage: unimplemented,
+    updateQueuedMessage: unimplemented,
+    reorderQueue: unimplemented,
+    interrupt: unimplemented,
+    respondToPrompt: unimplemented,
+    respondToApproval: unimplemented,
+    ...overrides,
+  };
+}
+
+function createMailbox(): TestMailbox {
+  return { resolveAttachment: unimplemented };
+}
+
+function createBrowser(): TestBrowser {
+  return {
+    listTabs: unimplemented,
+    getControlState: unimplemented,
+    open: unimplemented,
+    activate: unimplemented,
+    close: unimplemented,
+    setVisible: unimplemented,
+  };
 }
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   await Promise.all(
-    tcpServers
-      .splice(0)
-      .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+    tcpServers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
   );
 });
 
@@ -59,12 +118,12 @@ describe("TeamApiServer administration", () => {
     const chat = new TeamChatStore(database);
     const agentEvents = new EventEmitter();
     const presenceSnapshots: TeamPresenceSnapshot[] = [];
-    const agents = agentEvents as unknown as AgentService;
+    const agents = createAgents({}, agentEvents);
     const api = new TeamApiServer({
       store,
       agents,
-      mailbox: {} as MailboxStore,
-      browser: {} as BrowserHost,
+      mailbox: createMailbox(),
+      browser: createBrowser(),
       getRemoteMac: () => ({ hostname: null, online: false }),
       redeemCentralTicket: async (ticket, serverId) =>
         ticket === "valid-team-ticket" && serverId === store.getIdentity()?.serverId
@@ -92,10 +151,7 @@ describe("TeamApiServer administration", () => {
         }),
       });
       expect(response.status).toBe(201);
-      const joined = (await response.json()) as {
-        member: { id: string; email: string; role: string; avatarUrl: string | null };
-        sessionToken: string;
-      };
+      const joined = await response.json();
       expect(joined.member).toMatchObject({
         email: "alice@example.com",
         role: "member",
@@ -147,9 +203,7 @@ describe("TeamApiServer administration", () => {
       await expect(stoppedTypingPresence).resolves.toMatchObject({
         type: "team-presence",
         snapshot: {
-          members: expect.arrayContaining([
-            expect.objectContaining({ email: "alice@example.com", typingBotId: null }),
-          ]),
+          members: expect.arrayContaining([expect.objectContaining({ email: "alice@example.com", typingBotId: null })]),
         },
       });
 
@@ -207,11 +261,7 @@ describe("TeamApiServer administration", () => {
       await expect(received).resolves.toMatchObject({ type: "error", code: "smoke_event" });
       socket.close();
       await expect
-        .poll(
-          () =>
-            presenceSnapshots.at(-1)?.members.find((member) => member.email === "alice@example.com")
-              ?.online,
-        )
+        .poll(() => presenceSnapshots.at(-1)?.members.find((member) => member.email === "alice@example.com")?.online)
         .toBe(false);
     } finally {
       await api.stop();
@@ -225,12 +275,12 @@ describe("TeamApiServer administration", () => {
     const store = new TeamStore(join(root, "team.json"));
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
-    const agents = new EventEmitter() as unknown as AgentService;
+    const agents = createAgents();
     const api = new TeamApiServer({
       store,
       agents,
-      mailbox: {} as MailboxStore,
-      browser: {} as BrowserHost,
+      mailbox: createMailbox(),
+      browser: createBrowser(),
       getRemoteMac: () => ({ hostname: null, online: false }),
     });
     const port = await api.start();
@@ -245,29 +295,23 @@ describe("TeamApiServer administration", () => {
         token: ownerToken,
         body: { role: "member" },
       });
-      const joined = await jsonRequest<{ member: { id: string }; sessionToken: string }>(
-        base,
-        "/v1/join",
-        {
-          body: {
-            inviteToken: invite.token,
-            username: "alice",
-            password: "a secure team password",
-          },
+      const joined = await jsonRequest<{ member: { id: string }; sessionToken: string }>(base, "/v1/join", {
+        body: {
+          inviteToken: invite.token,
+          username: "alice",
+          password: "a secure team password",
         },
-      );
-      const updated = await jsonRequest<{ role: string }>(
-        base,
-        `/v1/team/members/${joined.member.id}`,
-        { method: "PATCH", token: ownerToken, body: { role: "admin" } },
-      );
+      });
+      const updated = await jsonRequest<{ role: string }>(base, `/v1/team/members/${joined.member.id}`, {
+        method: "PATCH",
+        token: ownerToken,
+        body: { role: "admin" },
+      });
       expect(updated.role).toBe("admin");
 
-      const sessions = await jsonRequest<Array<{ id: string; username: string }>>(
-        base,
-        "/v1/team/sessions",
-        { token: ownerToken },
-      );
+      const sessions = await jsonRequest<Array<{ id: string; username: string }>>(base, "/v1/team/sessions", {
+        token: ownerToken,
+      });
       const aliceSession = sessions.find((session) => session.username === "alice");
       expect(aliceSession).toBeDefined();
       await emptyRequest(base, `/v1/team/sessions/${aliceSession?.id}`, {
@@ -304,12 +348,12 @@ describe("TeamApiServer administration", () => {
     const store = new TeamStore(join(root, "team.json"));
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
-    const agents = new EventEmitter() as unknown as AgentService;
+    const agents = createAgents();
     const api = new TeamApiServer({
       store,
       agents,
-      mailbox: {} as MailboxStore,
-      browser: {} as BrowserHost,
+      mailbox: createMailbox(),
+      browser: createBrowser(),
       getRemoteMac: () => ({ hostname: null, online: false }),
     });
     const port = await api.start();
@@ -349,21 +393,60 @@ describe("TeamApiServer administration", () => {
     const store = new TeamStore(join(root, "team.json"));
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
-    const localBots = [{ id: "chief", name: "Chief", source: "local" }];
-    const localConversation = {
+    const localBots: BotSummary[] = [
+      {
+        id: "chief",
+        name: "Chief",
+        role: "Lead",
+        description: "",
+        notifications: true,
+        model: "gpt-5.6-luna",
+        reasoningEffort: "medium",
+        threadId: "thread-chief",
+        workspacePath: root,
+        preview: "",
+        updatedAt: null,
+        avatarSeed: "chief",
+        avatarHue: null,
+        avatarUrl: null,
+      },
+    ];
+    const localConversation: ConversationWithReadState = {
       botId: "chief",
       threadId: "thread-chief",
-      messages: [{ id: "message-1", text: "Stored locally" }],
+      activeTurnId: null,
+      revision: 1,
+      messages: [
+        {
+          id: "message-1",
+          author: "assistant",
+          text: "Stored locally",
+          createdAt: "2026-08-19T10:00:00.000Z",
+          status: "completed",
+        },
+      ],
     };
-    const agents = Object.assign(new EventEmitter(), {
+    const agents = createAgents({
       listBots: () => localBots,
-      readConversation: async (botId: string) => ({ ...localConversation, botId }),
-    }) as unknown as AgentService;
+      listConversationReads: () => ({
+        chief: { unreadCount: 1, firstUnreadMessageId: "message-1", throughMessageId: null },
+      }),
+      readConversationFor: async (botId: string, _memberId: string) => ({
+        ...localConversation,
+        botId,
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+      }),
+      markConversationRead: async (_botId: string, _memberId: string, throughMessageId: string | null) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId,
+      }),
+    });
     const api = new TeamApiServer({
       store,
       agents,
-      mailbox: {} as MailboxStore,
-      browser: {} as BrowserHost,
+      mailbox: createMailbox(),
+      browser: createBrowser(),
       getRemoteMac: () => ({ hostname: null, online: false }),
     });
     const port = await api.start();
@@ -373,12 +456,24 @@ describe("TeamApiServer administration", () => {
       const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
         body: { username: "owner", password: "correct horse battery" },
       });
-      await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(
-        localBots,
-      );
+      await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(localBots);
+      await expect(jsonRequest(base, "/v1/agents/chief/conversation", { token: login.sessionToken })).resolves.toEqual({
+        ...localConversation,
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+      });
+      await expect(jsonRequest(base, "/v1/agents/conversation-reads", { token: login.sessionToken })).resolves.toEqual({
+        chief: { unreadCount: 1, firstUnreadMessageId: "message-1", throughMessageId: null },
+      });
       await expect(
-        jsonRequest(base, "/v1/agents/chief/conversation", { token: login.sessionToken }),
-      ).resolves.toEqual(localConversation);
+        jsonRequest(base, "/v1/agents/chief/conversation/read", {
+          token: login.sessionToken,
+          body: { throughMessageId: "message-1" },
+        }),
+      ).resolves.toEqual({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: "message-1",
+      });
     } finally {
       await api.stop();
     }
@@ -391,16 +486,16 @@ describe("TeamApiServer administration", () => {
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
     const approvals: unknown[] = [];
-    const agents = Object.assign(new EventEmitter(), {
+    const agents = createAgents({
       respondToApproval: async (input: unknown) => {
         approvals.push(input);
       },
-    }) as unknown as AgentService;
+    });
     const api = new TeamApiServer({
       store,
       agents,
-      mailbox: {} as MailboxStore,
-      browser: {} as BrowserHost,
+      mailbox: createMailbox(),
+      browser: createBrowser(),
       getRemoteMac: () => ({ hostname: null, online: false }),
     });
     const port = await api.start();
@@ -446,9 +541,9 @@ describe("TeamApiServer administration", () => {
     if (!address || isString(address)) throw new Error("Missing VNC test port");
     const api = new TeamApiServer({
       store,
-      agents: new EventEmitter() as unknown as AgentService,
-      mailbox: {} as MailboxStore,
-      browser: {} as BrowserHost,
+      agents: createAgents(),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
       getRemoteMac: () => ({ hostname: "desktop.test", online: true }),
       getRemoteDesktopPassword: () => "deskpass",
       remoteDesktopPort: address.port,
@@ -478,9 +573,7 @@ describe("TeamApiServer administration", () => {
       const ownerSession = store.listSessions().find((session) => session.username === "owner");
       if (!ownerSession) throw new Error("Missing owner session");
       await store.revokeSession(ownerSession.id);
-      const closed = new Promise<number>((resolve) =>
-        desktop.once("close", (code) => resolve(code)),
-      );
+      const closed = new Promise<number>((resolve) => desktop.once("close", (code) => resolve(code)));
       desktop.send(Buffer.from("after-revoke"));
       await expect(closed).resolves.toBe(1008);
 
@@ -495,13 +588,7 @@ describe("TeamApiServer administration", () => {
 function nextWebSocketMessage(websocket: Ws.WebSocket): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     websocket.once("message", (data) => {
-      resolve(
-        Buffer.isBuffer(data)
-          ? data
-          : Array.isArray(data)
-            ? Buffer.concat(data)
-            : Buffer.from(data),
-      );
+      resolve(Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data));
     });
     websocket.once("error", reject);
   });
@@ -511,7 +598,7 @@ function nextJsonEvent(websocket: WebSocket): Promise<TestRealtimeEvent> {
   return new Promise((resolve, reject) => {
     websocket.addEventListener(
       "message",
-      (message) => resolve(JSON.parse(String(message.data)) as TestRealtimeEvent),
+      (message) => resolve(decodeTestRealtimeEvent(JSON.parse(String(message.data)))),
       { once: true },
     );
     websocket.addEventListener("error", () => reject(new Error("WebSocket event failed.")), {
@@ -534,7 +621,34 @@ async function jsonRequest<T>(
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
   expect(response.ok).toBe(true);
-  return (await response.json()) as T;
+  return await response.json();
+}
+
+function decodeTestRealtimeEvent(value: unknown): TestRealtimeEvent {
+  if (!isDynamicRecord(value) || !isString(value.type)) {
+    throw new Error("Invalid test realtime event.");
+  }
+  const code = value.code;
+  if (code !== undefined && !isString(code)) throw new Error("Invalid test event code.");
+  const senderMemberId = value.senderMemberId;
+  if (senderMemberId !== undefined && !isString(senderMemberId)) {
+    throw new Error("Invalid test sender.");
+  }
+  const recipientMemberId = value.recipientMemberId;
+  if (recipientMemberId !== undefined && !isString(recipientMemberId)) {
+    throw new Error("Invalid test recipient.");
+  }
+  const typing = value.typing;
+  if (typing !== undefined && !isBoolean(typing)) throw new Error("Invalid test typing state.");
+  return {
+    type: value.type,
+    ...(code === undefined ? {} : { code }),
+    ...(value.snapshot === undefined ? {} : { snapshot: value.snapshot }),
+    ...(value.message === undefined ? {} : { message: value.message }),
+    ...(senderMemberId === undefined ? {} : { senderMemberId }),
+    ...(recipientMemberId === undefined ? {} : { recipientMemberId }),
+    ...(typing === undefined ? {} : { typing }),
+  };
 }
 
 async function emptyRequest(

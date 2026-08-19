@@ -1,7 +1,6 @@
 // @vitest-environment node
 
 import { EventEmitter } from "node:events";
-import type { AppUpdater } from "electron-updater";
 import { describe, expect, it, vi } from "vitest";
 import { supportsInstalledUpdates, UpdateService } from "./update-service";
 
@@ -10,12 +9,12 @@ class FakeUpdater extends EventEmitter {
   autoInstallOnAppQuit = false;
   allowPrerelease = true;
   checkForUpdates = vi.fn(async () => null);
-  downloadUpdate = vi.fn(async () => [] as string[]);
+  downloadUpdate = vi.fn(async (): Promise<string[]> => []);
   quitAndInstall = vi.fn();
 }
 
 function createService(updater: FakeUpdater, beforeInstall = vi.fn(async () => undefined)) {
-  return new UpdateService(updater as unknown as AppUpdater, {
+  return new UpdateService(updater, {
     currentVersion: "0.1.0",
     enabled: true,
     beforeInstall,
@@ -85,7 +84,7 @@ describe("UpdateService", () => {
 
   it("does not contact the update provider from an unsupported build", async () => {
     const updater = new FakeUpdater();
-    const service = new UpdateService(updater as unknown as AppUpdater, {
+    const service = new UpdateService(updater, {
       currentVersion: "0.1.0",
       enabled: false,
       beforeInstall: vi.fn(async () => undefined),

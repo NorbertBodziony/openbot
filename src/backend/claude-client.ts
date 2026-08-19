@@ -7,28 +7,31 @@ import {
   createSdkMcpServer,
   getSessionMessages,
   type PermissionResult,
-  type Query,
   query,
-  type SDKMessage,
   type SDKUserMessage,
   tool,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { type DynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { z } from "zod";
 import type { AgentProvider } from "./agent-client";
 import type { ClaudeCliInfo } from "./cli";
 import {
+  type AccountReadResult,
   type AppServerNotification,
   type AppServerRequest,
   getString,
   isRecord,
   type RequestId,
+  type ResponseDecoder,
   type RpcError,
   type ThreadResponse,
+  type TurnResponse,
 } from "./protocol";
 
 const execFileAsync = promisify(execFile);
+const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+type ClaudeEffort = (typeof CLAUDE_EFFORTS)[number];
 
 interface ClientEvents {
   notification: [notification: AppServerNotification];
@@ -57,7 +60,7 @@ interface ThreadRuntime {
   id: string;
   config: ThreadConfig;
   input: AsyncMessageQueue;
-  query: Query;
+  query: ClaudeQuery;
   activeTurn: ActiveTurn | null;
   consume: Promise<void>;
 }
@@ -67,7 +70,30 @@ interface PendingServerRequest {
   reject: (error: Error) => void;
 }
 
-type QueryFactory = (params: Parameters<typeof query>[0]) => Query;
+interface ClaudeStreamMessage {
+  type: string;
+  parent_tool_use_id?: string | null;
+  event?: unknown;
+  message?: unknown;
+  uuid?: string;
+  session_id?: string;
+  subtype?: string;
+  result?: string;
+  errors?: string[];
+  terminal_reason?: string;
+}
+
+interface ClaudeQuery extends AsyncIterable<ClaudeStreamMessage> {
+  interrupt(): Promise<unknown>;
+  setModel(model?: string): Promise<void>;
+  setMaxThinkingTokens(
+    maxThinkingTokens: number | null,
+    thinkingDisplay?: "summarized" | "omitted" | null,
+  ): Promise<void>;
+  close(): void;
+}
+
+type QueryFactory = (params: Parameters<typeof query>[0]) => ClaudeQuery;
 
 export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   readonly provider: AgentProvider = "claude";
@@ -105,46 +131,47 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     this.#pendingServerRequests.clear();
   }
 
-  async request<T>(method: string, params: unknown): Promise<T> {
+  request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, _timeoutMs?: number): Promise<T>;
+  async request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, _timeoutMs?: number): Promise<T> {
     if (!this.#running) throw new Error("Claude Agent SDK is not running.");
 
     switch (method) {
       case "initialize":
-        return {} as T;
+        return decoder({});
       case "account/read":
-        return (await this.#readAccount()) as T;
+        return decoder(await this.#readAccount());
       case "account/rateLimits/read":
-        return { rateLimits: null, rateLimitsByLimitId: null } as T;
+        return decoder({ rateLimits: null, rateLimitsByLimitId: null });
       case "model/list":
-        return { data: CLAUDE_MODELS } as T;
+        return decoder({ data: CLAUDE_MODELS });
       case "plugin/list":
-        return { marketplaces: [] } as T;
+        return decoder({ marketplaces: [] });
       case "thread/start": {
         const threadId = randomUUID();
         await this.#startThread(threadId, readThreadConfig(params), false);
-        return { thread: { id: threadId } } as T;
+        return decoder({ thread: { id: threadId } });
       }
       case "thread/resume": {
         const threadId = requiredString(params, "threadId");
         if (!this.#threads.has(threadId)) {
           await this.#startThread(threadId, readThreadConfig(params), true);
         }
-        return { thread: { id: threadId } } as T;
+        return decoder({ thread: { id: threadId } });
       }
       case "thread/read":
-        return (await this.#readThread(requiredString(params, "threadId"))) as T;
+        return decoder(await this.#readThread(requiredString(params, "threadId")));
       case "turn/start":
-        return (await this.#startTurn(params)) as T;
+        return decoder(await this.#startTurn(params));
       case "turn/steer":
-        return (await this.#steerTurn(params)) as T;
+        return decoder(await this.#steerTurn(params));
       case "turn/interrupt": {
         const runtime = this.#requireThread(requiredString(params, "threadId"));
         await runtime.query.interrupt();
-        return {} as T;
+        return decoder({});
       }
       case "thread/compact/start":
         // Claude Code manages its own context compaction.
-        return {} as T;
+        return decoder({});
       default:
         throw new Error(`Claude adapter does not implement ${method}.`);
     }
@@ -168,14 +195,14 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     pending.reject(new Error(error.message));
   }
 
-  async #readAccount(): Promise<unknown> {
+  async #readAccount(): Promise<AccountReadResult> {
     try {
       const { stdout } = await execFileAsync(this.#cli.executable, ["auth", "status", "--json"], {
         timeout: 5_000,
         maxBuffer: 64 * 1024,
         shell: process.platform === "win32",
       });
-      const status = JSON.parse(stdout) as unknown;
+      const status = JSON.parse(stdout);
       if (!isRecord(status) || status.loggedIn !== true) {
         return { account: null, requiresOpenaiAuth: false };
       }
@@ -237,7 +264,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     this.#threads.set(threadId, runtime);
   }
 
-  async #startTurn(params: unknown): Promise<unknown> {
+  async #startTurn(params: unknown): Promise<TurnResponse> {
     const threadId = requiredString(params, "threadId");
     const runtime = this.#requireThread(threadId);
     if (runtime.activeTurn) throw new Error("The Claude thread already has an active turn.");
@@ -271,13 +298,13 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       type: "user",
       message: { role: "user", content: text },
       parent_tool_use_id: null,
-      uuid: turnId as UUID,
+      uuid: turnId,
       session_id: threadId,
     });
     return { turn: { id: turnId, status: "inProgress" } };
   }
 
-  async #steerTurn(params: unknown): Promise<unknown> {
+  async #steerTurn(params: unknown): Promise<{ turnId: string }> {
     const threadId = requiredString(params, "threadId");
     const runtime = this.#requireThread(threadId);
     const expectedTurnId = requiredString(params, "expectedTurnId");
@@ -290,7 +317,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       type: "user",
       message: { role: "user", content: readInputText(params) },
       parent_tool_use_id: null,
-      uuid: messageId as UUID,
+      uuid: messageId,
       session_id: threadId,
     });
     return { turnId: runtime.activeTurn.id };
@@ -314,9 +341,9 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     this.emit("exit", error);
   }
 
-  #handleMessage(runtime: ThreadRuntime, message: SDKMessage): void {
+  #handleMessage(runtime: ThreadRuntime, message: ClaudeStreamMessage): void {
     if (message.type === "stream_event" && message.parent_tool_use_id === null) {
-      const event = message.event as unknown;
+      const event = message.event;
       const delta = isRecord(event) ? event.delta : null;
       if (
         event &&
@@ -335,7 +362,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       if (message.parent_tool_use_id !== null) return;
       const turn = runtime.activeTurn;
       const text = messageText(message.message);
-      if (!turn || !text) return;
+      if (!turn || !text || !message.uuid) return;
       turn.assistantMessages.set(message.uuid, text);
       const completeText = [...turn.assistantMessages.values()].join("");
       if (completeText.startsWith(turn.text)) {
@@ -346,6 +373,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
     if (message.type !== "result") return;
     const fallback = message.subtype === "success" ? message.result : "";
+    const errors = message.errors ?? [];
     const turn = runtime.activeTurn;
     if (turn) {
       const completeText = [...turn.assistantMessages.values()].join("");
@@ -355,13 +383,9 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const interrupted =
       message.terminal_reason === "aborted_streaming" ||
       message.terminal_reason === "aborted_tools" ||
-      ("errors" in message && message.errors.some((error) => /interrupt|abort/i.test(error)));
-    const status = interrupted
-      ? "interrupted"
-      : message.subtype === "success"
-        ? "completed"
-        : "failed";
-    this.#completeTurn(runtime, status, "errors" in message ? message.errors.join("\n") : null);
+      errors.some((error) => /interrupt|abort/i.test(error));
+    const status = interrupted ? "interrupted" : message.subtype === "success" ? "completed" : "failed";
+    this.#completeTurn(runtime, status, errors.length > 0 ? errors.join("\n") : null);
   }
 
   #appendDelta(runtime: ThreadRuntime, delta: string): void {
@@ -405,10 +429,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
   async #readThread(threadId: string): Promise<ThreadResponse> {
     const runtime = this.#threads.get(threadId);
-    const messages = await getSessionMessages(
-      threadId,
-      runtime?.config.cwd ? { dir: runtime.config.cwd } : undefined,
-    );
+    const messages = await getSessionMessages(threadId, runtime?.config.cwd ? { dir: runtime.config.cwd } : undefined);
     const turns: NonNullable<ThreadResponse["thread"]["turns"]> = [];
     let current: (typeof turns)[number] | null = null;
     for (const message of messages) {
@@ -448,20 +469,12 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         name: "openbot_browser",
         version: "0.1.0",
         tools: [
-          tool(
-            "open",
-            "Open an HTTP(S) URL in OpenBot's private browser.",
-            { url: z.string() },
-            (args) => call("openbot_browser", "open", args),
+          tool("open", "Open an HTTP(S) URL in OpenBot's private browser.", { url: z.string() }, (args) =>
+            call("openbot_browser", "open", args),
           ),
-          tool("list_tabs", "List OpenBot browser tabs.", {}, (args) =>
-            call("openbot_browser", "list_tabs", args),
-          ),
-          tool(
-            "snapshot",
-            "Read a browser page and get element references.",
-            { tabId: z.string() },
-            (args) => call("openbot_browser", "snapshot", args),
+          tool("list_tabs", "List OpenBot browser tabs.", {}, (args) => call("openbot_browser", "list_tabs", args)),
+          tool("snapshot", "Read a browser page and get element references.", { tabId: z.string() }, (args) =>
+            call("openbot_browser", "snapshot", args),
           ),
           tool(
             "act",
@@ -511,12 +524,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     };
   }
 
-  async #callDynamicTool(
-    threadId: string,
-    namespace: string,
-    name: string,
-    args: unknown,
-  ): Promise<CallToolResult> {
+  async #callDynamicTool(threadId: string, namespace: string, name: string, args: unknown): Promise<CallToolResult> {
     const runtime = this.#requireThread(threadId);
     const result = await this.#callServerRequest("item/tool/call", {
       threadId,
@@ -534,11 +542,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     return { content, isError: result.success === false };
   }
 
-  async #requestUserInput(
-    threadId: string,
-    input: DynamicRecord,
-    toolUseId: string,
-  ): Promise<PermissionResult> {
+  async #requestUserInput(threadId: string, input: DynamicRecord, toolUseId: string): Promise<PermissionResult> {
     const runtime = this.#requireThread(threadId);
     const rawQuestions = Array.isArray(input.questions) ? input.questions.filter(isRecord) : [];
     const questions = rawQuestions.map((question, index) => ({
@@ -558,10 +562,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       questions.map((question) => {
         const entry = responseAnswers[question.id];
         const values = isRecord(entry) && Array.isArray(entry.answers) ? entry.answers : [];
-        return [
-          question.question,
-          values.filter((value): value is string => isString(value)).join(", "),
-        ];
+        return [question.question, values.filter((value): value is string => isString(value)).join(", ")];
       }),
     );
     return { behavior: "allow", updatedInput: { questions: input.questions, answers } };
@@ -665,7 +666,7 @@ function readInputText(params: unknown): string {
   return params.input
     .filter(isRecord)
     .filter((item) => item.type === "text" && isString(item.text))
-    .map((item) => item.text as string)
+    .map((item) => item.text)
     .join("\n");
 }
 
@@ -676,7 +677,7 @@ function messageText(message: unknown): string {
   return message.content
     .filter(isRecord)
     .filter((block) => block.type === "text" && isString(block.text))
-    .map((block) => block.text as string)
+    .map((block) => block.text)
     .join("\n");
 }
 
@@ -696,16 +697,14 @@ function normalizeClaudeModel(model: string): string {
   return model.startsWith("claude-") ? model : "claude-opus-5";
 }
 
-function normalizeClaudeEffort(effort: string): "low" | "medium" | "high" | "xhigh" | "max" {
-  return ["low", "medium", "high", "xhigh", "max"].includes(effort)
-    ? (effort as "low" | "medium" | "high" | "xhigh" | "max")
-    : "high";
+function normalizeClaudeEffort(effort: string): ClaudeEffort {
+  return isOneOf(CLAUDE_EFFORTS, effort) ? effort : "high";
 }
 
 function thinkingTokens(effort: string): number {
   return { low: 2_000, medium: 8_000, high: 16_000, xhigh: 32_000, max: 64_000 }[effort] ?? 16_000;
 }
 
-function isUuid(value: string): boolean {
+function isUuid(value: string): value is UUID {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }

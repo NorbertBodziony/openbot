@@ -35,8 +35,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
     ({ focusFirst, options, allowUnavailableSelection }) => {
       if (!focusFirst || focused) return;
       const first =
-        options.find((option) => option.state === "available") ??
-        (allowUnavailableSelection ? options[0] : undefined);
+        options.find((option) => option.state === "available") ?? (allowUnavailableSelection ? options[0] : undefined);
       const input = first ? inputs.get(first.id) : undefined;
       if (!input) return;
       focused = true;
@@ -56,9 +55,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
       role="radiogroup"
       aria-label={props.ariaLabel}
     >
-      <Show when={props.label}>
-        {(label) => <div class="provider-picker-label">{label()}</div>}
-      </Show>
+      <Show when={props.label}>{(label) => <div class="provider-picker-label">{label()}</div>}</Show>
       <div class="provider-picker-list">
         <For each={props.options}>
           {(option) => {
@@ -87,9 +84,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
                 />
                 <span class="provider-picker-identity">
                   <span class="provider-picker-name">{option.name}</span>
-                  <Show when={option.email}>
-                    {(email) => <small class="provider-picker-email">{email()}</small>}
-                  </Show>
+                  <Show when={option.email}>{(email) => <small class="provider-picker-email">{email()}</small>}</Show>
                 </span>
                 <span class={`provider-picker-status provider-picker-status-${option.state}`}>
                   <i aria-hidden="true" />
@@ -105,7 +100,9 @@ export function ProviderPicker(props: ProviderPickerProps) {
   );
 }
 
-function providerStatusLabel(state: AgentProviderState): string {
+function providerStatusLabel(
+  state: AgentProviderState,
+): "Available" | "Sign in required" | "Not installed" | "Update required" | "Unavailable" | "Checking" {
   if (state === "available") return "Available";
   if (state === "sign-in-required") return "Sign in required";
   if (state === "not-installed") return "Not installed";

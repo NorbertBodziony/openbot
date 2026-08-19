@@ -8,7 +8,18 @@ const bot = {
   id: "chief",
   name: "Chief",
   notifications: true,
-} as BotSummary;
+  role: "Lead",
+  description: "",
+  model: "gpt-5.6-luna",
+  reasoningEffort: "medium",
+  threadId: "thread-chief",
+  workspacePath: "/tmp/chief",
+  preview: "",
+  updatedAt: null,
+  avatarSeed: "chief",
+  avatarHue: null,
+  avatarUrl: null,
+} satisfies BotSummary;
 
 describe("notificationForAgentEvent", () => {
   it("surfaces completed work and prompts for enabled agents", () => {
@@ -33,9 +44,7 @@ describe("notificationForAgentEvent", () => {
 
   it("ignores disabled agents, non-successful turns, and unrelated events", () => {
     expect(notificationForAgentEvent(completed("failed"), [bot])).toBeNull();
-    expect(
-      notificationForAgentEvent(completed("completed"), [{ ...bot, notifications: false }]),
-    ).toBeNull();
+    expect(notificationForAgentEvent(completed("completed"), [{ ...bot, notifications: false }])).toBeNull();
     expect(notificationForAgentEvent({ type: "bots-changed", bots: [] }, [bot])).toBeNull();
   });
 });

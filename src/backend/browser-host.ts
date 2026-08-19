@@ -11,20 +11,8 @@ import type {
   BrowserTab,
   BrowserVisibilityInput,
 } from "@openbot/contracts/ipc";
-import {
-  type DynamicRecord,
-  isBoolean,
-  isNumber,
-  isString,
-} from "@openbot/contracts/runtime-values";
-import {
-  app,
-  type BrowserWindow,
-  type Session,
-  session,
-  type WebContents,
-  WebContentsView,
-} from "electron";
+import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { app, type BrowserWindow, type Session, session, type WebContents, WebContentsView } from "electron";
 import { persistentBrowserUrl, xLoginUrlForLanding } from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
@@ -179,16 +167,12 @@ export class BrowserHost {
       this.#bindTabEvents(tab);
       return tab;
     });
-    this.#activeTabId = this.#tabs.has(state.activeTabId ?? "")
-      ? state.activeTabId
-      : (tabs[0]?.id ?? null);
+    this.#activeTabId = this.#tabs.has(state.activeTabId ?? "") ? state.activeTabId : (tabs[0]?.id ?? null);
     this.#syncAttachedView();
     this.#emitChanged();
 
     for (const tab of tabs) {
-      void tab.view.webContents
-        .loadURL(tab.requestedUrl, browserLoadOptions())
-        .catch(() => undefined);
+      void tab.view.webContents.loadURL(tab.requestedUrl, browserLoadOptions()).catch(() => undefined);
     }
   }
 
@@ -235,11 +219,7 @@ export class BrowserHost {
     return this.#activeTabId;
   }
 
-  async open(
-    url: string,
-    ownerThreadId: string | null = null,
-    ownerBotId: string | null = null,
-  ): Promise<BrowserTab> {
+  async open(url: string, ownerThreadId: string | null = null, ownerBotId: string | null = null): Promise<BrowserTab> {
     if (this.#tabs.size >= INPUT_LIMITS.browserTabs) {
       throw new Error(`The browser can have up to ${INPUT_LIMITS.browserTabs} open tabs.`);
     }
@@ -322,11 +302,7 @@ export class BrowserHost {
       tab.view.webContents.focus();
       try {
         if (!wasVisible) await delay(250);
-        await withTimeout(
-          performAction(tab.view.webContents, action),
-          10_000,
-          "Browser action timed out.",
-        );
+        await withTimeout(performAction(tab.view.webContents, action), 10_000, "Browser action timed out.");
         await delay(50);
       } finally {
         if (!wasVisible) tab.view.setVisible(false);
@@ -339,11 +315,7 @@ export class BrowserHost {
 
   async screenshot(tabId: string): Promise<string> {
     return this.#enqueue(tabId, async (tab) => {
-      const image = await withTimeout(
-        tab.view.webContents.capturePage(),
-        10_000,
-        "Browser screenshot timed out.",
-      );
+      const image = await withTimeout(tab.view.webContents.capturePage(), 10_000, "Browser screenshot timed out.");
       return image.toDataURL();
     });
   }
@@ -362,9 +334,7 @@ export class BrowserHost {
         case "list_tabs":
           return textResult({ tabs: this.listTabs(), activeTabId: this.#activeTabId });
         case "snapshot": {
-          const snapshot = await this.snapshot(
-            requiredString(args, "tabId", INPUT_LIMITS.identifier),
-          );
+          const snapshot = await this.snapshot(requiredString(args, "tabId", INPUT_LIMITS.identifier));
           return textResult(snapshot);
         }
         case "act": {
@@ -374,9 +344,7 @@ export class BrowserHost {
           return textResult(await this.act(tabId, revision, action));
         }
         case "screenshot": {
-          const imageUrl = await this.screenshot(
-            requiredString(args, "tabId", INPUT_LIMITS.identifier),
-          );
+          const imageUrl = await this.screenshot(requiredString(args, "tabId", INPUT_LIMITS.identifier));
           return { success: true, contentItems: [{ type: "inputImage", imageUrl }] };
         }
         case "close_tab": {
@@ -411,12 +379,7 @@ export class BrowserHost {
     }
   }
 
-  #createTab(
-    id: string,
-    requestedUrl: string,
-    ownerThreadId: string | null,
-    ownerBotId: string | null,
-  ): InternalTab {
+  #createTab(id: string, requestedUrl: string, ownerThreadId: string | null, ownerBotId: string | null): InternalTab {
     const view = this.#createView();
     this.#mountView(view);
     return {
@@ -527,9 +490,7 @@ export class BrowserHost {
       title: isString(raw.title) ? raw.title.slice(0, 500) : "",
       url: isString(raw.url) ? raw.url : tab.view.webContents.getURL(),
       text: isString(raw.text) ? raw.text.slice(0, 100_000) : "",
-      elements: Array.isArray(raw.elements)
-        ? raw.elements.filter(isSnapshotElement).slice(0, 500)
-        : [],
+      elements: Array.isArray(raw.elements) ? raw.elements.filter(isSnapshotElement).slice(0, 500) : [],
     };
   }
 
@@ -739,8 +700,7 @@ function removeUserAgentProducts(userAgent: string, products: string[]): string 
   return products
     .filter(Boolean)
     .reduce(
-      (current, product) =>
-        current.replace(new RegExp(`\\s${escapeRegExp(product)}/[^\\s]+`, "g"), ""),
+      (current, product) => current.replace(new RegExp(`\\s${escapeRegExp(product)}/[^\\s]+`, "g"), ""),
       userAgent,
     );
 }
@@ -748,9 +708,7 @@ function removeUserAgentProducts(userAgent: string, products: string[]): string 
 function preferredBrowserLanguages(): string {
   return preferredBrowserLanguageCodes()
     .split(",")
-    .map((language, index) =>
-      index === 0 ? language : `${language};q=${Math.max(1 - index * 0.1, 0.1).toFixed(1)}`,
-    )
+    .map((language, index) => (index === 0 ? language : `${language};q=${Math.max(1 - index * 0.1, 0.1).toFixed(1)}`))
     .join(",");
 }
 
@@ -760,9 +718,7 @@ function preferredBrowserLanguageCodes(): string {
 }
 
 function setRequestHeader(headers: Record<string, string>, name: string, value: string): void {
-  const existingName = Object.keys(headers).find(
-    (candidate) => candidate.toLowerCase() === name.toLowerCase(),
-  );
+  const existingName = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
   if (existingName && existingName !== name) delete headers[existingName];
   headers[name] = value;
 }
@@ -773,19 +729,17 @@ function escapeRegExp(value: string): string {
 
 async function readBrowserState(path: string): Promise<StoredBrowserState> {
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as Partial<StoredBrowserState>;
-    if (parsed.version !== 1) return { version: 1, activeTabId: null, tabs: [] };
+    const parsed = JSON.parse(await readFile(path, "utf8"));
+    if (!isRecord(parsed) || parsed.version !== 1) {
+      return { version: 1, activeTabId: null, tabs: [] };
+    }
     const tabs = Array.isArray(parsed.tabs)
-      ? parsed.tabs
-          .filter(isStoredBrowserTab)
-          .map((tab) => ({ ...tab, url: persistentBrowserUrl(tab.url) }))
+      ? parsed.tabs.filter(isStoredBrowserTab).map((tab) => ({ ...tab, url: persistentBrowserUrl(tab.url) }))
       : [];
     return {
       version: 1,
       activeTabId: isString(parsed.activeTabId) ? parsed.activeTabId : null,
-      tabs: tabs.filter(
-        (tab, index) => tabs.findIndex((candidate) => candidate.id === tab.id) === index,
-      ),
+      tabs: tabs.filter((tab, index) => tabs.findIndex((candidate) => candidate.id === tab.id) === index),
     };
   } catch (error) {
     if (isMissingFile(error) || error instanceof SyntaxError) {
@@ -812,10 +766,7 @@ function isStoredBrowserTab(value: unknown): value is StoredBrowserState["tabs"]
   ) {
     return false;
   }
-  if (
-    value.ownerBotId !== null &&
-    (!isString(value.ownerBotId) || value.ownerBotId.length > INPUT_LIMITS.identifier)
-  ) {
+  if (value.ownerBotId !== null && (!isString(value.ownerBotId) || value.ownerBotId.length > INPUT_LIMITS.identifier)) {
     return false;
   }
   return isPersistableBrowserUrl(value.url);
@@ -995,18 +946,11 @@ async function performAction(contents: WebContents, action: BrowserAction): Prom
 
 function isInputPoint(value: unknown): value is { x: number; y: number; direct?: boolean } {
   return (
-    isRecord(value) &&
-    isNumber(value.x) &&
-    Number.isFinite(value.x) &&
-    isNumber(value.y) &&
-    Number.isFinite(value.y)
+    isRecord(value) && isNumber(value.x) && Number.isFinite(value.x) && isNumber(value.y) && Number.isFinite(value.y)
   );
 }
 
-async function withDevToolsDebugger<T>(
-  contents: WebContents,
-  operation: () => Promise<T>,
-): Promise<T> {
+async function withDevToolsDebugger<T>(contents: WebContents, operation: () => Promise<T>): Promise<T> {
   const attachedHere = !contents.debugger.isAttached();
   if (attachedHere) {
     contents.debugger.attach("1.3");
@@ -1095,11 +1039,7 @@ function uniqueDownloadPath(root: string, name: string, reserved: Set<string>): 
   }
 }
 
-async function withTimeout<T>(
-  promise: Promise<T>,
-  milliseconds: number,
-  message: string,
-): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {
   let timeout: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([

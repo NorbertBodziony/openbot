@@ -1,10 +1,5 @@
 import { createFileRoute } from "@tanstack/solid-router";
-import {
-  AvatarUploadError,
-  avatarObjectKey,
-  avatarVersion,
-  readAvatarUpload,
-} from "../../../server/avatar-storage";
+import { AvatarUploadError, avatarObjectKey, avatarVersion, readAvatarUpload } from "../../../server/avatar-storage";
 import {
   apiError,
   authErrorResponse,

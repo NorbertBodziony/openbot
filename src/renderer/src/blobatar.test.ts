@@ -5,9 +5,9 @@ import { avatarCandidateSeeds, avatarHeadColor, buildAnimatedAvatarSvg } from ".
 
 const avatarGeometryMarkup = (markup: string) => {
   const document = new DOMParser().parseFromString(markup, "image/svg+xml");
-  return Array.from(
-    document.querySelectorAll("circle, ellipse, line, path, polygon, polyline, rect"),
-  ).map((element) => element.outerHTML);
+  return Array.from(document.querySelectorAll("circle, ellipse, line, path, polygon, polyline, rect")).map(
+    (element) => element.outerHTML,
+  );
 };
 
 describe("animated Blobatar adapter", () => {
@@ -57,18 +57,7 @@ describe("animated Blobatar adapter", () => {
     expect(new Set(firstSet)).toHaveLength(12);
     expect(firstSet[0]).toBe("chief:avatar:4:7");
     expect(new Set(firstSet.map((seed) => layout(traits(seed)).shape))).toEqual(
-      new Set([
-        "round",
-        "organic",
-        "boxy",
-        "nub",
-        "cloud",
-        "sun",
-        "capsule",
-        "triangle",
-        "hexagon",
-        "droplet",
-      ]),
+      new Set(["round", "organic", "boxy", "nub", "cloud", "sun", "capsule", "triangle", "hexagon", "droplet"]),
     );
     expect(nextSet[0]).toBe(firstSet[0]);
     expect(nextSet.slice(1)).not.toEqual(firstSet.slice(1));
@@ -81,9 +70,7 @@ describe("animated Blobatar adapter", () => {
       const animated = buildAnimatedAvatarSvg(seed, 215);
       expect(animated).toContain('class="mo-root"');
       expect(animated.match(/class="mo-eye"/gu)).toHaveLength(2);
-      expect(avatarGeometryMarkup(animated)).toEqual(
-        avatarGeometryMarkup(blobatar(seed, { hue: 215 })),
-      );
+      expect(avatarGeometryMarkup(animated)).toEqual(avatarGeometryMarkup(blobatar(seed, { hue: 215 })));
     }
   });
 });

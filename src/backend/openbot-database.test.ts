@@ -4,6 +4,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BotSummary, ConversationSnapshot } from "@openbot/contracts/ipc";
+import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import { OpenBotDatabase } from "./openbot-database";
 
@@ -16,11 +17,13 @@ afterEach(async () => {
 describe("OpenBotDatabase", () => {
   it("configures a private WAL database with every required projection", async () => {
     const database = await createDatabase();
-    const tables = (
-      database.connection
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
-        .all() as Array<{ name: string }>
-    ).map((row) => row.name);
+    const tables = database.connection
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .all()
+      .map((row) => {
+        if (!isDynamicRecord(row) || !isString(row.name)) throw new Error("Invalid table row.");
+        return row.name;
+      });
 
     expect(tables).toEqual(
       expect.arrayContaining([
@@ -74,9 +77,7 @@ describe("OpenBotDatabase", () => {
     expect(eventCount(database)).toBe(0);
     expect(
       database.connection
-        .prepare(
-          "SELECT COUNT(*) AS count FROM orchestration_command_receipts WHERE command_id = ?",
-        )
+        .prepare("SELECT COUNT(*) AS count FROM orchestration_command_receipts WHERE command_id = ?")
         .get("broken-command"),
     ).toMatchObject({ count: 0 });
     database.close();
@@ -140,11 +141,10 @@ describe("OpenBotDatabase", () => {
       turnId: "turn-1",
       status: "completed",
     });
-    database.connection
-      .prepare("DELETE FROM projection_thread_messages WHERE thread_id = ?")
-      .run(bot.threadId);
+    database.connection.prepare("DELETE FROM projection_thread_messages WHERE thread_id = ?").run(bot.threadId);
     expect(database.readConversation(bot.id, bot.threadId).messages).toEqual([]);
-    expect(database.rebuildThreadProjection(bot.threadId as string).messages).toMatchObject([
+    if (!bot.threadId) throw new Error("The test bot has no thread.");
+    expect(database.rebuildThreadProjection(bot.threadId).messages).toMatchObject([
       { text: "Return 42", status: "completed" },
       { text: "42", status: "completed" },
     ]);
@@ -191,9 +191,7 @@ function testBot(): BotSummary {
 }
 
 function eventCount(database: OpenBotDatabase): number {
-  return (
-    database.connection.prepare("SELECT COUNT(*) AS count FROM orchestration_events").get() as {
-      count: number;
-    }
-  ).count;
+  const row = database.connection.prepare("SELECT COUNT(*) AS count FROM orchestration_events").get();
+  if (!isDynamicRecord(row) || !isNumber(row.count)) throw new Error("Invalid event count row.");
+  return row.count;
 }

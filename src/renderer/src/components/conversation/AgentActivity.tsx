@@ -3,18 +3,13 @@ import type { BotMessage, BotProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import { ChevronIcon, ThinkingIcon } from "./ConversationIcons";
 
-export function AgentActivityIndicator(props: {
-  bot: BotProfile | undefined;
-  state: "Queued" | "Working" | null;
-}) {
+export function AgentActivityIndicator(props: { bot: BotProfile | undefined; state: "Queued" | "Working" | null }) {
   return (
     <div
       class={["agent-activity-entry", { "agent-activity-entry-visible": props.state !== null }]}
       role="status"
       aria-hidden={props.state === null ? "true" : "false"}
-      aria-label={
-        props.state ? `${props.bot?.name ?? "Agent"} is ${props.state.toLowerCase()}` : undefined
-      }
+      aria-label={props.state ? `${props.bot?.name ?? "Agent"} is ${props.state.toLowerCase()}` : undefined}
     >
       <AgentAvatar bot={props.bot} class="agent-activity-avatar" />
       <div class="agent-activity-bubble" aria-hidden="true">

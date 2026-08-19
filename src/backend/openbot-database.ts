@@ -2,19 +2,9 @@ import { randomUUID } from "node:crypto";
 import { chmod, copyFile, mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type {
-  AgentProviderId,
-  BotSummary,
-  ConversationMessage,
-  ConversationSnapshot,
-} from "@openbot/contracts/ipc";
-import { isClaudeModel } from "@openbot/contracts/ipc";
-import {
-  type DynamicRecord,
-  isDynamicRecord,
-  isNumber,
-  isString,
-} from "@openbot/contracts/runtime-values";
+import type { AgentProviderId, BotSummary, ConversationMessage, ConversationSnapshot } from "@openbot/contracts/ipc";
+import { isClaudeModel, isImageGenerationInfo } from "@openbot/contracts/ipc";
+import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { migrateOpenBotDatabase } from "./openbot-database-schema";
 
 export interface OrchestrationEventInput {
@@ -50,14 +40,6 @@ export interface StoredThreadSummary {
 interface ReceiptRow {
   last_sequence: number;
   result_json: string;
-}
-
-interface MessageRow {
-  message_json: string;
-}
-
-interface AgentRow {
-  agent_json: string;
 }
 
 interface SessionRow {
@@ -102,6 +84,15 @@ interface MailboxProjectionDraft extends MailboxProjectionAttachment {
   createdAt: string;
 }
 
+interface MailboxProjectionGeneratedAttachment extends MailboxProjectionAttachment {
+  size: number;
+  kind: string;
+  mimeType: string;
+  previewKind: string;
+  previewUrl: string | null;
+  sha256: string;
+}
+
 interface MailboxProjectionReaction {
   botId: string;
   messageId: string;
@@ -113,6 +104,7 @@ interface MailboxProjectionState {
   messages: MailboxProjectionMessage[];
   deliveries: MailboxProjectionDelivery[];
   drafts: MailboxProjectionDraft[];
+  generatedAttachments: MailboxProjectionGeneratedAttachment[];
   pausedBotIds: string[];
   idempotency: Record<string, string>;
   reactions: MailboxProjectionReaction[];
@@ -169,12 +161,12 @@ export class OpenBotDatabase {
     project: (db: DatabaseSync, sequences: number[]) => T,
   ): T {
     const db = this.connection;
-    const receipt = db
-      .prepare(
-        "SELECT last_sequence, result_json FROM orchestration_command_receipts WHERE command_id = ?",
-      )
-      .get(commandId) as ReceiptRow | undefined;
-    if (receipt) return JSON.parse(receipt.result_json) as T;
+    const receipt = decodeReceiptRow(
+      db
+        .prepare("SELECT last_sequence, result_json FROM orchestration_command_receipts WHERE command_id = ?")
+        .get(commandId),
+    );
+    if (receipt) return JSON.parse(receipt.result_json);
 
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -217,11 +209,9 @@ export class OpenBotDatabase {
   }
 
   listAgents(): BotSummary[] {
-    return (
-      this.connection
-        .prepare("SELECT agent_json FROM projection_agents ORDER BY sort_order, agent_id")
-        .all() as unknown as AgentRow[]
-    ).map((row) => JSON.parse(row.agent_json) as BotSummary);
+    return databaseRows(
+      this.connection.prepare("SELECT agent_json FROM projection_agents ORDER BY sort_order, agent_id").all(),
+    ).map((row) => JSON.parse(requiredStringColumn(row, "agent_json")));
   }
 
   replaceAgents(commandId: string, agents: BotSummary[], eventType: string): void {
@@ -259,12 +249,7 @@ export class OpenBotDatabase {
     );
   }
 
-  hardDeleteAgent(
-    commandId: string,
-    botId: string,
-    threadId: string | null,
-    remainingAgents: BotSummary[],
-  ): void {
+  hardDeleteAgent(commandId: string, botId: string, threadId: string | null, remainingAgents: BotSummary[]): void {
     this.dispatch(
       commandId,
       [
@@ -282,17 +267,13 @@ export class OpenBotDatabase {
               (aggregate_type = 'agents' AND aggregate_id = 'agents' AND sequence < ?))`
           : `(aggregate_id = ? OR
               (aggregate_type = 'agents' AND aggregate_id = 'agents' AND sequence < ?))`;
-        const sensitiveParameters = threadId
-          ? ([botId, threadId, sequence] as const)
-          : ([botId, sequence] as const);
+        const sensitiveParameters = threadId ? ([botId, threadId, sequence] as const) : ([botId, sequence] as const);
         db.prepare(
           `DELETE FROM orchestration_command_receipts WHERE command_id IN (
              SELECT DISTINCT command_id FROM orchestration_events WHERE ${sensitiveFilter}
            )`,
         ).run(...sensitiveParameters);
-        db.prepare(`DELETE FROM orchestration_events WHERE ${sensitiveFilter}`).run(
-          ...sensitiveParameters,
-        );
+        db.prepare(`DELETE FROM orchestration_events WHERE ${sensitiveFilter}`).run(...sensitiveParameters);
         db.prepare("DELETE FROM projection_agents WHERE agent_id = ?").run(botId);
         db.prepare("DELETE FROM projection_reactions WHERE agent_id = ?").run(botId);
         db.prepare("DELETE FROM projection_deliveries WHERE recipient_agent_id = ?").run(botId);
@@ -307,26 +288,28 @@ export class OpenBotDatabase {
 
   readConversation(botId: string, threadId: string | null): ConversationSnapshot {
     if (!threadId) return { botId, threadId: null, activeTurnId: null, revision: 0, messages: [] };
-    const thread = this.connection
-      .prepare(
-        `SELECT active_turn_id, last_event_sequence
-         FROM projection_threads WHERE thread_id = ? AND agent_id = ?`,
-      )
-      .get(threadId, botId) as
-      | { active_turn_id: string | null; last_event_sequence: number }
-      | undefined;
-    const rows = this.connection
-      .prepare(
-        `SELECT message_json FROM projection_thread_messages
-         WHERE thread_id = ? ORDER BY created_at, ordinal, message_id`,
-      )
-      .all(threadId) as unknown as MessageRow[];
+    const thread = decodeConversationThreadRow(
+      this.connection
+        .prepare(
+          `SELECT active_turn_id, last_event_sequence
+           FROM projection_threads WHERE thread_id = ? AND agent_id = ?`,
+        )
+        .get(threadId, botId),
+    );
+    const rows = databaseRows(
+      this.connection
+        .prepare(
+          `SELECT message_json FROM projection_thread_messages
+           WHERE thread_id = ? ORDER BY created_at, ordinal, message_id`,
+        )
+        .all(threadId),
+    );
     return {
       botId,
       threadId,
       activeTurnId: thread?.active_turn_id ?? null,
       revision: thread?.last_event_sequence ?? 0,
-      messages: rows.map((row) => JSON.parse(row.message_json) as ConversationMessage),
+      messages: rows.map((row) => JSON.parse(requiredStringColumn(row, "message_json"))),
     };
   }
 
@@ -421,20 +404,10 @@ export class OpenBotDatabase {
               WHERE thread_id = ? AND state = 'active' ORDER BY created_at DESC LIMIT 1
             ), 'running', ?, NULL, ?)
             ON CONFLICT(turn_id) DO UPDATE SET status = 'running', last_event_sequence = excluded.last_event_sequence
-          `).run(
-            snapshot.activeTurnId,
-            snapshot.threadId,
-            snapshot.threadId,
-            new Date().toISOString(),
-            sequence,
-          );
+          `).run(snapshot.activeTurnId, snapshot.threadId, snapshot.threadId, new Date().toISOString(), sequence);
         }
         if (
-          [
-            "turn.completed",
-            "turn.reconciled-after-restart",
-            "turn.interrupted-by-restart",
-          ].includes(eventType) &&
+          ["turn.completed", "turn.reconciled-after-restart", "turn.interrupted-by-restart"].includes(eventType) &&
           isDynamicRecord(payload) &&
           "turnId" in payload &&
           isString(payload.turnId)
@@ -457,20 +430,22 @@ export class OpenBotDatabase {
   }
 
   activeProviderSession(threadId: string, provider: AgentProviderId): ProviderSession | null {
-    const row = this.connection
-      .prepare(
-        `SELECT id, thread_id, provider, external_session_id, model, effort, state,
-                created_at, updated_at, resume_cursor
-         FROM projection_provider_sessions
-         WHERE thread_id = ? AND provider = ? AND state = 'active'
-         ORDER BY created_at DESC, last_event_sequence DESC LIMIT 1`,
-      )
-      .get(threadId, provider) as SessionRow | undefined;
+    const row = decodeSessionRow(
+      this.connection
+        .prepare(
+          `SELECT id, thread_id, provider, external_session_id, model, effort, state,
+                  created_at, updated_at, resume_cursor
+           FROM projection_provider_sessions
+           WHERE thread_id = ? AND provider = ? AND state = 'active'
+           ORDER BY created_at DESC, last_event_sequence DESC LIMIT 1`,
+        )
+        .get(threadId, provider),
+    );
     return row ? toProviderSession(row) : null;
   }
 
   listProviderSessions(threadId: string): ProviderSession[] {
-    return (
+    return databaseRows(
       this.connection
         .prepare(
           `SELECT id, thread_id, provider, external_session_id, model, effort, state,
@@ -479,8 +454,8 @@ export class OpenBotDatabase {
            WHERE thread_id = ?
            ORDER BY created_at, last_event_sequence`,
         )
-        .all(threadId) as unknown as SessionRow[]
-    ).map(toProviderSession);
+        .all(threadId),
+    ).map((row) => toProviderSession(requiredSessionRow(row)));
   }
 
   bindProviderSession(input: {
@@ -543,9 +518,7 @@ export class OpenBotDatabase {
   }
 
   deactivateProviderSessions(threadId: string): void {
-    const active = this.listProviderSessions(threadId).filter(
-      (session) => session.state === "active",
-    );
+    const active = this.listProviderSessions(threadId).filter((session) => session.state === "active");
     if (active.length === 0) return;
     this.dispatch(
       `provider-session:deactivate:${threadId}:${randomUUID()}`,
@@ -568,12 +541,7 @@ export class OpenBotDatabase {
     );
   }
 
-  updateProviderSessionConfig(
-    sessionId: string,
-    threadId: string,
-    model: string,
-    effort: string,
-  ): void {
+  updateProviderSessionConfig(sessionId: string, threadId: string, model: string, effort: string): void {
     this.dispatch(
       `provider-session:config:${sessionId}:${model}:${effort}`,
       [
@@ -623,36 +591,21 @@ export class OpenBotDatabase {
           INSERT INTO projection_thread_summaries
             (summary_id, thread_id, through_message_id, summary_text, estimated_tokens, created_at, last_event_sequence)
           VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          summary.id,
-          threadId,
-          throughMessageId,
-          text,
-          estimatedTokens,
-          summary.createdAt,
-          sequences[0],
-        );
+        `).run(summary.id, threadId, throughMessageId, text, estimatedTokens, summary.createdAt, sequences[0]);
         return summary;
       },
     );
   }
 
   latestThreadSummary(threadId: string): StoredThreadSummary | null {
-    const row = this.connection
-      .prepare(
-        `SELECT summary_id, thread_id, through_message_id, summary_text, estimated_tokens, created_at
-         FROM projection_thread_summaries WHERE thread_id = ? ORDER BY created_at DESC LIMIT 1`,
-      )
-      .get(threadId) as
-      | {
-          summary_id: string;
-          thread_id: string;
-          through_message_id: string | null;
-          summary_text: string;
-          estimated_tokens: number;
-          created_at: string;
-        }
-      | undefined;
+    const row = decodeSummaryRow(
+      this.connection
+        .prepare(
+          `SELECT summary_id, thread_id, through_message_id, summary_text, estimated_tokens, created_at
+           FROM projection_thread_summaries WHERE thread_id = ? ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(threadId),
+    );
     return row
       ? {
           id: row.summary_id,
@@ -667,21 +620,18 @@ export class OpenBotDatabase {
 
   rebuildThreadProjection(threadId: string): ConversationSnapshot {
     const db = this.connection;
-    const events = db
-      .prepare(
-        `SELECT sequence, event_type, occurred_at, payload_json
-         FROM orchestration_events
-         WHERE aggregate_type = 'thread' AND aggregate_id = ? ORDER BY sequence`,
-      )
-      .all(threadId) as Array<{
-      sequence: number;
-      event_type: string;
-      occurred_at: string;
-      payload_json: string;
-    }>;
-    const thread = db
-      .prepare("SELECT agent_id FROM projection_threads WHERE thread_id = ?")
-      .get(threadId) as { agent_id: string } | undefined;
+    const events = databaseRows(
+      db
+        .prepare(
+          `SELECT sequence, event_type, occurred_at, payload_json
+           FROM orchestration_events
+           WHERE aggregate_type = 'thread' AND aggregate_id = ? ORDER BY sequence`,
+        )
+        .all(threadId),
+    ).map(requiredEventRow);
+    const thread = decodeThreadAgentRow(
+      db.prepare("SELECT agent_id FROM projection_threads WHERE thread_id = ?").get(threadId),
+    );
     if (!thread) throw new Error(`Unknown OpenBot thread: ${threadId}`);
 
     let latest: ConversationSnapshot | null = null;
@@ -690,7 +640,7 @@ export class OpenBotDatabase {
     const summaries: Array<StoredThreadSummary & { sequence: number }> = [];
     const turnSessions = new Map<string, string | null>();
     for (const event of events) {
-      const payload = JSON.parse(event.payload_json) as unknown;
+      const payload = JSON.parse(event.payload_json);
       const record = objectValue(payload);
       if (event.event_type === "provider-session.bound") {
         const session = providerSessionValue(record);
@@ -722,9 +672,7 @@ export class OpenBotDatabase {
         latest = snapshot;
         latestSequence = event.sequence;
         if (snapshot.activeTurnId && !turnSessions.has(snapshot.activeTurnId)) {
-          const activeSession = [...sessions.values()].find(
-            (session) => session.state === "active",
-          );
+          const activeSession = [...sessions.values()].find((session) => session.state === "active");
           turnSessions.set(snapshot.activeTurnId, activeSession?.id ?? null);
         }
       }
@@ -738,9 +686,9 @@ export class OpenBotDatabase {
       db.prepare("DELETE FROM projection_thread_messages WHERE thread_id = ?").run(threadId);
       db.prepare("DELETE FROM projection_thread_summaries WHERE thread_id = ?").run(threadId);
       db.prepare("DELETE FROM projection_provider_sessions WHERE thread_id = ?").run(threadId);
-      db.prepare(
-        "DELETE FROM projection_attachments WHERE owner_kind = 'thread-message' AND owner_id LIKE ?",
-      ).run(`${threadId}:%`);
+      db.prepare("DELETE FROM projection_attachments WHERE owner_kind = 'thread-message' AND owner_id LIKE ?").run(
+        `${threadId}:%`,
+      );
       const sessionInsert = db.prepare(`
         INSERT INTO projection_provider_sessions (
           id, thread_id, provider, external_session_id, model, effort, state,
@@ -894,9 +842,7 @@ export class OpenBotDatabase {
         db.exec("DELETE FROM projection_mailbox_messages");
         db.exec("DELETE FROM projection_queue_state");
         db.exec("DELETE FROM projection_reactions");
-        db.exec(
-          "DELETE FROM projection_attachments WHERE owner_kind IN ('mailbox-message', 'draft')",
-        );
+        db.exec("DELETE FROM projection_attachments WHERE owner_kind IN ('mailbox-message', 'draft', 'generated')");
         const messageInsert = db.prepare(`
           INSERT INTO projection_mailbox_messages
             (message_id, sender_kind, sender_agent_id, text, reply_to_message_id, created_at, message_json, last_event_sequence)
@@ -908,7 +854,7 @@ export class OpenBotDatabase {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const message of value.messages) {
-          const sender = message.sender as { kind: string; botId?: string };
+          const sender = message.sender;
           messageInsert.run(
             String(message.id),
             sender.kind,
@@ -954,12 +900,7 @@ export class OpenBotDatabase {
           INSERT INTO projection_queue_state
             (agent_id, paused, metadata_json, last_event_sequence) VALUES (?, ?, ?, ?)
         `);
-        queueInsert.run(
-          "__mailbox__",
-          0,
-          JSON.stringify({ idempotency: value.idempotency }),
-          sequence,
-        );
+        queueInsert.run("__mailbox__", 0, JSON.stringify({ idempotency: value.idempotency }), sequence);
         for (const botId of value.pausedBotIds) queueInsert.run(botId, 1, "{}", sequence);
         const reactionInsert = db.prepare(`
           INSERT INTO projection_reactions
@@ -986,6 +927,18 @@ export class OpenBotDatabase {
             sequence,
           );
         }
+        for (const attachment of value.generatedAttachments) {
+          attachmentInsert.run(
+            String(attachment.id),
+            "generated",
+            String(attachment.id),
+            String(attachment.name),
+            String(attachment.path),
+            JSON.stringify(attachment),
+            new Date().toISOString(),
+            sequence,
+          );
+        }
         const outboxInsert = db.prepare(`
           INSERT OR IGNORE INTO file_deletion_outbox
             (id, path, reason, created_at, attempts, last_error)
@@ -1000,9 +953,12 @@ export class OpenBotDatabase {
   }
 
   pendingFileDeletions(): Array<{ id: string; path: string }> {
-    return this.connection
-      .prepare("SELECT id, path FROM file_deletion_outbox ORDER BY created_at")
-      .all() as Array<{ id: string; path: string }>;
+    return databaseRows(
+      this.connection.prepare("SELECT id, path FROM file_deletion_outbox ORDER BY created_at").all(),
+    ).map((row) => ({
+      id: requiredStringColumn(row, "id"),
+      path: requiredStringColumn(row, "path"),
+    }));
   }
 
   completeFileDeletion(id: string): void {
@@ -1020,53 +976,40 @@ export class OpenBotDatabase {
 
   readMailboxState(): unknown | null {
     const db = this.connection;
-    const marker = db
-      .prepare("SELECT metadata_json FROM projection_queue_state WHERE agent_id = '__mailbox__'")
-      .get() as { metadata_json: string } | undefined;
+    const marker = databaseRow(
+      db.prepare("SELECT metadata_json FROM projection_queue_state WHERE agent_id = '__mailbox__'").get(),
+    );
     if (!marker) return null;
-    const metadata = JSON.parse(marker.metadata_json) as { idempotency?: Record<string, string> };
-    const messages = (
-      db
-        .prepare(
-          "SELECT message_json FROM projection_mailbox_messages ORDER BY created_at, message_id",
-        )
-        .all() as Array<{ message_json: string }>
-    ).map((row) => JSON.parse(row.message_json));
-    const deliveries = (
-      db
-        .prepare("SELECT delivery_json FROM projection_deliveries ORDER BY created_at, delivery_id")
-        .all() as Array<{ delivery_json: string }>
-    ).map((row) => JSON.parse(row.delivery_json));
-    const drafts = (
-      db
-        .prepare("SELECT metadata_json FROM projection_attachments WHERE owner_kind = 'draft'")
-        .all() as Array<{ metadata_json: string }>
-    ).map((row) => JSON.parse(row.metadata_json));
-    const pausedBotIds = (
-      db.prepare("SELECT agent_id FROM projection_queue_state WHERE paused = 1").all() as Array<{
-        agent_id: string;
-      }>
-    ).map((row) => row.agent_id);
-    const reactions = (
-      db
-        .prepare("SELECT agent_id, message_id, emoji, updated_at FROM projection_reactions")
-        .all() as Array<{
-        agent_id: string;
-        message_id: string;
-        emoji: string;
-        updated_at: string;
-      }>
+    const metadata = parseMailboxMetadata(requiredStringColumn(marker, "metadata_json"));
+    const messages = databaseRows(
+      db.prepare("SELECT message_json FROM projection_mailbox_messages ORDER BY created_at, message_id").all(),
+    ).map((row) => JSON.parse(requiredStringColumn(row, "message_json")));
+    const deliveries = databaseRows(
+      db.prepare("SELECT delivery_json FROM projection_deliveries ORDER BY created_at, delivery_id").all(),
+    ).map((row) => JSON.parse(requiredStringColumn(row, "delivery_json")));
+    const drafts = databaseRows(
+      db.prepare("SELECT metadata_json FROM projection_attachments WHERE owner_kind = 'draft'").all(),
+    ).map((row) => JSON.parse(requiredStringColumn(row, "metadata_json")));
+    const generatedAttachments = databaseRows(
+      db.prepare("SELECT metadata_json FROM projection_attachments WHERE owner_kind = 'generated'").all(),
+    ).map((row) => JSON.parse(requiredStringColumn(row, "metadata_json")));
+    const pausedBotIds = databaseRows(
+      db.prepare("SELECT agent_id FROM projection_queue_state WHERE paused = 1").all(),
+    ).map((row) => requiredStringColumn(row, "agent_id"));
+    const reactions = databaseRows(
+      db.prepare("SELECT agent_id, message_id, emoji, updated_at FROM projection_reactions").all(),
     ).map((row) => ({
-      botId: row.agent_id,
-      messageId: row.message_id,
-      emoji: row.emoji,
-      updatedAt: row.updated_at,
+      botId: requiredStringColumn(row, "agent_id"),
+      messageId: requiredStringColumn(row, "message_id"),
+      emoji: requiredStringColumn(row, "emoji"),
+      updatedAt: requiredStringColumn(row, "updated_at"),
     }));
     return {
-      version: 1,
+      version: 3,
       messages,
       deliveries,
       drafts,
+      generatedAttachments,
       pausedBotIds,
       idempotency: metadata.idempotency ?? {},
       reactions,
@@ -1077,7 +1020,7 @@ export class OpenBotDatabase {
     try {
       await readFile(path);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      if (errorCode(error) === "ENOENT") return;
       throw error;
     }
     await mkdir(this.#legacyBackupRoot, { recursive: true, mode: 0o700 });
@@ -1085,7 +1028,7 @@ export class OpenBotDatabase {
     try {
       await copyFile(path, target, 1);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (errorCode(error) !== "EEXIST") throw error;
     }
     await chmod(target, 0o600);
   }
@@ -1093,9 +1036,7 @@ export class OpenBotDatabase {
   hasAggregateEvents(aggregateType: string, aggregateId: string): boolean {
     return Boolean(
       this.connection
-        .prepare(
-          "SELECT 1 FROM orchestration_events WHERE aggregate_type = ? AND aggregate_id = ? LIMIT 1",
-        )
+        .prepare("SELECT 1 FROM orchestration_events WHERE aggregate_type = ? AND aggregate_id = ? LIMIT 1")
         .get(aggregateType, aggregateId),
     );
   }
@@ -1141,6 +1082,166 @@ function toProviderSession(row: SessionRow): ProviderSession {
   };
 }
 
+function databaseRow(value: unknown): DynamicRecord | null {
+  return isDynamicRecord(value) ? value : null;
+}
+
+function databaseRows(value: unknown): DynamicRecord[] {
+  if (!Array.isArray(value)) throw new Error("Invalid SQLite result set.");
+  return value.map((row, index) => {
+    if (!isDynamicRecord(row)) throw new Error(`Invalid SQLite row at index ${index}.`);
+    return row;
+  });
+}
+
+function requiredStringColumn(row: DynamicRecord, key: string): string {
+  const value = row[key];
+  if (!isString(value)) throw new Error(`Invalid SQLite column ${key}.`);
+  return value;
+}
+
+function requiredNumberColumn(row: DynamicRecord, key: string): number {
+  const value = row[key];
+  if (!isNumber(value)) throw new Error(`Invalid SQLite column ${key}.`);
+  return value;
+}
+
+function optionalStringColumn(row: DynamicRecord, key: string): string | null {
+  const value = row[key];
+  if (value === null || isString(value)) return value;
+  throw new Error(`Invalid SQLite column ${key}.`);
+}
+
+function decodeReceiptRow(value: unknown): ReceiptRow | null {
+  const row = databaseRow(value);
+  if (!row) return null;
+  return {
+    last_sequence: requiredNumberColumn(row, "last_sequence"),
+    result_json: requiredStringColumn(row, "result_json"),
+  };
+}
+
+function decodeConversationThreadRow(
+  value: unknown,
+): { active_turn_id: string | null; last_event_sequence: number } | null {
+  const row = databaseRow(value);
+  if (!row) return null;
+  return {
+    active_turn_id: optionalStringColumn(row, "active_turn_id"),
+    last_event_sequence: requiredNumberColumn(row, "last_event_sequence"),
+  };
+}
+
+function decodeSessionRow(value: unknown): SessionRow | null {
+  const row = databaseRow(value);
+  if (!row) return null;
+  const provider = requiredStringColumn(row, "provider");
+  const state = requiredStringColumn(row, "state");
+  if (provider !== "codex" && provider !== "claude") throw new Error("Invalid provider column.");
+  if (state !== "active" && state !== "inactive" && state !== "failed") {
+    throw new Error("Invalid provider session state column.");
+  }
+  return {
+    id: requiredStringColumn(row, "id"),
+    thread_id: requiredStringColumn(row, "thread_id"),
+    provider,
+    external_session_id: requiredStringColumn(row, "external_session_id"),
+    model: requiredStringColumn(row, "model"),
+    effort: requiredStringColumn(row, "effort"),
+    state,
+    created_at: requiredStringColumn(row, "created_at"),
+    updated_at: requiredStringColumn(row, "updated_at"),
+    resume_cursor: optionalStringColumn(row, "resume_cursor"),
+  };
+}
+
+function requiredSessionRow(value: DynamicRecord): SessionRow {
+  const row = decodeSessionRow(value);
+  if (!row) throw new Error("Invalid provider session row.");
+  return row;
+}
+
+function decodeSummaryRow(value: unknown): {
+  summary_id: string;
+  thread_id: string;
+  through_message_id: string | null;
+  summary_text: string;
+  estimated_tokens: number;
+  created_at: string;
+} | null {
+  const row = databaseRow(value);
+  if (!row) return null;
+  return {
+    summary_id: requiredStringColumn(row, "summary_id"),
+    thread_id: requiredStringColumn(row, "thread_id"),
+    through_message_id: optionalStringColumn(row, "through_message_id"),
+    summary_text: requiredStringColumn(row, "summary_text"),
+    estimated_tokens: requiredNumberColumn(row, "estimated_tokens"),
+    created_at: requiredStringColumn(row, "created_at"),
+  };
+}
+
+function requiredEventRow(value: DynamicRecord): {
+  sequence: number;
+  event_type: string;
+  occurred_at: string;
+  payload_json: string;
+} {
+  return {
+    sequence: requiredNumberColumn(value, "sequence"),
+    event_type: requiredStringColumn(value, "event_type"),
+    occurred_at: requiredStringColumn(value, "occurred_at"),
+    payload_json: requiredStringColumn(value, "payload_json"),
+  };
+}
+
+function decodeThreadAgentRow(value: unknown): { agent_id: string } | null {
+  const row = databaseRow(value);
+  return row ? { agent_id: requiredStringColumn(row, "agent_id") } : null;
+}
+
+function parseMailboxMetadata(value: string): { idempotency?: Record<string, string> } {
+  const parsed = JSON.parse(value);
+  if (!isDynamicRecord(parsed)) throw new Error("Invalid mailbox metadata.");
+  const idempotency = parsed.idempotency;
+  if (idempotency === undefined) return {};
+  if (!isDynamicRecord(idempotency)) throw new Error("Invalid mailbox idempotency metadata.");
+  const entries = Object.entries(idempotency);
+  const values: Record<string, string> = {};
+  for (const [key, entry] of entries) {
+    if (!isString(entry)) throw new Error("Invalid mailbox idempotency entry.");
+    values[key] = entry;
+  }
+  return { idempotency: values };
+}
+
+function isConversationMessage(value: unknown): value is ConversationMessage {
+  if (!isDynamicRecord(value)) return false;
+  const author = value.author;
+  const status = value.status;
+  return (
+    isString(value.id) &&
+    isString(value.text) &&
+    isString(value.createdAt) &&
+    (author === "user" || author === "assistant" || author === "agent" || author === "system") &&
+    (status === "streaming" || status === "completed" || status === "failed" || status === "interrupted") &&
+    (value.turnId === undefined || isString(value.turnId)) &&
+    (value.itemType === undefined || isString(value.itemType)) &&
+    (value.source === undefined ||
+      value.source === "user" ||
+      value.source === "assistant" ||
+      value.source === "agent" ||
+      value.source === "system") &&
+    (value.senderBotId === undefined || isString(value.senderBotId)) &&
+    (value.replyToMessageId === undefined || value.replyToMessageId === null || isString(value.replyToMessageId)) &&
+    (value.imageGeneration === undefined || isImageGenerationInfo(value.imageGeneration))
+  );
+}
+
+function errorCode(value: unknown): string | null {
+  return isDynamicRecord(value) && isString(value.code) ? value.code : null;
+}
+
 function objectValue(value: unknown): DynamicRecord | null {
   return isDynamicRecord(value) ? value : null;
 }
@@ -1161,7 +1262,18 @@ function providerSessionValue(value: DynamicRecord | null): ProviderSession | nu
   ) {
     return null;
   }
-  return value as unknown as ProviderSession;
+  return {
+    id: value.id,
+    threadId: value.threadId,
+    provider: value.provider,
+    externalSessionId: value.externalSessionId,
+    model: value.model,
+    effort: value.effort,
+    state: value.state,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    resumeCursor: value.resumeCursor,
+  };
 }
 
 function summaryValue(value: DynamicRecord | null): StoredThreadSummary | null {
@@ -1176,7 +1288,14 @@ function summaryValue(value: DynamicRecord | null): StoredThreadSummary | null {
   ) {
     return null;
   }
-  return value as unknown as StoredThreadSummary;
+  return {
+    id: value.id,
+    threadId: value.threadId,
+    throughMessageId: value.throughMessageId,
+    text: value.text,
+    estimatedTokens: value.estimatedTokens,
+    createdAt: value.createdAt,
+  };
 }
 
 function conversationSnapshotValue(value: DynamicRecord | null): ConversationSnapshot | null {
@@ -1190,7 +1309,15 @@ function conversationSnapshotValue(value: DynamicRecord | null): ConversationSna
   ) {
     return null;
   }
-  return value as unknown as ConversationSnapshot;
+  const messages = value.messages.filter(isConversationMessage);
+  if (messages.length !== value.messages.length) return null;
+  return {
+    botId: value.botId,
+    threadId: value.threadId,
+    activeTurnId: value.activeTurnId,
+    revision: value.revision,
+    messages,
+  };
 }
 
 export function providerForStoredModel(model: BotSummary["model"]): AgentProviderId {

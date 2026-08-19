@@ -2,9 +2,10 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isString } from "@openbot/contracts/runtime-values";
+import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { app, BrowserWindow } from "electron";
 import { BrowserHost } from "../src/backend/browser-host";
+import { getString } from "../src/backend/protocol";
 
 let cachedPageVersion = 1;
 
@@ -124,35 +125,34 @@ async function main(): Promise<void> {
 
     const headerTab = await browser.open(`${origin}/headers`, "smoke-thread");
     const headerSnapshot = await browser.snapshot(headerTab.id);
-    const identity = JSON.parse(headerSnapshot.text) as {
-      requestHeaders: Record<string, string | undefined>;
-      navigatorUserAgent: string;
-      navigatorBrands: Array<{ brand: string; version: string }>;
-    };
-    const clientHintBrands = identity.requestHeaders["sec-ch-ua"] ?? "";
+    const identity = JSON.parse(headerSnapshot.text);
+    if (!isDynamicRecord(identity) || !isDynamicRecord(identity.requestHeaders)) {
+      throw new Error("Browser identity payload is invalid.");
+    }
+    const navigatorUserAgent = getString(identity, "navigatorUserAgent");
+    const navigatorBrands = Array.isArray(identity.navigatorBrands)
+      ? identity.navigatorBrands.filter(isDynamicRecord)
+      : [];
+    const clientHintBrands = getString(identity.requestHeaders, "sec-ch-ua") ?? "";
     if (
       headerSnapshot.text.includes("Electron/") ||
       headerSnapshot.text.includes("OpenBot/") ||
-      identity.requestHeaders["user-agent"] !== identity.navigatorUserAgent ||
+      getString(identity.requestHeaders, "user-agent") !== navigatorUserAgent ||
       (clientHintBrands.length > 0 &&
-        identity.navigatorBrands.some(
-          ({ brand, version }) => !clientHintBrands.includes(`"${brand}";v="${version}"`),
+        navigatorBrands.some(
+          (brand) => !clientHintBrands.includes(`"${getString(brand, "brand")}";v="${getString(brand, "version")}"`),
         ))
     ) {
       throw new Error(`Browser identity headers are invalid: ${headerSnapshot.text}`);
     }
     process.stdout.write("BrowserHost: matching Chromium page and request identity passed.\n");
-    await expectFailure(() =>
-      browser.act(tab.id, first.revision, { type: "click", ref: save.ref }),
-    );
+    await expectFailure(() => browser.act(tab.id, first.revision, { type: "click", ref: save.ref }));
 
     const child = result.elements.find((element) => element.name === "Child");
     if (!child) throw new Error("Child-tab control is missing.");
     await browser.act(tab.id, result.revision, { type: "click", ref: child.ref });
     await waitForValue(() =>
-      browser
-        .listTabs()
-        .find((candidate) => candidate.id !== tab.id && candidate.url.includes("/child")),
+      browser.listTabs().find((candidate) => candidate.id !== tab.id && candidate.url.includes("/child")),
     );
     const childTab = browser
       .listTabs()
@@ -169,8 +169,7 @@ async function main(): Promise<void> {
     await browser.open(`${origin}/cookie?set=1`, "smoke-thread");
     const cookieTab = await browser.open(`${origin}/cookie`, "other-thread");
     const cookieSnapshot = await browser.snapshot(cookieTab.id);
-    if (!cookieSnapshot.text.includes("openbot=shared"))
-      throw new Error("Cookies were not shared.");
+    if (!cookieSnapshot.text.includes("openbot=shared")) throw new Error("Cookies were not shared.");
     process.stdout.write("BrowserHost: shared cookies passed.\n");
 
     const firstCachedTab = await browser.open(`${origin}/cached`, "smoke-thread");
@@ -204,17 +203,14 @@ async function main(): Promise<void> {
     const downloadPath = join(downloadsRoot, "openbot-smoke.txt");
     await waitFor(async () => (await readFile(downloadPath, "utf8")) === "local download");
     const nextDownloadSnapshot = await browser.snapshot(downloadPage.id);
-    const nextDownload = nextDownloadSnapshot.elements.find(
-      (element) => element.name === "Download",
-    );
+    const nextDownload = nextDownloadSnapshot.elements.find((element) => element.name === "Download");
     if (!nextDownload) throw new Error("Download link disappeared.");
     await browser.act(downloadPage.id, nextDownloadSnapshot.revision, {
       type: "click",
       ref: nextDownload.ref,
     });
     await waitFor(
-      async () =>
-        (await readFile(join(downloadsRoot, "openbot-smoke (2).txt"), "utf8")) === "local download",
+      async () => (await readFile(join(downloadsRoot, "openbot-smoke (2).txt"), "utf8")) === "local download",
     );
     process.stdout.write("BrowserHost: download passed.\n");
 
@@ -239,11 +235,7 @@ async function main(): Promise<void> {
     }
     process.stdout.write("BrowserHost: agent control lifecycle passed.\n");
 
-    const persistedTab = await browser.open(
-      `${origin}/cookie`,
-      "persisted-thread",
-      "persisted-bot",
-    );
+    const persistedTab = await browser.open(`${origin}/cookie`, "persisted-thread", "persisted-bot");
     await browser.activate(persistedTab.id);
     await browser.destroy();
     const restoredWindow = new BrowserWindow({ show: false });
@@ -261,12 +253,14 @@ async function main(): Promise<void> {
     }
     process.stdout.write("BrowserHost: persisted tabs passed.\n");
     await restoredBrowser.destroy();
-    const persistedState = JSON.parse(await readFile(statePath, "utf8")) as {
-      tabs?: Array<{ id?: string; url?: string }>;
-    };
+    const persistedState = JSON.parse(await readFile(statePath, "utf8"));
+    if (!isDynamicRecord(persistedState)) throw new Error("Persisted browser state is invalid.");
+    const persistedTabs = Array.isArray(persistedState.tabs) ? persistedState.tabs.filter(isDynamicRecord) : [];
     if (
-      persistedState.tabs?.find((candidate) => candidate.id === persistedTab.id)?.url !==
-      `${origin}/cookie`
+      getString(
+        persistedTabs.find((candidate) => getString(candidate, "id") === persistedTab.id),
+        "url",
+      ) !== `${origin}/cookie`
     ) {
       throw new Error("An immediate shutdown lost a restored tab URL.");
     }

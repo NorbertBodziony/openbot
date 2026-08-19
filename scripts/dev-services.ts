@@ -49,17 +49,11 @@ export function createDevelopmentServiceSpec(
   return {
     name,
     executable: electronVite,
-    args: [
-      "dev",
-      "--watch",
-      "--outDir",
-      outputDirectory,
-      "--entry",
-      join(outputDirectory, "main", "index.js"),
-    ],
+    args: ["dev", "--watch", "--outDir", outputDirectory, "--entry", join(outputDirectory, "main", "index.js")],
     cwd: projectRoot,
     env: {
       ...environment,
+      OPENBOT_APP_VARIANT: "dev",
       OPENBOT_DEV_PROFILE: isTestClient ? "test-client" : "app",
       OPENBOT_DEV_RENDERER_PORT: isTestClient ? "5174" : "5173",
     },
@@ -74,9 +68,7 @@ export function parseDevelopmentTarget(args: string[]): {
   if (target !== "api" && target !== "app" && target !== "test-client" && target !== "all") {
     throw new Error(`Unknown development target: ${target}. Use api, app, test-client, or all.`);
   }
-  const unsupportedOption = args.find(
-    (argument) => argument.startsWith("--") && argument !== "--dry-run",
-  );
+  const unsupportedOption = args.find((argument) => argument.startsWith("--") && argument !== "--dry-run");
   if (unsupportedOption) throw new Error(`Unknown option: ${unsupportedOption}.`);
   return { target, dryRun: args.includes("--dry-run") };
 }

@@ -1,5 +1,5 @@
 import type { BrowserControlState, BrowserTab } from "./ipc-browser";
-import { isNumber, isString } from "./runtime-values";
+import { isDynamicRecord, isNumber, isOneOf, isString } from "./runtime-values";
 
 export type AgentPhase = "idle" | "starting" | "ready" | "restarting" | "blocked" | "stopped";
 
@@ -102,7 +102,7 @@ export const BOT_AVATAR_HUES = [0, 30, 55, 100, 150, 185, 215, 245, 280, 320] as
 export type BotAvatarHue = (typeof BOT_AVATAR_HUES)[number];
 
 export function isAgentModel(value: unknown): value is AgentModelId {
-  return isString(value) && AGENT_MODELS.includes(value as AgentModelId);
+  return isOneOf(AGENT_MODELS, value);
 }
 
 export function isClaudeModel(model: AgentModelId): boolean {
@@ -110,7 +110,7 @@ export function isClaudeModel(model: AgentModelId): boolean {
 }
 
 export function isReasoningEffort(value: unknown): value is AgentReasoningEffort {
-  return isString(value) && AGENT_REASONING_EFFORTS.includes(value as AgentReasoningEffort);
+  return isOneOf(AGENT_REASONING_EFFORTS, value);
 }
 
 export function isAvatarSeed(value: unknown): value is string {
@@ -118,7 +118,7 @@ export function isAvatarSeed(value: unknown): value is string {
 }
 
 export function isAvatarHue(value: unknown): value is BotAvatarHue {
-  return isNumber(value) && BOT_AVATAR_HUES.includes(value as BotAvatarHue);
+  return isOneOf(BOT_AVATAR_HUES, value);
 }
 
 export interface UpdateBotInput {
@@ -144,6 +144,30 @@ export interface SetAgentAvatarInput {
 }
 
 export type ConversationMessageAuthor = "user" | "assistant" | "agent" | "system";
+
+export const IMAGE_GENERATION_ASPECT_RATIOS = ["square", "portrait", "landscape"] as const;
+export type ImageGenerationAspectRatio = (typeof IMAGE_GENERATION_ASPECT_RATIOS)[number];
+
+export interface ImageGenerationInfo {
+  prompt?: string;
+  resolution: string;
+  aspectRatio: ImageGenerationAspectRatio;
+  error?: string;
+}
+
+export function isImageGenerationAspectRatio(value: unknown): value is ImageGenerationAspectRatio {
+  return isOneOf(IMAGE_GENERATION_ASPECT_RATIOS, value);
+}
+
+export function isImageGenerationInfo(value: unknown): value is ImageGenerationInfo {
+  return (
+    isDynamicRecord(value) &&
+    (value.prompt === undefined || isString(value.prompt)) &&
+    isString(value.resolution) &&
+    isImageGenerationAspectRatio(value.aspectRatio) &&
+    (value.error === undefined || isString(value.error))
+  );
+}
 
 export type AttachmentKind = "image" | "file";
 export type AttachmentPreviewKind = "image" | "pdf" | "text" | "none";
@@ -223,6 +247,7 @@ export interface ConversationMessage {
   senderBotId?: string;
   replyToMessageId?: string | null;
   attachments?: AttachmentSummary[];
+  imageGeneration?: ImageGenerationInfo;
   delivery?: Pick<QueueDelivery, "id" | "status" | "position">;
   exchange?: AgentExchangeSummary;
   reaction?: MessageReaction | null;
@@ -231,12 +256,10 @@ export interface ConversationMessage {
 export const MESSAGE_REACTIONS = ["👍", "👎", "❤️", "😂", "🎉", "😮"] as const;
 export const MORE_MESSAGE_REACTIONS = ["🔥", "👏", "🙏", "🤔", "👀", "✅", "🚀", "💯"] as const;
 export const ALL_MESSAGE_REACTIONS = [...MESSAGE_REACTIONS, ...MORE_MESSAGE_REACTIONS] as const;
-export type MessageReaction =
-  | (typeof MESSAGE_REACTIONS)[number]
-  | (typeof MORE_MESSAGE_REACTIONS)[number];
+export type MessageReaction = (typeof MESSAGE_REACTIONS)[number] | (typeof MORE_MESSAGE_REACTIONS)[number];
 
 export function isMessageReaction(value: unknown): value is MessageReaction {
-  return isString(value) && ALL_MESSAGE_REACTIONS.includes(value as MessageReaction);
+  return isOneOf(ALL_MESSAGE_REACTIONS, value);
 }
 
 export interface AgentExchangeSummary {
@@ -254,6 +277,21 @@ export interface ConversationSnapshot {
   activeTurnId: string | null;
   revision: number;
   messages: ConversationMessage[];
+}
+
+export interface ConversationReadState {
+  unreadCount: number;
+  firstUnreadMessageId: string | null;
+  throughMessageId: string | null;
+}
+
+export interface ConversationWithReadState extends ConversationSnapshot {
+  readState?: ConversationReadState;
+}
+
+export interface MarkConversationReadInput {
+  botId: string;
+  throughMessageId: string | null;
 }
 
 export interface SendMessageInput {
@@ -390,6 +428,53 @@ export type AgentEvent =
   | { type: "browser-changed"; tabs: BrowserTab[]; activeTabId: string | null }
   | { type: "browser-control-changed"; state: BrowserControlState }
   | { type: "error"; botId?: string; code: string; message: string };
+
+export function isAgentEvent(value: unknown): value is AgentEvent {
+  if (!isDynamicRecord(value) || !isString(value.type)) return false;
+  switch (value.type) {
+    case "status":
+      return isDynamicRecord(value.status);
+    case "usage-changed":
+      return isDynamicRecord(value.usage);
+    case "bots-changed":
+      return Array.isArray(value.bots);
+    case "conversation":
+      return isDynamicRecord(value.snapshot);
+    case "conversation-delta":
+      return (
+        isString(value.botId) &&
+        isString(value.threadId) &&
+        isString(value.turnId) &&
+        isString(value.messageId) &&
+        isString(value.delta) &&
+        isString(value.createdAt) &&
+        isNumber(value.revision)
+      );
+    case "queue-changed":
+      return isDynamicRecord(value.snapshot);
+    case "turn-started":
+    case "turn-completed":
+      return isString(value.botId) && isString(value.threadId) && isString(value.turnId);
+    case "prompt":
+      return (
+        (isString(value.requestId) || isNumber(value.requestId)) &&
+        isString(value.botId) &&
+        isString(value.threadId) &&
+        isString(value.turnId) &&
+        Array.isArray(value.questions)
+      );
+    case "approval":
+      return isDynamicRecord(value.approval);
+    case "browser-changed":
+      return Array.isArray(value.tabs) && (value.activeTabId === null || isString(value.activeTabId));
+    case "browser-control-changed":
+      return isDynamicRecord(value.state);
+    case "error":
+      return isString(value.code) && isString(value.message);
+    default:
+      return false;
+  }
+}
 
 export interface ScopedAgentEvent {
   serverId: string;

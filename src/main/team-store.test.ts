@@ -47,9 +47,9 @@ describe("TeamStore", () => {
     const invite = await store.createInvite("member");
     const joined = await store.acceptInvite(invite.token, "alice", "a secure team password");
     expect(joined.member.role).toBe("member");
-    await expect(
-      store.acceptInvite(invite.token, "bob", "another secure password"),
-    ).rejects.toThrow("invalid or expired");
+    await expect(store.acceptInvite(invite.token, "bob", "another secure password")).rejects.toThrow(
+      "invalid or expired",
+    );
   });
 
   it("uses the verified OpenBot email as the team identity", async () => {
@@ -100,9 +100,7 @@ describe("TeamStore", () => {
 
     const restored = new TeamStore(path);
     await restored.initialize();
-    expect(restored.listMembers()[0]?.avatarUrl).toBe(
-      "https://api.openbot.run/v1/avatars/owner-account?v=image-1",
-    );
+    expect(restored.listMembers()[0]?.avatarUrl).toBe("https://api.openbot.run/v1/avatars/owner-account?v=image-1");
   });
 
   it("allows only the OpenBot email that created the host to own it", async () => {
@@ -172,9 +170,7 @@ describe("TeamStore", () => {
     expect(store.listInvites()[0]?.usedAt).not.toBeNull();
 
     await store.updateMember(joined.member.id, { role: "admin" });
-    expect(store.listMembers().find((member) => member.id === joined.member.id)?.role).toBe(
-      "admin",
-    );
+    expect(store.listMembers().find((member) => member.id === joined.member.id)?.role).toBe("admin");
     await store.updateMember(joined.member.id, { disabled: true });
     expect(store.authenticate(joined.sessionToken)).toBeNull();
     expect(store.listSessions()).toHaveLength(0);
@@ -200,10 +196,7 @@ describe("TeamStore", () => {
   it("signs an address update that is bound to the pinned fingerprint", async () => {
     const { store } = await createStore();
     const identity = await store.configure("Studio Mac", "owner", "correct horse battery");
-    const proof = store.createAddressUpdateProof(
-      "https://new-api.trycloudflare.com/",
-      "new-vnc.trycloudflare.com",
-    );
+    const proof = store.createAddressUpdateProof("https://new-api.trycloudflare.com/", "new-vnc.trycloudflare.com");
     const url = new URL("openbot://update");
     url.searchParams.set("api", proof.apiUrl);
     url.searchParams.set("server", proof.serverId);
@@ -211,14 +204,9 @@ describe("TeamStore", () => {
     url.searchParams.set("key", Buffer.from(proof.publicKey).toString("base64url"));
     url.searchParams.set("signature", proof.signature);
     const parsed = parseAddressUpdateUrl(url.toString());
-    expect(fingerprint(verifyAddressUpdate(parsed, identity.fingerprint))).toBe(
-      identity.fingerprint,
-    );
+    expect(fingerprint(verifyAddressUpdate(parsed, identity.fingerprint))).toBe(identity.fingerprint);
     expect(() =>
-      verifyAddressUpdate(
-        { ...parsed, apiUrl: "https://other.trycloudflare.com/" },
-        identity.fingerprint,
-      ),
+      verifyAddressUpdate({ ...parsed, apiUrl: "https://other.trycloudflare.com/" }, identity.fingerprint),
     ).toThrow("signature");
   });
 });

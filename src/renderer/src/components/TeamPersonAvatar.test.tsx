@@ -27,7 +27,9 @@ describe("TeamPersonAvatar", () => {
   it("uses a version 2 Blobatar when the image cannot load", async () => {
     const view = render(() => <TeamPersonAvatar member={member} />);
 
-    await fireEvent.error(view.container.querySelector("img") as HTMLImageElement);
+    const image = view.container.querySelector("img");
+    if (!(image instanceof HTMLImageElement)) throw new Error("Avatar image is missing.");
+    await fireEvent.error(image);
 
     expect(view.container.querySelector("img")).toBeNull();
     expect(view.container.querySelector(".person-avatar-generated > svg")).not.toBeNull();

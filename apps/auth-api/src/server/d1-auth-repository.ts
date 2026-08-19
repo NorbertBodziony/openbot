@@ -22,9 +22,7 @@ export class D1AuthRepository implements AuthRepository {
 
   async latestEmailChallengeAt(email: string): Promise<number | null> {
     const row = await this.database
-      .prepare(
-        "SELECT created_at FROM email_login_challenges WHERE email = ? ORDER BY created_at DESC LIMIT 1",
-      )
+      .prepare("SELECT created_at FROM email_login_challenges WHERE email = ? ORDER BY created_at DESC LIMIT 1")
       .bind(email)
       .first<{ created_at: number }>();
     return row?.created_at ?? null;
@@ -112,14 +110,7 @@ export class D1AuthRepository implements AuthRepository {
           id, user_id, token_hash, expires_at, created_at, last_used_at
         ) VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .bind(
-        input.session.id,
-        user.id,
-        await sha256(input.session.token),
-        input.session.expiresAt,
-        input.now,
-        input.now,
-      )
+      .bind(input.session.id, user.id, await sha256(input.session.token), input.session.expiresAt, input.now, input.now)
       .run();
     return {
       status: "verified",
@@ -206,11 +197,7 @@ export class D1AuthRepository implements AuthRepository {
       .run();
   }
 
-  async redeemTeamAuthTicket(input: {
-    ticketHash: string;
-    serverId: string;
-    now: number;
-  }): Promise<AuthUser | null> {
+  async redeemTeamAuthTicket(input: { ticketHash: string; serverId: string; now: number }): Promise<AuthUser | null> {
     const consumed = await this.database
       .prepare(
         `UPDATE team_auth_tickets SET consumed_at = ?

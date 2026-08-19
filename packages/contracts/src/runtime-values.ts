@@ -33,3 +33,7 @@ export function isObjectValue(value: unknown): value is object | null {
 export function isDynamicRecord(value: unknown): value is DynamicRecord {
   return value !== null && isObjectValue(value) && !Array.isArray(value);
 }
+
+export function isOneOf<T extends string | number>(values: readonly T[], value: unknown): value is T {
+  return values.some((candidate) => candidate === value);
+}

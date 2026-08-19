@@ -1,8 +1,10 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { CentralAuthState } from "@openbot/contracts/ipc";
+import type { AppVariant, CentralAuthState } from "@openbot/contracts/ipc";
 import { createSignal, Show } from "solid-js";
+import { AppLogo } from "./AppLogo";
 
 interface AccountLoginProps {
+  variant: AppVariant;
   state: CentralAuthState;
   onRetry: () => Promise<void>;
   onRequestEmailCode: (email: string) => Promise<void>;
@@ -16,8 +18,7 @@ export function AccountLogin(props: AccountLoginProps) {
 
   const codeSent = () => props.state.status === "code_sent";
   const connecting = () => props.state.status === "loading";
-  const unavailable = () =>
-    props.state.status === "error" && props.state.code === "auth_api_unavailable";
+  const unavailable = () => props.state.status === "error" && props.state.code === "auth_api_unavailable";
   const busy = () => props.state.status === "loading" || props.state.status === "signing_in";
 
   return (
@@ -30,7 +31,7 @@ export function AccountLogin(props: AccountLoginProps) {
         aria-describedby="account-login-description"
       >
         <div class="account-login-brand" aria-hidden="true">
-          <span>O</span>
+          <AppLogo variant={props.variant} animation="blink" class="account-login-logo" />
         </div>
         <p class="account-login-wordmark">OpenBot</p>
         <h1 id="account-login-title">
@@ -129,8 +130,7 @@ export function AccountLogin(props: AccountLoginProps) {
               />
               <Show when={props.state.status === "code_sent" && props.state.developmentCode}>
                 <p class="account-login-development-code">
-                  Development code:{" "}
-                  {props.state.status === "code_sent" && props.state.developmentCode}
+                  Development code: {props.state.status === "code_sent" && props.state.developmentCode}
                 </p>
               </Show>
               <button type="submit" disabled={code().replace("-", "").length !== 8}>

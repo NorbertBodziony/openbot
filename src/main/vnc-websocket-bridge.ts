@@ -8,9 +8,7 @@ import type * as Ws from "ws";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const requireModule = createRequire(import.meta.url);
-const webSockets = requireModule(
-  join(dirname(requireModule.resolve("ws/package.json")), "index.js"),
-) as typeof Ws;
+const webSockets: typeof Ws = requireModule(join(dirname(requireModule.resolve("ws/package.json")), "index.js"));
 
 export interface VncWebSocketBridge {
   url: string;
@@ -50,11 +48,7 @@ export async function startVncWebSocketBridge(targetPort: number): Promise<VncWe
     const pending: Buffer[] = [];
 
     websocket.on("message", (data) => {
-      const chunk = Buffer.isBuffer(data)
-        ? data
-        : Array.isArray(data)
-          ? Buffer.concat(data)
-          : Buffer.from(data);
+      const chunk = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
       if (target.connecting) pending.push(chunk);
       else if (!target.destroyed) target.write(chunk);
     });
@@ -99,9 +93,7 @@ export async function startVncWebSocketBridge(targetPort: number): Promise<VncWe
   };
 }
 
-export async function startVncWebSocketRelay(
-  target: RemoteDesktopWebSocketTarget,
-): Promise<VncWebSocketBridge> {
+export async function startVncWebSocketRelay(target: RemoteDesktopWebSocketTarget): Promise<VncWebSocketBridge> {
   const token = randomBytes(32).toString("base64url");
   const path = `/vnc/${token}`;
   const server = createServer((_request, response) => {
@@ -178,11 +170,7 @@ export async function startVncWebSocketRelay(
 }
 
 function websocketMessageBuffer(data: Ws.RawData): Buffer {
-  return Buffer.isBuffer(data)
-    ? data
-    : Array.isArray(data)
-      ? Buffer.concat(data)
-      : Buffer.from(data);
+  return Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
 }
 
 function isAllowedOrigin(origin: string | undefined): boolean {

@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  AvatarUploadError,
-  avatarObjectKey,
-  avatarVersion,
-  readAvatarUpload,
-} from "../src/server/avatar-storage";
+import { AvatarUploadError, avatarObjectKey, avatarVersion, readAvatarUpload } from "../src/server/avatar-storage";
 
 const USER_ID = "00000000-0000-4000-8000-000000000001";
 const VERSION = "00000000-0000-4000-8000-000000000002";

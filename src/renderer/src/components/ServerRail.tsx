@@ -12,8 +12,7 @@ interface ServerRailProps {
 }
 
 export function ServerRail(props: ServerRailProps) {
-  const activeRemote = () =>
-    props.servers.find((server) => server.active && server.kind === "remote");
+  const activeRemote = () => props.servers.find((server) => server.active && server.kind === "remote");
   return (
     <aside class="server-rail panel-edge" aria-label="Servers">
       <div class="server-rail-list">

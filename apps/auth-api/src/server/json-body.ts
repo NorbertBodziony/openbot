@@ -43,7 +43,7 @@ export async function readJsonObject(request: Request): Promise<DynamicRecord> {
     offset += chunk.byteLength;
   }
   try {
-    const value = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    const value = JSON.parse(new TextDecoder().decode(bytes));
     if (!isDynamicRecord(value)) throw invalidJson();
     return value;
   } catch (error) {

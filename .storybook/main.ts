@@ -16,9 +16,7 @@ const config = {
         alias: [{ find: "solid-js/web", replacement: "@solidjs/web" }],
       },
     });
-    const plugins = (mergedConfig.plugins ?? []).filter(
-      (plugin: PluginOption) => !isLegacySolidPlugin(plugin),
-    );
+    const plugins = (mergedConfig.plugins ?? []).filter((plugin: PluginOption) => !isLegacySolidPlugin(plugin));
     return {
       ...mergedConfig,
       plugins: [...plugins, solidPlugin()],

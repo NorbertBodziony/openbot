@@ -7,6 +7,7 @@ import {
   parseCancelQueuedMessage,
   parseImportAttachments,
   parseInterrupt,
+  parseMarkConversationRead,
   parseMessageReaction,
   parseOpenAttachment,
   parsePromptResponse,
@@ -24,6 +25,7 @@ import {
   parseHostConfig,
   parseJoinServer,
   parseLoginServer,
+  parseMarkDirectRead,
   parseRemoteDesktopConfig,
   parseRemoteMacConnect,
   parseUpdateTeamMember,
@@ -57,6 +59,10 @@ describe("server IPC input parsing", () => {
       serverId: null,
     });
     expect(parseRemoteDesktopConfig({ password: "secret" })).toEqual({ password: "secret" });
+    expect(parseMarkDirectRead({ memberId: "member-1", throughSequence: 42 })).toEqual({
+      memberId: "member-1",
+      throughSequence: 42,
+    });
   });
 
   it("requires a six-character host name", () => {
@@ -80,14 +86,13 @@ describe("server IPC input parsing", () => {
     expect(() => parseJoinServer(null)).toThrowError("Invitation details are required.");
     expect(() => parseLoginServer(null)).toThrowError("Login details are required.");
     expect(() => parseCreateTeamInvite({ role: "owner" })).toThrowError("Unknown team role.");
-    expect(() => parseRemoteMacConnect({ hostname: "mac", serverId: 1 })).toThrowError(
-      "Invalid serverId.",
-    );
-    expect(() => parseRemoteDesktopConfig(null)).toThrowError(
-      "Remote Desktop details are required.",
-    );
+    expect(() => parseRemoteMacConnect({ hostname: "mac", serverId: 1 })).toThrowError("Invalid serverId.");
+    expect(() => parseRemoteDesktopConfig(null)).toThrowError("Remote Desktop details are required.");
     expect(() => parseUpdateTeamMember({ memberId: "member-1", disabled: "no" })).toThrowError(
       "Invalid team member state.",
+    );
+    expect(() => parseMarkDirectRead({ memberId: "member-1", throughSequence: -1 })).toThrowError(
+      "Invalid direct-message read boundary.",
     );
   });
 });
@@ -112,6 +117,10 @@ describe("agent IPC input parsing", () => {
     expect(parseInterrupt({ botId: "bot-1", turnId: "turn-1" })).toEqual({
       botId: "bot-1",
       turnId: "turn-1",
+    });
+    expect(parseMarkConversationRead({ botId: "bot-1", throughMessageId: "message-1" })).toEqual({
+      botId: "bot-1",
+      throughMessageId: "message-1",
     });
   });
 
@@ -165,9 +174,10 @@ describe("agent IPC input parsing", () => {
       keepAttachmentIds: ["attachment-1"],
       attachmentDraftIds: ["draft-1"],
     });
-    expect(
-      parseReorderQueue({ botId: "bot-1", deliveryIds: ["delivery-2", "delivery-1"] }),
-    ).toEqual({ botId: "bot-1", deliveryIds: ["delivery-2", "delivery-1"] });
+    expect(parseReorderQueue({ botId: "bot-1", deliveryIds: ["delivery-2", "delivery-1"] })).toEqual({
+      botId: "bot-1",
+      deliveryIds: ["delivery-2", "delivery-1"],
+    });
     expect(parsePromptResponse({ requestId: 7, answers: { question: ["answer"] } })).toEqual({
       requestId: 7,
       answers: { question: ["answer"] },
@@ -180,27 +190,17 @@ describe("agent IPC input parsing", () => {
 
   it("keeps agent input error messages", () => {
     expect(() => parseAgentRequest(null)).toThrowError("Invalid agent request.");
-    expect(() => parseSendMessage({ botId: "bot-1", text: " " })).toThrowError(
-      "A message or attachment is required.",
+    expect(() => parseSendMessage({ botId: "bot-1", text: " " })).toThrowError("A message or attachment is required.");
+    expect(() => parseMessageReaction({ botId: "bot-1", messageId: "message-1", emoji: "invalid" })).toThrowError(
+      "Invalid message reaction.",
     );
-    expect(() =>
-      parseMessageReaction({ botId: "bot-1", messageId: "message-1", emoji: "invalid" }),
-    ).toThrowError("Invalid message reaction.");
-    expect(() => parseUpdateBot({ botId: "bot-1", notifications: "yes" })).toThrowError(
-      "Invalid notifications value.",
+    expect(() => parseUpdateBot({ botId: "bot-1", notifications: "yes" })).toThrowError("Invalid notifications value.");
+    expect(() => parseImportAttachments({ paths: [""], data: [] })).toThrowError("Invalid attachment path.");
+    expect(() => parseOpenAttachment({ attachmentId: "attachment-1", action: "delete" })).toThrowError(
+      "Invalid attachment action.",
     );
-    expect(() => parseImportAttachments({ paths: [""], data: [] })).toThrowError(
-      "Invalid attachment path.",
-    );
-    expect(() =>
-      parseOpenAttachment({ attachmentId: "attachment-1", action: "delete" }),
-    ).toThrowError("Invalid attachment action.");
-    expect(() => parseCancelQueuedMessage(null)).toThrowError(
-      "Invalid queue cancellation request.",
-    );
-    expect(() => parseSetQueuePaused({ botId: "bot-1", paused: "yes" })).toThrowError(
-      "Invalid queue pause request.",
-    );
+    expect(() => parseCancelQueuedMessage(null)).toThrowError("Invalid queue cancellation request.");
+    expect(() => parseSetQueuePaused({ botId: "bot-1", paused: "yes" })).toThrowError("Invalid queue pause request.");
     expect(() => parseSteerQueuedMessage(null)).toThrowError("Invalid queued steer request.");
     expect(() =>
       parseUpdateQueuedMessage({
@@ -211,16 +211,17 @@ describe("agent IPC input parsing", () => {
         attachmentDraftIds: [],
       }),
     ).toThrowError("A message or attachment is required.");
-    expect(() =>
-      parseReorderQueue({ botId: "bot-1", deliveryIds: ["delivery-1", "delivery-1"] }),
-    ).toThrowError("Duplicate delivery ids.");
-    expect(() => parseInterrupt(null)).toThrowError("Invalid interrupt request.");
-    expect(() => parsePromptResponse({ requestId: 1, answers: null })).toThrowError(
-      "Prompt answers are required.",
+    expect(() => parseReorderQueue({ botId: "bot-1", deliveryIds: ["delivery-1", "delivery-1"] })).toThrowError(
+      "Duplicate delivery ids.",
     );
-    expect(() =>
-      parseApprovalResponse({ requestId: "approval-1", decision: "maybe" }),
-    ).toThrowError("Invalid approval decision.");
+    expect(() => parseInterrupt(null)).toThrowError("Invalid interrupt request.");
+    expect(() => parseMarkConversationRead({ botId: "bot-1", throughMessageId: 1 })).toThrowError(
+      "Invalid conversation read boundary.",
+    );
+    expect(() => parsePromptResponse({ requestId: 1, answers: null })).toThrowError("Prompt answers are required.");
+    expect(() => parseApprovalResponse({ requestId: "approval-1", decision: "maybe" })).toThrowError(
+      "Invalid approval decision.",
+    );
     expect(() => parseApprovalResponse({ requestId: 1.5, decision: "accept" })).toThrowError(
       "Invalid approval response.",
     );
@@ -234,22 +235,18 @@ describe("browser IPC input parsing", () => {
       ownerThreadId: "thread-1",
       ownerBotId: null,
     });
-    expect(parseVisibility({ visible: true, bounds: { x: 1, y: 2, width: 3, height: 4 } })).toEqual(
-      {
-        visible: true,
-        bounds: { x: 1, y: 2, width: 3, height: 4 },
-      },
-    );
+    expect(parseVisibility({ visible: true, bounds: { x: 1, y: 2, width: 3, height: 4 } })).toEqual({
+      visible: true,
+      bounds: { x: 1, y: 2, width: 3, height: 4 },
+    });
   });
 
   it("keeps browser input error messages", () => {
     expect(() => parseBrowserOpen(null)).toThrowError("Invalid browser open request.");
-    expect(() => parseVisibility({ visible: "yes" })).toThrowError(
-      "Invalid browser visibility request.",
+    expect(() => parseVisibility({ visible: "yes" })).toThrowError("Invalid browser visibility request.");
+    expect(() => parseVisibility({ visible: true, bounds: { x: 1, y: 2, width: Number.NaN, height: 4 } })).toThrowError(
+      "Invalid browser bound: width.",
     );
-    expect(() =>
-      parseVisibility({ visible: true, bounds: { x: 1, y: 2, width: Number.NaN, height: 4 } }),
-    ).toThrowError("Invalid browser bound: width.");
   });
 });
 

@@ -2,20 +2,12 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  developmentStatePaths,
-  resetDevelopmentState,
-  resolveDevelopmentAppDataRoot,
-} from "./reset-dev-state";
+import { developmentStatePaths, resetDevelopmentState, resolveDevelopmentAppDataRoot } from "./reset-dev-state";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((directory) => rm(directory, { force: true, recursive: true })),
-  );
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { force: true, recursive: true })));
 });
 
 describe("reset dev state", () => {
@@ -50,11 +42,7 @@ describe("reset dev state", () => {
       writeFile(join(productionPath, "openbot.db"), "production database"),
     ]);
 
-    await expect(resetDevelopmentState(appDataRoot)).resolves.toEqual([
-      appPath,
-      testClientPath,
-      legacyHostPath,
-    ]);
+    await expect(resetDevelopmentState(appDataRoot)).resolves.toEqual([appPath, testClientPath, legacyHostPath]);
     await expect(stat(appPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(testClientPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(legacyHostPath)).rejects.toMatchObject({ code: "ENOENT" });
@@ -68,9 +56,7 @@ describe("reset dev state", () => {
   });
 
   it("rejects a filesystem root", () => {
-    expect(() => developmentStatePaths("/")).toThrow(
-      "The application data root cannot be a filesystem root.",
-    );
+    expect(() => developmentStatePaths("/")).toThrow("The application data root cannot be a filesystem root.");
   });
 });
 

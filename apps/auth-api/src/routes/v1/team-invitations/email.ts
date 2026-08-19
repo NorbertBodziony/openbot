@@ -71,11 +71,7 @@ function isValidInviteUrl(value: string): boolean {
   if (value.length > 4_096 || /[\r\n]/u.test(value)) return false;
   try {
     const url = new URL(value);
-    return (
-      url.protocol === "openbot:" &&
-      url.hostname === "join" &&
-      Boolean(url.searchParams.get("invite"))
-    );
+    return url.protocol === "openbot:" && url.hostname === "join" && Boolean(url.searchParams.get("invite"));
   } catch {
     return false;
   }

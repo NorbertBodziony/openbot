@@ -7,27 +7,19 @@ import { dirname, join } from "node:path";
 import { isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import type * as Ws from "ws";
-import {
-  startVncWebSocketBridge,
-  startVncWebSocketRelay,
-  type VncWebSocketBridge,
-} from "./vnc-websocket-bridge";
+import { startVncWebSocketBridge, startVncWebSocketRelay, type VncWebSocketBridge } from "./vnc-websocket-bridge";
 
 const requireModule = createRequire(import.meta.url);
-const { WebSocket, WebSocketServer } = requireModule(
+const { WebSocket, WebSocketServer }: typeof Ws = requireModule(
   join(dirname(requireModule.resolve("ws/package.json")), "index.js"),
-) as typeof Ws;
+);
 
 const servers: ReturnType<typeof createServer>[] = [];
 const bridges: VncWebSocketBridge[] = [];
 
 afterEach(async () => {
   await Promise.all(bridges.splice(0).map((bridge) => bridge.close()));
-  await Promise.all(
-    servers
-      .splice(0)
-      .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
-  );
+  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
 });
 
 describe("VNC WebSocket bridge", () => {
@@ -70,15 +62,15 @@ describe("VNC WebSocket bridge", () => {
     const remoteServer = createHttpServer();
     const remoteWebSockets = new WebSocketServer({
       server: remoteServer,
-      handleProtocols: (protocols) =>
-        protocols.has("openbot-desktop") ? "openbot-desktop" : false,
+      handleProtocols: (protocols) => (protocols.has("openbot-desktop") ? "openbot-desktop" : false),
     });
     remoteWebSockets.on("connection", (socket, request) => {
       expect(request.headers["sec-websocket-protocol"]).toContain("openbot-token.team-token");
       socket.send(Buffer.from("RFB 003.889\n"));
-      socket.on("message", (data) =>
-        socket.send(Buffer.concat([Buffer.from("echo:"), data as Buffer])),
-      );
+      socket.on("message", (data) => {
+        const bytes = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
+        socket.send(Buffer.concat([Buffer.from("echo:"), bytes]));
+      });
     });
     await new Promise<void>((resolve) => remoteServer.listen(0, "127.0.0.1", resolve));
     const address = remoteServer.address();
@@ -106,11 +98,7 @@ describe("VNC WebSocket bridge", () => {
 function nextMessage(websocket: Ws.WebSocket): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     websocket.once("message", (data) => {
-      const chunk = Buffer.isBuffer(data)
-        ? data
-        : Array.isArray(data)
-          ? Buffer.concat(data)
-          : Buffer.from(data);
+      const chunk = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
       resolve(chunk);
     });
     websocket.once("error", reject);

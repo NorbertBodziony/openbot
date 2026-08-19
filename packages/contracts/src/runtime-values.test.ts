@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  isBoolean,
-  isDynamicRecord,
-  isFunction,
-  isNumber,
-  isObjectValue,
-  isString,
-} from "./runtime-values";
+import { isBoolean, isDynamicRecord, isFunction, isNumber, isObjectValue, isString } from "./runtime-values";
 
 describe("runtime values", () => {
   it("accepts only unboxed primitives", () => {

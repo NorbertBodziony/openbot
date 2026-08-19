@@ -65,7 +65,7 @@ describe("CentralAuthManager", () => {
       storagePath,
       encrypt: (value: string) => Buffer.from(`encrypted:${value}`),
       decrypt: (value: Buffer) => value.toString().replace("encrypted:", ""),
-      fetch: fetchMock as typeof fetch,
+      fetch: fetchMock,
     };
     const manager = new CentralAuthManager(options);
     expect((await manager.initialize()).status).toBe("signed_out");
@@ -143,7 +143,7 @@ describe("CentralAuthManager", () => {
           { error: { code: "invalid_sign_in_code", message: "The sign-in code is incorrect." } },
           { status: 401 },
         );
-      }) as typeof fetch,
+      }),
     });
     await manager.requestEmailCode("person@example.com");
     expect(await manager.verifyEmailCode("challenge-1", "AAAA-AAAA")).toMatchObject({
@@ -170,7 +170,7 @@ describe("CentralAuthManager", () => {
       storagePath: join(root, "session.bin"),
       encrypt: (value) => Buffer.from(value),
       decrypt: (value) => value.toString(),
-      fetch: fetchMock as typeof fetch,
+      fetch: fetchMock,
       startupRetryWindowMs: 100,
       startupRequestTimeoutMs: 20,
       startupRetryDelaysMs: [10, 20],
@@ -205,7 +205,7 @@ describe("CentralAuthManager", () => {
       storagePath,
       encrypt: (value) => Buffer.from(value),
       decrypt: (value) => value.toString(),
-      fetch: fetchMock as typeof fetch,
+      fetch: fetchMock,
       startupRetryWindowMs: 50,
       startupRequestTimeoutMs: 10,
       startupRetryDelaysMs: [1],
@@ -228,17 +228,14 @@ describe("CentralAuthManager", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(
-        Response.json(
-          { error: { code: "unauthorized", message: "The session has expired." } },
-          { status: 401 },
-        ),
+        Response.json({ error: { code: "unauthorized", message: "The session has expired." } }, { status: 401 }),
       );
     const manager = new CentralAuthManager({
       apiUrl: "http://127.0.0.1:3100",
       storagePath,
       encrypt: (value) => Buffer.from(value),
       decrypt: (value) => value.toString(),
-      fetch: fetchMock as typeof fetch,
+      fetch: fetchMock,
     });
 
     await expect(manager.initialize()).resolves.toEqual({ status: "signed_out" });
@@ -254,7 +251,7 @@ describe("CentralAuthManager", () => {
       storagePath: join(root, "session.bin"),
       encrypt: (value) => Buffer.from(value),
       decrypt: (value) => value.toString(),
-      fetch: fetchMock as typeof fetch,
+      fetch: fetchMock,
       startupRetryWindowMs: 25,
       startupRequestTimeoutMs: 5,
       startupRetryDelaysMs: [5, 10],
@@ -298,7 +295,7 @@ describe("CentralAuthManager", () => {
           name: null,
           avatarUrl: request.method === "PUT" ? "/v1/avatars/user-1?v=image-1" : null,
         });
-      }) as typeof fetch,
+      }),
     });
     await manager.requestEmailCode("person@example.com");
     await manager.verifyEmailCode("challenge-1", "ABCD-EFGH");
@@ -363,7 +360,7 @@ describe("CentralAuthManager", () => {
           });
         }
         return new Response(null, { status: 404 });
-      }) as typeof fetch,
+      }),
     });
     await manager.requestEmailCode("person@example.com");
     await manager.verifyEmailCode("challenge-1", "ABCD-EFGH");

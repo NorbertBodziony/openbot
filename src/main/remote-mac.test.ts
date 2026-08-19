@@ -1,6 +1,5 @@
 // @vitest-environment node
 
-import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:net";
 import { isString } from "@openbot/contracts/runtime-values";
@@ -18,11 +17,7 @@ import {
 const servers: ReturnType<typeof createServer>[] = [];
 
 afterEach(async () => {
-  await Promise.all(
-    servers
-      .splice(0)
-      .map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
-  );
+  await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
 });
 
 describe("Remote Mac helpers", () => {
@@ -76,9 +71,11 @@ describe("Remote Mac helpers", () => {
 
   it("terminates only the supplied child and escalates after the grace period", async () => {
     vi.useFakeTimers();
-    const child = new EventEmitter() as ChildProcess;
-    Object.assign(child, { exitCode: null, killed: false });
-    child.kill = vi.fn(() => true);
+    const child = Object.assign(new EventEmitter(), {
+      exitCode: null,
+      killed: false,
+      kill: vi.fn(() => true),
+    });
     const stopping = stopOwnedProcess(child, 50);
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     await vi.advanceTimersByTimeAsync(50);
@@ -110,19 +107,23 @@ describe("Remote Mac helpers", () => {
       const vnc = createServer((socket) => socket.end("RFB 003.889\n"));
       servers.push(vnc);
       vnc.listen(port, "127.0.0.1");
-      const child = new EventEmitter() as ChildProcess;
-      Object.assign(child, { exitCode: null, killed: false, stdout: null, stderr: null });
-      child.kill = vi.fn(() => {
-        Object.assign(child, { exitCode: 0, killed: true });
-        vnc.close();
-        queueMicrotask(() => child.emit("exit", 0, null));
-        return true;
+      const child = Object.assign(new EventEmitter(), {
+        exitCode: null,
+        killed: false,
+        stdout: null,
+        stderr: null,
+        kill: vi.fn(() => {
+          Object.assign(child, { exitCode: 0, killed: true });
+          vnc.close();
+          queueMicrotask(() => child.emit("exit", 0, null));
+          return true;
+        }),
       });
       return child;
     });
     const manager = new RemoteMacManager({
       resolveCloudflared: async () => "/usr/local/bin/cloudflared",
-      spawnProcess: spawnProcess as unknown as typeof import("node:child_process").spawn,
+      spawnProcess,
       startBridge,
       timeoutMs: 2_000,
     });

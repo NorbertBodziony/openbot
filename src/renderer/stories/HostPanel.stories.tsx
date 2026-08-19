@@ -1,13 +1,7 @@
 import { fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { HostPanel } from "../src/components/HostPanel";
-import {
-  STORY_HOST_STATUS,
-  STORY_INVITES,
-  STORY_PRESENCE,
-  STORY_SESSIONS,
-  STORY_TEAM_MEMBERS,
-} from "./fixtures";
+import { STORY_HOST_STATUS, STORY_INVITES, STORY_PRESENCE, STORY_SESSIONS, STORY_TEAM_MEMBERS } from "./fixtures";
 
 const args: Parameters<typeof HostPanel>[0] = {
   platform: "darwin",

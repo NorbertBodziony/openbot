@@ -1,19 +1,25 @@
+import { attachmentReferenceIds, serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type { DraftAttachment } from "@openbot/contracts/ipc";
 import { Portal } from "@solidjs/web";
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, createUniqueId, For, Show } from "solid-js";
 import { buildAnimatedAvatarSvg } from "../blobatar";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
+import { AnchoredTooltip } from "./conversation/AnchoredTooltip";
+import { AttachmentReferenceVisual, appendAttachmentReferenceVisual } from "./conversation/AttachmentReference";
 
 interface ComposerEditorProps {
   botId: string | undefined;
   bots: BotProfile[];
+  attachments?: DraftAttachment[];
   value: string;
   placeholder: string;
   ariaLabel: string;
   disabled: boolean;
   onValueChange: (value: string) => void;
   onSubmit: () => void;
+  onOpenAttachment?: (attachment: DraftAttachment) => void;
 }
 
 interface MentionContext {
@@ -31,12 +37,21 @@ interface PickerPosition {
 const MENTION_PATTERN = /@\[([^\]]+)]\(([^)]+)\)/g;
 
 export function expandComposerMentions(value: string): string {
-  return value.replace(MENTION_PATTERN, (_match, name: string) => `@${name}`);
+  return value.replace(MENTION_PATTERN, (match, name: string, target: string) =>
+    target.startsWith("attachment:") ? match : `@${name}`,
+  );
 }
+
+type PickerOption = { type: "bot"; bot: BotProfile } | { type: "attachment"; attachment: DraftAttachment };
 
 export function ComposerEditor(props: ComposerEditorProps) {
   const [mention, setMention] = createSignal<MentionContext | null>(null);
   const [activeOption, setActiveOption] = createSignal(0);
+  const [attachmentTooltip, setAttachmentTooltip] = createSignal<{
+    anchor: HTMLElement;
+    content: string;
+  } | null>(null);
+  const attachmentTooltipId = `composer-file-tooltip-${createUniqueId()}`;
   const [pickerPosition, setPickerPosition] = createSignal<PickerPosition>({
     bottom: 0,
     left: 0,
@@ -45,24 +60,64 @@ export function ComposerEditor(props: ComposerEditorProps) {
   const matchingBots = createMemo(() => {
     const query = mention()?.query.trim().toLocaleLowerCase() ?? "";
     return props.bots.filter(
-      (bot) =>
-        bot.id !== props.botId &&
-        (!query || `${bot.name} ${bot.role}`.toLocaleLowerCase().includes(query)),
+      (bot) => bot.id !== props.botId && (!query || `${bot.name} ${bot.role}`.toLocaleLowerCase().includes(query)),
     );
   });
+  const matchingAttachments = createMemo(() => {
+    const query = mention()?.query.trim().toLocaleLowerCase() ?? "";
+    const referencedIds = attachmentReferenceIds(props.value);
+    return (props.attachments ?? []).filter(
+      (attachment) =>
+        !referencedIds.has(attachment.id) && (!query || attachment.name.toLocaleLowerCase().includes(query)),
+    );
+  });
+  const matchingOptions = createMemo<PickerOption[]>(() => [
+    ...matchingBots().map((bot) => ({ type: "bot" as const, bot })),
+    ...matchingAttachments().map((attachment) => ({
+      type: "attachment" as const,
+      attachment,
+    })),
+  ]);
   let editor: HTMLDivElement | undefined;
   let lastBotId: string | undefined;
+  let lastAttachmentKey = "";
   let lastEmittedValue = "";
   let isComposing = false;
+  const attachmentTokenActions: AttachmentTokenActions = {
+    tooltipId: attachmentTooltipId,
+    open: (attachment) => {
+      setAttachmentTooltip(null);
+      props.onOpenAttachment?.(attachment);
+    },
+    showTooltip: (anchor, content) => {
+      const label = anchor.querySelector<HTMLElement>(".inline-file-reference-name");
+      if (!label || label.scrollWidth <= label.clientWidth + 1) {
+        setAttachmentTooltip(null);
+        return;
+      }
+      setAttachmentTooltip({ anchor, content });
+    },
+    hideTooltip: (anchor) => {
+      if (attachmentTooltip()?.anchor === anchor) setAttachmentTooltip(null);
+    },
+  };
 
   createEffect(
-    () => ({ botId: props.botId, value: props.value, bots: props.bots }),
-    ({ botId, value, bots }) => {
+    () => ({
+      botId: props.botId,
+      value: props.value,
+      bots: props.bots,
+      attachments: props.attachments ?? [],
+    }),
+    ({ botId, value, bots, attachments }) => {
       if (!editor) return;
-      if (botId === lastBotId && value === lastEmittedValue) return;
+      const attachmentKey = attachments.map((attachment) => `${attachment.id}:${attachment.name}`).join("|");
+      if (botId === lastBotId && value === lastEmittedValue && attachmentKey === lastAttachmentKey) return;
       lastBotId = botId;
+      lastAttachmentKey = attachmentKey;
       lastEmittedValue = value;
-      renderEditorValue(editor, value, bots);
+      setAttachmentTooltip(null);
+      renderEditorValue(editor, value, bots, attachments, attachmentTokenActions);
       setMention(null);
     },
   );
@@ -71,8 +126,9 @@ export function ComposerEditor(props: ComposerEditorProps) {
     if (!editor) return;
     let value = serializeEditor(editor);
     if (value.length > INPUT_LIMITS.messageText) {
-      value = value.slice(0, INPUT_LIMITS.messageText);
-      renderEditorValue(editor, value, props.bots);
+      value = truncateComposerValue(value, INPUT_LIMITS.messageText);
+      setAttachmentTooltip(null);
+      renderEditorValue(editor, value, props.bots, props.attachments ?? [], attachmentTokenActions);
       placeCaretAtEnd(editor);
     }
     lastEmittedValue = value;
@@ -106,13 +162,16 @@ export function ComposerEditor(props: ComposerEditorProps) {
     setActiveOption(0);
   }
 
-  function insertMention(bot: BotProfile) {
+  function insertOption(option: PickerOption) {
     const context = mention();
     if (!editor || !context) return;
     const range = rangeFromTextOffsets(editor, context.start, context.end);
     if (!range) return;
     range.deleteContents();
-    const token = createMentionToken(bot);
+    const token =
+      option.type === "bot"
+        ? createMentionToken(option.bot)
+        : createAttachmentToken(option.attachment, attachmentTokenActions);
     const trailingSpace = document.createTextNode(" ");
     range.insertNode(trailingSpace);
     range.insertNode(token);
@@ -129,7 +188,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
   function handleKeyDown(event: KeyboardEvent) {
     if (event.key === "Enter" && (isComposing || event.isComposing)) return;
 
-    const options = matchingBots();
+    const options = matchingOptions();
     if (mention() && options.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -144,7 +203,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
       if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
         event.preventDefault();
         const bot = options[activeOption()];
-        if (bot) insertMention(bot);
+        if (bot) insertOption(bot);
         return;
       }
     }
@@ -175,10 +234,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
     const clipboard = event.clipboardData;
     if (!clipboard || clipboard.files.length > 0) return;
 
-    const text = clipboard
-      .getData("text/plain")
-      .replace(/\r\n?/g, "\n")
-      .slice(0, INPUT_LIMITS.messageText);
+    const text = clipboard.getData("text/plain").replace(/\r\n?/g, "\n").slice(0, INPUT_LIMITS.messageText);
     if (!text) return;
 
     insertPlainText(editor, text);
@@ -224,30 +280,30 @@ export function ComposerEditor(props: ComposerEditorProps) {
         }}
       />
       <Portal>
-        <Show when={mention() && matchingBots().length > 0}>
+        <Show when={mention() && matchingOptions().length > 0}>
           <div
             class="mention-picker"
             role="listbox"
-            aria-label="Tag an agent"
+            aria-label="Insert mention"
             style={{
               bottom: `${pickerPosition().bottom}px`,
               left: `${pickerPosition().left}px`,
               width: `${pickerPosition().width}px`,
             }}
           >
+            <Show when={matchingBots().length > 0}>
+              <div class="mention-picker-section">Agents</div>
+            </Show>
             <For each={matchingBots()}>
               {(bot, index) => (
                 <button
                   type="button"
                   role="option"
                   aria-selected={activeOption() === index() ? "true" : "false"}
-                  class={[
-                    "mention-picker-option",
-                    { "mention-picker-option-active": activeOption() === index() },
-                  ]}
+                  class={["mention-picker-option", { "mention-picker-option-active": activeOption() === index() }]}
                   onPointerDown={(event) => event.preventDefault()}
                   onMouseEnter={() => setActiveOption(index())}
-                  onClick={() => insertMention(bot)}
+                  onClick={() => insertOption({ type: "bot", bot })}
                 >
                   <AgentAvatar bot={bot} />
                   <strong>{bot.name}</strong>
@@ -255,11 +311,108 @@ export function ComposerEditor(props: ComposerEditorProps) {
                 </button>
               )}
             </For>
+            <Show when={matchingAttachments().length > 0}>
+              <div class="mention-picker-section">Files</div>
+            </Show>
+            <For each={matchingAttachments()}>
+              {(attachment, index) => {
+                const optionIndex = () => matchingBots().length + index();
+                return (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={activeOption() === optionIndex() ? "true" : "false"}
+                    aria-label={`${attachment.name} File`}
+                    class={[
+                      "mention-picker-option",
+                      "mention-picker-file-option",
+                      { "mention-picker-option-active": activeOption() === optionIndex() },
+                    ]}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setActiveOption(optionIndex())}
+                    onClick={() => insertOption({ type: "attachment", attachment })}
+                  >
+                    <AttachmentReferenceVisual name={attachment.name} />
+                    <strong>{attachment.name}</strong>
+                    <span>File</span>
+                  </button>
+                );
+              }}
+            </For>
           </div>
         </Show>
       </Portal>
+      <Show when={attachmentTooltip()}>
+        {(activeTooltip) => (
+          <AnchoredTooltip id={attachmentTooltipId} anchor={activeTooltip().anchor} content={activeTooltip().content} />
+        )}
+      </Show>
     </div>
   );
+}
+
+function truncateComposerValue(value: string, limit: number): string {
+  if (value.length <= limit) return value;
+  let result = "";
+  let cursor = 0;
+  for (const match of value.matchAll(MENTION_PATTERN)) {
+    const index = match.index ?? 0;
+    const text = value.slice(cursor, index);
+    if (result.length + text.length >= limit) {
+      return result + text.slice(0, limit - result.length);
+    }
+    result += text;
+    if (result.length + match[0].length > limit) return result;
+    result += match[0];
+    cursor = index + match[0].length;
+  }
+  return result + value.slice(cursor, cursor + limit - result.length);
+}
+
+interface AttachmentTokenActions {
+  tooltipId: string;
+  open: (attachment: DraftAttachment) => void;
+  showTooltip: (anchor: HTMLElement, content: string) => void;
+  hideTooltip: (anchor: HTMLElement) => void;
+}
+
+function createAttachmentToken(attachment: DraftAttachment, actions: AttachmentTokenActions): HTMLSpanElement {
+  const token = document.createElement("span");
+  token.className = "composer-file-reference";
+  token.contentEditable = "false";
+  token.dataset.attachmentReferenceId = attachment.id;
+  token.dataset.attachmentReferenceName = attachment.name;
+  token.setAttribute("role", "button");
+  token.setAttribute("tabindex", "0");
+  token.setAttribute("aria-label", `Open attached file ${attachment.name}`);
+  token.setAttribute("aria-describedby", actions.tooltipId);
+  appendAttachmentReferenceVisual(token, attachment.name);
+  const name = document.createElement("span");
+  name.className = "inline-file-reference-name";
+  name.textContent = attachment.name;
+  token.append(name);
+  const showTooltip = () => actions.showTooltip(token, attachment.name);
+  const hideTooltip = () => actions.hideTooltip(token);
+  token.addEventListener("pointerenter", showTooltip);
+  token.addEventListener("pointerleave", hideTooltip);
+  token.addEventListener("focus", showTooltip);
+  token.addEventListener("blur", hideTooltip);
+  token.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      hideTooltip();
+      return;
+    }
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    event.stopPropagation();
+    actions.open(attachment);
+  });
+  token.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    actions.open(attachment);
+  });
+  return token;
 }
 
 function createMentionToken(bot: BotProfile): HTMLSpanElement {
@@ -289,14 +442,30 @@ function createMentionToken(bot: BotProfile): HTMLSpanElement {
   return token;
 }
 
-function renderEditorValue(editor: HTMLDivElement, value: string, bots: BotProfile[]) {
+function renderEditorValue(
+  editor: HTMLDivElement,
+  value: string,
+  bots: BotProfile[],
+  attachments: DraftAttachment[],
+  attachmentTokenActions: AttachmentTokenActions,
+) {
   editor.replaceChildren();
   let cursor = 0;
   for (const match of value.matchAll(MENTION_PATTERN)) {
     const index = match.index ?? 0;
     if (index > cursor) editor.append(document.createTextNode(value.slice(cursor, index)));
     const name = match[1] ?? "Agent";
-    const id = match[2] ?? "";
+    const target = match[2] ?? "";
+    if (target.startsWith("attachment:")) {
+      const id = target.slice("attachment:".length);
+      const attachment = attachments.find((candidate) => candidate.id === id);
+      editor.append(
+        attachment ? createAttachmentToken(attachment, attachmentTokenActions) : document.createTextNode(name),
+      );
+      cursor = index + match[0].length;
+      continue;
+    }
+    const id = target;
     const bot = bots.find((candidate) => candidate.id === id);
     editor.append(
       createMentionToken(
@@ -323,13 +492,19 @@ function renderEditorValue(editor: HTMLDivElement, value: string, bots: BotProfi
 }
 
 function serializeEditor(editor: HTMLDivElement): string {
-  if (editor.textContent === "" && !editor.querySelector("[data-mention-id]")) return "";
+  if (editor.textContent === "" && !editor.querySelector("[data-mention-id], [data-attachment-reference-id]"))
+    return "";
   return Array.from(editor.childNodes).map(serializeNode).join("");
 }
 
 function serializeNode(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
   if (!(node instanceof HTMLElement)) return "";
+  const attachmentId = node.dataset.attachmentReferenceId;
+  const attachmentName = node.dataset.attachmentReferenceName;
+  if (attachmentId && attachmentName) {
+    return serializeAttachmentReference(attachmentName, attachmentId);
+  }
   const mentionId = node.dataset.mentionId;
   const mentionName = node.dataset.mentionName;
   if (mentionId && mentionName) return `@[${mentionName}](${mentionId})`;

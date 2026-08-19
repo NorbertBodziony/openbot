@@ -3,9 +3,17 @@ import { EventEmitter } from "node:events";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
+  AccountUsage,
   AgentEvent,
+  AgentModelOption,
+  AgentStatus,
   AvatarImageInput,
   BotSummary,
+  BrowserControlState,
+  BrowserTab,
+  ConversationReadState,
+  ConversationWithReadState,
+  DirectConversationReadState,
   DirectConversationSnapshot,
   DirectMessage,
   DirectMessageRealtimeEvent,
@@ -15,14 +23,32 @@ import type {
   DraftAttachment,
   JoinServerInput,
   LoginServerInput,
+  MarkConversationReadInput,
+  MarkDirectReadInput,
+  QueuedMessageReceipt,
+  QueueSnapshot,
   SendDirectMessageInput,
   ServerSummary,
   SetTeamTypingInput,
   TeamPresenceSnapshot,
   TeamRole,
 } from "@openbot/contracts/ipc";
-import { isTeamRealtimeEvent } from "@openbot/contracts/ipc";
-import { isDynamicRecord, isObjectValue, isString } from "@openbot/contracts/runtime-values";
+import {
+  isAgentEvent,
+  isAgentModel,
+  isAvatarHue,
+  isAvatarSeed,
+  isReasoningEffort,
+  isTeamRealtimeEvent,
+} from "@openbot/contracts/ipc";
+import {
+  type DynamicRecord,
+  isBoolean,
+  isDynamicRecord,
+  isNumber,
+  isOneOf,
+  isString,
+} from "@openbot/contracts/runtime-values";
 import { isOpenBotTeamApiHostname, isOpenBotTeamVncHostname } from "@openbot/contracts/validation";
 import { addressUpdatePayload, fingerprint } from "./team-store";
 
@@ -64,6 +90,8 @@ interface CentralAccountSession {
 
 const REMOTE_REQUEST_TIMEOUT_MS = 15_000;
 
+type ResponseDecoder<T> = (value: unknown) => T;
+
 export interface RemoteDesktopAccess {
   url: string;
   protocols: string[];
@@ -89,8 +117,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async initialize(): Promise<void> {
     try {
-      const parsed = JSON.parse(await readFile(this.#path, "utf8")) as StoredRemoteServers;
-      if (parsed.version === 1 && Array.isArray(parsed.servers)) this.#state = parsed;
+      const parsed = JSON.parse(await readFile(this.#path, "utf8"));
+      if (isStoredRemoteServers(parsed)) this.#state = parsed;
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
@@ -145,16 +173,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async join(input: JoinServerInput): Promise<ServerSummary> {
     const invite = parseJoinUrl(input.inviteUrl);
-    const verifiedIdentity = await this.#verifyIdentity(
-      invite.apiUrl,
-      invite.serverId,
-      invite.fingerprint,
-    );
+    const verifiedIdentity = await this.#verifyIdentity(invite.apiUrl, invite.serverId, invite.fingerprint);
     const accountTicket = await this.#centralAccount.createTeamAuthTicket(invite.serverId);
-    const result = await requestJson<{
-      member: { role: TeamRole };
-      sessionToken: string;
-    }>(invite.apiUrl, "/v1/join/account", {
+    const result = await requestJson(invite.apiUrl, "/v1/join/account", decodeJoinResult, {
       method: "POST",
       body: {
         inviteToken: invite.token,
@@ -172,17 +193,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       vncHostname: null,
       role: result.member.role,
     };
-    this.#state.servers = [
-      ...this.#state.servers.filter((server) => server.id !== stored.id),
-      stored,
-    ];
+    this.#state.servers = [...this.#state.servers.filter((server) => server.id !== stored.id), stored];
     this.#state.activeServerId = stored.id;
     this.#states.set(stored.id, "online");
     await this.#refreshVnc(stored);
     await this.#persist();
     this.#emitChanged();
     void this.#connectEvents(stored.id);
-    return this.list().find((server) => server.id === stored.id) as ServerSummary;
+    return requiredServerSummary(this.list(), stored.id);
   }
 
   async login(input: LoginServerInput): Promise<ServerSummary> {
@@ -192,11 +210,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     try {
       await this.#verifyIdentity(server.apiUrl, server.id, server.fingerprint);
       const accountTicket = await this.#centralAccount.createTeamAuthTicket(server.id);
-      const result = await requestJson<{ member: { role: TeamRole }; sessionToken: string }>(
-        server.apiUrl,
-        "/v1/auth/account",
-        { method: "POST", body: { accountTicket } },
-      );
+      const result = await requestJson(server.apiUrl, "/v1/auth/account", decodeJoinResult, {
+        method: "POST",
+        body: { accountTicket },
+      });
       server.username = this.#centralAccount.getEmail().trim().toLowerCase();
       server.role = result.member.role;
       server.encryptedToken = this.#cipher.encrypt(result.sessionToken).toString("base64");
@@ -210,7 +227,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       throw error;
     }
     this.#emitChanged();
-    return this.list().find((candidate) => candidate.id === server.id) as ServerSummary;
+    return requiredServerSummary(this.list(), server.id);
   }
 
   async remove(serverId: string): Promise<void> {
@@ -239,20 +256,46 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     await this.#persist();
     this.#emitChanged();
     void this.#connectEvents(server.id);
-    return this.list().find((candidate) => candidate.id === server.id) as ServerSummary;
+    return requiredServerSummary(this.list(), server.id);
   }
 
   async request<T>(
     path: string,
     init: { method?: string; body?: unknown } = {},
     serverId = this.#state.activeServerId,
+    decoder: ResponseDecoder<T>,
   ): Promise<T> {
     const server = this.#requireServer(serverId);
-    const value = await requestJson<T>(server.apiUrl, path, {
+    const value = await requestJson(server.apiUrl, path, decoder, {
       ...init,
       token: this.#token(server),
     });
     return addRemotePreviewUrls(value, server.id);
+  }
+
+  listAgentConversationReads(serverId = this.#state.activeServerId): Promise<Record<string, ConversationReadState>> {
+    return this.request("/v1/agents/conversation-reads", {}, serverId, decodeConversationReadStates);
+  }
+
+  readAgentConversation(botId: string, serverId = this.#state.activeServerId): Promise<ConversationWithReadState> {
+    return this.request(
+      `/v1/agents/${encodeURIComponent(botId)}/conversation`,
+      {},
+      serverId,
+      decodeConversationWithReadState,
+    );
+  }
+
+  markAgentConversationRead(
+    input: MarkConversationReadInput,
+    serverId = this.#state.activeServerId,
+  ): Promise<ConversationReadState> {
+    return this.request(
+      `/v1/agents/${encodeURIComponent(input.botId)}/conversation/read`,
+      { method: "POST", body: { throughMessageId: input.throughMessageId } },
+      serverId,
+      decodeConversationReadState,
+    );
   }
 
   getPresence(serverId = this.#state.activeServerId): TeamPresenceSnapshot {
@@ -268,28 +311,31 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   listDirectThreads(serverId = this.#state.activeServerId): Promise<DirectThreadSummary[]> {
-    return this.request("/v1/direct/threads", {}, serverId);
+    return this.request("/v1/direct/threads", {}, serverId, decodeDirectThreadSummaries);
   }
 
-  readDirectConversation(
-    memberId: string,
-    serverId = this.#state.activeServerId,
-  ): Promise<DirectConversationSnapshot> {
-    return this.request(`/v1/direct/conversations/${encodeURIComponent(memberId)}`, {}, serverId);
-  }
-
-  sendDirectMessage(
-    input: SendDirectMessageInput,
-    serverId = this.#state.activeServerId,
-  ): Promise<DirectMessage> {
-    return this.request("/v1/direct/messages", { method: "POST", body: input }, serverId);
-  }
-
-  async markDirectRead(memberId: string, serverId = this.#state.activeServerId): Promise<void> {
-    await this.request(
-      `/v1/direct/conversations/${encodeURIComponent(memberId)}/read`,
-      { method: "POST" },
+  readDirectConversation(memberId: string, serverId = this.#state.activeServerId): Promise<DirectConversationSnapshot> {
+    return this.request(
+      `/v1/direct/conversations/${encodeURIComponent(memberId)}`,
+      {},
       serverId,
+      decodeDirectConversationSnapshot,
+    );
+  }
+
+  sendDirectMessage(input: SendDirectMessageInput, serverId = this.#state.activeServerId): Promise<DirectMessage> {
+    return this.request("/v1/direct/messages", { method: "POST", body: input }, serverId, decodeDirectMessage);
+  }
+
+  markDirectRead(
+    input: MarkDirectReadInput,
+    serverId = this.#state.activeServerId,
+  ): Promise<DirectConversationReadState> {
+    return this.request(
+      `/v1/direct/conversations/${encodeURIComponent(input.memberId)}/read`,
+      { method: "POST", body: { throughSequence: input.throughSequence } },
+      serverId,
+      decodeDirectConversationReadState,
     );
   }
 
@@ -308,11 +354,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async getRemoteDesktopAccess(serverId: string): Promise<RemoteDesktopAccess> {
     const server = this.#requireServer(serverId);
     const token = this.#token(server);
-    const access = await requestJson<{ configured: boolean; password: string | null }>(
-      server.apiUrl,
-      "/v1/host/remote-desktop-access",
-      { token },
-    );
+    const access = await requestJson(server.apiUrl, "/v1/host/remote-desktop-access", decodeRemoteDesktopAccess, {
+      token,
+    });
     if (!access.configured || !access.password) {
       throw new Error("The host owner must configure Remote Desktop access.");
     }
@@ -352,9 +396,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       },
       body: Buffer.from(bytes),
     });
-    const value = (await response.json()) as DraftAttachment | { error?: string };
-    if (!response.ok) throw new Error("error" in value ? value.error : "Attachment upload failed.");
-    return addRemotePreviewUrls(value as DraftAttachment, server.id);
+    const value = await response.json();
+    if (!response.ok) throw new Error(responseError(value, "Attachment upload failed."));
+    return addRemotePreviewUrls(decodeDraftAttachment(value), server.id);
   }
 
   async setAgentAvatar(
@@ -372,11 +416,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       },
       body: image ? Buffer.from(image.bytes) : undefined,
     });
-    const value = (await response.json()) as BotSummary | { error?: string };
+    const value = await response.json();
     if (!response.ok) {
-      throw new Error("error" in value ? value.error : "Agent avatar update failed.");
+      throw new Error(responseError(value, "Agent avatar update failed."));
     }
-    return addRemotePreviewUrls(value as BotSummary, server.id);
+    return addRemotePreviewUrls(decodeBotSummary(value), server.id);
   }
 
   async downloadAgentAvatar(
@@ -406,13 +450,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     mimeType: string;
   }> {
     const server = this.#requireServer(serverId);
-    const response = await remoteFetch(
-      `${server.apiUrl}/v1/attachments/${encodeURIComponent(attachmentId)}`,
-      { headers: { Authorization: `Bearer ${this.#token(server)}` } },
-    );
+    const response = await remoteFetch(`${server.apiUrl}/v1/attachments/${encodeURIComponent(attachmentId)}`, {
+      headers: { Authorization: `Bearer ${this.#token(server)}` },
+    });
     if (!response.ok) {
-      const value = (await response.json()) as { error?: string };
-      throw new Error(value.error ?? "Attachment download failed.");
+      throw new Error(responseError(await response.json(), "Attachment download failed."));
     }
     const disposition = response.headers.get("content-disposition") ?? "";
     const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
@@ -434,35 +476,25 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     expectedFingerprint: string,
   ): Promise<{ publicKey: string; serverName: string }> {
     const challenge = randomBytes(24).toString("base64url");
-    const proof = await requestJson<{
-      serverId: string;
-      publicKey: string;
-      serverName: string;
-      fingerprint: string;
-      challenge: string;
-      signature: string;
-    }>(apiUrl, `/v1/identity?challenge=${encodeURIComponent(challenge)}`);
+    const proof = await requestJson(
+      apiUrl,
+      `/v1/identity?challenge=${encodeURIComponent(challenge)}`,
+      decodeIdentityProof,
+    );
     const valid =
       proof.serverId === serverId &&
       proof.challenge === challenge &&
       proof.fingerprint === expectedFingerprint &&
       fingerprint(proof.publicKey) === expectedFingerprint &&
-      verify(
-        null,
-        Buffer.from(challenge),
-        proof.publicKey,
-        Buffer.from(proof.signature, "base64url"),
-      );
+      verify(null, Buffer.from(challenge), proof.publicKey, Buffer.from(proof.signature, "base64url"));
     if (!valid) throw new Error("The server identity could not be verified.");
     return { publicKey: proof.publicKey, serverName: proof.serverName };
   }
 
   async #refreshVnc(server: StoredRemoteServer): Promise<void> {
-    const remote = await requestJson<{ hostname: string | null; online: boolean }>(
-      server.apiUrl,
-      "/v1/host/remote-mac",
-      { token: this.#token(server) },
-    );
+    const remote = await requestJson(server.apiUrl, "/v1/host/remote-mac", decodeRemoteMac, {
+      token: this.#token(server),
+    });
     server.vncHostname = remote.online ? remote.hostname : null;
   }
 
@@ -474,10 +506,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     try {
       const eventsUrl = new URL("/v1/events", server.apiUrl);
       eventsUrl.protocol = "wss:";
-      const socket = new WebSocket(eventsUrl, [
-        "openbot-events",
-        `openbot-token.${this.#token(server)}`,
-      ]);
+      const socket = new WebSocket(eventsUrl, ["openbot-events", `openbot-token.${this.#token(server)}`]);
       controller.signal.addEventListener("abort", () => socket.close(1000, "Client stopped"), {
         once: true,
       });
@@ -494,7 +523,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         socket.addEventListener("message", (message) => {
           if (!isString(message.data)) return;
           try {
-            const event = JSON.parse(message.data) as unknown;
+            const event = JSON.parse(message.data);
             if (isTeamRealtimeEvent(event)) {
               if (event.type === "team-presence") {
                 this.#presence.set(serverId, event.snapshot);
@@ -504,20 +533,18 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               } else {
                 this.emit("directTyping", serverId, event);
               }
+            } else if (isAgentEvent(event)) {
+              this.emit("agent", serverId, addRemotePreviewUrls(event, serverId));
             } else {
-              this.emit("agent", serverId, event as AgentEvent);
+              throw new Error("Invalid agent event payload.");
             }
           } catch {
             socket.close(1003, "Invalid event payload");
           }
         });
-        socket.addEventListener(
-          "error",
-          () => reject(new Error("Remote events are unavailable.")),
-          {
-            once: true,
-          },
-        );
+        socket.addEventListener("error", () => reject(new Error("Remote events are unavailable.")), {
+          once: true,
+        });
         socket.addEventListener(
           "close",
           () => {
@@ -664,10 +691,7 @@ export function parseAddressUpdateUrl(value: string): {
 }
 
 function isValidRemoteVncHostname(value: string): boolean {
-  return (
-    /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com$/.test(value) ||
-    isOpenBotTeamVncHostname(value)
-  );
+  return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com$/.test(value) || isOpenBotTeamVncHostname(value);
 }
 
 export function verifyAddressUpdate(
@@ -690,6 +714,7 @@ export function verifyAddressUpdate(
 async function requestJson<T>(
   apiUrl: string,
   path: string,
+  decoder: ResponseDecoder<T>,
   options: { method?: string; body?: unknown; token?: string } = {},
 ): Promise<T> {
   const response = await remoteFetch(`${apiUrl}${path}`, {
@@ -701,15 +726,398 @@ async function requestJson<T>(
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
-  const value = response.status === 204 ? undefined : ((await response.json()) as unknown);
+  const value = response.status === 204 ? undefined : await response.json();
   if (!response.ok) {
     const message =
-      value && isObjectValue(value) && "error" in value && isString(value.error)
+      isDynamicRecord(value) && isString(value.error)
         ? value.error
         : `Remote server request failed (${response.status}).`;
     throw new Error(message);
   }
-  return value as T;
+  return decoder(value);
+}
+
+function decodeRecord(value: unknown, label: string): DynamicRecord {
+  if (!isDynamicRecord(value)) throw new Error(`Invalid ${label}.`);
+  return value;
+}
+
+function requiredString(record: DynamicRecord, field: string): string {
+  const value = record[field];
+  if (!isString(value)) throw new Error(`Invalid ${field}.`);
+  return value;
+}
+
+function nullableString(record: DynamicRecord, field: string): string | null {
+  const value = record[field];
+  if (value === null || isString(value)) return value;
+  throw new Error(`Invalid ${field}.`);
+}
+
+function requiredNumber(record: DynamicRecord, field: string): number {
+  const value = record[field];
+  if (!isNumber(value)) throw new Error(`Invalid ${field}.`);
+  return value;
+}
+
+function requiredBoolean(record: DynamicRecord, field: string): boolean {
+  const value = record[field];
+  if (!isBoolean(value)) throw new Error(`Invalid ${field}.`);
+  return value;
+}
+
+function decodeJoinResult(value: unknown): { member: { role: TeamRole }; sessionToken: string } {
+  const record = decodeRecord(value, "join response");
+  const member = decodeRecord(record.member, "member");
+  const role = member.role;
+  if (!isOneOf(["owner", "admin", "member"] as const, role)) {
+    throw new Error("Invalid member role.");
+  }
+  return { member: { role }, sessionToken: requiredString(record, "sessionToken") };
+}
+
+function decodeRemoteDesktopAccess(value: unknown): {
+  configured: boolean;
+  password: string | null;
+} {
+  const record = decodeRecord(value, "Remote Desktop access");
+  return {
+    configured: requiredBoolean(record, "configured"),
+    password: nullableString(record, "password"),
+  };
+}
+
+function decodeDraftAttachment(value: unknown): DraftAttachment {
+  const record = decodeRecord(value, "attachment");
+  const kind = record.kind;
+  const previewKind = record.previewKind;
+  const previewUrl = record.previewUrl;
+  if (!isOneOf(["image", "file"] as const, kind)) throw new Error("Invalid attachment kind.");
+  if (!isOneOf(["image", "pdf", "text", "none"] as const, previewKind)) {
+    throw new Error("Invalid attachment preview kind.");
+  }
+  if (previewUrl !== null && !isString(previewUrl)) {
+    throw new Error("Invalid attachment preview URL.");
+  }
+  return {
+    id: requiredString(record, "id"),
+    name: requiredString(record, "name"),
+    size: requiredNumber(record, "size"),
+    kind,
+    mimeType: requiredString(record, "mimeType"),
+    previewKind,
+    previewUrl,
+  };
+}
+
+export function decodeBotSummary(value: unknown): BotSummary {
+  const record = decodeRecord(value, "agent");
+  const model = record.model;
+  const reasoningEffort = record.reasoningEffort;
+  const avatarSeed = record.avatarSeed;
+  const avatarHue = record.avatarHue;
+  if (!isAgentModel(model) || !isReasoningEffort(reasoningEffort)) {
+    throw new Error("Invalid agent model configuration.");
+  }
+  if (!isAvatarSeed(avatarSeed) || (avatarHue !== null && !isAvatarHue(avatarHue))) {
+    throw new Error("Invalid agent avatar configuration.");
+  }
+  return {
+    id: requiredString(record, "id"),
+    name: requiredString(record, "name"),
+    role: requiredString(record, "role"),
+    description: requiredString(record, "description"),
+    notifications: requiredBoolean(record, "notifications"),
+    model,
+    reasoningEffort,
+    threadId: nullableString(record, "threadId"),
+    workspacePath: requiredString(record, "workspacePath"),
+    preview: requiredString(record, "preview"),
+    updatedAt: nullableString(record, "updatedAt"),
+    avatarSeed,
+    avatarHue,
+    avatarUrl: nullableString(record, "avatarUrl"),
+  };
+}
+
+export function decodeVoid(value: unknown): undefined {
+  if (value !== undefined && value !== null) throw new Error("The remote server returned data.");
+  return undefined;
+}
+
+export function decodeAgentStatus(value: unknown): AgentStatus {
+  if (!isAgentStatusValue(value)) {
+    throw new Error("Invalid remote agent status.");
+  }
+  return value;
+}
+
+function isAgentStatusValue(value: unknown): value is AgentStatus {
+  return (
+    isDynamicRecord(value) &&
+    isOneOf(["idle", "starting", "ready", "restarting", "blocked", "stopped"] as const, value.phase) &&
+    isDynamicRecord(value.auth) &&
+    isDynamicRecord(value.capabilities) &&
+    isOneOf(["ready", "setup-required", "unavailable"] as const, value.capabilities.chat) &&
+    isOneOf(["ready", "setup-required", "unavailable"] as const, value.capabilities.browser) &&
+    isOneOf(["ready", "setup-required", "unavailable"] as const, value.capabilities.computerUse) &&
+    (value.message === null || isString(value.message)) &&
+    value.fullAccess === true
+  );
+}
+
+export function decodeAccountUsage(value: unknown): AccountUsage {
+  if (!isAccountUsageValue(value)) {
+    throw new Error("Invalid remote account usage.");
+  }
+  return value;
+}
+
+function isAccountUsageValue(value: unknown): value is AccountUsage {
+  return (
+    isDynamicRecord(value) &&
+    Array.isArray(value.limits) &&
+    value.limits.every(
+      (limit) =>
+        isDynamicRecord(limit) &&
+        isString(limit.id) &&
+        (limit.primary === null || isDynamicRecord(limit.primary)) &&
+        (limit.secondary === null || isDynamicRecord(limit.secondary)),
+    )
+  );
+}
+
+export function decodeAgentModelOptions(value: unknown): AgentModelOption[] {
+  if (
+    !Array.isArray(value) ||
+    !value.every(
+      (model) =>
+        isDynamicRecord(model) &&
+        isAgentModel(model.id) &&
+        isString(model.name) &&
+        isString(model.description) &&
+        isReasoningEffort(model.defaultReasoningEffort) &&
+        Array.isArray(model.supportedReasoningEfforts) &&
+        model.supportedReasoningEfforts.every(isReasoningEffort),
+    )
+  ) {
+    throw new Error("Invalid remote agent models.");
+  }
+  return value;
+}
+
+export function decodeBotSummaries(value: unknown): BotSummary[] {
+  if (!Array.isArray(value)) throw new Error("Invalid remote agent list.");
+  return value.map(decodeBotSummary);
+}
+
+export function decodeQueueSnapshot(value: unknown): QueueSnapshot {
+  if (!isQueueSnapshotValue(value)) {
+    throw new Error("Invalid remote queue.");
+  }
+  return value;
+}
+
+function isQueueSnapshotValue(value: unknown): value is QueueSnapshot {
+  return (
+    !isDynamicRecord(value) || !isString(value.botId) || !isBoolean(value.paused) || !Array.isArray(value.deliveries)
+  );
+}
+
+export function decodeQueuedMessageReceipt(value: unknown): QueuedMessageReceipt {
+  if (!isQueuedMessageReceiptValue(value)) {
+    throw new Error("Invalid remote message receipt.");
+  }
+  return value;
+}
+
+function isQueuedMessageReceiptValue(value: unknown): value is QueuedMessageReceipt {
+  return isDynamicRecord(value) && isString(value.messageId) && Array.isArray(value.deliveries);
+}
+
+export function decodeBrowserTabs(value: unknown): BrowserTab[] {
+  if (
+    !Array.isArray(value) ||
+    !value.every(
+      (tab) =>
+        isDynamicRecord(tab) &&
+        isString(tab.id) &&
+        isString(tab.title) &&
+        isString(tab.url) &&
+        isBoolean(tab.loading) &&
+        (tab.ownerThreadId === null || isString(tab.ownerThreadId)) &&
+        (tab.ownerBotId === null || isString(tab.ownerBotId)),
+    )
+  ) {
+    throw new Error("Invalid remote browser tabs.");
+  }
+  return value;
+}
+
+export function decodeBrowserControlState(value: unknown): BrowserControlState {
+  if (!isBrowserControlStateValue(value)) {
+    throw new Error("Invalid remote browser control state.");
+  }
+  return value;
+}
+
+function isBrowserControlStateValue(value: unknown): value is BrowserControlState {
+  return isDynamicRecord(value) && Array.isArray(value.sessions);
+}
+
+function decodeDirectMessage(value: unknown): DirectMessage {
+  const record = decodeRecord(value, "direct message");
+  return {
+    id: requiredString(record, "id"),
+    threadId: requiredString(record, "threadId"),
+    senderMemberId: requiredString(record, "senderMemberId"),
+    recipientMemberId: requiredString(record, "recipientMemberId"),
+    text: requiredString(record, "text"),
+    createdAt: requiredString(record, "createdAt"),
+    sequence: requiredNumber(record, "sequence"),
+  };
+}
+
+function decodeDirectThreadSummary(value: unknown): DirectThreadSummary {
+  const record = decodeRecord(value, "direct thread");
+  return {
+    threadId: requiredString(record, "threadId"),
+    otherMemberId: requiredString(record, "otherMemberId"),
+    lastMessage: decodeDirectMessage(record.lastMessage),
+    unreadCount: requiredNumber(record, "unreadCount"),
+    updatedAt: requiredString(record, "updatedAt"),
+  };
+}
+
+function decodeDirectThreadSummaries(value: unknown): DirectThreadSummary[] {
+  if (!Array.isArray(value)) throw new Error("Invalid direct thread response.");
+  return value.map(decodeDirectThreadSummary);
+}
+
+function decodeDirectConversationSnapshot(value: unknown): DirectConversationSnapshot {
+  const record = decodeRecord(value, "direct conversation");
+  const readState = record.readState;
+  return {
+    threadId: requiredString(record, "threadId"),
+    otherMemberId: requiredString(record, "otherMemberId"),
+    messages: decodeDirectMessages(record.messages),
+    revision: requiredNumber(record, "revision"),
+    ...(readState === undefined ? {} : { readState: decodeDirectConversationReadState(readState) }),
+  };
+}
+
+function decodeDirectMessages(value: unknown): DirectMessage[] {
+  if (!Array.isArray(value)) throw new Error("Invalid direct-message list.");
+  return value.map(decodeDirectMessage);
+}
+
+function decodeDirectConversationReadState(value: unknown): DirectConversationReadState {
+  const record = decodeRecord(value, "direct read state");
+  const firstUnreadMessageId = record.firstUnreadMessageId;
+  if (firstUnreadMessageId !== null && !isString(firstUnreadMessageId)) {
+    throw new Error("Invalid first unread message.");
+  }
+  return {
+    unreadCount: requiredNumber(record, "unreadCount"),
+    firstUnreadMessageId,
+    throughSequence: requiredNumber(record, "throughSequence"),
+  };
+}
+
+export function decodeConversationReadState(value: unknown): ConversationReadState {
+  const record = decodeRecord(value, "conversation read state");
+  const firstUnreadMessageId = record.firstUnreadMessageId;
+  const throughMessageId = record.throughMessageId;
+  if (firstUnreadMessageId !== null && !isString(firstUnreadMessageId)) {
+    throw new Error("Invalid first unread message.");
+  }
+  if (throughMessageId !== null && !isString(throughMessageId)) {
+    throw new Error("Invalid conversation read boundary.");
+  }
+  return {
+    unreadCount: requiredNumber(record, "unreadCount"),
+    firstUnreadMessageId,
+    throughMessageId,
+  };
+}
+
+export function decodeConversationReadStates(value: unknown): Record<string, ConversationReadState> {
+  const record = decodeRecord(value, "conversation read states");
+  return Object.fromEntries(
+    Object.entries(record).map(([botId, state]) => [botId, decodeConversationReadState(state)]),
+  );
+}
+
+function decodeConversationWithReadState(value: unknown): ConversationWithReadState {
+  const event = { type: "conversation", snapshot: value };
+  if (!isAgentEvent(event) || event.type !== "conversation") {
+    throw new Error("Invalid agent conversation response.");
+  }
+  const record = decodeRecord(value, "agent conversation");
+  return {
+    ...event.snapshot,
+    readState: decodeConversationReadState(record.readState),
+  };
+}
+
+function decodeIdentityProof(value: unknown): {
+  serverId: string;
+  publicKey: string;
+  serverName: string;
+  fingerprint: string;
+  challenge: string;
+  signature: string;
+} {
+  const record = decodeRecord(value, "server identity");
+  return {
+    serverId: requiredString(record, "serverId"),
+    publicKey: requiredString(record, "publicKey"),
+    serverName: requiredString(record, "serverName"),
+    fingerprint: requiredString(record, "fingerprint"),
+    challenge: requiredString(record, "challenge"),
+    signature: requiredString(record, "signature"),
+  };
+}
+
+function decodeRemoteMac(value: unknown): { hostname: string | null; online: boolean } {
+  const record = decodeRecord(value, "Remote Mac status");
+  return {
+    hostname: nullableString(record, "hostname"),
+    online: requiredBoolean(record, "online"),
+  };
+}
+
+function responseError(value: unknown, fallback: string): string {
+  if (isDynamicRecord(value) && isString(value.error)) return value.error;
+  return fallback;
+}
+
+function requiredServerSummary(servers: ServerSummary[], serverId: string): ServerSummary {
+  const server = servers.find((candidate) => candidate.id === serverId);
+  if (!server) throw new Error("Remote server summary is missing.");
+  return server;
+}
+
+function isStoredRemoteServers(value: unknown): value is StoredRemoteServers {
+  if (!isDynamicRecord(value) || value.version !== 1 || !isString(value.activeServerId)) {
+    return false;
+  }
+  return Array.isArray(value.servers) && value.servers.every(isStoredRemoteServer);
+}
+
+function isStoredRemoteServer(value: unknown): value is StoredRemoteServer {
+  if (!isDynamicRecord(value)) return false;
+  return (
+    isString(value.id) &&
+    isString(value.name) &&
+    isString(value.apiUrl) &&
+    isString(value.fingerprint) &&
+    (value.publicKey === undefined || isString(value.publicKey)) &&
+    isString(value.username) &&
+    isString(value.encryptedToken) &&
+    (value.vncHostname === null || isString(value.vncHostname)) &&
+    isOneOf(["owner", "admin", "member"] as const, value.role)
+  );
 }
 
 function remoteFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
@@ -722,16 +1130,12 @@ function addRemotePreviewUrls<T>(value: T, serverId: string): T {
     return value;
   }
   if (!isDynamicRecord(value)) return value;
-  const record = value as { [key: string]: unknown };
+  const record = value;
   if ("previewUrl" in record && isString(record.id)) {
-    record.previewUrl = remoteAttachmentPreviewUrl(serverId, record.id);
+    Reflect.set(record, "previewUrl", remoteAttachmentPreviewUrl(serverId, record.id));
   }
-  if (
-    isString(record.avatarUrl) &&
-    record.avatarUrl.startsWith("openbot-avatar:") &&
-    isString(record.id)
-  ) {
-    record.avatarUrl = remoteAgentAvatarUrl(serverId, record.id, record.avatarUrl);
+  if (isString(record.avatarUrl) && record.avatarUrl.startsWith("openbot-avatar:") && isString(record.id)) {
+    Reflect.set(record, "avatarUrl", remoteAgentAvatarUrl(serverId, record.id, record.avatarUrl));
   }
   for (const item of Object.values(record)) addRemotePreviewUrls(item, serverId);
   return value;
@@ -743,9 +1147,7 @@ export function remoteAttachmentPreviewUrl(serverId: string, attachmentId: strin
 
 export function remoteAgentAvatarUrl(serverId: string, botId: string, sourceUrl: string): string {
   const source = new URL(sourceUrl);
-  const target = new URL(
-    `openbot-remote-avatar://${encodeURIComponent(serverId)}/${encodeURIComponent(botId)}`,
-  );
+  const target = new URL(`openbot-remote-avatar://${encodeURIComponent(serverId)}/${encodeURIComponent(botId)}`);
   target.search = source.search;
   return target.toString();
 }

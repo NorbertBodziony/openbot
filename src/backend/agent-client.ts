@@ -1,5 +1,5 @@
 import type { AgentProviderId } from "@openbot/contracts/ipc";
-import type { AppServerNotification, AppServerRequest, RequestId, RpcError } from "./protocol";
+import type { AppServerNotification, AppServerRequest, RequestId, ResponseDecoder, RpcError } from "./protocol";
 
 export type AgentProvider = AgentProviderId;
 
@@ -8,7 +8,7 @@ export interface AgentClient {
   readonly running: boolean;
   start(): void;
   stop(): Promise<void>;
-  request<T>(method: string, params: unknown, timeoutMs?: number): Promise<T>;
+  request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, timeoutMs?: number): Promise<T>;
   notify(method: string, params?: unknown): void;
   respond(id: RequestId, result: unknown): void;
   respondError(id: RequestId, error: RpcError): void;

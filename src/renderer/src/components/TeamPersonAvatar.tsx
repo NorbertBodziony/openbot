@@ -15,20 +15,12 @@ export function TeamPersonAvatar(props: { member: TeamPresenceMember; large?: bo
     },
   );
   return (
-    <span
-      class={["person-avatar", { large: Boolean(props.large), online: props.member.online }]}
-      aria-hidden="true"
-    >
+    <span class={["person-avatar", { large: Boolean(props.large), online: props.member.online }]} aria-hidden="true">
       <Show
         when={avatarUrl() && !imageFailed()}
         fallback={<span class="person-avatar-generated" innerHTML={generatedAvatar()} />}
       >
-        <img
-          src={avatarUrl() ?? ""}
-          alt=""
-          draggable={false}
-          onError={() => setImageFailed(true)}
-        />
+        <img src={avatarUrl() ?? ""} alt="" draggable={false} onError={() => setImageFailed(true)} />
       </Show>
       <i />
     </span>

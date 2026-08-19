@@ -1,3 +1,5 @@
+import { isDynamicRecord, isFunction } from "@openbot/contracts/runtime-values";
+
 export interface WorkerBindings {
   DB: D1Database;
   AVATARS: R2Bucket;
@@ -13,6 +15,30 @@ export interface WorkerBindings {
   CLOUDFLARE_ZONE_ID?: string;
   CLOUDFLARE_TUNNEL_DOMAIN?: string;
   CLOUDFLARE_API_TOKEN?: string;
+}
+
+export function isWorkerBindings(value: unknown): value is WorkerBindings {
+  if (!isDynamicRecord(value)) return false;
+  const database = value.DB;
+  const avatars = value.AVATARS;
+  if (
+    !isDynamicRecord(database) ||
+    !isFunction(database.prepare) ||
+    !isDynamicRecord(avatars) ||
+    !isFunction(avatars.get) ||
+    !isFunction(avatars.put) ||
+    !isFunction(avatars.delete)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function requireWorkerBindings(value: unknown): WorkerBindings {
+  if (!isWorkerBindings(value)) {
+    throw new Error("Cloudflare worker bindings are unavailable.");
+  }
+  return value;
 }
 
 export interface AuthUser {
@@ -78,9 +104,5 @@ export interface AuthRepository {
     createdAt: number;
     expiresAt: number;
   }): Promise<void>;
-  redeemTeamAuthTicket(input: {
-    ticketHash: string;
-    serverId: string;
-    now: number;
-  }): Promise<AuthUser | null>;
+  redeemTeamAuthTicket(input: { ticketHash: string; serverId: string; now: number }): Promise<AuthUser | null>;
 }

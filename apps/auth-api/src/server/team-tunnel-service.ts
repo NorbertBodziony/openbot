@@ -14,9 +14,7 @@ export interface TeamTunnelRecord {
 }
 
 export interface TeamTunnelRepository {
-  claim(
-    input: Omit<TeamTunnelRecord, "tunnelId" | "status"> & { now: number },
-  ): Promise<TeamTunnelRecord>;
+  claim(input: Omit<TeamTunnelRecord, "tunnelId" | "status"> & { now: number }): Promise<TeamTunnelRecord>;
   setTunnelId(serverId: string, tunnelId: string, now: number): Promise<void>;
   markActive(serverId: string, now: number): Promise<void>;
   find(serverId: string): Promise<TeamTunnelRecord | null>;
@@ -178,10 +176,7 @@ export class TeamTunnelService {
         "This team server belongs to a different OpenBot account.",
       );
     }
-    await Promise.all([
-      this.#provider.deleteDns(record.apiHostname),
-      this.#provider.deleteDns(record.vncHostname),
-    ]);
+    await Promise.all([this.#provider.deleteDns(record.apiHostname), this.#provider.deleteDns(record.vncHostname)]);
     const tunnelId = record.tunnelId ?? (await this.#provider.findTunnelId(record.tunnelName));
     if (tunnelId) await this.#provider.deleteTunnel(tunnelId);
     await this.#repository.delete(record.serverId);
@@ -217,11 +212,7 @@ function validateServerName(value: string): string {
     normalized.length > INPUT_LIMITS.serverName ||
     /[\r\n]/u.test(normalized)
   ) {
-    throw new TeamTunnelServiceError(
-      400,
-      "invalid_server_name",
-      "The team server name is invalid.",
-    );
+    throw new TeamTunnelServiceError(400, "invalid_server_name", "The team server name is invalid.");
   }
   const slug = slugifyTeamServerName(normalized);
   if (slug.length < INPUT_LIMITS.serverNameMin) {

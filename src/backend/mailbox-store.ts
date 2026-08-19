@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
+import { rewriteAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AttachmentDataInput,
@@ -54,10 +55,11 @@ interface StoredDelivery {
 }
 
 interface StoredState {
-  version: 2;
+  version: 3;
   messages: StoredMessage[];
   deliveries: StoredDelivery[];
   drafts: StoredDraft[];
+  generatedAttachments: StoredAttachment[];
   pausedBotIds: string[];
   idempotency: Record<string, string>;
   reactions: StoredReaction[];
@@ -91,10 +93,11 @@ export interface ExportedAttachmentFile {
 }
 
 const EMPTY_STATE: StoredState = {
-  version: 2,
+  version: 3,
   messages: [],
   deliveries: [],
   drafts: [],
+  generatedAttachments: [],
   pausedBotIds: [],
   idempotency: {},
   reactions: [],
@@ -107,11 +110,7 @@ export class MailboxStore {
   readonly #database: OpenBotDatabase;
   #state: StoredState = structuredClone(EMPTY_STATE);
 
-  constructor(
-    userDataPath: string,
-    sharedRoot: string,
-    database = new OpenBotDatabase(userDataPath),
-  ) {
+  constructor(userDataPath: string, sharedRoot: string, database = new OpenBotDatabase(userDataPath)) {
     this.#statePath = join(userDataPath, "mailbox.json");
     this.#draftsRoot = join(userDataPath, "attachment-drafts");
     this.#transfersRoot = join(sharedRoot, "Transfers");
@@ -147,10 +146,7 @@ export class MailboxStore {
     return this.prepareImportedAttachments(paths, []);
   }
 
-  async prepareImportedAttachments(
-    paths: string[],
-    data: AttachmentDataInput[],
-  ): Promise<DraftAttachment[]> {
+  async prepareImportedAttachments(paths: string[], data: AttachmentDataInput[]): Promise<DraftAttachment[]> {
     if (paths.length + data.length === 0) return [];
     if (paths.length + data.length > MAX_ATTACHMENTS) {
       throw new Error(`Choose at most ${MAX_ATTACHMENTS} files.`);
@@ -163,9 +159,7 @@ export class MailboxStore {
     }
     if (
       data.some(
-        (item) =>
-          item.name.length > INPUT_LIMITS.attachmentName ||
-          item.mimeType.length > INPUT_LIMITS.mimeType,
+        (item) => item.name.length > INPUT_LIMITS.attachmentName || item.mimeType.length > INPUT_LIMITS.mimeType,
       )
     ) {
       throw new Error("Attachment metadata is too long.");
@@ -227,9 +221,7 @@ export class MailboxStore {
     } catch (error) {
       const preparedIds = new Set(prepared.map((draft) => draft.id));
       this.#state.drafts = this.#state.drafts.filter((draft) => !preparedIds.has(draft.id));
-      await Promise.all(
-        prepared.map((draft) => rm(dirname(draft.path), { recursive: true, force: true })),
-      );
+      await Promise.all(prepared.map((draft) => rm(dirname(draft.path), { recursive: true, force: true })));
       throw error;
     }
   }
@@ -261,10 +253,7 @@ export class MailboxStore {
     if (recipients.some((id) => !id || id.length > INPUT_LIMITS.identifier)) {
       throw new Error("A message recipient is invalid.");
     }
-    if (
-      input.idempotencyKey !== undefined &&
-      input.idempotencyKey.length > INPUT_LIMITS.identifier
-    ) {
+    if (input.idempotencyKey !== undefined && input.idempotencyKey.length > INPUT_LIMITS.identifier) {
       throw new Error("The idempotency key is too long.");
     }
 
@@ -288,10 +277,14 @@ export class MailboxStore {
     const messageId = randomUUID();
     const attachments = await this.#commitAttachments(messageId, sourcePaths);
     const createdAt = new Date().toISOString();
+    const committedByDraftId = new Map(drafts.map((draft, index) => [draft.id, attachments[index]] as const));
     const message: StoredMessage = {
       id: messageId,
       sender: input.sender,
-      text,
+      text: rewriteAttachmentReferences(text, (reference) => {
+        const attachment = committedByDraftId.get(reference.attachmentId);
+        return attachment ? { attachmentId: attachment.id, name: attachment.name } : null;
+      }),
       attachments,
       replyToMessageId: input.replyToMessageId ?? null,
       createdAt,
@@ -310,17 +303,13 @@ export class MailboxStore {
     this.#state.messages.push(message);
     this.#state.deliveries.push(...deliveries);
     if (input.idempotencyKey) this.#state.idempotency[input.idempotencyKey] = messageId;
-    this.#state.drafts = this.#state.drafts.filter(
-      (draft) => !(input.draftIds ?? []).includes(draft.id),
-    );
+    this.#state.drafts = this.#state.drafts.filter((draft) => !(input.draftIds ?? []).includes(draft.id));
     try {
       await this.#persist();
     } catch (error) {
       const deliveryIds = new Set(deliveries.map((delivery) => delivery.id));
       this.#state.messages = this.#state.messages.filter((candidate) => candidate.id !== messageId);
-      this.#state.deliveries = this.#state.deliveries.filter(
-        (candidate) => !deliveryIds.has(candidate.id),
-      );
+      this.#state.deliveries = this.#state.deliveries.filter((candidate) => !deliveryIds.has(candidate.id));
       if (input.idempotencyKey && this.#state.idempotency[input.idempotencyKey] === messageId) {
         delete this.#state.idempotency[input.idempotencyKey];
       }
@@ -332,9 +321,7 @@ export class MailboxStore {
       await rm(join(this.#transfersRoot, messageId), { recursive: true, force: true });
       throw error;
     }
-    await Promise.all(
-      drafts.map((draft) => rm(dirname(draft.path), { recursive: true, force: true })),
-    );
+    await Promise.all(drafts.map((draft) => rm(dirname(draft.path), { recursive: true, force: true })));
     return this.#receipt(messageId);
   }
 
@@ -440,9 +427,8 @@ export class MailboxStore {
 
   reactionFor(botId: string, messageId: string): MessageReaction | null {
     return (
-      this.#state.reactions.find(
-        (reaction) => reaction.botId === botId && reaction.messageId === messageId,
-      )?.emoji ?? null
+      this.#state.reactions.find((reaction) => reaction.botId === botId && reaction.messageId === messageId)?.emoji ??
+      null
     );
   }
 
@@ -454,11 +440,7 @@ export class MailboxStore {
     );
   }
 
-  async setReaction(
-    botId: string,
-    messageId: string,
-    emoji: MessageReaction | null,
-  ): Promise<void> {
+  async setReaction(botId: string, messageId: string, emoji: MessageReaction | null): Promise<void> {
     const index = this.#state.reactions.findIndex(
       (reaction) => reaction.botId === botId && reaction.messageId === messageId,
     );
@@ -484,9 +466,7 @@ export class MailboxStore {
   }
 
   #sourceTurnId(messageId: string): string | undefined {
-    const key = Object.entries(this.#state.idempotency).find(
-      ([, value]) => value === messageId,
-    )?.[0];
+    const key = Object.entries(this.#state.idempotency).find(([, value]) => value === messageId)?.[0];
     if (!key) return undefined;
     const parts = key.split(":");
     return parts.length >= 3 ? parts.at(-2) : undefined;
@@ -507,8 +487,7 @@ export class MailboxStore {
     if (
       this.#state.deliveries.some(
         (delivery) =>
-          delivery.recipientBotId === botId &&
-          (delivery.status === "starting" || delivery.status === "running"),
+          delivery.recipientBotId === botId && (delivery.status === "starting" || delivery.status === "running"),
       )
     ) {
       return null;
@@ -542,10 +521,7 @@ export class MailboxStore {
 
   startingDeliveryForBot(botId: string): DeliveryContext | null {
     const delivery = this.#state.deliveries.find(
-      (candidate) =>
-        candidate.recipientBotId === botId &&
-        candidate.status === "starting" &&
-        candidate.turnId === null,
+      (candidate) => candidate.recipientBotId === botId && candidate.status === "starting" && candidate.turnId === null,
     );
     return delivery ? this.#context(delivery) : null;
   }
@@ -553,12 +529,8 @@ export class MailboxStore {
   async deleteBotData(botId: string): Promise<void> {
     const previous = structuredClone(this.#state);
     const removedMessageIds = new Set<string>();
-    this.#state.deliveries = this.#state.deliveries.filter(
-      (delivery) => delivery.recipientBotId !== botId,
-    );
-    const remainingMessageIds = new Set(
-      this.#state.deliveries.map((delivery) => delivery.messageId),
-    );
+    this.#state.deliveries = this.#state.deliveries.filter((delivery) => delivery.recipientBotId !== botId);
+    const remainingMessageIds = new Set(this.#state.deliveries.map((delivery) => delivery.messageId));
     this.#state.messages = this.#state.messages.filter((message) => {
       const keep = remainingMessageIds.has(message.id);
       if (!keep) removedMessageIds.add(message.id);
@@ -569,9 +541,7 @@ export class MailboxStore {
       (reaction) => reaction.botId !== botId && !removedMessageIds.has(reaction.messageId),
     );
     this.#state.idempotency = Object.fromEntries(
-      Object.entries(this.#state.idempotency).filter(
-        ([, messageId]) => !removedMessageIds.has(messageId),
-      ),
+      Object.entries(this.#state.idempotency).filter(([, messageId]) => !removedMessageIds.has(messageId)),
     );
     try {
       await this.#persist(
@@ -604,9 +574,7 @@ export class MailboxStore {
   hasReplyFrom(botId: string, messageId: string): boolean {
     return this.#state.messages.some(
       (message) =>
-        message.sender.kind === "bot" &&
-        message.sender.botId === botId &&
-        message.replyToMessageId === messageId,
+        message.sender.kind === "bot" && message.sender.botId === botId && message.replyToMessageId === messageId,
     );
   }
 
@@ -615,8 +583,7 @@ export class MailboxStore {
       if (message.sender.kind !== "bot" || message.sender.botId !== botId) return false;
       if (this.#sourceTurnId(message.id) !== turnId) return false;
       return this.#state.deliveries.some(
-        (delivery) =>
-          delivery.messageId === message.id && delivery.recipientBotId === recipientBotId,
+        (delivery) => delivery.messageId === message.id && delivery.recipientBotId === recipientBotId,
       );
     });
   }
@@ -672,8 +639,7 @@ export class MailboxStore {
     }
 
     const draftIds = new Set(attachmentDraftIds);
-    if (draftIds.size !== attachmentDraftIds.length)
-      throw new Error("Duplicate attachment drafts.");
+    if (draftIds.size !== attachmentDraftIds.length) throw new Error("Duplicate attachment drafts.");
     const drafts = attachmentDraftIds.map((id) => {
       const draft = this.#state.drafts.find((candidate) => candidate.id === id);
       if (!draft) throw new Error(`Attachment draft no longer exists: ${id}`);
@@ -695,19 +661,22 @@ export class MailboxStore {
     const draftAttachmentPaths = drafts.map((draft) => draft.path);
     let newAttachmentPaths: string[] = [];
     try {
-      const replacementAttachments = [
-        ...message.attachments.filter((attachment) => keepIds.has(attachment.id)),
-        ...(draftAttachmentPaths.length
-          ? await this.#commitAttachments(
-              `${message.id}-edit-${randomUUID()}`,
-              draftAttachmentPaths,
-            )
-          : []),
-      ];
+      const keptAttachments = message.attachments.filter((attachment) => keepIds.has(attachment.id));
+      const committedDrafts = draftAttachmentPaths.length
+        ? await this.#commitAttachments(`${message.id}-edit-${randomUUID()}`, draftAttachmentPaths)
+        : [];
+      const replacementAttachments = [...keptAttachments, ...committedDrafts];
+      const replacementByReferenceId = new Map([
+        ...keptAttachments.map((attachment) => [attachment.id, attachment] as const),
+        ...drafts.map((draft, index) => [draft.id, committedDrafts[index]] as const),
+      ]);
       newAttachmentPaths = replacementAttachments
         .filter((attachment) => !message.attachments.some((item) => item.id === attachment.id))
         .map((attachment) => attachment.path);
-      message.text = normalizedText;
+      message.text = rewriteAttachmentReferences(normalizedText, (reference) => {
+        const attachment = replacementByReferenceId.get(reference.attachmentId);
+        return attachment ? { attachmentId: attachment.id, name: attachment.name } : null;
+      });
       message.attachments = replacementAttachments;
       this.#state.drafts = this.#state.drafts.filter((draft) => !draftIds.has(draft.id));
       await this.#persist(
@@ -723,14 +692,10 @@ export class MailboxStore {
           this.#state.drafts.push(draft);
         }
       }
-      await Promise.all(
-        newAttachmentPaths.map((path) => rm(dirname(path), { recursive: true, force: true })),
-      );
+      await Promise.all(newAttachmentPaths.map((path) => rm(dirname(path), { recursive: true, force: true })));
       throw error;
     }
-    await Promise.all(
-      drafts.map((draft) => rm(dirname(draft.path), { recursive: true, force: true })),
-    );
+    await Promise.all(drafts.map((draft) => rm(dirname(draft.path), { recursive: true, force: true })));
     await this.#drainFileDeletionOutbox();
   }
 
@@ -797,7 +762,57 @@ export class MailboxStore {
       const attachment = message.attachments.find((candidate) => candidate.id === id);
       if (attachment) return resolveManagedAttachment(this.#transfersRoot, attachment);
     }
+    const generated = this.#state.generatedAttachments.find((candidate) => candidate.id === id);
+    if (generated) return resolveManagedAttachment(this.#transfersRoot, generated);
     return null;
+  }
+
+  async storeGeneratedAttachment(input: {
+    sourcePath?: string;
+    bytes?: Uint8Array;
+    name?: string;
+    mimeType?: string;
+  }): Promise<AttachmentSummary> {
+    if ((input.sourcePath === undefined) === (input.bytes === undefined)) {
+      throw new Error("Provide exactly one generated image source.");
+    }
+
+    const id = randomUUID();
+    const source = input.sourcePath === undefined ? null : await inspectSource(input.sourcePath);
+    const bytes = input.bytes === undefined ? null : normalizeBytes(input.bytes);
+    const size = source?.size ?? bytes?.byteLength ?? 0;
+    if (size > MAX_FILE_BYTES) throw new Error("Generated image exceeds the 100 MB limit.");
+
+    const name = sanitizeName(input.name ?? (source ? basename(source.path) : "generated-image.png"));
+    const metadata = attachmentMetadata(name, input.mimeType);
+    const generatedRoot = join(this.#transfersRoot, "generated", id);
+    const targetPath = join(generatedRoot, name);
+    await mkdir(generatedRoot, { recursive: true, mode: 0o700 });
+    try {
+      if (source) await copyFile(source.path, targetPath);
+      else if (bytes) await writeFile(targetPath, bytes, { mode: 0o600 });
+      else throw new Error("Generated image bytes are missing.");
+      const attachment: StoredAttachment = {
+        id,
+        name,
+        size,
+        ...metadata,
+        previewUrl: attachmentPreviewUrl(id),
+        path: targetPath,
+        sha256: await sha256(targetPath),
+      };
+      this.#state.generatedAttachments.push(attachment);
+      try {
+        await this.#persist("attachment.generated");
+      } catch (error) {
+        this.#state.generatedAttachments = this.#state.generatedAttachments.filter((candidate) => candidate.id !== id);
+        throw error;
+      }
+      return toAttachmentSummary(attachment);
+    } catch (error) {
+      await rm(generatedRoot, { recursive: true, force: true });
+      throw error;
+    }
   }
 
   async listExportAttachments(): Promise<ExportedAttachmentFile[]> {
@@ -815,6 +830,18 @@ export class MailboxStore {
           ),
         });
       }
+    }
+    for (const attachment of this.#state.generatedAttachments) {
+      const resolved = await resolveManagedAttachment(this.#transfersRoot, attachment);
+      if (!resolved) continue;
+      files.push({
+        sourcePath: resolved.path,
+        relativePath: join(
+          "attachments",
+          "generated",
+          `${safeArchiveSegment(attachment.id)}-${safeArchiveSegment(attachment.name)}`,
+        ),
+      });
     }
     return files;
   }
@@ -917,11 +944,7 @@ export class MailboxStore {
     }
   }
 
-  async #updateDelivery(
-    id: string,
-    allowed: QueueDeliveryStatus[],
-    patch: Partial<StoredDelivery>,
-  ): Promise<void> {
+  async #updateDelivery(id: string, allowed: QueueDeliveryStatus[], patch: Partial<StoredDelivery>): Promise<void> {
     const delivery = this.#state.deliveries.find((candidate) => candidate.id === id);
     if (!delivery) throw new Error(`Unknown delivery: ${id}`);
     if (!allowed.includes(delivery.status)) return;
@@ -937,11 +960,9 @@ export class MailboxStore {
 
   async #readState(): Promise<StoredState> {
     try {
-      const value = JSON.parse(await readFile(this.#statePath, "utf8")) as unknown;
+      const value = JSON.parse(await readFile(this.#statePath, "utf8"));
       if (!isStoredState(value)) {
-        throw new Error(
-          "Mailbox state is corrupt or from a newer OpenBot version; refusing to overwrite it.",
-        );
+        throw new Error("Mailbox state is corrupt or from a newer OpenBot version; refusing to overwrite it.");
       }
       return value;
     } catch (error) {
@@ -956,13 +977,7 @@ export class MailboxStore {
     fileDeletions: string[] = [],
     rebaseHistory = false,
   ): Promise<void> {
-    this.#database.replaceMailboxState(
-      commandId,
-      this.#state,
-      eventType,
-      fileDeletions,
-      rebaseHistory,
-    );
+    this.#database.replaceMailboxState(commandId, this.#state, eventType, fileDeletions, rebaseHistory);
   }
 
   async #drainFileDeletionOutbox(): Promise<void> {
@@ -971,10 +986,7 @@ export class MailboxStore {
         await rm(item.path, { recursive: true, force: true });
         this.#database.completeFileDeletion(item.id);
       } catch (error) {
-        this.#database.failFileDeletion(
-          item.id,
-          error instanceof Error ? error.message : String(error),
-        );
+        this.#database.failFileDeletion(item.id, error instanceof Error ? error.message : String(error));
       }
     }
   }
@@ -985,10 +997,7 @@ async function resolveManagedAttachment(
   attachment: StoredAttachment,
 ): Promise<{ path: string; mimeType: string } | null> {
   try {
-    const [canonicalRoot, canonicalPath] = await Promise.all([
-      realpath(root),
-      realpath(attachment.path),
-    ]);
+    const [canonicalRoot, canonicalPath] = await Promise.all([realpath(root), realpath(attachment.path)]);
     if (!isWithin(canonicalRoot, canonicalPath)) return null;
     if (!(await stat(canonicalPath)).isFile()) return null;
     return { path: canonicalPath, mimeType: attachment.mimeType };
@@ -1001,8 +1010,7 @@ async function inspectSource(sourcePath: string): Promise<{ path: string; size: 
   const path = await realpath(sourcePath);
   const metadata = await stat(path);
   if (!metadata.isFile()) throw new Error(`Only regular files can be attached: ${basename(path)}`);
-  if (metadata.size > MAX_FILE_BYTES)
-    throw new Error(`${basename(path)} exceeds the 100 MB limit.`);
+  if (metadata.size > MAX_FILE_BYTES) throw new Error(`${basename(path)} exceeds the 100 MB limit.`);
   return { path, size: metadata.size };
 }
 
@@ -1099,15 +1107,16 @@ function normalizeStoredState(value: StoredState): StoredState {
   const nextOrderByBot = new Map<string, number>();
   const deliveries = value.deliveries.map((delivery) => {
     const fallback = nextOrderByBot.get(delivery.recipientBotId) ?? 0;
-    const queueOrder =
-      isNumber((delivery as StoredDelivery & { queueOrder?: unknown }).queueOrder) &&
-      Number.isFinite((delivery as StoredDelivery & { queueOrder?: number }).queueOrder)
-        ? (delivery as StoredDelivery & { queueOrder: number }).queueOrder
-        : fallback;
+    const queueOrder = Number.isFinite(delivery.queueOrder) ? delivery.queueOrder : fallback;
     nextOrderByBot.set(delivery.recipientBotId, Math.max(fallback, queueOrder + 1));
     return { ...delivery, queueOrder };
   });
-  return { ...value, version: 2, deliveries };
+  return {
+    ...value,
+    version: 3,
+    generatedAttachments: value.generatedAttachments ?? [],
+    deliveries,
+  };
 }
 
 function compareQueueOrder(left: StoredDelivery, right: StoredDelivery): number {
@@ -1121,13 +1130,15 @@ function compareQueueOrder(left: StoredDelivery, right: StoredDelivery): number 
 function isStoredState(value: unknown): value is StoredState {
   return (
     isRecord(value) &&
-    (value.version === 1 || value.version === 2) &&
+    (value.version === 1 || value.version === 2 || value.version === 3) &&
     Array.isArray(value.messages) &&
     value.messages.every(isStoredMessage) &&
     Array.isArray(value.deliveries) &&
     value.deliveries.every(isStoredDelivery) &&
     Array.isArray(value.drafts) &&
     value.drafts.every(isStoredDraft) &&
+    (value.generatedAttachments === undefined ||
+      (Array.isArray(value.generatedAttachments) && value.generatedAttachments.every(isStoredAttachment))) &&
     Array.isArray(value.pausedBotIds) &&
     value.pausedBotIds.every((item) => isString(item)) &&
     isRecord(value.idempotency) &&
@@ -1156,10 +1167,7 @@ function isStoredAttachment(value: unknown): value is StoredAttachment {
 }
 
 function isStoredDraft(value: unknown): value is StoredDraft {
-  return (
-    isStoredAttachment(value) &&
-    isString((value as StoredAttachment & { createdAt?: unknown }).createdAt)
-  );
+  return isRecord(value) && isString(value.createdAt) && isStoredAttachment(value);
 }
 
 function isStoredMessage(value: unknown): value is StoredMessage {
@@ -1167,8 +1175,7 @@ function isStoredMessage(value: unknown): value is StoredMessage {
     isRecord(value) &&
     isString(value.id) &&
     isRecord(value.sender) &&
-    (value.sender.kind === "user" ||
-      (value.sender.kind === "bot" && isString(value.sender.botId))) &&
+    (value.sender.kind === "user" || (value.sender.kind === "bot" && isString(value.sender.botId))) &&
     isString(value.text) &&
     Array.isArray(value.attachments) &&
     value.attachments.every(isStoredAttachment) &&
@@ -1183,8 +1190,7 @@ function isStoredDelivery(value: unknown): value is StoredDelivery {
     isString(value.id) &&
     isString(value.messageId) &&
     isString(value.recipientBotId) &&
-    (value.queueOrder === undefined ||
-      (isNumber(value.queueOrder) && Number.isFinite(value.queueOrder))) &&
+    (value.queueOrder === undefined || (isNumber(value.queueOrder) && Number.isFinite(value.queueOrder))) &&
     (value.status === "queued" ||
       value.status === "starting" ||
       value.status === "running" ||

@@ -1,6 +1,6 @@
 import { CodexAppServerClient } from "../src/backend/app-server-client";
 import { resolveCodexCli } from "../src/backend/cli";
-import { type AccountReadResult, getArray, getString, isRecord } from "../src/backend/protocol";
+import { decodeAccountReadResult, decodeRecordResponse, getArray, getString, isRecord } from "../src/backend/protocol";
 
 const strict = process.argv.includes("--strict");
 let client: CodexAppServerClient | null = null;
@@ -9,14 +9,18 @@ try {
   const cli = await resolveCodexCli();
   client = new CodexAppServerClient(cli.executable, 10_000);
   client.start();
-  await client.request("initialize", {
-    clientInfo: { name: "openbot_doctor", title: "OpenBot Doctor", version: "0.1.0" },
-    capabilities: { experimentalApi: true },
-  });
+  await client.request(
+    "initialize",
+    {
+      clientInfo: { name: "openbot_doctor", title: "OpenBot Doctor", version: "0.1.0" },
+      capabilities: { experimentalApi: true },
+    },
+    decodeRecordResponse,
+  );
   client.notify("initialized");
 
-  const account = await client.request<AccountReadResult>("account/read", { refreshToken: false });
-  const plugins = await client.request<unknown>("plugin/list", { cwds: [] });
+  const account = await client.request("account/read", { refreshToken: false }, decodeAccountReadResult);
+  const plugins = await client.request("plugin/list", { cwds: [] }, decodeRecordResponse);
   const computerUse = findComputerUse(plugins);
   const auth = account.account
     ? {
@@ -42,13 +46,7 @@ try {
 
   if (strict && account.account?.type !== "chatgpt") process.exitCode = 1;
 } catch (error) {
-  console.error(
-    JSON.stringify(
-      { ok: false, error: error instanceof Error ? error.message : String(error) },
-      null,
-      2,
-    ),
-  );
+  console.error(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }, null, 2));
   process.exitCode = 1;
 } finally {
   if (client) await client.stop();

@@ -9,12 +9,7 @@ import type {
   SaveSetupInput,
   UpdateStatus,
 } from "./ipc-app-auth";
-import type {
-  BrowserControlState,
-  BrowserOpenInput,
-  BrowserTab,
-  BrowserVisibilityInput,
-} from "./ipc-browser";
+import type { BrowserControlState, BrowserOpenInput, BrowserTab, BrowserVisibilityInput } from "./ipc-browser";
 import type {
   AccountUsage,
   AgentEvent,
@@ -23,9 +18,11 @@ import type {
   AttachmentImportEvent,
   BotSummary,
   CancelQueuedMessageInput,
-  ConversationSnapshot,
+  ConversationReadState,
+  ConversationWithReadState,
   DraftAttachment,
   InterruptTurnInput,
+  MarkConversationReadInput,
   OpenAttachmentInput,
   QueuedMessageReceipt,
   QueueSnapshot,
@@ -44,6 +41,7 @@ import type {
   ConfigureHostInput,
   ConfigureRemoteDesktopInput,
   CreateTeamInviteInput,
+  DirectConversationReadState,
   DirectConversationSnapshot,
   DirectMessage,
   DirectMessageRealtimeEvent,
@@ -54,6 +52,7 @@ import type {
   InviteSummary,
   JoinServerInput,
   LoginServerInput,
+  MarkDirectReadInput,
   RemoteMacConnectInput,
   RemoteMacCredentials,
   RemoteMacSession,
@@ -76,7 +75,9 @@ export interface AgentDesktopApi {
   updateBot: (input: UpdateBotInput) => Promise<BotSummary>;
   setAvatar: (input: SetAgentAvatarInput) => Promise<BotSummary>;
   deleteBot: (botId: string) => Promise<void>;
-  readConversation: (botId: string) => Promise<ConversationSnapshot>;
+  readConversation: (botId: string) => Promise<ConversationWithReadState>;
+  listConversationReads: () => Promise<Record<string, ConversationReadState>>;
+  markConversationRead: (input: MarkConversationReadInput) => Promise<ConversationReadState>;
   chooseAttachments: () => Promise<DraftAttachment[]>;
   onAttachmentImport: (listener: (event: AttachmentImportEvent) => void) => () => void;
   discardDraftAttachment: (attachmentId: string) => Promise<void>;
@@ -130,7 +131,7 @@ export interface ServersDesktopApi {
   listDirectThreads: () => Promise<DirectThreadSummary[]>;
   readDirectConversation: (memberId: string) => Promise<DirectConversationSnapshot>;
   sendDirectMessage: (input: SendDirectMessageInput) => Promise<DirectMessage>;
-  markDirectRead: (memberId: string) => Promise<void>;
+  markDirectRead: (input: MarkDirectReadInput) => Promise<DirectConversationReadState>;
   setDirectTyping: (input: DirectTypingInput) => Promise<void>;
   onDirectMessage: (listener: (event: DirectMessageRealtimeEvent) => void) => () => void;
   onDirectTyping: (listener: (event: DirectTypingRealtimeEvent) => void) => () => void;

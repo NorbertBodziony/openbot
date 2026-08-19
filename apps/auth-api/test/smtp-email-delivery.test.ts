@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createEmailCodeDelivery } from "../src/server/email-delivery";
-import {
-  type SmtpConnector,
-  sendPrivateEmailCode,
-  sendPrivateTeamInvite,
-} from "../src/server/smtp-email-delivery";
-import type { WorkerBindings } from "../src/server/types";
+import { type SmtpConnector, sendPrivateEmailCode, sendPrivateTeamInvite } from "../src/server/smtp-email-delivery";
 
 const SUCCESS_RESPONSES = [
   "220 mail.privateemail.com ready",
@@ -144,7 +139,7 @@ describe("Private Email SMTP delivery", () => {
         (() => {
           connected = true;
           throw new Error("must_not_connect");
-        }) as SmtpConnector,
+        }) satisfies SmtpConnector,
       ),
     ).rejects.toThrow("smtp_invalid_recipient");
     expect(connected).toBe(false);
@@ -180,8 +175,9 @@ describe("Private Email SMTP delivery", () => {
     ).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toBe("smtp_ehlo_failed");
-    expect((error as Error).message).not.toContain(password);
+    if (!(error instanceof Error)) throw new Error("Expected an Error.");
+    expect(error.message).toBe("smtp_ehlo_failed");
+    expect(error.message).not.toContain(password);
   });
 
   it("retries transport failures but not protocol failures", async () => {
@@ -237,10 +233,8 @@ describe("Private Email SMTP delivery", () => {
   it("rejects partial SMTP configuration", () => {
     expect(() =>
       createEmailCodeDelivery({
-        DB: {} as D1Database,
-        AVATARS: {} as R2Bucket,
         EMAIL_SMTP_HOST: "mail.privateemail.com",
-      } satisfies WorkerBindings),
+      }),
     ).toThrow("SMTP email delivery configuration is incomplete.");
   });
 });

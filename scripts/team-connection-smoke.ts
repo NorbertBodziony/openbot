@@ -1,13 +1,13 @@
 import { spawn } from "node:child_process";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
-import type { AgentService } from "../src/backend/agent-service";
-import type { BrowserHost } from "../src/backend/browser-host";
-import type { MailboxStore } from "../src/backend/mailbox-store";
+import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { AgentService } from "../src/backend/agent-service";
+import { BotStore } from "../src/backend/bot-store";
+import { MailboxStore } from "../src/backend/mailbox-store";
 import { OpenBotDatabase } from "../src/backend/openbot-database";
 import { TeamChatStore } from "../src/backend/team-chat-store";
 import { buildNamedTunnelArgs, waitForNamedTunnelConnection } from "../src/main/host-service";
@@ -42,26 +42,38 @@ async function main(): Promise<void> {
     await provisionDevelopmentTunnel(ownerSession.sessionToken, identity.serverId, null);
     cleanup = { sessionToken: ownerSession.sessionToken, serverId: identity.serverId };
     await new Promise((resolve) => setTimeout(resolve, 3_000));
-    const agentEvents = new EventEmitter();
-    const agents = agentEvents as unknown as AgentService;
     database = new OpenBotDatabase(join(root, "user-data"));
     await database.initialize();
+    const botStore = new BotStore(join(root, "user-data"), join(root, "home"), database);
+    const mailbox = new MailboxStore(join(root, "user-data"), botStore.sharedRoot, database);
+    const browser = {
+      onChanged: () => () => undefined,
+      onControlChanged: () => () => undefined,
+      clearControls: () => undefined,
+      endControl: () => undefined,
+      handleDynamicTool: async () => ({ success: true as const, contentItems: [] }),
+      listTabs: () => [],
+      getControlState: () => ({ sessions: [] }),
+      open: async () => {
+        throw new Error("Browser is unavailable in the team smoke host.");
+      },
+      activate: async () => undefined,
+      close: async () => undefined,
+      setVisible: async () => undefined,
+    };
+    const agents = new AgentService(botStore, mailbox, browser);
     const chat = new TeamChatStore(database);
     api = new TeamApiServer({
       store,
       agents,
-      mailbox: {} as MailboxStore,
-      browser: {} as BrowserHost,
+      mailbox,
+      browser,
       chat,
       getRemoteMac: () => ({ hostname: null, online: false }),
       redeemCentralTicket: redeemDevelopmentTicket,
     });
     const port = await api.start();
-    const provisioned = await provisionDevelopmentTunnel(
-      ownerSession.sessionToken,
-      identity.serverId,
-      port,
-    );
+    const provisioned = await provisionDevelopmentTunnel(ownerSession.sessionToken, identity.serverId, port);
     tunnel = spawn(executable, buildNamedTunnelArgs(), {
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
@@ -81,8 +93,7 @@ async function main(): Promise<void> {
     const cipher = createTemporaryCipher();
     const remotePath = join(root, "remote-servers.json");
     const remoteManager = new RemoteServerManager(remotePath, cipher, {
-      createTeamAuthTicket: (serverId) =>
-        createDevelopmentTeamTicket(memberSession.sessionToken, serverId),
+      createTeamAuthTicket: (serverId) => createDevelopmentTeamTicket(memberSession.sessionToken, serverId),
       getEmail: () => memberSession.user.email,
     });
     remote = remoteManager;
@@ -94,7 +105,7 @@ async function main(): Promise<void> {
     });
     const server = await remoteManager.join({ inviteUrl: inviteUrl.toString() });
     const eventInterval = setInterval(() => {
-      agentEvents.emit("event", {
+      agents.emit("event", {
         type: "error",
         code: "team_smoke_event",
         message: "WebSocket event delivery works.",
@@ -132,7 +143,7 @@ async function main(): Promise<void> {
         }
       });
     });
-    api.sendDirectMessage(owner.id, {
+    const ownerMessage = api.sendDirectMessage(owner.id, {
       memberId: member.id,
       text: "Hello from the host owner.",
       clientMessageId: "smoke-owner-message",
@@ -142,7 +153,10 @@ async function main(): Promise<void> {
     if (unreadThreads[0]?.unreadCount !== 1) {
       throw new Error("The member direct-message unread count is invalid.");
     }
-    await remoteManager.markDirectRead(owner.id);
+    await remoteManager.markDirectRead({
+      memberId: owner.id,
+      throughSequence: ownerMessage.sequence,
+    });
     if ((await remoteManager.listDirectThreads())[0]?.unreadCount !== 0) {
       throw new Error("The member direct-message read state was not stored.");
     }
@@ -165,20 +179,13 @@ async function main(): Promise<void> {
     });
     await withTimeout(memberMessageEvent, "The member direct message event did not arrive.");
     const ownerConversation = chat.readConversation(owner.id, member.id);
-    if (
-      ownerConversation.messages.length !== 2 ||
-      chat.listThreads(owner.id)[0]?.unreadCount !== 1
-    ) {
+    if (ownerConversation.messages.length !== 2 || chat.listThreads(owner.id)[0]?.unreadCount !== 1) {
       throw new Error("The host did not persist the complete direct conversation.");
     }
 
     const typingEvent = new Promise<void>((resolve) => {
       remoteManager.once("directTyping", (_serverId, event) => {
-        if (
-          event.senderMemberId === owner.id &&
-          event.recipientMemberId === member.id &&
-          event.typing
-        ) {
+        if (event.senderMemberId === owner.id && event.recipientMemberId === member.id && event.typing) {
           resolve();
         }
       });
@@ -272,42 +279,36 @@ async function provisionDevelopmentTunnel(
     body: JSON.stringify({ serverId, serverName: "Smoke Host", apiPort, vncEnabled: false }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  const value = (await response.json()) as {
-    apiUrl?: string;
-    token?: string;
-    error?: { code?: string; message?: string };
-  };
-  if (!response.ok || !value.apiUrl || !value.token) {
+  const value = await readJsonRecord(response);
+  const apiUrl = stringField(value, "apiUrl");
+  const token = stringField(value, "token");
+  const error = recordField(value, "error");
+  if (!response.ok || !apiUrl || !token) {
     throw new Error(
-      value.error
-        ? `${value.error.code ?? "tunnel_error"}: ${value.error.message ?? "Tunnel provisioning failed."}`
+      error
+        ? `${stringField(error, "code") ?? "tunnel_error"}: ${stringField(error, "message") ?? "Tunnel provisioning failed."}`
         : `Tunnel provisioning returned ${response.status}.`,
     );
   }
-  return { apiUrl: value.apiUrl, token: value.token };
+  return { apiUrl, token };
 }
 
 async function createDevelopmentSession(email: string): Promise<{
   sessionToken: string;
   user: CentralAuthUser;
 }> {
-  const challenge = await requestJson<{
-    challengeId: string;
-    developmentCode?: string;
-  }>("/v1/auth/email/start", { email });
+  const challenge = await requestJson("/v1/auth/email/start", { email }, decodeChallenge);
   if (!challenge.developmentCode) {
     throw new Error("The local Auth API must expose development OTP codes for this smoke test.");
   }
-  return requestJson("/v1/auth/email/verify", {
-    challengeId: challenge.challengeId,
-    code: challenge.developmentCode,
-  });
+  return requestJson(
+    "/v1/auth/email/verify",
+    { challengeId: challenge.challengeId, code: challenge.developmentCode },
+    decodeCentralAuthSession,
+  );
 }
 
-async function createDevelopmentTeamTicket(
-  sessionToken: string,
-  serverId: string,
-): Promise<string> {
+async function createDevelopmentTeamTicket(sessionToken: string, serverId: string): Promise<string> {
   const response = await fetch(new URL("/v1/team-auth/ticket", AUTH_API_URL), {
     method: "POST",
     headers: {
@@ -318,15 +319,13 @@ async function createDevelopmentTeamTicket(
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`The Auth API returned ${response.status}.`);
-  const value = (await response.json()) as { ticket?: string };
-  if (!value.ticket) throw new Error("The Auth API did not return a team ticket.");
-  return value.ticket;
+  const value = await readJsonRecord(response);
+  const ticket = stringField(value, "ticket");
+  if (!ticket) throw new Error("The Auth API did not return a team ticket.");
+  return ticket;
 }
 
-async function redeemDevelopmentTicket(
-  ticket: string,
-  serverId: string,
-): Promise<CentralAuthUser | null> {
+async function redeemDevelopmentTicket(ticket: string, serverId: string): Promise<CentralAuthUser | null> {
   const response = await fetch(new URL("/v1/team-auth/redeem", AUTH_API_URL), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -335,20 +334,71 @@ async function redeemDevelopmentTicket(
   });
   if (response.status === 401) return null;
   if (!response.ok) throw new Error(`The Auth API returned ${response.status}.`);
-  return (await response.json()) as CentralAuthUser;
+  return decodeCentralAuthUser(await response.json());
 }
 
-async function requestJson<T>(path: string, body: unknown): Promise<T> {
+async function requestJson<T>(path: string, body: unknown, decode: (value: DynamicRecord) => T): Promise<T> {
   const response = await fetch(new URL(path, AUTH_API_URL), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
-  const value = (await response.json()) as T & { error?: { message?: string } };
-  if (!response.ok)
-    throw new Error(value.error?.message ?? `Request failed with ${response.status}.`);
+  const value = await readJsonRecord(response);
+  if (!response.ok) {
+    throw new Error(stringField(recordField(value, "error"), "message") ?? `Request failed with ${response.status}.`);
+  }
+  return decode(value);
+}
+
+async function readJsonRecord(response: Response): Promise<DynamicRecord> {
+  const value = await response.json();
+  if (!isDynamicRecord(value)) throw new Error("The Auth API returned invalid JSON.");
   return value;
+}
+
+function recordField(value: DynamicRecord, key: string): DynamicRecord | null;
+function recordField(value: unknown, key: string): DynamicRecord | null;
+function recordField(value: unknown, key: string): DynamicRecord | null {
+  return isDynamicRecord(value) && isDynamicRecord(value[key]) ? value[key] : null;
+}
+
+function stringField(value: unknown, key: string): string | null {
+  return isDynamicRecord(value) && isString(value[key]) ? value[key] : null;
+}
+
+function nullableStringField(value: DynamicRecord, key: string): string | null {
+  return value[key] === null ? null : (stringField(value, key) ?? null);
+}
+
+function decodeChallenge(value: DynamicRecord): { challengeId: string; developmentCode?: string } {
+  const challengeId = stringField(value, "challengeId");
+  if (!challengeId) throw new Error("The Auth API returned an invalid challenge.");
+  const developmentCode = stringField(value, "developmentCode");
+  return developmentCode ? { challengeId, developmentCode } : { challengeId };
+}
+
+function decodeCentralAuthUser(value: unknown): CentralAuthUser {
+  if (!isDynamicRecord(value)) throw new Error("The Auth API returned an invalid user.");
+  const id = stringField(value, "id");
+  const email = stringField(value, "email");
+  if (!id || !email) throw new Error("The Auth API returned an invalid user.");
+  return {
+    id,
+    email,
+    name: nullableStringField(value, "name"),
+    avatarUrl: nullableStringField(value, "avatarUrl"),
+  };
+}
+
+function decodeCentralAuthSession(value: DynamicRecord): {
+  sessionToken: string;
+  user: CentralAuthUser;
+} {
+  const sessionToken = stringField(value, "sessionToken");
+  const user = decodeCentralAuthUser(value.user);
+  if (!sessionToken) throw new Error("The Auth API returned an invalid session.");
+  return { sessionToken, user };
 }
 
 function createTemporaryCipher(): {
@@ -366,9 +416,7 @@ function createTemporaryCipher(): {
     decrypt(value) {
       const decipher = createDecipheriv("aes-256-gcm", key, value.subarray(0, 12));
       decipher.setAuthTag(value.subarray(12, 28));
-      return Buffer.concat([decipher.update(value.subarray(28)), decipher.final()]).toString(
-        "utf8",
-      );
+      return Buffer.concat([decipher.update(value.subarray(28)), decipher.final()]).toString("utf8");
     },
   };
 }

@@ -1,0 +1,11 @@
+engine biome(1.0)
+language js(typescript)
+
+or {
+  JsFormalParameter(type_annotation=TsTypeAnnotation(ty=TsNonPrimitiveType())) as $parameter,
+  JsFormalParameter(type_annotation=TsTypeAnnotation(ty=TsParenthesizedType(ty=TsNonPrimitiveType()))) as $parameter,
+  JsRestParameter(type_annotation=TsTypeAnnotation(ty=TsNonPrimitiveType())) as $parameter,
+  JsRestParameter(type_annotation=TsTypeAnnotation(ty=TsParenthesizedType(ty=TsNonPrimitiveType()))) as $parameter
+} where {
+  register_diagnostic(span=$parameter, message="This parameter uses the broad `object` type. Accept a named owner type and parse external input at its boundary before calling this function.", severity="error")
+}

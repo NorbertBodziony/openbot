@@ -8,6 +8,7 @@ import {
   type AppServerRequest,
   isRecord,
   type RequestId,
+  type ResponseDecoder,
   type RpcError,
   type RpcMessage,
 } from "./protocol";
@@ -117,7 +118,13 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
     });
   }
 
-  request<T>(method: string, params: unknown, timeoutMs = this.#requestTimeoutMs): Promise<T> {
+  request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, timeoutMs?: number): Promise<T>;
+  request<T>(
+    method: string,
+    params: unknown,
+    decoder: ResponseDecoder<T>,
+    timeoutMs = this.#requestTimeoutMs,
+  ): Promise<T> {
     const id = this.#nextId++;
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -126,7 +133,7 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
       }, timeoutMs);
 
       this.#pending.set(id, {
-        resolve: (value) => resolve(value as T),
+        resolve: (value) => resolve(decoder(value)),
         reject,
         timeout,
       });

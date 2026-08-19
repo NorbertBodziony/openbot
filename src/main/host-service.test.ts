@@ -1,14 +1,9 @@
 // @vitest-environment node
 
-import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import {
-  buildNamedTunnelArgs,
-  buildNamedTunnelEnvironment,
-  waitForNamedTunnelConnection,
-} from "./host-service";
+import { buildNamedTunnelArgs, buildNamedTunnelEnvironment, waitForNamedTunnelConnection } from "./host-service";
 
 describe("host tunnel commands", () => {
   it("runs one remotely managed named tunnel", () => {
@@ -23,7 +18,7 @@ describe("host tunnel commands", () => {
   it("waits for the named connector registration", async () => {
     const stdout = new PassThrough();
     const stderr = new PassThrough();
-    const child = Object.assign(new EventEmitter(), { stdout, stderr }) as unknown as ChildProcess;
+    const child = Object.assign(new EventEmitter(), { stdout, stderr });
     const connected = waitForNamedTunnelConnection(child, 1_000);
     stderr.write("INF Registered tunnel connection connIndex=0");
     await expect(connected).resolves.toBe(true);

@@ -39,10 +39,7 @@ export async function resolveCodexCli(): Promise<CodexCliInfo> {
       const stdout = await readCliVersion(candidate);
       const version = parseCodexVersion(stdout);
       if (!isMinimumVersion(version)) {
-        throw new CodexCliError(
-          `Codex CLI ${version} is too old. OpenBot requires 0.144.1 or newer.`,
-          "outdated",
-        );
+        throw new CodexCliError(`Codex CLI ${version} is too old. OpenBot requires 0.144.1 or newer.`, "outdated");
       }
 
       return { executable: candidate, version };
@@ -120,10 +117,7 @@ function isMinimumVersion(version: string): boolean {
   return true;
 }
 
-async function collectCandidates(
-  command: "codex" | "claude",
-  configuredPath: string | undefined,
-): Promise<string[]> {
+async function collectCandidates(command: "codex" | "claude", configuredPath: string | undefined): Promise<string[]> {
   const candidates: string[] = [];
   const override = configuredPath?.trim();
   if (override) return [override];
@@ -182,10 +176,7 @@ export function windowsFallbackPaths(
     win32.join(userHome, ".bun", "bin", `${command}.cmd`),
   );
   if (localAppData) {
-    paths.push(
-      win32.join(localAppData, "pnpm", `${command}.exe`),
-      win32.join(localAppData, "pnpm", `${command}.cmd`),
-    );
+    paths.push(win32.join(localAppData, "pnpm", `${command}.exe`), win32.join(localAppData, "pnpm", `${command}.cmd`));
   }
 
   return paths;
@@ -202,16 +193,12 @@ async function readCliVersion(candidate: string): Promise<string> {
   if (process.platform === "win32" && [".bat", ".cmd"].includes(extname(candidate).toLowerCase())) {
     const commandProcessor = process.env.ComSpec?.trim() || "cmd.exe";
     const escapedCandidate = candidate.replaceAll("%", "%%");
-    const { stdout } = await execFileAsync(
-      commandProcessor,
-      ["/d", "/s", "/c", `""${escapedCandidate}" --version"`],
-      {
-        timeout: 5_000,
-        maxBuffer: 64 * 1024,
-        windowsHide: true,
-        windowsVerbatimArguments: true,
-      },
-    );
+    const { stdout } = await execFileAsync(commandProcessor, ["/d", "/s", "/c", `""${escapedCandidate}" --version"`], {
+      timeout: 5_000,
+      maxBuffer: 64 * 1024,
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+    });
     return stdout;
   }
 

@@ -32,16 +32,14 @@ export const Playground: Story = {
   render: () => <MockedApp />,
   play: async ({ canvas, userEvent }) => {
     await expect(canvas.getByRole("navigation", { name: "Chat list" })).toBeInTheDocument();
-    await expect(canvas.getByRole("heading", { name: "Chief" })).toBeInTheDocument();
+    await expect(canvas.findByRole("heading", { name: "Agents" })).resolves.toBeInTheDocument();
 
     const editor = canvas.getByRole("textbox", { name: "Message Chief" });
     await userEvent.click(editor);
     await userEvent.type(editor, "Show me the next step");
     await userEvent.click(canvas.getByRole("button", { name: "Send message" }));
 
-    await expect(
-      canvas.findByText(/Mock reply from Chief: I received/),
-    ).resolves.toBeInTheDocument();
+    await expect(canvas.findByText(/Mock reply from Chief: I received/)).resolves.toBeInTheDocument();
   },
 };
 
@@ -50,9 +48,7 @@ export const EmptyWorkspace: Story = {
 };
 
 export const Onboarding: Story = {
-  render: () => (
-    <MockedApp options={{ setupState: { completed: false, preferredProvider: null } }} />
-  ),
+  render: () => <MockedApp options={{ setupState: { completed: false, preferredProvider: null } }} />,
 };
 
 export const SignedOut: Story = {

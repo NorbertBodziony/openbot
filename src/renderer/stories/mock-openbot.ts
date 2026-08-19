@@ -31,7 +31,6 @@ import type {
   QueueDelivery,
   QueueSnapshot,
   RemoteMacConnectInput,
-  RemoteMacCredentials,
   RemoteMacSession,
   ReorderQueueInput,
   RespondToPromptInput,
@@ -126,9 +125,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     },
   };
   let authState = clone<CentralAuthState>(options.authState ?? defaultAuthState);
-  let setupState = clone<AppSetupState>(
-    options.setupState ?? { completed: true, preferredProvider: "codex" },
-  );
+  let setupState = clone<AppSetupState>(options.setupState ?? { completed: true, preferredProvider: "codex" });
   const agentStatus = clone(options.agentStatus ?? STORY_AGENT_STATUS);
   let bots = clone(options.bots ?? STORY_BOT_SUMMARIES);
   const models = clone(options.models ?? STORY_MODELS);
@@ -341,7 +338,16 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         queues.delete(botId);
         emitAgentEvent({ type: "bots-changed", bots });
       },
-      readConversation: async (botId) => clone(getSnapshot(botId)),
+      readConversation: async (botId) => ({
+        ...clone(getSnapshot(botId)),
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+      }),
+      listConversationReads: async () => ({}),
+      markConversationRead: async (input) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: input.throughMessageId,
+      }),
       chooseAttachments: async () => [],
       onAttachmentImport: (listener) => {
         attachmentListeners.add(listener);
@@ -428,9 +434,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
 
         return {
           messageId,
-          deliveries: [
-            { id: deliveryId, recipientBotId: input.botId, status: "running", position: null },
-          ],
+          deliveries: [{ id: deliveryId, recipientBotId: input.botId, status: "running", position: null }],
         };
       },
       setMessageReaction: async (input: SetMessageReactionInput) => {
@@ -617,10 +621,18 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         directSnapshots[input.memberId] = snapshot;
         return clone(message);
       },
-      markDirectRead: async (memberId) => {
+      markDirectRead: async (input) => {
         directThreads = directThreads.map((thread) =>
-          thread.otherMemberId === memberId ? { ...thread, unreadCount: 0 } : thread,
+          thread.otherMemberId === input.memberId ? { ...thread, unreadCount: 0 } : thread,
         );
+        const snapshot = directSnapshots[input.memberId];
+        const readState = {
+          unreadCount: 0,
+          firstUnreadMessageId: null,
+          throughSequence: input.throughSequence,
+        };
+        if (snapshot) snapshot.readState = readState;
+        return readState;
       },
       setDirectTyping: async () => undefined,
       onDirectMessage: (listener) => {
@@ -672,9 +684,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         const member = teamMembers.find((candidate) => candidate.id === input.memberId);
         if (!member) throw new Error("Member not found");
         const updated = { ...member, ...input };
-        teamMembers = teamMembers.map((candidate) =>
-          candidate.id === updated.id ? updated : candidate,
-        );
+        teamMembers = teamMembers.map((candidate) => (candidate.id === updated.id ? updated : candidate));
         return clone(updated);
       },
       removeMember: async (memberId) => {
@@ -724,7 +734,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         remoteMacSessions = remoteMacSessions.filter((session) => session.id !== sessionId);
         emitRemoteMacSessions(remoteMacSessions);
       },
-      getCredentials: async (_sessionId): Promise<RemoteMacCredentials | null> => null,
+      getCredentials: async (_sessionId) => null,
       onEvent: (listener) => {
         remoteMacListeners.add(listener);
         return () => remoteMacListeners.delete(listener);

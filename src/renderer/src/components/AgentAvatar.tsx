@@ -30,9 +30,7 @@ export function AgentAvatar(props: AgentAvatarProps) {
   return (
     <Show
       when={url() && !imageFailed()}
-      fallback={
-        <span class={className()} style={props.style} aria-hidden="true" innerHTML={markup()} />
-      }
+      fallback={<span class={className()} style={props.style} aria-hidden="true" innerHTML={markup()} />}
     >
       <span class={`${className()} bot-avatar-custom`} style={props.style} aria-hidden="true">
         <img src={url() ?? ""} alt="" draggable={false} onError={() => setImageFailed(true)} />

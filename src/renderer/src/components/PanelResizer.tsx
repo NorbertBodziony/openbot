@@ -81,7 +81,8 @@ export function PanelResizer(props: PanelResizerProps) {
   const beginDrag = (event: PointerEvent) => {
     if (event.button !== 0) return;
     event.preventDefault();
-    const handle = event.currentTarget as HTMLElement;
+    if (!(event.currentTarget instanceof HTMLElement)) return;
+    const handle = event.currentTarget;
     handle.setPointerCapture?.(event.pointerId);
     const startX = event.clientX;
     const startValue = displayedValue();
@@ -109,8 +110,7 @@ export function PanelResizer(props: PanelResizerProps) {
       document.documentElement.classList.remove("panel-resizing");
       setIsResizing(false);
       cleanupDrag = undefined;
-      if (handle.hasPointerCapture?.(event.pointerId))
-        handle.releasePointerCapture(event.pointerId);
+      if (handle.hasPointerCapture?.(event.pointerId)) handle.releasePointerCapture(event.pointerId);
     };
     const cancel = () => finish();
 
@@ -139,10 +139,8 @@ export function PanelResizer(props: PanelResizerProps) {
       event.stopPropagation();
       withoutTransition(() => props.snap?.onCompactChange(true));
       return;
-    } else if (event.key === "ArrowLeft")
-      next = props.value + (props.direction === "right" ? 12 : -12);
-    else if (event.key === "ArrowRight")
-      next = props.value + (props.direction === "left" ? 12 : -12);
+    } else if (event.key === "ArrowLeft") next = props.value + (props.direction === "right" ? 12 : -12);
+    else if (event.key === "ArrowRight") next = props.value + (props.direction === "left" ? 12 : -12);
     if (next === undefined) return;
     event.preventDefault();
     event.stopPropagation();
@@ -160,9 +158,7 @@ export function PanelResizer(props: PanelResizerProps) {
       aria-valuemin={props.snap?.compactValue ?? props.min}
       aria-valuemax={maximum()}
       aria-valuenow={displayedValue()}
-      aria-valuetext={
-        props.snap?.compact ? `Compact (${props.snap.compactValue}px)` : `${props.value}px`
-      }
+      aria-valuetext={props.snap?.compact ? `Compact (${props.snap.compactValue}px)` : `${props.value}px`}
       onPointerDown={beginDrag}
       onKeyDown={handleKeyDown}
       onDblClick={(event) => {

@@ -12,12 +12,7 @@ export function readLocalRuntimeVars(environment: NodeJS.ProcessEnv): Record<str
   for (const key of LOCAL_RUNTIME_KEYS) {
     const value = environment[key];
     if (value === undefined) continue;
-    result[key] =
-      key === "AUTH_EXPOSE_DEVELOPMENT_CODE"
-        ? normalizeBooleanFlag(value)
-          ? "true"
-          : "false"
-        : value;
+    result[key] = key === "AUTH_EXPOSE_DEVELOPMENT_CODE" ? (normalizeBooleanFlag(value) ? "true" : "false") : value;
   }
   return result;
 }

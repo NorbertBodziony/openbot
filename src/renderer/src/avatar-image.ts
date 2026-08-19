@@ -27,10 +27,7 @@ export async function normalizeAvatarFile(file: File): Promise<AvatarImageInput>
   throw new Error("OpenBot could not make this image small enough. Choose a simpler image.");
 }
 
-export function avatarCrop(
-  width: number,
-  height: number,
-): { sourceX: number; sourceY: number; sourceSize: number } {
+export function avatarCrop(width: number, height: number): { sourceX: number; sourceY: number; sourceSize: number } {
   const sourceSize = Math.min(width, height);
   return {
     sourceX: Math.max(0, (width - sourceSize) / 2),
@@ -39,11 +36,7 @@ export function avatarCrop(
   };
 }
 
-async function renderAvatar(
-  source: ImageBitmap,
-  outputSize: number,
-  quality: number,
-): Promise<Blob> {
+async function renderAvatar(source: ImageBitmap, outputSize: number, quality: number): Promise<Blob> {
   const canvas = document.createElement("canvas");
   canvas.width = outputSize;
   canvas.height = outputSize;
@@ -52,20 +45,8 @@ async function renderAvatar(
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
   const crop = avatarCrop(source.width, source.height);
-  context.drawImage(
-    source,
-    crop.sourceX,
-    crop.sourceY,
-    crop.sourceSize,
-    crop.sourceSize,
-    0,
-    0,
-    outputSize,
-    outputSize,
-  );
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob(resolve, "image/webp", quality),
-  );
+  context.drawImage(source, crop.sourceX, crop.sourceY, crop.sourceSize, crop.sourceSize, 0, 0, outputSize, outputSize);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", quality));
   if (!blob) throw new Error("OpenBot could not process this image.");
   return blob;
 }

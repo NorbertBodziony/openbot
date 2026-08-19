@@ -28,23 +28,17 @@ const DEFAULT_MODELS: Record<AgentProviderId, AgentModelId> = {
 
 export function ProviderModelPicker(props: ProviderModelPickerProps) {
   const [open, setOpen] = createSignal(false);
-  const [railProvider, setRailProvider] = createSignal<AgentProviderId>(
-    untrack(() => providerForModel(props.value)),
-  );
+  const [railProvider, setRailProvider] = createSignal<AgentProviderId>(untrack(() => providerForModel(props.value)));
   const providerButtons = new Map<AgentProviderId, HTMLButtonElement>();
   const modelButtons = new Map<AgentModelId, HTMLButtonElement>();
   let root: HTMLDivElement | undefined;
 
-  const selectedModel = createMemo(() =>
-    props.modelOptions.find((option) => option.id === props.value),
-  );
+  const selectedModel = createMemo(() => props.modelOptions.find((option) => option.id === props.value));
   const activeProvider = createMemo(() => providerForModel(props.value));
   const railModels = createMemo(() =>
     props.modelOptions.filter((option) => providerForModel(option.id) === railProvider()),
   );
-  const railStatus = createMemo(() =>
-    providerAvailability(props.agentStatus, props.modelOptions, railProvider()),
-  );
+  const railStatus = createMemo(() => providerAvailability(props.agentStatus, props.modelOptions, railProvider()));
   const railAvailable = createMemo(() => railStatus().state === "available");
 
   createEffect(
@@ -63,7 +57,8 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
 
   onSettled(() => {
     const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!open() || root?.contains(event.target as Node)) return;
+      const target = event.target;
+      if (!open() || (target instanceof Node && root?.contains(target))) return;
       setOpen(false);
     };
     window.addEventListener("pointerdown", closeOnOutsidePointer);
@@ -120,11 +115,7 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
         aria-haspopup="dialog"
         aria-expanded={open() ? "true" : "false"}
         disabled={props.disabled}
-        title={
-          props.disabled
-            ? props.disabledReason
-            : `${providerName(activeProvider())} · ${triggerModelName()}`
-        }
+        title={props.disabled ? props.disabledReason : `${providerName(activeProvider())} · ${triggerModelName()}`}
         onClick={() => setPickerOpen(!open())}
         onKeyDown={(event) => {
           if (event.key === "Escape" && open()) {
@@ -161,16 +152,10 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
             setOpen(false);
           }}
         >
-          <div
-            class="provider-model-rail"
-            role="tablist"
-            aria-label="Model providers"
-            aria-orientation="vertical"
-          >
+          <div class="provider-model-rail" role="tablist" aria-label="Model providers" aria-orientation="vertical">
             <For each={PROVIDERS}>
               {(provider) => {
-                const status = () =>
-                  providerAvailability(props.agentStatus, props.modelOptions, provider);
+                const status = () => providerAvailability(props.agentStatus, props.modelOptions, provider);
                 const selected = () => railProvider() === provider;
                 return (
                   <button
@@ -217,27 +202,19 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
               <strong>{providerName(railProvider())}</strong>
               <span>{providerSummary(railProvider(), railStatus())}</span>
             </div>
-            <div
-              class="provider-model-list"
-              role="listbox"
-              aria-label={`${providerName(railProvider())} models`}
-            >
+            <div class="provider-model-list" role="listbox" aria-label={`${providerName(railProvider())} models`}>
               <For each={railModels()}>
                 {(model, index) => {
                   const selected = () => props.value === model.id;
                   const firstFocusable = () =>
                     railAvailable() &&
-                    (selected() ||
-                      (!railModels().some((option) => option.id === props.value) && index() === 0));
+                    (selected() || (!railModels().some((option) => option.id === props.value) && index() === 0));
                   return (
                     <button
                       ref={(element) => modelButtons.set(model.id, element)}
                       type="button"
                       role="option"
-                      class={[
-                        "provider-model-option",
-                        { "provider-model-option-selected": selected() },
-                      ]}
+                      class={["provider-model-option", { "provider-model-option-selected": selected() }]}
                       aria-label={`${displayModelName(model.name, model.id)}${
                         model.id === DEFAULT_MODELS[railProvider()] ? ", default" : ""
                       }`}
@@ -310,7 +287,9 @@ function providerSummary(provider: AgentProviderId, status: AgentProviderStatus)
   return status.message ?? providerStatusLabel(status.state);
 }
 
-function providerStatusLabel(state: AgentProviderStatus["state"]): string {
+function providerStatusLabel(
+  state: AgentProviderStatus["state"],
+): "Sign in required" | "Not installed" | "Update required" | "Unavailable" | "Checking" {
   if (state === "sign-in-required") return "Sign in required";
   if (state === "not-installed") return "Not installed";
   if (state === "outdated") return "Update required";
@@ -318,7 +297,7 @@ function providerStatusLabel(state: AgentProviderStatus["state"]): string {
   return "Checking";
 }
 
-function providerName(provider: AgentProviderId): string {
+function providerName(provider: AgentProviderId): "Claude" | "Codex" {
   return provider === "claude" ? "Claude" : "Codex";
 }
 

@@ -1,16 +1,17 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { isDynamicRecord, isOneOf, isString } from "@openbot/contracts/runtime-values";
 
 type Increment = "major" | "minor" | "patch";
 
-const increment = process.argv[2] as Increment | undefined;
-if (!increment || !["major", "minor", "patch"].includes(increment)) {
+const increment = process.argv[2];
+if (!isOneOf(["major", "minor", "patch"] as const, increment)) {
   throw new Error("Usage: bun scripts/prepare-release.ts <major|minor|patch>");
 }
 
-const packageJson = JSON.parse(await readFile("package.json", "utf8")) as {
-  version: string;
-  [key: string]: unknown;
-};
+const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+if (!isDynamicRecord(packageJson) || !isString(packageJson.version)) {
+  throw new Error("package.json has no valid version.");
+}
 const changelog = await readFile("CHANGELOG.md", "utf8");
 const nextVersion = bumpVersion(packageJson.version, increment);
 const releaseHeading = `## [${nextVersion}] - ${new Date().toISOString().slice(0, 10)}`;
@@ -22,11 +23,11 @@ if (changelog.includes(`## [${nextVersion}]`)) {
   throw new Error(`CHANGELOG.md already contains ${nextVersion}`);
 }
 
-packageJson.version = nextVersion;
+const nextPackageJson = { ...packageJson, version: nextVersion };
 const nextChangelog = changelog.replace("## [Unreleased]", `## [Unreleased]\n\n${releaseHeading}`);
 
 await Promise.all([
-  writeFile("package.json", `${JSON.stringify(packageJson, null, 2)}\n`),
+  writeFile("package.json", `${JSON.stringify(nextPackageJson, null, 2)}\n`),
   writeFile("CHANGELOG.md", nextChangelog),
 ]);
 

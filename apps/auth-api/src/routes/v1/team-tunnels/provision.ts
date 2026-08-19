@@ -24,30 +24,28 @@ export const Route = createFileRoute("/v1/team-tunnels/provision")({
           const user = await auth.authenticate(token);
           if (!user) return apiError(401, "unauthorized", "The session is invalid.");
           const body = await readJsonObject(request);
+          const apiPort = body.apiPort;
+          const vncEnabled = body.vncEnabled;
           if (
             !isString(body.serverId) ||
             !isString(body.serverName) ||
-            (body.apiPort !== undefined && body.apiPort !== null && !isNumber(body.apiPort)) ||
-            (body.vncEnabled !== undefined && !isBoolean(body.vncEnabled))
+            (apiPort !== undefined && apiPort !== null && !isNumber(apiPort)) ||
+            (vncEnabled !== undefined && !isBoolean(vncEnabled))
           ) {
             return apiError(400, "invalid_tunnel_request", "The tunnel details are invalid.");
           }
           await auth.enforceTeamTunnelRateLimit(user.id, requestSourceIp(request));
           const service = requestTeamTunnelService();
           if (!service) {
-            return apiError(
-              503,
-              "team_tunnels_not_configured",
-              "Named team tunnels are not configured.",
-            );
+            return apiError(503, "team_tunnels_not_configured", "Named team tunnels are not configured.");
           }
           return json(
             await service.provision({
               user,
               serverId: body.serverId,
               serverName: body.serverName,
-              apiPort: body.apiPort as number | null | undefined,
-              vncEnabled: body.vncEnabled as boolean | undefined,
+              apiPort,
+              vncEnabled,
             }),
           );
         } catch (error) {
@@ -77,11 +75,7 @@ export const Route = createFileRoute("/v1/team-tunnels/provision")({
           await auth.enforceTeamTunnelRateLimit(user.id, requestSourceIp(request));
           const service = requestTeamTunnelService();
           if (!service) {
-            return apiError(
-              503,
-              "team_tunnels_not_configured",
-              "Named team tunnels are not configured.",
-            );
+            return apiError(503, "team_tunnels_not_configured", "Named team tunnels are not configured.");
           }
           await service.deprovision(user, body.serverId);
           return new Response(null, { status: 204 });

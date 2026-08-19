@@ -1,11 +1,18 @@
-import {
-  type SmtpEmailConfig,
-  sendPrivateEmailCode,
-  sendPrivateTeamInvite,
-} from "./smtp-email-delivery";
+import { type SmtpEmailConfig, sendPrivateEmailCode, sendPrivateTeamInvite } from "./smtp-email-delivery";
 import type { EmailCodeDelivery, TeamInviteEmailDelivery, WorkerBindings } from "./types";
 
-export function createEmailCodeDelivery(bindings: WorkerBindings): EmailCodeDelivery | null {
+type EmailDeliveryBindings = Pick<
+  WorkerBindings,
+  | "EMAIL_SMTP_HOST"
+  | "EMAIL_SMTP_PORT"
+  | "EMAIL_SMTP_USERNAME"
+  | "EMAIL_SMTP_PASSWORD"
+  | "EMAIL_FROM"
+  | "EMAIL_DELIVERY_WEBHOOK_URL"
+  | "EMAIL_DELIVERY_WEBHOOK_SECRET"
+>;
+
+export function createEmailCodeDelivery(bindings: EmailDeliveryBindings): EmailCodeDelivery | null {
   const smtp = readSmtpConfig(bindings);
   if (smtp) {
     return {
@@ -36,14 +43,12 @@ export function createEmailCodeDelivery(bindings: WorkerBindings): EmailCodeDeli
   };
 }
 
-export function createTeamInviteEmailDelivery(
-  bindings: WorkerBindings,
-): TeamInviteEmailDelivery | null {
+export function createTeamInviteEmailDelivery(bindings: EmailDeliveryBindings): TeamInviteEmailDelivery | null {
   const smtp = readSmtpConfig(bindings);
   return smtp ? { send: (message) => sendPrivateTeamInvite(smtp, message) } : null;
 }
 
-function readSmtpConfig(bindings: WorkerBindings): SmtpEmailConfig | null {
+function readSmtpConfig(bindings: EmailDeliveryBindings): SmtpEmailConfig | null {
   const values = {
     host: bindings.EMAIL_SMTP_HOST?.trim(),
     port: bindings.EMAIL_SMTP_PORT?.trim(),
@@ -51,18 +56,23 @@ function readSmtpConfig(bindings: WorkerBindings): SmtpEmailConfig | null {
     password: bindings.EMAIL_SMTP_PASSWORD,
     from: bindings.EMAIL_FROM?.trim(),
   };
-  const configuredCount = Object.values(values).filter(
-    (value) => value !== undefined && value !== "",
-  ).length;
+  const configuredCount = Object.values(values).filter((value) => value !== undefined && value !== "").length;
   if (configuredCount === 0) return null;
-  if (configuredCount !== Object.keys(values).length) {
+  if (
+    configuredCount !== Object.keys(values).length ||
+    !values.host ||
+    !values.port ||
+    !values.username ||
+    !values.password ||
+    !values.from
+  ) {
     throw new Error("SMTP email delivery configuration is incomplete.");
   }
   return {
-    host: values.host as string,
+    host: values.host,
     port: Number(values.port),
-    username: values.username as string,
-    password: values.password as string,
-    from: values.from as string,
+    username: values.username,
+    password: values.password,
+    from: values.from,
   };
 }

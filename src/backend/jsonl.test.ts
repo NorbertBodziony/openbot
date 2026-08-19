@@ -8,9 +8,7 @@ describe("JsonLineDecoder", () => {
     const decoder = new JsonLineDecoder();
 
     expect(decoder.push('{"id":1,"res')).toEqual([]);
-    expect(
-      decoder.push('ult":{"ok":true}}\n{"method":"turn/started","params":{"id":"t1"}}\n'),
-    ).toEqual([
+    expect(decoder.push('ult":{"ok":true}}\n{"method":"turn/started","params":{"id":"t1"}}\n')).toEqual([
       { id: 1, result: { ok: true } },
       { method: "turn/started", params: { id: "t1" } },
     ]);
@@ -22,9 +20,7 @@ describe("JsonLineDecoder", () => {
     const splitAt = payload.indexOf(Buffer.from("ś")) + 1;
 
     expect(decoder.push(payload.subarray(0, splitAt))).toEqual([]);
-    expect(decoder.push(payload.subarray(splitAt))).toEqual([
-      { method: "message", params: { text: "cześć" } },
-    ]);
+    expect(decoder.push(payload.subarray(splitAt))).toEqual([{ method: "message", params: { text: "cześć" } }]);
   });
 
   it("rejects malformed lines", () => {

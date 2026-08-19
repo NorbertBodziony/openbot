@@ -43,9 +43,7 @@ describe("remote server links", () => {
   });
 
   it("rejects a link with a non-Cloudflare API URL", () => {
-    expect(() => parseJoinUrl("openbot://join?api=https%3A%2F%2Fevil.example&server=x")).toThrow(
-      "invalid",
-    );
+    expect(() => parseJoinUrl("openbot://join?api=https%3A%2F%2Fevil.example&server=x")).toThrow("invalid");
   });
 
   it("validates address update links and creates token-free preview URLs", () => {
@@ -60,9 +58,7 @@ describe("remote server links", () => {
       vncHostname: "new-vnc.trycloudflare.com",
     });
     const preview = remoteAttachmentPreviewUrl("00000000-0000-4000-8000-000000000000", "draft 1");
-    expect(preview).toBe(
-      "openbot-remote-attachment://00000000-0000-4000-8000-000000000000/draft%201",
-    );
+    expect(preview).toBe("openbot-remote-attachment://00000000-0000-4000-8000-000000000000/draft%201");
     expect(preview).not.toContain("token");
   });
 });

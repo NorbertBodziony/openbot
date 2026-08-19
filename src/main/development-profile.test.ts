@@ -1,15 +1,9 @@
 import { describe, expect, it } from "vitest";
-import {
-  developmentUserDataName,
-  readDevelopmentProfile,
-  shouldAutoStartHost,
-} from "./development-profile";
+import { developmentUserDataName, readDevelopmentProfile, shouldAutoStartHost } from "./development-profile";
 
 describe("development profile", () => {
   it("uses a separate userData folder for the test client", () => {
-    expect(developmentUserDataName(readDevelopmentProfile("test-client"))).toBe(
-      "OpenBot Dev Test Client",
-    );
+    expect(developmentUserDataName(readDevelopmentProfile("test-client"))).toBe("OpenBot Dev Test Client");
     expect(developmentUserDataName(readDevelopmentProfile("app"))).toBe("OpenBot Dev");
   });
 

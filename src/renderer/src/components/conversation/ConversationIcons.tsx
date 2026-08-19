@@ -24,17 +24,8 @@ export function BackIcon() {
 
 export function SettingsForwardIcon() {
   return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      class="settings-forward-icon fill-none stroke-current"
-    >
-      <path
-        d="m5.5 4 6 6-6 6m5-12 6 6-6 6"
-        stroke-width="1.35"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="settings-forward-icon fill-none stroke-current">
+      <path d="m5.5 4 6 6-6 6m5-12 6 6-6 6" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" />
     </svg>
   );
 }
@@ -175,11 +166,7 @@ export function RemoteDesktopIcon() {
     <svg aria-hidden="true" viewBox="0 0 20 20" class="size-[14px] fill-none stroke-current">
       <rect x="2.5" y="3" width="15" height="10" rx="1.5" stroke-width="1.3" />
       <path d="M7 17h6M10 13v4" stroke-width="1.3" stroke-linecap="round" />
-      <path
-        d="M13.8 6.2c.9.45 1.45 1.15 1.65 2.05M13.65 8.3h.01"
-        stroke-width="1.15"
-        stroke-linecap="round"
-      />
+      <path d="M13.8 6.2c.9.45 1.45 1.15 1.65 2.05M13.65 8.3h.01" stroke-width="1.15" stroke-linecap="round" />
     </svg>
   );
 }
@@ -195,11 +182,7 @@ export function BrowserControlIcon() {
 
 export function BrowserBackIcon() {
   return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      class="browser-toolbar-icon fill-none stroke-current"
-    >
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="browser-toolbar-icon fill-none stroke-current">
       <path d="m12 4-6 6 6 6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
     </svg>
   );
@@ -207,11 +190,7 @@ export function BrowserBackIcon() {
 
 export function BrowserForwardIcon() {
   return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      class="browser-toolbar-icon fill-none stroke-current"
-    >
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="browser-toolbar-icon fill-none stroke-current">
       <path d="m8 4 6 6-6 6" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
     </svg>
   );
@@ -219,11 +198,7 @@ export function BrowserForwardIcon() {
 
 export function BrowserReloadIcon() {
   return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      class="browser-toolbar-icon fill-none stroke-current"
-    >
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="browser-toolbar-icon fill-none stroke-current">
       <path d="M15.5 7.5A6 6 0 1 0 16 11" stroke-width="1.3" stroke-linecap="round" />
       <path d="M15.5 4.5v3h-3" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
     </svg>

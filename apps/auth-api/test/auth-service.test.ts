@@ -17,10 +17,7 @@ class MemoryAuthRepository implements AuthRepository {
   >();
   readonly limits = new Map<string, number>();
   readonly sessions = new Map<string, { user: AuthUser; expiresAt: number; revoked: boolean }>();
-  readonly teamTickets = new Map<
-    string,
-    { user: AuthUser; serverId: string; expiresAt: number; consumed: boolean }
-  >();
+  readonly teamTickets = new Map<string, { user: AuthUser; serverId: string; expiresAt: number; consumed: boolean }>();
 
   async latestEmailChallengeAt(email: string): Promise<number | null> {
     const matches = [...this.challenges.values()].filter((value) => value.email === email);
@@ -63,9 +60,7 @@ class MemoryAuthRepository implements AuthRepository {
     if (challenge.failures >= challenge.maxAttempts) return { status: "too_many_attempts" };
     if (challenge.codeHash !== input.codeHash) {
       challenge.failures += 1;
-      return challenge.failures >= challenge.maxAttempts
-        ? { status: "too_many_attempts" }
-        : { status: "invalid" };
+      return challenge.failures >= challenge.maxAttempts ? { status: "too_many_attempts" } : { status: "invalid" };
     }
     challenge.consumed = true;
     const user = {
@@ -121,9 +116,7 @@ class MemoryAuthRepository implements AuthRepository {
     serverId: string;
     expiresAt: number;
   }): Promise<void> {
-    const user = [...this.sessions.values()].find(
-      (session) => session.user.id === input.userId,
-    )?.user;
+    const user = [...this.sessions.values()].find((session) => session.user.id === input.userId)?.user;
     if (!user) throw new Error("User not found.");
     this.teamTickets.set(input.ticketHash, {
       user,
@@ -133,18 +126,9 @@ class MemoryAuthRepository implements AuthRepository {
     });
   }
 
-  async redeemTeamAuthTicket(input: {
-    ticketHash: string;
-    serverId: string;
-    now: number;
-  }): Promise<AuthUser | null> {
+  async redeemTeamAuthTicket(input: { ticketHash: string; serverId: string; now: number }): Promise<AuthUser | null> {
     const ticket = this.teamTickets.get(input.ticketHash);
-    if (
-      !ticket ||
-      ticket.consumed ||
-      ticket.serverId !== input.serverId ||
-      ticket.expiresAt <= input.now
-    ) {
+    if (!ticket || ticket.consumed || ticket.serverId !== input.serverId || ticket.expiresAt <= input.now) {
       return null;
     }
     ticket.consumed = true;
@@ -156,9 +140,7 @@ describe("email one-time codes", () => {
   it("creates an eight-character code from the safe alphabet", () => {
     for (let index = 0; index < 100; index += 1) {
       const code = generateOneTimeCode();
-      expect(code).toMatch(
-        /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/u,
-      );
+      expect(code).toMatch(/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/u);
       expect(normalizeOneTimeCode(code.toLowerCase())).toHaveLength(8);
     }
   });
@@ -188,30 +170,18 @@ describe("email one-time codes", () => {
     const serverId = "00000000-0000-4000-8000-000000000000";
     const ticket = await service.issueTeamAuthTicket(session.sessionToken, serverId, "203.0.113.4");
     expect(
-      await service.redeemTeamAuthTicket(
-        ticket.ticket,
-        "00000000-0000-4000-8000-000000000001",
-        "203.0.113.5",
-      ),
+      await service.redeemTeamAuthTicket(ticket.ticket, "00000000-0000-4000-8000-000000000001", "203.0.113.5"),
     ).toBeNull();
-    expect(await service.redeemTeamAuthTicket(ticket.ticket, serverId, "203.0.113.5")).toEqual(
-      session.user,
-    );
+    expect(await service.redeemTeamAuthTicket(ticket.ticket, serverId, "203.0.113.5")).toEqual(session.user);
     expect(await service.redeemTeamAuthTicket(ticket.ticket, serverId, "203.0.113.5")).toBeNull();
-    await expect(
-      service.updateAvatar(session.sessionToken, "/v1/avatars/user?v=avatar", null),
-    ).resolves.toMatchObject({ avatarUrl: "/v1/avatars/user?v=avatar" });
-    await expect(
-      service.updateAvatar(session.sessionToken, null, "/v1/avatars/user?v=avatar"),
-    ).resolves.toMatchObject({
+    await expect(service.updateAvatar(session.sessionToken, "/v1/avatars/user?v=avatar", null)).resolves.toMatchObject({
+      avatarUrl: "/v1/avatars/user?v=avatar",
+    });
+    await expect(service.updateAvatar(session.sessionToken, null, "/v1/avatars/user?v=avatar")).resolves.toMatchObject({
       avatarUrl: null,
     });
     await expect(
-      service.updateAvatar(
-        session.sessionToken,
-        "/v1/avatars/user?v=stale",
-        "/v1/avatars/user?v=old",
-      ),
+      service.updateAvatar(session.sessionToken, "/v1/avatars/user?v=stale", "/v1/avatars/user?v=old"),
     ).rejects.toMatchObject({ status: 409, code: "avatar_conflict" });
     await expect(service.authenticate(session.sessionToken)).resolves.toMatchObject({
       avatarUrl: null,
@@ -245,9 +215,10 @@ describe("email one-time codes", () => {
       now: () => now,
     });
     const challenge = await service.startEmailSignIn("person@example.com", "203.0.113.4");
-    await expect(
-      service.startEmailSignIn("person@example.com", "203.0.113.4"),
-    ).rejects.toMatchObject({ code: "code_recently_sent", status: 429 });
+    await expect(service.startEmailSignIn("person@example.com", "203.0.113.4")).rejects.toMatchObject({
+      code: "code_recently_sent",
+      status: 429,
+    });
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
       await expect(
@@ -281,9 +252,10 @@ describe("email one-time codes", () => {
       await emailService.startEmailSignIn("limited@example.com", "203.0.113.4");
       now += 61_000;
     }
-    await expect(
-      emailService.startEmailSignIn("limited@example.com", "203.0.113.4"),
-    ).rejects.toMatchObject({ code: "rate_limited", status: 429 });
+    await expect(emailService.startEmailSignIn("limited@example.com", "203.0.113.4")).rejects.toMatchObject({
+      code: "rate_limited",
+      status: 429,
+    });
 
     const ipService = new AuthService({
       repository: new MemoryAuthRepository(),
@@ -293,8 +265,9 @@ describe("email one-time codes", () => {
     for (let request = 0; request < 20; request += 1) {
       await ipService.startEmailSignIn(`person-${request}@example.com`, "198.51.100.8");
     }
-    await expect(
-      ipService.startEmailSignIn("blocked@example.com", "198.51.100.8"),
-    ).rejects.toMatchObject({ code: "rate_limited", status: 429 });
+    await expect(ipService.startEmailSignIn("blocked@example.com", "198.51.100.8")).rejects.toMatchObject({
+      code: "rate_limited",
+      status: 429,
+    });
   });
 });

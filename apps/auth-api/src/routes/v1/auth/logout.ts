@@ -1,10 +1,5 @@
 import { createFileRoute } from "@tanstack/solid-router";
-import {
-  apiError,
-  authErrorResponse,
-  bearerToken,
-  requestAuthService,
-} from "../../../server/request-auth";
+import { apiError, authErrorResponse, bearerToken, requestAuthService } from "../../../server/request-auth";
 
 export const Route = createFileRoute("/v1/auth/logout")({
   server: {

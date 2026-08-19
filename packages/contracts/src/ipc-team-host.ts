@@ -99,12 +99,24 @@ export interface DirectConversationSnapshot {
   otherMemberId: string;
   messages: DirectMessage[];
   revision: number;
+  readState?: DirectConversationReadState;
+}
+
+export interface DirectConversationReadState {
+  unreadCount: number;
+  firstUnreadMessageId: string | null;
+  throughSequence: number;
 }
 
 export interface SendDirectMessageInput {
   memberId: string;
   text: string;
   clientMessageId: string;
+}
+
+export interface MarkDirectReadInput {
+  memberId: string;
+  throughSequence: number;
 }
 
 export interface DirectTypingInput {
@@ -129,10 +141,7 @@ export type TeamRealtimeEvent =
       typing: boolean;
     };
 
-export type DirectMessageRealtimeEvent = Extract<
-  TeamRealtimeEvent,
-  { type: "team-direct-message" }
->;
+export type DirectMessageRealtimeEvent = Extract<TeamRealtimeEvent, { type: "team-direct-message" }>;
 
 export type DirectTypingRealtimeEvent = Extract<TeamRealtimeEvent, { type: "team-direct-typing" }>;
 
@@ -173,9 +182,7 @@ function isTeamPresenceMember(value: unknown): value is TeamPresenceMember {
     isLimitedString(value.username, INPUT_LIMITS.email) &&
     (value.email === null || isLimitedString(value.email, INPUT_LIMITS.email)) &&
     (value.name === null || isLimitedString(value.name, INPUT_LIMITS.accountName)) &&
-    (value.avatarUrl === undefined ||
-      value.avatarUrl === null ||
-      isHttpUrl(value.avatarUrl, INPUT_LIMITS.avatarUrl)) &&
+    (value.avatarUrl === undefined || value.avatarUrl === null || isHttpUrl(value.avatarUrl, INPUT_LIMITS.avatarUrl)) &&
     (value.role === "owner" || value.role === "admin" || value.role === "member") &&
     isTimestamp(value.createdAt) &&
     isBoolean(value.disabled) &&
@@ -268,12 +275,7 @@ export interface UpdateTeamMemberInput {
   disabled?: boolean;
 }
 
-export type RemoteMacPhase =
-  | "idle"
-  | "starting_tunnel"
-  | "checking_vnc"
-  | "connected"
-  | "disconnecting";
+export type RemoteMacPhase = "idle" | "starting_tunnel" | "checking_vnc" | "connected" | "disconnecting";
 
 export type RemoteMacErrorCode =
   | "cloudflared_not_found"

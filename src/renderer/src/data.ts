@@ -4,10 +4,18 @@ import type {
   AgentReasoningEffort,
   AttachmentSummary,
   BotAvatarHue,
+  ImageGenerationInfo,
   MessageReaction,
 } from "@openbot/contracts/ipc";
 
 export type MessageKind = "text" | "thinking" | "exchange";
+
+export interface MessageCitation {
+  number: number;
+  label: string;
+  url: string;
+  host?: string;
+}
 
 export interface BotMessage {
   id: string;
@@ -23,6 +31,8 @@ export interface BotMessage {
   senderBotId?: string;
   replyToMessageId?: string | null;
   attachments?: AttachmentSummary[];
+  imageGeneration?: ImageGenerationInfo;
+  citations?: MessageCitation[];
   exchange?: AgentExchangeSummary;
   reaction?: MessageReaction | null;
   items?: string[];

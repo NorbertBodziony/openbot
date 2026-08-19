@@ -6,12 +6,13 @@ import type {
   DirectTypingInput,
   JoinServerInput,
   LoginServerInput,
+  MarkDirectReadInput,
   RemoteMacConnectInput,
   SendDirectMessageInput,
   SetTeamTypingInput,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
-import { isBoolean, isString } from "@openbot/contracts/runtime-values";
+import { isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { isObject, requireString } from "./validation";
 
 export function parseHostConfig(value: unknown): ConfigureHostInput {
@@ -101,8 +102,7 @@ export function parseSetTeamTyping(value: unknown): SetTeamTypingInput {
   }
   if (value.typing && !value.botId) throw new Error("A typing agent is required.");
   return {
-    botId:
-      value.botId === null ? null : requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    botId: value.botId === null ? null : requireString(value.botId, "botId", INPUT_LIMITS.identifier),
     typing: value.typing,
   };
 }
@@ -112,11 +112,20 @@ export function parseSendDirectMessage(value: unknown): SendDirectMessageInput {
   return {
     memberId: requireString(value.memberId, "memberId", INPUT_LIMITS.identifier),
     text: requireString(value.text, "text", INPUT_LIMITS.directMessageText),
-    clientMessageId: requireString(
-      value.clientMessageId,
-      "clientMessageId",
-      INPUT_LIMITS.identifier,
-    ),
+    clientMessageId: requireString(value.clientMessageId, "clientMessageId", INPUT_LIMITS.identifier),
+  };
+}
+
+export function parseMarkDirectRead(value: unknown): MarkDirectReadInput {
+  if (!isObject(value) || !isNumber(value.throughSequence)) {
+    throw new Error("Invalid direct-message read request.");
+  }
+  if (!Number.isSafeInteger(value.throughSequence) || value.throughSequence < 0) {
+    throw new Error("Invalid direct-message read boundary.");
+  }
+  return {
+    memberId: requireString(value.memberId, "memberId", INPUT_LIMITS.identifier),
+    throughSequence: value.throughSequence,
   };
 }
 

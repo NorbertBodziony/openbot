@@ -9,10 +9,11 @@ import { ClaudeAgentClient } from "../src/backend/claude-client";
 import { resolveClaudeCli, resolveCodexCli } from "../src/backend/cli";
 import { OpenBotDatabase } from "../src/backend/openbot-database";
 import {
+  decodeRecordResponse,
+  decodeThreadResponse,
+  decodeTurnResponse,
   getRecord,
   getString,
-  type ThreadResponse,
-  type TurnResponse,
 } from "../src/backend/protocol";
 
 const EXPECTED = "OPENBOT_SQLITE_SMOKE_OK";
@@ -23,17 +24,10 @@ try {
   await database.initialize();
   const codex = await resolveCodexCli();
   const claude = await resolveClaudeCli();
-  await runProvider(
-    database,
-    "codex",
-    new CodexAppServerClient(codex.executable, 60_000),
-    "gpt-5.6-luna",
-  );
+  await runProvider(database, "codex", new CodexAppServerClient(codex.executable, 60_000), "gpt-5.6-luna");
   await runProvider(database, "claude", new ClaudeAgentClient(claude), "claude-opus-5");
   database.close();
-  process.stdout.write(
-    "Codex and Claude stored a completed live turn in the temporary SQLite database.\n",
-  );
+  process.stdout.write("Codex and Claude stored a completed live turn in the temporary SQLite database.\n");
 } finally {
   await rm(root, { recursive: true, force: true });
 }
@@ -64,11 +58,7 @@ async function runProvider(
     avatarHue: null,
     avatarUrl: null,
   };
-  database.replaceAgents(
-    `smoke:agent:${provider}`,
-    [...database.listAgents(), bot],
-    "agent.created",
-  );
+  database.replaceAgents(`smoke:agent:${provider}`, [...database.listAgents(), bot], "agent.created");
 
   const userMessage: ConversationMessage = {
     id: randomUUID(),
@@ -91,10 +81,7 @@ async function runProvider(
     resolveCompleted = resolve;
     rejectCompleted = reject;
   });
-  const timeout = setTimeout(
-    () => rejectCompleted?.(new Error(`${provider} live smoke timed out.`)),
-    120_000,
-  );
+  const timeout = setTimeout(() => rejectCompleted?.(new Error(`${provider} live smoke timed out.`)), 120_000);
 
   client.on("notification", (notification) => {
     const params = notification.params;
@@ -117,23 +104,31 @@ async function runProvider(
   client.once("exit", (error) => rejectCompleted?.(error));
   client.start();
   try {
-    await client.request("initialize", {
-      clientInfo: { name: "openbot-storage-smoke", version: "1.0.0" },
-      capabilities: { experimentalApi: true },
-    });
+    await client.request(
+      "initialize",
+      {
+        clientInfo: { name: "openbot-storage-smoke", version: "1.0.0" },
+        capabilities: { experimentalApi: true },
+      },
+      decodeRecordResponse,
+    );
     client.notify("initialized", {});
-    const started = await client.request<ThreadResponse>("thread/start", {
-      model,
-      effort: "low",
-      cwd: workspace,
-      runtimeWorkspaceRoots: [workspace],
-      approvalPolicy: "never",
-      sandbox: "danger-full-access",
-      developerInstructions: "Return only the exact text requested by the user.",
-      ephemeral: provider === "codex",
-      persistSession: provider !== "claude",
-      dynamicTools: [],
-    });
+    const started = await client.request(
+      "thread/start",
+      {
+        model,
+        effort: "low",
+        cwd: workspace,
+        runtimeWorkspaceRoots: [workspace],
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
+        developerInstructions: "Return only the exact text requested by the user.",
+        ephemeral: provider === "codex",
+        persistSession: provider !== "claude",
+        dynamicTools: [],
+      },
+      decodeThreadResponse,
+    );
     database.bindProviderSession({
       threadId,
       provider,
@@ -141,17 +136,21 @@ async function runProvider(
       model,
       effort: "low",
     });
-    const turn = await client.request<TurnResponse>("turn/start", {
-      threadId: started.thread.id,
-      model,
-      effort: "low",
-      clientUserMessageId: userMessage.id,
-      input: [{ type: "text", text: userMessage.text }],
-      cwd: workspace,
-      runtimeWorkspaceRoots: [workspace],
-      approvalPolicy: "never",
-      sandboxPolicy: { type: "dangerFullAccess" },
-    });
+    const turn = await client.request(
+      "turn/start",
+      {
+        threadId: started.thread.id,
+        model,
+        effort: "low",
+        clientUserMessageId: userMessage.id,
+        input: [{ type: "text", text: userMessage.text }],
+        cwd: workspace,
+        runtimeWorkspaceRoots: [workspace],
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" },
+      },
+      decodeTurnResponse,
+    );
     turnId = turn.turn.id;
     assistantMessage.turnId = turnId;
     database.persistConversation(

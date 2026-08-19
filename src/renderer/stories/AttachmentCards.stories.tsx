@@ -3,6 +3,16 @@ import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { AttachmentCards } from "../src/components/conversation/AttachmentCards";
 import { STORY_ATTACHMENTS } from "./fixtures";
 
+const compactFile = {
+  id: "attachment-index",
+  name: "index.html",
+  size: 65 * 1024,
+  kind: "file" as const,
+  mimeType: "text/html",
+  previewKind: "text" as const,
+  previewUrl: null,
+};
+
 const args: Parameters<typeof AttachmentCards>[0] = {
   attachments: STORY_ATTACHMENTS,
   onPreview: fn(),
@@ -20,6 +30,11 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Files: Story = {};
+
+export const SingleCompactFile: Story = {
+  name: "Single compact file",
+  args: { attachments: [compactFile] },
+};
 
 export const Empty: Story = {
   args: { attachments: [] },

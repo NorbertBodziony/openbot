@@ -3,6 +3,7 @@
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MailboxStore } from "./mailbox-store";
@@ -60,9 +61,9 @@ describe("MailboxStore", () => {
     expect(imported.listQueue("chief").deliveries).toMatchObject([
       { id: "delivery-1", text: "Legacy request", status: "completed" },
     ]);
-    await expect(
-      readFile(join(userData, "legacy-backup-v1", "mailbox.json"), "utf8"),
-    ).resolves.toContain("Legacy request");
+    await expect(readFile(join(userData, "legacy-backup-v1", "mailbox.json"), "utf8")).resolves.toContain(
+      "Legacy request",
+    );
     const restored = new MailboxStore(userData, join(root, "Legacy Shared"));
     await restored.initialize();
     expect(restored.listQueue("chief").deliveries).toHaveLength(1);
@@ -86,6 +87,49 @@ describe("MailboxStore", () => {
     const second = store.getDelivery(receipt.deliveries[1].id);
     expect(first?.delivery.attachments[0]?.id).toBe(second?.delivery.attachments[0]?.id);
     await expect(access(first?.managedAttachments[0]?.path ?? "missing")).resolves.toBeUndefined();
+  });
+
+  it("remaps inline references from draft IDs to committed attachment IDs", async () => {
+    const original = join(root, "start-types.d.ts");
+    const extra = join(root, "AGENTS.md");
+    await writeFile(original, "export type Start = true;\n");
+    await writeFile(extra, "# Agents\n");
+    const [draft] = await store.prepareAttachments([original]);
+    const receipt = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: `Review ${serializeAttachmentReference(draft.name, draft.id)}`,
+      draftIds: [draft.id],
+    });
+    const deliveryId = receipt.deliveries[0].id;
+    const committed = store.getDelivery(deliveryId)?.delivery.attachments[0];
+    expect(committed).toBeDefined();
+    expect(store.getDelivery(deliveryId)?.delivery.text).toBe(
+      `Review ${serializeAttachmentReference("start-types.d.ts", committed?.id ?? "")}`,
+    );
+
+    const [extraDraft] = await store.prepareAttachments([extra]);
+    await store.updateQueuedMessage(
+      "chief",
+      deliveryId,
+      [
+        serializeAttachmentReference("start-types.d.ts", committed?.id ?? ""),
+        serializeAttachmentReference(extraDraft.name, extraDraft.id),
+        serializeAttachmentReference("missing.txt", "missing"),
+      ].join(" and "),
+      [committed?.id ?? ""],
+      [extraDraft.id],
+    );
+
+    const edited = store.getDelivery(deliveryId)?.delivery;
+    expect(edited?.attachments).toHaveLength(2);
+    expect(edited?.text).toBe(
+      [
+        serializeAttachmentReference("start-types.d.ts", edited?.attachments[0]?.id ?? ""),
+        serializeAttachmentReference("AGENTS.md", edited?.attachments[1]?.id ?? ""),
+        "missing.txt",
+      ].join(" and "),
+    );
   });
 
   it("persists cancellation, pause state, and idempotent agent sends", async () => {
@@ -263,6 +307,30 @@ describe("MailboxStore", () => {
     });
   });
 
+  it("persists generated image attachments and resolves them after restart", async () => {
+    const attachment = await store.storeGeneratedAttachment({
+      bytes: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]),
+      name: "generated-image.png",
+      mimeType: "image/png",
+    });
+
+    expect(attachment).toMatchObject({
+      kind: "image",
+      mimeType: "image/png",
+      previewKind: "image",
+      previewUrl: `openbot-attachment://file/${attachment.id}`,
+    });
+    await expect(store.resolveAttachment(attachment.id)).resolves.toMatchObject({
+      mimeType: "image/png",
+    });
+
+    const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    const resolved = await restored.resolveAttachment(attachment.id);
+    expect(resolved?.mimeType).toBe("image/png");
+    await expect(readFile(resolved?.path ?? "")).resolves.toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  });
+
   it("cleans unrecoverable attachment drafts when a new app session starts", async () => {
     const source = join(root, "abandoned.txt");
     await writeFile(source, "abandoned");
@@ -290,9 +358,7 @@ describe("MailboxStore", () => {
     await store.deleteBotData("chief");
 
     expect(store.listQueue("chief").deliveries).toEqual([]);
-    expect(store.conversationMessages("chief").map((message) => message.text)).not.toContain(
-      "Private to Chief",
-    );
+    expect(store.conversationMessages("chief").map((message) => message.text)).not.toContain("Private to Chief");
     expect(store.conversationMessages("sales-outbound")).toEqual([
       expect.objectContaining({ text: "Keep this for Sales", senderBotId: "chief" }),
     ]);

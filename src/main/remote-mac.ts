@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { constants as fsConstants } from "node:fs";
@@ -27,13 +27,20 @@ interface RemoteMacEvents {
   changed: [sessions: RemoteMacSession[]];
 }
 
+interface ManagedChildProcess {
+  exitCode: number | null;
+  killed: boolean;
+  kill: (signal?: NodeJS.Signals) => boolean;
+  once(event: string, listener: (...args: unknown[]) => unknown): unknown;
+  stdout?: { on: (event: string, listener: (chunk: Buffer) => void) => unknown } | null;
+  stderr?: { on: (event: string, listener: (chunk: Buffer) => void) => unknown } | null;
+}
+
 interface RemoteMacOptions {
   resolveCloudflared?: () => Promise<string | null>;
-  spawnProcess?: typeof spawn;
+  spawnProcess?: (executable: string, args: readonly string[], options?: SpawnOptions) => ManagedChildProcess;
   startBridge?: (targetPort: number) => Promise<VncWebSocketBridge>;
-  resolveRemoteDesktop?: (
-    serverId: string,
-  ) => Promise<RemoteDesktopWebSocketTarget & { password: string }>;
+  resolveRemoteDesktop?: (serverId: string) => Promise<RemoteDesktopWebSocketTarget & { password: string }>;
   startRelay?: (target: RemoteDesktopWebSocketTarget) => Promise<VncWebSocketBridge>;
   timeoutMs?: number;
   logDirectory?: string;
@@ -41,7 +48,7 @@ interface RemoteMacOptions {
 
 interface ManagedSession {
   snapshot: RemoteMacSession;
-  process: ChildProcess | null;
+  process: ManagedChildProcess | null;
   bridge: VncWebSocketBridge | null;
   credentials: RemoteMacCredentials | null;
   stopping: boolean;
@@ -54,8 +61,7 @@ export function isValidTunnelHostname(value: string): boolean {
   const labels = value.split(".");
   if (labels.length < 3) return false;
   return labels.every(
-    (label) =>
-      label.length >= 1 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
+    (label) => label.length >= 1 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label),
   );
 }
 
@@ -67,9 +73,7 @@ export function recognizesRfbHandshake(value: Uint8Array | string): boolean {
   return Buffer.from(value).toString("ascii").startsWith("RFB");
 }
 
-export async function resolveCloudflaredExecutable(
-  pathValue = process.env.PATH ?? "",
-): Promise<string | null> {
+export async function resolveCloudflaredExecutable(pathValue = process.env.PATH ?? ""): Promise<string | null> {
   const candidates = new Set([
     "/opt/homebrew/opt/cloudflared/bin/cloudflared",
     "/usr/local/opt/cloudflared/bin/cloudflared",
@@ -121,7 +125,7 @@ export async function probeRfbHandshake(port: number, timeoutMs = 2_000): Promis
   });
 }
 
-export async function stopOwnedProcess(child: ChildProcess, graceMs = 2_000): Promise<void> {
+export async function stopOwnedProcess(child: ManagedChildProcess, graceMs = 2_000): Promise<void> {
   if (child.exitCode !== null || child.killed) return;
   await new Promise<void>((resolve) => {
     let complete = false;
@@ -150,7 +154,8 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
     super();
     this.#options = {
       ...options,
-      spawnProcess: options.spawnProcess ?? spawn,
+      spawnProcess:
+        options.spawnProcess ?? ((executable, args, spawnOptions) => spawn(executable, args, spawnOptions ?? {})),
       timeoutMs: options.timeoutMs ?? CONNECT_TIMEOUT_MS,
     };
   }
@@ -179,9 +184,7 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
     for (const [id, session] of this.#sessions) {
       if (
         session.snapshot.phase === "idle" &&
-        (input.serverId
-          ? session.snapshot.serverId === input.serverId
-          : session.snapshot.hostname === hostname)
+        (input.serverId ? session.snapshot.serverId === input.serverId : session.snapshot.hostname === hostname)
       ) {
         this.#sessions.delete(id);
       }
@@ -238,8 +241,7 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
         return { ...managed.snapshot };
       }
 
-      const executable = await (this.#options.resolveCloudflared?.() ??
-        resolveCloudflaredExecutable());
+      const executable = await (this.#options.resolveCloudflared?.() ?? resolveCloudflaredExecutable());
       if (!executable) return this.#fail(managed, "cloudflared_not_found");
 
       const port = await findFreeLoopbackPort(this.#reservedPorts);
@@ -247,16 +249,12 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
       this.#reservedPorts.add(port);
       this.#patch(managed, { localPort: port });
 
-      const child = this.#options.spawnProcess(
-        executable,
-        buildCloudflaredAccessArgs(hostname, port),
-        {
-          shell: false,
-          windowsHide: true,
-          stdio: ["ignore", "pipe", "pipe"],
-          env: process.env,
-        },
-      );
+      const child = this.#options.spawnProcess(executable, buildCloudflaredAccessArgs(hostname, port), {
+        shell: false,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: process.env,
+      });
       managed.process = child;
       child.once("error", () => {
         if (!managed.stopping) this.#fail(managed, "tunnel_disconnected");
@@ -267,25 +265,10 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
         }
       });
       child.stdout?.on("data", () => undefined);
-      if (this.#options.logDirectory) {
-        child.stdout?.on(
-          "data",
-          (chunk) =>
-            void appendDiagnosticLog(
-              this.#options.logDirectory as string,
-              managed.snapshot.id,
-              chunk,
-            ),
-        );
-        child.stderr?.on(
-          "data",
-          (chunk) =>
-            void appendDiagnosticLog(
-              this.#options.logDirectory as string,
-              managed.snapshot.id,
-              chunk,
-            ),
-        );
+      const logDirectory = this.#options.logDirectory;
+      if (logDirectory) {
+        child.stdout?.on("data", (chunk) => void appendDiagnosticLog(logDirectory, managed.snapshot.id, chunk));
+        child.stderr?.on("data", (chunk) => void appendDiagnosticLog(logDirectory, managed.snapshot.id, chunk));
       }
 
       this.#patch(managed, {
@@ -346,8 +329,7 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
       if (result) return true;
       if (managed.snapshot.errorCode === "tunnel_disconnected") return false;
       successfulTcpConnection ||= await canConnect(port, Math.min(300, remaining));
-      if (attempt < 2)
-        await delay(Math.min(250 * 2 ** attempt, Math.max(0, deadline - Date.now())));
+      if (attempt < 2) await delay(Math.min(250 * 2 ** attempt, Math.max(0, deadline - Date.now())));
     }
     if (successfulTcpConnection) {
       this.#fail(managed, "invalid_vnc_handshake");
@@ -393,11 +375,7 @@ export class RemoteMacManager extends EventEmitter<RemoteMacEvents> {
   }
 }
 
-export async function appendDiagnosticLog(
-  directory: string,
-  name: string,
-  chunk: Uint8Array | string,
-): Promise<void> {
+export async function appendDiagnosticLog(directory: string, name: string, chunk: Uint8Array | string): Promise<void> {
   await mkdir(directory, { recursive: true });
   const safeName = name.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80);
   const path = join(directory, `${safeName}.log`);

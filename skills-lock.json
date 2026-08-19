@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "biome-anti-slop": {
+      "source": "norbertbodziony/biome-anti-slop",
+      "sourceType": "github",
+      "skillPath": "skills/biome-anti-slop/SKILL.md",
+      "computedHash": "19adc5a42b6b145741d2559321fcfa059e585af7354fed9750a7e0ed62496abc"
+    }
+  }
+}

@@ -10,15 +10,7 @@ import type {
   TeamSessionSummary,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  onCleanup,
-  Show,
-  type Element as SolidElement,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Element as SolidElement } from "solid-js";
 
 type AdminSection = "overview" | "people" | "desktop";
 
@@ -35,10 +27,7 @@ interface HostPanelProps {
   onConfigureRemoteDesktop: (password: string) => Promise<void>;
   onStart: () => Promise<void>;
   onStop: () => Promise<void>;
-  onCreateInvite: (input: {
-    role: Exclude<TeamRole, "owner">;
-    email?: string;
-  }) => Promise<InviteSummary>;
+  onCreateInvite: (input: { role: Exclude<TeamRole, "owner">; email?: string }) => Promise<InviteSummary>;
   onUpdateMember: (input: UpdateTeamMemberInput) => Promise<void>;
   onRemoveMember: (memberId: string) => Promise<void>;
   onRevokeSession: (sessionId: string) => Promise<void>;
@@ -60,9 +49,7 @@ export function HostPanel(props: HostPanelProps) {
   const [remoteDesktopPassword, setRemoteDesktopPassword] = createSignal("");
   const [currentTime, setCurrentTime] = createSignal(Date.now());
   const activeInvites = createMemo(() =>
-    props.invites.filter(
-      (item) => item.usedAt === null && Date.parse(item.expiresAt) > currentTime(),
-    ),
+    props.invites.filter((item) => item.usedAt === null && Date.parse(item.expiresAt) > currentTime()),
   );
   const online = createMemo(() => props.status.phase === "online");
   let inviteExpiryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -70,16 +57,12 @@ export function HostPanel(props: HostPanelProps) {
   createEffect(
     () => ({
       now: currentTime(),
-      expiries: props.invites
-        .filter((item) => item.usedAt === null)
-        .map((item) => Date.parse(item.expiresAt)),
+      expiries: props.invites.filter((item) => item.usedAt === null).map((item) => Date.parse(item.expiresAt)),
     }),
     ({ now, expiries }) => {
       if (inviteExpiryTimer) clearTimeout(inviteExpiryTimer);
       const nextExpiry = expiries.filter((expiry) => expiry > now).sort((a, b) => a - b)[0];
-      inviteExpiryTimer = nextExpiry
-        ? setTimeout(() => setCurrentTime(Date.now()), nextExpiry - now + 1)
-        : undefined;
+      inviteExpiryTimer = nextExpiry ? setTimeout(() => setCurrentTime(Date.now()), nextExpiry - now + 1) : undefined;
     },
   );
   onCleanup(() => {
@@ -132,23 +115,16 @@ export function HostPanel(props: HostPanelProps) {
   return (
     <div class="remote-dialog-backdrop" role="presentation">
       <section
-        class={[
-          "remote-dialog remote-host-dialog",
-          { "remote-host-dialog-setup": !props.status.configured },
-        ]}
+        class={["remote-dialog remote-host-dialog", { "remote-host-dialog-setup": !props.status.configured }]}
         role="dialog"
         aria-modal="true"
         aria-labelledby="host-title"
       >
         <header class="remote-admin-header">
           <div>
-            <span class="remote-dialog-eyebrow">
-              {props.status.configured ? "Published access" : "This OpenBot"}
-            </span>
+            <span class="remote-dialog-eyebrow">{props.status.configured ? "Published access" : "This OpenBot"}</span>
             <h2 id="host-title">
-              {props.status.configured
-                ? (props.status.serverName ?? "OpenBot server")
-                : "Publish this OpenBot"}
+              {props.status.configured ? (props.status.serverName ?? "OpenBot server") : "Publish this OpenBot"}
             </h2>
           </div>
           <button type="button" aria-label="Close" onClick={props.onClose}>
@@ -164,9 +140,7 @@ export function HostPanel(props: HostPanelProps) {
               serverName={serverName()}
               busy={busy()}
               onServerName={setServerName}
-              onCreate={() =>
-                void run(() => props.onConfigure({ serverName: serverName().trim() }))
-              }
+              onCreate={() => void run(() => props.onConfigure({ serverName: serverName().trim() }))}
             />
           }
         >
@@ -235,10 +209,7 @@ export function HostPanel(props: HostPanelProps) {
                   <section class="remote-admin-control-card">
                     <div>
                       <h3>Publishing controls</h3>
-                      <p>
-                        {props.status.message ??
-                          "The address is public, but only invited people can sign in."}
-                      </p>
+                      <p>{props.status.message ?? "The address is public, but only invited people can sign in."}</p>
                     </div>
                     <div class="remote-host-actions">
                       <Show
@@ -297,9 +268,7 @@ export function HostPanel(props: HostPanelProps) {
                         <select
                           aria-label="Invitation role"
                           value={inviteRole()}
-                          onChange={(event) =>
-                            setInviteRole(event.currentTarget.value as "admin" | "member")
-                          }
+                          onChange={(event) => setInviteRole(readTeamRole(event.currentTarget.value))}
                         >
                           <option value="member">Member</option>
                           <option value="admin">Admin</option>
@@ -351,9 +320,7 @@ export function HostPanel(props: HostPanelProps) {
                       type="button"
                       class="remote-primary-button remote-invite-submit"
                       disabled={
-                        !props.status.apiOnline ||
-                        busy() ||
-                        (inviteMode() === "email" && !inviteEmail().trim())
+                        !props.status.apiOnline || busy() || (inviteMode() === "email" && !inviteEmail().trim())
                       }
                       onClick={() => void createInvite()}
                     >
@@ -364,17 +331,11 @@ export function HostPanel(props: HostPanelProps) {
                           : "Create invitation link"}
                     </button>
                     <Show when={!props.status.apiOnline}>
-                      <p class="remote-inline-note">
-                        Make this OpenBot public before inviting people.
-                      </p>
+                      <p class="remote-inline-note">Make this OpenBot public before inviting people.</p>
                     </Show>
                     <Show when={invite()}>
                       {(item) => (
-                        <InviteResult
-                          invite={item()}
-                          copied={inviteCopied()}
-                          onCopy={() => void copyInvite(item())}
-                        />
+                        <InviteResult invite={item()} copied={inviteCopied()} onCopy={() => void copyInvite(item())} />
                       )}
                     </Show>
                   </section>
@@ -384,19 +345,11 @@ export function HostPanel(props: HostPanelProps) {
                       {(member) => (
                         <MemberRow
                           member={member}
-                          online={
-                            props.presence.members.find((item) => item.id === member.id)?.online ??
-                            false
-                          }
-                          typing={Boolean(
-                            props.presence.members.find((item) => item.id === member.id)
-                              ?.typingBotId,
-                          )}
+                          online={props.presence.members.find((item) => item.id === member.id)?.online ?? false}
+                          typing={Boolean(props.presence.members.find((item) => item.id === member.id)?.typingBotId)}
                           busy={busy()}
                           confirmingRemoval={removeMemberId() === member.id}
-                          onChangeRole={(role) =>
-                            void run(() => props.onUpdateMember({ memberId: member.id, role }))
-                          }
+                          onChangeRole={(role) => void run(() => props.onUpdateMember({ memberId: member.id, role }))}
                           onToggleAccess={() =>
                             void run(() =>
                               props.onUpdateMember({
@@ -480,10 +433,7 @@ export function HostPanel(props: HostPanelProps) {
                       <p>Every active server member can control this Mac without a second login.</p>
                     </div>
                     <span
-                      class={[
-                        "remote-desktop-access-state",
-                        { ready: props.status.remoteDesktopCredentialConfigured },
-                      ]}
+                      class={["remote-desktop-access-state", { ready: props.status.remoteDesktopCredentialConfigured }]}
                     >
                       {props.status.remoteDesktopCredentialConfigured ? "Managed" : "Setup needed"}
                     </span>
@@ -492,9 +442,8 @@ export function HostPanel(props: HostPanelProps) {
                     <div class="remote-desktop-access-instructions">
                       <span>Set the same password on this Mac</span>
                       <p>
-                        Open System Settings → General → Sharing → Screen Sharing. Enable “VNC
-                        viewers may control screen with password”, then enter the same dedicated
-                        password below.
+                        Open System Settings → General → Sharing → Screen Sharing. Enable “VNC viewers may control
+                        screen with password”, then enter the same dedicated password below.
                       </p>
                     </div>
                     <label class="remote-field remote-desktop-password-field">
@@ -525,9 +474,7 @@ export function HostPanel(props: HostPanelProps) {
                         })
                       }
                     >
-                      {props.status.remoteDesktopCredentialConfigured
-                        ? "Replace VNC password"
-                        : "Save VNC password"}
+                      {props.status.remoteDesktopCredentialConfigured ? "Replace VNC password" : "Save VNC password"}
                     </button>
                   </section>
                 </section>
@@ -551,8 +498,8 @@ function HostSetup(props: {
   return (
     <div class="remote-host-setup">
       <p>
-        Publish the agents, conversations, files, and browser from this local OpenBot instance
-        through a secure public address. Only people you invite can sign in.
+        Publish the agents, conversations, files, and browser from this local OpenBot instance through a secure public
+        address. Only people you invite can sign in.
       </p>
       <label class="remote-field">
         <span>Server name</span>
@@ -688,29 +635,19 @@ function MemberRow(props: {
             {props.typing ? "Typing now" : props.online ? "Online" : "Offline"}
           </small>
         </div>
-        <Show
-          when={props.member.role !== "owner"}
-          fallback={<span class="remote-role-badge">Owner</span>}
-        >
+        <Show when={props.member.role !== "owner"} fallback={<span class="remote-role-badge">Owner</span>}>
           <label class="remote-role-select">
             <span class="sr-only">Role for {displayName()}</span>
             <select
               value={props.member.role}
               disabled={props.busy || props.member.disabled}
-              onChange={(event) =>
-                props.onChangeRole(event.currentTarget.value as "admin" | "member")
-              }
+              onChange={(event) => props.onChangeRole(readTeamRole(event.currentTarget.value))}
             >
               <option value="member">Member</option>
               <option value="admin">Admin</option>
             </select>
           </label>
-          <button
-            type="button"
-            class="remote-text-button"
-            disabled={props.busy}
-            onClick={props.onToggleAccess}
-          >
+          <button type="button" class="remote-text-button" disabled={props.busy} onClick={props.onToggleAccess}>
             {props.member.disabled ? "Restore access" : "Pause access"}
           </button>
           <button
@@ -740,6 +677,11 @@ function MemberRow(props: {
       </Show>
     </div>
   );
+}
+
+function readTeamRole(value: string): "admin" | "member" {
+  if (value === "admin" || value === "member") return value;
+  throw new Error("Invalid team member role.");
 }
 
 function IdentityMark(props: { value: string; muted?: boolean }) {
@@ -776,7 +718,7 @@ function InviteResult(props: { invite: InviteSummary; copied: boolean; onCopy: (
   );
 }
 
-function roleLabel(role: Exclude<TeamRole, "owner">): string {
+function roleLabel(role: Exclude<TeamRole, "owner">): "Admin" | "Member" {
   return role === "admin" ? "Admin" : "Member";
 }
 

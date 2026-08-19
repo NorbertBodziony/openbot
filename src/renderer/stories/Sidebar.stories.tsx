@@ -1,4 +1,4 @@
-import type { AppInfo, CentralAuthUser } from "@openbot/contracts/ipc";
+import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import { fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import type { SidebarAgentState } from "../src/components/Sidebar";
@@ -88,6 +88,6 @@ export const AccountMenu: Story = {
 
 export const Linux: Story = {
   args: {
-    appInfo: { ...(STORY_APP_INFO as AppInfo), platform: "linux" },
+    appInfo: { ...STORY_APP_INFO, platform: "linux" },
   },
 };

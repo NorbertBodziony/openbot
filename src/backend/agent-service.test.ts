@@ -5,15 +5,15 @@ import { EventEmitter } from "node:events";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentEvent } from "@openbot/contracts/ipc";
+import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
+import type { AgentEvent, BrowserControlState, BrowserTab } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentService } from "./agent-service";
 import { BotStore } from "./bot-store";
-import type { BrowserHost } from "./browser-host";
 import { MailboxStore } from "./mailbox-store";
-import type { AppServerNotification, RequestId, RpcError } from "./protocol";
+import { type AppServerNotification, getString, type RequestId, type ResponseDecoder, type RpcError } from "./protocol";
 
 let root: string;
 let logPath: string;
@@ -51,8 +51,7 @@ afterEach(async () => {
 
 describe.sequential("AgentService", () => {
   it("does not surface the skills context-budget notice as an agent error", async () => {
-    process.env.OPENBOT_FAKE_WARNING =
-      "Skill descriptions were shortened to fit the skills context budget.";
+    process.env.OPENBOT_FAKE_WARNING = "Skill descriptions were shortened to fit the skills context budget.";
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
     const events: AgentEvent[] = [];
@@ -70,6 +69,32 @@ describe.sequential("AgentService", () => {
         }),
       ]),
     );
+  });
+
+  it("expands inline file references before sending text to the agent", async () => {
+    const source = join(root, "start-types.d.ts");
+    await writeFile(source, "export type Start = true;\n");
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    const [draft] = await service.prepareAttachments([source]);
+
+    await service.sendMessage({
+      botId: "chief",
+      text: `Review ${serializeAttachmentReference(draft.name, draft.id)}`,
+      attachmentDraftIds: [draft.id],
+    });
+    await waitFor(() => Boolean(clients.get("codex")?.requests.some((request) => request.method === "turn/start")));
+
+    const turn = clients.get("codex")?.requests.find((request) => request.method === "turn/start");
+    const inputText = firstInputText(turn?.params);
+    expect(inputText).toContain("Review start-types.d.ts");
+    expect(inputText).not.toContain("attachment:");
   });
 
   it("creates independent full-access threads with browser and OpenBot tools", async () => {
@@ -105,16 +130,14 @@ describe.sequential("AgentService", () => {
     });
     await service.sendMessage({ botId: "chief", text: "First task" });
     await service.sendMessage({ botId: "sales-outbound", text: "Second task" });
-    await waitFor(
-      async () =>
-        (await protocolMessages()).filter((item) => item.method === "turn/start").length === 2,
-    );
+    await waitFor(async () => (await protocolMessages()).filter((item) => item.method === "turn/start").length === 2);
 
     const requests = await protocolMessages();
     const starts = requests.filter((message) => message.method === "thread/start");
     expect(starts).toHaveLength(2);
     for (const start of starts) {
-      const params = start.params as DynamicRecord;
+      const params = paramsRecord(start.params);
+      if (!params) throw new Error("The fake thread request has no parameters.");
       expect(params).toMatchObject({
         model: "gpt-5.6-luna",
         approvalPolicy: "on-request",
@@ -136,9 +159,7 @@ describe.sequential("AgentService", () => {
     for (const turn of requests.filter((message) => message.method === "turn/start")) {
       expect(turn.params).toMatchObject({ model: "gpt-5.6-luna", effort: "medium" });
     }
-    expect((await store.getOrCreate("chief")).threadId).not.toBe(
-      (await store.getOrCreate("sales-outbound")).threadId,
-    );
+    expect((await store.getOrCreate("chief")).threadId).not.toBe((await store.getOrCreate("sales-outbound")).threadId);
   });
 
   it("surfaces Codex approvals without auto-accepting and maps one-shot decisions", async () => {
@@ -264,7 +285,15 @@ describe.sequential("AgentService", () => {
       id: "question-call",
       result: expect.objectContaining({ success: true }),
     });
-    expect(JSON.stringify(client.responses[0]?.result)).toContain('"favorite":["Blue"]');
+    const result = client.responses[0]?.result;
+    if (!isDynamicRecord(result) || !Array.isArray(result.contentItems)) {
+      throw new Error("The question result has no content items.");
+    }
+    const content = result.contentItems[0];
+    if (!isDynamicRecord(content) || !isString(content.text)) {
+      throw new Error("The question result has no text content.");
+    }
+    expect(JSON.parse(content.text)).toEqual({ favorite: ["Blue"] });
   });
 
   it("keeps legacy approvals interactive and clears pending approvals on shutdown", async () => {
@@ -277,9 +306,7 @@ describe.sequential("AgentService", () => {
     });
     await service.initialize();
     await service.sendMessage({ botId: "chief", text: "Need a legacy approval" });
-    await waitFor(() =>
-      clients.get("codex")?.requests.some((request) => request.method === "turn/start"),
-    );
+    await waitFor(() => clients.get("codex")?.requests.some((request) => request.method === "turn/start"));
     const client = clients.get("codex");
     if (!client) throw new Error("Codex client was not created.");
     const conversationId = store.activeProviderSession("chief")?.externalSessionId;
@@ -398,35 +425,26 @@ describe.sequential("AgentService", () => {
     await service.sendMessage({ botId: "chief", text: "Second request" });
     await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "completed");
 
-    const claudeInput = clients
-      .get("claude")
-      ?.requests.find((request) => request.method === "turn/start")?.params as
-      | { input?: Array<{ text?: string }> }
-      | undefined;
-    expect(claudeInput?.input?.[0]?.text).toContain("CODEX_DONE");
-    expect(claudeInput?.input?.[0]?.text).toContain("Second request");
+    const claudeInput = clients.get("claude")?.requests.find((request) => request.method === "turn/start")?.params;
+    expect(firstInputText(claudeInput)).toContain("CODEX_DONE");
+    expect(firstInputText(claudeInput)).toContain("Second request");
 
     await service.updateBot({ botId: "chief", model: "gpt-5.6-sol" });
     await service.sendMessage({ botId: "chief", text: "Third request" });
     await waitFor(() => service?.listQueue("chief").deliveries[2]?.status === "completed");
-    const codexStarts = clients
-      .get("codex")
-      ?.requests.filter((request) => request.method === "thread/start");
+    const codexStarts = clients.get("codex")?.requests.filter((request) => request.method === "thread/start");
     expect(codexStarts).toHaveLength(2);
-    const codexTurns = clients
-      .get("codex")
-      ?.requests.filter((request) => request.method === "turn/start");
-    const latestCodexTurn = codexTurns?.at(-1)?.params as
-      | { input?: Array<{ text?: string }> }
-      | undefined;
-    expect(latestCodexTurn?.input?.[0]?.text).toContain("CLAUDE_DONE");
+    const codexTurns = clients.get("codex")?.requests.filter((request) => request.method === "turn/start");
+    const latestCodexTurn = codexTurns?.at(-1)?.params;
+    expect(firstInputText(latestCodexTurn)).toContain("CLAUDE_DONE");
 
     const conversation = await service.readConversation("chief");
     expect(conversation.threadId).toBe(publicThreadId);
     expect(conversation.messages.map((message) => message.text)).toEqual(
       expect.arrayContaining(["CODEX_DONE", "CLAUDE_DONE"]),
     );
-    expect(store.database.listProviderSessions(publicThreadId as string)).toMatchObject([
+    if (!publicThreadId) throw new Error("The public thread was not created.");
+    expect(store.database.listProviderSessions(publicThreadId)).toMatchObject([
       { provider: "codex", state: "inactive" },
       { provider: "claude", state: "inactive" },
       { provider: "codex", state: "active" },
@@ -452,13 +470,10 @@ describe.sequential("AgentService", () => {
     await service.sendMessage({ botId: "chief", text: "Continue from the result" });
     await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "completed");
 
-    const claudeTurn = clients
-      .get("claude")
-      ?.requests.find((request) => request.method === "turn/start")?.params as
-      | { input?: Array<{ text?: string }> }
-      | undefined;
-    expect(claudeTurn?.input?.[0]?.text).toContain("oldest visible history was summarized");
-    expect(store.database.latestThreadSummary(publicThreadId as string)).toMatchObject({
+    const claudeTurn = clients.get("claude")?.requests.find((request) => request.method === "turn/start")?.params;
+    expect(firstInputText(claudeTurn)).toContain("oldest visible history was summarized");
+    if (!publicThreadId) throw new Error("The public thread was not created.");
+    expect(store.database.latestThreadSummary(publicThreadId)).toMatchObject({
       threadId: publicThreadId,
       throughMessageId: expect.any(String),
     });
@@ -479,18 +494,12 @@ describe.sequential("AgentService", () => {
       botId: "chief",
       text: "Focus on research and writing.",
     });
-    await waitFor(async () =>
-      (await protocolMessages()).some((message) => message.method === "thread/start"),
-    );
+    await waitFor(async () => (await protocolMessages()).some((message) => message.method === "thread/start"));
 
     const start = (await protocolMessages()).find((message) => message.method === "thread/start");
-    const instructions = String(
-      (start?.params as DynamicRecord | undefined)?.developerInstructions ?? "",
-    );
+    const instructions = getString(start?.params, "developerInstructions") ?? "";
     expect(instructions).toContain('"title": "Research & writing"');
-    expect(instructions).toContain(
-      '"description": "Researches topics and turns findings into clear writing."',
-    );
+    expect(instructions).toContain('"description": "Researches topics and turns findings into clear writing."');
     expect(instructions).toContain("openbot.ask_user");
     expect(instructions).toContain("standing remit");
   });
@@ -510,9 +519,7 @@ describe.sequential("AgentService", () => {
 
     let queue = service.listQueue("chief");
     expect(queue.deliveries.map((item) => item.status)).toEqual(["running", "queued"]);
-    expect((await protocolMessages()).some((message) => message.method === "turn/steer")).toBe(
-      false,
-    );
+    expect((await protocolMessages()).some((message) => message.method === "turn/steer")).toBe(false);
 
     await service.interrupt("chief", active.turnId);
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
@@ -521,10 +528,7 @@ describe.sequential("AgentService", () => {
     expect(queue.deliveries[1]?.status).toBe("queued");
 
     await service.setQueuePaused("chief", false);
-    await waitFor(
-      async () =>
-        (await protocolMessages()).filter((item) => item.method === "turn/start").length === 2,
-    );
+    await waitFor(async () => (await protocolMessages()).filter((item) => item.method === "turn/start").length === 2);
     expect(service.listQueue("chief").deliveries[1]?.status).toBe("running");
 
     const conversationSignatures = events
@@ -560,9 +564,7 @@ describe.sequential("AgentService", () => {
     const active = events.find((event) => event.type === "turn-started");
     if (active?.type !== "turn-started") throw new Error("Turn did not start.");
     await service.sendMessage({ botId: "chief", text: "Add this to the active turn" });
-    const queued = service
-      .listQueue("chief")
-      .deliveries.find((delivery) => delivery.status === "queued");
+    const queued = service.listQueue("chief").deliveries.find((delivery) => delivery.status === "queued");
     if (!queued) throw new Error("Queued delivery was not created.");
 
     await service.steerQueuedMessage({
@@ -597,6 +599,214 @@ describe.sequential("AgentService", () => {
         ?.listQueue("chief")
         .deliveries.filter((delivery) => delivery.id === queued.id)
         .every((delivery) => delivery.status === "completed"),
+    );
+  });
+
+  it("renders a Codex image generation item and manages its saved image", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    const imagePath = join(root, "codex-image.png");
+    await writeFile(imagePath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Create a mountain observatory." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    const started = events.find((event) => event.type === "turn-started");
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    if (started?.type !== "turn-started" || !client || !threadId) {
+      throw new Error("The fake Codex turn did not start.");
+    }
+    const item = {
+      id: "image-call-1",
+      type: "image_generation_call",
+      status: "in_progress",
+    };
+    client.emit(
+      "notification",
+      notification("item/started", {
+        threadId,
+        turnId: started.turnId,
+        item,
+      }),
+    );
+    await waitFor(async () =>
+      (await service?.readConversation("chief"))?.messages.some(
+        (message) => message.id === item.id && message.status === "streaming",
+      ),
+    );
+    client.emit(
+      "notification",
+      notification("item/completed", {
+        threadId,
+        turnId: started.turnId,
+        item: {
+          ...item,
+          status: "completed",
+          revised_prompt: "A mountain observatory at blue hour",
+          saved_path: imagePath,
+        },
+      }),
+    );
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId,
+        turn: { id: started.turnId, status: "completed" },
+      }),
+    );
+
+    await waitFor(async () => {
+      const message = (await service?.readConversation("chief"))?.messages.find(
+        (candidate) => candidate.id === item.id,
+      );
+      return message?.status === "completed" && Boolean(message.attachments?.[0]);
+    });
+    const message = (await service.readConversation("chief")).messages.find((candidate) => candidate.id === item.id);
+    expect(message).toMatchObject({
+      itemType: "image_generation",
+      imageGeneration: {
+        prompt: "A mountain observatory at blue hour",
+        resolution: "1024 × 1024",
+        aspectRatio: "square",
+      },
+      attachments: [{ kind: "image", previewKind: "image" }],
+    });
+    await expect(mailbox.resolveAttachment(message?.attachments?.[0]?.id ?? "")).resolves.toMatchObject({
+      mimeType: "image/png",
+    });
+  });
+
+  it("falls back to Codex base64 image results without persisting the encoded payload", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Make this image vivid." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const started = events.find((event) => event.type === "turn-started");
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    if (started?.type !== "turn-started" || !client || !threadId) {
+      throw new Error("The fake Codex turn did not start.");
+    }
+    const imageCall = { id: "image-call-base64", type: "image_generation_call" };
+    client.emit("notification", notification("item/started", { threadId, turnId: started.turnId, item: imageCall }));
+    client.emit(
+      "notification",
+      notification("item/completed", {
+        threadId,
+        turnId: started.turnId,
+        item: {
+          ...imageCall,
+          status: "completed",
+          result: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64"),
+        },
+      }),
+    );
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId,
+        turn: { id: started.turnId, status: "completed" },
+      }),
+    );
+
+    await waitFor(async () => {
+      const message = (await service?.readConversation("chief"))?.messages.find(
+        (candidate) => candidate.id === imageCall.id,
+      );
+      return message?.status === "completed" && Boolean(message.attachments?.[0]);
+    });
+    const message = (await service.readConversation("chief")).messages.find(
+      (candidate) => candidate.id === imageCall.id,
+    );
+    expect(JSON.stringify(message)).not.toContain("iVBORw0KGgo");
+    await expect(mailbox.resolveAttachment(message?.attachments?.[0]?.id ?? "")).resolves.toMatchObject({
+      mimeType: "image/png",
+    });
+  });
+
+  it("keeps failed and interrupted image generations visible in the conversation", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Generate two atmospheric studies." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const started = events.find((event) => event.type === "turn-started");
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    if (started?.type !== "turn-started" || !client || !threadId) {
+      throw new Error("The fake Codex turn did not start.");
+    }
+    const failedCall = { id: "image-call-failed", type: "image_generation_call" };
+    const interruptedCall = { id: "image-call-interrupted", type: "image_generation_call" };
+    client.emit("notification", notification("item/started", { threadId, turnId: started.turnId, item: failedCall }));
+    client.emit(
+      "notification",
+      notification("item/completed", {
+        threadId,
+        turnId: started.turnId,
+        item: {
+          ...failedCall,
+          status: "failed",
+          failure: { message: "The image provider rejected the prompt." },
+        },
+      }),
+    );
+    client.emit(
+      "notification",
+      notification("item/started", {
+        threadId,
+        turnId: started.turnId,
+        item: interruptedCall,
+      }),
+    );
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId,
+        turn: { id: started.turnId, status: "interrupted" },
+      }),
+    );
+
+    await waitFor(async () => {
+      const messages = (await service?.readConversation("chief"))?.messages ?? [];
+      return (
+        messages.some(
+          (message) =>
+            message.id === failedCall.id &&
+            message.status === "failed" &&
+            message.imageGeneration?.error === "The image provider rejected the prompt.",
+        ) && messages.some((message) => message.id === interruptedCall.id && message.status === "interrupted")
+      );
+    });
+    const messages = (await service.readConversation("chief")).messages;
+    expect(messages.find((message) => message.id === failedCall.id)?.imageGeneration?.prompt).toBe(
+      "Generate two atmospheric studies.",
+    );
+    expect(messages.find((message) => message.id === interruptedCall.id)?.imageGeneration?.error).toBe(
+      "Image generation was interrupted.",
     );
   });
 
@@ -646,9 +856,7 @@ describe.sequential("AgentService", () => {
     await service.sendMessage({ botId: "chief", text: "Normal task" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
 
-    expect(
-      (await protocolMessages()).some((message) => message.method === "thread/compact/start"),
-    ).toBe(false);
+    expect((await protocolMessages()).some((message) => message.method === "thread/compact/start")).toBe(false);
   });
 
   it("continues queued work when context compaction is unavailable", async () => {
@@ -669,9 +877,7 @@ describe.sequential("AgentService", () => {
     });
 
     expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: "error", code: "context_compaction_failed" }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ type: "error", code: "context_compaction_failed" })]),
     );
   });
 
@@ -702,17 +908,12 @@ describe.sequential("AgentService", () => {
     expect(sales.messageId).toBe(inbox.messageId);
     expect(sales.sender).toEqual({ kind: "bot", botId: "chief" });
     expect(sales.text).toBe("Please prepare your reports.");
-    expect(sales.attachments.map((item) => item.name)).toEqual([
-      "generated-note.txt",
-      "generated-image.png",
-    ]);
+    expect(sales.attachments.map((item) => item.name)).toEqual(["generated-note.txt", "generated-image.png"]);
     const managedNote = await mailbox.resolveAttachment(sales.attachments[0]?.id ?? "");
     const managedImage = await mailbox.resolveAttachment(sales.attachments[1]?.id ?? "");
     expect(managedNote?.path).not.toBe(notePath);
     expect(managedImage?.path).not.toBe(imagePath);
-    await expect(readFile(managedNote?.path ?? "", "utf8")).resolves.toBe(
-      "OPENBOT_SHARED_FILE_OK\n",
-    );
+    await expect(readFile(managedNote?.path ?? "", "utf8")).resolves.toBe("OPENBOT_SHARED_FILE_OK\n");
 
     const chiefMessages = (await service.readConversation("chief")).messages;
     expect(chiefMessages).toEqual(
@@ -720,9 +921,9 @@ describe.sequential("AgentService", () => {
         expect.objectContaining({ exchange: expect.objectContaining({ direction: "outgoing" }) }),
       ]),
     );
-    expect(
-      chiefMessages.findIndex((message) => message.exchange?.direction === "outgoing"),
-    ).toBeLessThan(chiefMessages.findIndex((message) => message.author === "assistant"));
+    expect(chiefMessages.findIndex((message) => message.exchange?.direction === "outgoing")).toBeLessThan(
+      chiefMessages.findIndex((message) => message.author === "assistant"),
+    );
     await waitFor(async () =>
       (await service?.readConversation("sales-outbound"))?.messages.some(
         (message) => message.exchange?.direction === "incoming",
@@ -738,16 +939,12 @@ describe.sequential("AgentService", () => {
     );
 
     const starts = (await protocolMessages()).filter((message) => message.method === "turn/start");
-    const salesStart = starts.find((message) =>
-      String((message.params as DynamicRecord).cwd).endsWith("/sales-outbound"),
-    );
-    const salesInput = (salesStart?.params as DynamicRecord | undefined)?.input as
-      | DynamicRecord[]
-      | undefined;
-    expect(salesInput?.[0]?.text).toContain(
+    const salesStart = starts.find((message) => getString(message.params, "cwd")?.endsWith("/sales-outbound"));
+    const salesInput = inputRecords(salesStart?.params);
+    expect(getString(salesInput[0], "text")).toContain(
       "After completing the request, send a concise result back to Chief",
     );
-    expect(salesInput?.[0]?.text).toContain(`replyToMessageId "${sales.messageId}"`);
+    expect(getString(salesInput[0], "text")).toContain(`replyToMessageId "${sales.messageId}"`);
     expect(salesInput).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -799,9 +996,7 @@ describe.sequential("AgentService", () => {
         ),
     );
     await waitFor(() =>
-      (service?.listQueue("chief").deliveries ?? []).every(
-        (delivery) => delivery.status === "completed",
-      ),
+      (service?.listQueue("chief").deliveries ?? []).every((delivery) => delivery.status === "completed"),
     );
 
     expect(await service.readConversation("chief")).toMatchObject({
@@ -838,9 +1033,7 @@ describe.sequential("AgentService", () => {
     expect(snapshot.messages).toEqual(
       expect.arrayContaining([expect.objectContaining({ text: "Streaming", status: "streaming" })]),
     );
-    expect(
-      (await protocolMessages()).filter((message) => message.method === "thread/read"),
-    ).toHaveLength(0);
+    expect((await protocolMessages()).filter((message) => message.method === "thread/read")).toHaveLength(0);
   });
 
   it("does not fail or replay a turn whose start response times out after lifecycle events", async () => {
@@ -854,20 +1047,14 @@ describe.sequential("AgentService", () => {
 
     await service.sendMessage({ botId: "chief", text: "Run exactly once" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
-    await waitFor(() =>
-      events.some((event) => event.type === "error" && event.code === "delivery_start_unconfirmed"),
-    );
+    await waitFor(() => events.some((event) => event.type === "error" && event.code === "delivery_start_unconfirmed"));
 
     expect(service.listQueue("chief").deliveries[0]).toMatchObject({
       status: "completed",
       error: null,
     });
-    expect(
-      (await protocolMessages()).filter((message) => message.method === "turn/start"),
-    ).toHaveLength(1);
-    expect(events).toContainEqual(
-      expect.objectContaining({ type: "error", code: "delivery_start_unconfirmed" }),
-    );
+    expect((await protocolMessages()).filter((message) => message.method === "turn/start")).toHaveLength(1);
+    expect(events).toContainEqual(expect.objectContaining({ type: "error", code: "delivery_start_unconfirmed" }));
   });
 
   it("resumes stored threads and does not replay an uncertain running delivery", async () => {
@@ -883,9 +1070,7 @@ describe.sequential("AgentService", () => {
     await service.initialize();
     expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
     await service.sendMessage({ botId: "chief", text: "Continue" });
-    await waitFor(async () =>
-      (await protocolMessages()).some((message) => message.method === "thread/resume"),
-    );
+    await waitFor(async () => (await protocolMessages()).some((message) => message.method === "thread/resume"));
     const resume = (await protocolMessages()).find((message) => message.method === "thread/resume");
     expect(resume?.params).toMatchObject({
       dynamicTools: expect.arrayContaining([
@@ -926,9 +1111,7 @@ describe.sequential("AgentService", () => {
     );
     expect(
       requests.filter(
-        (message) =>
-          message.method === "thread/resume" &&
-          (message.params as DynamicRecord).threadId === externalThreadId,
+        (message) => message.method === "thread/resume" && getString(message.params, "threadId") === externalThreadId,
       ),
     ).toHaveLength(2);
     expect(events).not.toEqual(
@@ -997,42 +1180,44 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
     this.running = false;
   }
 
-  async request<T>(method: string, params: unknown): Promise<T> {
+  async request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>): Promise<T> {
     this.requests.push({ method, params: structuredClone(params) });
-    if (method === "initialize") return {} as T;
+    let result: unknown;
+    if (method === "initialize") result = {};
     if (method === "account/read") {
-      return {
+      result = {
         account: {
           type: this.provider === "codex" ? "chatgpt" : "claude",
           email: `${this.provider}@example.com`,
         },
-      } as T;
+        requiresOpenaiAuth: false,
+      };
     }
     if (method === "account/rateLimits/read") {
-      return { rateLimits: null, rateLimitsByLimitId: null } as T;
+      result = { rateLimits: null, rateLimitsByLimitId: null };
     }
     if (method === "model/list") {
-      return {
+      result = {
         data:
           this.provider === "codex"
             ? ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"].map((model) => ({ model }))
             : ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"].map((model) => ({ model })),
-      } as T;
+      };
     }
-    if (method === "plugin/list") return { marketplaces: [] } as T;
+    if (method === "plugin/list") result = { marketplaces: [] };
     if (method === "thread/start") {
       this.#threadCounter += 1;
-      return { thread: { id: `${this.provider}-session-${this.#threadCounter}` } } as T;
+      result = { thread: { id: `${this.provider}-session-${this.#threadCounter}` } };
     }
     if (method === "thread/resume") {
-      return { thread: { id: stringParam(params, "threadId") } } as T;
+      result = { thread: { id: stringParam(params, "threadId") } };
     }
     if (method === "thread/read") {
-      return { thread: { id: stringParam(params, "threadId"), turns: [] } } as T;
+      result = { thread: { id: stringParam(params, "threadId"), turns: [] } };
     }
-    if (method === "thread/compact/start" || method === "turn/interrupt") return {} as T;
+    if (method === "thread/compact/start" || method === "turn/interrupt") result = {};
     if (method === "turn/steer") {
-      return { turnId: stringParam(params, "expectedTurnId") } as T;
+      result = { turnId: stringParam(params, "expectedTurnId") };
     }
     if (method === "turn/start") {
       const threadId = stringParam(params, "threadId");
@@ -1051,10 +1236,7 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
             item: { id: itemId, type: "agentMessage", text: "" },
           }),
         );
-        this.emit(
-          "notification",
-          notification("item/agentMessage/delta", { threadId, turnId, itemId, delta: text }),
-        );
+        this.emit("notification", notification("item/agentMessage/delta", { threadId, turnId, itemId, delta: text }));
         this.emit(
           "notification",
           notification("item/completed", {
@@ -1071,9 +1253,10 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
           }),
         );
       }, 0);
-      return { turn: { id: turnId, status: "inProgress", items: [] } } as T;
+      result = { turn: { id: turnId, status: "inProgress", items: [] } };
     }
-    throw new Error(`Fake client does not implement ${method}.`);
+    if (result === undefined) throw new Error(`Fake client does not implement ${method}.`);
+    return decoder(result);
   }
 
   notify(): void {}
@@ -1096,19 +1279,34 @@ function stringParam(value: unknown, key: string): string {
   return result;
 }
 
+function paramsRecord(value: unknown): DynamicRecord | null {
+  return isDynamicRecord(value) ? value : null;
+}
+
+function firstInputText(value: unknown): string | null {
+  const input = paramsRecord(value)?.input;
+  if (!Array.isArray(input)) return null;
+  return getString(input[0], "text");
+}
+
+function inputRecords(value: unknown): DynamicRecord[] {
+  const input = paramsRecord(value)?.input;
+  return Array.isArray(input) ? input.filter(isDynamicRecord) : [];
+}
+
 function stores(): { store: BotStore; mailbox: MailboxStore } {
   const store = new BotStore(join(root, "user-data"), join(root, "home"));
   return { store, mailbox: new MailboxStore(join(root, "user-data"), store.sharedRoot) };
 }
 
-function fakeBrowser(): BrowserHost {
+function fakeBrowser() {
   return {
-    onChanged: () => () => undefined,
-    onControlChanged: () => () => undefined,
+    onChanged: (_listener: (tabs: BrowserTab[], activeTabId: string | null) => void) => () => undefined,
+    onControlChanged: (_listener: (state: BrowserControlState) => void) => () => undefined,
     clearControls: () => undefined,
     endControl: () => undefined,
     handleDynamicTool: async () => ({ success: true, contentItems: [] }),
-  } as unknown as BrowserHost;
+  };
 }
 
 async function protocolMessages(): Promise<DynamicRecord[]> {
@@ -1117,16 +1315,14 @@ async function protocolMessages(): Promise<DynamicRecord[]> {
       .trim()
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as unknown)
+      .map((line) => JSON.parse(line))
       .filter(isDynamicRecord);
   } catch {
     return [];
   }
 }
 
-async function waitFor(
-  check: () => boolean | undefined | Promise<boolean | undefined>,
-): Promise<void> {
+async function waitFor(check: () => boolean | undefined | Promise<boolean | undefined>): Promise<void> {
   const deadline = Date.now() + 3_000;
   while (Date.now() < deadline) {
     if (await check()) return;

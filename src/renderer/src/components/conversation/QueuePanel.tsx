@@ -1,13 +1,6 @@
 import type { QueueDelivery } from "@openbot/contracts/ipc";
 import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import {
-  DragHandleIcon,
-  EditIcon,
-  MoreIcon,
-  QueueIcon,
-  SteerIcon,
-  TrashIcon,
-} from "./ConversationIcons";
+import { DragHandleIcon, EditIcon, MoreIcon, QueueIcon, SteerIcon, TrashIcon } from "./ConversationIcons";
 
 interface QueuePanelProps {
   deliveries: QueueDelivery[];
@@ -43,7 +36,8 @@ export function QueuePanel(props: QueuePanelProps) {
   );
 
   const closeMenu = (event: PointerEvent) => {
-    if (panel && !panel.contains(event.target as Node)) setOpenMenuId(null);
+    const target = event.target;
+    if (panel && target instanceof Node && !panel.contains(target)) setOpenMenuId(null);
   };
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.key === "Escape") setOpenMenuId(null);
@@ -77,19 +71,11 @@ export function QueuePanel(props: QueuePanelProps) {
   }
 
   function messagePreview(delivery: QueueDelivery): string {
-    return (
-      delivery.text.trim() ||
-      delivery.attachments.map((attachment) => attachment.name).join(", ") ||
-      "Attachment"
-    );
+    return delivery.text.trim() || delivery.attachments.map((attachment) => attachment.name).join(", ") || "Attachment";
   }
 
   return (
-    <section
-      class="agent-queue-panel"
-      aria-label="Message queue"
-      ref={(element) => (panel = element)}
-    >
+    <section class="agent-queue-panel" aria-label="Message queue" ref={(element) => (panel = element)}>
       <div class="agent-queue-panel-list">
         <For each={visibleDeliveries()}>
           {(delivery) => (
@@ -178,9 +164,7 @@ export function QueuePanel(props: QueuePanelProps) {
                     aria-expanded={openMenuId() === delivery.id ? "true" : "false"}
                     aria-haspopup="menu"
                     aria-label={`More actions for queued message ${delivery.position ?? ""}`}
-                    onClick={() =>
-                      setOpenMenuId((current) => (current === delivery.id ? null : delivery.id))
-                    }
+                    onClick={() => setOpenMenuId((current) => (current === delivery.id ? null : delivery.id))}
                   >
                     <MoreIcon />
                   </button>

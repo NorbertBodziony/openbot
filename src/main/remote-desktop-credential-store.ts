@@ -1,7 +1,7 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import { isString } from "@openbot/contracts/runtime-values";
+import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 
 interface CredentialCipher {
   encrypt: (value: string) => Buffer;
@@ -25,13 +25,16 @@ export class RemoteDesktopCredentialStore {
 
   async initialize(): Promise<void> {
     try {
-      const stored = JSON.parse(
-        await readFile(this.#path, "utf8"),
-      ) as StoredRemoteDesktopCredential;
-      if (stored.version !== 1 || !isString(stored.encryptedPassword)) {
+      const value = JSON.parse(await readFile(this.#path, "utf8"));
+      if (
+        !isDynamicRecord(value) ||
+        !isNumber(value.version) ||
+        value.version !== 1 ||
+        !isString(value.encryptedPassword)
+      ) {
         throw new Error("The Remote Desktop credential file is invalid.");
       }
-      const password = this.#cipher.decrypt(Buffer.from(stored.encryptedPassword, "base64"));
+      const password = this.#cipher.decrypt(Buffer.from(value.encryptedPassword, "base64"));
       validateRemoteDesktopPassword(password);
       this.#password = password;
       await chmod(this.#path, 0o600);

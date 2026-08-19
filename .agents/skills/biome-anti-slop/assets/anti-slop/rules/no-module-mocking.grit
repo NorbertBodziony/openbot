@@ -1,0 +1,14 @@
+language js(typescript)
+
+`$framework.$method($args)` where {
+  $framework <: or {
+    `vi`,
+    `jest`
+  },
+  $method <: or {
+    `doMock`,
+    `mock`,
+    `unstable_mockModule`
+  },
+  register_diagnostic(span=$framework, message="Replace module mocking with dependency injection through a real interface, service layer, or faithful test implementation.", severity="error")
+}

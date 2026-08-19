@@ -1,18 +1,13 @@
+import { attachmentReferenceIds } from "@openbot/contracts/attachment-references";
 import type { AttachmentSummary, MessageReaction } from "@openbot/contracts/ipc";
 import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "@openbot/contracts/ipc";
-import { createSignal, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { avatarHeadColor } from "../../blobatar";
 import type { BotMessage, BotProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import { AttachmentCards } from "./AttachmentCards";
-import {
-  CheckIcon,
-  CopyIcon,
-  MoreIcon,
-  PlusIcon,
-  ReactionIcon,
-  ReplyIcon,
-} from "./ConversationIcons";
+import { CheckIcon, CopyIcon, MoreIcon, PlusIcon, ReactionIcon, ReplyIcon } from "./ConversationIcons";
+import { ImageGeneration } from "./ImageGeneration";
 import { RichMessageText } from "./RichMessageText";
 
 function ExchangeAgentAvatar(props: { bot: BotProfile | undefined }) {
@@ -20,9 +15,17 @@ function ExchangeAgentAvatar(props: { bot: BotProfile | undefined }) {
 }
 
 function exchangeAgentStyle(bot: BotProfile | undefined): string | undefined {
-  return bot
-    ? `--exchange-agent-color: ${avatarHeadColor(bot.avatarSeed, bot.avatarHue)}`
-    : undefined;
+  return bot ? `--exchange-agent-color: ${avatarHeadColor(bot.avatarSeed, bot.avatarHue)}` : undefined;
+}
+
+function exchangeAgentsStyle(bots: Array<BotProfile | undefined>): string | undefined {
+  const colors = bots.flatMap((bot) => (bot ? [avatarHeadColor(bot.avatarSeed, bot.avatarHue)] : []));
+  const mixedColor = colors.reduce<string | undefined>((mix, color, index) => {
+    if (!mix) return color;
+    const previousColorsWeight = Math.round((index / (index + 1)) * 10_000) / 100;
+    return `color-mix(in oklab, ${mix} ${previousColorsWeight}%, ${color})`;
+  }, undefined);
+  return mixedColor ? `--exchange-agent-color: ${mixedColor}` : undefined;
 }
 
 export function ExchangeSystemRow(props: {
@@ -74,7 +77,9 @@ export function ExchangeSystemRow(props: {
               <button
                 type="button"
                 class="exchange-agent-trigger exchange-agent-trigger-outgoing"
-                style={exchangeAgentStyle(props.bots.find((bot) => bot.id === recipients()[0]))}
+                style={exchangeAgentsStyle(
+                  recipients().map((recipientId) => props.bots.find((bot) => bot.id === recipientId)),
+                )}
                 aria-haspopup="menu"
                 aria-expanded={agentsOpen() ? "true" : "false"}
                 aria-label={`${agentCountLabel()}, show list`}
@@ -82,9 +87,7 @@ export function ExchangeSystemRow(props: {
               >
                 <span class="exchange-avatar-stack" aria-hidden="true">
                   <For each={recipients().slice(0, 3)}>
-                    {(recipientId) => (
-                      <ExchangeAgentAvatar bot={props.bots.find((bot) => bot.id === recipientId)} />
-                    )}
+                    {(recipientId) => <ExchangeAgentAvatar bot={props.bots.find((bot) => bot.id === recipientId)} />}
                   </For>
                 </span>
                 <span>{agentCountLabel()}</span>
@@ -144,7 +147,16 @@ export function MessageBody(props: {
   onOpenLink: (url: string) => void;
   onPreview: (attachment: AttachmentSummary) => void;
   onAttachmentAction: (attachment: AttachmentSummary, action: "open" | "reveal") => void;
+  onRetry?: () => void;
 }) {
+  const standaloneAttachments = createMemo(() => {
+    const referencedIds = attachmentReferenceIds(props.message.body);
+    const generatedAttachmentId = props.message.imageGeneration ? props.message.attachments?.[0]?.id : undefined;
+    return (props.message.attachments ?? []).filter(
+      (attachment) => !referencedIds.has(attachment.id) && attachment.id !== generatedAttachmentId,
+    );
+  });
+
   return (
     <>
       <Show when={props.referencedMessage}>
@@ -160,26 +172,57 @@ export function MessageBody(props: {
           <RichMessageText
             body={props.message.body}
             bots={props.bots}
+            attachments={props.message.attachments}
+            citations={props.message.citations}
             onSelectAgent={props.onSelectAgent}
             onOpenLink={props.onOpenLink}
+            onOpenAttachment={(attachment) =>
+              attachment.previewKind === "none"
+                ? props.onAttachmentAction(attachment, "open")
+                : props.onPreview(attachment)
+            }
           />
         </p>
       </Show>
-      <Show when={props.message.status}>
+      <Show when={props.message.imageGeneration}>
+        {(imageGeneration) => (
+          <ImageGeneration
+            status={imageGenerationStatus(props.message.streaming, props.message.status)}
+            prompt={imageGeneration().prompt}
+            resolution={imageGeneration().resolution}
+            aspectRatio={imageGeneration().aspectRatio}
+            attachment={props.message.attachments?.[0]}
+            error={imageGeneration().error}
+            onPreview={props.onPreview}
+            onRetry={props.onRetry}
+          />
+        )}
+      </Show>
+      <Show when={props.message.status && !props.message.imageGeneration}>
         <div class="message-status">
           <span />
           {props.message.status}
         </div>
       </Show>
-      <Show when={props.message.attachments?.length}>
+      <Show when={standaloneAttachments().length > 0}>
         <AttachmentCards
-          attachments={props.message.attachments ?? []}
+          attachments={standaloneAttachments()}
           onPreview={props.onPreview}
           onAction={props.onAttachmentAction}
         />
       </Show>
     </>
   );
+}
+
+function imageGenerationStatus(
+  streaming: boolean | undefined,
+  status: string | undefined,
+): "generating" | "completed" | "failed" | "interrupted" {
+  if (streaming || status === "streaming") return "generating";
+  if (status === "Failed" || status === "failed") return "failed";
+  if (status === "Stopped" || status === "interrupted") return "interrupted";
+  return "completed";
 }
 
 export function MessageActions(props: {

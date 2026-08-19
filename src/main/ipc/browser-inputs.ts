@@ -1,9 +1,5 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type {
-  BrowserBounds,
-  BrowserOpenInput,
-  BrowserVisibilityInput,
-} from "@openbot/contracts/ipc";
+import type { BrowserBounds, BrowserOpenInput, BrowserVisibilityInput } from "@openbot/contracts/ipc";
 import { isBoolean, isNumber } from "@openbot/contracts/runtime-values";
 import { isObject, requireString } from "./validation";
 
@@ -34,16 +30,17 @@ export function parseVisibility(value: unknown): BrowserVisibilityInput {
 
 function parseBounds(value: unknown): BrowserBounds {
   if (!isObject(value)) throw new Error("Invalid browser bounds.");
-  const fields = ["x", "y", "width", "height"] as const;
-  for (const field of fields) {
-    if (!isNumber(value[field]) || !Number.isFinite(value[field])) {
-      throw new Error(`Invalid browser bound: ${field}.`);
-    }
-  }
   return {
-    x: value.x as number,
-    y: value.y as number,
-    width: value.width as number,
-    height: value.height as number,
+    x: finiteBound(value.x, "x"),
+    y: finiteBound(value.y, "y"),
+    width: finiteBound(value.width, "width"),
+    height: finiteBound(value.height, "height"),
   };
+}
+
+function finiteBound(value: unknown, field: string): number {
+  if (!isNumber(value) || !Number.isFinite(value)) {
+    throw new Error(`Invalid browser bound: ${field}.`);
+  }
+  return value;
 }

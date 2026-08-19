@@ -4,7 +4,10 @@ import type {
   CentralAuthUser,
   ConfigureHostInput,
   ConfigureRemoteDesktopInput,
+  ConversationReadState,
+  ConversationWithReadState,
   CreateTeamInviteInput,
+  DirectConversationReadState,
   DirectConversationSnapshot,
   DirectMessage,
   DirectMessageRealtimeEvent,
@@ -13,6 +16,8 @@ import type {
   DirectTypingRealtimeEvent,
   HostStatus,
   InviteSummary,
+  MarkConversationReadInput,
+  MarkDirectReadInput,
   SendDirectMessageInput,
   SetTeamTypingInput,
   TeamInviteSummary,
@@ -26,12 +31,7 @@ import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
 import type { TeamChatStore } from "../backend/team-chat-store";
 import type { ProvisionedTeamTunnel } from "./central-auth-manager";
-import {
-  appendDiagnosticLog,
-  probeRfbHandshake,
-  resolveCloudflaredExecutable,
-  stopOwnedProcess,
-} from "./remote-mac";
+import { appendDiagnosticLog, probeRfbHandshake, resolveCloudflaredExecutable, stopOwnedProcess } from "./remote-mac";
 import { TeamApiServer } from "./team-api-server";
 import type { TeamStore } from "./team-store";
 
@@ -75,17 +75,12 @@ export function buildNamedTunnelArgs(): string[] {
   return ["tunnel", "--protocol", "quic", "run"];
 }
 
-export function buildNamedTunnelEnvironment(
-  token: string,
-  base: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
+export function buildNamedTunnelEnvironment(token: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   return { ...base, TUNNEL_TOKEN: token };
 }
 
 export class HostService extends EventEmitter<HostEvents> {
-  readonly #options: Required<
-    Pick<HostServiceOptions, "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs">
-  > &
+  readonly #options: Required<Pick<HostServiceOptions, "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs">> &
     Omit<HostServiceOptions, "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs">;
   readonly #api: TeamApiServer;
   #tunnel: ChildProcess | null = null;
@@ -141,10 +136,7 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async configure(input: ConfigureHostInput): Promise<HostStatus> {
-    const identity = await this.#options.store.configureWithAccount(
-      input.serverName,
-      this.#options.getSignedInUser(),
-    );
+    const identity = await this.#options.store.configureWithAccount(input.serverName, this.#options.getSignedInUser());
     this.#setStatus({
       phase: "idle",
       configured: true,
@@ -198,8 +190,7 @@ export class HostService extends EventEmitter<HostEvents> {
     this.#options.store.assertOwnerAccount(signedInUser);
     await this.syncSignedInAccount(signedInUser);
     this.#setStatus({ phase: "starting", message: "Starting the secure public API…" });
-    const executable = await (this.#options.resolveCloudflared?.() ??
-      resolveCloudflaredExecutable());
+    const executable = await (this.#options.resolveCloudflared?.() ?? resolveCloudflaredExecutable());
     if (!executable) {
       this.#setStatus({
         phase: "error",
@@ -288,6 +279,18 @@ export class HostService extends EventEmitter<HostEvents> {
     this.#api.setLocalTyping(input.botId, input.typing);
   }
 
+  readAgentConversation(botId: string): Promise<ConversationWithReadState> {
+    return this.#options.agents.readConversationFor(botId, this.#currentAgentReaderId());
+  }
+
+  listAgentConversationReads(): Record<string, ConversationReadState> {
+    return this.#options.agents.listConversationReads(this.#currentAgentReaderId());
+  }
+
+  markAgentConversationRead(input: MarkConversationReadInput): Promise<ConversationReadState> {
+    return this.#options.agents.markConversationRead(input.botId, this.#currentAgentReaderId(), input.throughMessageId);
+  }
+
   listDirectThreads(): DirectThreadSummary[] {
     if (!this.#options.store.configured) return [];
     const memberId = this.#findCurrentMemberId();
@@ -302,8 +305,8 @@ export class HostService extends EventEmitter<HostEvents> {
     return this.#api.sendDirectMessage(this.#currentMemberId(), input);
   }
 
-  markDirectRead(memberId: string): void {
-    this.#api.markDirectRead(this.#currentMemberId(), memberId);
+  markDirectRead(input: MarkDirectReadInput): DirectConversationReadState {
+    return this.#api.markDirectRead(this.#currentMemberId(), input.memberId, input.throughSequence);
   }
 
   setDirectTyping(input: DirectTypingInput): void {
@@ -343,10 +346,7 @@ export class HostService extends EventEmitter<HostEvents> {
 
   createAddressUpdate(): string {
     if (!this.#status.apiUrl) throw new Error("Make this OpenBot public first.");
-    const proof = this.#options.store.createAddressUpdateProof(
-      this.#status.apiUrl,
-      this.#status.vncHostname,
-    );
+    const proof = this.#options.store.createAddressUpdateProof(this.#status.apiUrl, this.#status.vncHostname);
     const url = new URL("openbot://update");
     url.searchParams.set("api", proof.apiUrl);
     url.searchParams.set("server", proof.serverId);
@@ -357,8 +357,7 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async createInvite(input: CreateTeamInviteInput): Promise<InviteSummary> {
-    if (!this.#status.apiUrl)
-      throw new Error("Make this OpenBot public before creating an invite.");
+    if (!this.#status.apiUrl) throw new Error("Make this OpenBot public before creating an invite.");
     const identity = this.#options.store.getIdentity();
     if (!identity) throw new Error("Name this OpenBot before publishing it.");
     const invite = await this.#options.store.createInvite(input.role, input.email);
@@ -411,17 +410,10 @@ export class HostService extends EventEmitter<HostEvents> {
         message: "The named Cloudflare Tunnel stopped unexpectedly.",
       });
     });
-    if (this.#options.logDirectory) {
-      child.stdout?.on(
-        "data",
-        (chunk) =>
-          void appendDiagnosticLog(this.#options.logDirectory as string, "host-tunnel", chunk),
-      );
-      child.stderr?.on(
-        "data",
-        (chunk) =>
-          void appendDiagnosticLog(this.#options.logDirectory as string, "host-tunnel", chunk),
-      );
+    const logDirectory = this.#options.logDirectory;
+    if (logDirectory) {
+      child.stdout?.on("data", (chunk) => void appendDiagnosticLog(logDirectory, "host-tunnel", chunk));
+      child.stderr?.on("data", (chunk) => void appendDiagnosticLog(logDirectory, "host-tunnel", chunk));
     }
     return child;
   }
@@ -444,6 +436,14 @@ export class HostService extends EventEmitter<HostEvents> {
     return memberId;
   }
 
+  #currentAgentReaderId(): string {
+    const accountReaderId = `local-user:${this.#options.getSignedInUser().id}`;
+    const memberId = this.#findCurrentMemberId();
+    if (!memberId) return accountReaderId;
+    this.#options.agents.adoptConversationReads(accountReaderId, memberId);
+    return memberId;
+  }
+
   #findCurrentMemberId(): string | null {
     try {
       const email = this.#options.getSignedInUser().email.trim().toLowerCase();
@@ -451,8 +451,7 @@ export class HostService extends EventEmitter<HostEvents> {
         .listMembers()
         .find(
           (candidate) =>
-            candidate.email?.trim().toLowerCase() === email ||
-            candidate.username.trim().toLowerCase() === email,
+            candidate.email?.trim().toLowerCase() === email || candidate.username.trim().toLowerCase() === email,
         );
       return member && !member.disabled ? member.id : null;
     } catch {
@@ -478,7 +477,11 @@ export async function waitForPublicApi(apiUrl: string, timeoutMs: number): Promi
 }
 
 export function waitForNamedTunnelConnection(
-  child: ChildProcess,
+  child: {
+    stdout: { on: (event: string, listener: (chunk: Buffer) => void) => unknown } | null;
+    stderr: { on: (event: string, listener: (chunk: Buffer) => void) => unknown } | null;
+    once(event: string, listener: (...args: unknown[]) => unknown): unknown;
+  },
   timeoutMs: number,
 ): Promise<boolean> {
   return new Promise((resolve) => {

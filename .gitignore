@@ -23,4 +23,5 @@ coverage/
 playwright-report/
 test-results/
 storybook-static/
+index-*.css
 .openbot-browser-test/

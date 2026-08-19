@@ -46,10 +46,7 @@ interface SidebarProps {
   onExpand: () => void;
 }
 
-export type SidebarAgentState =
-  | { kind: "working" }
-  | { kind: "responded" }
-  | { kind: "unread"; count: number };
+export type SidebarAgentState = { kind: "working" } | { kind: "responded" } | { kind: "unread"; count: number };
 
 function sidebarAgentStateLabel(state: SidebarAgentState): string {
   if (state.kind === "working") return "Thinking";
@@ -60,10 +57,7 @@ function sidebarAgentStateLabel(state: SidebarAgentState): string {
 function SidebarAgentIndicator(props: { state: SidebarAgentState }) {
   const unreadCount = () => (props.state.kind === "unread" ? props.state.count : 0);
   return (
-    <span
-      class={`bot-row-agent-status bot-row-agent-status-${props.state.kind}`}
-      aria-hidden="true"
-    >
+    <span class={`bot-row-agent-status bot-row-agent-status-${props.state.kind}`} aria-hidden="true">
       <Show when={props.state.kind === "working"}>
         <TypingDots class="bot-row-thinking-dots" />
       </Show>
@@ -117,11 +111,7 @@ export function SidebarToggleIcon() {
 
 function EditIcon() {
   return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      class="bot-context-icon size-4 fill-none stroke-current"
-    >
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="bot-context-icon size-4 fill-none stroke-current">
       <path d="m12.6 4.2 3.2 3.2-8.7 8.7-3.8.6.6-3.8 8.7-8.7Z" stroke-width="1.4" />
       <path d="m10.9 5.9 3.2 3.2" stroke-width="1.4" />
     </svg>
@@ -225,9 +215,7 @@ export function Sidebar(props: SidebarProps) {
   const filteredBots = createMemo(() => {
     const normalizedQuery = query().trim().toLowerCase();
     return normalizedQuery
-      ? props.bots.filter((bot) =>
-          `${bot.name} ${bot.role} ${bot.preview}`.toLowerCase().includes(normalizedQuery),
-        )
+      ? props.bots.filter((bot) => `${bot.name} ${bot.role} ${bot.preview}`.toLowerCase().includes(normalizedQuery))
       : props.bots;
   });
   const directThreadByMember = createMemo(
@@ -257,9 +245,7 @@ export function Sidebar(props: SidebarProps) {
   const accountInitials = createMemo(() => {
     const localPart = accountName().split("@")[0] ?? "OpenBot";
     const parts = localPart.split(/[._\-\s]+/).filter(Boolean);
-    return (
-      parts.length > 1 ? `${parts[0]?.[0]}${parts[1]?.[0]}` : localPart.slice(0, 2)
-    ).toUpperCase();
+    return (parts.length > 1 ? `${parts[0]?.[0]}${parts[1]?.[0]}` : localPart.slice(0, 2)).toUpperCase();
   });
   createEffect(
     () => props.account.avatarUrl,
@@ -269,8 +255,7 @@ export function Sidebar(props: SidebarProps) {
   );
   const weeklyUsage = createMemo(() => {
     const limit =
-      props.accountUsage?.limits.find((candidate) => candidate.id === "codex") ??
-      props.accountUsage?.limits[0];
+      props.accountUsage?.limits.find((candidate) => candidate.id === "codex") ?? props.accountUsage?.limits[0];
     if (!limit) return null;
     return (
       [limit.primary, limit.secondary].find((window) => window?.windowDurationMins === 10_080) ??
@@ -286,9 +271,7 @@ export function Sidebar(props: SidebarProps) {
   const updateAvailable = createMemo(() =>
     ["available", "downloading", "ready", "installing"].includes(props.updateStatus.phase),
   );
-  const updateBusy = createMemo(() =>
-    ["checking", "downloading", "installing"].includes(props.updateStatus.phase),
-  );
+  const updateBusy = createMemo(() => ["checking", "downloading", "installing"].includes(props.updateStatus.phase));
   const updateLabel = createMemo(() => {
     switch (props.updateStatus.phase) {
       case "checking":
@@ -319,8 +302,7 @@ export function Sidebar(props: SidebarProps) {
     return status.currentVersion ? `v${status.currentVersion}` : "";
   });
   const popoverError = createMemo(
-    () =>
-      accountError() ?? (props.updateStatus.phase === "error" ? props.updateStatus.message : null),
+    () => accountError() ?? (props.updateStatus.phase === "error" ? props.updateStatus.message : null),
   );
 
   function updateScrollFade() {
@@ -414,18 +396,14 @@ export function Sidebar(props: SidebarProps) {
     void props
       .onOpenExternal(destination)
       .then(() => setAccountMenuOpen(false))
-      .catch((error) =>
-        setAccountError(error instanceof Error ? error.message : "Could not open the link."),
-      );
+      .catch((error) => setAccountError(error instanceof Error ? error.message : "Could not open the link."));
   }
 
   function runUpdateAction() {
     setAccountError(null);
     void props
       .onUpdateAction()
-      .catch((error) =>
-        setAccountError(error instanceof Error ? error.message : "Could not update OpenBot."),
-      );
+      .catch((error) => setAccountError(error instanceof Error ? error.message : "Could not update OpenBot."));
   }
 
   async function logout(): Promise<void> {
@@ -474,9 +452,7 @@ export function Sidebar(props: SidebarProps) {
           when={props.account.avatarUrl && !accountAvatarFailed() ? props.account.avatarUrl : null}
           fallback={accountInitials()}
         >
-          {(avatarUrl) => (
-            <img src={avatarUrl()} alt="" onError={() => setAccountAvatarFailed(true)} />
-          )}
+          {(avatarUrl) => <img src={avatarUrl()} alt="" onError={() => setAccountAvatarFailed(true)} />}
         </Show>
       </span>
     );
@@ -596,9 +572,7 @@ export function Sidebar(props: SidebarProps) {
                       <span class="bot-row-copy">
                         <span class="bot-row-heading">
                           <strong>{teamMemberName(member)}</strong>
-                          <span>
-                            {thread() ? sidebarMessageTime(thread()?.updatedAt ?? "") : ""}
-                          </span>
+                          <span>{thread() ? sidebarMessageTime(thread()?.updatedAt ?? "") : ""}</span>
                         </span>
                         <span class="bot-row-preview">
                           {thread()?.lastMessage.text ?? (member.online ? "Online now" : "Offline")}
@@ -645,10 +619,7 @@ export function Sidebar(props: SidebarProps) {
                         openContextMenu(bot.id, event.clientX, event.clientY);
                       }}
                       onKeyDown={(event) => {
-                        if (
-                          event.key !== "ContextMenu" &&
-                          !(event.shiftKey && event.key === "F10")
-                        ) {
+                        if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) {
                           return;
                         }
                         event.preventDefault();
@@ -711,16 +682,8 @@ export function Sidebar(props: SidebarProps) {
                 <strong>{accountName()}</strong>
                 <span>{props.account.email}</span>
                 <div class="account-profile-actions">
-                  <button
-                    type="button"
-                    onClick={() => accountAvatarInput?.click()}
-                    disabled={avatarUploadBusy()}
-                  >
-                    {avatarUploadBusy()
-                      ? "Saving…"
-                      : props.account.avatarUrl
-                        ? "Replace photo"
-                        : "Upload photo"}
+                  <button type="button" onClick={() => accountAvatarInput?.click()} disabled={avatarUploadBusy()}>
+                    {avatarUploadBusy() ? "Saving…" : props.account.avatarUrl ? "Replace photo" : "Upload photo"}
                   </button>
                   <Show when={props.account.avatarUrl}>
                     <button
@@ -775,21 +738,11 @@ export function Sidebar(props: SidebarProps) {
               <span>Providers &amp; permissions</span>
             </button>
             <div class="account-menu-separator" />
-            <button
-              type="button"
-              role="menuitem"
-              class="account-menu-row"
-              onClick={() => openExternal("feedback")}
-            >
+            <button type="button" role="menuitem" class="account-menu-row" onClick={() => openExternal("feedback")}>
               <FeedbackIcon />
               <span>Send feedback</span>
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              class="account-menu-row"
-              onClick={() => openExternal("message")}
-            >
+            <button type="button" role="menuitem" class="account-menu-row" onClick={() => openExternal("message")}>
               <MessageIcon />
               <span>Message</span>
             </button>
@@ -804,9 +757,7 @@ export function Sidebar(props: SidebarProps) {
               <LogoutIcon />
               <span>{loggingOut() ? "Signing out…" : "Sign out"}</span>
             </button>
-            <Show when={popoverError()}>
-              {(message) => <p class="account-popover-error">{message()}</p>}
-            </Show>
+            <Show when={popoverError()}>{(message) => <p class="account-popover-error">{message()}</p>}</Show>
           </div>
         </Show>
 
@@ -905,18 +856,12 @@ export function Sidebar(props: SidebarProps) {
                 />
                 <h2 id="bot-delete-title">Delete {bot().name}?</h2>
                 <p id="bot-delete-description">
-                  This removes the agent, its OpenBot queue, and managed files used only by that
-                  conversation. Its workspace and CLI history stay on your Mac.
+                  This removes the agent, its OpenBot queue, and managed files used only by that conversation. Its
+                  workspace and CLI history stay on your Mac.
                 </p>
-                <Show when={deleteError()}>
-                  {(message) => <p class="bot-delete-error">{message()}</p>}
-                </Show>
+                <Show when={deleteError()}>{(message) => <p class="bot-delete-error">{message()}</p>}</Show>
                 <div class="bot-delete-actions">
-                  <button
-                    type="button"
-                    disabled={deleting()}
-                    onClick={() => setDeleteTargetId(null)}
-                  >
+                  <button type="button" disabled={deleting()} onClick={() => setDeleteTargetId(null)}>
                     Cancel
                   </button>
                   <button

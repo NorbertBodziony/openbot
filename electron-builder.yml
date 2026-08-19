@@ -27,6 +27,12 @@ files:
   - LICENSE
   - NOTICE
 extraResources:
+  - from: build/icon-production.png
+    to: icons/icon-production.png
+  - from: build/icon-dev.png
+    to: icons/icon-dev.png
+  - from: build/icon-preview.png
+    to: icons/icon-preview.png
   - from: node_modules/electron/dist/LICENSE
     to: licenses/Electron-LICENSE
   - from: node_modules/electron/dist/LICENSES.chromium.html
@@ -38,7 +44,7 @@ mac:
   minimumSystemVersion: "12.0"
   notarize: true
   hardenedRuntime: true
-  icon: build/icon.svg
+  icon: build/icon-production.png
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   darkModeSupport: true
@@ -50,7 +56,7 @@ mac:
       arch:
         - arm64
 win:
-  icon: build/icon.ico
+  icon: build/icon-production.ico
   # Windows builds are intentionally unsigned until release signing is configured.
   signExecutable: false
   verifyUpdateCodeSignature: false

@@ -1,4 +1,3 @@
-import type { AgentProviderId, AgentProviderState } from "@openbot/contracts/ipc";
 import { fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { ProviderPicker, type ProviderPickerOption } from "../src/components/ProviderPicker";
@@ -49,7 +48,7 @@ export const ProviderUnavailable: Story = {
     value: null,
     options: options.map((option) => ({
       ...option,
-      state: "not-installed" as AgentProviderState,
+      state: "not-installed",
       message: "Install this provider to continue.",
     })),
   },
@@ -57,7 +56,7 @@ export const ProviderUnavailable: Story = {
 
 export const AllowUnavailableSelection: Story = {
   args: {
-    value: "claude" as AgentProviderId,
+    value: "claude",
     allowUnavailableSelection: true,
   },
 };

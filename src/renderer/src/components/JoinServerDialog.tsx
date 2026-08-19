@@ -44,9 +44,7 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
             ×
           </button>
         </header>
-        <p>
-          Paste the one-time invitation link. You will join with your signed-in OpenBot account.
-        </p>
+        <p>Paste the one-time invitation link. You will join with your signed-in OpenBot account.</p>
         <label class="remote-field">
           <span>Invitation link</span>
           <textarea
@@ -74,12 +72,7 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
           >
             Cancel
           </button>
-          <button
-            type="button"
-            class="remote-primary-button"
-            disabled={busy()}
-            onClick={() => void join()}
-          >
+          <button type="button" class="remote-primary-button" disabled={busy()} onClick={() => void join()}>
             {busy() ? "Joining…" : "Join server"}
           </button>
         </footer>

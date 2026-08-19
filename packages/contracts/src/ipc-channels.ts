@@ -29,6 +29,8 @@ export const IPC_CHANNELS = {
   agentSetAvatar: "agent:set-avatar",
   agentDeleteBot: "agent:delete-bot",
   agentReadConversation: "agent:read-conversation",
+  agentListConversationReads: "agent:list-conversation-reads",
+  agentMarkConversationRead: "agent:mark-conversation-read",
   agentSendMessage: "agent:send-message",
   agentSetMessageReaction: "agent:set-message-reaction",
   agentChooseAttachments: "agent:choose-attachments",

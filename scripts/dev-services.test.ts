@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  createDevelopmentServiceSpec,
-  parseDevelopmentTarget,
-  projectRoot,
-  servicesForTarget,
-} from "./dev-services";
+import { createDevelopmentServiceSpec, parseDevelopmentTarget, projectRoot, servicesForTarget } from "./dev-services";
 
 describe("development service runner", () => {
   it("runs the normal API and app in a stable order", () => {
@@ -27,9 +22,11 @@ describe("development service runner", () => {
     const app = createDevelopmentServiceSpec("app", {});
     const testClient = createDevelopmentServiceSpec("test-client", {});
 
+    expect(app.env.OPENBOT_APP_VARIANT).toBe("dev");
     expect(app.env.OPENBOT_DEV_PROFILE).toBe("app");
     expect(app.env.OPENBOT_DEV_RENDERER_PORT).toBe("5173");
     expect(app.args).toContain("out-dev-app");
+    expect(testClient.env.OPENBOT_APP_VARIANT).toBe("dev");
     expect(testClient.env.OPENBOT_DEV_PROFILE).toBe("test-client");
     expect(testClient.env.OPENBOT_DEV_RENDERER_PORT).toBe("5174");
     expect(testClient.env.OPENBOT_DEV_HOST_AUTO_START).toBeUndefined();

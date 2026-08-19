@@ -58,7 +58,7 @@
     "all": "bun run dev:all",
     "dev:reset": "bun scripts/reset-dev-state.ts",
     "build": "electron-vite build",
-    "preview": "electron-vite preview",
+    "preview": "bun scripts/preview.ts",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
@@ -111,7 +111,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.8",
+    "@biomejs/biome": "^2.5.9",
     "@dotenvx/dotenvx": "^2.21.0",
     "@electron/fuses": "1.8.0",
     "@solidjs/testing-library": "1.0.0-beta.2",

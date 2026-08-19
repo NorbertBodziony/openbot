@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./attachment-references": "./src/attachment-references.ts",
     "./avatar-images": "./src/avatar-images.ts",
     "./input-limits": "./src/input-limits.ts",
     "./ipc": "./src/ipc.ts",

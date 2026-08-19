@@ -38,12 +38,9 @@ import { MailboxStore } from "../backend/mailbox-store";
 import { TeamChatStore } from "../backend/team-chat-store";
 import { AgentInitializationGate } from "./agent-initialization";
 import { notificationForAgentEvent } from "./agent-notifications";
+import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
-import {
-  developmentUserDataName,
-  readDevelopmentProfile,
-  shouldAutoStartHost,
-} from "./development-profile";
+import { developmentUserDataName, readDevelopmentProfile, shouldAutoStartHost } from "./development-profile";
 import { HostService } from "./host-service";
 import {
   parseAgentRequest,
@@ -51,6 +48,7 @@ import {
   parseCancelQueuedMessage,
   parseImportAttachments,
   parseInterrupt,
+  parseMarkConversationRead,
   parseMessageReaction,
   parseOpenAttachment,
   parsePromptResponse,
@@ -71,6 +69,7 @@ import {
   parseHostConfig,
   parseJoinServer,
   parseLoginServer,
+  parseMarkDirectRead,
   parseRemoteDesktopConfig,
   parseRemoteMacConnect,
   parseSendDirectMessage,
@@ -81,7 +80,19 @@ import { isObject, requireString } from "./ipc/validation";
 import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
 import { RemoteDesktopCredentialStore } from "./remote-desktop-credential-store";
 import { RemoteMacManager } from "./remote-mac";
-import { RemoteServerManager } from "./remote-server-manager";
+import {
+  decodeAccountUsage,
+  decodeAgentModelOptions,
+  decodeAgentStatus,
+  decodeBotSummaries,
+  decodeBotSummary,
+  decodeBrowserControlState,
+  decodeBrowserTabs,
+  decodeQueuedMessageReceipt,
+  decodeQueueSnapshot,
+  decodeVoid,
+  RemoteServerManager,
+} from "./remote-server-manager";
 import { readSetupState, writeSetupState } from "./setup-store";
 import { TeamStore } from "./team-store";
 import { handleTrusted } from "./trusted-ipc";
@@ -95,6 +106,13 @@ if (!app.isPackaged) {
 app.enableSandbox();
 if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
+const appVariant = readAppVariant(process.env.OPENBOT_APP_VARIANT, app.isPackaged);
+const appIconPath = resolveAppIconPath({
+  variant: appVariant,
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  sourceRoot: resolve(__dirname, "../.."),
+});
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "openbot-app",
@@ -187,7 +205,7 @@ function registerIpcHandlers(
     if (platform !== "darwin" && platform !== "win32" && platform !== "linux") {
       throw new Error(`Unsupported desktop platform: ${platform}`);
     }
-    return { name: app.getName(), version: app.getVersion(), platform };
+    return { name: app.getName(), version: app.getVersion(), platform, variant: appVariant };
   });
   handleTrusted(IPC_CHANNELS.getSetupState, () => readSetupState(setupFile));
   handleTrusted(IPC_CHANNELS.saveSetup, async (input: unknown): Promise<AppSetupState> => {
@@ -226,9 +244,7 @@ function registerIpcHandlers(
       requireString(input.code, "code", 32),
     );
   });
-  handleTrusted(IPC_CHANNELS.authUpdateAvatar, (input: unknown) =>
-    centralAuth.updateAvatar(parseAvatarImage(input)),
-  );
+  handleTrusted(IPC_CHANNELS.authUpdateAvatar, (input: unknown) => centralAuth.updateAvatar(parseAvatarImage(input)));
   handleTrusted(IPC_CHANNELS.authLogout, () => centralAuth.logout());
   handleTrusted(IPC_CHANNELS.updateGetStatus, () => updater.getStatus());
   handleTrusted(IPC_CHANNELS.updateCheck, () => updater.checkForUpdates());
@@ -245,12 +261,8 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.serversSelect, (serverId: unknown) =>
     remoteServers.select(requireString(serverId, "serverId")),
   );
-  handleTrusted(IPC_CHANNELS.serversJoin, (input: unknown) =>
-    remoteServers.join(parseJoinServer(input)),
-  );
-  handleTrusted(IPC_CHANNELS.serversLogin, (input: unknown) =>
-    remoteServers.login(parseLoginServer(input)),
-  );
+  handleTrusted(IPC_CHANNELS.serversJoin, (input: unknown) => remoteServers.join(parseJoinServer(input)));
+  handleTrusted(IPC_CHANNELS.serversLogin, (input: unknown) => remoteServers.login(parseLoginServer(input)));
   handleTrusted(IPC_CHANNELS.serversUpdateAddress, (updateUrl: unknown) =>
     remoteServers.updateAddress(requireString(updateUrl, "updateUrl", INPUT_LIMITS.inviteUrl)),
   );
@@ -266,9 +278,7 @@ function registerIpcHandlers(
     else remoteServers.setTyping(parsed);
   });
   handleTrusted(IPC_CHANNELS.serversListDirectThreads, () =>
-    remoteServers.activeServerId === "local"
-      ? host.listDirectThreads()
-      : remoteServers.listDirectThreads(),
+    remoteServers.activeServerId === "local" ? host.listDirectThreads() : remoteServers.listDirectThreads(),
   );
   handleTrusted(IPC_CHANNELS.serversReadDirectConversation, (memberId: unknown) => {
     const parsedMemberId = requireString(memberId, "memberId");
@@ -282,11 +292,11 @@ function registerIpcHandlers(
       ? host.sendDirectMessage(parsed)
       : remoteServers.sendDirectMessage(parsed);
   });
-  handleTrusted(IPC_CHANNELS.serversMarkDirectRead, (memberId: unknown) => {
-    const parsedMemberId = requireString(memberId, "memberId");
+  handleTrusted(IPC_CHANNELS.serversMarkDirectRead, (input: unknown) => {
+    const parsed = parseMarkDirectRead(input);
     return remoteServers.activeServerId === "local"
-      ? host.markDirectRead(parsedMemberId)
-      : remoteServers.markDirectRead(parsedMemberId);
+      ? host.markDirectRead(parsed)
+      : remoteServers.markDirectRead(parsed);
   });
   handleTrusted(IPC_CHANNELS.serversSetDirectTyping, (input: unknown) => {
     const parsed = parseDirectTyping(input);
@@ -294,18 +304,14 @@ function registerIpcHandlers(
     else remoteServers.setDirectTyping(parsed);
   });
   handleTrusted(IPC_CHANNELS.hostGetStatus, () => host.getStatus());
-  handleTrusted(IPC_CHANNELS.hostConfigure, (input: unknown) =>
-    host.configure(parseHostConfig(input)),
-  );
+  handleTrusted(IPC_CHANNELS.hostConfigure, (input: unknown) => host.configure(parseHostConfig(input)));
   handleTrusted(IPC_CHANNELS.hostConfigureRemoteDesktop, (input: unknown) =>
     host.configureRemoteDesktop(parseRemoteDesktopConfig(input)),
   );
   handleTrusted(IPC_CHANNELS.hostStart, () => host.start());
   handleTrusted(IPC_CHANNELS.hostStop, () => host.stop());
   handleTrusted(IPC_CHANNELS.hostListMembers, () => host.listMembers());
-  handleTrusted(IPC_CHANNELS.hostUpdateMember, (input: unknown) =>
-    host.updateMember(parseUpdateTeamMember(input)),
-  );
+  handleTrusted(IPC_CHANNELS.hostUpdateMember, (input: unknown) => host.updateMember(parseUpdateTeamMember(input)));
   handleTrusted(IPC_CHANNELS.hostRemoveMember, (memberId: unknown) =>
     host.removeMember(requireString(memberId, "memberId")),
   );
@@ -317,14 +323,10 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.hostRevokeInvite, (inviteId: unknown) =>
     host.revokeInvite(requireString(inviteId, "inviteId")),
   );
-  handleTrusted(IPC_CHANNELS.hostCreateInvite, (input: unknown) =>
-    host.createInvite(parseCreateTeamInvite(input)),
-  );
+  handleTrusted(IPC_CHANNELS.hostCreateInvite, (input: unknown) => host.createInvite(parseCreateTeamInvite(input)));
   handleTrusted(IPC_CHANNELS.hostCreateAddressUpdate, () => host.createAddressUpdate());
   handleTrusted(IPC_CHANNELS.remoteMacList, () => remoteMac.list());
-  handleTrusted(IPC_CHANNELS.remoteMacConnect, (input: unknown) =>
-    remoteMac.connect(parseRemoteMacConnect(input)),
-  );
+  handleTrusted(IPC_CHANNELS.remoteMacConnect, (input: unknown) => remoteMac.connect(parseRemoteMacConnect(input)));
   handleTrusted(IPC_CHANNELS.remoteMacDisconnect, (sessionId: unknown) =>
     remoteMac.disconnect(requireString(sessionId, "sessionId")),
   );
@@ -336,31 +338,31 @@ function registerIpcHandlers(
     const { serverId } = parseAgentRequest(input);
     return serverId === "local"
       ? service.getStatus()
-      : remoteServers.request("/v1/agents/status", {}, serverId);
+      : remoteServers.request("/v1/agents/status", {}, serverId, decodeAgentStatus);
   });
   handleTrusted(IPC_CHANNELS.agentGetUsage, (input: unknown) => {
     const { serverId } = parseAgentRequest(input);
     return serverId === "local"
       ? service.getUsage()
-      : remoteServers.request("/v1/agents/usage", {}, serverId);
+      : remoteServers.request("/v1/agents/usage", {}, serverId, decodeAccountUsage);
   });
   handleTrusted(IPC_CHANNELS.agentListModels, (input: unknown) => {
     const { serverId } = parseAgentRequest(input);
     return serverId === "local"
       ? service.listModels()
-      : remoteServers.request("/v1/agents/models", {}, serverId);
+      : remoteServers.request("/v1/agents/models", {}, serverId, decodeAgentModelOptions);
   });
   handleTrusted(IPC_CHANNELS.agentListBots, (input: unknown) => {
     const { serverId } = parseAgentRequest(input);
     return serverId === "local"
       ? service.listBots()
-      : remoteServers.request("/v1/agents", {}, serverId);
+      : remoteServers.request("/v1/agents", {}, serverId, decodeBotSummaries);
   });
   handleTrusted(IPC_CHANNELS.agentCreateBot, (input: unknown) => {
     const { serverId } = parseAgentRequest(input);
     return serverId === "local"
       ? service.createBot()
-      : remoteServers.request("/v1/agents", { method: "POST", body: {} }, serverId);
+      : remoteServers.request("/v1/agents", { method: "POST", body: {} }, serverId, decodeBotSummary);
   });
   handleTrusted(IPC_CHANNELS.agentUpdateBot, (input: unknown) => {
     const scoped = parseAgentRequest(input);
@@ -375,30 +377,28 @@ function registerIpcHandlers(
   });
   handleTrusted(IPC_CHANNELS.agentDeleteBot, (input: unknown) => {
     const scoped = parseAgentRequest(input);
-    return routeDeleteBot(
-      service,
-      remoteServers,
-      scoped.serverId,
-      requireString(scoped.payload, "botId"),
-    );
+    return routeDeleteBot(service, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
   });
   handleTrusted(IPC_CHANNELS.agentReadConversation, (input: unknown) => {
     const scoped = parseAgentRequest(input);
-    return routeReadConversation(
-      service,
-      remoteServers,
-      scoped.serverId,
-      requireString(scoped.payload, "botId"),
-    );
+    return routeReadConversation(host, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
+  });
+  handleTrusted(IPC_CHANNELS.agentListConversationReads, (input: unknown) => {
+    const { serverId } = parseAgentRequest(input);
+    return serverId === "local"
+      ? host.listAgentConversationReads()
+      : remoteServers.listAgentConversationReads(serverId);
+  });
+  handleTrusted(IPC_CHANNELS.agentMarkConversationRead, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseMarkConversationRead(scoped.payload);
+    return scoped.serverId === "local"
+      ? host.markAgentConversationRead(parsed)
+      : remoteServers.markAgentConversationRead(parsed, scoped.serverId);
   });
   handleTrusted(IPC_CHANNELS.agentSendMessage, (input: unknown) => {
     const scoped = parseAgentRequest(input);
-    return routeSendMessage(
-      service,
-      remoteServers,
-      scoped.serverId,
-      parseSendMessage(scoped.payload),
-    );
+    return routeSendMessage(service, remoteServers, scoped.serverId, parseSendMessage(scoped.payload));
   });
   handleTrusted(IPC_CHANNELS.agentSetMessageReaction, (input: unknown) => {
     const scoped = parseAgentRequest(input);
@@ -412,14 +412,13 @@ function registerIpcHandlers(
             body: parsed,
           },
           scoped.serverId,
+          decodeVoid,
         );
   });
   handleTrusted(IPC_CHANNELS.agentChooseAttachments, async (input: unknown) => {
     const { serverId } = parseAgentRequest(input);
     const options: OpenDialogOptions = { properties: ["openFile", "multiSelections"] };
-    const result = mainWindow
-      ? await dialog.showOpenDialog(mainWindow, options)
-      : await dialog.showOpenDialog(options);
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     if (result.canceled) return [];
     if (serverId === "local") return service.prepareAttachments(result.filePaths);
     return uploadRemotePaths(remoteServers, serverId, result.filePaths);
@@ -440,16 +439,14 @@ function registerIpcHandlers(
           `/v1/attachments/${encodeURIComponent(attachmentId)}`,
           { method: "DELETE" },
           scoped.serverId,
+          decodeVoid,
         );
   });
   handleTrusted(IPC_CHANNELS.agentOpenAttachment, async (input: unknown) => {
     const scoped = parseAgentRequest(input);
     const parsed = parseOpenAttachment(scoped.payload);
     if (scoped.serverId !== "local") {
-      const downloaded = await remoteServers.downloadAttachment(
-        parsed.attachmentId,
-        scoped.serverId,
-      );
+      const downloaded = await remoteServers.downloadAttachment(parsed.attachmentId, scoped.serverId);
       const cacheRoot = join(app.getPath("userData"), "remote-attachments");
       await mkdir(cacheRoot, { recursive: true });
       const safeName = `${parsed.attachmentId}-${basename(downloaded.name)}`;
@@ -473,12 +470,7 @@ function registerIpcHandlers(
   });
   handleTrusted(IPC_CHANNELS.agentListQueue, (input: unknown) => {
     const scoped = parseAgentRequest(input);
-    return routeListQueue(
-      service,
-      remoteServers,
-      scoped.serverId,
-      requireString(scoped.payload, "botId"),
-    );
+    return routeListQueue(service, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
   });
   handleTrusted(IPC_CHANNELS.agentCancelQueuedMessage, (input: unknown) => {
     const scoped = parseAgentRequest(input);
@@ -492,6 +484,7 @@ function registerIpcHandlers(
             body: { deliveryId: parsed.deliveryId },
           },
           scoped.serverId,
+          decodeVoid,
         );
   });
   handleTrusted(IPC_CHANNELS.agentSetQueuePaused, (input: unknown) => {
@@ -506,6 +499,7 @@ function registerIpcHandlers(
             body: { paused: parsed.paused },
           },
           scoped.serverId,
+          decodeVoid,
         );
   });
   handleTrusted(IPC_CHANNELS.agentSteerQueuedMessage, (input: unknown) => {
@@ -520,6 +514,7 @@ function registerIpcHandlers(
             body: { deliveryId: parsed.deliveryId, expectedTurnId: parsed.expectedTurnId },
           },
           scoped.serverId,
+          decodeVoid,
         );
   });
   handleTrusted(IPC_CHANNELS.agentUpdateQueuedMessage, (input: unknown) => {
@@ -539,6 +534,7 @@ function registerIpcHandlers(
             },
           },
           scoped.serverId,
+          decodeVoid,
         );
   });
   handleTrusted(IPC_CHANNELS.agentReorderQueue, (input: unknown) => {
@@ -550,6 +546,7 @@ function registerIpcHandlers(
           `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/reorder`,
           { method: "POST", body: { deliveryIds: parsed.deliveryIds } },
           scoped.serverId,
+          decodeVoid,
         );
   });
   handleTrusted(IPC_CHANNELS.agentInterrupt, (input: unknown) => {
@@ -564,6 +561,7 @@ function registerIpcHandlers(
             body: { turnId: parsed.turnId },
           },
           scoped.serverId,
+          decodeVoid,
         );
   });
   handleTrusted(IPC_CHANNELS.agentRespondToPrompt, (input: unknown) => {
@@ -571,60 +569,58 @@ function registerIpcHandlers(
     const parsed = parsePromptResponse(scoped.payload);
     return scoped.serverId === "local"
       ? service.respondToPrompt(parsed)
-      : remoteServers.request(
-          "/v1/prompts/respond",
-          { method: "POST", body: parsed },
-          scoped.serverId,
-        );
+      : remoteServers.request("/v1/prompts/respond", { method: "POST", body: parsed }, scoped.serverId, decodeVoid);
   });
   handleTrusted(IPC_CHANNELS.agentRespondToApproval, (input: unknown) => {
     const scoped = parseAgentRequest(input);
     const parsed = parseApprovalResponse(scoped.payload);
     return scoped.serverId === "local"
       ? service.respondToApproval(parsed)
-      : remoteServers.request(
-          "/v1/approvals/respond",
-          { method: "POST", body: parsed },
-          scoped.serverId,
-        );
+      : remoteServers.request("/v1/approvals/respond", { method: "POST", body: parsed }, scoped.serverId, decodeVoid);
   });
 
   handleTrusted(IPC_CHANNELS.browserOpen, (input: unknown) => {
     const parsed = parseBrowserOpen(input);
     return remoteServers.activeServerId === "local"
       ? browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null)
-      : remoteServers.request("/v1/browser/open", { method: "POST", body: parsed });
+      : remoteServers.request("/v1/browser/open", { method: "POST", body: parsed }, undefined, decodeVoid);
   });
   handleTrusted(IPC_CHANNELS.browserActivate, (tabId: unknown) =>
     remoteServers.activeServerId === "local"
       ? browser.activate(requireString(tabId, "tabId"))
-      : remoteServers.request("/v1/browser/activate", {
-          method: "POST",
-          body: { tabId: requireString(tabId, "tabId") },
-        }),
+      : remoteServers.request(
+          "/v1/browser/activate",
+          { method: "POST", body: { tabId: requireString(tabId, "tabId") } },
+          undefined,
+          decodeVoid,
+        ),
   );
   handleTrusted(IPC_CHANNELS.browserClose, (tabId: unknown) =>
     remoteServers.activeServerId === "local"
       ? browser.close(requireString(tabId, "tabId"))
-      : remoteServers.request("/v1/browser/close", {
-          method: "POST",
-          body: { tabId: requireString(tabId, "tabId") },
-        }),
+      : remoteServers.request(
+          "/v1/browser/close",
+          { method: "POST", body: { tabId: requireString(tabId, "tabId") } },
+          undefined,
+          decodeVoid,
+        ),
   );
   handleTrusted(IPC_CHANNELS.browserListTabs, () =>
     remoteServers.activeServerId === "local"
       ? browser.listTabs()
-      : remoteServers.request("/v1/browser/tabs"),
+      : remoteServers.request("/v1/browser/tabs", {}, undefined, decodeBrowserTabs),
   );
   handleTrusted(IPC_CHANNELS.browserGetControlState, () =>
     remoteServers.activeServerId === "local"
       ? browser.getControlState()
-      : remoteServers.request("/v1/browser/control"),
+      : remoteServers.request("/v1/browser/control", {}, undefined, decodeBrowserControlState),
   );
   handleTrusted(IPC_CHANNELS.browserSetVisible, async (input: unknown) => {
     const parsed = parseVisibility(input);
     if (remoteServers.activeServerId === "local") await browser.setVisible(parsed);
-    else await remoteServers.request("/v1/browser/visible", { method: "POST", body: parsed });
+    else {
+      await remoteServers.request("/v1/browser/visible", { method: "POST", body: parsed }, undefined, decodeVoid);
+    }
   });
 }
 
@@ -637,6 +633,7 @@ function createWindow(): BrowserWindow {
     show: false,
     backgroundColor: "#0b0d0e",
     title: "OpenBot",
+    icon: appIconPath,
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 13, y: 14 } }
       : {}),
@@ -670,9 +667,7 @@ function createWindow(): BrowserWindow {
 
 function loadRenderer(window: BrowserWindow): Promise<void> {
   const developmentUrl = process.env.ELECTRON_RENDERER_URL;
-  return developmentUrl
-    ? window.loadURL(developmentUrl)
-    : window.loadURL("openbot-app://app/index.html");
+  return developmentUrl ? window.loadURL(developmentUrl) : window.loadURL("openbot-app://app/index.html");
 }
 
 function configureApplicationMenu(service: AgentService, updater: UpdateService): void {
@@ -733,9 +728,7 @@ function forwardHostStatus(status: import("@openbot/contracts/ipc").HostStatus):
   mainWindow.webContents.send(IPC_CHANNELS.hostEvent, status);
 }
 
-function forwardRemoteMacSessions(
-  sessions: import("@openbot/contracts/ipc").RemoteMacSession[],
-): void {
+function forwardRemoteMacSessions(sessions: import("@openbot/contracts/ipc").RemoteMacSession[]): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.remoteMacEvent, sessions);
 }
@@ -745,10 +738,7 @@ function forwardServers(servers: import("@openbot/contracts/ipc").ServerSummary[
   mainWindow.webContents.send(IPC_CHANNELS.serversEvent, servers);
 }
 
-function forwardTeamPresence(
-  serverId: string,
-  snapshot: import("@openbot/contracts/ipc").TeamPresenceSnapshot,
-): void {
+function forwardTeamPresence(serverId: string, snapshot: import("@openbot/contracts/ipc").TeamPresenceSnapshot): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.serversPresence, { serverId, snapshot });
 }
@@ -816,9 +806,7 @@ if (!hasSingleInstanceLock) {
   app.quit();
 } else {
   app.on("second-instance", (_event, argv) => {
-    const deepLink = argv.find(
-      (value) => value.startsWith("openbot://join?") || value.startsWith("openbot://update?"),
-    );
+    const deepLink = argv.find((value) => value.startsWith("openbot://join?") || value.startsWith("openbot://update?"));
     if (deepLink) acceptOpenbotUrl(deepLink);
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -830,6 +818,7 @@ if (!hasSingleInstanceLock) {
     .whenReady()
     .then(async () => {
       if (process.platform === "darwin") app.setAsDefaultProtocolClient("openbot");
+      if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
       configureContentSecurityPolicy();
       mainWindow = createWindow();
       centralAuthManager = new CentralAuthManager({
@@ -850,11 +839,7 @@ if (!hasSingleInstanceLock) {
       mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot, store.database);
       await mailboxStore.initialize();
       configureApplicationProtocol();
-      browserHost = new BrowserHost(
-        mainWindow,
-        store.downloadsRoot,
-        join(app.getPath("userData"), BROWSER_STATE_FILE),
-      );
+      browserHost = new BrowserHost(mainWindow, store.downloadsRoot, join(app.getPath("userData"), BROWSER_STATE_FILE));
       await browserHost.restore();
       const setupFile = join(app.getPath("userData"), SETUP_FILE);
       const setupState = await readSetupState(setupFile);
@@ -948,8 +933,7 @@ if (!hasSingleInstanceLock) {
         const updateUrl = pendingAddressUpdateUrl;
         pendingAddressUpdateUrl = null;
         void remoteServerManager.updateAddress(updateUrl).catch((error) => {
-          const message =
-            error instanceof Error ? error.message : "The server address was not updated.";
+          const message = error instanceof Error ? error.message : "The server address was not updated.";
           dialog.showErrorBox("OpenBot server update failed", message);
         });
       }
@@ -1006,9 +990,7 @@ if (!hasSingleInstanceLock) {
           enabledOnLaunch: teamIdentity?.enabledOnLaunch ?? false,
         })
       ) {
-        void host
-          .start()
-          .catch((error) => console.error("Unable to republish this OpenBot:", error));
+        void host.start().catch((error) => console.error("Unable to republish this OpenBot:", error));
       }
       void agentInitialization.start().catch((error) => {
         console.error("Unable to initialize the local agent backend:", error);
@@ -1053,9 +1035,7 @@ function readMacPermissions(): MacPermissionsState {
   }
   return {
     screenRecording: systemPreferences.getMediaAccessStatus("screen"),
-    accessibility: systemPreferences.isTrustedAccessibilityClient(false)
-      ? "granted"
-      : "not-determined",
+    accessibility: systemPreferences.isTrustedAccessibilityClient(false) ? "granted" : "not-determined",
   };
 }
 
@@ -1070,9 +1050,7 @@ async function requestMacPermission(permission: MacPermissionId): Promise<MacPer
   if (state === "not-determined") {
     await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } });
   } else if (state === "denied" || state === "unknown") {
-    await shell.openExternal(
-      "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
-    );
+    await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
   }
   return readMacPermissions();
 }
@@ -1115,33 +1093,20 @@ function routeUpdateBot(
           body: input,
         },
         serverId,
+        decodeBotSummary,
       );
 }
 
-function routeDeleteBot(
-  service: AgentService,
-  remoteServers: RemoteServerManager,
-  serverId: string,
-  botId: string,
-) {
+function routeDeleteBot(service: AgentService, remoteServers: RemoteServerManager, serverId: string, botId: string) {
   return serverId === "local"
     ? service.deleteBot(botId)
-    : remoteServers.request(
-        `/v1/agents/${encodeURIComponent(botId)}`,
-        { method: "DELETE" },
-        serverId,
-      );
+    : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}`, { method: "DELETE" }, serverId, decodeVoid);
 }
 
-function routeReadConversation(
-  service: AgentService,
-  remoteServers: RemoteServerManager,
-  serverId: string,
-  botId: string,
-) {
+function routeReadConversation(host: HostService, remoteServers: RemoteServerManager, serverId: string, botId: string) {
   return serverId === "local"
-    ? service.readConversation(botId)
-    : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/conversation`, {}, serverId);
+    ? host.readAgentConversation(botId)
+    : remoteServers.readAgentConversation(botId, serverId);
 }
 
 function routeSendMessage(
@@ -1159,25 +1124,17 @@ function routeSendMessage(
           body: input,
         },
         serverId,
+        decodeQueuedMessageReceipt,
       );
 }
 
-function routeListQueue(
-  service: AgentService,
-  remoteServers: RemoteServerManager,
-  serverId: string,
-  botId: string,
-) {
+function routeListQueue(service: AgentService, remoteServers: RemoteServerManager, serverId: string, botId: string) {
   return serverId === "local"
     ? service.listQueue(botId)
-    : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/queue`, {}, serverId);
+    : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/queue`, {}, serverId, decodeQueueSnapshot);
 }
 
-async function uploadRemotePaths(
-  remoteServers: RemoteServerManager,
-  serverId: string,
-  paths: string[],
-) {
+async function uploadRemotePaths(remoteServers: RemoteServerManager, serverId: string, paths: string[]) {
   if (paths.length > INPUT_LIMITS.attachments) {
     throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
   }
@@ -1195,9 +1152,7 @@ async function uploadRemotePaths(
     throw new Error("Attachments exceed the 250 MB total limit.");
   }
   return Promise.all(
-    files.map((file) =>
-      remoteServers.uploadAttachment(file.name, mimeTypeForName(file.name), file.bytes, serverId),
-    ),
+    files.map((file) => remoteServers.uploadAttachment(file.name, mimeTypeForName(file.name), file.bytes, serverId)),
   );
 }
 
@@ -1231,13 +1186,13 @@ async function uploadRemoteImports(
     throw new Error("Attachments exceed the 250 MB total limit.");
   }
   return Promise.all(
-    files.map((file) =>
-      remoteServers.uploadAttachment(file.name, file.mimeType, file.bytes, serverId),
-    ),
+    files.map((file) => remoteServers.uploadAttachment(file.name, file.mimeType, file.bytes, serverId)),
   );
 }
 
-function mimeTypeForName(name: string): string {
+function mimeTypeForName(
+  name: string,
+): "image/png" | "image/jpeg" | "image/gif" | "application/pdf" | "text/plain" | "application/octet-stream" {
   switch (extname(name).toLowerCase()) {
     case ".png":
       return "image/png";
@@ -1365,7 +1320,16 @@ function configureApplicationProtocol(): void {
   });
 }
 
-function applicationContentType(path: string): string {
+function applicationContentType(
+  path: string,
+):
+  | "text/html; charset=utf-8"
+  | "text/javascript; charset=utf-8"
+  | "text/css; charset=utf-8"
+  | "image/svg+xml"
+  | "image/png"
+  | "font/woff2"
+  | "application/octet-stream" {
   switch (extname(path).toLowerCase()) {
     case ".html":
       return "text/html; charset=utf-8";

@@ -1,10 +1,11 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.8/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.9/schema.json",
   "plugins": [
     "./tools/biome/anti-slop/rules/no-chained-type-assertions.grit",
     "./tools/biome/anti-slop/rules/no-conditional-empty-object-spread.grit",
     "./tools/biome/anti-slop/rules/no-known-value-widening.grit",
     "./tools/biome/anti-slop/rules/no-module-mocking.grit",
+    "./tools/biome/anti-slop/rules/no-object-parameters.grit",
     "./tools/biome/anti-slop/rules/no-reflect-apply.grit",
     "./tools/biome/anti-slop/rules/no-reflect-get.grit",
     "./tools/biome/anti-slop/rules/no-runtime-typeof.grit",
@@ -27,19 +28,36 @@
       "!**/.wrangler",
       "!**/routeTree.gen.ts",
       "!tools/biome/anti-slop",
-      "!coverage"
+      "!coverage",
+      "!.agents"
     ]
   },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
-    "lineWidth": 100
+    "lineWidth": 120
   },
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "recommended"
+      "preset": "recommended",
+      "complexity": {
+        "noBannedTypes": "error",
+        "noUselessTypeConstraint": "error"
+      },
+      "nursery": {
+        "noMisleadingReturnType": "error",
+        "noUnsafeTypeAssertion": "error",
+        "useReduceTypeParameter": "error"
+      },
+      "style": {
+        "noNonNullAssertion": "error",
+        "useAsConstAssertion": "error"
+      },
+      "suspicious": {
+        "noExplicitAny": "error"
+      }
     }
   },
   "assist": {

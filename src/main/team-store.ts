@@ -17,7 +17,7 @@ import type {
   TeamRole,
   TeamSessionSummary,
 } from "@openbot/contracts/ipc";
-import { isObjectValue, isString } from "@openbot/contracts/runtime-values";
+import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { normalizeEmailAddress, slugifyTeamServerName } from "@openbot/contracts/validation";
 
 const scrypt = promisify(scryptCallback);
@@ -99,7 +99,7 @@ export class TeamStore {
 
   async initialize(): Promise<void> {
     try {
-      const parsed = JSON.parse(await readFile(this.#path, "utf8")) as StoredTeam;
+      const parsed = JSON.parse(await readFile(this.#path, "utf8"));
       this.#state = isStoredTeam(parsed) ? parsed : null;
       if (this.#state) await this.#prune();
     } catch (error) {
@@ -132,14 +132,10 @@ export class TeamStore {
     }
   }
 
-  getIdentityProof(
-    challenge: string,
-  ): (TeamIdentity & { challenge: string; signature: string }) | null {
+  getIdentityProof(challenge: string): (TeamIdentity & { challenge: string; signature: string }) | null {
     const identity = this.getIdentity();
     if (!identity || !this.#state || !/^[A-Za-z0-9_-]{16,128}$/.test(challenge)) return null;
-    const signature = sign(null, Buffer.from(challenge), this.#state.privateKey).toString(
-      "base64url",
-    );
+    const signature = sign(null, Buffer.from(challenge), this.#state.privateKey).toString("base64url");
     return { ...identity, challenge, signature };
   }
 
@@ -177,7 +173,9 @@ export class TeamStore {
       sessions: [],
     };
     await this.#persist();
-    return this.getIdentity() as TeamIdentity;
+    const identity = this.getIdentity();
+    if (!identity) throw new Error("The team identity could not be created.");
+    return identity;
   }
 
   async configureWithAccount(serverName: string, user: CentralAuthUser): Promise<TeamIdentity> {
@@ -211,7 +209,9 @@ export class TeamStore {
       sessions: [],
     };
     await this.#persist();
-    return this.getIdentity() as TeamIdentity;
+    const identity = this.getIdentity();
+    if (!identity) throw new Error("The team identity could not be created.");
+    return identity;
   }
 
   async setEnabledOnLaunch(enabled: boolean): Promise<void> {
@@ -244,8 +244,7 @@ export class TeamStore {
     return state.sessions.map((session) => ({
       id: session.id,
       memberId: session.memberId,
-      username:
-        state.members.find((member) => member.id === session.memberId)?.username ?? "unknown",
+      username: state.members.find((member) => member.id === session.memberId)?.username ?? "unknown",
       createdAt: session.createdAt,
       expiresAt: session.expiresAt,
     }));
@@ -263,10 +262,7 @@ export class TeamStore {
     };
   }
 
-  async createInvite(
-    role: Exclude<TeamRole, "owner">,
-    emailInput?: string,
-  ): Promise<CreatedInvite> {
+  async createInvite(role: Exclude<TeamRole, "owner">, emailInput?: string): Promise<CreatedInvite> {
     if (role !== "admin" && role !== "member") throw new Error("Invalid invite role.");
     const state = this.#requireState();
     const activeInvites = state.invites.filter(
@@ -290,10 +286,7 @@ export class TeamStore {
     return { id: invite.id, role, token, expiresAt: invite.expiresAt, email };
   }
 
-  async acceptInviteWithAccount(
-    token: string,
-    user: CentralAuthUser,
-  ): Promise<AuthenticatedMember> {
+  async acceptInviteWithAccount(token: string, user: CentralAuthUser): Promise<AuthenticatedMember> {
     const state = this.#requireState();
     const email = normalizeEmail(user.email);
     if (state.members.some((member) => member.email === email || member.username === email)) {
@@ -328,8 +321,7 @@ export class TeamStore {
     const state = this.#requireState();
     const email = normalizeEmail(user.email);
     const member = state.members.find(
-      (candidate) =>
-        (candidate.email === email || candidate.username === email) && !candidate.disabled,
+      (candidate) => (candidate.email === email || candidate.username === email) && !candidate.disabled,
     );
     if (!member) throw new Error("This OpenBot account is not a member of the team.");
     member.email = email;
@@ -341,11 +333,7 @@ export class TeamStore {
     return result;
   }
 
-  async acceptInvite(
-    token: string,
-    username: string,
-    password: string,
-  ): Promise<AuthenticatedMember> {
+  async acceptInvite(token: string, username: string, password: string): Promise<AuthenticatedMember> {
     validateUsername(username);
     validatePassword(password);
     const state = this.#requireState();
@@ -394,23 +382,17 @@ export class TeamStore {
     if (!this.#state || !token) return null;
     const tokenHash = hashToken(token);
     const session = this.#state.sessions.find(
-      (candidate) =>
-        Date.parse(candidate.expiresAt) > Date.now() &&
-        safeTextEqual(candidate.tokenHash, tokenHash),
+      (candidate) => Date.parse(candidate.expiresAt) > Date.now() && safeTextEqual(candidate.tokenHash, tokenHash),
     );
     if (!session) return null;
-    const member = this.#state.members.find(
-      (candidate) => candidate.id === session.memberId && !candidate.disabled,
-    );
+    const member = this.#state.members.find((candidate) => candidate.id === session.memberId && !candidate.disabled);
     return member ? publicMember(member) : null;
   }
 
   async logout(token: string): Promise<void> {
     const state = this.#requireState();
     const tokenHash = hashToken(token);
-    state.sessions = state.sessions.filter(
-      (candidate) => !safeTextEqual(candidate.tokenHash, tokenHash),
-    );
+    state.sessions = state.sessions.filter((candidate) => !safeTextEqual(candidate.tokenHash, tokenHash));
     await this.#persist();
   }
 
@@ -471,9 +453,7 @@ export class TeamStore {
   async syncAccount(user: CentralAuthUser): Promise<boolean> {
     const state = this.#requireState();
     const email = normalizeEmail(user.email);
-    const member = state.members.find(
-      (candidate) => candidate.email === email || candidate.username === email,
-    );
+    const member = state.members.find((candidate) => candidate.email === email || candidate.username === email);
     if (!member) return false;
     const name = normalizeName(user.name);
     const avatarUrl = normalizeAvatarUrl(user.avatarUrl);
@@ -532,9 +512,7 @@ export class TeamStore {
   async #prune(): Promise<void> {
     if (!this.#state) return;
     const now = Date.now();
-    this.#state.sessions = this.#state.sessions.filter(
-      (session) => Date.parse(session.expiresAt) > now,
-    );
+    this.#state.sessions = this.#state.sessions.filter((session) => Date.parse(session.expiresAt) > now);
     this.#state.invites = this.#state.invites.filter(
       (invite) => invite.usedAt !== null || Date.parse(invite.expiresAt) > now,
     );
@@ -556,29 +534,27 @@ export function fingerprint(publicKey: string): string {
   return createHash("sha256").update(publicKey).digest("base64url");
 }
 
-export function addressUpdatePayload(
-  serverId: string,
-  apiUrl: string,
-  vncHostname: string | null,
-): string {
+export function addressUpdatePayload(serverId: string, apiUrl: string, vncHostname: string | null): string {
   return JSON.stringify({ version: 1, serverId, apiUrl, vncHostname });
 }
 
-async function hashPassword(
-  password: string,
-): Promise<{ passwordSalt: string; passwordHash: string }> {
+async function hashPassword(password: string): Promise<{ passwordSalt: string; passwordHash: string }> {
   const passwordSalt = randomBytes(16).toString("base64url");
-  const passwordHash = Buffer.from((await scrypt(password, passwordSalt, 64)) as Buffer).toString(
-    "base64url",
-  );
+  const passwordHash = Buffer.from(await derivePasswordBytes(password, passwordSalt)).toString("base64url");
   return { passwordSalt, passwordHash };
 }
 
 async function verifyPassword(password: string, member: StoredMember): Promise<boolean> {
   if (!member.passwordSalt || !member.passwordHash) return false;
-  const candidate = Buffer.from((await scrypt(password, member.passwordSalt, 64)) as Buffer);
+  const candidate = Buffer.from(await derivePasswordBytes(password, member.passwordSalt));
   const expected = Buffer.from(member.passwordHash, "base64url");
   return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+}
+
+async function derivePasswordBytes(password: string, salt: string): Promise<Uint8Array> {
+  const result = await scrypt(password, salt, 64);
+  if (!(result instanceof Uint8Array)) throw new Error("Password hashing returned invalid data.");
+  return result;
 }
 
 function hashToken(token: string): string {
@@ -628,13 +604,8 @@ function normalizeAvatarUrl(value: string | null): string | null {
 
 function validateServerName(value: string): void {
   const normalized = value.trim();
-  if (
-    normalized.length < INPUT_LIMITS.serverNameMin ||
-    normalized.length > INPUT_LIMITS.serverName
-  ) {
-    throw new Error(
-      `Server name must contain ${INPUT_LIMITS.serverNameMin} to ${INPUT_LIMITS.serverName} characters.`,
-    );
+  if (normalized.length < INPUT_LIMITS.serverNameMin || normalized.length > INPUT_LIMITS.serverName) {
+    throw new Error(`Server name must contain ${INPUT_LIMITS.serverNameMin} to ${INPUT_LIMITS.serverName} characters.`);
   }
   if (slugifyTeamServerName(normalized).length < INPUT_LIMITS.serverNameMin) {
     throw new Error("Server name must produce a valid public hostname.");
@@ -643,9 +614,7 @@ function validateServerName(value: string): void {
 
 function validateUsername(value: string): void {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{2,31}$/.test(value.trim())) {
-    throw new Error(
-      "Username must contain 3 to 32 letters, numbers, dots, dashes, or underscores.",
-    );
+    throw new Error("Username must contain 3 to 32 letters, numbers, dots, dashes, or underscores.");
   }
 }
 
@@ -656,8 +625,8 @@ function validatePassword(value: string): void {
 }
 
 function isStoredTeam(value: unknown): value is StoredTeam {
-  if (!value || !isObjectValue(value)) return false;
-  const record = value as Partial<StoredTeam>;
+  if (!isDynamicRecord(value)) return false;
+  const record = value;
   return (
     record.version === 1 &&
     isString(record.serverId) &&

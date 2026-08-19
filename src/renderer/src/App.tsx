@@ -15,6 +15,7 @@ import type {
   BrowserTab,
   CentralAuthState,
   ConversationMessage,
+  ConversationReadState,
   ConversationSnapshot,
   DirectConversationSnapshot,
   DirectMessage,
@@ -33,16 +34,7 @@ import type {
   UpdateBotInput,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  createStore,
-  flush,
-  onSettled,
-  Show,
-  type StoreSetter,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, createStore, flush, onSettled, Show } from "solid-js";
 import { AccountLogin } from "./components/AccountLogin";
 import { Conversation } from "./components/Conversation";
 import { DirectConversation } from "./components/DirectConversation";
@@ -112,46 +104,53 @@ const LEFT_PANEL_COLLAPSE_THRESHOLD = 210;
 const LEFT_PANEL_EXPAND_THRESHOLD = 220;
 const CONVERSATION_MIN_WIDTH = 424;
 
-interface StoredObject {
-  [key: string]: unknown;
+type StoredValue = BotProfile | BotMessage;
+type StoredSetter = (value: StoredValue) => void;
+
+const storeSetters = new WeakMap<object, StoredSetter>();
+
+function isBotProfile(value: StoredValue): value is BotProfile {
+  return "avatarSeed" in value;
 }
 
-const storeSetters = new WeakMap<object, StoreSetter<StoredObject>>();
-
-function createStored<T extends object>(value: T): T {
-  const [store, setStore] = createStore(value as StoredObject);
-  storeSetters.set(store, setStore);
-  return store as T;
-}
-
-function updateStored<T extends object>(store: T, value: T): void {
-  storeSetters.get(store)?.((draft) => {
-    Object.assign(draft, value as StoredObject);
+function createStoredProfile(value: BotProfile): BotProfile {
+  const initial = Object.assign({}, value);
+  const [store, setStore] = createStore(initial);
+  storeSetters.set(store, (next) => {
+    if (isBotProfile(next)) setStore(() => next);
   });
+  return store;
 }
 
-const ONBOARDING_PROFILES: Record<
-  string,
-  { role: string; description: string; firstMessage: string }
-> = {
+function createStoredMessage(value: BotMessage): BotMessage {
+  const initial = Object.assign({}, value);
+  const [store, setStore] = createStore(initial);
+  storeSetters.set(store, (next) => {
+    if (!isBotProfile(next)) setStore(() => next);
+  });
+  return store;
+}
+
+function updateStored(store: StoredValue, value: StoredValue): void {
+  storeSetters.get(store)?.(value);
+}
+
+const ONBOARDING_PROFILES: Record<string, { role: string; description: string; firstMessage: string }> = {
   "Work & projects": {
     role: "Work & projects",
     description:
       "Helps plan, organize, and execute ongoing work and projects while keeping priorities, next steps, and deliverables clear.",
-    firstMessage:
-      "Focus on my work and projects. Help me plan, organize, and execute them proactively.",
+    firstMessage: "Focus on my work and projects. Help me plan, organize, and execute them proactively.",
   },
   "Research & writing": {
     role: "Research & writing",
-    description:
-      "Researches topics, synthesizes reliable sources, and helps draft, edit, and refine clear writing.",
+    description: "Researches topics, synthesizes reliable sources, and helps draft, edit, and refine clear writing.",
     firstMessage:
       "Focus on research and writing. Help me investigate topics and turn the findings into clear, useful writing.",
   },
   "Sales & outreach": {
     role: "Sales & outreach",
-    description:
-      "Supports prospect research, sales preparation, personalized outreach, and organized follow-up work.",
+    description: "Supports prospect research, sales preparation, personalized outreach, and organized follow-up work.",
     firstMessage:
       "Focus on sales and outreach. Help me research prospects, prepare personalized outreach, and manage follow-ups.",
   },
@@ -164,11 +163,10 @@ export function App() {
   const [liveMessages, setLiveMessages] = createSignal<Record<string, BotMessage[]>>({});
   const [uiErrors, setUiErrors] = createSignal<Record<string, BotMessage[]>>({});
   const [conversationLoaded, setConversationLoaded] = createSignal<Record<string, boolean>>({});
-  const [conversationRevisions, setConversationRevisions] = createSignal<Record<string, number>>(
-    {},
-  );
+  const [conversationRevisions, setConversationRevisions] = createSignal<Record<string, number>>({});
   const [activeTurns, setActiveTurns] = createSignal<Record<string, string | null>>({});
   const [unreadReplies, setUnreadReplies] = createSignal<Record<string, number>>({});
+  const [conversationReads, setConversationReads] = createSignal<Record<string, ConversationReadState>>({});
   const [recentReplies, setRecentReplies] = createSignal<Record<string, boolean>>({});
   const [queues, setQueues] = createSignal<Record<string, QueueSnapshot>>({});
   const [browserTabs, setBrowserTabs] = createSignal<BrowserTab[]>([]);
@@ -186,12 +184,8 @@ export function App() {
     botId: string;
     nonce: number;
   } | null>(null);
-  const [pendingPrompts, setPendingPrompts] = createSignal<Record<string, PromptEvent | undefined>>(
-    {},
-  );
-  const [pendingApprovals, setPendingApprovals] = createSignal<
-    Record<string, AgentApproval | undefined>
-  >({});
+  const [pendingPrompts, setPendingPrompts] = createSignal<Record<string, PromptEvent | undefined>>({});
+  const [pendingApprovals, setPendingApprovals] = createSignal<Record<string, AgentApproval | undefined>>({});
   const [appInfo, setAppInfo] = createSignal<AppInfo | null>(null);
   const [agentStatus, setAgentStatus] = createSignal<AgentStatus>(FALLBACK_STATUS);
   const [accountUsage, setAccountUsage] = createSignal<AccountUsage | null>(null);
@@ -219,9 +213,7 @@ export function App() {
   const [teamSessions, setTeamSessions] = createSignal<TeamSessionSummary[]>([]);
   const [teamPresence, setTeamPresence] = createSignal<TeamPresenceSnapshot>(EMPTY_TEAM_PRESENCE);
   const [directThreads, setDirectThreads] = createSignal<DirectThreadSummary[]>([]);
-  const [directConversations, setDirectConversations] = createSignal<
-    Record<string, DirectConversationSnapshot>
-  >({});
+  const [directConversations, setDirectConversations] = createSignal<Record<string, DirectConversationSnapshot>>({});
   const [activeDirectMemberId, setActiveDirectMemberId] = createSignal<string | null>(null);
   const [directConversationLoading, setDirectConversationLoading] = createSignal(false);
   const [directConversationError, setDirectConversationError] = createSignal<string | null>(null);
@@ -262,21 +254,15 @@ export function App() {
     if (state.status !== "signed_in") return undefined;
     const email = state.user.email.trim().toLowerCase();
     return teamPresence().members.find(
-      (member) =>
-        member.email?.trim().toLowerCase() === email ||
-        member.username.trim().toLowerCase() === email,
+      (member) => member.email?.trim().toLowerCase() === email || member.username.trim().toLowerCase() === email,
     );
   });
   const directPeople = createMemo(() => {
     const currentMemberId = currentTeamMember()?.id;
     if (!currentMemberId) return [];
-    return teamPresence().members.filter(
-      (member) => member.id !== currentMemberId && !member.disabled,
-    );
+    return teamPresence().members.filter((member) => member.id !== currentMemberId && !member.disabled);
   });
-  const activeDirectMember = createMemo(() =>
-    directPeople().find((member) => member.id === activeDirectMemberId()),
-  );
+  const activeDirectMember = createMemo(() => directPeople().find((member) => member.id === activeDirectMemberId()));
   const activeBot = createMemo(() => {
     if (activeDirectMemberId()) return undefined;
     return botList().find((bot) => bot.id === activeBotId()) ?? botList()[0];
@@ -322,12 +308,8 @@ export function App() {
     const unsubscribeAuth = window.openbot.auth.onEvent((state) => {
       flush(() => setCentralAuth(state));
     });
-    const unsubscribeServers = window.openbot.servers.onEvent((value) =>
-      flush(() => setServers(value)),
-    );
-    const unsubscribePresence = window.openbot.servers.onPresence((snapshot) =>
-      flush(() => setTeamPresence(snapshot)),
-    );
+    const unsubscribeServers = window.openbot.servers.onEvent((value) => flush(() => setServers(value)));
+    const unsubscribePresence = window.openbot.servers.onPresence((snapshot) => flush(() => setTeamPresence(snapshot)));
     const unsubscribeDirectMessage = window.openbot.servers.onDirectMessage((event) =>
       flush(() => handleDirectMessageEvent(event)),
     );
@@ -340,9 +322,7 @@ export function App() {
         setJoinServerOpen(true);
       });
     });
-    const unsubscribeHost = window.openbot.host.onEvent((status) =>
-      flush(() => setHostStatus(status)),
-    );
+    const unsubscribeHost = window.openbot.host.onEvent((status) => flush(() => setHostStatus(status)));
     const unsubscribeRemoteMac = window.openbot.remoteMac.onEvent((sessions) =>
       flush(() => setRemoteMacSessions(sessions)),
     );
@@ -389,6 +369,7 @@ export function App() {
             name: "OpenBot",
             version: "unavailable",
             platform: "darwin",
+            variant: "production",
           }),
         ),
       window.openbot.agent
@@ -405,6 +386,10 @@ export function App() {
         .catch((error) => {
           setAgentStatus((current) => ({ ...current, message: String(error) }));
         }),
+      window.openbot.agent
+        .listConversationReads()
+        .then(applyConversationReads)
+        .catch(() => undefined),
     ]);
     void window.openbot.browser
       .listTabs()
@@ -441,12 +426,10 @@ export function App() {
     () => ({ botId: activeBotId(), agentPhase: agentStatus().phase }),
     ({ botId }) => {
       if (!botId) return;
-      void Promise.all([
-        window.openbot.agent.readConversation(botId),
-        window.openbot.agent.listQueue(botId),
-      ])
+      void Promise.all([window.openbot.agent.readConversation(botId), window.openbot.agent.listQueue(botId)])
         .then(([snapshot, queue]) => {
           setQueues((current) => ({ ...current, [botId]: queue }));
+          if (snapshot.readState) applyConversationReadState(botId, snapshot.readState);
           scheduleConversation(snapshot);
         })
         .catch((error) => appendUiError(botId, error, "Load failed"));
@@ -521,15 +504,23 @@ export function App() {
     const profiles = storedBots.map((stored) => {
       const next = toBotProfile(stored);
       const existing = currentById.get(next.id);
-      if (!existing) return createStored(next);
+      if (!existing) return createStoredProfile(next);
       if (!botProfilesEqual(existing, next)) updateStored(existing, next);
       return existing;
     });
     setBotList(profiles);
-    setActiveBotId((current) =>
-      profiles.some((bot) => bot.id === current) ? current : (profiles[0]?.id ?? ""),
-    );
+    setActiveBotId((current) => (profiles.some((bot) => bot.id === current) ? current : (profiles[0]?.id ?? "")));
     if (profiles.length === 0) setAgentPickerOpen(true);
+  }
+
+  function applyConversationReads(reads: Record<string, ConversationReadState>): void {
+    setConversationReads(reads);
+    setUnreadReplies(Object.fromEntries(Object.entries(reads).map(([botId, state]) => [botId, state.unreadCount])));
+  }
+
+  function applyConversationReadState(botId: string, state: ConversationReadState): void {
+    setConversationReads((current) => ({ ...current, [botId]: state }));
+    setUnreadReplies((current) => ({ ...current, [botId]: state.unreadCount }));
   }
 
   function scheduleConversation(snapshot: ConversationSnapshot) {
@@ -563,7 +554,7 @@ export function App() {
         streaming: true,
       });
     } else {
-      const message = createStored<BotMessage>({
+      const message = createStoredMessage({
         id: event.messageId,
         turnId: event.turnId,
         author: "bot",
@@ -577,6 +568,14 @@ export function App() {
         ...current,
         [event.botId]: [...(current[event.botId] ?? []), message],
       }));
+      const readState = conversationReads()[event.botId];
+      if (readState) {
+        applyConversationReadState(event.botId, {
+          ...readState,
+          unreadCount: readState.unreadCount + 1,
+          firstUnreadMessageId: readState.firstUnreadMessageId ?? event.messageId,
+        });
+      }
     }
     setConversationLoaded((current) => ({ ...current, [event.botId]: true }));
   }
@@ -595,14 +594,11 @@ export function App() {
       const mappedMessages = retainThinkingMessages(previous, toBotMessages(snapshot.messages));
       const next = mappedMessages.map((mapped) => {
         const existing = previousById.get(mapped.id);
-        if (!existing) return createStored({ ...mapped, animate: !initialLoad });
+        if (!existing) return createStoredMessage({ ...mapped, animate: !initialLoad });
         if (!botMessagesEqual(existing, mapped)) updateStored(existing, mapped);
         return existing;
       });
-      if (
-        previous.length === next.length &&
-        previous.every((message, index) => message === next[index])
-      ) {
+      if (previous.length === next.length && previous.every((message, index) => message === next[index])) {
         return current;
       }
       return { ...current, [botId]: next };
@@ -612,6 +608,10 @@ export function App() {
       ...current,
       [botId]: snapshot.activeTurnId,
     }));
+    const readState = conversationReads()[botId];
+    if (readState) {
+      applyConversationReadState(botId, readStateForMessages(readState, snapshot.messages));
+    }
   }
 
   async function createAgent() {
@@ -619,7 +619,7 @@ export function App() {
     setCreatingAgent(true);
     try {
       const stored = await window.openbot.agent.createBot();
-      const newAgent = createStored(toBotProfile(stored));
+      const newAgent = createStoredProfile(toBotProfile(stored));
       setBotList((current) => [newAgent, ...current.filter((item) => item.id !== newAgent.id)]);
       setLiveMessages((current) => ({ ...current, [newAgent.id]: [] }));
       setConversationLoaded((current) => ({ ...current, [newAgent.id]: true }));
@@ -638,9 +638,7 @@ export function App() {
   function openAgentPicker() {
     const directMemberId = activeDirectMemberId();
     if (directMemberId) {
-      void window.openbot.servers
-        .setDirectTyping({ memberId: directMemberId, typing: false })
-        .catch(() => undefined);
+      void window.openbot.servers.setDirectTyping({ memberId: directMemberId, typing: false }).catch(() => undefined);
     }
     setActiveDirectMemberId(null);
     setDirectConversationError(null);
@@ -651,9 +649,7 @@ export function App() {
     setAgentPickerOpen(false);
     const directMemberId = activeDirectMemberId();
     if (directMemberId) {
-      void window.openbot.servers
-        .setDirectTyping({ memberId: directMemberId, typing: false })
-        .catch(() => undefined);
+      void window.openbot.servers.setDirectTyping({ memberId: directMemberId, typing: false }).catch(() => undefined);
     }
     setActiveDirectMemberId(null);
     clearReplyIndicators(botId);
@@ -678,9 +674,7 @@ export function App() {
     setSettingsRequest(null);
     const previousMemberId = activeDirectMemberId();
     if (previousMemberId && previousMemberId !== memberId) {
-      void window.openbot.servers
-        .setDirectTyping({ memberId: previousMemberId, typing: false })
-        .catch(() => undefined);
+      void window.openbot.servers.setDirectTyping({ memberId: previousMemberId, typing: false }).catch(() => undefined);
     }
     setActiveDirectMemberId(memberId);
     setDirectConversationLoading(true);
@@ -693,20 +687,18 @@ export function App() {
         ...current,
         [memberId]: snapshot,
       }));
-      await window.openbot.servers.markDirectRead(memberId);
-      if (request !== directConversationRequest) return;
-      await refreshDirectThreads();
     } catch (error) {
       if (request !== directConversationRequest) return;
-      setDirectConversationError(
-        error instanceof Error ? error.message : "The messages could not load.",
-      );
+      setDirectConversationError(error instanceof Error ? error.message : "The messages could not load.");
     } finally {
       if (request === directConversationRequest) setDirectConversationLoading(false);
     }
   }
 
-  async function sendDirectMessage(text: string, clientMessageId: string): Promise<DirectMessage> {
+  async function sendDirectMessage(
+    text: string,
+    clientMessageId: string,
+  ): Promise<{ message: DirectMessage; readError?: string }> {
     const memberId = activeDirectMemberId();
     if (!memberId) throw new Error("Select a person first.");
     const message = await window.openbot.servers.sendDirectMessage({
@@ -715,8 +707,29 @@ export function App() {
       clientMessageId,
     });
     mergeDirectMessage(memberId, message);
+    let readError: string | undefined;
+    try {
+      await markDirectMessagesRead(memberId, message.sequence);
+    } catch (error) {
+      readError = error instanceof Error ? error.message : "Could not mark messages as read.";
+    }
     await refreshDirectThreads();
-    return message;
+    return { message, ...(readError ? { readError } : {}) };
+  }
+
+  async function markDirectMessagesRead(memberId = activeDirectMemberId(), throughSequence?: number): Promise<void> {
+    if (!memberId) return;
+    const snapshot = directConversations()[memberId];
+    const boundary = throughSequence ?? snapshot?.messages.at(-1)?.sequence ?? 0;
+    const readState = await window.openbot.servers.markDirectRead({
+      memberId,
+      throughSequence: boundary,
+    });
+    setDirectConversations((current) => {
+      const currentSnapshot = current[memberId];
+      return currentSnapshot ? { ...current, [memberId]: { ...currentSnapshot, readState } } : current;
+    });
+    await refreshDirectThreads();
   }
 
   function setDirectTyping(typing: boolean): void {
@@ -729,17 +742,9 @@ export function App() {
     const currentMemberId = currentTeamMember()?.id;
     if (!currentMemberId || !event.memberIds.includes(currentMemberId)) return;
     const otherMemberId =
-      event.message.senderMemberId === currentMemberId
-        ? event.message.recipientMemberId
-        : event.message.senderMemberId;
+      event.message.senderMemberId === currentMemberId ? event.message.recipientMemberId : event.message.senderMemberId;
     mergeDirectMessage(otherMemberId, event.message);
     void refreshDirectThreads();
-    if (activeDirectMemberId() === otherMemberId) {
-      void window.openbot.servers
-        .markDirectRead(otherMemberId)
-        .then(refreshDirectThreads)
-        .catch(() => undefined);
-    }
   }
 
   function handleDirectTypingEvent(event: DirectTypingRealtimeEvent): void {
@@ -759,29 +764,35 @@ export function App() {
         otherMemberId: memberId,
         messages: [],
         revision: 0,
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughSequence: 0 },
       };
       if (snapshot.messages.some((candidate) => candidate.id === message.id)) return current;
+      const readState = snapshot.readState ?? {
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughSequence: 0,
+      };
+      const incomingUnread =
+        message.senderMemberId !== currentTeamMember()?.id && message.sequence > readState.throughSequence;
       return {
         ...current,
         [memberId]: {
           ...snapshot,
-          messages: [...snapshot.messages, message].sort(
-            (left, right) => left.sequence - right.sequence,
-          ),
+          messages: [...snapshot.messages, message].sort((left, right) => left.sequence - right.sequence),
           revision: Math.max(snapshot.revision, message.sequence),
+          readState: incomingUnread
+            ? {
+                ...readState,
+                unreadCount: readState.unreadCount + 1,
+                firstUnreadMessageId: readState.firstUnreadMessageId ?? message.id,
+              }
+            : readState,
         },
       };
     });
   }
 
   function markReplyCompleted(botId: string) {
-    if (activeDirectMemberId() || activeBotId() !== botId) {
-      setUnreadReplies((current) => ({
-        ...current,
-        [botId]: Math.min(99, (current[botId] ?? 0) + 1),
-      }));
-      return;
-    }
     clearRecentReply(botId);
     setRecentReplies((current) => ({ ...current, [botId]: true }));
     recentReplyTimers.set(
@@ -802,7 +813,6 @@ export function App() {
 
   function clearReplyIndicators(botId: string) {
     clearRecentReply(botId);
-    setUnreadReplies((current) => (current[botId] ? { ...current, [botId]: 0 } : current));
   }
 
   function activateBrowserTab(tabId: string) {
@@ -822,7 +832,7 @@ export function App() {
       const next = toBotProfile(stored);
       setBotList((current) => {
         const existingIndex = current.findIndex((bot) => bot.id === botId);
-        if (existingIndex === -1) return [...current, createStored(next)];
+        if (existingIndex === -1) return [...current, createStoredProfile(next)];
         const existing = current[existingIndex];
         if (existing) updateStored(existing, next);
         return current;
@@ -839,7 +849,7 @@ export function App() {
       const next = toBotProfile(stored);
       setBotList((current) => {
         const existing = current.find((bot) => bot.id === botId);
-        if (!existing) return [...current, createStored(next)];
+        if (!existing) return [...current, createStoredProfile(next)];
         updateStored(existing, next);
         return current;
       });
@@ -867,6 +877,7 @@ export function App() {
       setConversationRevisions((current) => withoutBot(current, botId));
       setActiveTurns((current) => withoutBot(current, botId));
       setUnreadReplies((current) => withoutBot(current, botId));
+      setConversationReads((current) => withoutBot(current, botId));
       setRecentReplies((current) => withoutBot(current, botId));
       setQueues((current) => withoutBot(current, botId));
       setPendingPrompts((current) => withoutBot(current, botId));
@@ -896,18 +907,39 @@ export function App() {
     replyToMessageId: string | null = null,
   ): Promise<boolean> {
     try {
-      await window.openbot.agent.sendMessage({
+      const receipt = await window.openbot.agent.sendMessage({
         botId,
         text: body.trim(),
         attachmentDraftIds,
         ...(replyToMessageId ? { replyToMessageId } : {}),
       });
       setUiErrors((current) => ({ ...current, [botId]: [] }));
+      try {
+        await markAgentMessagesRead(botId, receipt.messageId);
+      } catch (error) {
+        appendUiError(botId, error, "Read state failed");
+      }
       return true;
     } catch (error) {
       appendUiError(botId, error, "Send failed");
       return false;
     }
+  }
+
+  async function markAgentMessagesRead(botId = activeBot()?.id, throughMessageId?: string | null): Promise<void> {
+    if (!botId) return;
+    const boundary =
+      throughMessageId ??
+      liveMessages()
+        [botId]?.filter((message) => !message.id.startsWith("thinking:") && !message.id.startsWith("ui-"))
+        .at(-1)?.id ??
+      null;
+    const state = await window.openbot.agent.markConversationRead({
+      botId,
+      throughMessageId: boundary,
+    });
+    applyConversationReadState(botId, state);
+    clearRecentReply(botId);
   }
 
   async function completeOnboarding(
@@ -1130,10 +1162,7 @@ export function App() {
       await window.openbot.update.install();
       return;
     }
-    const status =
-      phase === "available"
-        ? await window.openbot.update.download()
-        : await window.openbot.update.check();
+    const status = phase === "available" ? await window.openbot.update.download() : await window.openbot.update.check();
     setUpdateStatus(status);
   }
 
@@ -1154,10 +1183,13 @@ export function App() {
     setUiErrors({});
     setConversationLoaded({});
     setConversationRevisions({});
+    setConversationReads({});
+    setUnreadReplies({});
     setQueues({});
     setTeamPresence(EMPTY_TEAM_PRESENCE);
-    const [storedBots, status, models, tabs, controlState, presence] = await Promise.all([
+    const [storedBots, reads, status, models, tabs, controlState, presence] = await Promise.all([
       window.openbot.agent.listBots(),
+      window.openbot.agent.listConversationReads(),
       window.openbot.agent.getStatus(),
       window.openbot.agent.listModels(),
       window.openbot.browser.listTabs(),
@@ -1171,6 +1203,7 @@ export function App() {
     setBrowserControlState(controlState);
     setTeamPresence(presence);
     applyStoredBots(storedBots);
+    applyConversationReads(reads);
   }
 
   function setTeamTyping(botId: string, typing: boolean): void {
@@ -1184,16 +1217,11 @@ export function App() {
     setPendingInviteUrl("");
     setJoinServerOpen(false);
     await selectServer(
-      window.openbot
-        ? ((await window.openbot.servers.list()).find((item) => item.active)?.id ?? "local")
-        : "local",
+      window.openbot ? ((await window.openbot.servers.list()).find((item) => item.active)?.id ?? "local") : "local",
     );
   }
 
-  async function joinRemoteDuringSetup(
-    input: { inviteUrl: string },
-    provider: AgentProviderId,
-  ): Promise<void> {
+  async function joinRemoteDuringSetup(input: { inviteUrl: string }, provider: AgentProviderId): Promise<void> {
     await joinServer(input);
     await saveSetup(provider);
   }
@@ -1249,10 +1277,7 @@ export function App() {
     setHostStatus(await window.openbot.host.stop());
   }
 
-  async function createHostInvite(input: {
-    role: "admin" | "member";
-    email?: string;
-  }): Promise<InviteSummary> {
+  async function createHostInvite(input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
     const invite = await window.openbot.host.createInvite(input);
     await refreshHostManagement();
     return invite;
@@ -1291,10 +1316,7 @@ export function App() {
       hostname,
       serverId,
     });
-    setRemoteMacSessions((current) => [
-      ...current.filter((item) => item.id !== session.id),
-      session,
-    ]);
+    setRemoteMacSessions((current) => [...current.filter((item) => item.id !== session.id), session]);
   }
 
   async function disconnectRemoteMac(sessionId: string): Promise<void> {
@@ -1323,6 +1345,7 @@ export function App() {
         when={signedInAccount()}
         fallback={
           <AccountLogin
+            variant={appInfo()?.variant ?? "production"}
             state={centralAuth()}
             onRetry={retryCentralAccount}
             onRequestEmailCode={requestEmailCode}
@@ -1351,8 +1374,7 @@ export function App() {
                 "app-frame",
                 {
                   "app-frame-sidebar-compact": leftPanelCompact(),
-                  "app-frame-with-server-rail":
-                    appInfo()?.platform === "darwin" || appInfo()?.platform === "win32",
+                  "app-frame-with-server-rail": appInfo()?.platform === "darwin" || appInfo()?.platform === "win32",
                 },
               ]}
               style={`--left-panel-width: ${leftPanelCompact() ? LEFT_PANEL_COMPACT : leftPanelWidth()}px`}
@@ -1427,6 +1449,7 @@ export function App() {
                     loadError={directConversationError()}
                     typing={directTypingMemberIds().has(member.id)}
                     onSend={sendDirectMessage}
+                    onMarkRead={() => markDirectMessagesRead(member.id)}
                     onTypingChange={setDirectTyping}
                   />
                 )}
@@ -1438,9 +1461,11 @@ export function App() {
                   bots={botList()}
                   modelOptions={modelOptions()}
                   messages={activeMessages()}
-                  loaded={
-                    activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false
+                  unreadCount={activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.unreadCount ?? 0) : 0}
+                  firstUnreadMessageId={
+                    activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.firstUnreadMessageId ?? null) : null
                   }
+                  loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
                   queue={activeQueue()}
                   browserTabs={browserTabs()}
                   activeBrowserTabId={activeBrowserTabId()}
@@ -1463,6 +1488,7 @@ export function App() {
                   onUpdateBot={updateBot}
                   onSetAgentAvatar={setAgentAvatar}
                   onSendMessage={sendMessage}
+                  onMarkRead={() => markAgentMessagesRead()}
                   onTypingChange={setTeamTyping}
                   onCompleteOnboarding={completeOnboarding}
                   onAnswerPrompt={answerPrompt}
@@ -1571,6 +1597,7 @@ function toBotMessage(message: ConversationMessage): BotMessage {
     senderBotId: exchangeSenderId,
     replyToMessageId: message.replyToMessageId,
     attachments: message.attachments,
+    imageGeneration: message.imageGeneration,
     exchange: message.exchange,
     reaction: message.reaction,
     status: message.exchange
@@ -1619,6 +1646,20 @@ function toBotMessages(messages: ConversationMessage[]): BotMessage[] {
     result.push(thinking);
   }
   return result;
+}
+
+function readStateForMessages(state: ConversationReadState, messages: ConversationMessage[]): ConversationReadState {
+  const throughIndex = state.throughMessageId
+    ? messages.findIndex((message) => message.id === state.throughMessageId)
+    : -1;
+  const unread = messages
+    .slice(throughIndex + 1)
+    .filter((message) => message.author !== "user" && message.itemType !== "commentary");
+  return {
+    ...state,
+    unreadCount: unread.length,
+    firstUnreadMessageId: unread[0]?.id ?? null,
+  };
 }
 
 function cleanPreview(preview: string): string {
@@ -1671,18 +1712,12 @@ function retainThinkingMessages(previous: BotMessage[], next: BotMessage[]): Bot
   const nextIds = new Set(result.map((message) => message.id));
   for (const thinking of previous) {
     if (thinking.kind !== "thinking" || nextIds.has(thinking.id) || !thinking.turnId) continue;
-    const sameTurnIndexes = result.flatMap((message, index) =>
-      message.turnId === thinking.turnId ? [index] : [],
-    );
+    const sameTurnIndexes = result.flatMap((message, index) => (message.turnId === thinking.turnId ? [index] : []));
     if (sameTurnIndexes.length === 0) continue;
     const finalAnswerIndex = result.findIndex(
-      (message) =>
-        message.turnId === thinking.turnId &&
-        message.author === "bot" &&
-        message.kind !== "thinking",
+      (message) => message.turnId === thinking.turnId && message.author === "bot" && message.kind !== "thinking",
     );
-    const insertionIndex =
-      finalAnswerIndex >= 0 ? finalAnswerIndex : (sameTurnIndexes.at(-1) ?? result.length - 1) + 1;
+    const insertionIndex = finalAnswerIndex >= 0 ? finalAnswerIndex : (sameTurnIndexes.at(-1) ?? result.length - 1) + 1;
     result.splice(insertionIndex, 0, { ...thinking, streaming: false });
     nextIds.add(thinking.id);
   }

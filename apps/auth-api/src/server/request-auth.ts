@@ -6,10 +6,10 @@ import { D1TeamTunnelRepository } from "./d1-team-tunnel-repository";
 import { createEmailCodeDelivery, createTeamInviteEmailDelivery } from "./email-delivery";
 import { JsonBodyError } from "./json-body";
 import { TeamTunnelService } from "./team-tunnel-service";
-import type { TeamInviteEmailDelivery, WorkerBindings } from "./types";
+import { requireWorkerBindings, type TeamInviteEmailDelivery } from "./types";
 
 export function requestAuthService(): AuthService {
-  const bindings = env as unknown as WorkerBindings;
+  const bindings = requireWorkerBindings(env);
   const exposeDevelopmentCode = bindings.AUTH_EXPOSE_DEVELOPMENT_CODE === "true";
   return new AuthService({
     repository: new D1AuthRepository(bindings.DB),
@@ -19,15 +19,17 @@ export function requestAuthService(): AuthService {
 }
 
 export function requestAvatarBucket(): R2Bucket {
-  return (env as unknown as WorkerBindings).AVATARS;
+  const bindings = requireWorkerBindings(env);
+  return bindings.AVATARS;
 }
 
 export function requestTeamInviteEmailDelivery(): TeamInviteEmailDelivery | null {
-  return createTeamInviteEmailDelivery(env as unknown as WorkerBindings);
+  const bindings = requireWorkerBindings(env);
+  return createTeamInviteEmailDelivery(bindings);
 }
 
 export function requestTeamTunnelService(): TeamTunnelService | null {
-  const bindings = env as unknown as WorkerBindings;
+  const bindings = requireWorkerBindings(env);
   if (
     !bindings.CLOUDFLARE_ACCOUNT_ID ||
     !bindings.CLOUDFLARE_ZONE_ID ||
@@ -49,9 +51,7 @@ export function requestTeamTunnelService(): TeamTunnelService | null {
 
 export function requestSourceIp(request: Request): string {
   return (
-    request.headers.get("CF-Connecting-IP") ??
-    request.headers.get("X-Forwarded-For")?.split(",")[0] ??
-    "127.0.0.1"
+    request.headers.get("CF-Connecting-IP") ?? request.headers.get("X-Forwarded-For")?.split(",")[0] ?? "127.0.0.1"
   );
 }
 

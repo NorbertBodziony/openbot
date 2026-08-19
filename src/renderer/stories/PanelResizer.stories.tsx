@@ -54,11 +54,7 @@ export const CompactSnap: Story = {
     const [compact, setCompact] = createSignal(false);
     return (
       <div class="flex h-screen">
-        <aside
-          style={{ width: `${compact() ? 88 : width()}px` }}
-          class="sidebar"
-          aria-label="Snapping sidebar"
-        />
+        <aside style={{ width: `${compact() ? 88 : width()}px` }} class="sidebar" aria-label="Snapping sidebar" />
         <PanelResizer
           label="Resize snapping sidebar"
           controls="snapping-sidebar"

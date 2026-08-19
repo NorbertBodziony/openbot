@@ -105,6 +105,7 @@ workspaces, `~/.codex`, or `~/.claude`.
 | Command | Purpose |
 | --- | --- |
 | `bun run dev` | Start the Electron client with renderer HMR on its app profile. |
+| `bun run preview` | Preview the built Electron client with the green preview icon. |
 | `bun run api` | Start the TanStack Start API and its local D1 database on `127.0.0.1:3100`. |
 | `bun run api:start` | Build and preview the Cloudflare Worker locally. |
 | `bun run api:migrate:local` | Apply D1 migrations to the local development database. |

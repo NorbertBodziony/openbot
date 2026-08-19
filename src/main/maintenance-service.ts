@@ -54,11 +54,10 @@ export async function exportOpenBotData(
       conversations,
       queues,
     };
-    await writeFile(
-      join(exportRoot, "openbot-data.json"),
-      `${JSON.stringify(manifest, null, 2)}\n`,
-      { encoding: "utf8", mode: 0o600 },
-    );
+    await writeFile(join(exportRoot, "openbot-data.json"), `${JSON.stringify(manifest, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     for (const attachment of attachments) {
       const target = join(exportRoot, attachment.relativePath);
       await mkdir(dirname(target), { recursive: true, mode: 0o700 });
@@ -72,21 +71,12 @@ export async function exportOpenBotData(
         `Compress-Archive -LiteralPath '${powerShellLiteral(exportRoot)}' -DestinationPath '${powerShellLiteral(archiveCandidate)}' -Force`,
       ]);
     } else {
-      await execFileAsync("/usr/bin/ditto", [
-        "-c",
-        "-k",
-        "--keepParent",
-        exportRoot,
-        archiveCandidate,
-      ]);
+      await execFileAsync("/usr/bin/ditto", ["-c", "-k", "--keepParent", exportRoot, archiveCandidate]);
     }
     await rename(archiveCandidate, destination);
     return { saved: true };
   } finally {
-    await Promise.all([
-      rm(temporaryRoot, { recursive: true, force: true }),
-      rm(archiveCandidate, { force: true }),
-    ]);
+    await Promise.all([rm(temporaryRoot, { recursive: true, force: true }), rm(archiveCandidate, { force: true })]);
   }
 }
 
@@ -112,12 +102,10 @@ export async function exportDiagnostics(
       botId: bot.id,
       paused: queue.paused,
       deliveries: Object.fromEntries(
-        ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"].map(
-          (deliveryStatus) => [
-            deliveryStatus,
-            queue.deliveries.filter((delivery) => delivery.status === deliveryStatus).length,
-          ],
-        ),
+        ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"].map((deliveryStatus) => [
+          deliveryStatus,
+          queue.deliveries.filter((delivery) => delivery.status === deliveryStatus).length,
+        ]),
       ),
     };
   });

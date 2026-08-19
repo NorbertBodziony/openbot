@@ -5,10 +5,7 @@ export interface AgentNotificationContent {
   body: string;
 }
 
-export function notificationForAgentEvent(
-  event: AgentEvent,
-  bots: BotSummary[],
-): AgentNotificationContent | null {
+export function notificationForAgentEvent(event: AgentEvent, bots: BotSummary[]): AgentNotificationContent | null {
   if (event.type !== "turn-completed" && event.type !== "prompt" && event.type !== "approval") {
     return null;
   }

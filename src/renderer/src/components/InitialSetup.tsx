@@ -9,16 +9,7 @@ import type {
   MacPermissionId,
   MacPermissionsState,
 } from "@openbot/contracts/ipc";
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  flush,
-  onCleanup,
-  Show,
-  untrack,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, For, flush, onCleanup, Show, untrack } from "solid-js";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 
 interface InitialSetupProps {
@@ -63,9 +54,7 @@ const EMPTY_PERMISSIONS: MacPermissionsState = {
 };
 
 export function InitialSetup(props: InitialSetupProps) {
-  const [route, setRoute] = createSignal<SetupRoute | null>(
-    untrack(() => (props.reviewing ? "local" : null)),
-  );
+  const [route, setRoute] = createSignal<SetupRoute | null>(untrack(() => (props.reviewing ? "local" : null)));
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(
     untrack(() => props.state.preferredProvider),
   );
@@ -86,9 +75,7 @@ export function InitialSetup(props: InitialSetupProps) {
       };
     }),
   );
-  const availableProviders = createMemo(() =>
-    providerOptions().filter((provider) => provider.state === "available"),
-  );
+  const availableProviders = createMemo(() => providerOptions().filter((provider) => provider.state === "available"));
 
   createEffect(
     () => ({
@@ -224,11 +211,7 @@ export function InitialSetup(props: InitialSetupProps) {
               <i aria-hidden="true" />
               {props.accountEmail}
             </span>
-            <button
-              type="button"
-              class="initial-setup-signout"
-              onClick={() => void props.onLogout()}
-            >
+            <button type="button" class="initial-setup-signout" onClick={() => void props.onLogout()}>
               Sign out
             </button>
           </div>
@@ -259,11 +242,7 @@ export function InitialSetup(props: InitialSetupProps) {
               </button>
             </li>
             <li>
-              <button
-                type="button"
-                class="setup-route-button"
-                onClick={() => chooseRoute("remote")}
-              >
+              <button type="button" class="setup-route-button" onClick={() => chooseRoute("remote")}>
                 <span class="setup-route-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24">
                     <title>Remote host</title>
@@ -317,20 +296,11 @@ export function InitialSetup(props: InitialSetupProps) {
                           </span>
                           <button
                             type="button"
-                            class={[
-                              "mac-permission-action",
-                              { "mac-permission-allowed": state() === "granted" },
-                            ]}
-                            disabled={
-                              permissionBusy() !== null ||
-                              state() === "granted" ||
-                              state() === "restricted"
-                            }
+                            class={["mac-permission-action", { "mac-permission-allowed": state() === "granted" }]}
+                            disabled={permissionBusy() !== null || state() === "granted" || state() === "restricted"}
                             onClick={() => void requestPermission(permission.id)}
                           >
-                            {permissionBusy() === permission.id
-                              ? "Checking…"
-                              : permissionLabel(state())}
+                            {permissionBusy() === permission.id ? "Checking…" : permissionLabel(state())}
                           </button>
                         </div>
                       );
@@ -364,8 +334,8 @@ export function InitialSetup(props: InitialSetupProps) {
               />
             </label>
             <p class="setup-remote-note">
-              You will join as <strong>{props.accountEmail}</strong>. Email invitations only work
-              for the address that received them.
+              You will join as <strong>{props.accountEmail}</strong>. Email invitations only work for the address that
+              received them.
             </p>
           </form>
         </Show>
@@ -424,19 +394,19 @@ function permissionState(
   permissions: MacPermissionsState,
   permission: MacPermissionId,
 ): MacPermissionsState["screenRecording"] {
-  return permission === "screen-recording"
-    ? permissions.screenRecording
-    : permissions.accessibility;
+  return permission === "screen-recording" ? permissions.screenRecording : permissions.accessibility;
 }
 
-function permissionLabel(state: MacPermissionsState["screenRecording"]): string {
+function permissionLabel(
+  state: MacPermissionsState["screenRecording"],
+): "Allowed" | "Open Settings" | "Restricted" | "Allow" {
   if (state === "granted") return "Allowed";
   if (state === "denied" || state === "unknown") return "Open Settings";
   if (state === "restricted") return "Restricted";
   return "Allow";
 }
 
-function providerName(provider: AgentProviderId | null): string {
+function providerName(provider: AgentProviderId | null): "Claude" | "Codex" {
   return provider === "claude" ? "Claude" : "Codex";
 }
 

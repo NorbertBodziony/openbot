@@ -1,11 +1,13 @@
 import type { AgentProviderId, AvatarImageInput } from "./ipc-conversation";
 
 export type DesktopPlatform = "darwin" | "win32" | "linux";
+export type AppVariant = "production" | "dev" | "preview";
 
 export interface AppInfo {
   name: string;
   version: string;
   platform: DesktopPlatform;
+  variant: AppVariant;
 }
 
 export type UpdatePhase =

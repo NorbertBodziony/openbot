@@ -1,10 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type {
-  DirectConversationSnapshot,
-  DirectMessage,
-  TeamPresenceMember,
-} from "@openbot/contracts/ipc";
+import type { DirectConversationSnapshot, DirectMessage, TeamPresenceMember } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { scrollToUnreadBoundary, UnreadMessagesBanner, UnreadMessagesDivider } from "./conversation/UnreadMessages";
 import { TeamPersonAvatar, teamMemberName } from "./TeamPersonAvatar";
 import { TypingDots } from "./TypingDots";
 
@@ -15,7 +12,8 @@ interface DirectConversationProps {
   loading: boolean;
   loadError: string | null;
   typing: boolean;
-  onSend: (text: string, clientMessageId: string) => Promise<DirectMessage>;
+  onSend: (text: string, clientMessageId: string) => Promise<{ message: DirectMessage; readError?: string }>;
+  onMarkRead: () => Promise<void>;
   onTypingChange: (typing: boolean) => void;
 }
 
@@ -23,11 +21,14 @@ export function DirectConversation(props: DirectConversationProps) {
   const [text, setText] = createSignal("");
   const [sending, setSending] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [markingRead, setMarkingRead] = createSignal(false);
   let messageList: HTMLDivElement | undefined;
+  let unreadMessagesDivider: HTMLDivElement | undefined;
   let typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
 
   createEffect(
-    () => [props.snapshot?.revision, props.snapshot?.messages.length],
+    () =>
+      `${props.snapshot?.threadId ?? "none"}:${props.snapshot?.revision ?? -1}:${props.snapshot?.messages.length ?? 0}`,
     () => {
       requestAnimationFrame(() => {
         if (messageList) messageList.scrollTop = messageList.scrollHeight;
@@ -59,8 +60,9 @@ export function DirectConversation(props: DirectConversationProps) {
     setSending(true);
     setError(null);
     try {
-      await props.onSend(body, crypto.randomUUID());
+      const result = await props.onSend(body, crypto.randomUUID());
       setText("");
+      if (result.readError) setError(result.readError);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "The message was not sent.");
     } finally {
@@ -68,11 +70,37 @@ export function DirectConversation(props: DirectConversationProps) {
     }
   }
 
+  async function markUnreadMessages(): Promise<void> {
+    if (markingRead()) return;
+    setMarkingRead(true);
+    setError(null);
+    try {
+      await props.onMarkRead();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not mark messages as read.");
+    } finally {
+      setMarkingRead(false);
+    }
+  }
+
+  function jumpToUnreadMessages(): void {
+    if (!messageList || !unreadMessagesDivider) return;
+    const divider = unreadMessagesDivider;
+    const firstUnreadMessage = divider.nextElementSibling instanceof HTMLElement ? divider.nextElementSibling : divider;
+    scrollToUnreadBoundary(messageList, firstUnreadMessage);
+    void markUnreadMessages().then(() => {
+      requestAnimationFrame(() => {
+        if (!messageList) return;
+        const settledBoundary = divider.isConnected ? divider : firstUnreadMessage;
+        if (settledBoundary.isConnected) {
+          scrollToUnreadBoundary(messageList, settledBoundary, "auto");
+        }
+      });
+    });
+  }
+
   return (
-    <main
-      class="direct-conversation"
-      aria-label={`Direct conversation with ${teamMemberName(props.member)}`}
-    >
+    <main class="direct-conversation" aria-label={`Direct conversation with ${teamMemberName(props.member)}`}>
       <header class="window-drag direct-conversation-header">
         <div class="direct-conversation-person no-drag">
           <TeamPersonAvatar member={props.member} />
@@ -89,11 +117,17 @@ export function DirectConversation(props: DirectConversationProps) {
         </span>
       </header>
 
+      <Show when={(props.snapshot?.readState?.unreadCount ?? 0) > 0}>
+        <UnreadMessagesBanner
+          count={props.snapshot?.readState?.unreadCount ?? 0}
+          busy={markingRead()}
+          onJumpToUnread={jumpToUnreadMessages}
+          onMarkRead={() => void markUnreadMessages()}
+        />
+      </Show>
+
       <div ref={(element) => (messageList = element)} class="direct-message-list" role="log">
-        <Show
-          when={!props.loading}
-          fallback={<div class="direct-conversation-state">Loading messages…</div>}
-        >
+        <Show when={!props.loading} fallback={<div class="direct-conversation-state">Loading messages…</div>}>
           <Show
             when={!props.loadError}
             fallback={
@@ -119,18 +153,23 @@ export function DirectConversation(props: DirectConversationProps) {
                   const previous = () => props.snapshot?.messages[index() - 1];
                   const grouped = () => previous()?.senderMemberId === message.senderMemberId;
                   return (
-                    <article
-                      class={["direct-message", { own: own(), grouped: grouped() }]}
-                      aria-label={`${own() ? "You" : teamMemberName(props.member)} at ${messageTime(message.createdAt)}`}
-                    >
-                      <Show when={!own() && !grouped()}>
-                        <TeamPersonAvatar member={props.member} />
+                    <>
+                      <Show when={message.id === props.snapshot?.readState?.firstUnreadMessageId}>
+                        <UnreadMessagesDivider elementRef={(element) => (unreadMessagesDivider = element)} />
                       </Show>
-                      <div>
-                        <p>{message.text}</p>
-                        <time datetime={message.createdAt}>{messageTime(message.createdAt)}</time>
-                      </div>
-                    </article>
+                      <article
+                        class={["direct-message", { own: own(), grouped: grouped() }]}
+                        aria-label={`${own() ? "You" : teamMemberName(props.member)} at ${messageTime(message.createdAt)}`}
+                      >
+                        <Show when={!own() && !grouped()}>
+                          <TeamPersonAvatar member={props.member} />
+                        </Show>
+                        <div>
+                          <p>{message.text}</p>
+                          <time datetime={message.createdAt}>{messageTime(message.createdAt)}</time>
+                        </div>
+                      </article>
+                    </>
                   );
                 }}
               </For>

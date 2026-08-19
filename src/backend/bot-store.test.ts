@@ -101,9 +101,7 @@ describe("BotStore", () => {
     expect(restored.list()[0]?.threadId).toBe("openbot-thread-chief");
     expect(restored.activeProviderSession("chief")?.externalSessionId).toBe("native-codex-thread");
     await expect(readFile(statePath, "utf8")).resolves.toContain('"version": 1');
-    await expect(
-      readFile(join(userData, "legacy-backup-v1", "bots.json"), "utf8"),
-    ).resolves.toContain('"version": 1');
+    await expect(readFile(join(userData, "legacy-backup-v1", "bots.json"), "utf8")).resolves.toContain('"version": 1');
   });
 
   it("imports a version 2 agent file without changing the legacy source", async () => {
@@ -138,13 +136,9 @@ describe("BotStore", () => {
     const store = new BotStore(userData, join(root, "home"));
     await store.initialize();
 
-    expect(store.list()).toMatchObject([
-      { id: "writer", model: "claude-sonnet-5", threadId: null, avatarHue: 215 },
-    ]);
+    expect(store.list()).toMatchObject([{ id: "writer", model: "claude-sonnet-5", threadId: null, avatarHue: 215 }]);
     await expect(readFile(statePath, "utf8")).resolves.toBe(source);
-    await expect(readFile(join(userData, "legacy-backup-v1", "bots.json"), "utf8")).resolves.toBe(
-      source,
-    );
+    await expect(readFile(join(userData, "legacy-backup-v1", "bots.json"), "utf8")).resolves.toBe(source);
   });
 
   it("creates unique new agents at the top of the persistent list", async () => {
@@ -291,9 +285,9 @@ describe("BotStore", () => {
     await store.initialize();
     await store.getOrCreate("chief");
 
-    await expect(
-      store.updateBot({ botId: "chief", name: "x".repeat(INPUT_LIMITS.agentName + 1) }),
-    ).rejects.toThrow("Agent name is too long");
+    await expect(store.updateBot({ botId: "chief", name: "x".repeat(INPUT_LIMITS.agentName + 1) })).rejects.toThrow(
+      "Agent name is too long",
+    );
     await expect(
       store.updateBot({
         botId: "chief",

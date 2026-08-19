@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import type { AgentProviderId, AppSetupState } from "@openbot/contracts/ipc";
-import { isString } from "@openbot/contracts/runtime-values";
+import { isDynamicRecord, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
 
 interface StoredSetup {
   version: 2;
@@ -12,10 +12,12 @@ const EMPTY_SETUP: AppSetupState = { completed: false, preferredProvider: null }
 
 export async function readSetupState(path: string): Promise<AppSetupState> {
   try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as Partial<StoredSetup>;
+    const parsed = JSON.parse(await readFile(path, "utf8"));
     if (
+      !isDynamicRecord(parsed) ||
+      !isNumber(parsed.version) ||
       parsed.version !== 2 ||
-      (parsed.preferredProvider !== "codex" && parsed.preferredProvider !== "claude") ||
+      !isOneOf(["codex", "claude"] as const, parsed.preferredProvider) ||
       !isString(parsed.completedAt)
     ) {
       return { ...EMPTY_SETUP };
@@ -27,10 +29,7 @@ export async function readSetupState(path: string): Promise<AppSetupState> {
   }
 }
 
-export async function writeSetupState(
-  path: string,
-  preferredProvider: AgentProviderId,
-): Promise<AppSetupState> {
+export async function writeSetupState(path: string, preferredProvider: AgentProviderId): Promise<AppSetupState> {
   const stored: StoredSetup = {
     version: 2,
     preferredProvider,

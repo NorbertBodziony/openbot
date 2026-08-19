@@ -165,18 +165,18 @@ export const STORY_USAGE: AccountUsage = {
 
 export const STORY_ATTACHMENTS: AttachmentSummary[] = [
   {
-    id: "attachment-brief",
-    name: "project-brief.pdf",
-    size: 1_842_176,
+    id: "attachment-start-types",
+    name: "start-types.d.ts",
+    size: 6_144,
     kind: "file",
-    mimeType: "application/pdf",
-    previewKind: "pdf",
+    mimeType: "text/plain",
+    previewKind: "text",
     previewUrl: null,
   },
   {
-    id: "attachment-notes",
-    name: "meeting-notes.txt",
-    size: 18_432,
+    id: "attachment-agents",
+    name: "AGENTS.md",
+    size: 2_048,
     kind: "file",
     mimeType: "text/plain",
     previewKind: "text",
@@ -331,6 +331,11 @@ export const STORY_DIRECT_SNAPSHOTS: Record<string, DirectConversationSnapshot> 
     threadId: "direct-alice",
     otherMemberId: "member-alice",
     revision: 1,
+    readState: {
+      unreadCount: 1,
+      firstUnreadMessageId: "direct-message-alice",
+      throughSequence: 1,
+    },
     messages: [
       {
         id: "direct-message-hello",
@@ -464,6 +469,7 @@ export const STORY_APP_INFO = {
   name: "OpenBot",
   version: "0.1.11",
   platform: "darwin" as const,
+  variant: "production" as const,
 };
 
 export function toConversationMessage(message: BotMessage): ConversationMessage {

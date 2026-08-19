@@ -77,9 +77,7 @@ describe("isTeamRealtimeEvent", () => {
         },
       }),
     ).toBe(false);
-    expect(isTeamRealtimeEvent({ type: "team-direct-message", message: {}, memberIds: [] })).toBe(
-      false,
-    );
+    expect(isTeamRealtimeEvent({ type: "team-direct-message", message: {}, memberIds: [] })).toBe(false);
     expect(
       isTeamRealtimeEvent({
         type: "team-direct-message",

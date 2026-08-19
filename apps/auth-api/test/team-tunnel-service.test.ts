@@ -18,9 +18,7 @@ class MemoryTeamTunnelRepository implements TeamTunnelRepository {
   record: TeamTunnelRecord | null = null;
   hostnameConflicts = 0;
 
-  async claim(
-    input: Omit<TeamTunnelRecord, "tunnelId" | "status"> & { now: number },
-  ): Promise<TeamTunnelRecord> {
+  async claim(input: Omit<TeamTunnelRecord, "tunnelId" | "status"> & { now: number }): Promise<TeamTunnelRecord> {
     if (this.hostnameConflicts > 0) {
       this.hostnameConflicts -= 1;
       throw new TeamTunnelClaimConflict();
@@ -112,9 +110,10 @@ describe("TeamTunnelService", () => {
       provider: fakeProvider(),
       domain: "openbot.run",
     });
-    await expect(
-      service.provision({ user, serverId, serverName: "Studio Mac" }),
-    ).rejects.toMatchObject({ code: "team_tunnel_owner_mismatch", status: 403 });
+    await expect(service.provision({ user, serverId, serverName: "Studio Mac" })).rejects.toMatchObject({
+      code: "team_tunnel_owner_mismatch",
+      status: 403,
+    });
   });
 
   it("allows one team server per OpenBot account", async () => {
@@ -123,9 +122,9 @@ describe("TeamTunnelService", () => {
     const service = new TeamTunnelService({ repository, provider, domain: "openbot.run" });
     await service.provision({ user, serverId, serverName: "Studio Mac" });
 
-    await expect(
-      service.provision({ user, serverId: secondServerId, serverName: "Second Mac" }),
-    ).rejects.toMatchObject({ code: "team_server_limit_reached", status: 409 });
+    await expect(service.provision({ user, serverId: secondServerId, serverName: "Second Mac" })).rejects.toMatchObject(
+      { code: "team_server_limit_reached", status: 409 },
+    );
     expect(provider.createTunnel).toHaveBeenCalledTimes(1);
   });
 
@@ -141,9 +140,7 @@ describe("TeamTunnelService", () => {
       randomSuffix: () => suffixes.shift() ?? "cccccccc",
     });
 
-    await expect(
-      service.provision({ user, serverId, serverName: "Studio Mac" }),
-    ).resolves.toMatchObject({
+    await expect(service.provision({ user, serverId, serverName: "Studio Mac" })).resolves.toMatchObject({
       apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
       vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
     });
@@ -180,9 +177,8 @@ describe("TeamTunnelService", () => {
 
 describe("CloudflareTunnelProvider", () => {
   it("configures authenticated API ingress and closes raw VNC ingress", async () => {
-    const requests: Array<{ path: string; method: string; body: unknown; auth: string | null }> =
-      [];
-    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const requests: Array<{ path: string; method: string; body: unknown; auth: string | null }> = [];
+    const fetchMock: typeof fetch = async (input, init) => {
       const url = new URL(input.toString());
       const method = init?.method ?? "GET";
       requests.push({
@@ -198,12 +194,12 @@ describe("CloudflareTunnelProvider", () => {
         return Response.json({ success: true, result: [] });
       }
       return Response.json({ success: true, result: {} });
-    });
+    };
     const provider = new CloudflareTunnelProvider({
       accountId: "a".repeat(32),
       zoneId: "b".repeat(32),
       apiToken: "secret",
-      fetch: fetchMock as unknown as typeof fetch,
+      fetch: fetchMock,
     });
     await provider.configureTunnel({
       tunnelId,
@@ -231,9 +227,7 @@ describe("CloudflareTunnelProvider", () => {
         ],
       },
     });
-    expect(requests.some((request) => request.method === "POST" && request.body !== null)).toBe(
-      true,
-    );
+    expect(requests.some((request) => request.method === "POST" && request.body !== null)).toBe(true);
     expect(requests.every((request) => request.auth === "Bearer secret")).toBe(true);
   });
 });

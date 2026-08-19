@@ -70,11 +70,7 @@ export function avatarCandidateSeeds(botId: string, currentSeed: string, batch: 
   return candidates;
 }
 
-export function buildAnimatedAvatarSvg(
-  seed: string,
-  hue: BotAvatarHue | null,
-  motion: AvatarMotion = "hover",
-): string {
+export function buildAnimatedAvatarSvg(seed: string, hue: BotAvatarHue | null, motion: AvatarMotion = "hover"): string {
   const svgMarkup = blobatar(seed, hue === null ? undefined : { hue });
   const document = new DOMParser().parseFromString(svgMarkup, "image/svg+xml");
   const svg = document.documentElement;

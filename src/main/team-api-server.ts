@@ -4,11 +4,7 @@ import { createRequire } from "node:module";
 import { createConnection, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { isAvatarMimeType } from "@openbot/contracts/avatar-images";
-import {
-  ATTACHMENT_LIMITS,
-  AVATAR_IMAGE_LIMITS,
-  INPUT_LIMITS,
-} from "@openbot/contracts/input-limits";
+import { ATTACHMENT_LIMITS, AVATAR_IMAGE_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   type AgentEvent,
   type CentralAuthUser,
@@ -31,13 +27,7 @@ import {
   type UpdateBotInput,
   type UpdateQueuedMessageInput,
 } from "@openbot/contracts/ipc";
-import {
-  type DynamicRecord,
-  isBoolean,
-  isDynamicRecord,
-  isNumber,
-  isString,
-} from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
@@ -48,15 +38,50 @@ import type { TeamStore } from "./team-store";
 const JSON_LIMIT = 1024 * 1024;
 const TYPING_TIMEOUT_MS = 5_000;
 const requireModule = createRequire(import.meta.url);
-const webSockets = requireModule(
-  join(dirname(requireModule.resolve("ws/package.json")), "index.js"),
-) as typeof Ws;
+const webSockets: typeof Ws = requireModule(join(dirname(requireModule.resolve("ws/package.json")), "index.js"));
+
+type TeamApiAgentMethods = Pick<
+  AgentService,
+  | "getStatus"
+  | "getUsage"
+  | "listModels"
+  | "listBots"
+  | "listConversationReads"
+  | "createBot"
+  | "updateBot"
+  | "deleteBot"
+  | "setAvatar"
+  | "resolveAvatar"
+  | "readConversationFor"
+  | "markConversationRead"
+  | "prepareImportedAttachments"
+  | "discardDraftAttachment"
+  | "sendMessage"
+  | "listQueue"
+  | "setMessageReaction"
+  | "cancelQueuedMessage"
+  | "setQueuePaused"
+  | "steerQueuedMessage"
+  | "updateQueuedMessage"
+  | "reorderQueue"
+  | "interrupt"
+  | "respondToPrompt"
+  | "respondToApproval"
+>;
+
+type TeamApiAgents = TeamApiAgentMethods & {
+  on: (event: "event", listener: (event: AgentEvent) => void) => void;
+  off: (event: "event", listener: (event: AgentEvent) => void) => void;
+};
+
+type TeamApiMailbox = Pick<MailboxStore, "resolveAttachment">;
+type TeamApiBrowser = Pick<BrowserHost, "listTabs" | "getControlState" | "open" | "activate" | "close" | "setVisible">;
 
 interface TeamApiOptions {
   store: TeamStore;
-  agents: AgentService;
-  mailbox: MailboxStore;
-  browser: BrowserHost;
+  agents: TeamApiAgents;
+  mailbox: TeamApiMailbox;
+  browser: TeamApiBrowser;
   getRemoteMac: () => { hostname: string | null; online: boolean };
   getRemoteDesktopPassword?: () => string | null;
   remoteDesktopPort?: number;
@@ -113,9 +138,7 @@ export class TeamApiServer {
     this.#server = createServer((request, response) => void this.#handle(request, response));
     this.#server.on("upgrade", (request, socket, head) => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      const protocols = (request.headers["sec-websocket-protocol"] ?? "")
-        .split(",")
-        .map((value) => value.trim());
+      const protocols = (request.headers["sec-websocket-protocol"] ?? "").split(",").map((value) => value.trim());
       const encodedToken = protocols.find((value) => value.startsWith("openbot-token."));
       const token = encodedToken?.slice("openbot-token.".length) ?? "";
       const member = token.length <= 512 ? this.#options.store.authenticate(token) : null;
@@ -205,13 +228,10 @@ export class TeamApiServer {
     return {
       serverId: identity.serverId,
       members: this.#options.store.listMembers().map((member) => {
-        const memberConnections = connections.filter(
-          (connection) => connection.memberId === member.id,
-        );
+        const memberConnections = connections.filter((connection) => connection.memberId === member.id);
         return {
           ...member,
-          online:
-            memberConnections.length > 0 || (member.id === owner?.id && this.#server !== null),
+          online: memberConnections.length > 0 || (member.id === owner?.id && this.#server !== null),
           typingBotId:
             (member.id === owner?.id ? this.#localTypingBotId : null) ??
             memberConnections.find((connection) => connection.typingBotId)?.typingBotId ??
@@ -262,9 +282,9 @@ export class TeamApiServer {
     return message;
   }
 
-  markDirectRead(memberId: string, otherMemberId: string): void {
+  markDirectRead(memberId: string, otherMemberId: string, throughSequence: number) {
     this.#requireDirectRecipient(memberId, otherMemberId);
-    this.#requireChat().markRead(memberId, otherMemberId);
+    return this.#requireChat().markRead(memberId, otherMemberId, throughSequence);
   }
 
   setLocalDirectTyping(senderMemberId: string, recipientMemberId: string, typing: boolean): void {
@@ -284,9 +304,7 @@ export class TeamApiServer {
         return this.#json(
           response,
           200,
-          challenge
-            ? this.#options.store.getIdentityProof(challenge)
-            : this.#options.store.getIdentity(),
+          challenge ? this.#options.store.getIdentityProof(challenge) : this.#options.store.getIdentity(),
         );
       }
       if (method === "POST" && url.pathname === "/v1/join") {
@@ -341,8 +359,7 @@ export class TeamApiServer {
 
       const token = bearerToken(request.headers.authorization);
       const member = token ? this.#options.store.authenticate(token) : null;
-      if (!member || !token)
-        return this.#json(response, 401, { error: "Authentication required." });
+      if (!member || !token) return this.#json(response, 401, { error: "Authentication required." });
 
       if (method === "POST" && url.pathname === "/v1/auth/logout") {
         await this.#options.store.logout(token);
@@ -390,22 +407,25 @@ export class TeamApiServer {
           }),
         );
       }
-      const directConversationMatch = url.pathname.match(
-        /^\/v1\/direct\/conversations\/([^/]+)(?:\/(read))?$/,
-      );
+      const directConversationMatch = url.pathname.match(/^\/v1\/direct\/conversations\/([^/]+)(?:\/(read))?$/);
       if (method === "GET" && directConversationMatch && !directConversationMatch[2]) {
         return this.#json(
           response,
           200,
-          this.readDirectConversation(
-            member.id,
-            pathIdentifier(directConversationMatch[1], "memberId"),
-          ),
+          this.readDirectConversation(member.id, pathIdentifier(directConversationMatch[1], "memberId")),
         );
       }
       if (method === "POST" && directConversationMatch?.[2] === "read") {
-        this.markDirectRead(member.id, pathIdentifier(directConversationMatch[1], "memberId"));
-        return this.#empty(response, 204);
+        const body = await readJson(request);
+        const throughSequence = body.throughSequence;
+        if (!isNumber(throughSequence) || !Number.isSafeInteger(throughSequence)) {
+          throw new HttpError(400, "Invalid direct-message read boundary.");
+        }
+        return this.#json(
+          response,
+          200,
+          this.markDirectRead(member.id, pathIdentifier(directConversationMatch[1], "memberId"), throughSequence),
+        );
       }
       if (method === "GET" && url.pathname === "/v1/browser/tabs") {
         return this.#json(response, 200, this.#options.browser.listTabs());
@@ -440,7 +460,7 @@ export class TeamApiServer {
         if (!isBoolean(body.visible)) throw new HttpError(400, "visible is required.");
         await this.#options.browser.setVisible({
           visible: body.visible,
-          bounds: body.bounds as import("@openbot/contracts/ipc").BrowserBounds | undefined,
+          bounds: body.bounds === undefined ? undefined : parseBrowserBounds(body.bounds),
         });
         return this.#empty(response, 204);
       }
@@ -454,10 +474,7 @@ export class TeamApiServer {
           throw new HttpError(400, "The attachment MIME type is too long.");
         }
         const bytes = await readBinary(request, ATTACHMENT_LIMITS.fileBytes);
-        const attachments = await this.#options.agents.prepareImportedAttachments(
-          [],
-          [{ name, mimeType, bytes }],
-        );
+        const attachments = await this.#options.agents.prepareImportedAttachments([], [{ name, mimeType, bytes }]);
         return this.#json(response, 201, attachments[0]);
       }
       const attachmentMatch = url.pathname.match(/^\/v1\/attachments\/([^/]+)$/);
@@ -496,13 +513,10 @@ export class TeamApiServer {
         if (disabled !== undefined && !isBoolean(disabled)) {
           throw new HttpError(400, "disabled must be a boolean.");
         }
-        const updated = await this.#options.store.updateMember(
-          pathIdentifier(memberMatch[1], "memberId"),
-          {
-            ...(role ? { role } : {}),
-            ...(disabled === undefined ? {} : { disabled }),
-          },
-        );
+        const updated = await this.#options.store.updateMember(pathIdentifier(memberMatch[1], "memberId"), {
+          ...(role ? { role } : {}),
+          ...(disabled === undefined ? {} : { disabled }),
+        });
         this.refreshPresence();
         return this.#json(response, 200, updated);
       }
@@ -520,10 +534,7 @@ export class TeamApiServer {
         return this.#json(
           response,
           201,
-          await this.#options.store.createInvite(
-            role,
-            nullableString(body, "email", INPUT_LIMITS.email) ?? undefined,
-          ),
+          await this.#options.store.createInvite(role, nullableString(body, "email", INPUT_LIMITS.email) ?? undefined),
         );
       }
       if (method === "GET" && url.pathname === "/v1/team/invites") {
@@ -560,6 +571,9 @@ export class TeamApiServer {
       if (method === "GET" && url.pathname === "/v1/agents") {
         return this.#json(response, 200, this.#options.agents.listBots());
       }
+      if (method === "GET" && url.pathname === "/v1/agents/conversation-reads") {
+        return this.#json(response, 200, this.#options.agents.listConversationReads(member.id));
+      }
       if (method === "POST" && url.pathname === "/v1/agents") {
         return this.#json(response, 201, await this.#options.agents.createBot());
       }
@@ -570,11 +584,7 @@ export class TeamApiServer {
         const action = agentMatch[2] ?? "";
         if (method === "PATCH" && !action) {
           const body = await readJson(request);
-          return this.#json(
-            response,
-            200,
-            await this.#options.agents.updateBot(botUpdate(body, botId)),
-          );
+          return this.#json(response, 200, await this.#options.agents.updateBot(botUpdate(body, botId)));
         }
         if (method === "DELETE" && !action) {
           if (member.role === "member") throw new HttpError(403, "Members cannot delete agents.");
@@ -588,11 +598,7 @@ export class TeamApiServer {
               throw new HttpError(415, "Choose a PNG, JPEG, or WebP image.");
             }
             const bytes = await readBinary(request, AVATAR_IMAGE_LIMITS.storedBytes);
-            return this.#json(
-              response,
-              200,
-              await this.#options.agents.setAvatar(botId, { mimeType, bytes }),
-            );
+            return this.#json(response, 200, await this.#options.agents.setAvatar(botId, { mimeType, bytes }));
           }
           if (method === "DELETE") {
             return this.#json(response, 200, await this.#options.agents.setAvatar(botId, null));
@@ -614,7 +620,15 @@ export class TeamApiServer {
           }
         }
         if (method === "GET" && action === "conversation") {
-          return this.#json(response, 200, await this.#options.agents.readConversation(botId));
+          return this.#json(response, 200, await this.#options.agents.readConversationFor(botId, member.id));
+        }
+        if (method === "POST" && action === "conversation/read") {
+          const body = await readJson(request);
+          return this.#json(
+            response,
+            200,
+            await this.#options.agents.markConversationRead(botId, member.id, nullableString(body, "throughMessageId")),
+          );
         }
         if (method === "POST" && action === "messages") {
           const body = await readJson(request);
@@ -635,8 +649,7 @@ export class TeamApiServer {
         if (method === "POST" && action === "reactions") {
           const body = await readJson(request);
           const emoji = body.emoji;
-          if (emoji !== null && !isMessageReaction(emoji))
-            throw new HttpError(400, "Invalid emoji.");
+          if (emoji !== null && !isMessageReaction(emoji)) throw new HttpError(400, "Invalid emoji.");
           await this.#options.agents.setMessageReaction({
             botId,
             messageId: stringField(body, "messageId"),
@@ -724,8 +737,7 @@ export class TeamApiServer {
       return;
     }
     current.attempts += 1;
-    if (current.attempts > 5)
-      throw new HttpError(429, "Too many sign-in attempts. Try again later.");
+    if (current.attempts > 5) throw new HttpError(429, "Too many sign-in attempts. Try again later.");
   }
 
   #broadcastAgentEvent(event: AgentEvent): void {
@@ -757,7 +769,7 @@ export class TeamApiServer {
             ? Buffer.concat(data).toString("utf8")
             : Buffer.from(data).toString("utf8");
         if (text.length > 1_024) throw new Error("Event payload is too large.");
-        const event = JSON.parse(text) as unknown;
+        const event = JSON.parse(text);
         if (!isDynamicRecord(event)) {
           throw new Error("Unsupported team event.");
         }
@@ -794,10 +806,7 @@ export class TeamApiServer {
       const directTypingRecipientId = connection.directTypingRecipientId;
       connection.directTypingRecipientId = null;
       this.#eventClients.delete(client);
-      if (
-        directTypingRecipientId &&
-        !this.#hasDirectTyping(connection.memberId, directTypingRecipientId)
-      ) {
+      if (directTypingRecipientId && !this.#hasDirectTyping(connection.memberId, directTypingRecipientId)) {
         this.#publishDirectTyping(connection.memberId, directTypingRecipientId, false);
       }
       this.#publishPresence();
@@ -828,11 +837,7 @@ export class TeamApiServer {
       ? this.#hasDirectTyping(connection.memberId, recipientMemberId)
       : false;
     connection.directTypingRecipientId = recipientMemberId;
-    if (
-      changed &&
-      previousRecipientId &&
-      !this.#hasDirectTyping(connection.memberId, previousRecipientId)
-    ) {
+    if (changed && previousRecipientId && !this.#hasDirectTyping(connection.memberId, previousRecipientId)) {
       this.#publishDirectTyping(connection.memberId, previousRecipientId, false);
     }
     if (connection.directTypingTimer) clearTimeout(connection.directTypingTimer);
@@ -856,8 +861,7 @@ export class TeamApiServer {
   #hasDirectTyping(senderMemberId: string, recipientMemberId: string): boolean {
     return [...this.#eventClients.values()].some(
       (connection) =>
-        connection.memberId === senderMemberId &&
-        connection.directTypingRecipientId === recipientMemberId,
+        connection.memberId === senderMemberId && connection.directTypingRecipientId === recipientMemberId,
     );
   }
 
@@ -900,10 +904,7 @@ export class TeamApiServer {
   #sendToMembers(memberIds: string[], event: TeamRealtimeEvent): void {
     const payload = JSON.stringify(event);
     for (const [client, connection] of this.#eventClients) {
-      if (
-        memberIds.includes(connection.memberId) &&
-        client.readyState === webSockets.WebSocket.OPEN
-      ) {
+      if (memberIds.includes(connection.memberId) && client.readyState === webSockets.WebSocket.OPEN) {
         client.send(payload);
       }
     }
@@ -939,11 +940,7 @@ export class TeamApiServer {
         target.destroy();
         return;
       }
-      const chunk = Buffer.isBuffer(data)
-        ? data
-        : Array.isArray(data)
-          ? Buffer.concat(data)
-          : Buffer.from(data);
+      const chunk = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
       if (target.connecting) pending.push(chunk);
       else if (!target.destroyed) target.write(chunk);
     });
@@ -996,6 +993,29 @@ function requireAdmin(member: TeamMemberSummary): void {
   if (member.role === "member") throw new HttpError(403, "Administrator access is required.");
 }
 
+function parseBrowserBounds(value: unknown): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} {
+  if (!isDynamicRecord(value)) throw new HttpError(400, "Invalid browser bounds.");
+  const x = value.x;
+  const y = value.y;
+  const width = value.width;
+  const height = value.height;
+  if (
+    !isNumber(x) ||
+    !isNumber(y) ||
+    !isNumber(width) ||
+    !isNumber(height) ||
+    ![x, y, width, height].every(Number.isFinite)
+  ) {
+    throw new HttpError(400, "Invalid browser bounds.");
+  }
+  return { x, y, width, height };
+}
+
 async function readJson(request: import("node:http").IncomingMessage): Promise<DynamicRecord> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -1006,7 +1026,7 @@ async function readJson(request: import("node:http").IncomingMessage): Promise<D
     chunks.push(bytes);
   }
   try {
-    const value = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+    const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     if (!isDynamicRecord(value)) throw new Error();
     return value;
   } catch {
@@ -1120,7 +1140,9 @@ function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {
     if (!isString(item) || item.length > maxLength) {
       throw new HttpError(400, `${field} is invalid.`);
     }
-    result[field as keyof typeof textFields] = item;
+    if (field === "name") result.name = item;
+    else if (field === "role") result.role = item;
+    else result.description = item;
   }
   if (value.notifications !== undefined) {
     if (!isBoolean(value.notifications)) {
@@ -1151,10 +1173,7 @@ function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {
   return result;
 }
 
-async function readBinary(
-  request: import("node:http").IncomingMessage,
-  limit: number,
-): Promise<Uint8Array> {
+async function readBinary(request: import("node:http").IncomingMessage, limit: number): Promise<Uint8Array> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {

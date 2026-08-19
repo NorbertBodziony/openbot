@@ -20,23 +20,30 @@ export function AttachmentCards(props: {
             >
               <Show
                 when={attachment.previewKind === "image"}
-                fallback={<span class="file-type-badge">{fileBadge(attachment)}</span>}
+                fallback={
+                  <span class="attachment-file-visual" aria-hidden="true">
+                    <AttachmentFileIcon />
+                  </span>
+                }
               >
-                <img src={attachment.previewUrl ?? ""} alt="" />
+                <span class="attachment-file-visual attachment-file-image">
+                  <img src={attachment.previewUrl ?? ""} alt="" />
+                </span>
               </Show>
-              <span>
+              <span class="attachment-file-copy">
                 <strong>{attachment.name}</strong>
                 <small>{formatFileSize(attachment.size)}</small>
               </span>
             </button>
-            <div class="attachment-actions">
-              <button type="button" onClick={() => props.onAction(attachment, "open")}>
-                Open
-              </button>
-              <button type="button" onClick={() => props.onAction(attachment, "reveal")}>
-                Finder
-              </button>
-            </div>
+            <button
+              type="button"
+              class="attachment-open-button"
+              aria-label={`Open ${attachment.name}`}
+              title="Open file"
+              onClick={() => props.onAction(attachment, "open")}
+            >
+              <AttachmentOpenIcon />
+            </button>
           </div>
         )}
       </For>
@@ -48,6 +55,24 @@ export function fileBadge(attachment: AttachmentSummary): string {
   if (attachment.previewKind === "pdf") return "PDF";
   if (attachment.previewKind === "text") return "TXT";
   return attachment.name.split(".").at(-1)?.slice(0, 4).toUpperCase() || "FILE";
+}
+
+function AttachmentFileIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20">
+      <path d="M5.5 2.75h5.75l3.25 3.5v11H5.5z" />
+      <path d="M11.25 2.75v3.5h3.25M7.75 10h4.5M7.75 13h4.5" />
+    </svg>
+  );
+}
+
+function AttachmentOpenIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20">
+      <path d="M6.1 14.75H5.5a3.25 3.25 0 0 1-.2-6.5A4.85 4.85 0 0 1 14.55 7a3.65 3.65 0 0 1-.05 7.3h-.6" />
+      <path d="M10 8.75v7.5m-2.6-2.6L10 16.25l2.6-2.6" />
+    </svg>
+  );
 }
 
 export function formatFileSize(bytes: number): string {

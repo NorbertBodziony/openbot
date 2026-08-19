@@ -1,3 +1,4 @@
+import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import type {
   AgentEvent,
   AgentModelId,
@@ -6,8 +7,8 @@ import type {
   QueueSnapshot,
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
-import { onCleanup } from "solid-js";
-import { fn } from "storybook/test";
+import { createEffect, createSignal, onCleanup } from "solid-js";
+import { expect, fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { Conversation } from "../src/components/Conversation";
 import type { BotMessage as RendererBotMessage } from "../src/data";
@@ -28,16 +29,88 @@ import { createMockOpenBot } from "./mock-openbot";
 const messages: RendererBotMessage[] = STORY_CONVERSATION_MESSAGES.map((message) => ({
   id: message.id,
   author: message.author === "user" ? "you" : "bot",
-  body: message.text,
+  body:
+    message.id === "message-agent-1"
+      ? `${message.text}\n\nPlease review ${serializeAttachmentReference(STORY_ATTACHMENTS[0].name, STORY_ATTACHMENTS[0].id)} before editing the implementation notes.\n\nTransformers scale well with data and compute [1], though attention is quadratic in sequence length [2].`
+      : message.text,
   time: "10:00",
   itemType: message.itemType,
   senderBotId: message.senderBotId,
   replyToMessageId: message.replyToMessageId,
   attachments: message.attachments,
+  citations:
+    message.id === "message-agent-1"
+      ? [
+          {
+            number: 1,
+            label: "Attention Is All You Need",
+            url: "https://arxiv.org/abs/1706.03762",
+            host: "arxiv.org",
+          },
+          {
+            number: 2,
+            label: "Efficient Transformers: A Survey",
+            url: "https://arxiv.org/abs/2009.06732",
+            host: "arxiv.org",
+          },
+        ]
+      : undefined,
   exchange: message.exchange,
   reaction: message.reaction,
   kind: message.exchange ? "exchange" : "text",
 }));
+
+const unreadStoryMessages: RendererBotMessage[] = [
+  ...Array.from(
+    { length: 12 },
+    (_, index): RendererBotMessage => ({
+      id: `unread-history-${index + 1}`,
+      author: index % 2 === 0 ? "you" : "bot",
+      body:
+        index % 2 === 0
+          ? `Historical project update ${index + 1}: please check the owner and due date.`
+          : `Reviewed historical update ${index + 1}. The owner and due date are confirmed.`,
+      time: `09:${String(20 + index).padStart(2, "0")}`,
+      kind: "text",
+    }),
+  ),
+  ...Array.from(
+    { length: 8 },
+    (_, index): RendererBotMessage => ({
+      id: `unread-story-new-${index + 1}`,
+      author: "bot",
+      body: `New update ${index + 1}: I reviewed the launch plan, verified the supporting notes, and added a concrete next action for the team. This message intentionally has enough detail to keep the unread boundary above the visible viewport when the conversation opens at the bottom.`,
+      time: `09:${String(40 + index).padStart(2, "0")}`,
+      kind: "text",
+    }),
+  ),
+];
+
+const imageGenerationMessages: RendererBotMessage[] = [
+  ...messages,
+  {
+    id: "image-generation-user",
+    author: "you",
+    body: "Create a quiet observatory above the clouds at blue hour.",
+    time: "10:02",
+    kind: "text",
+  },
+  {
+    id: "image-generation-in-chat",
+    author: "bot",
+    body: "",
+    time: "10:02",
+    itemType: "image_generation",
+    status: "streaming",
+    streaming: true,
+    kind: "text",
+    imageGeneration: {
+      prompt: "A quiet observatory above the clouds at blue hour",
+      resolution: "1024 × 1024",
+      aspectRatio: "square",
+    },
+  },
+];
 
 const prompt: Extract<AgentEvent, { type: "prompt" }> = {
   type: "prompt",
@@ -58,6 +131,65 @@ const prompt: Extract<AgentEvent, { type: "prompt" }> = {
     },
   ],
 };
+
+const promptQuestions: Extract<AgentEvent, { type: "prompt" }> = {
+  type: "prompt",
+  requestId: "prompt-questions",
+  botId: "chief",
+  threadId: "thread-chief",
+  turnId: "turn-prompt-questions",
+  questions: [
+    {
+      id: "approach",
+      header: "Approach",
+      question: "Which auth approach should we use?",
+      isSecret: false,
+      options: [
+        { label: "Session cookies", description: "" },
+        { label: "JWT bearer", description: "" },
+        { label: "OAuth only", description: "" },
+      ],
+    },
+    {
+      id: "secrets",
+      header: "Secrets",
+      question: "Where should secrets live?",
+      isSecret: false,
+      options: [
+        { label: ".env.local", description: "" },
+        { label: "Vault / secrets manager", description: "" },
+        { label: "CI only", description: "" },
+      ],
+    },
+    {
+      id: "rollout",
+      header: "Rollout",
+      question: "Ship behind a feature flag?",
+      isSecret: false,
+      options: [
+        { label: "Yes — gradual rollout", description: "" },
+        { label: "No — full release", description: "" },
+      ],
+    },
+  ],
+};
+
+const promptChatMessages: RendererBotMessage[] = [
+  {
+    id: "prompt-chat-user",
+    author: "you",
+    body: "Help me choose the safest auth setup for the launch.",
+    time: "10:00",
+    kind: "text",
+  },
+  {
+    id: "prompt-chat-agent",
+    author: "bot",
+    body: "I have a few decisions to confirm before I finish the setup.",
+    time: "10:01",
+    kind: "text",
+  },
+];
 
 const queue: QueueSnapshot = {
   botId: "chief",
@@ -80,10 +212,7 @@ const queue: QueueSnapshot = {
   ],
 };
 
-function queueWithItems(
-  count: number,
-  text = "Add the final checklist and verify the rollout notes",
-): QueueSnapshot {
+function queueWithItems(count: number, text = "Add the final checklist and verify the rollout notes"): QueueSnapshot {
   return {
     ...queue,
     deliveries: Array.from({ length: count }, (_, index) => ({
@@ -100,12 +229,34 @@ function queueWithItems(
 function MockedConversation(props: { args: Parameters<typeof Conversation>[0] }) {
   const previousApi = window.openbot;
   const mock = createMockOpenBot();
+  const [unreadCount, setUnreadCount] = createSignal(0);
+  const [firstUnreadMessageId, setFirstUnreadMessageId] = createSignal<string | null>(null);
+  createEffect(
+    () => [props.args.unreadCount, props.args.firstUnreadMessageId] as const,
+    ([count, messageId]) => {
+      setUnreadCount(count);
+      setFirstUnreadMessageId(messageId);
+    },
+  );
   window.openbot = mock.api;
   onCleanup(() => {
     mock.dispose();
     window.openbot = previousApi;
   });
-  return <Conversation {...props.args} />;
+  return (
+    <div class="conversation-story-frame">
+      <Conversation
+        {...props.args}
+        unreadCount={unreadCount()}
+        firstUnreadMessageId={firstUnreadMessageId()}
+        onMarkRead={async () => {
+          await props.args.onMarkRead();
+          setUnreadCount(0);
+          setFirstUnreadMessageId(null);
+        }}
+      />
+    </div>
+  );
 }
 
 const args: Parameters<typeof Conversation>[0] = {
@@ -114,6 +265,8 @@ const args: Parameters<typeof Conversation>[0] = {
   bots: STORY_BOTS,
   modelOptions: STORY_MODELS,
   messages,
+  unreadCount: 0,
+  firstUnreadMessageId: null,
   loaded: true,
   activeTurnId: null,
   agentPickerOpen: false,
@@ -136,17 +289,10 @@ const args: Parameters<typeof Conversation>[0] = {
   onSelectAgent: fn(),
   onUpdateBot: async (_botId: string, _updates: Omit<UpdateBotInput, "botId">) => undefined,
   onSetAgentAvatar: async (_botId: string, _image: AvatarImageInput | null) => undefined,
-  onSendMessage: async (
-    _body: string,
-    _attachmentDraftIds: string[],
-    _replyToMessageId: string | null,
-  ) => true,
+  onSendMessage: async (_body: string, _attachmentDraftIds: string[], _replyToMessageId: string | null) => true,
+  onMarkRead: async () => undefined,
   onTypingChange: fn(),
-  onCompleteOnboarding: async (
-    _answer: string,
-    _model: AgentModelId,
-    _reasoningEffort: AgentReasoningEffort,
-  ) => true,
+  onCompleteOnboarding: async (_answer: string, _model: AgentModelId, _reasoningEffort: AgentReasoningEffort) => true,
   onAnswerPrompt: async (_answers: Record<string, string[]>) => true,
   onRespondToApproval: async (_decision: "accept" | "decline") => true,
   onCancelQueuedMessage: fn(),
@@ -180,6 +326,54 @@ type Story = StoryObj<typeof meta>;
 
 export const RichConversation: Story = {};
 
+export const NarrowRichConversation: Story = {
+  name: "Narrow rich conversation",
+  args: {
+    browserTabs: [],
+    activeBrowserTabId: null,
+    browserControlState: { sessions: [] },
+  },
+  render: (storyArgs) => (
+    <section aria-label="Narrow conversation sample" style={{ width: "360px", height: "820px", overflow: "hidden" }}>
+      <MockedConversation args={storyArgs} />
+    </section>
+  ),
+  play: async ({ canvas }) => {
+    const sample = canvas.getByLabelText("Narrow conversation sample");
+    const reference = canvas.getByRole("button", {
+      name: `Open attached file ${STORY_ATTACHMENTS[0].name}`,
+    });
+    await expect(sample.scrollWidth).toBeLessThanOrEqual(sample.clientWidth);
+    await expect(reference.getBoundingClientRect().right).toBeLessThanOrEqual(sample.getBoundingClientRect().right);
+  },
+};
+
+export const UnreadMessages: Story = {
+  args: {
+    messages: unreadStoryMessages,
+    unreadCount: 8,
+    firstUnreadMessageId: "unread-story-new-1",
+    browserTabs: [],
+    activeBrowserTabId: null,
+    browserControlState: { sessions: [] },
+  },
+};
+
+export const CitationsInChat: Story = {
+  name: "Citations in chat",
+};
+
+export const ImageGenerationInChat: Story = {
+  name: "Image generation in chat",
+  args: {
+    messages: imageGenerationMessages,
+    activeTurnId: "turn-image-generation",
+    browserTabs: [],
+    activeBrowserTabId: null,
+    browserControlState: { sessions: [] },
+  },
+};
+
 export const Thinking: Story = {
   args: {
     activeTurnId: "turn-thinking",
@@ -191,11 +385,7 @@ export const Thinking: Story = {
         body: "",
         time: "10:01",
         kind: "thinking",
-        items: [
-          "Read the project brief",
-          "Compared the milestone owners",
-          "Drafting the next action",
-        ],
+        items: ["Read the project brief", "Compared the milestone owners", "Drafting the next action"],
         streaming: true,
       },
     ],
@@ -204,6 +394,17 @@ export const Thinking: Story = {
 
 export const Prompt: Story = {
   args: { prompt },
+};
+
+export const PromptQuestionsInChat: Story = {
+  name: "Prompt questions in chat",
+  args: {
+    messages: promptChatMessages,
+    prompt: promptQuestions,
+    browserTabs: [],
+    activeBrowserTabId: null,
+    browserControlState: { sessions: [] },
+  },
 };
 
 export const Queued: Story = {
@@ -216,10 +417,7 @@ export const ThreeQueuedMessages: Story = {
 
 export const SevenQueuedMessages: Story = {
   args: {
-    queue: queueWithItems(
-      7,
-      "Review the very long launch brief and summarize every dependency before shipping",
-    ),
+    queue: queueWithItems(7, "Review the very long launch brief and summarize every dependency before shipping"),
     activeTurnId: "turn-active",
   },
 };

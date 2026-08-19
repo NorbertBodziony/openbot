@@ -34,10 +34,7 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
   let requestedConnectionKey = "";
 
   const canConnect = createMemo(
-    () =>
-      props.server?.kind === "remote" &&
-      props.server.state === "online" &&
-      Boolean(props.server.apiUrl),
+    () => props.server?.kind === "remote" && props.server.state === "online" && Boolean(props.server.apiUrl),
   );
   const sessionBusy = () =>
     props.session?.phase === "starting_tunnel" ||
@@ -85,9 +82,7 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
       client.resizeSession = false;
       client.focusOnClick = true;
       client.showDotCursor = true;
-      const paletteBackground = getComputedStyle(targetElement)
-        .getPropertyValue("--openbot-vnc-background")
-        .trim();
+      const paletteBackground = getComputedStyle(targetElement).getPropertyValue("--openbot-vnc-background").trim();
       if (paletteBackground) client.background = paletteBackground;
       client.qualityLevel = 7;
       client.compressionLevel = 2;
@@ -127,9 +122,7 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
             if (rfb !== client) return;
             setViewerState("error");
             setViewerError(
-              error instanceof Error
-                ? error.message
-                : "OpenBot could not authorize Remote Desktop access.",
+              error instanceof Error ? error.message : "OpenBot could not authorize Remote Desktop access.",
             );
           });
       };
@@ -215,10 +208,7 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
       />
       <header class="remote-desktop-header">
         <div class="remote-desktop-heading">
-          <span
-            class={`remote-desktop-status remote-desktop-status-${viewerState()}`}
-            aria-hidden="true"
-          />
+          <span class={`remote-desktop-status remote-desktop-status-${viewerState()}`} aria-hidden="true" />
           <div>
             <strong>Remote desktop</strong>
             <span>{props.server?.name ?? "No remote host"}</span>
@@ -269,10 +259,7 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
           />
         </Show>
         <Show when={props.server?.kind === "remote" && props.server?.state !== "online"}>
-          <DesktopEmptyState
-            title="Host is offline"
-            message="Reconnect to the host before you open its desktop."
-          />
+          <DesktopEmptyState title="Host is offline" message="Reconnect to the host before you open its desktop." />
         </Show>
         <Show when={sessionBusy() || busy() || viewerState() === "connecting"}>
           <div class="remote-desktop-overlay" role="status">
@@ -291,12 +278,7 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
           </div>
         </Show>
         <Show
-          when={
-            canConnect() &&
-            props.session?.phase === "idle" &&
-            !props.session.errorCode &&
-            viewerState() === "idle"
-          }
+          when={canConnect() && props.session?.phase === "idle" && !props.session.errorCode && viewerState() === "idle"}
         >
           <div class="remote-desktop-overlay">
             <span class="remote-desktop-empty-mark">

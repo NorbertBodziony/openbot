@@ -29,11 +29,9 @@ async function main(): Promise<void> {
     label: "Cloudflare tunnel API secret",
   });
   if (cloudflareEnvironment) {
-    await run(
-      wranglerExecutable,
-      ["d1", "migrations", "apply", "DB", "--remote", ...environmentArgs],
-      { label: "Remote D1 migrations" },
-    );
+    await run(wranglerExecutable, ["d1", "migrations", "apply", "DB", "--remote", ...environmentArgs], {
+      label: "Remote D1 migrations",
+    });
   }
   await run(bunExecutable, ["run", "build"], {
     label: "Auth API build",
@@ -62,11 +60,7 @@ async function run(
     child.once("exit", (code, signal) => {
       if (code === 0) resolveProcess();
       else {
-        rejectProcess(
-          new Error(
-            `${options.label} failed with ${signal ? `signal ${signal}` : `code ${code ?? 1}`}.`,
-          ),
-        );
+        rejectProcess(new Error(`${options.label} failed with ${signal ? `signal ${signal}` : `code ${code ?? 1}`}.`));
       }
     });
     if (options.input !== undefined) child.stdin?.end(options.input);

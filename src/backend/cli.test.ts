@@ -64,14 +64,11 @@ describe("Windows CLI fallback paths", () => {
     );
   });
 
-  it.runIf(process.platform === "win32")(
-    "runs npm command shims when the user profile contains a space",
-    async () => {
-      await createWindowsNpmShims();
-      await expect(resolveCodexCli()).resolves.toMatchObject({ version: "0.144.1" });
-      await expect(resolveClaudeCli()).resolves.toMatchObject({ version: "2.1.231" });
-    },
-  );
+  it.runIf(process.platform === "win32")("runs npm command shims when the user profile contains a space", async () => {
+    await createWindowsNpmShims();
+    await expect(resolveCodexCli()).resolves.toMatchObject({ version: "0.144.1" });
+    await expect(resolveClaudeCli()).resolves.toMatchObject({ version: "2.1.231" });
+  });
 
   it.runIf(process.platform === "win32")("reports a CLI that exists but cannot start", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-cli-test-"));
@@ -83,8 +80,7 @@ describe("Windows CLI fallback paths", () => {
 
     await expect(resolveCodexCli()).rejects.toMatchObject({
       code: "invalid",
-      message:
-        "Codex CLI was found but could not be started. Run `codex --version` in a new terminal.",
+      message: "Codex CLI was found but could not be started. Run `codex --version` in a new terminal.",
     });
   });
 });

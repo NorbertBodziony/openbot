@@ -1,7 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 
-const packageJson = JSON.parse(await readFile("package.json", "utf8")) as { version: string };
+const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+if (!isDynamicRecord(packageJson) || !isString(packageJson.version)) {
+  throw new Error("package.json has no valid version.");
+}
 const changelog = await readFile("CHANGELOG.md", "utf8");
 const failures: string[] = [];
 
@@ -28,13 +32,7 @@ try {
 } catch {
   failures.push("GitHub release secrets could not be inspected");
 }
-for (const name of [
-  "CSC_LINK",
-  "CSC_KEY_PASSWORD",
-  "APPLE_ID",
-  "APPLE_APP_SPECIFIC_PASSWORD",
-  "APPLE_TEAM_ID",
-]) {
+for (const name of ["CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"]) {
   if (!releaseSecrets.split("\n").some((line) => line.startsWith(`${name}\t`))) {
     failures.push(`GitHub release secret ${name} is missing`);
   }

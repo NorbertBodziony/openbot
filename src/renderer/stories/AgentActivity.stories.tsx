@@ -1,8 +1,5 @@
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import {
-  AgentActivityIndicator,
-  ThinkingDisclosure,
-} from "../src/components/conversation/AgentActivity";
+import { AgentActivityIndicator, ThinkingDisclosure } from "../src/components/conversation/AgentActivity";
 import { STORY_BOTS } from "./fixtures";
 
 const indicatorMeta = {

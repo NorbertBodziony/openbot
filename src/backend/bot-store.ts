@@ -1,11 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import {
-  avatarFileExtension,
-  isAvatarMimeType,
-  isValidAvatarImage,
-} from "@openbot/contracts/avatar-images";
+import { avatarFileExtension, isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   type AgentModelId,
@@ -18,14 +14,9 @@ import {
   isReasoningEffort,
   type UpdateBotInput,
 } from "@openbot/contracts/ipc";
-import { type DynamicRecord, isBoolean, isString } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isBoolean, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { isUuidV4 } from "@openbot/contracts/validation";
-import {
-  OpenBotDatabase,
-  type ProviderSession,
-  providerForStoredModel,
-  stableThreadId,
-} from "./openbot-database";
+import { OpenBotDatabase, type ProviderSession, providerForStoredModel, stableThreadId } from "./openbot-database";
 import { isRecord } from "./protocol";
 
 type StoredBot = BotSummary;
@@ -43,16 +34,7 @@ type LegacyStoredBot = Omit<PersistedStoredBot, "avatarSeed" | "avatarHue"> & {
   avatarColor: string;
 };
 
-const LEGACY_AVATAR_VARIANTS = [
-  "blob",
-  "pebble",
-  "squircle",
-  "tablet",
-  "wedge",
-  "hex",
-  "cloud",
-  "teardrop",
-] as const;
+const LEGACY_AVATAR_VARIANTS = ["blob", "pebble", "squircle", "tablet", "wedge", "hex", "cloud", "teardrop"] as const;
 const LEGACY_AVATAR_COLORS = [
   "black",
   "brown",
@@ -80,11 +62,7 @@ export class BotStore {
   #state: StoredState = { version: 2, examplesInitialized: false, bots: [] };
   #avatarUpdateQueue: Promise<void> = Promise.resolve();
 
-  constructor(
-    userDataPath: string,
-    homePath: string,
-    database = new OpenBotDatabase(userDataPath),
-  ) {
+  constructor(userDataPath: string, homePath: string, database = new OpenBotDatabase(userDataPath)) {
     const openbotRoot = join(homePath, "OpenBot");
     this.#statePath = join(userDataPath, "bots.json");
     this.#botsRoot = join(openbotRoot, "Bots");
@@ -172,11 +150,7 @@ export class BotStore {
       bot.role = limitedText(input.role, "Agent title", INPUT_LIMITS.agentTitle);
     }
     if (input.description !== undefined) {
-      bot.description = limitedText(
-        input.description,
-        "Agent description",
-        INPUT_LIMITS.agentDescription,
-      );
+      bot.description = limitedText(input.description, "Agent description", INPUT_LIMITS.agentDescription);
     }
     if (input.notifications !== undefined) bot.notifications = input.notifications;
     if (input.model !== undefined) {
@@ -242,9 +216,7 @@ export class BotStore {
     return { ...bot };
   }
 
-  resolveAvatar(
-    botId: string,
-  ): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
+  resolveAvatar(botId: string): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
     const bot = this.#requireBot(botId);
     if (!bot.avatarUrl) return null;
     const parsed = parseAgentAvatarUrl(bot.avatarUrl, bot.id);
@@ -260,12 +232,7 @@ export class BotStore {
   async deleteBot(id: string): Promise<BotSummary> {
     const bot = this.#requireBot(id);
     this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== id);
-    this.#database.hardDeleteAgent(
-      `agents:hard-delete:${randomUUID()}`,
-      id,
-      bot.threadId,
-      this.#state.bots,
-    );
+    this.#database.hardDeleteAgent(`agents:hard-delete:${randomUUID()}`, id, bot.threadId, this.#state.bots);
     await rm(join(this.#avatarsRoot, id), { recursive: true, force: true });
     return { ...bot };
   }
@@ -321,15 +288,9 @@ export class BotStore {
 
   async #readState(): Promise<StoredState> {
     try {
-      const parsed = JSON.parse(await readFile(this.#statePath, "utf8")) as unknown;
-      if (
-        !isRecord(parsed) ||
-        !isBoolean(parsed.examplesInitialized) ||
-        !Array.isArray(parsed.bots)
-      ) {
-        throw new Error(
-          "Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.",
-        );
+      const parsed = JSON.parse(await readFile(this.#statePath, "utf8"));
+      if (!isRecord(parsed) || !isBoolean(parsed.examplesInitialized) || !Array.isArray(parsed.bots)) {
+        throw new Error("Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.");
       }
 
       let bots: StoredBot[];
@@ -338,9 +299,7 @@ export class BotStore {
       } else if (parsed.version === 2 && parsed.bots.every(isStoredBot)) {
         bots = parsed.bots.map(normalizeStoredBot);
       } else {
-        throw new Error(
-          "Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.",
-        );
+        throw new Error("Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.");
       }
       if (new Set(bots.map((bot) => bot.id)).size !== bots.length) {
         throw new Error("Agent state contains duplicate bot ids; refusing to overwrite it.");
@@ -355,11 +314,7 @@ export class BotStore {
   }
 
   #persist(eventType: string): void {
-    this.#database.replaceAgents(
-      `agents:${eventType}:${randomUUID()}`,
-      this.#state.bots,
-      eventType,
-    );
+    this.#database.replaceAgents(`agents:${eventType}:${randomUUID()}`, this.#state.bots, eventType);
   }
 
   #createRecord(id: string, name: string, role: string, description = ""): StoredBot {
@@ -440,9 +395,7 @@ function isStoredBotBase(value: unknown): value is StoredBotBase {
 function isStoredBot(value: unknown): value is PersistedStoredBot {
   if (!isRecord(value) || !isStoredBotBase(value)) return false;
   const record = value;
-  return (
-    isAvatarSeed(record.avatarSeed) && (record.avatarHue === null || isAvatarHue(record.avatarHue))
-  );
+  return isAvatarSeed(record.avatarSeed) && (record.avatarHue === null || isAvatarHue(record.avatarHue));
 }
 
 function isLegacyStoredBot(value: unknown): value is LegacyStoredBot {
@@ -450,11 +403,9 @@ function isLegacyStoredBot(value: unknown): value is LegacyStoredBot {
   const record = value;
   return (
     isString(record.avatarShape) &&
-    LEGACY_AVATAR_VARIANTS.includes(
-      record.avatarShape as (typeof LEGACY_AVATAR_VARIANTS)[number],
-    ) &&
+    isOneOf(LEGACY_AVATAR_VARIANTS, record.avatarShape) &&
     isString(record.avatarColor) &&
-    LEGACY_AVATAR_COLORS.includes(record.avatarColor as (typeof LEGACY_AVATAR_COLORS)[number])
+    isOneOf(LEGACY_AVATAR_COLORS, record.avatarColor)
   );
 }
 
@@ -480,8 +431,7 @@ function migrateLegacyBot(bot: LegacyStoredBot): StoredBot {
 function normalizeStoredBot(bot: PersistedStoredBot): StoredBot {
   return {
     ...bot,
-    avatarUrl:
-      isString(bot.avatarUrl) && parseAgentAvatarUrl(bot.avatarUrl, bot.id) ? bot.avatarUrl : null,
+    avatarUrl: isString(bot.avatarUrl) && parseAgentAvatarUrl(bot.avatarUrl, bot.id) ? bot.avatarUrl : null,
   };
 }
 

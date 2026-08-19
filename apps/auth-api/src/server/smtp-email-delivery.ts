@@ -52,11 +52,7 @@ export async function sendPrivateEmailCode(
 ): Promise<void> {
   validateConfig(config);
   validateEmail(message.email, "recipient");
-  if (
-    !/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/u.test(
-      message.code,
-    )
-  ) {
+  if (!/^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}$/u.test(message.code)) {
     throw new Error("smtp_invalid_code");
   }
 
@@ -141,10 +137,7 @@ async function sendPrivateEmailAttempt(
   message: PreparedEmailMessage,
   connect: SmtpConnector,
 ): Promise<void> {
-  const socket = connect(
-    { hostname: config.host, port: config.port },
-    { secureTransport: "on", allowHalfOpen: false },
-  );
+  const socket = connect({ hostname: config.host, port: config.port }, { secureTransport: "on", allowHalfOpen: false });
 
   try {
     await withTimeout(runSmtpSession(socket, config, message), SMTP_TIMEOUT_MS);
@@ -163,9 +156,7 @@ function wrapTransportError(): Error {
 }
 
 function isRetryableSmtpError(error: Error): boolean {
-  return ["smtp_transport_failed", "smtp_timeout", "smtp_connection_closed"].includes(
-    error.message,
-  );
+  return ["smtp_transport_failed", "smtp_timeout", "smtp_connection_closed"].includes(error.message);
 }
 
 async function runSmtpSession(
@@ -268,10 +259,7 @@ function dotStuff(value: string): string {
     .join("\r\n");
 }
 
-async function writeCommand(
-  writer: WritableStreamDefaultWriter<Uint8Array>,
-  value: string,
-): Promise<void> {
+async function writeCommand(writer: WritableStreamDefaultWriter<Uint8Array>, value: string): Promise<void> {
   await writer.write(new TextEncoder().encode(`${value}\r\n`));
 }
 
@@ -306,7 +294,7 @@ function encodeBase64(value: string): string {
 
 async function loadCloudflareConnector(): Promise<SmtpConnector> {
   const { connect } = await import("cloudflare:sockets");
-  return connect as unknown as SmtpConnector;
+  return connect;
 }
 
 async function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {

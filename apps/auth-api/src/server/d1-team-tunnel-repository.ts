@@ -1,8 +1,4 @@
-import {
-  TeamTunnelClaimConflict,
-  type TeamTunnelRecord,
-  type TeamTunnelRepository,
-} from "./team-tunnel-service";
+import { TeamTunnelClaimConflict, type TeamTunnelRecord, type TeamTunnelRepository } from "./team-tunnel-service";
 
 interface TeamTunnelRow {
   server_id: string;
@@ -17,24 +13,14 @@ interface TeamTunnelRow {
 export class D1TeamTunnelRepository implements TeamTunnelRepository {
   constructor(private readonly database: D1Database) {}
 
-  async claim(
-    input: Omit<TeamTunnelRecord, "tunnelId" | "status"> & { now: number },
-  ): Promise<TeamTunnelRecord> {
+  async claim(input: Omit<TeamTunnelRecord, "tunnelId" | "status"> & { now: number }): Promise<TeamTunnelRecord> {
     await this.database
       .prepare(
         `INSERT OR IGNORE INTO team_tunnels(
           server_id, user_id, tunnel_name, api_hostname, vnc_hostname, status, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, 'provisioning', ?, ?)`,
       )
-      .bind(
-        input.serverId,
-        input.userId,
-        input.tunnelName,
-        input.apiHostname,
-        input.vncHostname,
-        input.now,
-        input.now,
-      )
+      .bind(input.serverId, input.userId, input.tunnelName, input.apiHostname, input.vncHostname, input.now, input.now)
       .run();
     const row = await this.database
       .prepare(
@@ -90,10 +76,7 @@ export class D1TeamTunnelRepository implements TeamTunnelRepository {
   }
 
   async delete(serverId: string): Promise<void> {
-    await this.database
-      .prepare("DELETE FROM team_tunnels WHERE server_id = ?")
-      .bind(serverId)
-      .run();
+    await this.database.prepare("DELETE FROM team_tunnels WHERE server_id = ?").bind(serverId).run();
   }
 }
 

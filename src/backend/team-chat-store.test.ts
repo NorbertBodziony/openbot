@@ -42,8 +42,13 @@ describe("TeamChatStore", () => {
       { otherMemberId: "member-alice", unreadCount: 1, lastMessage: sent },
     ]);
     expect(chat.readConversation("member-bob", "member-alice").messages).toEqual([sent]);
+    expect(chat.readConversation("member-bob", "member-alice").readState).toMatchObject({
+      unreadCount: 1,
+      firstUnreadMessageId: sent.id,
+      throughSequence: 0,
+    });
 
-    chat.markRead("member-bob", "member-alice");
+    chat.markRead("member-bob", "member-alice", sent.sequence);
     expect(chat.listThreads("member-bob")[0]?.unreadCount).toBe(0);
     chat.sendMessage({
       clientMessageId: "message-bob-1",

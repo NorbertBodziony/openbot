@@ -43,11 +43,7 @@ export class AuthService {
 
   async startEmailSignIn(emailInput: string, sourceIp: string): Promise<EmailSignInStart> {
     if (!this.configured) {
-      throw new AuthServiceError(
-        503,
-        "email_delivery_not_configured",
-        "Email sign-in delivery is not configured.",
-      );
+      throw new AuthServiceError(503, "email_delivery_not_configured", "Email sign-in delivery is not configured.");
     }
     const email = normalizeEmail(emailInput);
     const now = this.#now();
@@ -56,10 +52,7 @@ export class AuthService {
 
     const latestChallenge = await this.#repository.latestEmailChallengeAt(email);
     if (latestChallenge !== null && latestChallenge > now - RESEND_COOLDOWN_MS) {
-      const retryAfterSeconds = Math.max(
-        1,
-        Math.ceil((latestChallenge + RESEND_COOLDOWN_MS - now) / 1_000),
-      );
+      const retryAfterSeconds = Math.max(1, Math.ceil((latestChallenge + RESEND_COOLDOWN_MS - now) / 1_000));
       throw new AuthServiceError(
         429,
         "code_recently_sent",
@@ -86,11 +79,7 @@ export class AuthService {
     } catch (error) {
       console.error("Email code delivery failed:", safeDeliveryError(error));
       await this.#repository.cancelEmailChallenge(challengeHash, now);
-      throw new AuthServiceError(
-        502,
-        "email_delivery_failed",
-        "OpenBot could not send the sign-in code.",
-      );
+      throw new AuthServiceError(502, "email_delivery_failed", "OpenBot could not send the sign-in code.");
     }
 
     return {
@@ -136,27 +125,14 @@ export class AuthService {
     if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
     const now = this.#now();
     await this.#enforceRateLimit(`avatar:user:${user.id}`, 20, now);
-    const updated = await this.#repository.updateUserAvatar(
-      user.id,
-      avatarUrl,
-      expectedAvatarUrl,
-      now,
-    );
+    const updated = await this.#repository.updateUserAvatar(user.id, avatarUrl, expectedAvatarUrl, now);
     if (!updated) {
-      throw new AuthServiceError(
-        409,
-        "avatar_conflict",
-        "The account avatar changed during this request. Try again.",
-      );
+      throw new AuthServiceError(409, "avatar_conflict", "The account avatar changed during this request. Try again.");
     }
     return updated;
   }
 
-  async enforceTeamInviteRateLimit(
-    userId: string,
-    recipientEmail: string,
-    sourceIp: string,
-  ): Promise<void> {
+  async enforceTeamInviteRateLimit(userId: string, recipientEmail: string, sourceIp: string): Promise<void> {
     const now = this.#now();
     const email = normalizeEmail(recipientEmail);
     await this.#enforceRateLimit(`invite:user:${userId}`, 20, now);
@@ -193,11 +169,7 @@ export class AuthService {
     return { ticket, expiresAt };
   }
 
-  async redeemTeamAuthTicket(
-    ticket: string,
-    serverId: string,
-    sourceIp: string,
-  ): Promise<AuthUser | null> {
+  async redeemTeamAuthTicket(ticket: string, serverId: string, sourceIp: string): Promise<AuthUser | null> {
     validateServerId(serverId);
     if (!ticket || ticket.length > 128) return null;
     const now = this.#now();
@@ -220,16 +192,8 @@ export class AuthService {
       limit,
     );
     if (!result.allowed) {
-      const retryAfterSeconds = Math.max(
-        1,
-        Math.ceil((result.windowStart + RATE_WINDOW_MS - now) / 1_000),
-      );
-      throw new AuthServiceError(
-        429,
-        "rate_limited",
-        "Too many sign-in attempts. Try again later.",
-        retryAfterSeconds,
-      );
+      const retryAfterSeconds = Math.max(1, Math.ceil((result.windowStart + RATE_WINDOW_MS - now) / 1_000));
+      throw new AuthServiceError(429, "rate_limited", "Too many sign-in attempts. Try again later.", retryAfterSeconds);
     }
   }
 }
@@ -261,10 +225,7 @@ export function generateOneTimeCode(): string {
 
 export function normalizeOneTimeCode(value: string): string {
   const normalized = value.toUpperCase().replace(/[\s-]/gu, "");
-  if (
-    normalized.length !== CODE_LENGTH ||
-    [...normalized].some((character) => !CODE_ALPHABET.includes(character))
-  ) {
+  if (normalized.length !== CODE_LENGTH || [...normalized].some((character) => !CODE_ALPHABET.includes(character))) {
     throw new AuthServiceError(400, "invalid_sign_in_code", "The sign-in code is invalid.");
   }
   return normalized;
@@ -303,11 +264,7 @@ function verificationResult(result: EmailVerificationResult): {
 } {
   if (result.status === "verified") return result.session;
   if (result.status === "too_many_attempts") {
-    throw new AuthServiceError(
-      429,
-      "too_many_code_attempts",
-      "Too many incorrect codes. Request a new code.",
-    );
+    throw new AuthServiceError(429, "too_many_code_attempts", "Too many incorrect codes. Request a new code.");
   }
   if (result.status === "expired") {
     throw new AuthServiceError(401, "sign_in_code_expired", "The sign-in code expired.");

@@ -1,3 +1,8 @@
+import {
+  attachmentReferenceIds,
+  expandAttachmentReferences,
+  removeAttachmentReferences,
+} from "@openbot/contracts/attachment-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AgentEvent,
@@ -20,16 +25,7 @@ import type {
   TeamPresenceSnapshot,
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  onCleanup,
-  onSettled,
-  Show,
-  untrack,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onSettled, Show, untrack } from "solid-js";
 import { normalizeAvatarFile } from "../avatar-image";
 import { AVATAR_HUE_OPTIONS, avatarCandidateSeeds, avatarHueSwatch } from "../blobatar";
 import type { BotMessage, BotProfile } from "../data";
@@ -54,6 +50,7 @@ import {
 } from "./conversation/ConversationIcons";
 import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
 import { QueuePanel } from "./conversation/QueuePanel";
+import { scrollToUnreadBoundary, UnreadMessagesBanner, UnreadMessagesDivider } from "./conversation/UnreadMessages";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./PanelResizer";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import {
@@ -71,6 +68,8 @@ interface ConversationProps {
   bots: BotProfile[];
   modelOptions: AgentModelOption[];
   messages: BotMessage[];
+  unreadCount: number;
+  firstUnreadMessageId: string | null;
   loaded: boolean;
   activeTurnId: string | null | undefined;
   agentPickerOpen: boolean;
@@ -93,11 +92,8 @@ interface ConversationProps {
   onSelectAgent: (botId: string) => void;
   onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
   onSetAgentAvatar: (botId: string, image: AvatarImageInput | null) => Promise<void>;
-  onSendMessage: (
-    body: string,
-    attachmentDraftIds: string[],
-    replyToMessageId: string | null,
-  ) => Promise<boolean>;
+  onSendMessage: (body: string, attachmentDraftIds: string[], replyToMessageId: string | null) => Promise<boolean>;
+  onMarkRead: () => Promise<void>;
   onTypingChange: (botId: string, typing: boolean) => void;
   onCompleteOnboarding: (
     answer: string,
@@ -144,12 +140,7 @@ const EMPTY_DRAFT: ComposerDraft = {
   attachments: [],
   replyToMessageId: null,
 };
-const ONBOARDING_CHOICES = [
-  "Work & projects",
-  "Research & writing",
-  "Sales & outreach",
-  "Something else",
-];
+const ONBOARDING_CHOICES = ["Work & projects", "Research & writing", "Sales & outreach", "Something else"];
 const SETTINGS_PANEL_STORAGE_KEY = "openbot:settings-panel-width";
 const SETTINGS_PANEL_DEFAULT = 296;
 const SETTINGS_PANEL_MIN = 180;
@@ -183,6 +174,7 @@ export function Conversation(props: ConversationProps) {
   const [showAttachments, setShowAttachments] = createSignal(false);
   const [attachmentBusy, setAttachmentBusy] = createSignal(false);
   const [composerError, setComposerError] = createSignal<string | null>(null);
+  const [markingRead, setMarkingRead] = createSignal(false);
   const [settingsSaveError, setSettingsSaveError] = createSignal<string | null>(null);
   const [submitting, setSubmitting] = createSignal(false);
   const [dropActive, setDropActive] = createSignal(false);
@@ -195,9 +187,7 @@ export function Conversation(props: ConversationProps) {
   const [settingsReasoning, setSettingsReasoning] = createSignal<AgentReasoningEffort>("medium");
   const [onboardingBots, setOnboardingBots] = createSignal<Record<string, true>>({});
   const [modelConfirmedBots, setModelConfirmedBots] = createSignal<Record<string, true>>({});
-  const [completedOnboardingBots, setCompletedOnboardingBots] = createSignal<Record<string, true>>(
-    {},
-  );
+  const [completedOnboardingBots, setCompletedOnboardingBots] = createSignal<Record<string, true>>({});
   const [avatarPickerOpen, setAvatarPickerOpen] = createSignal(false);
   const [avatarSeed, setAvatarSeed] = createSignal("agent");
   const [avatarHue, setAvatarHue] = createSignal<BotAvatarHue | null>(null);
@@ -220,20 +210,10 @@ export function Conversation(props: ConversationProps) {
   let typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
   let typingBotId: string | null = null;
   const [settingsPanelWidth, setSettingsPanelWidth] = createSignal(
-    readPanelWidth(
-      SETTINGS_PANEL_STORAGE_KEY,
-      SETTINGS_PANEL_DEFAULT,
-      SETTINGS_PANEL_MIN,
-      SETTINGS_PANEL_MAX,
-    ),
+    readPanelWidth(SETTINGS_PANEL_STORAGE_KEY, SETTINGS_PANEL_DEFAULT, SETTINGS_PANEL_MIN, SETTINGS_PANEL_MAX),
   );
   const [browserPanelWidth, setBrowserPanelWidth] = createSignal(
-    readPanelWidth(
-      BROWSER_PANEL_STORAGE_KEY,
-      BROWSER_PANEL_DEFAULT,
-      BROWSER_PANEL_MIN,
-      BROWSER_PANEL_MAX,
-    ),
+    readPanelWidth(BROWSER_PANEL_STORAGE_KEY, BROWSER_PANEL_DEFAULT, BROWSER_PANEL_MIN, BROWSER_PANEL_MAX),
   );
   const [remoteDesktopPanelWidth, setRemoteDesktopPanelWidth] = createSignal(
     readPanelWidth(
@@ -243,12 +223,8 @@ export function Conversation(props: ConversationProps) {
       REMOTE_DESKTOP_PANEL_MAX,
     ),
   );
-  const selectedModel = createMemo(() =>
-    props.modelOptions.find((option) => option.id === settingsModel()),
-  );
-  const reasoningOptions = createMemo(
-    () => selectedModel()?.supportedReasoningEfforts ?? ["medium" as const],
-  );
+  const selectedModel = createMemo(() => props.modelOptions.find((option) => option.id === settingsModel()));
+  const reasoningOptions = createMemo(() => selectedModel()?.supportedReasoningEfforts ?? ["medium" as const]);
   const onboardingActive = createMemo(() => {
     const botId = props.bot?.id;
     return Boolean(botId && onboardingBots()[botId]);
@@ -257,12 +233,14 @@ export function Conversation(props: ConversationProps) {
     const botId = props.bot?.id;
     return Boolean(botId && onboardingActive() && modelConfirmedBots()[botId]);
   });
-  const onboardingModelRequired = createMemo(
-    () => agentReady() && onboardingActive() && !onboardingModelConfirmed(),
-  );
+  const onboardingModelRequired = createMemo(() => agentReady() && onboardingActive() && !onboardingModelConfirmed());
   const currentDraft = createMemo(() => {
     const id = props.bot?.id;
     return id ? (drafts()[id] ?? EMPTY_DRAFT) : EMPTY_DRAFT;
+  });
+  const unreferencedDraftAttachments = createMemo(() => {
+    const referencedIds = attachmentReferenceIds(currentDraft().text);
+    return currentDraft().attachments.filter((attachment) => !referencedIds.has(attachment.id));
   });
   const typingPeople = createMemo(() => {
     const botId = props.bot?.id;
@@ -289,9 +267,7 @@ export function Conversation(props: ConversationProps) {
   });
   const filteredPickerBots = createMemo(() => {
     const query = pickerQuery().trim().toLowerCase();
-    return query
-      ? props.bots.filter((bot) => `${bot.name} ${bot.role}`.toLowerCase().includes(query))
-      : props.bots;
+    return query ? props.bots.filter((bot) => `${bot.name} ${bot.role}`.toLowerCase().includes(query)) : props.bots;
   });
   const activeRightPanel = createMemo<RightPanelMode>(() => {
     if (props.agentPickerOpen) return "none";
@@ -305,9 +281,7 @@ export function Conversation(props: ConversationProps) {
     const bot = props.bot;
     if (!bot) return [];
     return props.browserTabs.filter((tab) =>
-      tab.ownerBotId
-        ? tab.ownerBotId === bot.id
-        : Boolean(bot.threadId && tab.ownerThreadId === bot.threadId),
+      tab.ownerBotId ? tab.ownerBotId === bot.id : Boolean(bot.threadId && tab.ownerThreadId === bot.threadId),
     );
   });
   const activeBrowserTab = createMemo(
@@ -339,9 +313,7 @@ export function Conversation(props: ConversationProps) {
       sessions.find((session) => session.tabId === tab.id) ??
       sessions.find(
         (session) =>
-          session.tabId === null &&
-          tab.id === activeBrowserTab()?.id &&
-          session.threadId === tab.ownerThreadId,
+          session.tabId === null && tab.id === activeBrowserTab()?.id && session.threadId === tab.ownerThreadId,
       )
     );
   };
@@ -352,16 +324,11 @@ export function Conversation(props: ConversationProps) {
   const agentActivity = createMemo<"Queued" | "Working" | null>(() => {
     if (
       props.activeTurnId ||
-      props.queue?.deliveries.some(
-        (delivery) => delivery.status === "starting" || delivery.status === "running",
-      )
+      props.queue?.deliveries.some((delivery) => delivery.status === "starting" || delivery.status === "running")
     ) {
       return "Working";
     }
-    if (
-      !props.queue?.paused &&
-      props.queue?.deliveries.some((delivery) => delivery.status === "queued")
-    ) {
+    if (!props.queue?.paused && props.queue?.deliveries.some((delivery) => delivery.status === "queued")) {
       return "Queued";
     }
     return null;
@@ -369,16 +336,13 @@ export function Conversation(props: ConversationProps) {
   const queueBarVisible = createMemo(
     () =>
       Boolean(props.queue?.paused) ||
-      Boolean(
-        props.queue?.deliveries.some(
-          (item) => item.status === "queued" || item.status === "starting",
-        ),
-      ),
+      Boolean(props.queue?.deliveries.some((item) => item.status === "queued" || item.status === "starting")),
   );
   const seenMessageIds = new Set<string>();
   const [fadeAtTop, setFadeAtTop] = createSignal(false);
   const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
   let scrollElement: HTMLDivElement | undefined;
+  let unreadMessagesDivider: HTMLDivElement | undefined;
   let conversationPanel: HTMLElement | undefined;
   let browserSurface: HTMLDivElement | undefined;
   let browserResizeObserver: ResizeObserver | undefined;
@@ -407,9 +371,7 @@ export function Conversation(props: ConversationProps) {
       await props.onUpdateBot(botId, updates);
       return true;
     } catch (error) {
-      setSettingsSaveError(
-        error instanceof Error ? error.message : "Could not save agent settings.",
-      );
+      setSettingsSaveError(error instanceof Error ? error.message : "Could not save agent settings.");
       return false;
     }
   }
@@ -423,9 +385,7 @@ export function Conversation(props: ConversationProps) {
       await props.onSetAgentAvatar(botId, image);
       return true;
     } catch (error) {
-      setSettingsSaveError(
-        error instanceof Error ? error.message : "Could not save the agent avatar.",
-      );
+      setSettingsSaveError(error instanceof Error ? error.message : "Could not save the agent avatar.");
       return false;
     } finally {
       setAvatarUploadBusy(false);
@@ -442,9 +402,7 @@ export function Conversation(props: ConversationProps) {
       if (!botId) return;
       await props.onSetAgentAvatar(botId, image);
     } catch (error) {
-      setSettingsSaveError(
-        error instanceof Error ? error.message : "Could not process the agent avatar.",
-      );
+      setSettingsSaveError(error instanceof Error ? error.message : "Could not process the agent avatar.");
     } finally {
       setAvatarUploadBusy(false);
       if (avatarFileInput) avatarFileInput.value = "";
@@ -457,11 +415,7 @@ export function Conversation(props: ConversationProps) {
     await saveBotPatch({ avatarSeed: seed });
   }
 
-  async function selectModel(
-    model: AgentModelId,
-    persist = true,
-    reportComposerError = false,
-  ): Promise<boolean> {
+  async function selectModel(model: AgentModelId, persist = true, reportComposerError = false): Promise<boolean> {
     const option = props.modelOptions.find((candidate) => candidate.id === model);
     if (!option) return false;
     const reasoningEffort = option.supportedReasoningEfforts.includes(settingsReasoning())
@@ -565,13 +519,14 @@ export function Conversation(props: ConversationProps) {
       props.onCloseAgentPicker();
     };
     const closeMessageMenus = (event: MouseEvent) => {
-      if ((event.target as Element | null)?.closest(".message-actions")) return;
+      if (event.target instanceof Element && event.target.closest(".message-actions")) return;
       setOpenReactionMessageId(null);
       setOpenMoreMessageId(null);
       setExpandedEmojiMessageId(null);
     };
     const closeAvatarPicker = (event: PointerEvent) => {
-      if (!avatarPickerOpen() || avatarPickerRoot?.contains(event.target as Node)) return;
+      if (!avatarPickerOpen()) return;
+      if (event.target instanceof Node && avatarPickerRoot?.contains(event.target)) return;
       setAvatarPickerOpen(false);
     };
     window.addEventListener("keydown", closeOnEscape);
@@ -579,7 +534,11 @@ export function Conversation(props: ConversationProps) {
     window.addEventListener("pointerdown", closeAvatarPicker);
     const scrollResizeObserver = new ResizeObserver(() => updateScrollFade());
     if (scrollElement) scrollResizeObserver.observe(scrollElement);
-    requestAnimationFrame(() => updateScrollFade());
+    requestAnimationFrame(() => {
+      if (!scrollElement) return;
+      if (stickToLatest) scrollElement.scrollTop = scrollElement.scrollHeight;
+      updateScrollFade(scrollElement);
+    });
     return () => {
       scrollResizeObserver.disconnect();
       unsubscribeImport();
@@ -592,12 +551,7 @@ export function Conversation(props: ConversationProps) {
   createEffect(
     () => ({ request: props.onboardingRequest, botId: props.bot?.id }),
     ({ request, botId }) => {
-      if (
-        !request ||
-        botId !== request.botId ||
-        request.nonce === lastHandledOnboardingRequestNonce
-      )
-        return;
+      if (!request || botId !== request.botId || request.nonce === lastHandledOnboardingRequestNonce) return;
       lastHandledOnboardingRequestNonce = request.nonce;
       setOnboardingBots((current) => ({ ...current, [request.botId]: true }));
       setModelConfirmedBots((current) => ({
@@ -614,9 +568,7 @@ export function Conversation(props: ConversationProps) {
       return {
         botId: props.bot?.id,
         activeTurnId: props.activeTurnId,
-        queueSignature: props.queue?.deliveries
-          .map((delivery) => `${delivery.id}:${delivery.status}`)
-          .join("|"),
+        queueSignature: props.queue?.deliveries.map((delivery) => `${delivery.id}:${delivery.status}`).join("|"),
         lastMessageBody: lastMessage?.body,
         lastMessageStatus: lastMessage?.status,
         deliverySignature: lastMessage?.exchange?.deliveries
@@ -728,8 +680,7 @@ export function Conversation(props: ConversationProps) {
   createEffect(
     () => ({ request: props.settingsRequest, botId: props.bot?.id }),
     ({ request, botId }) => {
-      if (!request || botId !== request.botId || request.nonce === lastHandledSettingsRequestNonce)
-        return;
+      if (!request || botId !== request.botId || request.nonce === lastHandledSettingsRequestNonce) return;
       lastHandledSettingsRequestNonce = request.nonce;
       setActiveRightPanel("settings", botId);
     },
@@ -799,8 +750,7 @@ export function Conversation(props: ConversationProps) {
       if (browserVisibilityFrame !== undefined) cancelAnimationFrame(browserVisibilityFrame);
       browserResizeObserver?.disconnect();
       browserResizeObserver = undefined;
-      if (browserWindowResizeHandler)
-        window.removeEventListener("resize", browserWindowResizeHandler);
+      if (browserWindowResizeHandler) window.removeEventListener("resize", browserWindowResizeHandler);
       browserWindowResizeHandler = undefined;
       if (browserBoundsFrame !== undefined) cancelAnimationFrame(browserBoundsFrame);
       browserBoundsFrame = undefined;
@@ -810,12 +760,7 @@ export function Conversation(props: ConversationProps) {
       }
       browserVisibilityFrame = requestAnimationFrame(() => {
         browserVisibilityFrame = undefined;
-        if (
-          generation !== browserVisibilityGeneration ||
-          props.bot?.id !== botId ||
-          !screenOpen() ||
-          !browserSurface
-        ) {
+        if (generation !== browserVisibilityGeneration || props.bot?.id !== botId || !screenOpen() || !browserSurface) {
           return;
         }
         const syncBounds = () => {
@@ -859,8 +804,7 @@ export function Conversation(props: ConversationProps) {
     if (browserVisibilityFrame !== undefined) cancelAnimationFrame(browserVisibilityFrame);
     if (browserBoundsFrame !== undefined) cancelAnimationFrame(browserBoundsFrame);
     browserResizeObserver?.disconnect();
-    if (browserWindowResizeHandler)
-      window.removeEventListener("resize", browserWindowResizeHandler);
+    if (browserWindowResizeHandler) window.removeEventListener("resize", browserWindowResizeHandler);
     if (typingIdleTimer) clearTimeout(typingIdleTimer);
     if (typingBotId) props.onTypingChange(typingBotId, false);
     void window.openbot.browser.setVisible({ visible: false });
@@ -980,12 +924,7 @@ export function Conversation(props: ConversationProps) {
     stopTeamTyping();
     setSubmitting(true);
     setComposerError(null);
-    const saved = await props.onUpdateQueuedMessage(
-      deliveryId,
-      text,
-      keepAttachmentIds,
-      attachmentDraftIds,
-    );
+    const saved = await props.onUpdateQueuedMessage(deliveryId, text, keepAttachmentIds, attachmentDraftIds);
     setSubmitting(false);
     if (!saved) return;
     setDrafts((current) => ({ ...current, [botId]: EMPTY_DRAFT }));
@@ -1002,13 +941,7 @@ export function Conversation(props: ConversationProps) {
     const draft = currentDraft();
     const text = override ?? expandComposerMentions(draft.text);
     const attachments = override ? [] : draft.attachments;
-    if (
-      !botId ||
-      submitting() ||
-      onboardingModelRequired() ||
-      (!text.trim() && attachments.length === 0)
-    )
-      return;
+    if (!botId || submitting() || onboardingModelRequired() || (!text.trim() && attachments.length === 0)) return;
     stopTeamTyping();
     stickToLatest = true;
     setSubmitting(true);
@@ -1023,6 +956,36 @@ export function Conversation(props: ConversationProps) {
       setDrafts((current) => ({ ...current, [botId]: EMPTY_DRAFT }));
       finishOnboarding(botId);
     }
+  }
+
+  async function markUnreadMessages(): Promise<void> {
+    if (markingRead()) return;
+    setMarkingRead(true);
+    setComposerError(null);
+    try {
+      await props.onMarkRead();
+    } catch (error) {
+      setComposerError(error instanceof Error ? error.message : "Could not mark messages as read.");
+    } finally {
+      setMarkingRead(false);
+    }
+  }
+
+  function jumpToUnreadMessages(): void {
+    if (!scrollElement || !unreadMessagesDivider) return;
+    const divider = unreadMessagesDivider;
+    const firstUnreadMessage = divider.nextElementSibling instanceof HTMLElement ? divider.nextElementSibling : divider;
+    stickToLatest = false;
+    scrollToUnreadBoundary(scrollElement, firstUnreadMessage);
+    void markUnreadMessages().then(() => {
+      requestAnimationFrame(() => {
+        if (!scrollElement) return;
+        const settledBoundary = divider.isConnected ? divider : firstUnreadMessage;
+        if (settledBoundary.isConnected) {
+          scrollToUnreadBoundary(scrollElement, settledBoundary, "auto");
+        }
+      });
+    });
   }
 
   function replyToMessage(message: BotMessage) {
@@ -1048,7 +1011,8 @@ export function Conversation(props: ConversationProps) {
   }
 
   async function copyMessage(message: BotMessage) {
-    const text = message.body;
+    const attachmentNames = new Map((message.attachments ?? []).map((attachment) => [attachment.id, attachment.name]));
+    const text = expandAttachmentReferences(message.body, (reference) => attachmentNames.get(reference.attachmentId));
     if (!text) return;
     try {
       if (navigator.clipboard?.writeText) {
@@ -1075,6 +1039,7 @@ export function Conversation(props: ConversationProps) {
   function removeAttachment(id: string) {
     updateCurrentDraft({
       attachments: currentDraft().attachments.filter((attachment) => attachment.id !== id),
+      text: removeAttachmentReferences(currentDraft().text, id),
     });
     void window.openbot.agent.discardDraftAttachment(id);
   }
@@ -1116,9 +1081,7 @@ export function Conversation(props: ConversationProps) {
 
   function setActiveRightPanel(mode: RightPanelMode, botId = props.bot?.id) {
     if (!botId) return;
-    setRightPanels((current) =>
-      current[botId] === mode ? current : { ...current, [botId]: mode },
-    );
+    setRightPanels((current) => (current[botId] === mode ? current : { ...current, [botId]: mode }));
   }
 
   async function previewAttachment(attachment: AttachmentSummary) {
@@ -1336,6 +1299,15 @@ export function Conversation(props: ConversationProps) {
         </Show>
       </header>
 
+      <Show when={props.unreadCount > 0}>
+        <UnreadMessagesBanner
+          count={props.unreadCount}
+          busy={markingRead()}
+          onJumpToUnread={jumpToUnreadMessages}
+          onMarkRead={() => void markUnreadMessages()}
+        />
+      </Show>
+
       <div
         class={[
           "conversation-scroll",
@@ -1356,29 +1328,21 @@ export function Conversation(props: ConversationProps) {
             <section class="agent-setup-card" role="status">
               <div>
                 <strong>
-                  {props.agentStatus.phase === "starting" ||
-                  props.agentStatus.phase === "restarting"
+                  {props.agentStatus.phase === "starting" || props.agentStatus.phase === "restarting"
                     ? "Connecting to agent CLIs…"
                     : "Agent CLI setup required"}
                 </strong>
                 <p>
-                  {props.agentStatus.message ??
-                    "Install and sign in to Codex CLI or Claude CLI, then restart OpenBot."}
+                  {props.agentStatus.message ?? "Install and sign in to Codex CLI or Claude CLI, then restart OpenBot."}
                 </p>
               </div>
-              <Show
-                when={
-                  props.agentStatus.phase !== "starting" && props.agentStatus.phase !== "restarting"
-                }
-              >
+              <Show when={props.agentStatus.phase !== "starting" && props.agentStatus.phase !== "restarting"}>
                 <button
                   type="button"
                   onClick={() =>
                     void props
                       .onOpenAgentSetup()
-                      .catch((error) =>
-                        setComposerError(error instanceof Error ? error.message : String(error)),
-                      )
+                      .catch((error) => setComposerError(error instanceof Error ? error.message : String(error)))
                   }
                 >
                   Setup guide
@@ -1417,11 +1381,7 @@ export function Conversation(props: ConversationProps) {
                       if (submitting()) return false;
                       setSubmitting(true);
                       setComposerError(null);
-                      const completed = await props.onCompleteOnboarding(
-                        answer,
-                        settingsModel(),
-                        settingsReasoning(),
-                      );
+                      const completed = await props.onCompleteOnboarding(answer, settingsModel(), settingsReasoning());
                       if (completed) {
                         const botId = props.bot?.id;
                         if (botId) finishOnboarding(botId);
@@ -1436,138 +1396,123 @@ export function Conversation(props: ConversationProps) {
           </Show>
           <For each={props.messages}>
             {(message) => {
-              const animateEntrance = untrack(
-                () => message.animate === true && markMessageSeen(message.id),
-              );
+              const animateEntrance = untrack(() => message.animate === true && markMessageSeen(message.id));
               return (
-                <Show
-                  when={message.exchange}
-                  fallback={
-                    <Show
-                      when={message.kind === "thinking"}
-                      fallback={
-                        <article
-                          class={[
-                            "message-entry",
-                            {
-                              "message-entry-animated": animateEntrance,
-                              "message-entry-user": message.author === "you",
-                              "message-entry-bot": message.author === "bot",
-                            },
-                          ]}
-                        >
-                          <div class="message-shell">
-                            <div
-                              class={[
-                                message.author === "you" ? "user-bubble" : "bot-bubble",
-                                {
-                                  "bot-bubble-streaming": message.streaming === true,
-                                },
-                              ]}
-                            >
-                              <MessageBody
+                <>
+                  <Show when={message.id === props.firstUnreadMessageId}>
+                    <UnreadMessagesDivider elementRef={(element) => (unreadMessagesDivider = element)} />
+                  </Show>
+                  <Show
+                    when={message.exchange}
+                    fallback={
+                      <Show
+                        when={message.kind === "thinking"}
+                        fallback={
+                          <article
+                            class={[
+                              "message-entry",
+                              {
+                                "message-entry-animated": animateEntrance,
+                                "message-entry-user": message.author === "you",
+                                "message-entry-bot": message.author === "bot",
+                              },
+                            ]}
+                          >
+                            <div class="message-shell">
+                              <div
+                                class={[
+                                  message.author === "you" ? "user-bubble" : "bot-bubble",
+                                  {
+                                    "bot-bubble-streaming": message.streaming === true,
+                                  },
+                                ]}
+                              >
+                                <MessageBody
+                                  message={message}
+                                  referencedMessage={props.messages.find(
+                                    (candidate) => candidate.id === message.replyToMessageId,
+                                  )}
+                                  bots={props.bots}
+                                  onSelectAgent={props.onSelectAgent}
+                                  onOpenLink={(url) => void openMessageLink(url)}
+                                  onPreview={(attachment) => void previewAttachment(attachment)}
+                                  onAttachmentAction={attachmentAction}
+                                  onRetry={() => {
+                                    const prompt = message.imageGeneration?.prompt?.trim();
+                                    if (prompt) void submitMessage(prompt);
+                                  }}
+                                />
+                              </div>
+                              <MessageActions
                                 message={message}
-                                referencedMessage={props.messages.find(
-                                  (candidate) => candidate.id === message.replyToMessageId,
-                                )}
-                                bots={props.bots}
-                                onSelectAgent={props.onSelectAgent}
-                                onOpenLink={(url) => void openMessageLink(url)}
-                                onPreview={(attachment) => void previewAttachment(attachment)}
-                                onAttachmentAction={attachmentAction}
+                                pickerOpen={openReactionMessageId() === message.id}
+                                moreOpen={openMoreMessageId() === message.id}
+                                expandedEmoji={expandedEmojiMessageId() === message.id}
+                                copied={copiedMessageId() === message.id}
+                                onTogglePicker={() => {
+                                  setOpenReactionMessageId((current) => (current === message.id ? null : message.id));
+                                  setOpenMoreMessageId(null);
+                                  setExpandedEmojiMessageId(null);
+                                }}
+                                onToggleMore={() => {
+                                  setOpenMoreMessageId((current) => (current === message.id ? null : message.id));
+                                  setOpenReactionMessageId(null);
+                                  setExpandedEmojiMessageId(null);
+                                }}
+                                onExpandEmoji={() =>
+                                  setExpandedEmojiMessageId((current) => (current === message.id ? null : message.id))
+                                }
+                                onReact={(emoji) => void reactToMessage(message, emoji)}
+                                onReply={() => replyToMessage(message)}
+                                onCopy={() => void copyMessage(message)}
                               />
                             </div>
-                            <MessageActions
-                              message={message}
-                              pickerOpen={openReactionMessageId() === message.id}
-                              moreOpen={openMoreMessageId() === message.id}
-                              expandedEmoji={expandedEmojiMessageId() === message.id}
-                              copied={copiedMessageId() === message.id}
-                              onTogglePicker={() => {
-                                setOpenReactionMessageId((current) =>
-                                  current === message.id ? null : message.id,
-                                );
-                                setOpenMoreMessageId(null);
-                                setExpandedEmojiMessageId(null);
-                              }}
-                              onToggleMore={() => {
-                                setOpenMoreMessageId((current) =>
-                                  current === message.id ? null : message.id,
-                                );
-                                setOpenReactionMessageId(null);
-                                setExpandedEmojiMessageId(null);
-                              }}
-                              onExpandEmoji={() =>
-                                setExpandedEmojiMessageId((current) =>
-                                  current === message.id ? null : message.id,
-                                )
-                              }
-                              onReact={(emoji) => void reactToMessage(message, emoji)}
-                              onReply={() => replyToMessage(message)}
-                              onCopy={() => void copyMessage(message)}
-                            />
-                          </div>
-                          <Show when={message.reaction}>
-                            {(reaction) => (
-                              <button
-                                type="button"
-                                class="message-reaction-pill"
-                                aria-label={`Remove reaction ${reaction()}`}
-                                onClick={() => void reactToMessage(message, null)}
-                              >
-                                {reaction()}
-                              </button>
-                            )}
-                          </Show>
-                        </article>
-                      }
-                    >
-                      <div class={{ "thinking-entry-animated": animateEntrance }}>
-                        <ThinkingDisclosure message={message} />
-                      </div>
-                    </Show>
-                  }
-                >
-                  {(exchange) => (
-                    <article
-                      class={[
-                        "exchange-message-entry",
-                        { "exchange-message-entry-animated": animateEntrance },
-                      ]}
-                    >
-                      <ExchangeSystemRow
-                        message={message}
-                        bots={props.bots}
-                        onSelectAgent={props.onSelectAgent}
-                      />
-                      <Show
-                        when={
-                          exchange().direction === "incoming" &&
-                          (message.attachments?.length ?? 0) > 0
+                            <Show when={message.reaction}>
+                              {(reaction) => (
+                                <button
+                                  type="button"
+                                  class="message-reaction-pill"
+                                  aria-label={`Remove reaction ${reaction()}`}
+                                  onClick={() => void reactToMessage(message, null)}
+                                >
+                                  {reaction()}
+                                </button>
+                              )}
+                            </Show>
+                          </article>
                         }
                       >
-                        <div class="exchange-agent-attachments">
-                          <AttachmentCards
-                            attachments={message.attachments ?? []}
-                            onPreview={(attachment) => void previewAttachment(attachment)}
-                            onAction={attachmentAction}
-                          />
+                        <div class={{ "thinking-entry-animated": animateEntrance }}>
+                          <ThinkingDisclosure message={message} />
                         </div>
                       </Show>
-                    </article>
-                  )}
-                </Show>
+                    }
+                  >
+                    {(exchange) => (
+                      <article
+                        class={["exchange-message-entry", { "exchange-message-entry-animated": animateEntrance }]}
+                      >
+                        <ExchangeSystemRow message={message} bots={props.bots} onSelectAgent={props.onSelectAgent} />
+                        <Show when={exchange().direction === "incoming" && (message.attachments?.length ?? 0) > 0}>
+                          <div class="exchange-agent-attachments">
+                            <AttachmentCards
+                              attachments={message.attachments ?? []}
+                              onPreview={(attachment) => void previewAttachment(attachment)}
+                              onAction={attachmentAction}
+                            />
+                          </div>
+                        </Show>
+                      </article>
+                    )}
+                  </Show>
+                </>
               );
             }}
           </For>
           <AgentActivityIndicator bot={props.bot} state={agentActivity()} />
           <Show when={props.prompt}>
             {(prompt) => (
-              <ApprovalCard
-                variant="questions"
-                questions={prompt().questions}
-                onSubmit={props.onAnswerPrompt}
-              />
+              <ApprovalCard variant="questions" questions={prompt().questions} onSubmit={props.onAnswerPrompt} />
             )}
           </Show>
           <Show when={props.approval}>
@@ -1583,167 +1528,160 @@ export function Conversation(props: ConversationProps) {
         </Show>
       </div>
 
-      <div class="composer-wrap">
-        <Show when={typingPeople().length > 0}>
-          <div class="team-typing-indicator" role="status" aria-live="polite">
-            <TypingDots class="team-typing-dots" />
-            {typingLabel()}
-          </div>
-        </Show>
-        <Show when={showAttachments()}>
-          <div class="attachment-menu">
-            <button
-              type="button"
-              disabled={attachmentBusy()}
-              onClick={() => void chooseAttachments()}
-            >
-              <FileIcon />
-              {attachmentBusy() ? "Importing…" : "Attach files"}
-            </button>
-            <span class="attachment-menu-hint">You can also drop files or paste an image</span>
-          </div>
-        </Show>
-        <For each={currentDraft().attachments}>
-          {(attachment) => (
-            <div class="composer-attachment">
-              <span class={attachment.kind === "file" ? "file-type-badge" : "attachment-thumb"}>
-                <Show when={attachment.kind === "image"} fallback={fileBadge(attachment)}>
-                  <img src={attachment.previewUrl ?? ""} alt="" />
-                </Show>
-              </span>
-              <span>
-                <strong>{attachment.name}</strong>
-                <small>{formatFileSize(attachment.size)}</small>
-              </span>
-              <button
-                type="button"
-                aria-label={`Remove ${attachment.name}`}
-                onClick={() => removeAttachment(attachment.id)}
-              >
-                <CloseIcon />
-              </button>
+      <Show when={!props.prompt && !props.approval}>
+        <div class="composer-wrap">
+          <Show when={typingPeople().length > 0}>
+            <div class="team-typing-indicator" role="status" aria-live="polite">
+              <TypingDots class="team-typing-dots" />
+              {typingLabel()}
             </div>
-          )}
-        </For>
-        <Show when={replyTarget()}>
-          {(message) => (
-            <div class="composer-reply-preview">
-              <div>
-                <span>Replying to {message().author === "you" ? "your message" : "Agent"}</span>
-                <p>{message().body || "Attachment"}</p>
-              </div>
-              <button
-                type="button"
-                aria-label="Cancel reply"
-                onClick={() => updateCurrentDraft({ replyToMessageId: null })}
-              >
-                <CloseIcon />
+          </Show>
+          <Show when={showAttachments()}>
+            <div class="attachment-menu">
+              <button type="button" disabled={attachmentBusy()} onClick={() => void chooseAttachments()}>
+                <FileIcon />
+                {attachmentBusy() ? "Importing…" : "Attach files"}
               </button>
+              <span class="attachment-menu-hint">You can also drop files or paste an image</span>
             </div>
-          )}
-        </Show>
-        <Show when={composerError()}>
-          <div class="composer-error" role="alert">
-            {composerError()}
-          </div>
-        </Show>
-        <Show when={queueBarVisible()}>
-          <QueuePanel
-            deliveries={props.queue?.deliveries ?? []}
-            paused={Boolean(props.queue?.paused)}
-            canSteer={Boolean(props.activeTurnId)}
-            onSteer={props.onSteerQueuedMessage}
-            onCancel={props.onCancelQueuedMessage}
-            onEdit={editQueuedMessage}
-            onReorder={props.onReorderQueue}
-            onResume={props.onResumeQueue}
-          />
-        </Show>
-        <Show when={editingDeliveryId()}>
-          {(deliveryId) => {
-            const delivery = () => props.queue?.deliveries.find((item) => item.id === deliveryId());
-            return (
-              <div class="composer-queue-edit-preview">
-                <div>
-                  <span>Editing queued message</span>
-                  <p>{delivery()?.text || "Attachment"}</p>
-                </div>
+          </Show>
+          <For each={unreferencedDraftAttachments()}>
+            {(attachment) => (
+              <div class="composer-attachment">
+                <span class={attachment.kind === "file" ? "file-type-badge" : "attachment-thumb"}>
+                  <Show when={attachment.kind === "image"} fallback={fileBadge(attachment)}>
+                    <img src={attachment.previewUrl ?? ""} alt="" />
+                  </Show>
+                </span>
+                <span>
+                  <strong>{attachment.name}</strong>
+                  <small>{formatFileSize(attachment.size)}</small>
+                </span>
                 <button
                   type="button"
-                  aria-label="Cancel queued message edit"
-                  onClick={cancelQueuedMessageEdit}
+                  aria-label={`Remove ${attachment.name}`}
+                  onClick={() => removeAttachment(attachment.id)}
                 >
                   <CloseIcon />
                 </button>
               </div>
-            );
-          }}
-        </Show>
-        <div class="composer">
-          <button
-            type="button"
-            class="composer-button"
-            aria-label="Attach a file"
-            disabled={
-              props.agentPickerOpen ||
-              attachmentBusy() ||
-              !agentReady() ||
-              onboardingModelRequired()
-            }
-            onClick={() => setShowAttachments((value) => !value)}
-          >
-            <PlusIcon />
-          </button>
-          <div class="composer-input-label">
-            <ComposerEditor
-              botId={props.bot?.id}
-              bots={props.bots}
-              value={currentDraft().text}
-              disabled={
-                props.agentPickerOpen || submitting() || !agentReady() || onboardingModelRequired()
-              }
-              placeholder={
-                !agentReady()
-                  ? "Complete agent CLI setup to start"
-                  : onboardingModelRequired()
-                    ? "Choose a model to continue"
-                    : replyTarget()
-                      ? "Reply…"
-                      : `Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`
-              }
-              ariaLabel={`Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`}
-              onValueChange={(text) => {
-                updateCurrentDraft({ text });
-                updateTeamTyping(text);
-              }}
-              onSubmit={() => void submitMessage()}
+            )}
+          </For>
+          <Show when={replyTarget()}>
+            {(message) => (
+              <div class="composer-reply-preview">
+                <div>
+                  <span>Replying to {message().author === "you" ? "your message" : "Agent"}</span>
+                  <p>{message().body || "Attachment"}</p>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Cancel reply"
+                  onClick={() => updateCurrentDraft({ replyToMessageId: null })}
+                >
+                  <CloseIcon />
+                </button>
+              </div>
+            )}
+          </Show>
+          <Show when={composerError()}>
+            <div class="composer-error" role="alert">
+              {composerError()}
+            </div>
+          </Show>
+          <Show when={queueBarVisible()}>
+            <QueuePanel
+              deliveries={props.queue?.deliveries ?? []}
+              paused={Boolean(props.queue?.paused)}
+              canSteer={Boolean(props.activeTurnId)}
+              onSteer={props.onSteerQueuedMessage}
+              onCancel={props.onCancelQueuedMessage}
+              onEdit={editQueuedMessage}
+              onReorder={props.onReorderQueue}
+              onResume={props.onResumeQueue}
             />
-          </div>
-          <Show
-            when={props.activeTurnId && !editingDeliveryId()}
-            fallback={
-              <button
-                type="button"
-                class="voice-button"
-                aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
-                disabled={submitting() || !agentReady() || onboardingModelRequired()}
-                onClick={() => void submitMessage()}
-              >
-                {submitting() ? "…" : "↑"}
-              </button>
-            }
-          >
+          </Show>
+          <Show when={editingDeliveryId()}>
+            {(deliveryId) => {
+              const delivery = () => props.queue?.deliveries.find((item) => item.id === deliveryId());
+              return (
+                <div class="composer-queue-edit-preview">
+                  <div>
+                    <span>Editing queued message</span>
+                    <p>{delivery()?.text || "Attachment"}</p>
+                  </div>
+                  <button type="button" aria-label="Cancel queued message edit" onClick={cancelQueuedMessageEdit}>
+                    <CloseIcon />
+                  </button>
+                </div>
+              );
+            }}
+          </Show>
+          <div class="composer">
             <button
               type="button"
-              class="voice-button voice-button-active"
-              aria-label="Stop agent"
-              onClick={props.onStop}
+              class="composer-button"
+              aria-label="Attach a file"
+              disabled={props.agentPickerOpen || attachmentBusy() || !agentReady() || onboardingModelRequired()}
+              onClick={() => setShowAttachments((value) => !value)}
             >
-              <StopIcon />
+              <PlusIcon />
             </button>
-          </Show>
+            <div class="composer-input-label">
+              <ComposerEditor
+                botId={props.bot?.id}
+                bots={props.bots}
+                attachments={currentDraft().attachments}
+                value={currentDraft().text}
+                disabled={props.agentPickerOpen || submitting() || !agentReady() || onboardingModelRequired()}
+                placeholder={
+                  !agentReady()
+                    ? "Complete agent CLI setup to start"
+                    : onboardingModelRequired()
+                      ? "Choose a model to continue"
+                      : replyTarget()
+                        ? "Reply…"
+                        : `Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`
+                }
+                ariaLabel={`Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`}
+                onValueChange={(text) => {
+                  updateCurrentDraft({ text });
+                  updateTeamTyping(text);
+                }}
+                onSubmit={() => void submitMessage()}
+                onOpenAttachment={(attachment) =>
+                  attachment.previewKind === "none"
+                    ? attachmentAction(attachment, "open")
+                    : void previewAttachment(attachment)
+                }
+              />
+            </div>
+            <Show
+              when={props.activeTurnId && !editingDeliveryId()}
+              fallback={
+                <button
+                  type="button"
+                  class="voice-button"
+                  aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
+                  disabled={submitting() || !agentReady() || onboardingModelRequired()}
+                  onClick={() => void submitMessage()}
+                >
+                  {submitting() ? "…" : "↑"}
+                </button>
+              }
+            >
+              <button
+                type="button"
+                class="voice-button voice-button-active"
+                aria-label="Stop agent"
+                onClick={props.onStop}
+              >
+                <StopIcon />
+              </button>
+            </Show>
+          </div>
         </div>
-      </div>
+      </Show>
 
       <Show when={mediaPreview()}>
         {(preview) => (
@@ -1754,12 +1692,7 @@ export function Conversation(props: ConversationProps) {
               aria-label="Close media preview"
               onClick={() => setMediaPreview(null)}
             />
-            <section
-              class="media-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-label={preview().attachment.name}
-            >
+            <section class="media-modal" role="dialog" aria-modal="true" aria-label={preview().attachment.name}>
               <button
                 type="button"
                 class="media-close"
@@ -1769,11 +1702,7 @@ export function Conversation(props: ConversationProps) {
                 <CloseIcon />
               </button>
               <Show when={preview().attachment.previewKind === "image"}>
-                <img
-                  class="media-image"
-                  src={preview().attachment.previewUrl ?? ""}
-                  alt={preview().attachment.name}
-                />
+                <img class="media-image" src={preview().attachment.previewUrl ?? ""} alt={preview().attachment.name} />
               </Show>
               <Show when={preview().attachment.previewKind === "pdf"}>
                 <iframe
@@ -1783,22 +1712,14 @@ export function Conversation(props: ConversationProps) {
                 />
               </Show>
               <Show when={preview().attachment.previewKind === "text"}>
-                <pre class="media-text">
-                  {preview().loading ? "Loading…" : (preview().error ?? preview().text)}
-                </pre>
+                <pre class="media-text">{preview().loading ? "Loading…" : (preview().error ?? preview().text)}</pre>
               </Show>
               <div class="media-caption">
                 <span>{preview().attachment.name}</span>
-                <button
-                  type="button"
-                  onClick={() => attachmentAction(preview().attachment, "open")}
-                >
+                <button type="button" onClick={() => attachmentAction(preview().attachment, "open")}>
                   Open
                 </button>
-                <button
-                  type="button"
-                  onClick={() => attachmentAction(preview().attachment, "reveal")}
-                >
+                <button type="button" onClick={() => attachmentAction(preview().attachment, "reveal")}>
                   Show in Finder
                 </button>
               </div>
@@ -1842,19 +1763,12 @@ export function Conversation(props: ConversationProps) {
                     const controller = () => browserControllerForTab(tab);
                     const title = () => (tab.loading ? "Loading…" : tab.title || tab.url);
                     return (
-                      <div
-                        class={[
-                          "browser-tab-wrap",
-                          { "browser-tab-controlled": Boolean(control()) },
-                        ]}
-                      >
+                      <div class={["browser-tab-wrap", { "browser-tab-controlled": Boolean(control()) }]}>
                         <button
                           type="button"
                           role="tab"
                           aria-label={
-                            control()
-                              ? `${title()}, controlled by ${controller()?.name ?? "agent"}`
-                              : title()
+                            control() ? `${title()}, controlled by ${controller()?.name ?? "agent"}` : title()
                           }
                           aria-selected={props.activeBrowserTabId === tab.id ? "true" : "false"}
                           class={[
@@ -2008,10 +1922,7 @@ export function Conversation(props: ConversationProps) {
             </button>
           </header>
           <div class="agent-settings-content">
-            <div
-              ref={(element) => (avatarPickerRoot = element)}
-              class="agent-settings-avatar-picker"
-            >
+            <div ref={(element) => (avatarPickerRoot = element)} class="agent-settings-avatar-picker">
               <button
                 type="button"
                 class="agent-settings-avatar"
@@ -2027,12 +1938,7 @@ export function Conversation(props: ConversationProps) {
                   setAvatarPickerOpen(nextOpen);
                 }}
               >
-                <AgentAvatar
-                  seed={avatarSeed()}
-                  hue={avatarHue()}
-                  url={avatarUrl()}
-                  motion="always"
-                />
+                <AgentAvatar seed={avatarSeed()} hue={avatarHue()} url={avatarUrl()} motion="always" />
               </button>
               <Show when={avatarPickerOpen()}>
                 <section class="avatar-editor" role="dialog" aria-label="Avatar editor">
@@ -2047,11 +1953,7 @@ export function Conversation(props: ConversationProps) {
                     <span>Image</span>
                     <div class="avatar-editor-actions">
                       <Show when={avatarUrl()}>
-                        <button
-                          type="button"
-                          disabled={avatarUploadBusy()}
-                          onClick={() => void setCustomAvatar(null)}
-                        >
+                        <button type="button" disabled={avatarUploadBusy()} onClick={() => void setCustomAvatar(null)}>
                           Remove
                         </button>
                       </Show>
@@ -2059,10 +1961,7 @@ export function Conversation(props: ConversationProps) {
                   </div>
                   <button
                     type="button"
-                    class={[
-                      "avatar-image-upload",
-                      { "avatar-image-upload-active": Boolean(avatarUrl()) },
-                    ]}
+                    class={["avatar-image-upload", { "avatar-image-upload-active": Boolean(avatarUrl()) }]}
                     disabled={avatarUploadBusy()}
                     onClick={() => avatarFileInput?.click()}
                   >
@@ -2124,9 +2023,7 @@ export function Conversation(props: ConversationProps) {
                             },
                           ]}
                           aria-label={
-                            !avatarUrl() && avatarSeed() === seed
-                              ? "Selected avatar"
-                              : `Avatar option ${index() + 1}`
+                            !avatarUrl() && avatarSeed() === seed ? "Selected avatar" : `Avatar option ${index() + 1}`
                           }
                           aria-pressed={!avatarUrl() && avatarSeed() === seed ? "true" : "false"}
                           onClick={() => void selectGeneratedAvatar(seed)}
@@ -2143,10 +2040,7 @@ export function Conversation(props: ConversationProps) {
                   <fieldset class="avatar-color-grid" aria-label="Avatar color">
                     <button
                       type="button"
-                      class={[
-                        "avatar-color-choice",
-                        { "avatar-choice-selected": avatarHue() === null },
-                      ]}
+                      class={["avatar-color-choice", { "avatar-choice-selected": avatarHue() === null }]}
                       aria-label="Automatic avatar color"
                       aria-pressed={avatarHue() === null ? "true" : "false"}
                       onClick={() => {
@@ -2173,10 +2067,7 @@ export function Conversation(props: ConversationProps) {
                             void saveBotPatch({ avatarHue: option.hue });
                           }}
                         >
-                          <span
-                            class="avatar-color-swatch"
-                            style={{ background: avatarHueSwatch(option.hue) }}
-                          />
+                          <span class="avatar-color-swatch" style={{ background: avatarHueSwatch(option.hue) }} />
                         </button>
                       )}
                     </For>
@@ -2248,7 +2139,8 @@ export function Conversation(props: ConversationProps) {
                     value={settingsReasoning()}
                     aria-label="Agent reasoning level"
                     onChange={(event) => {
-                      const reasoningEffort = event.currentTarget.value as AgentReasoningEffort;
+                      const reasoningEffort = reasoningOptions().find((effort) => effort === event.currentTarget.value);
+                      if (!reasoningEffort) return;
                       setSettingsReasoning(reasoningEffort);
                       saveBotPatch({ reasoningEffort });
                     }}
