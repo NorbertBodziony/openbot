@@ -7,13 +7,13 @@ import {
 } from "./dev-services";
 
 describe("development service runner", () => {
-  it("runs all three services in a stable order", () => {
-    expect(servicesForTarget("all")).toEqual(["api", "app", "host"]);
+  it("runs the normal API and app in a stable order", () => {
+    expect(servicesForTarget("all")).toEqual(["api", "app"]);
+    expect(servicesForTarget("app")).toEqual(["api", "app"]);
   });
 
-  it("starts the auth API with every Electron development target", () => {
-    expect(servicesForTarget("app")).toEqual(["api", "app"]);
-    expect(servicesForTarget("host")).toEqual(["api", "host"]);
+  it("starts a complete isolated two-client harness on demand", () => {
+    expect(servicesForTarget("test-client")).toEqual(["api", "app", "test-client"]);
     expect(servicesForTarget("api")).toEqual(["api"]);
   });
 
@@ -23,17 +23,17 @@ describe("development service runner", () => {
     expect(spec.args).toEqual(["run", "--cwd", `${projectRoot}/apps/auth-api`, "dev"]);
   });
 
-  it("isolates the app and host profiles, ports, and outputs", () => {
+  it("isolates the app and test-client profiles, ports, and outputs", () => {
     const app = createDevelopmentServiceSpec("app", {});
-    const host = createDevelopmentServiceSpec("host", {});
+    const testClient = createDevelopmentServiceSpec("test-client", {});
 
     expect(app.env.OPENBOT_DEV_PROFILE).toBe("app");
     expect(app.env.OPENBOT_DEV_RENDERER_PORT).toBe("5173");
     expect(app.args).toContain("out-dev-app");
-    expect(host.env.OPENBOT_DEV_PROFILE).toBe("host");
-    expect(host.env.OPENBOT_DEV_RENDERER_PORT).toBe("5174");
-    expect(host.env.OPENBOT_DEV_HOST_AUTO_START).toBe("1");
-    expect(host.args).toContain("out-dev-host");
+    expect(testClient.env.OPENBOT_DEV_PROFILE).toBe("test-client");
+    expect(testClient.env.OPENBOT_DEV_RENDERER_PORT).toBe("5174");
+    expect(testClient.env.OPENBOT_DEV_HOST_AUTO_START).toBeUndefined();
+    expect(testClient.args).toContain("out-dev-test-client");
   });
 
   it("rejects unknown targets and options", () => {

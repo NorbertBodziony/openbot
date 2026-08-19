@@ -2,6 +2,7 @@ import type { HostStatus, ServerSummary } from "@openbot/contracts/ipc";
 import { For, Show } from "solid-js";
 
 interface ServerRailProps {
+  platform: "darwin" | "win32" | "linux";
   servers: ServerSummary[];
   hostStatus: HostStatus;
   onSelect: (serverId: string) => void;
@@ -45,7 +46,7 @@ export function ServerRail(props: ServerRailProps) {
         </button>
       </div>
       <div class="server-rail-tools">
-        <Show when={activeRemote()}>
+        <Show when={props.platform === "darwin" && activeRemote()}>
           <button
             type="button"
             class="server-rail-button server-rail-action"
@@ -62,8 +63,8 @@ export function ServerRail(props: ServerRailProps) {
         <button
           type="button"
           class="server-rail-button server-rail-action"
-          aria-label="Open host controls"
-          title="Host this Mac"
+          aria-label="Open publishing controls"
+          title="Publish this OpenBot"
           onClick={props.onOpenHost}
         >
           <svg aria-hidden="true" viewBox="0 0 20 20">

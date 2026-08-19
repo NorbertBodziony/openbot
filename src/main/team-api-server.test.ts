@@ -343,6 +343,47 @@ describe("TeamApiServer administration", () => {
     }
   });
 
+  it("publishes agents and conversations from the same local agent service", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-local-instance-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const localBots = [{ id: "chief", name: "Chief", source: "local" }];
+    const localConversation = {
+      botId: "chief",
+      threadId: "thread-chief",
+      messages: [{ id: "message-1", text: "Stored locally" }],
+    };
+    const agents = Object.assign(new EventEmitter(), {
+      listBots: () => localBots,
+      readConversation: async (botId: string) => ({ ...localConversation, botId }),
+    }) as unknown as AgentService;
+    const api = new TeamApiServer({
+      store,
+      agents,
+      mailbox: {} as MailboxStore,
+      browser: {} as BrowserHost,
+      getRemoteMac: () => ({ hostname: null, online: false }),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(
+        localBots,
+      );
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/conversation", { token: login.sessionToken }),
+      ).resolves.toEqual(localConversation);
+    } finally {
+      await api.stop();
+    }
+  });
+
   it("grants Remote Desktop through team membership and closes it after session revocation", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-desktop-"));
     roots.push(root);

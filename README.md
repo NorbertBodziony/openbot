@@ -94,9 +94,11 @@ bun run dev
 `codex:doctor` checks the CLI version, App Server handshake, ChatGPT login, and Computer Use plugin
 without starting a model turn.
 
-To reset only the local development state, quit the dev app and host, then run `bun run dev:reset`.
-The command deletes both development profiles, including `openbot.db` and its WAL files. It does not
-change the production profile, agent workspaces, `~/.codex`, or `~/.claude`.
+To reset only the local development state, quit the dev app and test client, then run
+`bun run dev:reset`.
+The command deletes the app and test-client development profiles plus the legacy host profile,
+including `openbot.db` and its WAL files. It does not change the production profile, agent
+workspaces, `~/.codex`, or `~/.claude`.
 
 ## Commands
 
@@ -108,9 +110,9 @@ change the production profile, agent workspaces, `~/.codex`, or `~/.claude`.
 | `bun run api:migrate:local` | Apply D1 migrations to the local development database. |
 | `bun run api:migrate:remote` | Apply D1 migrations to the configured remote database. |
 | `bun run api:deploy` | Build and deploy the account API to Cloudflare Workers. |
-| `bun run host` | Start Electron in the separate host profile with renderer HMR. |
-| `bun run dev:all` | Start the API, Electron client, and Electron host together. |
-| `bun run dev:reset` | Delete the local app and host development state. |
+| `bun run dev:all` | Start the API and the single local Electron instance. |
+| `bun run dev:test-client` | Start the API, the local instance, and an isolated second client for team testing. |
+| `bun run dev:reset` | Delete the local app, test-client, and legacy host development state. |
 | `bun run check` | Run Biome, both typechecks, offline tests, the browser smoke test, and the production build. |
 | `bun run test:backend` | Run backend tests only. |
 | `bun run test:browser` | Run the local embedded-browser smoke test. |
@@ -127,10 +129,16 @@ change the production profile, agent workspaces, `~/.codex`, or `~/.claude`.
 | `bun run test:imagegen` | **Online/manual:** run a real full-access image-generation turn. |
 | `bun run test:storage-live` | **Online/manual:** verify isolated Codex and Claude turns in a temporary SQLite database. |
 
-The host profile uses a separate Electron `userData` directory. Configure the team server in its
-Host panel on the first run. Later `bun run host` and `bun run dev:all` start the configured host
-automatically. Press `Ctrl+C` in the runner terminal to stop only the processes started by that
-runner.
+Publishing never creates a second OpenBot instance. The publishing controls start an authenticated
+local Team API and expose it through a Cloudflare Tunnel; agents, conversations, files, and browser
+state continue to come from the same local app. Only invited people can sign in through the public
+address. A public instance is republished automatically on its next launch until the owner makes it
+private.
+
+For manual team testing, `bun run dev:test-client` starts a complete two-client harness. The second
+client uses the isolated `OpenBot Dev Test Client` profile and renderer port 5174. `dev:reset` also
+removes that profile and the legacy `OpenBot Dev Host` profile. Press `Ctrl+C` in the runner terminal
+to stop only the processes started by that runner.
 
 The normal `check` command is offline and uses a fake App Server. Manual smoke scripts may use the
 signed-in subscription and must not run in CI.
@@ -177,11 +185,12 @@ rules for new modules.
 OpenBot keeps one stable local conversation when an agent changes between Codex and Claude. Native
 provider session identifiers stay private and are used only to resume provider runtime state.
 
-The Electron client does not open a public application HTTP port. It communicates with local CLI
-processes over stdio. The optional account flow connects to the configured HTTPS account API. The
-client stores only an encrypted OpenBot session token. One-time codes expire after 10 minutes and
-are stored only as hashes. The embedded browser uses a separate sandboxed Electron session and
-cannot access `window.openbot` or managed local attachments.
+The Electron renderer is never exposed as a public website. It communicates with local CLI processes
+over stdio. When the owner publishes OpenBot, its authenticated Team API binds to localhost and a
+Cloudflare Tunnel exposes only that API. The optional account flow connects to the configured HTTPS
+account API. The client stores only an encrypted OpenBot session token. One-time codes expire after
+10 minutes and are stored only as hashes. The embedded browser uses a separate sandboxed Electron
+session and cannot access `window.openbot` or managed local attachments.
 
 ## Security
 

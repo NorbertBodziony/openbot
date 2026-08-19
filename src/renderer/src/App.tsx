@@ -1055,9 +1055,15 @@ export function App() {
     void refreshHostManagement();
   }
 
-  async function configureHost(input: { serverName: string }): Promise<void> {
-    setHostStatus(await window.openbot.host.configure(input));
+  async function configureAndPublishHost(input: { serverName: string }): Promise<void> {
+    const configured = await window.openbot.host.configure(input);
+    setHostStatus(configured);
+    const published = await window.openbot.host.start();
+    setHostStatus(published);
     await refreshHostManagement();
+    if (published.phase !== "online") {
+      throw new Error(published.message ?? "This OpenBot could not be published.");
+    }
   }
 
   async function startHost(): Promise<void> {
@@ -1170,13 +1176,15 @@ export function App() {
                 "app-frame",
                 {
                   "app-frame-sidebar-collapsed": leftPanelCollapsed(),
-                  "app-frame-with-server-rail": appInfo()?.platform === "darwin",
+                  "app-frame-with-server-rail":
+                    appInfo()?.platform === "darwin" || appInfo()?.platform === "win32",
                 },
               ]}
               style={`--left-panel-width: ${leftPanelCollapsed() ? 0 : leftPanelWidth()}px`}
             >
-              <Show when={appInfo()?.platform === "darwin"}>
+              <Show when={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}>
                 <ServerRail
+                  platform={appInfo()?.platform ?? "darwin"}
                   servers={servers()}
                   hostStatus={hostStatus()}
                   onSelect={(serverId) => void selectServer(serverId)}
@@ -1312,6 +1320,7 @@ export function App() {
               </Show>
               <Show when={hostOpen()}>
                 <HostPanel
+                  platform={appInfo()?.platform ?? "darwin"}
                   status={hostStatus()}
                   members={teamMembers()}
                   invites={teamInvites()}
@@ -1319,7 +1328,7 @@ export function App() {
                   presence={teamPresence()}
                   accountEmail={account().email}
                   onClose={() => setHostOpen(false)}
-                  onConfigure={configureHost}
+                  onConfigure={configureAndPublishHost}
                   onConfigureRemoteDesktop={configureRemoteDesktop}
                   onStart={startHost}
                   onStop={stopHost}

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export type DevelopmentService = "api" | "app" | "host";
+export type DevelopmentService = "api" | "app" | "test-client";
 type DevelopmentTarget = DevelopmentService | "all";
 
 export interface DevelopmentServiceSpec {
@@ -18,9 +18,10 @@ const scriptsRoot = dirname(fileURLToPath(import.meta.url));
 export const projectRoot = dirname(scriptsRoot);
 
 export function servicesForTarget(target: DevelopmentTarget): DevelopmentService[] {
-  if (target === "all") return ["api", "app", "host"];
+  if (target === "all") return ["api", "app"];
+  if (target === "test-client") return ["api", "app", "test-client"];
   if (target === "api") return ["api"];
-  return ["api", target];
+  return ["api", "app"];
 }
 
 export function createDevelopmentServiceSpec(
@@ -37,8 +38,8 @@ export function createDevelopmentServiceSpec(
     };
   }
 
-  const isHost = name === "host";
-  const outputDirectory = isHost ? "out-dev-host" : "out-dev-app";
+  const isTestClient = name === "test-client";
+  const outputDirectory = isTestClient ? "out-dev-test-client" : "out-dev-app";
   const electronVite = join(
     projectRoot,
     "node_modules",
@@ -59,9 +60,8 @@ export function createDevelopmentServiceSpec(
     cwd: projectRoot,
     env: {
       ...environment,
-      OPENBOT_DEV_PROFILE: isHost ? "host" : "app",
-      OPENBOT_DEV_RENDERER_PORT: isHost ? "5174" : "5173",
-      ...(isHost ? { OPENBOT_DEV_HOST_AUTO_START: "1" } : {}),
+      OPENBOT_DEV_PROFILE: isTestClient ? "test-client" : "app",
+      OPENBOT_DEV_RENDERER_PORT: isTestClient ? "5174" : "5173",
     },
   };
 }
@@ -71,8 +71,8 @@ export function parseDevelopmentTarget(args: string[]): {
   dryRun: boolean;
 } {
   const target = args.find((argument) => !argument.startsWith("--")) ?? "all";
-  if (target !== "api" && target !== "app" && target !== "host" && target !== "all") {
-    throw new Error(`Unknown development target: ${target}. Use api, app, host, or all.`);
+  if (target !== "api" && target !== "app" && target !== "test-client" && target !== "all") {
+    throw new Error(`Unknown development target: ${target}. Use api, app, test-client, or all.`);
   }
   const unsupportedOption = args.find(
     (argument) => argument.startsWith("--") && argument !== "--dry-run",

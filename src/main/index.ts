@@ -940,19 +940,15 @@ if (!hasSingleInstanceLock) {
         pendingInviteUrl = null;
       }
       const teamIdentity = teamStore.getIdentity();
-      const forcedHostStart = !app.isPackaged && process.env.OPENBOT_DEV_HOST_AUTO_START === "1";
       if (
         shouldAutoStartHost({
           configured: Boolean(teamIdentity),
           enabledOnLaunch: teamIdentity?.enabledOnLaunch ?? false,
-          forcedByDevelopmentScript: forcedHostStart,
         })
       ) {
         void host
           .start()
-          .catch((error) => console.error("Unable to restart the team server:", error));
-      } else if (forcedHostStart && !teamIdentity) {
-        console.info("Host profile is ready. Configure the team server in the Host panel first.");
+          .catch((error) => console.error("Unable to republish this OpenBot:", error));
       }
       void agentInitialization.start().catch((error) => {
         console.error("Unable to initialize the local agent backend:", error);

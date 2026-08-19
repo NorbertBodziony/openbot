@@ -4,7 +4,8 @@ import { dirname, join, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type DevelopmentProfile, developmentUserDataName } from "../src/main/development-profile";
 
-const developmentProfiles = ["app", "host"] as const satisfies readonly DevelopmentProfile[];
+const developmentProfiles = ["app", "test-client"] as const satisfies readonly DevelopmentProfile[];
+const legacyDevelopmentStateNames = ["OpenBot Dev Host"] as const;
 
 export function resolveDevelopmentAppDataRoot(
   platform: NodeJS.Platform = process.platform,
@@ -32,8 +33,11 @@ export function developmentStatePaths(appDataRoot: string): string[] {
     throw new Error("The application data root cannot be a filesystem root.");
   }
 
-  return developmentProfiles.map((profile) => {
-    const target = resolve(safeRoot, developmentUserDataName(profile));
+  return [
+    ...developmentProfiles.map((profile) => developmentUserDataName(profile)),
+    ...legacyDevelopmentStateNames,
+  ].map((name) => {
+    const target = resolve(safeRoot, name);
     if (dirname(target) !== safeRoot) {
       throw new Error(`Unsafe OpenBot dev state path: ${target}`);
     }

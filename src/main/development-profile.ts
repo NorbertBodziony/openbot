@@ -1,17 +1,16 @@
-export type DevelopmentProfile = "app" | "host";
+export type DevelopmentProfile = "app" | "test-client";
 
 export function readDevelopmentProfile(value: string | undefined): DevelopmentProfile {
-  return value === "host" ? "host" : "app";
+  return value === "test-client" ? "test-client" : "app";
 }
 
 export function developmentUserDataName(profile: DevelopmentProfile): string {
-  return profile === "host" ? "OpenBot Dev Host" : "OpenBot Dev";
+  return profile === "test-client" ? "OpenBot Dev Test Client" : "OpenBot Dev";
 }
 
 export function shouldAutoStartHost(input: {
   configured: boolean;
   enabledOnLaunch: boolean;
-  forcedByDevelopmentScript: boolean;
 }): boolean {
-  return input.configured && (input.enabledOnLaunch || input.forcedByDevelopmentScript);
+  return input.configured && input.enabledOnLaunch;
 }

@@ -2529,7 +2529,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(sales).not.toBeInTheDocument());
   });
 
-  it("shows the macOS server rail and opens the join flow", async () => {
+  it("shows the server rail and opens the join flow", async () => {
     render(() => <App />);
     expect(await screen.findByRole("complementary", { name: "Servers" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Add remote server" }));
@@ -2537,12 +2537,62 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("textbox", { name: "Invitation link" })).toBeInTheDocument();
   });
 
-  it("opens host controls from the bottom of the server rail", async () => {
+  it("opens publishing controls from the bottom of the server rail", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    await fireEvent.click(screen.getByRole("button", { name: "Open host controls" }));
-    expect(screen.getByRole("dialog", { name: "Host a team" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Open publishing controls" }));
+    expect(screen.getByRole("dialog", { name: "Publish this OpenBot" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Server name" })).toBeInTheDocument();
+  });
+
+  it("configures and publishes the local instance in one action", async () => {
+    const configured = {
+      phase: "idle" as const,
+      configured: true,
+      enabledOnLaunch: false,
+      serverId: "server-1",
+      serverName: "Design studio",
+      apiUrl: "https://design-studio.teams.openbot.run",
+      vncHostname: null,
+      apiOnline: false,
+      vncOnline: false,
+      remoteDesktopCredentialConfigured: false,
+      message: "Address reserved.",
+    };
+    vi.mocked(window.openbot.host.configure).mockResolvedValueOnce(configured);
+    vi.mocked(window.openbot.host.start).mockResolvedValueOnce({
+      ...configured,
+      phase: "online",
+      enabledOnLaunch: true,
+      apiOnline: true,
+      message: "This OpenBot is public. Only invited people can sign in.",
+    });
+    render(() => <App />);
+
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "Open publishing controls" }));
+    await fireEvent.input(screen.getByRole("textbox", { name: "Server name" }), {
+      target: { value: "Design studio" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Publish this OpenBot" }));
+
+    await waitFor(() =>
+      expect(window.openbot.host.configure).toHaveBeenCalledWith({ serverName: "Design studio" }),
+    );
+    expect(window.openbot.host.start).toHaveBeenCalledOnce();
+    expect(await screen.findByRole("button", { name: "Make private" })).toBeInTheDocument();
+  });
+
+  it("shows publishing controls on Windows", async () => {
+    vi.mocked(window.openbot.getAppInfo).mockResolvedValueOnce({
+      name: "OpenBot",
+      version: "0.1.0",
+      platform: "win32",
+    });
+    render(() => <App />);
+
+    expect(await screen.findByRole("complementary", { name: "Servers" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open publishing controls" })).toBeInTheDocument();
   });
 });
 

@@ -5,8 +5,10 @@ import { HostPanel } from "./HostPanel";
 
 describe("HostPanel", () => {
   it("shows the shared server-name limit during host setup", () => {
+    const onConfigure = vi.fn().mockResolvedValue(undefined);
     render(() => (
       <HostPanel
+        platform="darwin"
         accountEmail="owner@example.com"
         status={{
           phase: "unconfigured",
@@ -26,7 +28,7 @@ describe("HostPanel", () => {
         sessions={[]}
         presence={{ serverId: null, members: [], updatedAt: "" }}
         onClose={vi.fn()}
-        onConfigure={vi.fn()}
+        onConfigure={onConfigure}
         onConfigureRemoteDesktop={vi.fn()}
         onStart={vi.fn()}
         onStop={vi.fn()}
@@ -43,6 +45,48 @@ describe("HostPanel", () => {
       "maxlength",
       String(INPUT_LIMITS.serverName),
     );
+    expect(screen.getByText(/Only people you invite can sign in/)).toBeInTheDocument();
+  });
+
+  it("keeps publishing controls on Windows without macOS Remote Desktop setup", () => {
+    render(() => (
+      <HostPanel
+        platform="win32"
+        accountEmail="owner@example.com"
+        status={{
+          phase: "idle",
+          configured: true,
+          enabledOnLaunch: false,
+          serverId: "server-1",
+          serverName: "Studio PC",
+          apiUrl: null,
+          vncHostname: null,
+          apiOnline: false,
+          vncOnline: false,
+          remoteDesktopCredentialConfigured: false,
+          message: "This OpenBot is private.",
+        }}
+        members={[]}
+        invites={[]}
+        sessions={[]}
+        presence={{ serverId: "server-1", members: [], updatedAt: "" }}
+        onClose={vi.fn()}
+        onConfigure={vi.fn()}
+        onConfigureRemoteDesktop={vi.fn()}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onCreateInvite={vi.fn()}
+        onUpdateMember={vi.fn()}
+        onRemoveMember={vi.fn()}
+        onRevokeSession={vi.fn()}
+        onRevokeInvite={vi.fn()}
+        onCopyAddressUpdate={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByRole("button", { name: "Make public" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remote desktop" })).toBeNull();
+    expect(screen.queryByText("Remote Mac")).toBeNull();
   });
 
   it("sends an email-bound invitation from the configured host", async () => {
@@ -56,6 +100,7 @@ describe("HostPanel", () => {
     });
     render(() => (
       <HostPanel
+        platform="darwin"
         accountEmail="owner@example.com"
         status={{
           phase: "online",
@@ -68,7 +113,7 @@ describe("HostPanel", () => {
           apiOnline: true,
           vncOnline: false,
           remoteDesktopCredentialConfigured: false,
-          message: "The team server is online.",
+          message: "This OpenBot is public. Only invited people can sign in.",
         }}
         members={[]}
         invites={[]}
@@ -111,6 +156,7 @@ describe("HostPanel", () => {
     const onRemoveMember = vi.fn().mockResolvedValue(undefined);
     render(() => (
       <HostPanel
+        platform="darwin"
         accountEmail="owner@example.com"
         status={{
           phase: "online",
@@ -123,7 +169,7 @@ describe("HostPanel", () => {
           apiOnline: true,
           vncOnline: false,
           remoteDesktopCredentialConfigured: false,
-          message: "The team server is online.",
+          message: "This OpenBot is public. Only invited people can sign in.",
         }}
         members={[
           {
@@ -204,6 +250,7 @@ describe("HostPanel", () => {
     });
     render(() => (
       <HostPanel
+        platform="darwin"
         accountEmail="owner@example.com"
         status={{
           phase: "online",
@@ -216,7 +263,7 @@ describe("HostPanel", () => {
           apiOnline: true,
           vncOnline: false,
           remoteDesktopCredentialConfigured: false,
-          message: "The team server is online.",
+          message: "This OpenBot is public. Only invited people can sign in.",
         }}
         members={[]}
         invites={[]}

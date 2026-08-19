@@ -30,27 +30,34 @@ describe("reset dev state", () => {
     expect(resolveDevelopmentAppDataRoot("linux", { XDG_CONFIG_HOME: "/config" })).toBe("/config");
   });
 
-  it("deletes app and host data but keeps production data", async () => {
+  it("deletes app, test-client, and legacy host data but keeps production data", async () => {
     const appDataRoot = await makeTemporaryDirectory();
-    const [appPath, hostPath] = developmentStatePaths(appDataRoot);
+    const [appPath, testClientPath, legacyHostPath] = developmentStatePaths(appDataRoot);
     const productionPath = join(appDataRoot, "OpenBot");
 
     await Promise.all([
       mkdir(appPath, { recursive: true }),
-      mkdir(hostPath, { recursive: true }),
+      mkdir(testClientPath, { recursive: true }),
+      mkdir(legacyHostPath, { recursive: true }),
       mkdir(productionPath, { recursive: true }),
     ]);
     await Promise.all([
       writeFile(join(appPath, "openbot.db"), "database"),
       writeFile(join(appPath, "openbot.db-wal"), "wal"),
       writeFile(join(appPath, "openbot.db-shm"), "shm"),
-      writeFile(join(hostPath, "openbot.db"), "host database"),
+      writeFile(join(testClientPath, "openbot.db"), "test-client database"),
+      writeFile(join(legacyHostPath, "openbot.db"), "legacy host database"),
       writeFile(join(productionPath, "openbot.db"), "production database"),
     ]);
 
-    await expect(resetDevelopmentState(appDataRoot)).resolves.toEqual([appPath, hostPath]);
+    await expect(resetDevelopmentState(appDataRoot)).resolves.toEqual([
+      appPath,
+      testClientPath,
+      legacyHostPath,
+    ]);
     await expect(stat(appPath)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(hostPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(testClientPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(legacyHostPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(join(productionPath, "openbot.db"))).resolves.toBeDefined();
   });
 

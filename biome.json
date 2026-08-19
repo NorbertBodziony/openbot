@@ -20,6 +20,7 @@
       "!node_modules",
       "!out",
       "!out-dev-app",
+      "!out-dev-test-client",
       "!dist",
       "!**/dist",
       "!**/.wrangler",

@@ -167,7 +167,7 @@ export class HostService extends EventEmitter<HostEvents> {
     } catch (error) {
       this.#setStatus({
         phase: "error",
-        message: error instanceof Error ? error.message : "Could not create the named team tunnel.",
+        message: error instanceof Error ? error.message : "Could not reserve the public address.",
       });
     }
     return this.getStatus();
@@ -190,14 +190,14 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async start(): Promise<HostStatus> {
-    if (!this.#options.store.configured) throw new Error("Configure the team server first.");
+    if (!this.#options.store.configured) throw new Error("Name this OpenBot before publishing it.");
     if (this.#status.phase === "online" || this.#status.phase === "starting") {
       return this.getStatus();
     }
     const signedInUser = this.#options.getSignedInUser();
     this.#options.store.assertOwnerAccount(signedInUser);
     await this.syncSignedInAccount(signedInUser);
-    this.#setStatus({ phase: "starting", message: "Starting the team API…" });
+    this.#setStatus({ phase: "starting", message: "Starting the secure public API…" });
     const executable = await (this.#options.resolveCloudflared?.() ??
       resolveCloudflaredExecutable());
     if (!executable) {
@@ -214,7 +214,7 @@ export class HostService extends EventEmitter<HostEvents> {
       const vncReady = screenSharingReady && this.#options.getRemoteDesktopPassword() !== null;
       this.#setStatus({ message: "Provisioning a stable teams.openbot.run address…" });
       const identity = this.#options.store.getIdentity();
-      if (!identity) throw new Error("Configure the team server first.");
+      if (!identity) throw new Error("Name this OpenBot before publishing it.");
       const provisioned = await this.#options.provisionTeamTunnel({
         serverId: identity.serverId,
         serverName: identity.serverName,
@@ -229,7 +229,7 @@ export class HostService extends EventEmitter<HostEvents> {
       this.#setStatus({
         apiUrl: provisioned.apiUrl,
         vncHostname: provisioned.vncHostname,
-        message: "Publishing the secure host address…",
+        message: "Publishing this OpenBot through its secure address…",
       });
       if (!(await waitForPublicApi(provisioned.apiUrl, this.#options.publicReadyTimeoutMs))) {
         throw new Error("Cloudflare did not publish the named tunnel address. Try again.");
@@ -238,10 +238,10 @@ export class HostService extends EventEmitter<HostEvents> {
         apiOnline: true,
         vncOnline: vncReady,
         message: vncReady
-          ? "The team server and Remote Desktop are online."
+          ? "This OpenBot and Remote Desktop are publicly reachable."
           : !screenSharingReady
-            ? "The team server is online. Enable macOS Screen Sharing to use Remote Desktop."
-            : "The team server is online. Add the dedicated VNC password to enable Remote Desktop.",
+            ? "This OpenBot is public. Only invited people can sign in."
+            : "This OpenBot is public. Add the dedicated VNC password to enable Remote Desktop.",
       });
       await this.#options.store.setEnabledOnLaunch(true);
       this.#setStatus({ phase: "online", enabledOnLaunch: true });
@@ -253,7 +253,7 @@ export class HostService extends EventEmitter<HostEvents> {
         vncOnline: false,
         apiUrl: null,
         vncHostname: null,
-        message: error instanceof Error ? error.message : "Could not start the team server.",
+        message: error instanceof Error ? error.message : "This OpenBot could not be published.",
       });
     }
     return this.getStatus();
@@ -261,7 +261,7 @@ export class HostService extends EventEmitter<HostEvents> {
 
   async stop(persistPreference = true): Promise<HostStatus> {
     if (this.#status.phase === "unconfigured") return this.getStatus();
-    this.#setStatus({ phase: "stopping", message: "Stopping the team server…" });
+    this.#setStatus({ phase: "stopping", message: "Making this OpenBot private…" });
     await this.#stopRuntime();
     if (persistPreference) await this.#options.store.setEnabledOnLaunch(false);
     this.#setStatus({
@@ -271,7 +271,7 @@ export class HostService extends EventEmitter<HostEvents> {
       vncHostname: null,
       apiOnline: false,
       vncOnline: false,
-      message: "The team server is stopped.",
+      message: "This OpenBot is private.",
     });
     return this.getStatus();
   }
@@ -341,7 +341,7 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   createAddressUpdate(): string {
-    if (!this.#status.apiUrl) throw new Error("Start the team server first.");
+    if (!this.#status.apiUrl) throw new Error("Make this OpenBot public first.");
     const proof = this.#options.store.createAddressUpdateProof(
       this.#status.apiUrl,
       this.#status.vncHostname,
@@ -356,9 +356,10 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async createInvite(input: CreateTeamInviteInput): Promise<InviteSummary> {
-    if (!this.#status.apiUrl) throw new Error("Start the team server before creating an invite.");
+    if (!this.#status.apiUrl)
+      throw new Error("Make this OpenBot public before creating an invite.");
     const identity = this.#options.store.getIdentity();
-    if (!identity) throw new Error("Configure the team server first.");
+    if (!identity) throw new Error("Name this OpenBot before publishing it.");
     const invite = await this.#options.store.createInvite(input.role, input.email);
     const url = new URL("openbot://join");
     url.searchParams.set("api", this.#status.apiUrl);

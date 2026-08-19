@@ -1,5 +1,6 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
+  AppInfo,
   HostStatus,
   InviteSummary,
   TeamInviteSummary,
@@ -22,6 +23,7 @@ import {
 type AdminSection = "overview" | "people" | "desktop";
 
 interface HostPanelProps {
+  platform: AppInfo["platform"];
   status: HostStatus;
   members: TeamMemberSummary[];
   invites: TeamInviteSummary[];
@@ -141,12 +143,12 @@ export function HostPanel(props: HostPanelProps) {
         <header class="remote-admin-header">
           <div>
             <span class="remote-dialog-eyebrow">
-              {props.status.configured ? "Server administration" : "This Mac"}
+              {props.status.configured ? "Published access" : "This OpenBot"}
             </span>
             <h2 id="host-title">
               {props.status.configured
                 ? (props.status.serverName ?? "OpenBot server")
-                : "Host a team"}
+                : "Publish this OpenBot"}
             </h2>
           </div>
           <button type="button" aria-label="Close" onClick={props.onClose}>
@@ -169,10 +171,10 @@ export function HostPanel(props: HostPanelProps) {
           }
         >
           <div class="remote-admin-shell">
-            <nav class="remote-admin-nav" aria-label="Server administration">
+            <nav class="remote-admin-nav" aria-label="Published access administration">
               <AdminNavButton
                 active={section() === "overview"}
-                label="Overview"
+                label="Publishing"
                 icon="pulse"
                 onSelect={() => setSection("overview")}
               />
@@ -183,15 +185,17 @@ export function HostPanel(props: HostPanelProps) {
                 icon="people"
                 onSelect={() => setSection("people")}
               />
-              <AdminNavButton
-                active={section() === "desktop"}
-                label="Remote desktop"
-                icon="screen"
-                onSelect={() => setSection("desktop")}
-              />
+              <Show when={props.platform === "darwin"}>
+                <AdminNavButton
+                  active={section() === "desktop"}
+                  label="Remote desktop"
+                  icon="screen"
+                  onSelect={() => setSection("desktop")}
+                />
+              </Show>
               <div class="remote-admin-nav-state">
                 <i class={online() ? "online" : ""} />
-                <span>{online() ? "Server online" : "Server offline"}</span>
+                <span>{online() ? "Public" : "Private"}</span>
               </div>
             </nav>
 
@@ -200,25 +204,27 @@ export function HostPanel(props: HostPanelProps) {
                 <section class="remote-admin-view" aria-labelledby="server-overview-title">
                   <div class="remote-admin-view-heading">
                     <div>
-                      <span class="remote-admin-kicker">Local host</span>
-                      <h3 id="server-overview-title">Server overview</h3>
-                      <p>Check access endpoints and control this hosted server.</p>
+                      <span class="remote-admin-kicker">This OpenBot</span>
+                      <h3 id="server-overview-title">Published access</h3>
+                      <p>Control the secure public address for this local OpenBot instance.</p>
                     </div>
                     <span class={["remote-admin-status-pill", { online: online() }]}>
-                      {online() ? "Online" : "Offline"}
+                      {online() ? "Public" : "Private"}
                     </span>
                   </div>
                   <div class="remote-status-grid">
                     <StatusCard
-                      label="Team API"
+                      label="Public API"
                       online={props.status.apiOnline}
                       value={props.status.apiUrl ?? "Not running"}
                     />
-                    <StatusCard
-                      label="Remote Mac"
-                      online={props.status.vncOnline}
-                      value={props.status.vncHostname ?? "Not available"}
-                    />
+                    <Show when={props.platform === "darwin"}>
+                      <StatusCard
+                        label="Remote Mac"
+                        online={props.status.vncOnline}
+                        value={props.status.vncHostname ?? "Not available"}
+                      />
+                    </Show>
                   </div>
                   <fieldset class="remote-admin-metrics">
                     <legend class="sr-only">Server access summary</legend>
@@ -228,8 +234,11 @@ export function HostPanel(props: HostPanelProps) {
                   </fieldset>
                   <section class="remote-admin-control-card">
                     <div>
-                      <h3>Host controls</h3>
-                      <p>{props.status.message ?? "Control the local server process."}</p>
+                      <h3>Publishing controls</h3>
+                      <p>
+                        {props.status.message ??
+                          "The address is public, but only invited people can sign in."}
+                      </p>
                     </div>
                     <div class="remote-host-actions">
                       <Show
@@ -241,7 +250,7 @@ export function HostPanel(props: HostPanelProps) {
                             disabled={busy() || props.status.phase === "starting"}
                             onClick={() => void run(props.onStart)}
                           >
-                            {props.status.phase === "starting" ? "Starting…" : "Start server"}
+                            {props.status.phase === "starting" ? "Publishing…" : "Make public"}
                           </button>
                         }
                       >
@@ -251,7 +260,7 @@ export function HostPanel(props: HostPanelProps) {
                           disabled={busy()}
                           onClick={() => void run(props.onStop)}
                         >
-                          Stop server
+                          Make private
                         </button>
                       </Show>
                       <button
@@ -355,7 +364,9 @@ export function HostPanel(props: HostPanelProps) {
                           : "Create invitation link"}
                     </button>
                     <Show when={!props.status.apiOnline}>
-                      <p class="remote-inline-note">Start the server before you invite people.</p>
+                      <p class="remote-inline-note">
+                        Make this OpenBot public before inviting people.
+                      </p>
                     </Show>
                     <Show when={invite()}>
                       {(item) => (
@@ -460,7 +471,7 @@ export function HostPanel(props: HostPanelProps) {
                 </section>
               </Show>
 
-              <Show when={section() === "desktop"}>
+              <Show when={props.platform === "darwin" && section() === "desktop"}>
                 <section class="remote-admin-view" aria-labelledby="desktop-access-title">
                   <div class="remote-admin-view-heading">
                     <div>
@@ -540,8 +551,8 @@ function HostSetup(props: {
   return (
     <div class="remote-host-setup">
       <p>
-        This Mac will use your signed-in OpenBot account as the owner. You can invite other people
-        after the server is ready.
+        Publish the agents, conversations, files, and browser from this local OpenBot instance
+        through a secure public address. Only people you invite can sign in.
       </p>
       <label class="remote-field">
         <span>Server name</span>
@@ -566,7 +577,7 @@ function HostSetup(props: {
         disabled={props.busy || props.serverName.trim().length < 2}
         onClick={props.onCreate}
       >
-        {props.busy ? "Creating…" : "Create team server"}
+        {props.busy ? "Publishing…" : "Publish this OpenBot"}
       </button>
     </div>
   );

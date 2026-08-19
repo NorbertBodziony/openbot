@@ -6,8 +6,10 @@ import {
 } from "./development-profile";
 
 describe("development profile", () => {
-  it("uses a separate userData folder for the host", () => {
-    expect(developmentUserDataName(readDevelopmentProfile("host"))).toBe("OpenBot Dev Host");
+  it("uses a separate userData folder for the test client", () => {
+    expect(developmentUserDataName(readDevelopmentProfile("test-client"))).toBe(
+      "OpenBot Dev Test Client",
+    );
     expect(developmentUserDataName(readDevelopmentProfile("app"))).toBe("OpenBot Dev");
   });
 
@@ -15,20 +17,19 @@ describe("development profile", () => {
     expect(readDevelopmentProfile("../../other")).toBe("app");
   });
 
-  it("starts only a configured host", () => {
+  it("republishes only when the configured instance was public on the previous launch", () => {
     expect(
       shouldAutoStartHost({
         configured: true,
-        enabledOnLaunch: false,
-        forcedByDevelopmentScript: true,
+        enabledOnLaunch: true,
       }),
     ).toBe(true);
     expect(
       shouldAutoStartHost({
-        configured: false,
-        enabledOnLaunch: true,
-        forcedByDevelopmentScript: true,
+        configured: true,
+        enabledOnLaunch: false,
       }),
     ).toBe(false);
+    expect(shouldAutoStartHost({ configured: false, enabledOnLaunch: true })).toBe(false);
   });
 });
