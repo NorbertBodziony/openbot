@@ -628,6 +628,8 @@ describe.sequential("AgentService", () => {
       id: "image-call-1",
       type: "image_generation_call",
       status: "in_progress",
+      size: "1536x1024",
+      aspect_ratio: "landscape",
     };
     client.emit(
       "notification",
@@ -674,8 +676,8 @@ describe.sequential("AgentService", () => {
       itemType: "image_generation",
       imageGeneration: {
         prompt: "A mountain observatory at blue hour",
-        resolution: "1024 × 1024",
-        aspectRatio: "square",
+        resolution: "1536x1024",
+        aspectRatio: "landscape",
       },
       attachments: [{ kind: "image", previewKind: "image" }],
     });
@@ -808,6 +810,77 @@ describe.sequential("AgentService", () => {
     expect(messages.find((message) => message.id === interruptedCall.id)?.imageGeneration?.error).toBe(
       "Image generation was interrupted.",
     );
+  });
+
+  it("marks an active image generation interrupted before a late Codex result arrives", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Generate a cinematic still." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const started = events.find((event) => event.type === "turn-started");
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    if (started?.type !== "turn-started" || !client || !threadId) {
+      throw new Error("The fake Codex turn did not start.");
+    }
+    const item = {
+      id: "image-call-late-result",
+      type: "image_generation_call",
+      status: "in_progress",
+      revised_prompt: "A cinematic still at blue hour",
+    };
+    client.emit("notification", notification("item/started", { threadId, turnId: started.turnId, item }));
+    await waitFor(async () => {
+      const message = (await service?.readConversation("chief"))?.messages.find(
+        (candidate) => candidate.id === item.id,
+      );
+      return message?.status === "streaming";
+    });
+
+    await service.interrupt("chief", started.turnId);
+    await waitFor(async () => {
+      const message = (await service?.readConversation("chief"))?.messages.find(
+        (candidate) => candidate.id === item.id,
+      );
+      return message?.status === "interrupted";
+    });
+
+    client.emit(
+      "notification",
+      notification("item/completed", {
+        threadId,
+        turnId: started.turnId,
+        item: {
+          ...item,
+          status: "completed",
+          result: Buffer.from("late-image").toString("base64"),
+        },
+      }),
+    );
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId,
+        turn: { id: started.turnId, status: "interrupted" },
+      }),
+    );
+
+    await waitFor(async () => {
+      const message = (await service?.readConversation("chief"))?.messages.find(
+        (candidate) => candidate.id === item.id,
+      );
+      return message?.status === "interrupted" && !message.attachments?.length;
+    });
+    const message = (await service.readConversation("chief")).messages.find((candidate) => candidate.id === item.id);
+    expect(message?.imageGeneration?.error).toBe("Image generation was interrupted.");
   });
 
   it("waits for active queue drains before shutdown completes", async () => {

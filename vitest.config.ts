@@ -6,7 +6,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    fileParallelism: false,
     setupFiles: ["./src/renderer/src/setupTests.ts"],
-    exclude: [...configDefaults.exclude, "apps/**"],
+    exclude: [...configDefaults.exclude, "apps/**", "tests/visual/**"],
   },
 });

@@ -164,7 +164,7 @@ export function parseImportAttachments(value: unknown): ImportAttachmentsInput {
 }
 
 export function parseOpenAttachment(value: unknown): OpenAttachmentInput {
-  if (!isObject(value) || (value.action !== "open" && value.action !== "reveal")) {
+  if (!isObject(value) || (value.action !== "open" && value.action !== "reveal" && value.action !== "download")) {
     throw new Error("Invalid attachment action.");
   }
   return {

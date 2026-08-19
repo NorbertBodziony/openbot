@@ -25,6 +25,7 @@ import type {
   TeamPresenceSnapshot,
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
+import { isClaudeModel } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onCleanup, onSettled, Show, untrack } from "solid-js";
 import { normalizeAvatarFile } from "../avatar-image";
 import { AVATAR_HUE_OPTIONS, avatarCandidateSeeds, avatarHueSwatch } from "../blobatar";
@@ -48,6 +49,7 @@ import {
   SettingsForwardIcon,
   StopIcon,
 } from "./conversation/ConversationIcons";
+import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
 import { QueuePanel } from "./conversation/QueuePanel";
 import { scrollToUnreadBoundary, UnreadMessagesBanner, UnreadMessagesDivider } from "./conversation/UnreadMessages";
@@ -168,6 +170,7 @@ const BROWSER_ACTION_LABELS: Record<BrowserControlAction, string> = {
 
 export function Conversation(props: ConversationProps) {
   const agentReady = () => props.agentStatus.phase === "ready";
+  const imageGenerationUnavailable = () => Boolean(props.bot && isClaudeModel(props.bot.model));
   const [drafts, setDrafts] = createSignal<Record<string, ComposerDraft>>({});
   const [editingDeliveryId, setEditingDeliveryId] = createSignal<string | null>(null);
   const [editingDraftBackup, setEditingDraftBackup] = createSignal<ComposerDraft | null>(null);
@@ -341,6 +344,7 @@ export function Conversation(props: ConversationProps) {
   const seenMessageIds = new Set<string>();
   const [fadeAtTop, setFadeAtTop] = createSignal(false);
   const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
+  const [showScrollToLatest, setShowScrollToLatest] = createSignal(false);
   let scrollElement: HTMLDivElement | undefined;
   let unreadMessagesDivider: HTMLDivElement | undefined;
   let conversationPanel: HTMLElement | undefined;
@@ -462,6 +466,7 @@ export function Conversation(props: ConversationProps) {
     const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
     setFadeAtTop(element.scrollTop > 2);
     setFadeAtBottom(remaining > 2);
+    setShowScrollToLatest(remaining > 80);
   }
 
   const markMessageSeen = (messageId: string): boolean => {
@@ -982,10 +987,16 @@ export function Conversation(props: ConversationProps) {
         if (!scrollElement) return;
         const settledBoundary = divider.isConnected ? divider : firstUnreadMessage;
         if (settledBoundary.isConnected) {
-          scrollToUnreadBoundary(scrollElement, settledBoundary, "auto");
+          scrollToUnreadBoundary(scrollElement, settledBoundary);
         }
       });
     });
+  }
+
+  function jumpToLatestMessage(): void {
+    if (!scrollElement) return;
+    stickToLatest = true;
+    scrollToLatestMessage(scrollElement);
   }
 
   function replyToMessage(message: BotMessage) {
@@ -1115,7 +1126,7 @@ export function Conversation(props: ConversationProps) {
     }
   }
 
-  function attachmentAction(attachment: AttachmentSummary, action: "open" | "reveal") {
+  function attachmentAction(attachment: AttachmentSummary, action: "open" | "reveal" | "download") {
     void window.openbot.agent
       .openAttachment({ attachmentId: attachment.id, action })
       .catch((error) => setComposerError(error instanceof Error ? error.message : String(error)));
@@ -1323,6 +1334,9 @@ export function Conversation(props: ConversationProps) {
           updateScrollFade(element);
         }}
       >
+        <Show when={showScrollToLatest()}>
+          <ScrollToLatestButton onClick={jumpToLatestMessage} />
+        </Show>
         <Show when={!props.agentPickerOpen && props.loaded}>
           <Show when={!agentReady()}>
             <section class="agent-setup-card" role="status">
@@ -1437,6 +1451,7 @@ export function Conversation(props: ConversationProps) {
                                   onOpenLink={(url) => void openMessageLink(url)}
                                   onPreview={(attachment) => void previewAttachment(attachment)}
                                   onAttachmentAction={attachmentAction}
+                                  onDownload={(attachment) => attachmentAction(attachment, "download")}
                                   onRetry={() => {
                                     const prompt = message.imageGeneration?.prompt?.trim();
                                     if (prompt) void submitMessage(prompt);
@@ -1589,6 +1604,12 @@ export function Conversation(props: ConversationProps) {
               {composerError()}
             </div>
           </Show>
+          <Show when={agentReady() && imageGenerationUnavailable()}>
+            <aside class="image-generation-capability-note" role="note">
+              <strong>Image generation is currently available with Codex.</strong>
+              <span>Switch this agent to a Codex model in Settings to generate images.</span>
+            </aside>
+          </Show>
           <Show when={queueBarVisible()}>
             <QueuePanel
               deliveries={props.queue?.deliveries ?? []}
@@ -1718,6 +1739,9 @@ export function Conversation(props: ConversationProps) {
                 <span>{preview().attachment.name}</span>
                 <button type="button" onClick={() => attachmentAction(preview().attachment, "open")}>
                   Open
+                </button>
+                <button type="button" onClick={() => attachmentAction(preview().attachment, "download")}>
+                  Download
                 </button>
                 <button type="button" onClick={() => attachmentAction(preview().attachment, "reveal")}>
                   Show in Finder

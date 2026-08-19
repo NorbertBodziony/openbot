@@ -129,6 +129,11 @@ interface PendingDelta {
   timer: NodeJS.Timeout | null;
 }
 
+interface ImageGenerationOperation {
+  interrupted: boolean;
+  promise: Promise<void> | null;
+}
+
 const CONTEXT_COMPACTION_THRESHOLD = 0.8;
 const CONTEXT_COMPACTION_TIMEOUT_MS = 120_000;
 
@@ -210,7 +215,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingPrompts = new Map<RequestId, PendingPrompt>();
   readonly #pendingApprovals = new Map<RequestId, PendingApproval>();
   readonly #itemTurns = new Map<string, string>();
-  readonly #imageGenerationOperations = new Map<string, Promise<void>>();
+  readonly #imageGenerationOperations = new Map<string, ImageGenerationOperation>();
+  readonly #interruptedTurns = new Set<string>();
   readonly #turnAssociations = new Map<string, Promise<void>>();
   readonly #drainingBots = new Set<string>();
   readonly #scheduledDrains = new Set<string>();
@@ -420,6 +426,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#pendingHandoffs.clear();
     this.#clearPendingPrompts();
     this.#pendingApprovals.clear();
+    for (const [botId, snapshot] of this.#snapshots) {
+      if (!snapshot.activeTurnId) continue;
+      const session = this.#store.activeProviderSession(botId);
+      if (session) this.#interruptImageGenerations(botId, session.externalSessionId, snapshot.activeTurnId);
+    }
     this.#turnAssociations.clear();
     this.#scheduledDrains.clear();
     this.#browser.clearControls();
@@ -427,6 +438,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#clients.clear();
     await Promise.all(clients.map((client) => client.stop().catch(() => undefined)));
     await Promise.allSettled([...this.#drainTasks.values()]);
+    await Promise.allSettled(
+      [...this.#imageGenerationOperations.values()]
+        .map((operation) => operation.promise)
+        .filter((promise): promise is Promise<void> => promise !== null),
+    );
+    this.#imageGenerationOperations.clear();
+    this.#interruptedTurns.clear();
     this.#setStatus({ phase: "stopped", message: null });
   }
 
@@ -596,6 +614,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const client = this.#requireReadyClient(providerForBot(bot));
     const session = this.#store.activeProviderSession(botId);
     if (!session) return;
+    this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
     await this.#mailbox.setPaused(botId, true);
     this.#emitQueue(botId);
     await client.request("turn/interrupt", { threadId: session.externalSessionId, turnId }, decodeRecordResponse);
@@ -610,6 +629,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const client = bot ? this.#clientForBot(bot) : null;
       const session = bot ? this.#store.activeProviderSession(bot.id) : null;
       if (!client || !session) continue;
+      this.#interruptImageGenerations(botId, session.externalSessionId, snapshot.activeTurnId);
       requests.push(this.#mailbox.setPaused(botId, true).then(() => this.#emitQueue(botId)));
       requests.push(
         client
@@ -1769,16 +1789,41 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#scheduleDrain(recipientBotId);
   }
 
+  #interruptImageGenerations(botId: string, threadId: string, turnId: string): void {
+    this.#interruptedTurns.add(`${threadId}:${turnId}`);
+    let changed = false;
+    for (const [key, operation] of this.#imageGenerationOperations) {
+      if (!key.startsWith(`${threadId}:${turnId}:`)) continue;
+      operation.interrupted = true;
+    }
+    const snapshot = this.#ensureSnapshot(botId, threadId);
+    for (const message of snapshot.messages) {
+      if (
+        message.turnId !== turnId ||
+        message.itemType !== "image_generation" ||
+        message.status === "completed" ||
+        message.status === "failed" ||
+        message.status === "interrupted"
+      ) {
+        continue;
+      }
+      message.status = "interrupted";
+      if (message.imageGeneration) message.imageGeneration.error ??= "Image generation was interrupted.";
+      changed = true;
+    }
+    if (changed) this.#emitConversation(snapshot, "image-generation.interrupted", { turnId });
+  }
+
   #applyItem(botId: string, threadId: string, turnId: string, item: ThreadItem, completed: boolean): void {
     if (isImageGenerationItem(item)) {
-      const operation = this.#applyImageGenerationItem(botId, threadId, turnId, item, completed);
       const operationKey = `${threadId}:${turnId}:${item.id}`;
-      this.#imageGenerationOperations.set(operationKey, operation);
-      void operation.finally(() => {
-        if (this.#imageGenerationOperations.get(operationKey) === operation) {
-          this.#imageGenerationOperations.delete(operationKey);
-        }
-      });
+      const state = this.#imageGenerationOperations.get(operationKey) ?? {
+        interrupted: this.#interruptedTurns.has(`${threadId}:${turnId}`),
+        promise: null,
+      };
+      state.interrupted ||= this.#interruptedTurns.has(`${threadId}:${turnId}`);
+      this.#imageGenerationOperations.set(operationKey, state);
+      state.promise = this.#applyImageGenerationItem(botId, threadId, turnId, item, completed, state);
       return;
     }
     if (item.type !== "agentMessage" || !isString(item.id)) return;
@@ -1801,6 +1846,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     turnId: string,
     item: ThreadItem,
     completed: boolean,
+    operation: ImageGenerationOperation,
   ): Promise<void> {
     if (!isString(item.id)) return;
     const snapshot = this.#ensureSnapshot(botId, threadId);
@@ -1831,11 +1877,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       aspectRatio,
       ...(failure ? { error: failure } : {}),
     } satisfies ImageGenerationInfo;
-    message.status = completed ? "completed" : "streaming";
+    message.status = operation.interrupted ? "interrupted" : completed ? "completed" : "streaming";
     this.#itemTurns.set(item.id, turnId);
     this.#emitConversation(snapshot);
 
-    if (!completed) return;
+    if (!completed || operation.interrupted) {
+      if (operation.interrupted) message.imageGeneration.error ??= "Image generation was interrupted.";
+      return;
+    }
     if (providerStatus === "failed" || failure) {
       message.status = "failed";
       message.imageGeneration.error = failure ?? "Image generation failed.";
@@ -1870,6 +1919,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       } else {
         throw new Error("Image generation did not return an image.");
       }
+      if (operation.interrupted) {
+        const interruptedSnapshot = this.#ensureSnapshot(botId, threadId);
+        const interruptedMessage = interruptedSnapshot.messages.find((candidate) => candidate.id === item.id);
+        if (interruptedMessage?.imageGeneration) {
+          interruptedMessage.status = "interrupted";
+          interruptedMessage.imageGeneration.error ??= "Image generation was interrupted.";
+          this.#emitConversation(interruptedSnapshot);
+        }
+        return;
+      }
       const latestSnapshot = this.#ensureSnapshot(botId, threadId);
       const latestMessage = latestSnapshot.messages.find((candidate) => candidate.id === item.id);
       if (!latestMessage?.imageGeneration) return;
@@ -1889,10 +1948,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #waitForImageGenerationOperations(threadId: string, turnId: string): Promise<void> {
-    const operations = [...this.#imageGenerationOperations.entries()]
-      .filter(([key]) => key.startsWith(`${threadId}:${turnId}:`))
-      .map(([, operation]) => operation);
+    const entries = [...this.#imageGenerationOperations.entries()].filter(([key]) =>
+      key.startsWith(`${threadId}:${turnId}:`),
+    );
+    const operations = entries
+      .map(([, operation]) => operation.promise)
+      .filter((promise): promise is Promise<void> => promise !== null);
     if (operations.length > 0) await Promise.allSettled(operations);
+    for (const [key] of entries) {
+      if (this.#imageGenerationOperations.has(key)) this.#imageGenerationOperations.delete(key);
+    }
+    this.#interruptedTurns.delete(`${threadId}:${turnId}`);
   }
 
   #surfaceApproval(client: AgentClient, request: AppServerRequest, kind: AgentApprovalKind): void {

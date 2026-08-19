@@ -151,6 +151,7 @@ describe("ImageGeneration", () => {
 
   it("crossfades to a clickable preview when complete", async () => {
     const onPreview = vi.fn();
+    const onDownload = vi.fn();
     render(() => (
       <ImageGeneration
         status="completed"
@@ -159,6 +160,7 @@ describe("ImageGeneration", () => {
         aspectRatio="square"
         attachment={attachment}
         onPreview={onPreview}
+        onDownload={onDownload}
       />
     ));
 
@@ -166,6 +168,27 @@ describe("ImageGeneration", () => {
     await fireEvent.click(preview);
     expect(onPreview).toHaveBeenCalledWith(attachment);
     expect(screen.getByAltText("A quiet observatory")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    expect(onDownload).toHaveBeenCalledWith(attachment);
+  });
+
+  it("keeps the canvas and offers retry when the preview cannot load", async () => {
+    const onRetry = vi.fn();
+    render(() => (
+      <ImageGeneration
+        status="completed"
+        prompt="A quiet observatory"
+        resolution="1024 × 1024"
+        aspectRatio="square"
+        attachment={attachment}
+        onRetry={onRetry}
+      />
+    ));
+
+    await fireEvent.error(screen.getByAltText("A quiet observatory"));
+    expect(screen.getByRole("alert")).toHaveTextContent("preview is unavailable");
+    await fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 
   it("keeps the canvas for errors and offers an accessible retry", async () => {

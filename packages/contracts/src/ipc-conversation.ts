@@ -202,7 +202,7 @@ export type AttachmentImportEvent =
 
 export interface OpenAttachmentInput {
   attachmentId: string;
-  action: "open" | "reveal";
+  action: "open" | "reveal" | "download";
 }
 
 export type QueueDeliveryStatus =

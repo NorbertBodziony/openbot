@@ -216,10 +216,49 @@ export const FileReferenceTypes: Story = {
   ),
   play: async ({ canvas }) => {
     await expect(canvas.getByText("TS")).toBeInTheDocument();
+    await expect(canvas.getByText("PDF")).toBeInTheDocument();
+    await expect(canvas.getByText("PNG")).toBeInTheDocument();
+    await expect(canvas.getByText("ZIP")).toBeInTheDocument();
+    await expect(canvas.getByText("DOCX")).toBeInTheDocument();
     const references = canvas.getAllByRole("button", { name: /Open attached file/u });
     await expect(references).toHaveLength(6);
     const root = references[0]?.parentElement;
     if (!root) throw new Error("The file reference story root is missing");
-    await expect(root.querySelectorAll(".attachment-reference-visual > svg")).toHaveLength(5);
+    await expect(root.querySelectorAll(".attachment-reference-visual > svg")).toHaveLength(1);
   },
+};
+
+export const MixedReferencesStress: Story = {
+  name: "Mixed references stress",
+  args: {
+    body: `Ask @Research to compare ${serializeAttachmentReference(longAttachment.name, longAttachment.id)} with ${serializeAttachmentReference(fileTypeAttachments[1].name, fileTypeAttachments[1].id)} and https://openbot.run/docs. Keep the decision traceable to the primary paper [1], then verify the compressed handoff in ${serializeAttachmentReference(fileTypeAttachments[3].name, fileTypeAttachments[3].id)} before shipping [2].`,
+    attachments: [longAttachment, fileTypeAttachments[1], fileTypeAttachments[3]],
+    citations,
+    onOpenAttachment: fn(),
+  },
+  render: (storyArgs) => (
+    <article aria-label="Mixed references stress sample" style={{ width: "360px" }}>
+      <RichMessageText {...storyArgs} />
+    </article>
+  ),
+  play: async ({ canvas }) => {
+    const sample = canvas.getByLabelText("Mixed references stress sample");
+    await expect(sample.scrollWidth).toBeLessThanOrEqual(sample.clientWidth);
+    await expect(canvas.getAllByRole("button", { name: /Open attached file/u })).toHaveLength(3);
+    await expect(canvas.getByRole("button", { name: "Open agent Research" })).toBeInTheDocument();
+    await expect(canvas.getAllByRole("link", { name: /Open citation/u })).toHaveLength(2);
+  },
+};
+
+export const InlineAlignment: Story = {
+  name: "Inline alignment",
+  args: {
+    body: `Review ${serializeAttachmentReference(fileTypeAttachments[1].name, fileTypeAttachments[1].id)} before launch.`,
+    attachments: [fileTypeAttachments[1]],
+  },
+  render: (storyArgs) => (
+    <article aria-label="Inline alignment sample" style={{ width: "360px" }}>
+      <RichMessageText {...storyArgs} />
+    </article>
+  ),
 };

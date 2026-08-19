@@ -1,3 +1,5 @@
+import { preferredMessageScrollBehavior } from "./MessageNavigation";
+
 export function UnreadMessagesBanner(props: {
   count: number;
   busy?: boolean;
@@ -10,7 +12,7 @@ export function UnreadMessagesBanner(props: {
       <button
         class="unread-messages-jump"
         type="button"
-        aria-label="Jump to new messages"
+        aria-label={`Jump to ${label()}`}
         onClick={props.onJumpToUnread}
       >
         {label()}
@@ -35,7 +37,7 @@ export function UnreadMessagesDivider(props: { elementRef?: (element: HTMLDivEle
 export function scrollToUnreadBoundary(
   scrollElement: HTMLElement,
   boundary: HTMLElement,
-  behavior: ScrollBehavior = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+  behavior: ScrollBehavior = preferredMessageScrollBehavior(),
 ): void {
   const top =
     boundary.getBoundingClientRect().top - scrollElement.getBoundingClientRect().top + scrollElement.scrollTop;

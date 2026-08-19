@@ -11,6 +11,9 @@ describe("AppLogo", () => {
     expect(logo).toHaveAttribute("data-animation", "none");
     expect(logo).toHaveAttribute("data-variant", "production");
     expect(logo).toHaveAttribute("aria-hidden", "true");
+    expect(logo?.tagName).toBe("svg");
+    expect(logo?.querySelector(".app-logo-background")).not.toBeNull();
+    expect(logo?.querySelector("img")).toBeNull();
   });
 
   it.each<AppLogoAnimation>(["blink", "look-around", "surprised"])("selects the %s eye animation", (animation) => {

@@ -359,6 +359,28 @@ export const UnreadMessages: Story = {
   },
 };
 
+export const ScrollToLatest: Story = {
+  args: {
+    messages: unreadStoryMessages,
+    unreadCount: 0,
+    firstUnreadMessageId: null,
+    browserTabs: [],
+    activeBrowserTabId: null,
+    browserControlState: { sessions: [] },
+  },
+  play: async ({ canvas, canvasElement }) => {
+    const scrollElement = canvasElement.querySelector<HTMLElement>(".conversation-scroll");
+    if (!scrollElement) throw new Error("Conversation scroll element is missing.");
+    Object.defineProperties(scrollElement, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 1_200 },
+    });
+    scrollElement.scrollTop = 0;
+    scrollElement.dispatchEvent(new Event("scroll"));
+    await expect(canvas.findByRole("button", { name: "Scroll to latest message" })).resolves.toBeVisible();
+  },
+};
+
 export const CitationsInChat: Story = {
   name: "Citations in chat",
 };
@@ -368,6 +390,17 @@ export const ImageGenerationInChat: Story = {
   args: {
     messages: imageGenerationMessages,
     activeTurnId: "turn-image-generation",
+    browserTabs: [],
+    activeBrowserTabId: null,
+    browserControlState: { sessions: [] },
+  },
+};
+
+export const ImageGenerationUnavailableWithClaude: Story = {
+  name: "Image generation unavailable with Claude",
+  args: {
+    bot: { ...STORY_BOTS[0], model: "claude-sonnet-5" },
+    messages: [],
     browserTabs: [],
     activeBrowserTabId: null,
     browserControlState: { sessions: [] },

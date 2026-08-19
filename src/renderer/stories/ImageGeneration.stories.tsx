@@ -21,6 +21,7 @@ const baseArgs: ImageGenerationProps = {
   resolution: "1024 × 1024",
   aspectRatio: "square",
   onPreview: fn(),
+  onDownload: fn(),
   onRetry: fn(),
 };
 

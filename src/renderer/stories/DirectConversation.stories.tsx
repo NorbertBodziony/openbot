@@ -123,6 +123,33 @@ export const UnreadMessages: Story = {
   },
 };
 
+export const ScrollToLatest: Story = {
+  render: (storyArgs) => <StatefulDirectConversation args={storyArgs} />,
+  args: {
+    snapshot: {
+      ...STORY_DIRECT_SNAPSHOTS[member.id],
+      revision: 2,
+      messages: unreadDirectMessages,
+      readState: {
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughSequence: 24,
+      },
+    },
+  },
+  play: async ({ canvas, canvasElement }) => {
+    const scrollElement = canvasElement.querySelector<HTMLElement>(".direct-message-list");
+    if (!scrollElement) throw new Error("Direct message scroll element is missing.");
+    Object.defineProperties(scrollElement, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 1_200 },
+    });
+    scrollElement.scrollTop = 0;
+    scrollElement.dispatchEvent(new Event("scroll"));
+    await expect(canvas.findByRole("button", { name: "Scroll to latest message" })).resolves.toBeVisible();
+  },
+};
+
 export const Typing: Story = {
   args: { typing: true },
 };

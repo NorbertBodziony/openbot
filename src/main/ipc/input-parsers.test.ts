@@ -144,6 +144,10 @@ describe("agent IPC input parsing", () => {
       attachmentId: "attachment-1",
       action: "reveal",
     });
+    expect(parseOpenAttachment({ attachmentId: "attachment-1", action: "download" })).toEqual({
+      attachmentId: "attachment-1",
+      action: "download",
+    });
     expect(parseCancelQueuedMessage({ botId: "bot-1", deliveryId: "delivery-1" })).toEqual({
       botId: "bot-1",
       deliveryId: "delivery-1",

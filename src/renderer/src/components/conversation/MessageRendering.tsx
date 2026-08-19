@@ -146,7 +146,8 @@ export function MessageBody(props: {
   onSelectAgent: (botId: string) => void;
   onOpenLink: (url: string) => void;
   onPreview: (attachment: AttachmentSummary) => void;
-  onAttachmentAction: (attachment: AttachmentSummary, action: "open" | "reveal") => void;
+  onAttachmentAction: (attachment: AttachmentSummary, action: "open" | "reveal" | "download") => void;
+  onDownload?: (attachment: AttachmentSummary) => void;
   onRetry?: () => void;
 }) {
   const standaloneAttachments = createMemo(() => {
@@ -194,6 +195,7 @@ export function MessageBody(props: {
             attachment={props.message.attachments?.[0]}
             error={imageGeneration().error}
             onPreview={props.onPreview}
+            onDownload={props.onDownload}
             onRetry={props.onRetry}
           />
         )}

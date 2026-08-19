@@ -10,6 +10,7 @@ const CODE_BADGES = new Set([
   "js",
   "jsx",
   "json",
+  "md",
   "php",
   "py",
   "rb",
@@ -21,15 +22,31 @@ const CODE_BADGES = new Set([
   "vue",
 ]);
 
+const DOCUMENT_BADGES = new Set(["doc", "docx", "odt", "pdf", "rtf"]);
+const IMAGE_BADGES = new Set(["avif", "gif", "heic", "jpeg", "jpg", "png", "svg", "webp"]);
+const ARCHIVE_BADGES = new Set(["7z", "gz", "rar", "tar", "zip"]);
+const DATA_BADGES = new Set(["csv", "ods", "xls", "xlsx"]);
+const PRESENTATION_BADGES = new Set(["odp", "ppt", "pptx"]);
+const MEDIA_BADGES = new Set(["avi", "flac", "m4a", "mkv", "mov", "mp3", "mp4", "ogg", "wav", "webm"]);
+const BADGED_EXTENSIONS = new Set([
+  ...CODE_BADGES,
+  ...DOCUMENT_BADGES,
+  ...IMAGE_BADGES,
+  ...ARCHIVE_BADGES,
+  ...DATA_BADGES,
+  ...PRESENTATION_BADGES,
+  ...MEDIA_BADGES,
+]);
+
 export function attachmentReferenceBadge(name: string): string | null {
   const extension = name.split(".").at(-1)?.toLocaleLowerCase() ?? "";
-  return CODE_BADGES.has(extension) ? extension.slice(0, 3).toLocaleUpperCase() : null;
+  return BADGED_EXTENSIONS.has(extension) ? extension.slice(0, 4).toLocaleUpperCase() : null;
 }
 
 export function AttachmentReferenceVisual(props: { name: string }) {
   const badge = () => attachmentReferenceBadge(props.name);
   return (
-    <span class="attachment-reference-visual" aria-hidden="true">
+    <span class="attachment-reference-visual" data-badge-length={badge()?.length.toString()} aria-hidden="true">
       {badge() ? <span>{badge()}</span> : <AttachmentReferenceFileIcon />}
     </span>
   );
@@ -41,6 +58,7 @@ export function appendAttachmentReferenceVisual(target: HTMLElement, name: strin
   visual.setAttribute("aria-hidden", "true");
   const badge = attachmentReferenceBadge(name);
   if (badge) {
+    visual.dataset.badgeLength = badge.length.toString();
     const label = document.createElement("span");
     label.textContent = badge;
     visual.append(label);

@@ -85,8 +85,8 @@ export function ComposerEditor(props: ComposerEditorProps) {
   let isComposing = false;
   const attachmentTokenActions: AttachmentTokenActions = {
     tooltipId: attachmentTooltipId,
-    open: (attachment) => {
-      setAttachmentTooltip(null);
+    open: (attachment, keepTooltip = false) => {
+      if (!keepTooltip) setAttachmentTooltip(null);
       props.onOpenAttachment?.(attachment);
     },
     showTooltip: (anchor, content) => {
@@ -99,6 +99,12 @@ export function ComposerEditor(props: ComposerEditorProps) {
     },
     hideTooltip: (anchor) => {
       if (attachmentTooltip()?.anchor === anchor) setAttachmentTooltip(null);
+    },
+    remove: (token) => {
+      setAttachmentTooltip(null);
+      token.remove();
+      emitValue();
+      editor?.focus();
     },
   };
 
@@ -371,9 +377,10 @@ function truncateComposerValue(value: string, limit: number): string {
 
 interface AttachmentTokenActions {
   tooltipId: string;
-  open: (attachment: DraftAttachment) => void;
+  open: (attachment: DraftAttachment, keepTooltip?: boolean) => void;
   showTooltip: (anchor: HTMLElement, content: string) => void;
   hideTooltip: (anchor: HTMLElement) => void;
+  remove: (token: HTMLElement) => void;
 }
 
 function createAttachmentToken(attachment: DraftAttachment, actions: AttachmentTokenActions): HTMLSpanElement {
@@ -402,6 +409,12 @@ function createAttachmentToken(attachment: DraftAttachment, actions: AttachmentT
       hideTooltip();
       return;
     }
+    if (event.key === "Backspace" || event.key === "Delete") {
+      event.preventDefault();
+      event.stopPropagation();
+      actions.remove(token);
+      return;
+    }
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
     event.stopPropagation();
@@ -410,9 +423,14 @@ function createAttachmentToken(attachment: DraftAttachment, actions: AttachmentT
   token.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    actions.open(attachment);
+    if (usesTouchLayout()) showTooltip();
+    actions.open(attachment, usesTouchLayout());
   });
   return token;
+}
+
+function usesTouchLayout(): boolean {
+  return window.matchMedia?.("(hover: none), (pointer: coarse)").matches ?? false;
 }
 
 function createMentionToken(bot: BotProfile): HTMLSpanElement {

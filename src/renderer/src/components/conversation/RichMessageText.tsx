@@ -71,8 +71,9 @@ export function RichMessageText(props: {
                 onFocus={(event) => openTooltip(event.currentTarget, attachment.name, true)}
                 onBlur={(event) => closeTooltip(event.currentTarget)}
                 onKeyDown={closeTooltipOnEscape}
-                onClick={() => {
-                  setTooltip(null);
+                onClick={(event) => {
+                  if (!usesTouchLayout()) setTooltip(null);
+                  else openTooltip(event.currentTarget, attachment.name, true);
                   props.onOpenAttachment?.(attachment);
                 }}
               >
@@ -188,6 +189,10 @@ export function RichMessageText(props: {
       </Show>
     </>
   );
+}
+
+function usesTouchLayout(): boolean {
+  return window.matchMedia?.("(hover: none), (pointer: coarse)").matches ?? false;
 }
 
 interface RichMessagePart {

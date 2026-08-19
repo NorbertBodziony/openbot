@@ -3,9 +3,15 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { DraftAttachment } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BotProfile } from "../data";
 import { ComposerEditor } from "./ComposerEditor";
+
+const originalMatchMedia = window.matchMedia;
+
+afterEach(() => {
+  window.matchMedia = originalMatchMedia;
+});
 
 function renderComposer(attachments: DraftAttachment[] = [], initialValue = "") {
   const onSubmit = vi.fn();
@@ -219,6 +225,8 @@ describe("ComposerEditor", () => {
     await fireEvent.keyDown(token, { key: " " });
     expect(onOpenAttachment).toHaveBeenCalledTimes(2);
     expect(onSubmit).not.toHaveBeenCalled();
+    await fireEvent.keyDown(token, { key: "Delete" });
+    expect(editor.querySelector('[data-attachment-reference-id="draft-long"]')).toBeNull();
   });
 
   it("renders missing file references as plain text", () => {
@@ -239,6 +247,34 @@ describe("ComposerEditor", () => {
     const editor = screen.getByRole("textbox", { name: "Missing file" });
     expect(editor).toHaveTextContent("missing.md");
     expect(editor.querySelector("[data-attachment-reference-id]")).toBeNull();
+  });
+
+  it("keeps the full truncated name visible after opening a file by touch", async () => {
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true });
+    const attachment: DraftAttachment = {
+      id: "draft-touch",
+      name: "a-very-long-touch-friendly-file-name.docx",
+      size: 1_024,
+      kind: "file",
+      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      previewKind: "none",
+      previewUrl: null,
+    };
+    const { editor, onOpenAttachment } = renderComposer(
+      [attachment],
+      serializeAttachmentReference(attachment.name, attachment.id),
+    );
+    const token = editor.querySelector<HTMLElement>('[data-attachment-reference-id="draft-touch"]');
+    const label = token?.querySelector<HTMLElement>(".inline-file-reference-name");
+    if (!token || !label) throw new Error("Composer did not render the touch file reference");
+    Object.defineProperties(label, {
+      clientWidth: { configurable: true, value: 120 },
+      scrollWidth: { configurable: true, value: 320 },
+    });
+
+    await fireEvent.click(token);
+    expect(onOpenAttachment).toHaveBeenCalledWith(attachment);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(attachment.name);
   });
 
   it("does not split an atomic file reference at the message limit", async () => {

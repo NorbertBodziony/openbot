@@ -1,6 +1,13 @@
+import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { fireEvent, render, screen } from "@solidjs/testing-library";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RichMessageText } from "./RichMessageText";
+
+const originalMatchMedia = window.matchMedia;
+
+afterEach(() => {
+  window.matchMedia = originalMatchMedia;
+});
 
 describe("RichMessageText tooltips", () => {
   it("associates a citation tooltip with its trigger and closes it with Escape", async () => {
@@ -31,5 +38,41 @@ describe("RichMessageText tooltips", () => {
 
     await fireEvent.keyDown(citation, { key: "Escape" });
     expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("keeps a truncated file name visible after a touch tap while opening the file", async () => {
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true });
+    const attachment = {
+      id: "touch-file",
+      name: "a-very-long-touch-friendly-file-name.pdf",
+      size: 1_024,
+      kind: "file" as const,
+      mimeType: "application/pdf",
+      previewKind: "pdf" as const,
+      previewUrl: null,
+    };
+    const onOpenAttachment = vi.fn();
+    render(() => (
+      <RichMessageText
+        body={`Review ${serializeAttachmentReference(attachment.name, attachment.id)}`}
+        bots={[]}
+        attachments={[attachment]}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onOpenAttachment={onOpenAttachment}
+      />
+    ));
+
+    const reference = screen.getByRole("button", { name: `Open attached file ${attachment.name}` });
+    const label = reference.querySelector<HTMLElement>(".inline-file-reference-name");
+    if (!label) throw new Error("The touch file label is missing");
+    Object.defineProperties(label, {
+      clientWidth: { configurable: true, value: 120 },
+      scrollWidth: { configurable: true, value: 320 },
+    });
+
+    await fireEvent.click(reference);
+    expect(onOpenAttachment).toHaveBeenCalledWith(attachment);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(attachment.name);
   });
 });

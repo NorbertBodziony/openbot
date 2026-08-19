@@ -1770,7 +1770,9 @@ describe("OpenBot connected desktop shell", () => {
         sequence: 2,
       },
     });
-    expect(await screen.findByText("Hi. I am here.")).toBeInTheDocument();
+    const incomingMessage = await screen.findByText("Hi. I am here.");
+    expect(incomingMessage).toBeInTheDocument();
+    expect(incomingMessage.closest(".direct-message")?.querySelector(".person-avatar")).toBeNull();
     expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
   });
 
@@ -2906,7 +2908,7 @@ describe("OpenBot connected desktop shell", () => {
       scrollElement.scrollTop = options.top ?? scrollElement.scrollTop;
     });
     Object.defineProperty(scrollElement, "scrollTo", { configurable: true, value: scrollTo });
-    await fireEvent.click(screen.getByRole("button", { name: "Jump to new messages" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Jump to 2 new messages" }));
     expect(scrollElement.scrollTop).toBe(1080);
     expect(scrollTo).toHaveBeenCalledWith({ behavior: "smooth", top: 1080 });
 
@@ -2917,11 +2919,15 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "2 new messages" })).not.toBeInTheDocument());
-    await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 1080 }));
+    await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 1080 }));
     expect(scrollElement.scrollTop).toBe(1080);
   });
 
   it("keeps the agent unread state when marking it fails", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: false }),
+    });
     const readState = {
       unreadCount: 1,
       firstUnreadMessageId: "agent-new",
@@ -2958,11 +2964,44 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     const banner = await screen.findByRole("status", { name: "1 new message" });
     await screen.findByText("Unseen answer");
-    await fireEvent.click(within(banner).getByRole("button", { name: "Mark as read" }));
+    const scrollElement = document.querySelector<HTMLElement>(".conversation-scroll");
+    const divider = document.querySelector<HTMLElement>(".unread-messages-divider");
+    expect(scrollElement).not.toBeNull();
+    expect(divider).not.toBeNull();
+    if (!scrollElement || !divider) throw new Error("Unread conversation elements are missing.");
+    const firstUnreadMessage = divider.nextElementSibling;
+    expect(firstUnreadMessage).toBeInstanceOf(HTMLElement);
+    if (!(firstUnreadMessage instanceof HTMLElement)) {
+      throw new Error("The first unread conversation message is missing.");
+    }
+    scrollElement.scrollTop = 600;
+    Object.defineProperty(scrollElement, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 100 }),
+    });
+    Object.defineProperty(firstUnreadMessage, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 100 + 900 - scrollElement.scrollTop }),
+    });
+    Object.defineProperty(divider, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 100 + 840 - scrollElement.scrollTop }),
+    });
+    const scrollTo = vi.fn((options: ScrollToOptions) => {
+      scrollElement.scrollTop = options.top ?? scrollElement.scrollTop;
+    });
+    Object.defineProperty(scrollElement, "scrollTo", { configurable: true, value: scrollTo });
+    await fireEvent.click(within(banner).getByRole("button", { name: "Jump to 1 new message" }));
 
     expect(await screen.findByText("Read state unavailable")).toBeInTheDocument();
     expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
     expect(screen.getByRole("separator", { name: "New messages" })).toBeInTheDocument();
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+      botId: "chief",
+      throughMessageId: "agent-new",
+    });
+    await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 840 }));
+    expect(scrollElement.scrollTop).toBe(840);
   });
 
   it("shows and clears the unread boundary in a private conversation", async () => {
@@ -3028,7 +3067,7 @@ describe("OpenBot connected desktop shell", () => {
       scrollElement.scrollTop = options.top ?? scrollElement.scrollTop;
     });
     Object.defineProperty(scrollElement, "scrollTo", { configurable: true, value: scrollTo });
-    await fireEvent.click(screen.getByRole("button", { name: "Jump to new messages" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Jump to 1 new message" }));
     expect(scrollElement.scrollTop).toBe(660);
     expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", top: 660 });
     await waitFor(() =>

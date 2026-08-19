@@ -1,6 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { DirectConversationSnapshot, DirectMessage, TeamPresenceMember } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import { scrollToUnreadBoundary, UnreadMessagesBanner, UnreadMessagesDivider } from "./conversation/UnreadMessages";
 import { TeamPersonAvatar, teamMemberName } from "./TeamPersonAvatar";
 import { TypingDots } from "./TypingDots";
@@ -22,16 +23,26 @@ export function DirectConversation(props: DirectConversationProps) {
   const [sending, setSending] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [markingRead, setMarkingRead] = createSignal(false);
+  const [showScrollToLatest, setShowScrollToLatest] = createSignal(false);
   let messageList: HTMLDivElement | undefined;
   let unreadMessagesDivider: HTMLDivElement | undefined;
   let typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
+  let stickToLatest = true;
+  let lastThreadId: string | undefined;
 
   createEffect(
     () =>
       `${props.snapshot?.threadId ?? "none"}:${props.snapshot?.revision ?? -1}:${props.snapshot?.messages.length ?? 0}`,
     () => {
+      const threadId = props.snapshot?.threadId;
+      if (threadId !== lastThreadId) {
+        lastThreadId = threadId;
+        stickToLatest = true;
+      }
       requestAnimationFrame(() => {
-        if (messageList) messageList.scrollTop = messageList.scrollHeight;
+        if (!messageList) return;
+        if (stickToLatest) messageList.scrollTop = messageList.scrollHeight;
+        updateScrollState(messageList);
       });
     },
   );
@@ -50,6 +61,11 @@ export function DirectConversation(props: DirectConversationProps) {
     }
     props.onTypingChange(true);
     typingIdleTimer = setTimeout(() => props.onTypingChange(false), 3_000);
+  }
+
+  function updateScrollState(element: HTMLElement): void {
+    const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
+    setShowScrollToLatest(remaining > 80);
   }
 
   async function send(): Promise<void> {
@@ -93,10 +109,16 @@ export function DirectConversation(props: DirectConversationProps) {
         if (!messageList) return;
         const settledBoundary = divider.isConnected ? divider : firstUnreadMessage;
         if (settledBoundary.isConnected) {
-          scrollToUnreadBoundary(messageList, settledBoundary, "auto");
+          scrollToUnreadBoundary(messageList, settledBoundary);
         }
       });
     });
+  }
+
+  function jumpToLatestMessage(): void {
+    if (!messageList) return;
+    stickToLatest = true;
+    scrollToLatestMessage(messageList);
   }
 
   return (
@@ -126,7 +148,19 @@ export function DirectConversation(props: DirectConversationProps) {
         />
       </Show>
 
-      <div ref={(element) => (messageList = element)} class="direct-message-list" role="log">
+      <div
+        ref={(element) => (messageList = element)}
+        class="direct-message-list"
+        role="log"
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          stickToLatest = element.scrollHeight - element.scrollTop - element.clientHeight <= 80;
+          updateScrollState(element);
+        }}
+      >
+        <Show when={showScrollToLatest()}>
+          <ScrollToLatestButton onClick={jumpToLatestMessage} />
+        </Show>
         <Show when={!props.loading} fallback={<div class="direct-conversation-state">Loading messages…</div>}>
           <Show
             when={!props.loadError}
@@ -161,9 +195,6 @@ export function DirectConversation(props: DirectConversationProps) {
                         class={["direct-message", { own: own(), grouped: grouped() }]}
                         aria-label={`${own() ? "You" : teamMemberName(props.member)} at ${messageTime(message.createdAt)}`}
                       >
-                        <Show when={!own() && !grouped()}>
-                          <TeamPersonAvatar member={props.member} />
-                        </Show>
                         <div>
                           <p>{message.text}</p>
                           <time datetime={message.createdAt}>{messageTime(message.createdAt)}</time>
