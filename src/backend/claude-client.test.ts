@@ -118,6 +118,30 @@ fi
     await client.stop();
   });
 
+  it("steers a second user message into the active Claude runtime", async () => {
+    const { client, prompt, threadId } = await createHarness();
+    const turnId = "44444444-4444-4444-8444-444444444444";
+    await startTurn(client, threadId, turnId);
+    const iterator = (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]();
+    const first = await iterator.next();
+    expect(first.value).toMatchObject({ uuid: turnId, message: { content: "Hello" } });
+
+    await expect(
+      client.request("turn/steer", {
+        threadId,
+        expectedTurnId: turnId,
+        clientUserMessageId: "55555555-5555-4555-8555-555555555555",
+        input: [{ type: "text", text: "Also check the queue." }],
+      }),
+    ).resolves.toEqual({ turnId });
+    const steered = await iterator.next();
+    expect(steered.value).toMatchObject({
+      uuid: "55555555-5555-4555-8555-555555555555",
+      message: { content: "Also check the queue." },
+    });
+    await client.stop();
+  });
+
   it("adds only the missing suffix from a complete assistant message", async () => {
     const { client, notifications, output, threadId } = await createHarness();
     const turnId = "22222222-2222-4222-8222-222222222222";
@@ -153,10 +177,12 @@ async function createHarness(): Promise<{
   client: ClaudeAgentClient;
   notifications: Array<{ method: string; params: unknown }>;
   output: TestQueue<SDKMessage>;
+  prompt: AsyncIterable<SDKUserMessage>;
   threadId: string;
 }> {
   root = await mkdtemp(join(tmpdir(), "openbot-claude-client-"));
   const output = new TestQueue<SDKMessage>();
+  let prompt: AsyncIterable<SDKUserMessage> | null = null;
   const generator = output[Symbol.asyncIterator]() as Query;
   Object.assign(generator, {
     [Symbol.asyncIterator]: () => generator,
@@ -167,7 +193,10 @@ async function createHarness(): Promise<{
   });
   const client = new ClaudeAgentClient(
     { executable: "/bin/true", version: "2.1.231" },
-    () => generator,
+    (params) => {
+      prompt = params.prompt as AsyncIterable<SDKUserMessage>;
+      return generator;
+    },
   );
   const notifications: Array<{ method: string; params: unknown }> = [];
   client.on("notification", (notification) => notifications.push(notification));
@@ -178,7 +207,8 @@ async function createHarness(): Promise<{
     developerInstructions: "Be concise.",
     runtimeWorkspaceRoots: [root],
   });
-  return { client, notifications, output, threadId: thread.thread.id };
+  if (!prompt) throw new Error("Claude prompt was not initialized.");
+  return { client, notifications, output, prompt, threadId: thread.thread.id };
 }
 
 function startTurn(client: ClaudeAgentClient, threadId: string, turnId: string) {

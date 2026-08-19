@@ -22,6 +22,7 @@
       "!out-dev-app",
       "!out-dev-test-client",
       "!dist",
+      "!storybook-static",
       "!**/dist",
       "!**/.wrangler",
       "!**/routeTree.gen.ts",

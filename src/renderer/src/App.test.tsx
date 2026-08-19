@@ -75,6 +75,7 @@ describe("OpenBot connected desktop shell", () => {
     emitDirectMessage = undefined;
     emitDirectTyping = undefined;
     window.localStorage.clear();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
     Object.defineProperty(window, "openbot", {
       configurable: true,
       value: {
@@ -239,9 +240,13 @@ describe("OpenBot connected desktop shell", () => {
             .fn()
             .mockImplementation(async (botId) => ({ botId, paused: false, deliveries: [] })),
           cancelQueuedMessage: vi.fn().mockResolvedValue(undefined),
+          steerQueuedMessage: vi.fn().mockResolvedValue(undefined),
+          updateQueuedMessage: vi.fn().mockResolvedValue(undefined),
+          reorderQueue: vi.fn().mockResolvedValue(undefined),
           setQueuePaused: vi.fn().mockResolvedValue(undefined),
           interrupt: vi.fn().mockResolvedValue(undefined),
           respondToPrompt: vi.fn().mockResolvedValue(undefined),
+          respondToApproval: vi.fn().mockResolvedValue(undefined),
           onEvent: vi.fn((listener) => {
             emitAgentEvent = listener;
             return () => undefined;
@@ -977,6 +982,32 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
   });
 
+  it("shows agent role badges without a redundant standalone heading", async () => {
+    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([
+      BOTS[0],
+      { ...BOTS[1], role: "   " },
+    ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    expect(screen.getByText("Chief of staff")).toHaveClass("bot-role-badge");
+    expect(screen.getByText("Chief of staff")).toHaveAttribute("title", "Chief of staff");
+    expect(screen.queryByText("Outbound specialist")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Agents" })).not.toBeInTheDocument();
+
+    emitPresence?.({
+      serverId: "server-1",
+      updatedAt: "2026-08-19T10:00:00.000Z",
+      members: [
+        presenceMember("member-self", "person@example.com", "Person"),
+        presenceMember("member-alice", "alice@example.com", "Alice"),
+      ],
+    });
+
+    expect(await screen.findByRole("heading", { name: "People" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Agents" })).toBeInTheDocument();
+  });
+
   it("shows the specialty question immediately after creating a new agent", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -992,15 +1023,54 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByLabelText("Message New agent")).toHaveAttribute("contenteditable", "true");
   });
 
+  it("opens agent creation from a private conversation", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitPresence?.({
+      serverId: "server-1",
+      updatedAt: "2026-08-19T10:00:00.000Z",
+      members: [
+        presenceMember("member-self", "person@example.com", "Person"),
+        presenceMember("member-alice", "alice@example.com", "Alice"),
+      ],
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: /Alice/ }));
+    expect(
+      await screen.findByRole("main", { name: "Direct conversation with Alice" }),
+    ).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "New agent" }));
+    await fireEvent.click(await screen.findByRole("option", { name: "Create new agent" }));
+
+    expect(await screen.findByRole("heading", { name: "New agent" })).toBeInTheDocument();
+    expect(window.openbot.agent.createBot).toHaveBeenCalledOnce();
+    expect(window.openbot.servers.setDirectTyping).toHaveBeenCalledWith({
+      memberId: "member-alice",
+      typing: false,
+    });
+  });
+
   it("resizes and persists the left and right side panels", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
     const leftResizer = screen.getByRole("separator", { name: "Resize left sidebar" });
     await fireEvent.keyDown(leftResizer, { key: "ArrowRight" });
-    expect(leftResizer).toHaveAttribute("aria-valuenow", "287");
-    expect(leftResizer.closest(".app-frame")).toHaveStyle("--left-panel-width: 287px");
-    expect(window.localStorage.getItem("openbot:left-panel-width")).toBe("287");
+    expect(leftResizer).toHaveAttribute("aria-valuenow", "292");
+    expect(leftResizer.closest(".app-frame")).toHaveStyle("--left-panel-width: 292px");
+    expect(window.localStorage.getItem("openbot:left-panel-width")).toBe("292");
+
+    await fireEvent.keyDown(leftResizer, { key: "Home" });
+    expect(leftResizer).toHaveAttribute("aria-valuenow", "88");
+    expect(leftResizer).toHaveAttribute("aria-valuetext", "Compact (88px)");
+    expect(window.localStorage.getItem("openbot:left-panel-width")).toBe("292");
+
+    await fireEvent.keyDown(leftResizer, { key: "ArrowRight" });
+    expect(leftResizer).toHaveAttribute("aria-valuenow", "240");
+    await fireEvent.keyDown(leftResizer, { key: "End" });
+    expect(leftResizer).toHaveAttribute("aria-valuenow", "400");
+    await fireEvent.dblClick(leftResizer);
+    expect(leftResizer).toHaveAttribute("aria-valuenow", "280");
 
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
     const rightResizer = screen.getByRole("separator", { name: "Resize right panel" });
@@ -1372,39 +1442,93 @@ describe("OpenBot connected desktop shell", () => {
     );
   });
 
-  it("fully hides and restores the left sidebar without losing its width", async () => {
+  it("keeps an accessible compact sidebar and expands search without losing its width", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
     const frame = screen.getByRole("main", { name: "Conversation" }).closest(".app-frame");
-    const sidebarToggle = screen.getByRole("button", { name: "Hide sidebar" });
+    const sidebarToggle = screen.getByRole("button", { name: "Collapse sidebar" });
     expect(sidebarToggle).toHaveClass("sidebar-icon-button");
     expect(sidebarToggle).toHaveAttribute("aria-expanded", "true");
     await fireEvent.click(sidebarToggle);
 
-    expect(screen.queryByRole("complementary", { name: "Bot navigation" })).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("separator", { name: "Resize left sidebar" }),
-    ).not.toBeInTheDocument();
-    expect(frame).toHaveClass("app-frame-sidebar-collapsed");
-    expect(frame).toHaveStyle("--left-panel-width: 0px");
+    expect(screen.getByRole("complementary", { name: "Bot navigation" })).toHaveClass(
+      "sidebar-compact",
+    );
+    expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute(
+      "aria-valuenow",
+      "88",
+    );
+    expect(frame).toHaveClass("app-frame-sidebar-compact");
+    expect(frame).toHaveStyle("--left-panel-width: 88px");
     expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBe("true");
-    const restoreSidebar = screen.getByRole("button", { name: "Show sidebar" });
-    expect(restoreSidebar).toHaveClass("sidebar-icon-button");
-    expect(restoreSidebar).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Show sidebar" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
 
-    await fireEvent.click(restoreSidebar);
+    await fireEvent.click(screen.getByRole("button", { name: "Expand sidebar and search chats" }));
 
     expect(screen.getByRole("complementary", { name: "Bot navigation" })).toBeInTheDocument();
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute(
       "aria-valuenow",
-      "275",
+      "280",
     );
-    expect(frame).not.toHaveClass("app-frame-sidebar-collapsed");
+    expect(frame).not.toHaveClass("app-frame-sidebar-compact");
     expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBe("false");
-    expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toHaveAttribute(
       "aria-expanded",
       "true",
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("searchbox", { name: "Search chats" })).toHaveFocus(),
+    );
+  });
+
+  it("snaps drag resizing between compact and expanded widths with hysteresis", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const resizer = screen.getByRole("separator", { name: "Resize left sidebar" });
+
+    await fireEvent.pointerDown(resizer, { button: 0, pointerId: 1, clientX: 280 });
+    await fireEvent.pointerMove(window, { pointerId: 1, clientX: 209 });
+    await fireEvent.pointerUp(window, { pointerId: 1, clientX: 209 });
+    expect(resizer).toHaveAttribute("aria-valuenow", "88");
+
+    await fireEvent.pointerDown(resizer, { button: 0, pointerId: 2, clientX: 100 });
+    await fireEvent.pointerMove(window, { pointerId: 2, clientX: 231 });
+    expect(resizer).toHaveAttribute("aria-valuenow", "88");
+    await fireEvent.pointerMove(window, { pointerId: 2, clientX: 232 });
+    await fireEvent.pointerUp(window, { pointerId: 2, clientX: 232 });
+    expect(resizer).toHaveAttribute("aria-valuenow", "240");
+  });
+
+  it("auto-compacts for conversation space and restores without changing user preference", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 759 });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const frame = screen.getByRole("main", { name: "Conversation" }).closest(".app-frame");
+
+    await waitFor(() => expect(frame).toHaveClass("app-frame-sidebar-compact"));
+    expect(frame).toHaveStyle("--left-panel-width: 88px");
+    expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBeNull();
+
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
+    window.dispatchEvent(new Event("resize"));
+    await waitFor(() => expect(frame).not.toHaveClass("app-frame-sidebar-compact"));
+    expect(frame).toHaveStyle("--left-panel-width: 280px");
+    expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBeNull();
+  });
+
+  it("migrates old narrow sidebar widths to the expanded minimum", async () => {
+    window.localStorage.setItem("openbot:left-panel-width", "220");
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute(
+      "aria-valuenow",
+      "240",
     );
   });
 
@@ -1607,7 +1731,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(composer).toHaveTextContent(""));
   });
 
-  it("shows online teammates and publishes typing state", async () => {
+  it("publishes typing state", async () => {
     render(() => <App />);
     await confirmOnboardingModel();
     emitPresence?.({
@@ -1628,7 +1752,6 @@ describe("OpenBot connected desktop shell", () => {
       ],
     });
 
-    expect(await screen.findByText("1 online")).toBeInTheDocument();
     expect(screen.getByText("Alice is typing")).toBeInTheDocument();
 
     const composer = screen.getByRole("textbox", { name: "Message Chief" });
@@ -1710,6 +1833,24 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
     expect(await screen.findByText("Hi. I am here.")).toBeInTheDocument();
+  });
+
+  it("does not expose team conversations when the signed-in account is not a member", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitPresence?.({
+      serverId: "server-smoke",
+      updatedAt: "2026-08-19T10:00:00.000Z",
+      members: [presenceMember("member-smoke", "codex-smoke@example.invalid", "Codex Smoke")],
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: /codex-smoke@example\.invalid/i }),
+      ).not.toBeInTheDocument();
+    });
+    expect(window.openbot.servers.readDirectConversation).not.toHaveBeenCalled();
+    expect(window.openbot.servers.listDirectThreads).not.toHaveBeenCalled();
   });
 
   it("does not apply a stale direct-message load after another person is selected", async () => {
@@ -2340,15 +2481,152 @@ describe("OpenBot connected desktop shell", () => {
         },
       ],
     });
-    const answer = await screen.findByRole("textbox", { name: "Account" });
+    const answer = await screen.findByRole("textbox", {
+      name: "Custom answer for: Which account?",
+    });
     await fireEvent.input(answer, { target: { value: "Acme" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Send answer" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     await waitFor(() =>
       expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledWith({
         requestId: "prompt-1",
         answers: { account: ["Acme"] },
       }),
     );
+  });
+
+  it("walks through questions one at a time and can skip them", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-steps",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: [
+        {
+          id: "environment",
+          header: "Environment",
+          question: "Where should I work?",
+          isSecret: false,
+          options: [
+            { label: "Repository", description: "Use the current project." },
+            { label: "Sandbox", description: "Keep changes isolated." },
+          ],
+        },
+        {
+          id: "goal",
+          header: "Goal",
+          question: "What is the desired outcome?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    expect(
+      await screen.findByText("Where should I work?", { selector: ".approval-question-prompt" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /Repository/ }));
+    await fireEvent.click(screen.getByRole("button", { name: "Next question" }));
+    expect(
+      await screen.findByText("What is the desired outcome?", {
+        selector: ".approval-question-prompt",
+      }),
+    ).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Previous question" }));
+    expect(
+      await screen.findByText("Where should I work?", { selector: ".approval-question-prompt" }),
+    ).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+
+    await waitFor(() =>
+      expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledWith({
+        requestId: "prompt-steps",
+        answers: {},
+      }),
+    );
+  });
+
+  it("renders command approvals and keeps the action pending while submitting", async () => {
+    let resolveApproval: (() => void) | undefined;
+    vi.mocked(window.openbot.agent.respondToApproval).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveApproval = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "approval",
+      approval: {
+        requestId: "approval-1",
+        botId: "chief",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        kind: "command",
+        command: "npm test -- --runInBand",
+        cwd: "/Users/norbertbodziony/projects/openbot",
+        reason: "Run the verification suite.",
+        grantRoot: null,
+        permissions: null,
+      },
+    });
+
+    expect(await screen.findByText("Run this command?")).toBeInTheDocument();
+    expect(screen.getByText("npm test -- --runInBand")).toBeInTheDocument();
+    expect(screen.getByText("Run the verification suite.")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(screen.getByRole("button", { name: "Sending…" })).toBeDisabled();
+    expect(window.openbot.agent.respondToApproval).toHaveBeenCalledWith({
+      requestId: "approval-1",
+      decision: "accept",
+    });
+
+    resolveApproval?.();
+    await waitFor(() => expect(screen.queryByText("Run this command?")).not.toBeInTheDocument());
+  });
+
+  it("rejects a permission approval and keeps the error visible", async () => {
+    vi.mocked(window.openbot.agent.respondToApproval).mockRejectedValueOnce(
+      new Error("This approval is no longer active."),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "approval",
+      approval: {
+        requestId: 14,
+        botId: "chief",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        kind: "permissions",
+        command: null,
+        cwd: null,
+        reason: "The agent needs access to the project files.",
+        grantRoot: null,
+        permissions: {
+          fileSystem: { read: ["/tmp/project"], write: ["/tmp/project/out"] },
+          network: true,
+        },
+      },
+    });
+
+    expect(await screen.findByText("Grant permissions?")).toBeInTheDocument();
+    expect(screen.getByText("Network access")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() =>
+      expect(window.openbot.agent.respondToApproval).toHaveBeenCalledWith({
+        requestId: 14,
+        decision: "decline",
+      }),
+    );
+    expect(await screen.findByText("This approval is no longer active.")).toBeInTheDocument();
   });
 
   it("renders persistent outgoing and incoming agent exchanges", async () => {

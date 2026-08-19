@@ -41,6 +41,13 @@ export function avatarHueSwatch(hue: BotAvatarHue): string {
   return swatch;
 }
 
+export function avatarHeadColor(seed: string, hue: BotAvatarHue | null): string {
+  const reader = traits(seed);
+  const head = palette(hue ?? reader.num("hue", 0, 360), true, reader("tone")).head;
+  if (!head) throw new Error(`Blobatar did not return a head color for seed ${seed}.`);
+  return head;
+}
+
 export function avatarCandidateSeeds(botId: string, currentSeed: string, batch: number): string[] {
   const candidates = [currentSeed];
   const missingBodyVariants = new Set(BLOBATAR_BODY_VARIANTS);

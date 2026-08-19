@@ -22,6 +22,23 @@ export function BackIcon() {
   );
 }
 
+export function SettingsForwardIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      class="settings-forward-icon fill-none stroke-current"
+    >
+      <path
+        d="m5.5 4 6 6-6 6m5-12 6 6-6 6"
+        stroke-width="1.35"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function PlusIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20" class="size-[14px] fill-none stroke-current">
@@ -76,6 +93,53 @@ export function MoreIcon() {
       <circle cx="5" cy="10" r="1" />
       <circle cx="10" cy="10" r="1" />
       <circle cx="15" cy="10" r="1" />
+    </svg>
+  );
+}
+
+export function QueueIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20">
+      <path d="M5 4.5v11M8.5 6.5h7M8.5 10h5.5M8.5 13.5h7" />
+      <path d="m3 15.5 2 1.8 2-1.8" />
+    </svg>
+  );
+}
+
+export function DragHandleIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 12 20">
+      <circle cx="3.5" cy="5" r="1" />
+      <circle cx="8.5" cy="5" r="1" />
+      <circle cx="3.5" cy="10" r="1" />
+      <circle cx="8.5" cy="10" r="1" />
+      <circle cx="3.5" cy="15" r="1" />
+      <circle cx="8.5" cy="15" r="1" />
+    </svg>
+  );
+}
+
+export function TrashIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20">
+      <path d="M5.5 6.5h9M8 6.5V4.75h4V6.5M7 8.5v6.25h6V8.5M8.5 9.5v4M11.5 9.5v4" />
+    </svg>
+  );
+}
+
+export function EditIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20">
+      <path d="m5 13.9-.7 2.8 2.8-.7L15.4 7.7a1.8 1.8 0 0 0-2.5-2.5z" />
+      <path d="m11.7 6.8 1.5 1.5" />
+    </svg>
+  );
+}
+
+export function SteerIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20">
+      <path d="M4 5.5h3v9h9M12.5 11.5 16 14.5l-3.5 3" />
     </svg>
   );
 }

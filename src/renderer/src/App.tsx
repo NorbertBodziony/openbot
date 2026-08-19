@@ -1,5 +1,6 @@
 import type {
   AccountUsage,
+  AgentApproval,
   AgentEvent,
   AgentModelId,
   AgentModelOption,
@@ -61,7 +62,11 @@ const FALLBACK_STATUS: AgentStatus = {
     { id: "codex", state: "not-started", version: null, message: null },
     { id: "claude", state: "not-started", version: null, message: null },
   ],
-  capabilities: { chat: "unavailable", browser: "unavailable", computerUse: "unavailable" },
+  capabilities: {
+    chat: "unavailable",
+    browser: "unavailable",
+    computerUse: "unavailable",
+  },
   message: "Starting local agent CLIs…",
   fullAccess: true,
 };
@@ -99,9 +104,13 @@ type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 
 const LEFT_PANEL_STORAGE_KEY = "openbot:left-panel-width";
 const LEFT_PANEL_COLLAPSED_STORAGE_KEY = "openbot:left-panel-collapsed";
-const LEFT_PANEL_DEFAULT = 275;
-const LEFT_PANEL_MIN = 220;
-const LEFT_PANEL_MAX = 360;
+const LEFT_PANEL_DEFAULT = 280;
+const LEFT_PANEL_MIN = 240;
+const LEFT_PANEL_MAX = 400;
+const LEFT_PANEL_COMPACT = 88;
+const LEFT_PANEL_COLLAPSE_THRESHOLD = 210;
+const LEFT_PANEL_EXPAND_THRESHOLD = 220;
+const CONVERSATION_MIN_WIDTH = 424;
 
 interface StoredObject {
   [key: string]: unknown;
@@ -180,6 +189,9 @@ export function App() {
   const [pendingPrompts, setPendingPrompts] = createSignal<Record<string, PromptEvent | undefined>>(
     {},
   );
+  const [pendingApprovals, setPendingApprovals] = createSignal<
+    Record<string, AgentApproval | undefined>
+  >({});
   const [appInfo, setAppInfo] = createSignal<AppInfo | null>(null);
   const [agentStatus, setAgentStatus] = createSignal<AgentStatus>(FALLBACK_STATUS);
   const [accountUsage, setAccountUsage] = createSignal<AccountUsage | null>(null);
@@ -190,9 +202,12 @@ export function App() {
   const [leftPanelCollapsed, setLeftPanelCollapsed] = createSignal(
     window.localStorage.getItem(LEFT_PANEL_COLLAPSED_STORAGE_KEY) === "true",
   );
+  const [leftPanelAutoCompact, setLeftPanelAutoCompact] = createSignal(false);
   const [setupState, setSetupState] = createSignal<AppSetupState | null>(null);
   const [setupLoaded, setSetupLoaded] = createSignal(false);
-  const [centralAuth, setCentralAuth] = createSignal<CentralAuthState>({ status: "loading" });
+  const [centralAuth, setCentralAuth] = createSignal<CentralAuthState>({
+    status: "loading",
+  });
   const [permissionsOpen, setPermissionsOpen] = createSignal(false);
   const [servers, setServers] = createSignal<ServerSummary[]>([]);
   const [joinServerOpen, setJoinServerOpen] = createSignal(false);
@@ -218,6 +233,30 @@ export function App() {
   let conversationFrame: number | undefined;
   let directConversationRequest = 0;
 
+  const leftPanelCompact = createMemo(() => leftPanelCollapsed() || leftPanelAutoCompact());
+
+  function shouldAutoCompactSidebar(platform: AppInfo["platform"] | undefined, panelWidth: number) {
+    const hasServerRail = platform === "darwin" || platform === "win32";
+    const serverRailWidth = hasServerRail ? (window.innerWidth <= 800 ? 56 : 64) : 0;
+    return window.innerWidth - serverRailWidth - panelWidth < CONVERSATION_MIN_WIDTH;
+  }
+
+  function updateResponsiveSidebar(): void {
+    setLeftPanelAutoCompact(shouldAutoCompactSidebar(appInfo()?.platform, leftPanelWidth()));
+  }
+
+  createEffect(
+    () => ({ platform: appInfo()?.platform, panelWidth: leftPanelWidth() }),
+    ({ platform, panelWidth }) => {
+      setLeftPanelAutoCompact(shouldAutoCompactSidebar(platform, panelWidth));
+    },
+  );
+
+  onSettled(() => {
+    window.addEventListener("resize", updateResponsiveSidebar);
+    return () => window.removeEventListener("resize", updateResponsiveSidebar);
+  });
+
   const currentTeamMember = createMemo(() => {
     const state = centralAuth();
     if (state.status !== "signed_in") return undefined;
@@ -230,6 +269,7 @@ export function App() {
   });
   const directPeople = createMemo(() => {
     const currentMemberId = currentTeamMember()?.id;
+    if (!currentMemberId) return [];
     return teamPresence().members.filter(
       (member) => member.id !== currentMemberId && !member.disabled,
     );
@@ -258,6 +298,17 @@ export function App() {
         setDirectConversationError(null);
         setDirectConversationLoading(false);
       }
+    },
+  );
+
+  createEffect(
+    () => currentTeamMember()?.id ?? null,
+    (memberId) => {
+      if (!memberId) {
+        setDirectThreads([]);
+        return;
+      }
+      void refreshDirectThreads();
     },
   );
 
@@ -333,7 +384,13 @@ export function App() {
       window.openbot
         .getAppInfo()
         .then(setAppInfo)
-        .catch(() => setAppInfo({ name: "OpenBot", version: "unavailable", platform: "darwin" })),
+        .catch(() =>
+          setAppInfo({
+            name: "OpenBot",
+            version: "unavailable",
+            platform: "darwin",
+          }),
+        ),
       window.openbot.agent
         .getStatus()
         .then(setAgentStatus)
@@ -420,7 +477,10 @@ export function App() {
         applyConversationDelta(event);
         return;
       case "queue-changed":
-        setQueues((current) => ({ ...current, [event.snapshot.botId]: event.snapshot }));
+        setQueues((current) => ({
+          ...current,
+          [event.snapshot.botId]: event.snapshot,
+        }));
         return;
       case "browser-changed":
         setBrowserTabs(event.tabs);
@@ -431,14 +491,25 @@ export function App() {
         return;
       case "turn-started":
         clearRecentReply(event.botId);
-        setActiveTurns((current) => ({ ...current, [event.botId]: event.turnId }));
+        setActiveTurns((current) => ({
+          ...current,
+          [event.botId]: event.turnId,
+        }));
         return;
       case "turn-completed":
         setActiveTurns((current) => ({ ...current, [event.botId]: null }));
+        setPendingPrompts((current) => ({ ...current, [event.botId]: undefined }));
+        setPendingApprovals((current) => ({ ...current, [event.botId]: undefined }));
         if (event.status === "completed") markReplyCompleted(event.botId);
         return;
       case "prompt":
         setPendingPrompts((current) => ({ ...current, [event.botId]: event }));
+        return;
+      case "approval":
+        setPendingApprovals((current) => ({
+          ...current,
+          [event.approval.botId]: event.approval,
+        }));
         return;
       case "error":
         if (event.botId) appendUiError(event.botId, event.message, "Error");
@@ -479,7 +550,10 @@ export function App() {
   function applyConversationDelta(event: Extract<AgentEvent, { type: "conversation-delta" }>) {
     if (event.revision <= (conversationRevisions()[event.botId] ?? -1)) return;
     pendingConversationSnapshots.delete(event.botId);
-    setConversationRevisions((current) => ({ ...current, [event.botId]: event.revision }));
+    setConversationRevisions((current) => ({
+      ...current,
+      [event.botId]: event.revision,
+    }));
 
     const existing = liveMessages()[event.botId]?.find((message) => message.id === event.messageId);
     if (existing) {
@@ -511,7 +585,10 @@ export function App() {
     const botId = snapshot.botId;
     if (snapshot.revision < (conversationRevisions()[botId] ?? -1)) return;
     const initialLoad = conversationLoaded()[botId] !== true;
-    setConversationRevisions((current) => ({ ...current, [botId]: snapshot.revision }));
+    setConversationRevisions((current) => ({
+      ...current,
+      [botId]: snapshot.revision,
+    }));
     setLiveMessages((current) => {
       const previous = current[botId] ?? [];
       const previousById = new Map(previous.map((message) => [message.id, message]));
@@ -531,7 +608,10 @@ export function App() {
       return { ...current, [botId]: next };
     });
     setConversationLoaded((current) => ({ ...current, [botId]: true }));
-    setActiveTurns((current) => ({ ...current, [botId]: snapshot.activeTurnId }));
+    setActiveTurns((current) => ({
+      ...current,
+      [botId]: snapshot.activeTurnId,
+    }));
   }
 
   async function createAgent() {
@@ -555,6 +635,18 @@ export function App() {
     }
   }
 
+  function openAgentPicker() {
+    const directMemberId = activeDirectMemberId();
+    if (directMemberId) {
+      void window.openbot.servers
+        .setDirectTyping({ memberId: directMemberId, typing: false })
+        .catch(() => undefined);
+    }
+    setActiveDirectMemberId(null);
+    setDirectConversationError(null);
+    setAgentPickerOpen(true);
+  }
+
   function selectBot(botId: string) {
     setAgentPickerOpen(false);
     const directMemberId = activeDirectMemberId();
@@ -569,6 +661,10 @@ export function App() {
   }
 
   async function refreshDirectThreads(): Promise<void> {
+    if (!currentTeamMember()) {
+      setDirectThreads([]);
+      return;
+    }
     try {
       setDirectThreads(await window.openbot.servers.listDirectThreads());
     } catch {
@@ -577,6 +673,7 @@ export function App() {
   }
 
   async function selectDirectMember(memberId: string): Promise<void> {
+    if (!currentTeamMember() || !directPeople().some((member) => member.id === memberId)) return;
     setAgentPickerOpen(false);
     setSettingsRequest(null);
     const previousMemberId = activeDirectMemberId();
@@ -592,7 +689,10 @@ export function App() {
     try {
       const snapshot = await window.openbot.servers.readDirectConversation(memberId);
       if (request !== directConversationRequest) return;
-      setDirectConversations((current) => ({ ...current, [memberId]: snapshot }));
+      setDirectConversations((current) => ({
+        ...current,
+        [memberId]: snapshot,
+      }));
       await window.openbot.servers.markDirectRead(memberId);
       if (request !== directConversationRequest) return;
       await refreshDirectThreads();
@@ -715,7 +815,10 @@ export function App() {
 
   async function updateBot(botId: string, updates: Omit<UpdateBotInput, "botId">) {
     try {
-      const stored = await window.openbot.agent.updateBot({ botId, ...updates });
+      const stored = await window.openbot.agent.updateBot({
+        botId,
+        ...updates,
+      });
       const next = toBotProfile(stored);
       setBotList((current) => {
         const existingIndex = current.findIndex((bot) => bot.id === botId);
@@ -839,11 +942,31 @@ export function App() {
     const prompt = bot ? pendingPrompts()[bot.id] : undefined;
     if (!bot || !prompt) return false;
     try {
-      await window.openbot.agent.respondToPrompt({ requestId: prompt.requestId, answers });
+      await window.openbot.agent.respondToPrompt({
+        requestId: prompt.requestId,
+        answers,
+      });
       setPendingPrompts((current) => ({ ...current, [bot.id]: undefined }));
       return true;
     } catch (error) {
       appendUiError(bot.id, error, "Answer failed");
+      return false;
+    }
+  }
+
+  async function respondToApproval(decision: "accept" | "decline"): Promise<boolean> {
+    const bot = activeBot();
+    const approval = bot ? pendingApprovals()[bot.id] : undefined;
+    if (!bot || !approval) return false;
+    try {
+      await window.openbot.agent.respondToApproval({
+        requestId: approval.requestId,
+        decision,
+      });
+      setPendingApprovals((current) => ({ ...current, [bot.id]: undefined }));
+      return true;
+    } catch (error) {
+      appendUiError(bot.id, error, "Approval failed");
       return false;
     }
   }
@@ -854,6 +977,46 @@ export function App() {
     void window.openbot.agent
       .cancelQueuedMessage({ botId: bot.id, deliveryId })
       .catch((error) => appendUiError(bot.id, error, "Cancel failed"));
+  }
+
+  function steerQueuedMessage(deliveryId: string) {
+    const bot = activeBot();
+    const turnId = bot ? activeTurns()[bot.id] : null;
+    if (!bot || !turnId) return;
+    void window.openbot.agent
+      .steerQueuedMessage({ botId: bot.id, deliveryId, expectedTurnId: turnId })
+      .catch((error) => appendUiError(bot.id, error, "Steer failed"));
+  }
+
+  async function updateQueuedMessage(
+    deliveryId: string,
+    text: string,
+    keepAttachmentIds: string[],
+    attachmentDraftIds: string[],
+  ): Promise<boolean> {
+    const bot = activeBot();
+    if (!bot) return false;
+    try {
+      await window.openbot.agent.updateQueuedMessage({
+        botId: bot.id,
+        deliveryId,
+        text,
+        keepAttachmentIds,
+        attachmentDraftIds,
+      });
+      return true;
+    } catch (error) {
+      appendUiError(bot.id, error, "Edit failed");
+      return false;
+    }
+  }
+
+  function reorderQueue(deliveryIds: string[]) {
+    const bot = activeBot();
+    if (!bot) return;
+    void window.openbot.agent
+      .reorderQueue({ botId: bot.id, deliveryIds })
+      .catch((error) => appendUiError(bot.id, error, "Reorder failed"));
   }
 
   function resumeQueue() {
@@ -927,6 +1090,11 @@ export function App() {
     window.localStorage.setItem(LEFT_PANEL_COLLAPSED_STORAGE_KEY, String(collapsed));
   }
 
+  function expandSidebar(): void {
+    setSidebarCollapsed(false);
+    setLeftPanelAutoCompact(false);
+  }
+
   async function saveSetup(preferredProvider: AgentProviderId): Promise<void> {
     const state = await window.openbot.saveSetup({ preferredProvider });
     flush(() => {
@@ -988,14 +1156,13 @@ export function App() {
     setConversationRevisions({});
     setQueues({});
     setTeamPresence(EMPTY_TEAM_PRESENCE);
-    const [storedBots, status, models, tabs, controlState, presence, threads] = await Promise.all([
+    const [storedBots, status, models, tabs, controlState, presence] = await Promise.all([
       window.openbot.agent.listBots(),
       window.openbot.agent.getStatus(),
       window.openbot.agent.listModels(),
       window.openbot.browser.listTabs(),
       window.openbot.browser.getControlState(),
       window.openbot.servers.getPresence(),
-      window.openbot.servers.listDirectThreads().catch(() => []),
     ]);
     setAgentStatus(status);
     setModelOptions(models);
@@ -1003,7 +1170,6 @@ export function App() {
     setActiveBrowserTabId(tabs[0]?.id ?? null);
     setBrowserControlState(controlState);
     setTeamPresence(presence);
-    setDirectThreads(threads);
     applyStoredBots(storedBots);
   }
 
@@ -1121,7 +1287,10 @@ export function App() {
   }
 
   async function connectRemoteMac(hostname: string, serverId: string | null): Promise<void> {
-    const session = await window.openbot.remoteMac.connect({ hostname, serverId });
+    const session = await window.openbot.remoteMac.connect({
+      hostname,
+      serverId,
+    });
     setRemoteMacSessions((current) => [
       ...current.filter((item) => item.id !== session.id),
       session,
@@ -1181,12 +1350,12 @@ export function App() {
               class={[
                 "app-frame",
                 {
-                  "app-frame-sidebar-collapsed": leftPanelCollapsed(),
+                  "app-frame-sidebar-compact": leftPanelCompact(),
                   "app-frame-with-server-rail":
                     appInfo()?.platform === "darwin" || appInfo()?.platform === "win32",
                 },
               ]}
-              style={`--left-panel-width: ${leftPanelCollapsed() ? 0 : leftPanelWidth()}px`}
+              style={`--left-panel-width: ${leftPanelCompact() ? LEFT_PANEL_COMPACT : leftPanelWidth()}px`}
             >
               <Show when={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}>
                 <ServerRail
@@ -1199,45 +1368,55 @@ export function App() {
                   onOpenRemoteMac={() => setRemoteDesktopRequest((current) => current + 1)}
                 />
               </Show>
-              <Show when={!leftPanelCollapsed()}>
-                <Sidebar
-                  bots={botList()}
-                  activeBotId={activeDirectMemberId() ? "" : (activeBot()?.id ?? "")}
-                  people={directPeople()}
-                  directThreads={directThreads()}
-                  activeDirectMemberId={activeDirectMemberId()}
-                  account={account()}
-                  appInfo={appInfo()}
-                  agentStatus={agentStatus()}
-                  accountUsage={accountUsage()}
-                  updateStatus={updateStatus()}
-                  agentStates={sidebarAgentStates()}
-                  onSelectBot={selectBot}
-                  onSelectPerson={(memberId) => void selectDirectMember(memberId)}
-                  onCreateBot={() => setAgentPickerOpen(true)}
-                  onEditBot={editBot}
-                  onDeleteBot={deleteBot}
-                  onRefreshUsage={refreshAccountUsage}
-                  onUpdateAction={runUpdateAction}
-                  onUpdateAccountAvatar={updateAccountAvatar}
-                  onLogout={logoutCentralAccount}
-                  onOpenExternal={(destination) => window.openbot.openExternal(destination)}
-                  onOpenPermissions={() => setPermissionsOpen(true)}
-                  onCollapse={() => setSidebarCollapsed(true)}
-                />
-                <PanelResizer
-                  class="left-panel-resizer"
-                  label="Resize left sidebar"
-                  controls="bot-sidebar"
-                  direction="left"
-                  value={leftPanelWidth()}
-                  defaultValue={LEFT_PANEL_DEFAULT}
-                  min={LEFT_PANEL_MIN}
-                  max={LEFT_PANEL_MAX}
-                  onResize={setLeftPanelWidth}
-                  onResizeEnd={(value) => savePanelWidth(LEFT_PANEL_STORAGE_KEY, value)}
-                />
-              </Show>
+              <Sidebar
+                bots={botList()}
+                activeBotId={activeDirectMemberId() ? "" : (activeBot()?.id ?? "")}
+                people={directPeople()}
+                directThreads={directThreads()}
+                activeDirectMemberId={activeDirectMemberId()}
+                account={account()}
+                appInfo={appInfo()}
+                agentStatus={agentStatus()}
+                accountUsage={accountUsage()}
+                updateStatus={updateStatus()}
+                agentStates={sidebarAgentStates()}
+                onSelectBot={selectBot}
+                onSelectPerson={(memberId) => void selectDirectMember(memberId)}
+                onCreateBot={openAgentPicker}
+                onEditBot={editBot}
+                onDeleteBot={deleteBot}
+                onRefreshUsage={refreshAccountUsage}
+                onUpdateAction={runUpdateAction}
+                onUpdateAccountAvatar={updateAccountAvatar}
+                onLogout={logoutCentralAccount}
+                onOpenExternal={(destination) => window.openbot.openExternal(destination)}
+                onOpenPermissions={() => setPermissionsOpen(true)}
+                compact={leftPanelCompact()}
+                onCollapse={() => setSidebarCollapsed(true)}
+                onExpand={expandSidebar}
+              />
+              <PanelResizer
+                class="left-panel-resizer"
+                label="Resize left sidebar"
+                controls="bot-sidebar"
+                direction="left"
+                value={leftPanelWidth()}
+                defaultValue={LEFT_PANEL_DEFAULT}
+                min={LEFT_PANEL_MIN}
+                max={LEFT_PANEL_MAX}
+                onResize={setLeftPanelWidth}
+                onResizeEnd={(value) => savePanelWidth(LEFT_PANEL_STORAGE_KEY, value)}
+                snap={{
+                  compactValue: LEFT_PANEL_COMPACT,
+                  compact: leftPanelCompact(),
+                  collapseThreshold: LEFT_PANEL_COLLAPSE_THRESHOLD,
+                  expandThreshold: LEFT_PANEL_EXPAND_THRESHOLD,
+                  onCompactChange: (compact) => {
+                    if (compact) setSidebarCollapsed(true);
+                    else expandSidebar();
+                  },
+                }}
+              />
               <Show when={activeDirectMember()} keyed>
                 {(member) => (
                   <DirectConversation
@@ -1247,8 +1426,6 @@ export function App() {
                     loading={directConversationLoading()}
                     loadError={directConversationError()}
                     typing={directTypingMemberIds().has(member.id)}
-                    leftSidebarCollapsed={leftPanelCollapsed()}
-                    onToggleLeftSidebar={() => setSidebarCollapsed(false)}
                     onSend={sendDirectMessage}
                     onTypingChange={setDirectTyping}
                   />
@@ -1273,8 +1450,8 @@ export function App() {
                   currentUserEmail={account().email}
                   remoteMacSession={activeRemoteMacSession()}
                   remoteDesktopRequest={remoteDesktopRequest()}
-                  leftSidebarCollapsed={leftPanelCollapsed()}
                   prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
+                  approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
                   activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
                   agentPickerOpen={agentPickerOpen()}
                   creatingAgent={creatingAgent()}
@@ -1289,13 +1466,16 @@ export function App() {
                   onTypingChange={setTeamTyping}
                   onCompleteOnboarding={completeOnboarding}
                   onAnswerPrompt={answerPrompt}
+                  onRespondToApproval={respondToApproval}
                   onCancelQueuedMessage={cancelQueuedMessage}
+                  onSteerQueuedMessage={steerQueuedMessage}
+                  onUpdateQueuedMessage={updateQueuedMessage}
+                  onReorderQueue={reorderQueue}
                   onResumeQueue={resumeQueue}
                   onActivateBrowserTab={activateBrowserTab}
                   onCloseBrowserTab={closeBrowserTab}
                   onConnectRemoteMac={connectRemoteMac}
                   onDisconnectRemoteMac={disconnectRemoteMac}
-                  onToggleLeftSidebar={() => setSidebarCollapsed(false)}
                   onOpenAgentSetup={() => window.openbot.openExternal("agent-setup")}
                   onStop={stopActiveTurn}
                 />
@@ -1303,7 +1483,12 @@ export function App() {
               <Show when={permissionsOpen()}>
                 <InitialSetup
                   reviewing
-                  state={setupState() ?? { completed: true, preferredProvider: "codex" }}
+                  state={
+                    setupState() ?? {
+                      completed: true,
+                      preferredProvider: "codex",
+                    }
+                  }
                   agentStatus={agentStatus()}
                   platform={appInfo()?.platform ?? "darwin"}
                   accountEmail={account().email}
@@ -1507,7 +1692,10 @@ function retainThinkingMessages(previous: BotMessage[], next: BotMessage[]): Bot
 function formatTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "now";
-  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date);
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 function withoutBot<T>(values: Record<string, T>, botId: string): Record<string, T> {

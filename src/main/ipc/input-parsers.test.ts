@@ -3,15 +3,19 @@
 import { describe, expect, it } from "vitest";
 import {
   parseAgentRequest,
+  parseApprovalResponse,
   parseCancelQueuedMessage,
   parseImportAttachments,
   parseInterrupt,
   parseMessageReaction,
   parseOpenAttachment,
   parsePromptResponse,
+  parseReorderQueue,
   parseSendMessage,
   parseSetQueuePaused,
+  parseSteerQueuedMessage,
   parseUpdateBot,
+  parseUpdateQueuedMessage,
 } from "./agent-inputs";
 import { parseMacPermission, parseProvider } from "./app-inputs";
 import { parseBrowserOpen, parseVisibility } from "./browser-inputs";
@@ -139,9 +143,38 @@ describe("agent IPC input parsing", () => {
       botId: "bot-1",
       paused: true,
     });
+    expect(
+      parseSteerQueuedMessage({
+        botId: "bot-1",
+        deliveryId: "delivery-1",
+        expectedTurnId: "turn-1",
+      }),
+    ).toEqual({ botId: "bot-1", deliveryId: "delivery-1", expectedTurnId: "turn-1" });
+    expect(
+      parseUpdateQueuedMessage({
+        botId: "bot-1",
+        deliveryId: "delivery-1",
+        text: "Edited",
+        keepAttachmentIds: ["attachment-1"],
+        attachmentDraftIds: ["draft-1"],
+      }),
+    ).toEqual({
+      botId: "bot-1",
+      deliveryId: "delivery-1",
+      text: "Edited",
+      keepAttachmentIds: ["attachment-1"],
+      attachmentDraftIds: ["draft-1"],
+    });
+    expect(
+      parseReorderQueue({ botId: "bot-1", deliveryIds: ["delivery-2", "delivery-1"] }),
+    ).toEqual({ botId: "bot-1", deliveryIds: ["delivery-2", "delivery-1"] });
     expect(parsePromptResponse({ requestId: 7, answers: { question: ["answer"] } })).toEqual({
       requestId: 7,
       answers: { question: ["answer"] },
+    });
+    expect(parseApprovalResponse({ requestId: "approval-1", decision: "accept" })).toEqual({
+      requestId: "approval-1",
+      decision: "accept",
     });
   });
 
@@ -168,9 +201,28 @@ describe("agent IPC input parsing", () => {
     expect(() => parseSetQueuePaused({ botId: "bot-1", paused: "yes" })).toThrowError(
       "Invalid queue pause request.",
     );
+    expect(() => parseSteerQueuedMessage(null)).toThrowError("Invalid queued steer request.");
+    expect(() =>
+      parseUpdateQueuedMessage({
+        botId: "bot-1",
+        deliveryId: "delivery-1",
+        text: " ",
+        keepAttachmentIds: [],
+        attachmentDraftIds: [],
+      }),
+    ).toThrowError("A message or attachment is required.");
+    expect(() =>
+      parseReorderQueue({ botId: "bot-1", deliveryIds: ["delivery-1", "delivery-1"] }),
+    ).toThrowError("Duplicate delivery ids.");
     expect(() => parseInterrupt(null)).toThrowError("Invalid interrupt request.");
     expect(() => parsePromptResponse({ requestId: 1, answers: null })).toThrowError(
       "Prompt answers are required.",
+    );
+    expect(() =>
+      parseApprovalResponse({ requestId: "approval-1", decision: "maybe" }),
+    ).toThrowError("Invalid approval decision.");
+    expect(() => parseApprovalResponse({ requestId: 1.5, decision: "accept" })).toThrowError(
+      "Invalid approval response.",
     );
   });
 });

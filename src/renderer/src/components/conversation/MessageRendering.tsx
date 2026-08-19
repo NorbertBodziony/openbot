@@ -1,6 +1,7 @@
 import type { AttachmentSummary, MessageReaction } from "@openbot/contracts/ipc";
 import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "@openbot/contracts/ipc";
 import { createSignal, For, Show } from "solid-js";
+import { avatarHeadColor } from "../../blobatar";
 import type { BotMessage, BotProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import { AttachmentCards } from "./AttachmentCards";
@@ -16,6 +17,12 @@ import { RichMessageText } from "./RichMessageText";
 
 function ExchangeAgentAvatar(props: { bot: BotProfile | undefined }) {
   return <AgentAvatar bot={props.bot} class="exchange-agent-avatar" />;
+}
+
+function exchangeAgentStyle(bot: BotProfile | undefined): string | undefined {
+  return bot
+    ? `--exchange-agent-color: ${avatarHeadColor(bot.avatarSeed, bot.avatarHue)}`
+    : undefined;
 }
 
 export function ExchangeSystemRow(props: {
@@ -46,6 +53,7 @@ export function ExchangeSystemRow(props: {
             <button
               type="button"
               class="exchange-agent-trigger exchange-agent-trigger-incoming"
+              style={exchangeAgentStyle(sender())}
               aria-label={`Open exchange with ${sender()?.name ?? exchange()?.senderBotId ?? "agent"}`}
               onClick={() => {
                 const senderId = exchange()?.senderBotId;
@@ -66,6 +74,7 @@ export function ExchangeSystemRow(props: {
               <button
                 type="button"
                 class="exchange-agent-trigger exchange-agent-trigger-outgoing"
+                style={exchangeAgentStyle(props.bots.find((bot) => bot.id === recipients()[0]))}
                 aria-haspopup="menu"
                 aria-expanded={agentsOpen() ? "true" : "false"}
                 aria-label={`${agentCountLabel()}, show list`}
@@ -109,6 +118,7 @@ export function ExchangeSystemRow(props: {
           <button
             type="button"
             class="exchange-agent-trigger exchange-agent-trigger-single"
+            style={exchangeAgentStyle(singleRecipient())}
             aria-label={`Open exchange with ${singleRecipient()?.name ?? recipients()[0] ?? "agent"}`}
             title={singleRecipient()?.name ?? recipients()[0] ?? "Agent"}
             onClick={() => {

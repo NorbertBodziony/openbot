@@ -22,10 +22,14 @@ import {
   isAvatarSeed,
   isMessageReaction,
   isReasoningEffort,
+  type ReorderQueueInput,
+  type RespondToApprovalInput,
+  type SteerQueuedMessageInput,
   type TeamMemberSummary,
   type TeamPresenceSnapshot,
   type TeamRealtimeEvent,
   type UpdateBotInput,
+  type UpdateQueuedMessageInput,
 } from "@openbot/contracts/ipc";
 import {
   type DynamicRecord,
@@ -651,6 +655,34 @@ export class TeamApiServer {
           await this.#options.agents.setQueuePaused(botId, body.paused);
           return this.#empty(response, 204);
         }
+        if (method === "POST" && action === "queue/steer") {
+          const body = await readJson(request);
+          await this.#options.agents.steerQueuedMessage({
+            botId,
+            deliveryId: stringField(body, "deliveryId"),
+            expectedTurnId: stringField(body, "expectedTurnId"),
+          } satisfies SteerQueuedMessageInput);
+          return this.#empty(response, 204);
+        }
+        if (method === "POST" && action === "queue/update") {
+          const body = await readJson(request);
+          await this.#options.agents.updateQueuedMessage({
+            botId,
+            deliveryId: stringField(body, "deliveryId"),
+            text: stringField(body, "text", true, INPUT_LIMITS.messageText),
+            keepAttachmentIds: stringArray(body, "keepAttachmentIds"),
+            attachmentDraftIds: stringArray(body, "attachmentDraftIds"),
+          } satisfies UpdateQueuedMessageInput);
+          return this.#empty(response, 204);
+        }
+        if (method === "POST" && action === "queue/reorder") {
+          const body = await readJson(request);
+          await this.#options.agents.reorderQueue({
+            botId,
+            deliveryIds: stringArray(body, "deliveryIds", INPUT_LIMITS.messageRecipients),
+          } satisfies ReorderQueueInput);
+          return this.#empty(response, 204);
+        }
         if (method === "POST" && action === "interrupt") {
           const body = await readJson(request);
           await this.#options.agents.interrupt(botId, stringField(body, "turnId"));
@@ -663,6 +695,14 @@ export class TeamApiServer {
         await this.#options.agents.respondToPrompt({
           requestId: promptRequestId(body.requestId),
           answers: promptAnswers(body.answers),
+        });
+        return this.#empty(response, 204);
+      }
+      if (method === "POST" && url.pathname === "/v1/approvals/respond") {
+        const body = await readJson(request);
+        await this.#options.agents.respondToApproval({
+          requestId: promptRequestId(body.requestId),
+          decision: approvalDecision(body.decision),
         });
         return this.#empty(response, 204);
       }
@@ -1060,6 +1100,11 @@ function promptAnswers(value: unknown): Record<string, string[]> {
     answers[key] = answer;
   }
   return answers;
+}
+
+function approvalDecision(value: unknown): RespondToApprovalInput["decision"] {
+  if (value === "accept" || value === "decline") return value;
+  throw new HttpError(400, "approval decision is invalid.");
 }
 
 function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {

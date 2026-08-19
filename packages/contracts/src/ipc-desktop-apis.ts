@@ -29,12 +29,16 @@ import type {
   OpenAttachmentInput,
   QueuedMessageReceipt,
   QueueSnapshot,
+  ReorderQueueInput,
+  RespondToApprovalInput,
   RespondToPromptInput,
   SendMessageInput,
   SetAgentAvatarInput,
   SetMessageReactionInput,
   SetQueuePausedInput,
+  SteerQueuedMessageInput,
   UpdateBotInput,
+  UpdateQueuedMessageInput,
 } from "./ipc-conversation";
 import type {
   ConfigureHostInput,
@@ -82,8 +86,12 @@ export interface AgentDesktopApi {
   listQueue: (botId: string) => Promise<QueueSnapshot>;
   cancelQueuedMessage: (input: CancelQueuedMessageInput) => Promise<void>;
   setQueuePaused: (input: SetQueuePausedInput) => Promise<void>;
+  steerQueuedMessage: (input: SteerQueuedMessageInput) => Promise<void>;
+  updateQueuedMessage: (input: UpdateQueuedMessageInput) => Promise<void>;
+  reorderQueue: (input: ReorderQueueInput) => Promise<void>;
   interrupt: (input: InterruptTurnInput) => Promise<void>;
   respondToPrompt: (input: RespondToPromptInput) => Promise<void>;
+  respondToApproval: (input: RespondToApprovalInput) => Promise<void>;
   onEvent: (listener: (event: AgentEvent) => void) => () => void;
 }
 

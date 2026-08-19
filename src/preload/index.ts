@@ -160,9 +160,16 @@ const openbotApi: OpenBotDesktopApi = {
       invokeAgent(IPC_CHANNELS.agentCancelQueuedMessage, input) as Promise<void>,
     setQueuePaused: (input) =>
       invokeAgent(IPC_CHANNELS.agentSetQueuePaused, input) as Promise<void>,
+    steerQueuedMessage: (input) =>
+      invokeAgent(IPC_CHANNELS.agentSteerQueuedMessage, input) as Promise<void>,
+    updateQueuedMessage: (input) =>
+      invokeAgent(IPC_CHANNELS.agentUpdateQueuedMessage, input) as Promise<void>,
+    reorderQueue: (input) => invokeAgent(IPC_CHANNELS.agentReorderQueue, input) as Promise<void>,
     interrupt: (input) => invokeAgent(IPC_CHANNELS.agentInterrupt, input) as Promise<void>,
     respondToPrompt: (input) =>
       invokeAgent(IPC_CHANNELS.agentRespondToPrompt, input) as Promise<void>,
+    respondToApproval: (input) =>
+      invokeAgent(IPC_CHANNELS.agentRespondToApproval, input) as Promise<void>,
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: ScopedAgentEvent) => {
         if (payload.serverId === selectedServerId) listener(payload.event);

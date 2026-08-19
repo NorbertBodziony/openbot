@@ -289,6 +289,25 @@ export interface SetQueuePausedInput {
   paused: boolean;
 }
 
+export interface SteerQueuedMessageInput {
+  botId: string;
+  deliveryId: string;
+  expectedTurnId: string;
+}
+
+export interface UpdateQueuedMessageInput {
+  botId: string;
+  deliveryId: string;
+  text: string;
+  keepAttachmentIds: string[];
+  attachmentDraftIds: string[];
+}
+
+export interface ReorderQueueInput {
+  botId: string;
+  deliveryIds: string[];
+}
+
 export interface InterruptTurnInput {
   botId: string;
   turnId: string;
@@ -305,6 +324,34 @@ export interface AgentPromptQuestion {
 export interface RespondToPromptInput {
   requestId: string | number;
   answers: Record<string, string[]>;
+}
+
+export type AgentApprovalKind = "command" | "file-change" | "permissions";
+
+export interface AgentApprovalPermissions {
+  fileSystem: {
+    read: string[];
+    write: string[];
+  };
+  network: boolean;
+}
+
+export interface AgentApproval {
+  requestId: string | number;
+  botId: string;
+  threadId: string;
+  turnId: string;
+  kind: AgentApprovalKind;
+  command: string | null;
+  cwd: string | null;
+  reason: string | null;
+  grantRoot: string | null;
+  permissions: AgentApprovalPermissions | null;
+}
+
+export interface RespondToApprovalInput {
+  requestId: string | number;
+  decision: "accept" | "decline";
 }
 
 export type AgentEvent =
@@ -339,6 +386,7 @@ export type AgentEvent =
       turnId: string;
       questions: AgentPromptQuestion[];
     }
+  | { type: "approval"; approval: AgentApproval }
   | { type: "browser-changed"; tabs: BrowserTab[]; activeTabId: string | null }
   | { type: "browser-control-changed"; state: BrowserControlState }
   | { type: "error"; botId?: string; code: string; message: string };

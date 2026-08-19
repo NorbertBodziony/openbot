@@ -11,6 +11,13 @@ interface PanelResizerProps {
   max: number | (() => number);
   onResize: (value: number) => void;
   onResizeEnd: (value: number) => void;
+  snap?: {
+    compactValue: number;
+    compact: boolean;
+    collapseThreshold: number;
+    expandThreshold: number;
+    onCompactChange: (compact: boolean) => void;
+  };
   class?: string;
 }
 
@@ -22,10 +29,35 @@ export function PanelResizer(props: PanelResizerProps) {
 
   const maximum = () => Math.max(props.min, isFunction(props.max) ? props.max() : props.max);
   const clamp = (value: number) => Math.round(Math.min(maximum(), Math.max(props.min, value)));
+  const displayedValue = () => (props.snap?.compact ? props.snap.compactValue : props.value);
+  const resolve = (value: number) => {
+    const snap = props.snap;
+    if (!snap) return { compact: false, value: clamp(value) };
+    if (snap.compact) {
+      return value < snap.expandThreshold
+        ? { compact: true, value: snap.compactValue }
+        : { compact: false, value: clamp(Math.max(props.min, value)) };
+    }
+    return value < snap.collapseThreshold
+      ? { compact: true, value: snap.compactValue }
+      : { compact: false, value: clamp(value) };
+  };
+  const resize = (value: number) => {
+    const next = resolve(value);
+    if (props.snap && next.compact !== props.snap.compact) {
+      props.snap.onCompactChange(next.compact);
+    }
+    if (!next.compact) props.onResize(next.value);
+    return next;
+  };
   const commit = (value: number) => {
-    const next = clamp(value);
-    props.onResize(next);
-    props.onResizeEnd(next);
+    const next = resize(value);
+    if (!next.compact) props.onResizeEnd(next.value);
+  };
+  const withoutTransition = (action: () => void) => {
+    document.documentElement.classList.add("panel-resizing");
+    action();
+    requestAnimationFrame(() => document.documentElement.classList.remove("panel-resizing"));
   };
 
   const enforceBounds = () => {
@@ -52,7 +84,7 @@ export function PanelResizer(props: PanelResizerProps) {
     const handle = event.currentTarget as HTMLElement;
     handle.setPointerCapture?.(event.pointerId);
     const startX = event.clientX;
-    const startValue = props.value;
+    const startValue = displayedValue();
     let latestValue = startValue;
     setIsResizing(true);
     document.documentElement.classList.add("panel-resizing");
@@ -60,17 +92,16 @@ export function PanelResizer(props: PanelResizerProps) {
     const move = (moveEvent: PointerEvent) => {
       if (moveEvent.pointerId !== event.pointerId) return;
       const delta = moveEvent.clientX - startX;
-      latestValue = clamp(startValue + (props.direction === "left" ? delta : -delta));
-      props.onResize(latestValue);
+      latestValue = startValue + (props.direction === "left" ? delta : -delta);
+      resize(latestValue);
     };
     const finish = (finishEvent?: PointerEvent) => {
       if (finishEvent && finishEvent.pointerId !== event.pointerId) return;
       if (finishEvent) {
         const delta = finishEvent.clientX - startX;
-        latestValue = clamp(startValue + (props.direction === "left" ? delta : -delta));
+        latestValue = startValue + (props.direction === "left" ? delta : -delta);
       }
-      props.onResize(latestValue);
-      props.onResizeEnd(latestValue);
+      commit(latestValue);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", cancel);
@@ -93,16 +124,29 @@ export function PanelResizer(props: PanelResizerProps) {
 
   const handleKeyDown = (event: KeyboardEvent) => {
     let next: number | undefined;
-    if (event.key === "Home") next = props.min;
-    else if (event.key === "End") next = maximum();
-    else if (event.key === "ArrowLeft")
+    if (event.key === "Home") {
+      event.preventDefault();
+      event.stopPropagation();
+      withoutTransition(() => {
+        props.snap?.onCompactChange(true);
+        if (!props.snap) commit(props.min);
+      });
+      return;
+    } else if (event.key === "End") next = maximum();
+    else if (event.key === "ArrowRight" && props.snap?.compact) next = props.min;
+    else if (event.key === "ArrowLeft" && props.snap && props.value <= props.min) {
+      event.preventDefault();
+      event.stopPropagation();
+      withoutTransition(() => props.snap?.onCompactChange(true));
+      return;
+    } else if (event.key === "ArrowLeft")
       next = props.value + (props.direction === "right" ? 12 : -12);
     else if (event.key === "ArrowRight")
       next = props.value + (props.direction === "left" ? 12 : -12);
     if (next === undefined) return;
     event.preventDefault();
     event.stopPropagation();
-    commit(next);
+    withoutTransition(() => commit(next));
   };
 
   return (
@@ -113,10 +157,12 @@ export function PanelResizer(props: PanelResizerProps) {
       aria-label={props.label}
       aria-controls={props.controls}
       aria-orientation="vertical"
-      aria-valuemin={props.min}
+      aria-valuemin={props.snap?.compactValue ?? props.min}
       aria-valuemax={maximum()}
-      aria-valuenow={props.value}
-      aria-valuetext={`${props.value}px`}
+      aria-valuenow={displayedValue()}
+      aria-valuetext={
+        props.snap?.compact ? `Compact (${props.snap.compactValue}px)` : `${props.value}px`
+      }
       onPointerDown={beginDrag}
       onKeyDown={handleKeyDown}
       onDblClick={(event) => {

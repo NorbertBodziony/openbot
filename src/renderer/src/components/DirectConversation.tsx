@@ -5,7 +5,6 @@ import type {
   TeamPresenceMember,
 } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
-import { SidebarToggleIcon } from "./Sidebar";
 import { TeamPersonAvatar, teamMemberName } from "./TeamPersonAvatar";
 import { TypingDots } from "./TypingDots";
 
@@ -16,8 +15,6 @@ interface DirectConversationProps {
   loading: boolean;
   loadError: string | null;
   typing: boolean;
-  leftSidebarCollapsed: boolean;
-  onToggleLeftSidebar: () => void;
   onSend: (text: string, clientMessageId: string) => Promise<DirectMessage>;
   onTypingChange: (typing: boolean) => void;
 }
@@ -77,18 +74,6 @@ export function DirectConversation(props: DirectConversationProps) {
       aria-label={`Direct conversation with ${teamMemberName(props.member)}`}
     >
       <header class="window-drag direct-conversation-header">
-        <Show when={props.leftSidebarCollapsed}>
-          <button
-            type="button"
-            class="sidebar-icon-button sidebar-restore-button no-drag"
-            aria-label="Show sidebar"
-            aria-controls="bot-sidebar"
-            aria-expanded="false"
-            onClick={props.onToggleLeftSidebar}
-          >
-            <SidebarToggleIcon />
-          </button>
-        </Show>
         <div class="direct-conversation-person no-drag">
           <TeamPersonAvatar member={props.member} />
           <div>
@@ -192,9 +177,10 @@ export function DirectConversation(props: DirectConversationProps) {
 }
 
 function messageTime(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(
-    new Date(value),
-  );
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function LockIcon() {

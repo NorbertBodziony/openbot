@@ -2,31 +2,66 @@
 
 :root {
   color-scheme: dark;
-  --openbot-black: #050505;
-  --openbot-sidebar: #111111;
-  --openbot-main: #080808;
-  --openbot-main-deep: #080808;
-  --openbot-hover: rgba(255, 255, 255, 0.05);
-  --openbot-active: rgba(255, 255, 255, 0.075);
-  --openbot-line: rgba(255, 255, 255, 0.08);
-  --openbot-line-strong: rgba(255, 255, 255, 0.12);
-  --openbot-white: rgb(242, 242, 242);
-  --openbot-muted: rgba(255, 255, 255, 0.58);
-  --openbot-dim: rgba(255, 255, 255, 0.32);
-  --openbot-teal: #54b9a6;
-  --openbot-orange: #f19d38;
-  --openbot-purple: #885cf5;
-  --openbot-blue: #3c82f6;
-  --openbot-violet: #6464ef;
-  --openbot-coral: #ed712e;
-  --background: var(--openbot-main);
-  --surface: #171717;
-  --border: var(--openbot-line);
-  --text-primary: var(--openbot-white);
-  --text-secondary: rgba(255, 255, 255, 0.72);
-  --text-muted: var(--openbot-muted);
-  --accent: var(--openbot-teal);
-  --danger: #bd554c;
+  /* Grok Bot-inspired neutral system. Keep UI colors here, not in components. */
+  --openbot-bg-canvas: #070707;
+  --openbot-bg-sidebar: #111111;
+  --openbot-bg-surface: #262626;
+  --openbot-bg-surface-raised: #2f2f2f;
+  --openbot-bg-control: #1b1b1b;
+  --openbot-bg-control-hover: #313131;
+  --openbot-bg-control-active: #3a3a3a;
+  --openbot-bg-switch: #5f5f5f;
+  --openbot-bg-overlay: rgba(7, 7, 7, 0.92);
+  --openbot-border: rgba(255, 255, 255, 0.08);
+  --openbot-border-strong: rgba(255, 255, 255, 0.14);
+  --openbot-border-focus: rgba(105, 96, 241, 0.72);
+  --openbot-text-primary: #f2f2f2;
+  --openbot-text-on-light: #141414;
+  --openbot-surface-light: #f0f0f0;
+  --openbot-text-secondary: rgba(255, 255, 255, 0.72);
+  --openbot-text-muted: rgba(255, 255, 255, 0.48);
+  --openbot-text-dim: rgba(255, 255, 255, 0.32);
+  --openbot-text-placeholder: rgba(255, 255, 255, 0.38);
+  --openbot-accent: #6960f1;
+  --openbot-accent-hover: #7a73ff;
+  --openbot-accent-soft: rgba(105, 96, 241, 0.16);
+  --openbot-accent-strong: rgba(105, 96, 241, 0.34);
+  --openbot-success: #61c985;
+  --openbot-success-soft: rgba(97, 201, 133, 0.12);
+  --openbot-warning: #e3b866;
+  --openbot-warning-soft: rgba(227, 184, 102, 0.12);
+  --openbot-danger: #e47d75;
+  --openbot-danger-soft: rgba(228, 125, 117, 0.13);
+  --openbot-danger-strong: #ff4058;
+  --openbot-shadow-popover-ambient: rgba(0, 0, 0, 0.1);
+  --openbot-shadow-popover-key: rgba(0, 0, 0, 0.1);
+  --openbot-shadow-ring: rgba(228, 228, 228, 0.04);
+  --openbot-white: var(--openbot-text-primary);
+  --openbot-black: var(--openbot-bg-canvas);
+  --openbot-sidebar: var(--openbot-bg-sidebar);
+  --openbot-main: var(--openbot-bg-canvas);
+  --openbot-main-deep: var(--openbot-bg-canvas);
+  --openbot-hover: rgba(255, 255, 255, 0.06);
+  --openbot-active: var(--openbot-bg-surface);
+  --openbot-line: var(--openbot-border);
+  --openbot-line-strong: var(--openbot-border-strong);
+  --openbot-muted: var(--openbot-text-muted);
+  --openbot-dim: var(--openbot-text-dim);
+  --openbot-teal: var(--openbot-success);
+  --openbot-orange: var(--openbot-warning);
+  --openbot-purple: var(--openbot-accent);
+  --openbot-blue: var(--openbot-accent);
+  --openbot-violet: var(--openbot-accent);
+  --openbot-coral: var(--openbot-danger);
+  --background: var(--openbot-bg-canvas);
+  --surface: var(--openbot-bg-surface);
+  --border: var(--openbot-border);
+  --text-primary: var(--openbot-text-primary);
+  --text-secondary: var(--openbot-text-secondary);
+  --text-muted: var(--openbot-text-muted);
+  --accent: var(--openbot-accent);
+  --danger: var(--openbot-danger);
+  --openbot-vnc-background: var(--openbot-bg-canvas);
   font-family: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   font-synthesis: none;
   text-rendering: geometricPrecision;
@@ -903,7 +938,8 @@ textarea {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .account-login-spinner {
+  .account-login-spinner,
+  .approval-card {
     animation: none;
   }
 }
@@ -989,24 +1025,18 @@ textarea:focus-visible {
   width: 100%;
   height: 100%;
   margin: 0;
-  grid-template-columns: var(--left-panel-width, 275px) 0 minmax(0, 1fr);
+  grid-template-columns: var(--left-panel-width, 280px) 0 minmax(0, 1fr);
   overflow: hidden;
   border: 0;
   border-radius: 0;
   background: var(--openbot-main);
   box-shadow: none;
-}
-
-.app-frame-sidebar-collapsed {
-  grid-template-columns: 0 0 minmax(0, 1fr);
+  transition: grid-template-columns var(--panel-resize-duration, 240ms)
+    cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .app-frame-with-server-rail {
-  grid-template-columns: 64px var(--left-panel-width, 275px) 0 minmax(0, 1fr);
-}
-
-.app-frame-with-server-rail.app-frame-sidebar-collapsed {
-  grid-template-columns: 64px 0 0 minmax(0, 1fr);
+  grid-template-columns: 64px var(--left-panel-width, 280px) 0 minmax(0, 1fr);
 }
 
 .server-rail {
@@ -2087,7 +2117,7 @@ textarea:focus-visible {
 
 @media (max-width: 800px) {
   .app-frame-with-server-rail {
-    grid-template-columns: 56px var(--left-panel-width, 240px) 0 minmax(0, 1fr);
+    grid-template-columns: 56px var(--left-panel-width, 280px) 0 minmax(0, 1fr);
   }
   .server-rail {
     min-width: 56px;
@@ -2137,12 +2167,6 @@ textarea:focus-visible {
   }
   .remote-access-row .remote-more-button {
     grid-column: 3;
-  }
-  .conversation-presence > span:last-child {
-    display: none;
-  }
-  .conversation-presence {
-    padding-left: 6px;
   }
 }
 
@@ -2236,6 +2260,7 @@ textarea {
 .sidebar {
   display: flex;
   min-width: 0;
+  overflow: hidden;
   flex-direction: column;
   background: var(--openbot-sidebar);
   color: rgba(255, 255, 255, 0.9);
@@ -2269,6 +2294,7 @@ textarea {
   transition:
     background-color 140ms ease,
     color 140ms ease,
+    opacity 140ms ease,
     transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
@@ -2334,16 +2360,39 @@ textarea {
   stroke-width: 1.35;
 }
 
-.sidebar-restore-button {
-  position: absolute;
-  z-index: 100;
-  top: 6px;
-  left: 74px;
-  color: var(--openbot-muted);
+.sidebar-search-wrap {
+  position: relative;
+  padding: 8px 12px 6px;
 }
 
-.sidebar-search-wrap {
-  padding: 8px 11px 6px;
+.sidebar-compact-search {
+  position: absolute;
+  inset: 8px 12px 6px;
+  display: grid;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--openbot-muted);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(6px) scale(0.96);
+  cursor: pointer;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    opacity 120ms ease,
+    transform 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.sidebar-compact-search:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--openbot-white);
+}
+
+.sidebar-compact-search:active {
+  transform: scale(0.96);
 }
 
 .search-field {
@@ -2356,9 +2405,13 @@ textarea {
   background: rgba(255, 255, 255, 0.07);
   padding: 0 9px;
   color: rgba(255, 255, 255, 0.32);
+  opacity: 1;
+  transform: translateX(0);
   transition:
     border-color 150ms ease,
-    background 150ms ease;
+    background-color 150ms ease,
+    opacity 120ms ease,
+    transform 200ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .search-field:focus-within {
@@ -2384,20 +2437,29 @@ textarea {
 .bot-list {
   min-height: 0;
   flex: 1;
+  overflow-x: hidden;
   overflow-y: auto;
-  padding: 0 11px 8px;
+  padding: 4px 12px 24px;
 }
 
 .sidebar-chat-group + .sidebar-chat-group {
   margin-top: 12px;
+  transition: margin-top var(--panel-resize-duration, 240ms) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .sidebar-chat-group > header {
   display: flex;
   height: 24px;
+  overflow: hidden;
   align-items: center;
   justify-content: space-between;
   padding: 0 7px;
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    height var(--panel-resize-duration, 240ms) cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 120ms ease,
+    transform 180ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .sidebar-chat-group > header h2,
@@ -2427,9 +2489,7 @@ textarea {
   height: 32px;
   flex: 0 0 auto;
   place-items: center;
-  border: 1px solid rgba(111, 205, 188, 0.12);
   border-radius: 10px;
-  background: linear-gradient(145deg, #243733, #182522);
   color: #8bd0c1;
   font-size: 9px;
   font-weight: 680;
@@ -2497,23 +2557,24 @@ textarea {
 .bot-row {
   display: flex;
   width: 100%;
-  min-height: 43px;
+  height: 54px;
+  min-height: 54px;
   align-items: center;
   gap: 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 10px;
   background: transparent;
-  padding: 6px 8px;
+  padding: 8px;
   color: inherit;
   text-align: left;
   transition:
-    background 140ms ease,
+    background-color 140ms ease,
     border-color 140ms ease,
     transform 140ms ease;
 }
 
 .bot-row + .bot-row {
-  margin-top: 1px;
+  margin-top: 4px;
 }
 
 .bot-row:hover {
@@ -2535,10 +2596,12 @@ textarea {
 .bot-row-avatar {
   position: relative;
   display: grid;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 38px;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
   place-items: center;
+  transform: translateX(0);
+  transition: transform var(--panel-resize-duration, 240ms) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .bot-row-agent-status {
@@ -2645,16 +2708,16 @@ textarea {
 .bot-context-menu {
   position: fixed;
   z-index: 90;
-  width: 178px;
-  border: 0.5px solid rgba(255, 255, 255, 0.14);
-  border-radius: 10px;
-  background: rgba(29, 29, 29, 0.98);
-  padding: 5px;
+  width: 184px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--openbot-bg-control);
+  padding: 6px;
   box-shadow:
-    0 18px 48px rgba(0, 0, 0, 0.48),
-    0 2px 8px rgba(0, 0, 0, 0.32),
-    inset 0 1px rgba(255, 255, 255, 0.035);
-  backdrop-filter: blur(18px);
+    inset 0 0 0 0.5px var(--openbot-border),
+    0 10px 20px -3px var(--openbot-shadow-popover-ambient),
+    0 4px 6px -4px var(--openbot-shadow-popover-key),
+    0 0 0 1px var(--openbot-shadow-ring);
   transform-origin: top left;
   animation: bot-context-in 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
@@ -2662,49 +2725,54 @@ textarea {
 .bot-context-menu button {
   display: flex;
   width: 100%;
-  height: 34px;
+  height: 32px;
   align-items: center;
-  gap: 10px;
+  gap: 4px;
   border: 0;
   border-radius: 6px;
   background: transparent;
-  padding: 0 9px;
-  color: rgba(255, 255, 255, 0.88);
-  font-size: 13px;
+  padding: 0 8px;
+  color: var(--openbot-text-primary);
+  font-size: 14px;
+  font-weight: 400;
   text-align: left;
   transition:
-    background 100ms ease,
-    color 100ms ease;
+    background-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
 }
 
 .bot-context-menu button:hover,
 .bot-context-menu button:focus-visible {
-  background: rgba(255, 255, 255, 0.08);
+  background-color: var(--openbot-bg-control-hover);
   outline: 0;
 }
 
 .bot-context-icon {
+  width: 18px;
+  height: 18px;
   flex: 0 0 auto;
-  color: rgba(255, 255, 255, 0.58);
+  color: var(--openbot-text-secondary);
 }
 
 .bot-context-separator {
-  height: 0.5px;
-  margin: 4px 5px;
-  background: rgba(255, 255, 255, 0.1);
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--openbot-border-strong);
 }
 
 .bot-context-menu .bot-context-danger {
-  color: #f1847c;
+  color: var(--openbot-danger-strong);
 }
 
 .bot-context-danger-icon {
-  color: #dc6d65;
+  color: var(--openbot-danger-strong);
 }
 
 .bot-context-menu .bot-context-danger:hover,
 .bot-context-menu .bot-context-danger:focus-visible {
-  background: rgba(202, 70, 60, 0.16);
+  background-color: var(--openbot-bg-control-hover);
+  color: var(--openbot-danger-strong);
 }
 
 .bot-delete-backdrop {
@@ -2867,8 +2935,13 @@ textarea {
 }
 
 .bot-row .bot-avatar {
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
+}
+
+.person-row .person-avatar {
+  width: 36px;
+  height: 36px;
 }
 
 .avatar-editor {
@@ -3123,16 +3196,31 @@ textarea {
 .bot-row-copy {
   min-width: 0;
   flex: 1;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 120ms ease,
+    transform 200ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .bot-row-heading {
   display: flex;
+  min-width: 0;
   align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
 }
 
-.bot-row-heading strong {
+.bot-row-title {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 5px;
+  overflow: hidden;
+}
+
+.bot-row-title strong,
+.person-row .bot-row-heading strong {
   min-width: 0;
   overflow: hidden;
   color: rgba(255, 255, 255, 0.9);
@@ -3143,11 +3231,33 @@ textarea {
   white-space: nowrap;
 }
 
-.bot-row-heading span {
+.bot-role-badge {
+  min-width: 0;
+  overflow: hidden;
+  flex: 0 1 auto;
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.055);
+  padding: 2px 4px;
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bot-row-time,
+.person-row .bot-row-heading > span {
+  min-width: 0;
+  max-width: 54px;
+  overflow: hidden;
   flex: 0 0 auto;
   color: rgba(255, 255, 255, 0.32);
   font-size: 12px;
   line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .bot-row-preview {
@@ -3155,8 +3265,8 @@ textarea {
   margin-top: 0;
   overflow: hidden;
   color: rgba(255, 255, 255, 0.55);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 13px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3194,11 +3304,84 @@ textarea {
 
 .sidebar-footer:hover,
 .sidebar-footer[aria-expanded="true"] {
-  background: rgba(255, 255, 255, 0.055);
+  background: var(--openbot-bg-control-hover);
 }
 
 .sidebar-footer:active {
   transform: scale(0.985);
+}
+
+.sidebar-compact .sidebar-topbar {
+  padding-inline: 12px;
+}
+
+.sidebar-compact .sidebar-new-button {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(6px) scale(0.92);
+}
+
+.sidebar-compact .sidebar-toggle-button {
+  transform: translateX(13px);
+}
+
+.sidebar-compact .sidebar-toggle-button:active {
+  transform: translateX(13px) scale(0.96);
+}
+
+.sidebar-compact .sidebar-search-wrap {
+  padding-inline: 12px;
+}
+
+.sidebar-compact .search-field {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-8px);
+}
+
+.sidebar-compact .sidebar-compact-search {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0) scale(1);
+  transition-delay: 55ms;
+}
+
+.sidebar-compact .bot-list {
+  padding-inline: 12px;
+}
+
+.sidebar-compact .sidebar-chat-group {
+  position: relative;
+}
+
+.sidebar-compact .sidebar-chat-group + .sidebar-chat-group {
+  margin-top: 4px;
+}
+
+.sidebar-compact .sidebar-chat-group > header {
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-4px);
+  white-space: nowrap;
+}
+
+.sidebar-compact .bot-row {
+  padding-inline: 8px;
+}
+
+.sidebar-compact .bot-row-avatar {
+  transform: translateX(6px);
+}
+
+.sidebar-compact .bot-row-copy {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-8px);
+}
+
+.sidebar-compact .sidebar-footer {
+  pointer-events: auto;
 }
 
 .footer-glyph,
@@ -3209,8 +3392,8 @@ textarea {
   flex: 0 0 auto;
   place-items: center;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
-  color: #a4a4a1;
+  background: var(--openbot-bg-control);
+  color: var(--openbot-text-secondary);
   font-size: 14px;
 }
 
@@ -3224,22 +3407,29 @@ textarea {
 .footer-count {
   margin-left: auto;
   border-radius: 999px;
-  background: rgba(86, 192, 176, 0.16);
+  background: var(--openbot-success-soft);
   padding: 2px 7px;
-  color: var(--openbot-teal);
+  color: var(--openbot-success);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 10px;
 }
 
 .profile-dot {
-  background: rgba(255, 255, 255, 0.08);
-  color: #b4b4b0;
+  background: var(--openbot-bg-control);
+  color: var(--openbot-text-secondary);
   font-size: 11px;
+  transform: translateX(0);
+  transition: transform var(--panel-resize-duration, 240ms) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .profile-copy {
   min-width: 0;
   flex: 1;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 120ms ease,
+    transform 200ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .profile-copy strong {
@@ -3247,7 +3437,7 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--openbot-text-primary);
   font-size: 13px;
   line-height: 18px;
   letter-spacing: -0.08px;
@@ -3257,30 +3447,46 @@ textarea {
 .sidebar-update-pill {
   flex: 0 0 auto;
   border-radius: 999px;
-  background: rgba(84, 185, 166, 0.14);
+  background: var(--openbot-success-soft);
   padding: 2px 7px;
-  color: #74cbbb;
+  color: var(--openbot-success);
   font-size: 10px;
   line-height: 16px;
   letter-spacing: 0.01em;
   font-weight: 600;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 120ms ease,
+    transform 200ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.sidebar-compact .profile-dot {
+  transform: translateX(15px);
+}
+
+.sidebar-compact .profile-copy,
+.sidebar-compact .sidebar-update-pill {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-8px);
 }
 
 .account-popover {
   position: fixed;
   bottom: 56px;
   left: 8px;
-  width: min(218px, calc(var(--left-panel-width, 275px) - 16px));
+  width: min(218px, calc(100vw - 16px));
   z-index: 80;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--openbot-border-strong);
   border-radius: 10px;
-  background: #1b1b1b;
-  padding: 4px;
+  background: var(--openbot-bg-surface);
+  padding: 5px;
   box-shadow:
-    0 16px 42px rgba(0, 0, 0, 0.48),
-    0 2px 8px rgba(0, 0, 0, 0.28);
-  color: rgba(255, 255, 255, 0.84);
+    0 20px 48px var(--openbot-bg-overlay),
+    0 4px 12px var(--openbot-bg-overlay);
+  color: var(--openbot-text-primary);
   transform-origin: bottom left;
   animation: account-popover-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
@@ -3289,9 +3495,9 @@ textarea {
   display: grid;
   min-width: 0;
   align-items: center;
-  padding: 9px 8px 8px;
+  padding: 10px 9px 9px;
   grid-template-columns: 46px minmax(0, 1fr);
-  gap: 10px;
+  gap: 11px;
 }
 
 .account-profile-avatar {
@@ -3301,11 +3507,9 @@ textarea {
   place-items: center;
   overflow: hidden;
   border-radius: 50%;
-  background:
-    radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.14), transparent 45%),
-    rgba(111, 205, 188, 0.13);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.11);
-  color: #8ed6c9;
+  background: var(--openbot-bg-control-hover);
+  box-shadow: inset 0 0 0 1px var(--openbot-border-strong);
+  color: var(--openbot-success);
   font-size: 13px;
   font-weight: 620;
 }
@@ -3329,36 +3533,37 @@ textarea {
 }
 
 .account-profile-copy > strong {
-  color: rgba(255, 255, 255, 0.93);
-  font-size: 13px;
+  color: var(--openbot-text-primary);
+  font-size: 14px;
+  letter-spacing: -0.01em;
   font-weight: 560;
 }
 
 .account-profile-copy > span {
   margin-top: 1px;
-  color: rgba(255, 255, 255, 0.43);
-  font-size: 10px;
+  color: var(--openbot-text-muted);
+  font-size: 11px;
 }
 
 .account-profile-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 7px;
+  margin-top: 8px;
 }
 
 .account-profile-actions button {
   border: 0;
   background: transparent;
   padding: 0;
-  color: #81cfc1;
-  font-size: 10px;
+  color: var(--openbot-success);
+  font-size: 11px;
   line-height: 14px;
   font-weight: 560;
 }
 
 .account-profile-actions button:hover:not(:disabled) {
-  color: #a5e4d9;
+  color: var(--openbot-success);
 }
 
 .account-profile-actions button:disabled {
@@ -3367,26 +3572,27 @@ textarea {
 }
 
 .account-profile-actions .account-profile-remove {
-  color: rgba(255, 255, 255, 0.43);
+  color: var(--openbot-text-muted);
 }
 
 .account-profile-actions .account-profile-remove:hover:not(:disabled) {
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--openbot-text-secondary);
 }
 
 .account-menu-row {
   display: grid;
   width: 100%;
-  height: 36px;
+  height: 38px;
   align-items: center;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
-  padding: 0 9px;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
-  gap: 9px;
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 13px;
+  padding: 0 10px;
+  grid-template-columns: 19px minmax(0, 1fr) auto;
+  gap: 10px;
+  color: var(--openbot-text-secondary);
+  font-size: 14px;
+  letter-spacing: -0.01em;
   text-align: left;
   transition:
     background-color 100ms ease,
@@ -3394,8 +3600,8 @@ textarea {
 }
 
 .account-menu-row:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.075);
-  color: rgba(255, 255, 255, 0.95);
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-primary);
 }
 
 .account-menu-row:disabled {
@@ -3406,38 +3612,43 @@ textarea {
   transform: scale(0.985);
 }
 
+.account-menu-row:focus-visible {
+  outline: 2px solid var(--openbot-border-focus);
+  outline-offset: -2px;
+}
+
 .account-update-row {
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--openbot-text-primary);
 }
 
 .account-menu-danger {
-  color: rgba(232, 151, 143, 0.82);
+  color: var(--openbot-danger);
 }
 
 .account-menu-danger:hover:not(:disabled) {
-  background: rgba(194, 91, 82, 0.11);
-  color: #efa59e;
+  background: var(--openbot-danger-soft);
+  color: var(--openbot-danger);
 }
 
 .account-menu-separator {
   height: 1px;
-  margin: 4px 8px;
-  background: rgba(255, 255, 255, 0.08);
+  margin: 5px 8px;
+  background: var(--openbot-border);
 }
 
 .account-menu-row small {
-  color: rgba(255, 255, 255, 0.42);
-  font-size: 12px;
+  color: var(--openbot-text-muted);
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .account-menu-icon {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.35;
+  stroke-width: 1.4;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -3459,7 +3670,7 @@ textarea {
 
 .account-popover-error {
   margin: 3px 7px 5px;
-  color: #df8982;
+  color: var(--openbot-danger);
   font-size: 10px;
   line-height: 14px;
 }
@@ -3512,10 +3723,6 @@ textarea {
   justify-content: space-between;
   border-bottom: 1px solid rgba(255, 255, 255, 0.055);
   padding: 0 14px;
-}
-
-.app-frame-sidebar-collapsed .direct-conversation-header {
-  padding-left: 112px;
 }
 
 .direct-conversation-person {
@@ -3773,42 +3980,6 @@ textarea {
   gap: 7px;
 }
 
-.conversation-presence {
-  display: flex;
-  height: 24px;
-  align-items: center;
-  gap: 6px;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
-  padding-left: 8px;
-  color: rgba(255, 255, 255, 0.42);
-  font-size: 9px;
-  white-space: nowrap;
-}
-
-.conversation-presence-faces {
-  display: flex;
-  padding-left: 5px;
-}
-
-.conversation-presence-faces i {
-  display: grid;
-  width: 16px;
-  height: 16px;
-  margin-left: -5px;
-  place-items: center;
-  border: 1px solid #111;
-  border-radius: 50%;
-  background: #253a36;
-  color: #81cdbd;
-  font-size: 7px;
-  font-style: normal;
-  font-weight: 680;
-}
-
-.app-frame-sidebar-collapsed .conversation-header {
-  padding-left: 112px;
-}
-
 .conversation-title[aria-label="View agent settings"]:hover {
   color: var(--openbot-white);
 }
@@ -3867,7 +4038,7 @@ textarea {
   min-width: 0;
   flex-direction: column;
   border-left: 1px solid rgba(255, 255, 255, 0.1);
-  background: #090a0b;
+  background: var(--openbot-bg-canvas);
   color: var(--openbot-white);
   animation: settings-panel-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
@@ -3889,7 +4060,7 @@ textarea {
   justify-content: space-between;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   padding: 0 10px 0 14px;
-  background: #0c0d0e;
+  background: var(--openbot-bg-sidebar);
 }
 
 .remote-desktop-heading,
@@ -5868,6 +6039,7 @@ textarea {
 }
 
 .exchange-agent-trigger {
+  --exchange-agent-color: var(--openbot-accent);
   box-sizing: border-box;
   display: inline-flex;
   height: 24px;
@@ -5885,8 +6057,9 @@ textarea {
   text-align: left;
   white-space: nowrap;
   transition:
-    background 120ms ease,
-    color 120ms ease;
+    background-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .exchange-agent-trigger-outgoing {
@@ -5896,13 +6069,14 @@ textarea {
 .exchange-agent-trigger:hover,
 .exchange-agent-trigger:focus-visible,
 .exchange-agent-trigger[aria-expanded="true"] {
-  background: rgba(119, 119, 119, 0.09);
-  color: var(--openbot-white);
+  background-color: color-mix(in srgb, var(--exchange-agent-color) 16%, transparent);
+  color: var(--exchange-agent-color);
+  outline: none;
 }
 
-.exchange-agent-trigger:active,
-.exchange-agent-trigger[aria-expanded="true"] {
-  background: rgba(119, 119, 119, 0.17);
+.exchange-agent-trigger:active {
+  background-color: color-mix(in srgb, var(--exchange-agent-color) 34%, transparent);
+  color: var(--openbot-text-primary);
 }
 
 .exchange-agent-trigger-incoming {
@@ -5923,6 +6097,16 @@ textarea {
   flex: 0 0 16px;
   border: 0;
   background: transparent;
+}
+
+.exchange-agent-trigger .exchange-agent-avatar {
+  transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.exchange-agent-trigger:hover .exchange-agent-avatar,
+.exchange-agent-trigger:focus-visible .exchange-agent-avatar,
+.exchange-agent-trigger[aria-expanded="true"] .exchange-agent-avatar {
+  transform: scale(1.06);
 }
 
 .exchange-avatar-stack .exchange-agent-avatar + .exchange-agent-avatar {
@@ -6852,61 +7036,307 @@ textarea {
   font-size: 10px;
 }
 
-.agent-queue-bar {
+.agent-queue-panel {
   position: absolute;
-  z-index: 9;
-  top: 0;
+  z-index: 10;
   right: 14px;
+  bottom: calc(100% - 2px);
   left: 14px;
-  display: flex;
+  overflow: visible;
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: 22px 22px 16px 16px;
+  background: var(--openbot-bg-surface);
+  box-shadow: 0 -12px 34px color-mix(in srgb, var(--openbot-bg-canvas) 42%, transparent);
+  animation: queue-panel-in 150ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.agent-queue-panel-list {
+  max-height: 266px;
+  overflow-y: auto;
+  padding: 11px 10px 9px;
+  overscroll-behavior: contain;
+}
+
+.agent-queue-item {
+  position: relative;
+  display: grid;
+  min-height: 38px;
+  min-width: 0;
+  grid-template-columns: 15px 20px minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
-  padding: 0 2px;
-  overflow-x: auto;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(calc(-100% - 2px));
-  visibility: hidden;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  border-radius: 9px;
+  color: var(--openbot-text-primary);
+  outline: 0;
   transition:
-    opacity 110ms cubic-bezier(0.23, 1, 0.32, 1),
-    transform 130ms cubic-bezier(0.23, 1, 0.32, 1),
-    visibility 0s linear 130ms;
+    background 110ms ease,
+    opacity 110ms ease,
+    transform 110ms ease;
 }
 
-.agent-queue-bar-visible {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(calc(-100% - 6px));
-  visibility: visible;
-  transition:
-    opacity 140ms cubic-bezier(0.23, 1, 0.32, 1),
-    transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
-    visibility 0s;
+.agent-queue-item:hover,
+.agent-queue-item:focus-visible,
+.agent-queue-item-drag-over {
+  background: var(--openbot-hover);
 }
 
-.agent-queue-bar > span,
-.agent-queue-bar > button {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 5px;
-  min-height: 25px;
-  padding: 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text-muted);
-  font-size: 11px;
+.agent-queue-item:focus-visible {
+  box-shadow: 0 0 0 2px var(--openbot-border-focus);
 }
 
-.agent-queue-bar span button {
+.agent-queue-item-dragging {
+  opacity: 0.44;
+}
+
+.agent-queue-item-steering {
+  color: var(--openbot-text-muted);
+}
+
+.agent-queue-drag-handle {
   display: grid;
-  width: 17px;
-  height: 17px;
+  place-items: center;
+  color: var(--openbot-text-dim);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 110ms ease;
+}
+
+.agent-queue-item:hover .agent-queue-drag-handle,
+.agent-queue-item:focus-visible .agent-queue-drag-handle,
+.agent-queue-item-drag-over .agent-queue-drag-handle {
+  opacity: 1;
+}
+
+.agent-queue-drag-handle:active {
+  cursor: grabbing;
+}
+
+.agent-queue-drag-handle svg {
+  width: 12px;
+  height: 20px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.agent-queue-icon {
+  display: grid;
+  place-items: center;
+  color: var(--openbot-text-muted);
+}
+
+.agent-queue-icon svg,
+.agent-queue-steer svg,
+.agent-queue-icon-button svg,
+.agent-queue-menu svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.25;
+}
+
+.agent-queue-message {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 15px;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-queue-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--openbot-text-muted);
+}
+
+.agent-queue-steer,
+.agent-queue-icon-button {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0 5px;
+  color: inherit;
+  font-size: 14px;
+  line-height: 18px;
+  transition:
+    background 110ms ease,
+    color 110ms ease;
+}
+
+.agent-queue-steer:hover:not(:disabled),
+.agent-queue-steer:focus-visible,
+.agent-queue-icon-button:hover:not(:disabled),
+.agent-queue-icon-button:focus-visible,
+.agent-queue-menu-anchor > button[aria-expanded="true"] {
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-primary);
+  outline: 0;
+}
+
+.agent-queue-steer:disabled,
+.agent-queue-icon-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.agent-queue-icon-button {
+  width: 30px;
+  padding: 0;
+}
+
+.agent-queue-menu-anchor {
+  position: relative;
+}
+
+.agent-queue-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 174px;
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: 13px;
+  background: var(--openbot-bg-surface-raised);
+  padding: 5px;
+  box-shadow: 0 14px 30px color-mix(in srgb, var(--openbot-bg-canvas) 48%, transparent);
+  animation: queue-menu-in 110ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.agent-queue-menu button {
+  display: flex;
+  width: 100%;
+  min-height: 35px;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0 9px;
+  color: var(--openbot-text-primary);
+  font-size: 13px;
+  text-align: left;
+}
+
+.agent-queue-menu button:hover,
+.agent-queue-menu button:focus-visible {
+  background: var(--openbot-bg-control-hover);
+  outline: 0;
+}
+
+.agent-queue-panel-footer {
+  display: flex;
+  min-height: 39px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--openbot-border);
+  padding: 0 13px;
+  color: var(--openbot-text-muted);
+  font-size: 12px;
+}
+
+.agent-queue-panel-footer button {
+  border: 0;
+  border-radius: 7px;
+  background: var(--openbot-accent-soft);
+  padding: 5px 8px;
+  color: var(--openbot-accent-hover);
+  font-size: 12px;
+}
+
+.agent-queue-panel-footer button:hover,
+.agent-queue-panel-footer button:focus-visible {
+  background: var(--openbot-accent-strong);
+  outline: 0;
+}
+
+.composer-queue-edit-preview {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 10px;
+  margin: 0 10px 6px;
+  border: 1px solid var(--openbot-accent-strong);
+  border-radius: 12px;
+  background: var(--openbot-accent-soft);
+  padding: 6px 8px 6px 12px;
+}
+
+.composer-queue-edit-preview > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.composer-queue-edit-preview span {
+  display: block;
+  color: var(--openbot-accent-hover);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+}
+
+.composer-queue-edit-preview p {
+  overflow: hidden;
+  margin: 1px 0 0;
+  color: var(--openbot-text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-queue-edit-preview > button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
   place-items: center;
   border: 0;
   border-radius: 50%;
-  color: inherit;
+  background: transparent;
+  color: var(--openbot-text-muted);
+}
+
+.composer-queue-edit-preview > button:hover,
+.composer-queue-edit-preview > button:focus-visible {
+  background: var(--openbot-hover);
+  color: var(--openbot-text-primary);
+  outline: 0;
+}
+
+@keyframes queue-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes queue-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .conversation-panel:has(.agent-settings-panel) .conversation-header,
@@ -7151,47 +7581,405 @@ textarea {
   background: rgba(255, 255, 255, 0.12);
 }
 
-.prompt-card {
-  display: grid;
+.approval-card {
+  display: flex;
+  width: min(460px, 100%);
+  overflow: hidden;
+  margin: 12px auto 20px;
+  border: 1px solid var(--openbot-border);
+  border-radius: 12px;
+  background: var(--openbot-bg-surface);
+  box-shadow:
+    0 0 0 0.5px var(--openbot-border),
+    0 1px 2px var(--openbot-bg-overlay),
+    0 2px 4px var(--openbot-shadow-popover-key);
+  color: var(--openbot-text-primary);
+  flex-direction: column;
   gap: 12px;
-  max-width: 560px;
-  margin: 12px 0 20px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 13px;
-  background: var(--surface);
+  padding: 12px;
+  animation: approval-card-in 180ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
-.prompt-question {
-  display: grid;
-  gap: 9px;
+.approval-card-header {
+  display: flex;
+  height: 24px;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
 }
 
-.prompt-question > strong {
-  color: var(--text-primary);
+.approval-card-header > div {
+  min-width: 0;
+}
+
+.approval-card-header strong,
+.approval-card-header span {
+  display: block;
+}
+
+.approval-card-header strong {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 520;
+  line-height: 18px;
 }
 
-.prompt-question .choice-option {
+.approval-card-header div > span {
+  margin-top: 1px;
+  color: var(--openbot-text-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.approval-card-icon {
   display: grid;
-  justify-items: start;
-  gap: 2px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--openbot-accent-soft);
+  color: var(--openbot-accent-hover);
 }
 
-.prompt-question .choice-option small {
-  color: var(--text-muted);
+.approval-card-icon[data-kind="approval"] {
+  background: var(--openbot-success-soft);
+  color: var(--openbot-success);
+}
+
+.approval-card-icon svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.approval-questions-viewport {
+  width: 100%;
+  min-height: 0;
+  margin: -1px;
+  overflow: hidden;
+  padding: 1px;
+}
+
+.approval-question {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.approval-question-prompt {
+  color: var(--openbot-text-primary);
+  font-size: 13px;
+  font-weight: 520;
+  line-height: 1.35;
+  padding-left: 2px;
+}
+
+.approval-options {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-inline-size: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.approval-option,
+.approval-custom-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border: 0.5px solid var(--openbot-border);
+  border-radius: 7px;
+  background: transparent;
+  padding: 5px;
+  color: var(--openbot-text-primary);
+  font-size: 12.5px;
+  line-height: 1.3;
+  text-align: left;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.approval-option:hover:not(:disabled),
+.approval-option-selected {
+  border-color: transparent;
+  background: var(--openbot-bg-surface-raised);
+  box-shadow:
+    0 0 0 0.5px var(--openbot-border),
+    0 1px 2px var(--openbot-bg-overlay);
+  color: var(--openbot-text-primary);
+}
+
+.approval-option > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.approval-option strong {
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+.approval-option small {
+  color: var(--openbot-text-muted);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.approval-option-key {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 4px;
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-dim);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10.5px;
+  font-weight: 620;
+  line-height: 1;
+}
+
+.approval-custom-option {
+  margin-top: 0;
+}
+
+.approval-custom-option:focus-within,
+.approval-custom-option:focus-visible {
+  border-color: var(--openbot-border-focus);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--openbot-accent-soft);
+}
+
+.approval-custom-option input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+}
+
+.approval-custom-option input::placeholder {
+  color: var(--openbot-text-placeholder);
+}
+
+.approval-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 0 0 2px;
+}
+
+.approval-card-footer-end {
+  justify-content: flex-end;
+}
+
+.approval-question-nav,
+.approval-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.approval-question-nav {
+  color: var(--openbot-text-muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.approval-question-divider {
+  color: var(--openbot-text-dim);
+}
+
+.approval-icon-button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--openbot-text-muted);
+}
+
+.approval-icon-button:hover:not(:disabled) {
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-primary);
+}
+
+.approval-icon-button svg,
+.approval-button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+}
+
+.approval-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  font-weight: 520;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 120ms ease;
+}
+
+.approval-button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.approval-button-ghost {
+  background: var(--openbot-bg-control);
+  color: var(--openbot-text-secondary);
+}
+
+.approval-button-ghost:hover:not(:disabled) {
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-primary);
+}
+
+.approval-button-primary {
+  background: var(--openbot-success);
+  color: var(--openbot-text-on-light);
+}
+
+.approval-button-primary:hover:not(:disabled) {
+  background: var(--openbot-success);
+  box-shadow: 0 0 0 3px var(--openbot-success-soft);
+}
+
+.approval-button:disabled,
+.approval-icon-button:disabled,
+.approval-option:disabled,
+.approval-custom-option:has(input:disabled) {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.approval-card-content {
+  display: grid;
+  gap: 10px;
+  padding: 4px 13px 14px;
+}
+
+.approval-command-block {
+  overflow: hidden;
+  border: 1px solid var(--openbot-border);
+  border-radius: 9px;
+  background: var(--openbot-bg-canvas);
+}
+
+.approval-command-block code {
+  display: block;
+  overflow-x: auto;
+  padding: 10px;
+  color: var(--openbot-text-primary);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 17px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.approval-cwd {
+  overflow: hidden;
+  border-bottom: 1px solid var(--openbot-border);
+  padding: 7px 10px;
+  color: var(--openbot-text-muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-detail-row {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--openbot-border);
+  border-radius: 9px;
+  background: var(--openbot-bg-control);
+  padding: 9px 10px;
+}
+
+.approval-detail-label {
+  color: var(--openbot-text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.approval-detail-row strong {
+  overflow: hidden;
+  color: var(--openbot-text-primary);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 520;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-permissions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.approval-permissions span {
+  border: 1px solid var(--openbot-border);
+  border-radius: 999px;
+  background: var(--openbot-bg-control);
+  padding: 5px 8px;
+  color: var(--openbot-text-secondary);
   font-size: 10px;
 }
 
-.prompt-submit {
-  justify-self: end;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.1);
-  padding: 7px 11px;
-  color: var(--text-primary);
+.approval-reason {
+  margin: 0;
+  color: var(--openbot-text-muted);
   font-size: 11px;
+  line-height: 16px;
+}
+
+.approval-card-empty {
+  margin: 0;
+  color: var(--openbot-text-muted);
+  font-size: 12px;
+}
+
+@keyframes approval-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .message-attachment {
@@ -7303,4 +8091,736 @@ textarea {
     animation-iteration-count: 1;
     transition-duration: 0.01ms;
   }
+}
+/*
+ * Palette normalization layer.
+ *
+ * The renderer has a broad surface area (local, remote, browser and setup
+ * flows). Keep the component selectors intact, but make their visual states
+ * resolve through the same Grok Bot-inspired tokens above.
+ */
+
+body,
+.account-login-screen,
+.initial-setup-screen,
+.app-frame,
+.conversation-panel,
+.direct-conversation {
+  background: var(--openbot-bg-canvas);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline-color: var(--openbot-border-focus);
+}
+
+::selection {
+  background: var(--openbot-accent-strong);
+}
+
+.server-rail,
+.sidebar {
+  background: var(--openbot-bg-sidebar);
+}
+
+.server-rail-tools,
+.panel-edge,
+.direct-conversation-header,
+.browser-panel-header,
+.browser-toolbar,
+.remote-desktop-header,
+.remote-desktop-footer,
+.remote-desktop-shared-note,
+.agent-settings-panel,
+.browser-panel,
+.remote-desktop-panel,
+.remote-admin-nav,
+.remote-admin-list > div,
+.remote-status-card,
+.remote-session-list article,
+.provider-picker-list,
+.mac-permission-list {
+  border-color: var(--openbot-border);
+}
+
+.server-rail-monogram,
+.server-rail-local,
+.server-rail-action .server-rail-monogram {
+  border-color: var(--openbot-border);
+  background: var(--openbot-bg-surface);
+  color: var(--openbot-text-secondary);
+}
+
+.server-rail-local {
+  background: var(--openbot-bg-surface-raised);
+  color: var(--openbot-text-primary);
+}
+
+.server-rail-button:hover .server-rail-monogram,
+.server-rail-button:hover .server-rail-local,
+.server-rail-button-active .server-rail-monogram,
+.server-rail-button-active .server-rail-local {
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-primary);
+}
+
+.server-rail-button-active .server-rail-local,
+.server-rail-button-active .server-rail-monogram {
+  border-color: var(--openbot-accent);
+  background: var(--openbot-accent-soft);
+}
+
+.server-rail-mark {
+  background: var(--openbot-accent);
+}
+
+.server-rail-state {
+  border-color: var(--openbot-bg-sidebar);
+  background: var(--openbot-text-dim);
+}
+
+.server-rail-state-online,
+.remote-status-card i.online,
+.remote-admin-nav-state i.online,
+.remote-member-presence.online i,
+.remote-desktop-status-connected,
+.person-avatar.online > i {
+  background: var(--openbot-success);
+}
+
+.server-rail-state-connecting,
+.remote-desktop-status-connecting {
+  background: var(--openbot-warning);
+}
+
+.server-rail-state-error,
+.remote-desktop-status-error {
+  background: var(--openbot-danger);
+}
+
+.sidebar-icon-button:hover,
+.header-panel-toggle:hover,
+.browser-tab:hover,
+.browser-tab-active,
+.browser-new-tab:hover,
+.browser-toolbar-button:hover:not(:disabled),
+.remote-desktop-icon-button:hover,
+.remote-desktop-mode:hover,
+.remote-desktop-footer button:hover,
+.message-action-button:hover,
+.message-action-button:focus-visible,
+.message-action-button[aria-expanded="true"],
+.reaction-picker-row button:hover,
+.reaction-picker-row button:focus-visible,
+.reaction-picker-row button[aria-checked="true"],
+.message-more-menu button:hover,
+.message-more-menu button:focus-visible,
+.choice-dismiss:hover,
+.media-close:hover,
+.attachment-menu button:hover,
+.composer-button:hover,
+.composer-attachment > button:hover,
+.account-menu-row:hover,
+.bot-context-menu button:hover,
+.bot-context-menu button:focus-visible,
+.remote-text-button:hover:not(:disabled),
+.remote-more-button:hover:not(:disabled),
+.remote-dialog > header > button:hover,
+.remote-admin-nav-button:hover,
+.remote-primary-button:hover:not(:disabled),
+.remote-secondary-button:hover:not(:disabled) {
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-primary);
+}
+
+.sidebar-icon-button:active,
+.header-panel-toggle:active,
+.bot-row:active,
+.composer-button:active,
+.voice-button:active,
+.remote-primary-button:active:not(:disabled),
+.remote-secondary-button:active:not(:disabled),
+.settings-switch:active,
+.agent-settings-nav-button:active {
+  transform: scale(0.97);
+}
+
+.search-field,
+.browser-address-bar input,
+.composer,
+.direct-composer,
+.agent-settings-field input,
+.agent-settings-field textarea,
+.agent-settings-field select,
+.remote-field input,
+.remote-field textarea,
+.setup-remote-form input,
+.setup-remote-form textarea,
+.account-login-form input {
+  border-color: var(--openbot-border);
+  background: var(--openbot-bg-surface);
+  color: var(--openbot-text-primary);
+}
+
+.search-field:focus-within,
+.browser-address-bar input:focus,
+.composer:focus-within,
+.direct-composer:focus-within,
+.agent-settings-field input:focus,
+.agent-settings-field textarea:focus,
+.agent-settings-field select:focus,
+.remote-field input:focus,
+.remote-field textarea:focus,
+.setup-remote-form input:focus,
+.setup-remote-form textarea:focus,
+.account-login-form input:focus {
+  border-color: var(--openbot-border-focus);
+  background: var(--openbot-bg-surface-raised);
+}
+
+.search-field input::placeholder,
+.browser-address-bar input::placeholder,
+.composer-editor-placeholder,
+.direct-composer textarea::placeholder,
+.agent-settings-field input::placeholder,
+.agent-settings-field textarea::placeholder,
+.remote-field input::placeholder,
+.remote-field textarea::placeholder,
+.setup-remote-form input::placeholder,
+.setup-remote-form textarea::placeholder,
+.account-login-form input::placeholder {
+  color: var(--openbot-text-placeholder);
+}
+
+.bot-row:hover,
+.bot-row-menu-open {
+  background: var(--openbot-bg-control);
+}
+
+.provider-picker-option-selected,
+.provider-model-option-selected,
+.remote-admin-nav-button.active,
+.remote-invite-tabs button.active,
+.settings-switch-on,
+.browser-tab-controlled .browser-tab,
+.browser-tab-controlled .browser-tab-active {
+  border-color: var(--openbot-border-focus);
+  background: var(--openbot-accent-soft);
+  color: var(--openbot-text-primary);
+}
+
+.bot-row-active {
+  border-color: transparent;
+  background: var(--openbot-bg-surface-raised);
+  color: var(--openbot-text-primary);
+}
+
+.browser-panel-controlled {
+  border-left-color: var(--openbot-border-focus);
+  box-shadow:
+    -1px 0 0 var(--openbot-accent-strong),
+    -10px 0 28px var(--openbot-accent-soft);
+}
+
+.browser-tab-control {
+  background: var(--openbot-accent-soft);
+  color: var(--openbot-accent-hover);
+}
+
+.browser-tab-control-acting {
+  animation-name: openbot-accent-pulse;
+}
+
+.agent-settings-panel,
+.browser-panel,
+.remote-desktop-panel {
+  background: var(--openbot-bg-canvas);
+}
+
+.agent-settings-content,
+.remote-admin-content,
+.remote-admin-view {
+  color: var(--openbot-text-primary);
+}
+
+.agent-settings-model,
+.agent-settings-notifications,
+.remote-admin-control-card,
+.remote-desktop-access-card,
+.remote-invite-composer,
+.remote-status-card,
+.approval-card,
+.choice-card,
+.agent-setup-card,
+.provider-model-panel,
+.provider-model-rail,
+.avatar-editor,
+.mention-picker,
+.attachment-menu,
+.reaction-picker,
+.message-more-menu,
+.exchange-agent-menu,
+.media-modal {
+  border-color: var(--openbot-border);
+  background: var(--openbot-bg-surface);
+  color: var(--openbot-text-primary);
+}
+
+.bot-context-menu {
+  border-color: var(--openbot-border-strong);
+  background: var(--openbot-bg-control);
+  color: var(--openbot-text-primary);
+}
+
+.account-popover {
+  border-color: var(--openbot-border-strong);
+  background: var(--openbot-bg-surface);
+  color: var(--openbot-text-primary);
+}
+
+.bot-bubble,
+.agent-activity-bubble,
+.direct-message p,
+.message-reaction-pill,
+.composer-reply-preview {
+  border-color: var(--openbot-border);
+  background: var(--openbot-bg-surface);
+  color: var(--openbot-text-primary);
+}
+
+.user-bubble,
+.direct-message.own p {
+  border-color: var(--openbot-border-strong);
+  background: var(--openbot-bg-surface-raised);
+  color: var(--openbot-text-primary);
+}
+
+.choice-options,
+.choice-option,
+.provider-picker-option,
+.provider-model-option,
+.remote-role-select select,
+.remote-role-badge {
+  border-color: var(--openbot-border);
+  background: var(--openbot-bg-control);
+  color: var(--openbot-text-secondary);
+}
+
+.approval-options {
+  border-color: transparent;
+  background: transparent;
+  color: var(--openbot-text-primary);
+}
+
+.approval-option,
+.approval-custom-option {
+  border-color: var(--openbot-border);
+  background: transparent;
+  color: var(--openbot-text-primary);
+}
+
+.choice-option:hover,
+.choice-option-selected,
+.provider-picker-option:hover:not(.provider-picker-option-unavailable),
+.provider-picker-option:focus-within,
+.provider-model-option:hover,
+.provider-model-option:focus-visible {
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-primary);
+}
+
+.approval-option:hover:not(:disabled),
+.approval-option-selected,
+.approval-custom-option.approval-option-selected {
+  background: var(--openbot-bg-surface-raised);
+  color: var(--openbot-text-primary);
+}
+
+.choice-key,
+.composer-mention-token,
+.attachment-thumb,
+.file-type-badge,
+.remote-account-chip,
+.remote-status-card,
+.remote-session-phase,
+.remote-desktop-empty-mark {
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-secondary);
+}
+
+.composer,
+.direct-composer {
+  background: var(--openbot-bg-surface);
+}
+
+.voice-button,
+.voice-button-active,
+.initial-setup-save,
+.account-login-retry,
+.account-login-form > button:not(.account-login-link),
+.remote-primary-button {
+  background: var(--openbot-surface-light);
+  color: var(--openbot-text-on-light);
+}
+
+.voice-button:hover,
+.voice-button-active:hover,
+.initial-setup-save:hover:not(:disabled),
+.account-login-retry:hover,
+.account-login-form > button:not(.account-login-link):hover:not(:disabled),
+.remote-primary-button:hover:not(:disabled) {
+  background: var(--openbot-text-primary);
+  color: var(--openbot-text-on-light);
+}
+
+.direct-composer > button {
+  background: var(--openbot-accent);
+  color: var(--openbot-text-primary);
+}
+
+.direct-composer > button:hover:not(:disabled) {
+  background: var(--openbot-accent-hover);
+}
+
+.remote-desktop-stage,
+.remote-desktop-viewer,
+.media-text {
+  background: var(--openbot-bg-canvas);
+  color: var(--openbot-text-secondary);
+}
+
+.remote-desktop-shared-note,
+.remote-desktop-footer,
+.remote-desktop-header {
+  background: var(--openbot-bg-sidebar);
+}
+
+.remote-desktop-mode-active,
+.remote-desktop-button[aria-expanded="true"] {
+  background: var(--openbot-accent-soft);
+  color: var(--openbot-accent-hover);
+}
+
+.remote-desktop-overlay {
+  background: var(--openbot-bg-overlay);
+}
+
+.remote-desktop-overlay > button,
+.remote-secondary-button,
+.agent-setup-card button,
+.mac-permission-action,
+.remote-desktop-overlay > button:hover {
+  border-color: var(--openbot-border-strong);
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-primary);
+}
+
+.remote-desktop-overlay > button:hover,
+.remote-secondary-button:hover:not(:disabled),
+.agent-setup-card button:hover,
+.mac-permission-action:hover:not(:disabled) {
+  background: var(--openbot-bg-control-active);
+}
+
+.remote-dialog-backdrop,
+.bot-delete-backdrop,
+.media-backdrop {
+  background: var(--openbot-bg-overlay);
+}
+
+.remote-dialog,
+.bot-delete-dialog {
+  border-color: var(--openbot-border-strong);
+  background: var(--openbot-bg-surface);
+}
+
+.bot-context-menu .bot-context-danger,
+.bot-context-danger-icon {
+  color: var(--openbot-danger-strong);
+}
+
+.remote-text-button-danger:hover:not(:disabled),
+.remote-remove-confirmation button.danger {
+  color: var(--openbot-danger);
+}
+
+.bot-context-menu .bot-context-danger:hover,
+.bot-context-menu .bot-context-danger:focus-visible {
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-danger-strong);
+}
+
+.remote-remove-confirmation,
+.remote-remove-confirmation button.danger {
+  background: var(--openbot-danger-soft);
+}
+
+.remote-desktop-status-connected,
+.remote-desktop-status-connecting,
+.remote-desktop-status-error {
+  box-shadow: 0 0 0 3px var(--openbot-accent-soft);
+}
+
+.remote-desktop-status-connecting {
+  box-shadow: 0 0 0 3px var(--openbot-warning-soft);
+}
+
+.remote-desktop-status-error {
+  box-shadow: 0 0 0 3px var(--openbot-danger-soft);
+}
+
+.account-login-error,
+.initial-setup-error,
+.composer-error,
+.remote-dialog-error,
+.account-popover-error {
+  border-color: var(--openbot-danger-soft);
+  background: var(--openbot-danger-soft);
+  color: var(--openbot-danger);
+}
+
+.bot-delete-dialog .bot-delete-error {
+  border-color: var(--openbot-danger-soft);
+  background: var(--openbot-danger-soft);
+  color: var(--openbot-danger);
+}
+
+.setup-route-button,
+.setup-route-icon,
+.mac-permission-row,
+.remote-field input,
+.remote-field textarea,
+.setup-remote-form input,
+.setup-remote-form textarea {
+  border-color: var(--openbot-border);
+  background: var(--openbot-bg-surface);
+}
+
+.setup-route-button:hover,
+.setup-route-button:focus-visible {
+  border-color: var(--openbot-border-focus);
+  background: var(--openbot-bg-surface-raised);
+}
+
+.setup-route-icon-local i,
+.provider-picker-status-available i,
+.remote-admin-status-pill.online,
+.remote-status-card i.online,
+.remote-session-phase-connected,
+.mac-permission-allowed {
+  color: var(--openbot-success);
+}
+
+.account-login-development-code,
+.provider-picker-status-sign-in-required i,
+.provider-picker-status-outdated i,
+.remote-session-phase-error {
+  color: var(--openbot-warning);
+}
+
+.remote-primary-button:active:not(:disabled),
+.remote-secondary-button:active:not(:disabled),
+.voice-button:active,
+.voice-button-active:active {
+  transform: scale(0.97);
+}
+
+@keyframes openbot-accent-pulse {
+  0%,
+  100% {
+    background: var(--openbot-accent-soft);
+    box-shadow: 0 0 0 transparent;
+    transform: scale(0.94);
+  }
+
+  50% {
+    background: var(--openbot-accent-strong);
+    box-shadow: 0 0 10px var(--openbot-accent-soft);
+    transform: scale(1);
+  }
+}
+
+/* Grok Bot settings panel refinement. Keep Openbot's extra controls intact. */
+.agent-settings-panel {
+  border-left-color: var(--openbot-border);
+  background: var(--openbot-bg-canvas);
+}
+
+.agent-settings-header {
+  height: 48px;
+  grid-template-columns: 32px 1fr 32px;
+  border-bottom: 0;
+  padding: 0 10px;
+}
+
+.agent-settings-header h2 {
+  color: var(--openbot-text-primary);
+  font-size: 13px;
+  font-weight: 560;
+  letter-spacing: -0.01em;
+}
+
+.agent-settings-nav-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  color: var(--openbot-text-muted);
+  transition:
+    background-color 140ms ease-out,
+    color 140ms ease-out,
+    transform 120ms ease-out;
+}
+
+.agent-settings-nav-button:hover {
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-primary);
+}
+
+.agent-settings-nav-button:active {
+  transform: scale(0.97);
+}
+
+.settings-back-icon,
+.settings-forward-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.agent-settings-content {
+  padding: 24px 14px 30px;
+}
+
+.agent-settings-avatar-picker {
+  width: 80px;
+  height: 80px;
+  margin-bottom: 18px;
+}
+
+.agent-settings-avatar {
+  width: 80px;
+  height: 80px;
+}
+
+.agent-settings-avatar .bot-avatar {
+  width: 80px;
+  height: 80px;
+}
+
+.agent-settings-avatar .bot-avatar > svg {
+  width: 113%;
+  height: 113%;
+}
+
+.agent-settings-field {
+  margin-bottom: 16px;
+}
+
+.agent-settings-field > span {
+  margin-bottom: 7px;
+  color: var(--openbot-text-muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.agent-settings-field input,
+.agent-settings-field textarea,
+.agent-settings-field select {
+  border-color: var(--openbot-border-strong);
+  background: var(--openbot-bg-canvas);
+  color: var(--openbot-text-primary);
+  box-shadow: none;
+  transition:
+    border-color 150ms ease-out,
+    background-color 150ms ease-out;
+}
+
+.agent-settings-field input::placeholder,
+.agent-settings-field textarea::placeholder {
+  color: var(--openbot-text-muted);
+}
+
+.agent-settings-field input:focus,
+.agent-settings-field textarea:focus,
+.agent-settings-field select:focus {
+  border-color: var(--openbot-border-focus);
+  background: var(--openbot-bg-canvas);
+}
+
+.agent-settings-model {
+  margin: 24px 0 18px;
+  border-color: var(--openbot-border);
+  background: var(--openbot-bg-control);
+  padding: 10px;
+}
+
+.agent-settings-section-heading strong {
+  color: var(--openbot-text-primary);
+}
+
+.agent-settings-section-heading span {
+  color: var(--openbot-text-muted);
+}
+
+.agent-settings-model .agent-settings-model-controls {
+  border-color: var(--openbot-border);
+  background: var(--openbot-bg-canvas);
+}
+
+.agent-settings-model .agent-settings-model-option {
+  border-bottom-color: var(--openbot-border);
+}
+
+.agent-settings-model .agent-settings-model-row {
+  background: var(--openbot-bg-canvas);
+}
+
+.agent-settings-model .agent-settings-model-row:focus-within {
+  background: var(--openbot-accent-soft);
+}
+
+.agent-settings-model .agent-settings-model-description {
+  background: var(--openbot-bg-canvas);
+  color: var(--openbot-text-muted);
+}
+
+.agent-settings-save-error {
+  color: var(--openbot-danger);
+}
+
+.agent-settings-notifications {
+  min-height: 70px;
+  border: 0;
+  background: var(--openbot-bg-control);
+  padding: 13px 12px;
+}
+
+.agent-settings-notifications div > span {
+  max-width: 220px;
+  color: var(--openbot-text-muted);
+}
+
+.settings-switch {
+  background: var(--openbot-bg-switch);
+  transition:
+    background-color 150ms ease-out,
+    transform 120ms ease-out;
+}
+
+.settings-switch span {
+  background: var(--openbot-surface-light);
+}
+
+.settings-switch-on {
+  border-color: transparent;
+  background: var(--openbot-bg-switch);
+}
+
+.settings-switch:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--openbot-accent-soft);
+}
+
+.settings-switch:active {
+  transform: scale(0.97);
 }

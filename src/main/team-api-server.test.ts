@@ -384,6 +384,52 @@ describe("TeamApiServer administration", () => {
     }
   });
 
+  it("responds to an authenticated remote approval request", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-approval-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const approvals: unknown[] = [];
+    const agents = Object.assign(new EventEmitter(), {
+      respondToApproval: async (input: unknown) => {
+        approvals.push(input);
+      },
+    }) as unknown as AgentService;
+    const api = new TeamApiServer({
+      store,
+      agents,
+      mailbox: {} as MailboxStore,
+      browser: {} as BrowserHost,
+      getRemoteMac: () => ({ hostname: null, online: false }),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      await emptyRequest(base, "/v1/approvals/respond", {
+        token: login.sessionToken,
+        body: { requestId: 17, decision: "accept" },
+      });
+      expect(approvals).toEqual([{ requestId: 17, decision: "accept" }]);
+
+      const invalid = await fetch(`${base}/v1/approvals/respond`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ requestId: 17, decision: "session" }),
+      });
+      expect(invalid.status).toBe(400);
+    } finally {
+      await api.stop();
+    }
+  });
+
   it("grants Remote Desktop through team membership and closes it after session revocation", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-desktop-"));
     roots.push(root);

@@ -290,7 +290,8 @@ export class HostService extends EventEmitter<HostEvents> {
 
   listDirectThreads(): DirectThreadSummary[] {
     if (!this.#options.store.configured) return [];
-    return this.#api.listDirectThreads(this.#currentMemberId());
+    const memberId = this.#findCurrentMemberId();
+    return memberId ? this.#api.listDirectThreads(memberId) : [];
   }
 
   readDirectConversation(memberId: string): DirectConversationSnapshot {
@@ -438,16 +439,25 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   #currentMemberId(): string {
-    const email = this.#options.getSignedInUser().email.trim().toLowerCase();
-    const member = this.#options.store
-      .listMembers()
-      .find(
-        (candidate) =>
-          candidate.email?.trim().toLowerCase() === email ||
-          candidate.username.trim().toLowerCase() === email,
-      );
-    if (!member || member.disabled) throw new Error("Your team access is unavailable.");
-    return member.id;
+    const memberId = this.#findCurrentMemberId();
+    if (!memberId) throw new Error("Your team access is unavailable.");
+    return memberId;
+  }
+
+  #findCurrentMemberId(): string | null {
+    try {
+      const email = this.#options.getSignedInUser().email.trim().toLowerCase();
+      const member = this.#options.store
+        .listMembers()
+        .find(
+          (candidate) =>
+            candidate.email?.trim().toLowerCase() === email ||
+            candidate.username.trim().toLowerCase() === email,
+        );
+      return member && !member.disabled ? member.id : null;
+    } catch {
+      return null;
+    }
   }
 }
 

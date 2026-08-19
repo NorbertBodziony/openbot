@@ -10,12 +10,16 @@ import {
   isMessageReaction,
   isReasoningEffort,
   type OpenAttachmentInput,
+  type ReorderQueueInput,
+  type RespondToApprovalInput,
   type RespondToPromptInput,
   type SendMessageInput,
   type SetAgentAvatarInput,
   type SetMessageReactionInput,
   type SetQueuePausedInput,
+  type SteerQueuedMessageInput,
   type UpdateBotInput,
+  type UpdateQueuedMessageInput,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { parseAvatarImage } from "./avatar-inputs";
@@ -177,6 +181,54 @@ export function parseSetQueuePaused(value: unknown): SetQueuePausedInput {
   return { botId: requireString(value.botId, "botId"), paused: value.paused };
 }
 
+export function parseSteerQueuedMessage(value: unknown): SteerQueuedMessageInput {
+  if (!isObject(value)) throw new Error("Invalid queued steer request.");
+  return {
+    botId: requireString(value.botId, "botId"),
+    deliveryId: requireString(value.deliveryId, "deliveryId"),
+    expectedTurnId: requireString(value.expectedTurnId, "expectedTurnId"),
+  };
+}
+
+export function parseUpdateQueuedMessage(value: unknown): UpdateQueuedMessageInput {
+  if (!isObject(value) || !isString(value.text)) {
+    throw new Error("Invalid queued message update request.");
+  }
+  if (value.text.length > INPUT_LIMITS.messageText) throw new Error("Message is too long.");
+  const keepAttachmentIds = parseIdentifierList(value.keepAttachmentIds, "attachment ids");
+  const attachmentDraftIds = parseIdentifierList(value.attachmentDraftIds, "attachment drafts");
+  if (!value.text.trim() && keepAttachmentIds.length === 0 && attachmentDraftIds.length === 0) {
+    throw new Error("A message or attachment is required.");
+  }
+  return {
+    botId: requireString(value.botId, "botId"),
+    deliveryId: requireString(value.deliveryId, "deliveryId"),
+    text: value.text,
+    keepAttachmentIds,
+    attachmentDraftIds,
+  };
+}
+
+export function parseReorderQueue(value: unknown): ReorderQueueInput {
+  if (!isObject(value)) throw new Error("Invalid queue reorder request.");
+  return {
+    botId: requireString(value.botId, "botId"),
+    deliveryIds: parseIdentifierList(value.deliveryIds, "delivery ids"),
+  };
+}
+
+function parseIdentifierList(value: unknown, label: string): string[] {
+  if (
+    !Array.isArray(value) ||
+    value.length > INPUT_LIMITS.messageRecipients ||
+    !value.every((item) => isString(item) && item.length <= INPUT_LIMITS.identifier)
+  ) {
+    throw new Error(`Invalid ${label}.`);
+  }
+  if (new Set(value).size !== value.length) throw new Error(`Duplicate ${label}.`);
+  return value;
+}
+
 export function parseInterrupt(value: unknown): InterruptTurnInput {
   if (!isObject(value)) throw new Error("Invalid interrupt request.");
   return {
@@ -212,4 +264,21 @@ export function parsePromptResponse(value: unknown): RespondToPromptInput {
     answers[key] = answer;
   }
   return { requestId: value.requestId, answers };
+}
+
+export function parseApprovalResponse(value: unknown): RespondToApprovalInput {
+  if (!isObject(value) || (!isString(value.requestId) && !isNumber(value.requestId))) {
+    throw new Error("Invalid approval response.");
+  }
+  if (
+    (isString(value.requestId) &&
+      (value.requestId.length === 0 || value.requestId.length > INPUT_LIMITS.identifier)) ||
+    (isNumber(value.requestId) && !Number.isSafeInteger(value.requestId))
+  ) {
+    throw new Error("Invalid approval response.");
+  }
+  if (value.decision !== "accept" && value.decision !== "decline") {
+    throw new Error("Invalid approval decision.");
+  }
+  return { requestId: value.requestId, decision: value.decision };
 }

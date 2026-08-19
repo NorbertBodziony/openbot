@@ -47,16 +47,20 @@ import {
 import { HostService } from "./host-service";
 import {
   parseAgentRequest,
+  parseApprovalResponse,
   parseCancelQueuedMessage,
   parseImportAttachments,
   parseInterrupt,
   parseMessageReaction,
   parseOpenAttachment,
   parsePromptResponse,
+  parseReorderQueue,
   parseSendMessage,
   parseSetAgentAvatar,
   parseSetQueuePaused,
+  parseSteerQueuedMessage,
   parseUpdateBot,
+  parseUpdateQueuedMessage,
 } from "./ipc/agent-inputs";
 import { parseMacPermission, parseProvider } from "./ipc/app-inputs";
 import { parseAvatarImage } from "./ipc/avatar-inputs";
@@ -504,6 +508,50 @@ function registerIpcHandlers(
           scoped.serverId,
         );
   });
+  handleTrusted(IPC_CHANNELS.agentSteerQueuedMessage, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseSteerQueuedMessage(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.steerQueuedMessage(parsed)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/steer`,
+          {
+            method: "POST",
+            body: { deliveryId: parsed.deliveryId, expectedTurnId: parsed.expectedTurnId },
+          },
+          scoped.serverId,
+        );
+  });
+  handleTrusted(IPC_CHANNELS.agentUpdateQueuedMessage, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseUpdateQueuedMessage(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.updateQueuedMessage(parsed)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/update`,
+          {
+            method: "POST",
+            body: {
+              deliveryId: parsed.deliveryId,
+              text: parsed.text,
+              keepAttachmentIds: parsed.keepAttachmentIds,
+              attachmentDraftIds: parsed.attachmentDraftIds,
+            },
+          },
+          scoped.serverId,
+        );
+  });
+  handleTrusted(IPC_CHANNELS.agentReorderQueue, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseReorderQueue(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.reorderQueue(parsed)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/reorder`,
+          { method: "POST", body: { deliveryIds: parsed.deliveryIds } },
+          scoped.serverId,
+        );
+  });
   handleTrusted(IPC_CHANNELS.agentInterrupt, (input: unknown) => {
     const scoped = parseAgentRequest(input);
     const parsed = parseInterrupt(scoped.payload);
@@ -525,6 +573,17 @@ function registerIpcHandlers(
       ? service.respondToPrompt(parsed)
       : remoteServers.request(
           "/v1/prompts/respond",
+          { method: "POST", body: parsed },
+          scoped.serverId,
+        );
+  });
+  handleTrusted(IPC_CHANNELS.agentRespondToApproval, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseApprovalResponse(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.respondToApproval(parsed)
+      : remoteServers.request(
+          "/v1/approvals/respond",
           { method: "POST", body: parsed },
           scoped.serverId,
         );

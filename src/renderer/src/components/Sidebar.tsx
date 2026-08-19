@@ -41,7 +41,9 @@ interface SidebarProps {
   onLogout: () => Promise<void>;
   onOpenExternal: (destination: ExternalDestination) => Promise<void>;
   onOpenPermissions: () => void;
+  compact: boolean;
   onCollapse: () => void;
+  onExpand: () => void;
 }
 
 export type SidebarAgentState =
@@ -83,6 +85,9 @@ interface BotContextMenu {
   x: number;
   y: number;
 }
+
+const BOT_CONTEXT_MENU_WIDTH = 184;
+const BOT_CONTEXT_MENU_HEIGHT = 86;
 
 function SearchIcon() {
   return (
@@ -215,6 +220,7 @@ export function Sidebar(props: SidebarProps) {
   const [loggingOut, setLoggingOut] = createSignal(false);
   let firstMenuItem: HTMLButtonElement | undefined;
   let botList: HTMLElement | undefined;
+  let searchInput: HTMLInputElement | undefined;
   let accountAvatarInput: HTMLInputElement | undefined;
   const filteredBots = createMemo(() => {
     const normalizedQuery = query().trim().toLowerCase();
@@ -362,8 +368,8 @@ export function Sidebar(props: SidebarProps) {
     setDeleteError(null);
     setContextMenu({
       botId,
-      x: Math.max(8, Math.min(x, window.innerWidth - 190)),
-      y: Math.max(8, Math.min(y, window.innerHeight - 116)),
+      x: Math.max(8, Math.min(x, window.innerWidth - BOT_CONTEXT_MENU_WIDTH - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - BOT_CONTEXT_MENU_HEIGHT - 8)),
     });
     requestAnimationFrame(() => firstMenuItem?.focus());
   }
@@ -476,17 +482,26 @@ export function Sidebar(props: SidebarProps) {
     );
   }
 
+  function expandToSearch(): void {
+    props.onExpand();
+    queueMicrotask(() => searchInput?.focus());
+  }
+
   return (
-    <aside id="bot-sidebar" aria-label="Bot navigation" class="sidebar panel-edge">
+    <aside
+      id="bot-sidebar"
+      aria-label="Bot navigation"
+      class={["sidebar panel-edge", { "sidebar-compact": props.compact }]}
+    >
       <div class="window-drag sidebar-topbar">
         <button
           type="button"
           class="sidebar-icon-button sidebar-toggle-button no-drag"
-          onClick={props.onCollapse}
-          aria-label="Hide sidebar"
+          onClick={() => (props.compact ? props.onExpand() : props.onCollapse())}
+          aria-label={props.compact ? "Expand sidebar" : "Collapse sidebar"}
           aria-controls="bot-sidebar"
-          aria-expanded="true"
-          title="Hide sidebar"
+          aria-expanded={props.compact ? "false" : "true"}
+          title={props.compact ? "Expand sidebar" : "Collapse sidebar"}
         >
           <SidebarToggleIcon />
         </button>
@@ -495,24 +510,38 @@ export function Sidebar(props: SidebarProps) {
           class="sidebar-icon-button sidebar-new-button no-drag"
           onClick={props.onCreateBot}
           aria-label="New agent"
+          aria-hidden={props.compact ? "true" : undefined}
+          tabindex={props.compact ? -1 : 0}
         >
           <PlusIcon />
         </button>
       </div>
 
       <div class="sidebar-search-wrap">
-        <label class="search-field">
+        <label class="search-field" aria-hidden={props.compact ? "true" : undefined}>
           <span class="sr-only">Search chats</span>
           <SearchIcon />
           <input
+            ref={(element) => (searchInput = element)}
             type="search"
             value={query()}
             onInput={(event) => setQuery(event.currentTarget.value)}
             placeholder="Search"
             aria-label="Search chats"
+            tabindex={props.compact ? -1 : 0}
             maxlength={INPUT_LIMITS.agentName}
           />
         </label>
+        <button
+          type="button"
+          class="sidebar-compact-search"
+          aria-label="Expand sidebar and search chats"
+          aria-hidden={props.compact ? undefined : "true"}
+          tabindex={props.compact ? 0 : -1}
+          onClick={expandToSearch}
+        >
+          <SearchIcon />
+        </button>
       </div>
 
       <nav
@@ -539,7 +568,6 @@ export function Sidebar(props: SidebarProps) {
             <section class="sidebar-chat-group" aria-labelledby="sidebar-people-heading">
               <header>
                 <h2 id="sidebar-people-heading">People</h2>
-                <span>{props.people.filter((member) => member.online).length} active</span>
               </header>
               <For each={filteredPeople()}>
                 {(member) => {
@@ -549,8 +577,11 @@ export function Sidebar(props: SidebarProps) {
                       type="button"
                       class={[
                         "bot-row person-row",
-                        { "bot-row-active": props.activeDirectMemberId === member.id },
+                        {
+                          "bot-row-active": props.activeDirectMemberId === member.id,
+                        },
                       ]}
+                      aria-label={`${teamMemberName(member)}. ${thread()?.lastMessage.text ?? (member.online ? "Online now" : "Offline")}`}
                       aria-pressed={props.activeDirectMemberId === member.id ? "true" : "false"}
                       onClick={() => props.onSelectPerson(member.id)}
                     >
@@ -583,55 +614,76 @@ export function Sidebar(props: SidebarProps) {
             </section>
           </Show>
           <Show when={filteredBots().length > 0}>
-            <section class="sidebar-chat-group" aria-labelledby="sidebar-agents-heading">
-              <header>
-                <h2 id="sidebar-agents-heading">Agents</h2>
-                <span>{props.bots.length}</span>
-              </header>
+            <section
+              class="sidebar-chat-group"
+              aria-label={filteredPeople().length > 0 ? undefined : "Agents"}
+              aria-labelledby={filteredPeople().length > 0 ? "sidebar-agents-heading" : undefined}
+            >
+              <Show when={filteredPeople().length > 0}>
+                <header>
+                  <h2 id="sidebar-agents-heading">Agents</h2>
+                </header>
+              </Show>
               <For each={filteredBots()}>
-                {(bot) => (
-                  <button
-                    type="button"
-                    class={[
-                      "bot-row",
-                      {
-                        "bot-row-active": props.activeBotId === bot.id,
-                        "bot-row-menu-open": contextMenu()?.botId === bot.id,
-                      },
-                    ]}
-                    aria-pressed={props.activeBotId === bot.id ? "true" : "false"}
-                    onClick={() => props.onSelectBot(bot.id)}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      openContextMenu(bot.id, event.clientX, event.clientY);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) {
-                        return;
-                      }
-                      event.preventDefault();
-                      const bounds = event.currentTarget.getBoundingClientRect();
-                      openContextMenu(bot.id, bounds.left + 28, bounds.top + 32);
-                    }}
-                  >
-                    <span class="bot-row-avatar">
-                      <AgentAvatar bot={bot} />
-                      <Show when={props.agentStates[bot.id]}>
-                        {(state) => <SidebarAgentIndicator state={state()} />}
-                      </Show>
-                    </span>
-                    <span class="bot-row-copy">
-                      <span class="bot-row-heading">
-                        <strong>{bot.name}</strong>
-                        <span>{bot.time}</span>
+                {(bot) => {
+                  const role = () => bot.role.trim();
+                  return (
+                    <button
+                      type="button"
+                      class={[
+                        "bot-row",
+                        {
+                          "bot-row-active": props.activeBotId === bot.id,
+                          "bot-row-menu-open": contextMenu()?.botId === bot.id,
+                        },
+                      ]}
+                      aria-label={`${bot.name}${role() ? `, ${role()}` : ""}. ${bot.preview}`}
+                      aria-pressed={props.activeBotId === bot.id ? "true" : "false"}
+                      onClick={() => props.onSelectBot(bot.id)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        openContextMenu(bot.id, event.clientX, event.clientY);
+                      }}
+                      onKeyDown={(event) => {
+                        if (
+                          event.key !== "ContextMenu" &&
+                          !(event.shiftKey && event.key === "F10")
+                        ) {
+                          return;
+                        }
+                        event.preventDefault();
+                        const bounds = event.currentTarget.getBoundingClientRect();
+                        openContextMenu(bot.id, bounds.left + 28, bounds.top + 32);
+                      }}
+                    >
+                      <span class="bot-row-avatar">
+                        <AgentAvatar bot={bot} />
+                        <Show when={props.agentStates[bot.id]}>
+                          {(state) => <SidebarAgentIndicator state={state()} />}
+                        </Show>
                       </span>
-                      <span class="bot-row-preview">{bot.preview}</span>
-                    </span>
-                    <Show when={props.agentStates[bot.id]}>
-                      {(state) => <span class="sr-only">{sidebarAgentStateLabel(state())}</span>}
-                    </Show>
-                  </button>
-                )}
+                      <span class="bot-row-copy">
+                        <span class="bot-row-heading">
+                          <span class="bot-row-title">
+                            <strong>{bot.name}</strong>
+                            <Show when={role()}>
+                              {(label) => (
+                                <span class="bot-role-badge" title={label()}>
+                                  {label()}
+                                </span>
+                              )}
+                            </Show>
+                          </span>
+                          <span class="bot-row-time">{bot.time}</span>
+                        </span>
+                        <span class="bot-row-preview">{bot.preview}</span>
+                      </span>
+                      <Show when={props.agentStates[bot.id]}>
+                        {(state) => <span class="sr-only">{sidebarAgentStateLabel(state())}</span>}
+                      </Show>
+                    </button>
+                  );
+                }}
               </For>
             </section>
           </Show>
@@ -845,7 +897,11 @@ export function Sidebar(props: SidebarProps) {
               >
                 <AgentAvatar
                   bot={bot()}
-                  style={{ width: "44px", height: "44px", "margin-bottom": "15px" }}
+                  style={{
+                    width: "44px",
+                    height: "44px",
+                    "margin-bottom": "15px",
+                  }}
                 />
                 <h2 id="bot-delete-title">Delete {bot().name}?</h2>
                 <p id="bot-delete-description">
@@ -886,7 +942,13 @@ function sidebarMessageTime(value: string): string {
   const date = new Date(value);
   const now = new Date();
   if (date.toDateString() === now.toDateString()) {
-    return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date);
+    return new Intl.DateTimeFormat(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(date);
   }
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(date);
 }

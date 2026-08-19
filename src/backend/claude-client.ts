@@ -135,6 +135,8 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         return (await this.#readThread(requiredString(params, "threadId"))) as T;
       case "turn/start":
         return (await this.#startTurn(params)) as T;
+      case "turn/steer":
+        return (await this.#steerTurn(params)) as T;
       case "turn/interrupt": {
         const runtime = this.#requireThread(requiredString(params, "threadId"));
         await runtime.query.interrupt();
@@ -273,6 +275,25 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       session_id: threadId,
     });
     return { turn: { id: turnId, status: "inProgress" } };
+  }
+
+  async #steerTurn(params: unknown): Promise<unknown> {
+    const threadId = requiredString(params, "threadId");
+    const runtime = this.#requireThread(threadId);
+    const expectedTurnId = requiredString(params, "expectedTurnId");
+    if (!runtime.activeTurn || runtime.activeTurn.id !== expectedTurnId) {
+      throw new Error("The active Claude turn changed before steering was accepted.");
+    }
+    const clientId = getString(params, "clientUserMessageId");
+    const messageId = clientId && isUuid(clientId) ? clientId : randomUUID();
+    runtime.input.push({
+      type: "user",
+      message: { role: "user", content: readInputText(params) },
+      parent_tool_use_id: null,
+      uuid: messageId as UUID,
+      session_id: threadId,
+    });
+    return { turnId: runtime.activeTurn.id };
   }
 
   async #consume(runtime: ThreadRuntime): Promise<void> {

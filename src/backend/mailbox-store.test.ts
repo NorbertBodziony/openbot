@@ -368,4 +368,78 @@ describe("MailboxStore", () => {
       expect.arrayContaining([expect.objectContaining({ status: "running" })]),
     );
   });
+
+  it("persists queue order and edits a queued message copy-on-write", async () => {
+    const original = join(root, "original.txt");
+    const replacement = join(root, "replacement.txt");
+    await writeFile(original, "original");
+    await writeFile(replacement, "replacement");
+    const [originalDraft] = await store.prepareAttachments([original]);
+    const first = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Keep this message",
+      draftIds: [originalDraft.id],
+    });
+    const second = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Move me first",
+    });
+    const firstDeliveryId = first.deliveries[0].id;
+    const secondDeliveryId = second.deliveries[0].id;
+    const before = store.getDelivery(firstDeliveryId);
+    const originalAttachmentId = before?.delivery.attachments[0]?.id;
+    expect(originalAttachmentId).toBeDefined();
+
+    await store.reorderQueue("chief", [secondDeliveryId, firstDeliveryId]);
+    const [replacementDraft] = await store.prepareAttachments([replacement]);
+    await store.updateQueuedMessage(
+      "chief",
+      firstDeliveryId,
+      "Edited in place",
+      [originalAttachmentId ?? ""],
+      [replacementDraft.id],
+    );
+
+    const edited = store.getDelivery(firstDeliveryId);
+    expect(edited?.delivery).toMatchObject({
+      id: firstDeliveryId,
+      messageId: first.messageId,
+      text: "Edited in place",
+      position: 2,
+      status: "queued",
+    });
+    expect(edited?.delivery.attachments).toHaveLength(2);
+    expect(edited?.delivery.attachments[0]?.id).toBe(originalAttachmentId);
+
+    const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    expect(restored.listQueue("chief").deliveries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: secondDeliveryId, position: 1 }),
+        expect.objectContaining({ id: firstDeliveryId, position: 2 }),
+      ]),
+    );
+    expect(restored.getDelivery(firstDeliveryId)?.delivery).toMatchObject({
+      messageId: first.messageId,
+      text: "Edited in place",
+      position: 2,
+    });
+  });
+
+  it("rejects queue edits and reorders for non-queued deliveries", async () => {
+    const receipt = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Already running",
+    });
+    const deliveryId = receipt.deliveries[0].id;
+    await store.markStarting(deliveryId);
+
+    await expect(store.updateQueuedMessage("chief", deliveryId, "Changed", [], [])).rejects.toThrow(
+      "Only queued messages can be edited",
+    );
+    await expect(store.reorderQueue("chief", [deliveryId])).rejects.toThrow("Queue order is stale");
+  });
 });

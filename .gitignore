@@ -22,4 +22,5 @@ coverage/
 .vscode/
 playwright-report/
 test-results/
+storybook-static/
 .openbot-browser-test/

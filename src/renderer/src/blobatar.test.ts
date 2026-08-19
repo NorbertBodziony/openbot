@@ -1,7 +1,7 @@
 import { traits, VERSION } from "blobatar";
 import { blobatar, layout } from "blobatar/blob";
 import { describe, expect, it } from "vitest";
-import { avatarCandidateSeeds, buildAnimatedAvatarSvg } from "./blobatar";
+import { avatarCandidateSeeds, avatarHeadColor, buildAnimatedAvatarSvg } from "./blobatar";
 
 const avatarGeometryMarkup = (markup: string) => {
   const document = new DOMParser().parseFromString(markup, "image/svg+xml");
@@ -29,6 +29,13 @@ describe("animated Blobatar adapter", () => {
   it("uses continuous motion only when requested", () => {
     expect(buildAnimatedAvatarSvg("chief", 215, "always")).toContain('class="mo-root mo-always"');
     expect(buildAnimatedAvatarSvg("chief", 215, "hover")).not.toContain("mo-always");
+  });
+
+  it("resolves the same head color used by the rendered avatar", () => {
+    const seed = "new-agent";
+    const markup = buildAnimatedAvatarSvg(seed, 0);
+
+    expect(avatarHeadColor(seed, 0)).toBe(markup.match(/--mo-head:([^;]+)/)?.[1]);
   });
 
   it("keeps all visible geometry from the pinned Blobatar renderer", () => {

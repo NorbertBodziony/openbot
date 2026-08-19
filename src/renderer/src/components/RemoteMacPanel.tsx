@@ -85,7 +85,10 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
       client.resizeSession = false;
       client.focusOnClick = true;
       client.showDotCursor = true;
-      client.background = "#090a0b";
+      const paletteBackground = getComputedStyle(targetElement)
+        .getPropertyValue("--openbot-vnc-background")
+        .trim();
+      if (paletteBackground) client.background = paletteBackground;
       client.qualityLevel = 7;
       client.compressionLevel = 2;
       client.viewOnly = readOnly;

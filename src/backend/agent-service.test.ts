@@ -117,7 +117,7 @@ describe.sequential("AgentService", () => {
       const params = start.params as DynamicRecord;
       expect(params).toMatchObject({
         model: "gpt-5.6-luna",
-        approvalPolicy: "never",
+        approvalPolicy: "on-request",
         sandbox: "danger-full-access",
         ephemeral: false,
         serviceName: "openbot",
@@ -125,7 +125,11 @@ describe.sequential("AgentService", () => {
       expect(params.dynamicTools).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ type: "namespace", name: "openbot_browser" }),
-          expect.objectContaining({ type: "namespace", name: "openbot" }),
+          expect.objectContaining({
+            type: "namespace",
+            name: "openbot",
+            tools: expect.arrayContaining([expect.objectContaining({ name: "ask_user" })]),
+          }),
         ]),
       );
     }
@@ -134,6 +138,173 @@ describe.sequential("AgentService", () => {
     }
     expect((await store.getOrCreate("chief")).threadId).not.toBe(
       (await store.getOrCreate("sales-outbound")).threadId,
+    );
+  });
+
+  it("surfaces Codex approvals without auto-accepting and maps one-shot decisions", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Need an approval" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    const client = clients.get("codex");
+    if (!client) throw new Error("Codex client was not created.");
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!turnId) throw new Error("Turn did not start.");
+    const externalId = store.activeProviderSession("chief")?.externalSessionId;
+    if (!externalId) throw new Error("External thread did not start.");
+
+    client.emit("request", {
+      method: "item/commandExecution/requestApproval",
+      id: "approval-command",
+      params: {
+        threadId: externalId,
+        turnId,
+        command: ["npm", "test"],
+        cwd: "/tmp/openbot",
+        reason: "Run tests.",
+      },
+    });
+    await waitFor(() => events.some((event) => event.type === "approval"));
+    expect(client.responses).toHaveLength(0);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "approval",
+        approval: expect.objectContaining({
+          requestId: "approval-command",
+          botId: "chief",
+          kind: "command",
+          command: "npm test",
+          cwd: "/tmp/openbot",
+        }),
+      }),
+    );
+
+    await service.respondToApproval({ requestId: "approval-command", decision: "accept" });
+    expect(client.responses).toEqual([{ id: "approval-command", result: { decision: "accept" } }]);
+
+    client.emit("request", {
+      method: "item/permissions/requestApproval",
+      id: "approval-permissions",
+      params: {
+        threadId: externalId,
+        turnId,
+        permissions: {
+          fileSystem: { read: ["/tmp/openbot"], write: ["/tmp/openbot/out"] },
+          network: { enabled: true },
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "approval").length === 2);
+    await service.respondToApproval({ requestId: "approval-permissions", decision: "decline" });
+    expect(client.responses.at(-1)).toEqual({
+      id: "approval-permissions",
+      result: { permissions: {}, scope: "turn" },
+    });
+  });
+
+  it("provides a default-mode ask_user tool that resolves through the Questions card", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Ask me a question" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    const client = clients.get("codex");
+    if (!client) throw new Error("Codex client was not created.");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!threadId || !turnId) throw new Error("Turn did not start.");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [
+            {
+              id: "favorite",
+              header: "Favorite",
+              question: "What is your favorite color?",
+              options: [{ label: "Blue", description: "A calm choice." }],
+            },
+          ],
+        },
+      },
+    });
+    await waitFor(() => events.some((event) => event.type === "prompt"));
+    expect(client.responses).toHaveLength(0);
+
+    await service.respondToPrompt({
+      requestId: "question-call",
+      answers: { favorite: ["Blue"] },
+    });
+    await waitFor(() => client.responses.length === 1);
+    expect(client.responses[0]).toMatchObject({
+      id: "question-call",
+      result: expect.objectContaining({ success: true }),
+    });
+    expect(JSON.stringify(client.responses[0]?.result)).toContain('"favorite":["Blue"]');
+  });
+
+  it("keeps legacy approvals interactive and clears pending approvals on shutdown", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Need a legacy approval" });
+    await waitFor(() =>
+      clients.get("codex")?.requests.some((request) => request.method === "turn/start"),
+    );
+    const client = clients.get("codex");
+    if (!client) throw new Error("Codex client was not created.");
+    const conversationId = store.activeProviderSession("chief")?.externalSessionId;
+    if (!conversationId) throw new Error("Conversation did not start.");
+
+    client.emit("request", {
+      method: "execCommandApproval",
+      id: 42,
+      params: { conversationId, command: "git status", reason: "Inspect the worktree." },
+    });
+    await waitFor(() => client.responses.length === 0);
+    await service.respondToApproval({ requestId: 42, decision: "decline" });
+    expect(client.responses.at(-1)).toEqual({
+      id: 42,
+      result: { decision: { denied: { rejection: "The user declined this action." } } },
+    });
+
+    client.emit("request", {
+      method: "applyPatchApproval",
+      id: 43,
+      params: { conversationId, turnId: "turn-legacy", reason: "Update the file." },
+    });
+    await service.stop();
+    await expect(service.respondToApproval({ requestId: 43, decision: "accept" })).rejects.toThrow(
+      "This approval is no longer active.",
     );
   });
 
@@ -320,6 +491,7 @@ describe.sequential("AgentService", () => {
     expect(instructions).toContain(
       '"description": "Researches topics and turns findings into clear writing."',
     );
+    expect(instructions).toContain("openbot.ask_user");
     expect(instructions).toContain("standing remit");
   });
 
@@ -369,6 +541,63 @@ describe.sequential("AgentService", () => {
     for (let index = 1; index < conversationSignatures.length; index += 1) {
       expect(conversationSignatures[index]).not.toBe(conversationSignatures[index - 1]);
     }
+  });
+
+  it("steers a queued delivery into the active turn and completes it with that turn", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "CODEX_DONE", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+
+    await service.sendMessage({ botId: "chief", text: "Start this turn" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const active = events.find((event) => event.type === "turn-started");
+    if (active?.type !== "turn-started") throw new Error("Turn did not start.");
+    await service.sendMessage({ botId: "chief", text: "Add this to the active turn" });
+    const queued = service
+      .listQueue("chief")
+      .deliveries.find((delivery) => delivery.status === "queued");
+    if (!queued) throw new Error("Queued delivery was not created.");
+
+    await service.steerQueuedMessage({
+      botId: "chief",
+      deliveryId: queued.id,
+      expectedTurnId: active.turnId,
+    });
+
+    const client = clients.get("codex");
+    expect(client?.requests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "turn/steer",
+          params: expect.objectContaining({
+            expectedTurnId: active.turnId,
+            clientUserMessageId: queued.id,
+          }),
+        }),
+      ]),
+    );
+    const externalThreadId = store.activeProviderSession("chief")?.externalSessionId;
+    if (!client || !externalThreadId) throw new Error("Active provider session is missing.");
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId: externalThreadId,
+        turn: { id: active.turnId, status: "completed" },
+      }),
+    );
+    await waitFor(() =>
+      service
+        ?.listQueue("chief")
+        .deliveries.filter((delivery) => delivery.id === queued.id)
+        .every((delivery) => delivery.status === "completed"),
+    );
   });
 
   it("waits for active queue drains before shutdown completes", async () => {
@@ -748,12 +977,14 @@ describe.sequential("AgentService", () => {
 
 class FakeAgentClient extends EventEmitter implements AgentClient {
   readonly requests: Array<{ method: string; params: unknown }> = [];
+  readonly responses: Array<{ id: RequestId; result: unknown }> = [];
   #threadCounter = 0;
   running = false;
 
   constructor(
     readonly provider: AgentProvider,
     readonly output = provider === "codex" ? "CODEX_DONE" : "CLAUDE_DONE",
+    readonly autoComplete = true,
   ) {
     super();
   }
@@ -800,6 +1031,9 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
       return { thread: { id: stringParam(params, "threadId"), turns: [] } } as T;
     }
     if (method === "thread/compact/start" || method === "turn/interrupt") return {} as T;
+    if (method === "turn/steer") {
+      return { turnId: stringParam(params, "expectedTurnId") } as T;
+    }
     if (method === "turn/start") {
       const threadId = stringParam(params, "threadId");
       const turnId = randomUUID();
@@ -808,6 +1042,7 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
       setTimeout(() => {
         if (!this.running) return;
         this.emit("notification", notification("turn/started", { threadId, turn: { id: turnId } }));
+        if (!this.autoComplete) return;
         this.emit(
           "notification",
           notification("item/started", {
@@ -843,7 +1078,9 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
 
   notify(): void {}
 
-  respond(): void {}
+  respond(id: RequestId, result: unknown): void {
+    this.responses.push({ id, result: structuredClone(result) });
+  }
 
   respondError(_id: RequestId, _error: RpcError): void {}
 }

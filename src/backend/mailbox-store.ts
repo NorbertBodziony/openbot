@@ -46,6 +46,7 @@ interface StoredDelivery {
   id: string;
   messageId: string;
   recipientBotId: string;
+  queueOrder: number;
   status: QueueDeliveryStatus;
   turnId: string | null;
   error: string | null;
@@ -53,7 +54,7 @@ interface StoredDelivery {
 }
 
 interface StoredState {
-  version: 1;
+  version: 2;
   messages: StoredMessage[];
   deliveries: StoredDelivery[];
   drafts: StoredDraft[];
@@ -90,7 +91,7 @@ export interface ExportedAttachmentFile {
 }
 
 const EMPTY_STATE: StoredState = {
-  version: 1,
+  version: 2,
   messages: [],
   deliveries: [],
   drafts: [],
@@ -127,9 +128,9 @@ export class MailboxStore {
     const persisted = this.#database.readMailboxState();
     if (persisted) {
       if (!isStoredState(persisted)) throw new Error("Stored mailbox projection is invalid.");
-      this.#state = persisted;
+      this.#state = normalizeStoredState(persisted);
     } else {
-      this.#state = await this.#readState();
+      this.#state = normalizeStoredState(await this.#readState());
       await this.#database.backupLegacyFile(this.#statePath);
       await this.#persist("mailbox.legacy-imported", "legacy-import:mailbox:v1");
     }
@@ -299,6 +300,7 @@ export class MailboxStore {
       id: randomUUID(),
       messageId,
       recipientBotId,
+      queueOrder: this.#nextQueueOrder(recipientBotId),
       status: "queued",
       turnId: null,
       error: null,
@@ -511,9 +513,9 @@ export class MailboxStore {
     ) {
       return null;
     }
-    const delivery = this.#state.deliveries.find(
-      (candidate) => candidate.recipientBotId === botId && candidate.status === "queued",
-    );
+    const delivery = this.#state.deliveries
+      .filter((candidate) => candidate.recipientBotId === botId && candidate.status === "queued")
+      .sort(compareQueueOrder)[0];
     return delivery ? this.#context(delivery) : null;
   }
 
@@ -525,6 +527,17 @@ export class MailboxStore {
   findDeliveryByTurn(turnId: string): DeliveryContext | null {
     const delivery = this.#state.deliveries.find((candidate) => candidate.turnId === turnId);
     return delivery ? this.#context(delivery) : null;
+  }
+
+  findDeliveriesByTurn(botId: string, turnId: string): DeliveryContext[] {
+    return this.#state.deliveries
+      .filter(
+        (delivery) =>
+          delivery.recipientBotId === botId &&
+          delivery.turnId === turnId &&
+          (delivery.status === "starting" || delivery.status === "running"),
+      )
+      .map((delivery) => this.#context(delivery));
   }
 
   startingDeliveryForBot(botId: string): DeliveryContext | null {
@@ -638,6 +651,124 @@ export class MailboxStore {
     await this.#persist("delivery.cancelled");
   }
 
+  async updateQueuedMessage(
+    botId: string,
+    deliveryId: string,
+    text: string,
+    keepAttachmentIds: string[],
+    attachmentDraftIds: string[],
+  ): Promise<void> {
+    const delivery = this.#state.deliveries.find(
+      (candidate) => candidate.id === deliveryId && candidate.recipientBotId === botId,
+    );
+    if (!delivery) throw new Error("Queued message was not found.");
+    if (delivery.status !== "queued") throw new Error("Only queued messages can be edited.");
+
+    const message = this.#requireMessage(delivery.messageId);
+    const keepIds = new Set(keepAttachmentIds);
+    if (keepIds.size !== keepAttachmentIds.length) throw new Error("Duplicate attachments.");
+    if (keepAttachmentIds.some((id) => !message.attachments.some((item) => item.id === id))) {
+      throw new Error("An attachment does not belong to the queued message.");
+    }
+
+    const draftIds = new Set(attachmentDraftIds);
+    if (draftIds.size !== attachmentDraftIds.length)
+      throw new Error("Duplicate attachment drafts.");
+    const drafts = attachmentDraftIds.map((id) => {
+      const draft = this.#state.drafts.find((candidate) => candidate.id === id);
+      if (!draft) throw new Error(`Attachment draft no longer exists: ${id}`);
+      return draft;
+    });
+    if (keepAttachmentIds.length + drafts.length > MAX_ATTACHMENTS) {
+      throw new Error(`Attach at most ${MAX_ATTACHMENTS} files.`);
+    }
+
+    const normalizedText = text.trim();
+    if (!normalizedText && keepAttachmentIds.length === 0 && drafts.length === 0) {
+      throw new Error("Message cannot be empty.");
+    }
+
+    const previous = structuredClone(message);
+    const oldAttachmentPaths = message.attachments
+      .filter((attachment) => !keepIds.has(attachment.id))
+      .map((attachment) => attachment.path);
+    const draftAttachmentPaths = drafts.map((draft) => draft.path);
+    let newAttachmentPaths: string[] = [];
+    try {
+      const replacementAttachments = [
+        ...message.attachments.filter((attachment) => keepIds.has(attachment.id)),
+        ...(draftAttachmentPaths.length
+          ? await this.#commitAttachments(
+              `${message.id}-edit-${randomUUID()}`,
+              draftAttachmentPaths,
+            )
+          : []),
+      ];
+      newAttachmentPaths = replacementAttachments
+        .filter((attachment) => !message.attachments.some((item) => item.id === attachment.id))
+        .map((attachment) => attachment.path);
+      message.text = normalizedText;
+      message.attachments = replacementAttachments;
+      this.#state.drafts = this.#state.drafts.filter((draft) => !draftIds.has(draft.id));
+      await this.#persist(
+        "message.updated",
+        `mailbox:message-updated:${deliveryId}:${randomUUID()}`,
+        oldAttachmentPaths,
+      );
+    } catch (error) {
+      message.text = previous.text;
+      message.attachments = previous.attachments;
+      for (const draft of drafts) {
+        if (!this.#state.drafts.some((candidate) => candidate.id === draft.id)) {
+          this.#state.drafts.push(draft);
+        }
+      }
+      await Promise.all(
+        newAttachmentPaths.map((path) => rm(dirname(path), { recursive: true, force: true })),
+      );
+      throw error;
+    }
+    await Promise.all(
+      drafts.map((draft) => rm(dirname(draft.path), { recursive: true, force: true })),
+    );
+    await this.#drainFileDeletionOutbox();
+  }
+
+  async reorderQueue(botId: string, deliveryIds: string[]): Promise<void> {
+    const queued = this.#state.deliveries.filter(
+      (delivery) => delivery.recipientBotId === botId && delivery.status === "queued",
+    );
+    const expected = new Set(queued.map((delivery) => delivery.id));
+    if (
+      deliveryIds.length !== queued.length ||
+      new Set(deliveryIds).size !== deliveryIds.length ||
+      deliveryIds.some((deliveryId) => !expected.has(deliveryId))
+    ) {
+      throw new Error("Queue order is stale. Refresh the queue and try again.");
+    }
+    const orders = new Map(deliveryIds.map((deliveryId, index) => [deliveryId, index]));
+    for (const delivery of queued) {
+      delivery.queueOrder = orders.get(delivery.id) ?? delivery.queueOrder;
+    }
+    await this.#persist("queue.reordered");
+  }
+
+  async markSteering(deliveryId: string, turnId: string): Promise<void> {
+    await this.#updateDelivery(deliveryId, ["queued"], {
+      status: "starting",
+      turnId,
+      error: null,
+    });
+  }
+
+  async restoreQueued(deliveryId: string): Promise<void> {
+    await this.#updateDelivery(deliveryId, ["starting"], {
+      status: "queued",
+      turnId: null,
+      error: null,
+    });
+  }
+
   async setPaused(botId: string, paused: boolean): Promise<void> {
     const current = new Set(this.#state.pausedBotIds);
     if (paused) current.add(botId);
@@ -699,6 +830,14 @@ export class MailboxStore {
     };
   }
 
+  #nextQueueOrder(botId: string): number {
+    return (
+      this.#state.deliveries
+        .filter((delivery) => delivery.recipientBotId === botId)
+        .reduce((max, delivery) => Math.max(max, delivery.queueOrder), -1) + 1
+    );
+  }
+
   #publicDelivery(delivery: StoredDelivery, positions = this.#queuedPositions()): QueueDelivery {
     const message = this.#requireMessage(delivery.messageId);
     return {
@@ -714,8 +853,10 @@ export class MailboxStore {
   #queuedPositions(): Map<string, number> {
     const counts = new Map<string, number>();
     const positions = new Map<string, number>();
-    for (const delivery of this.#state.deliveries) {
-      if (delivery.status !== "queued") continue;
+    const queued = [...this.#state.deliveries]
+      .filter((delivery) => delivery.status === "queued")
+      .sort(compareQueueOrder);
+    for (const delivery of queued) {
       const position = (counts.get(delivery.recipientBotId) ?? 0) + 1;
       counts.set(delivery.recipientBotId, position);
       positions.set(delivery.id, position);
@@ -954,10 +1095,33 @@ function normalizeBytes(value: Uint8Array): Uint8Array {
   throw new Error("Attachment data is invalid.");
 }
 
+function normalizeStoredState(value: StoredState): StoredState {
+  const nextOrderByBot = new Map<string, number>();
+  const deliveries = value.deliveries.map((delivery) => {
+    const fallback = nextOrderByBot.get(delivery.recipientBotId) ?? 0;
+    const queueOrder =
+      isNumber((delivery as StoredDelivery & { queueOrder?: unknown }).queueOrder) &&
+      Number.isFinite((delivery as StoredDelivery & { queueOrder?: number }).queueOrder)
+        ? (delivery as StoredDelivery & { queueOrder: number }).queueOrder
+        : fallback;
+    nextOrderByBot.set(delivery.recipientBotId, Math.max(fallback, queueOrder + 1));
+    return { ...delivery, queueOrder };
+  });
+  return { ...value, version: 2, deliveries };
+}
+
+function compareQueueOrder(left: StoredDelivery, right: StoredDelivery): number {
+  return (
+    left.queueOrder - right.queueOrder ||
+    left.createdAt.localeCompare(right.createdAt) ||
+    left.id.localeCompare(right.id)
+  );
+}
+
 function isStoredState(value: unknown): value is StoredState {
   return (
     isRecord(value) &&
-    value.version === 1 &&
+    (value.version === 1 || value.version === 2) &&
     Array.isArray(value.messages) &&
     value.messages.every(isStoredMessage) &&
     Array.isArray(value.deliveries) &&
@@ -1019,6 +1183,8 @@ function isStoredDelivery(value: unknown): value is StoredDelivery {
     isString(value.id) &&
     isString(value.messageId) &&
     isString(value.recipientBotId) &&
+    (value.queueOrder === undefined ||
+      (isNumber(value.queueOrder) && Number.isFinite(value.queueOrder))) &&
     (value.status === "queued" ||
       value.status === "starting" ||
       value.status === "running" ||
