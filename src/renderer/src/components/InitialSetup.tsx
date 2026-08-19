@@ -63,7 +63,9 @@ const EMPTY_PERMISSIONS: MacPermissionsState = {
 };
 
 export function InitialSetup(props: InitialSetupProps) {
-  const [route, setRoute] = createSignal<SetupRoute | null>(props.reviewing ? "local" : null);
+  const [route, setRoute] = createSignal<SetupRoute | null>(
+    untrack(() => (props.reviewing ? "local" : null)),
+  );
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(
     untrack(() => props.state.preferredProvider),
   );
@@ -102,8 +104,7 @@ export function InitialSetup(props: InitialSetupProps) {
     },
   );
 
-  async function refreshPermissions(): Promise<void> {
-    if (props.platform !== "darwin" || route() !== "local") return;
+  async function loadPermissions(): Promise<void> {
     const revision = ++permissionRevision;
     try {
       const next = await window.openbot.getMacPermissions();
@@ -113,11 +114,17 @@ export function InitialSetup(props: InitialSetupProps) {
     }
   }
 
-  createEffect(route, (currentRoute) => {
-    if (currentRoute === "local") void refreshPermissions();
-  });
+  createEffect(
+    () => ({ route: route(), platform: props.platform }),
+    ({ route: currentRoute, platform }) => {
+      if (platform === "darwin" && currentRoute === "local") void loadPermissions();
+    },
+  );
 
-  const handleFocus = () => void refreshPermissions();
+  const handleFocus = () => {
+    const shouldRefresh = untrack(() => props.platform === "darwin" && route() === "local");
+    if (shouldRefresh) void loadPermissions();
+  };
   window.addEventListener("focus", handleFocus);
   onCleanup(() => window.removeEventListener("focus", handleFocus));
 

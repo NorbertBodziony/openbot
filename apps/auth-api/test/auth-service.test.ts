@@ -103,6 +103,18 @@ class MemoryAuthRepository implements AuthRepository {
     if (session) session.revoked = true;
   }
 
+  async updateUserAvatar(
+    userId: string,
+    avatarUrl: string | null,
+    expectedAvatarUrl: string | null,
+  ): Promise<AuthUser | null> {
+    const session = [...this.sessions.values()].find((item) => item.user.id === userId);
+    if (!session) throw new Error("User not found.");
+    if (session.user.avatarUrl !== expectedAvatarUrl) return null;
+    session.user = { ...session.user, avatarUrl };
+    return session.user;
+  }
+
   async createTeamAuthTicket(input: {
     ticketHash: string;
     userId: string;
@@ -186,6 +198,24 @@ describe("email one-time codes", () => {
       session.user,
     );
     expect(await service.redeemTeamAuthTicket(ticket.ticket, serverId, "203.0.113.5")).toBeNull();
+    await expect(
+      service.updateAvatar(session.sessionToken, "/v1/avatars/user?v=avatar", null),
+    ).resolves.toMatchObject({ avatarUrl: "/v1/avatars/user?v=avatar" });
+    await expect(
+      service.updateAvatar(session.sessionToken, null, "/v1/avatars/user?v=avatar"),
+    ).resolves.toMatchObject({
+      avatarUrl: null,
+    });
+    await expect(
+      service.updateAvatar(
+        session.sessionToken,
+        "/v1/avatars/user?v=stale",
+        "/v1/avatars/user?v=old",
+      ),
+    ).rejects.toMatchObject({ status: 409, code: "avatar_conflict" });
+    await expect(service.authenticate(session.sessionToken)).resolves.toMatchObject({
+      avatarUrl: null,
+    });
     await expect(
       service.verifyEmailCode({
         challengeId: challenge.challengeId,

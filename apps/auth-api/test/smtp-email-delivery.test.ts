@@ -238,6 +238,7 @@ describe("Private Email SMTP delivery", () => {
     expect(() =>
       createEmailCodeDelivery({
         DB: {} as D1Database,
+        AVATARS: {} as R2Bucket,
         EMAIL_SMTP_HOST: "mail.privateemail.com",
       } satisfies WorkerBindings),
     ).toThrow("SMTP email delivery configuration is incomplete.");

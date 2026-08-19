@@ -39,6 +39,7 @@ export interface BotProfile {
   threadId: string | null;
   avatarSeed: string;
   avatarHue: BotAvatarHue | null;
+  avatarUrl: string | null;
   time: string;
   preview: string;
 }

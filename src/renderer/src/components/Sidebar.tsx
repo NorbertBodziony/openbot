@@ -3,28 +3,42 @@ import type {
   AccountUsage,
   AgentStatus,
   AppInfo,
+  AvatarImageInput,
+  CentralAuthUser,
+  DirectThreadSummary,
   ExternalDestination,
+  TeamPresenceMember,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
 import { Portal } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js";
+import { normalizeAvatarFile } from "../avatar-image";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
+import { TeamPersonAvatar, teamMemberName } from "./TeamPersonAvatar";
+import { TypingDots } from "./TypingDots";
 
 interface SidebarProps {
   bots: BotProfile[];
   activeBotId: string;
+  people: TeamPresenceMember[];
+  directThreads: DirectThreadSummary[];
+  activeDirectMemberId: string | null;
+  account: CentralAuthUser;
   appInfo: AppInfo | null;
   agentStatus: AgentStatus;
   accountUsage: AccountUsage | null;
   updateStatus: UpdateStatus;
   agentStates: Record<string, SidebarAgentState>;
   onSelectBot: (botId: string) => void;
+  onSelectPerson: (memberId: string) => void;
   onCreateBot: () => void;
   onEditBot: (botId: string) => void;
   onDeleteBot: (botId: string) => Promise<void>;
   onRefreshUsage: () => Promise<AccountUsage>;
   onUpdateAction: () => Promise<void>;
+  onUpdateAccountAvatar: (image: AvatarImageInput | null) => Promise<void>;
+  onLogout: () => Promise<void>;
   onOpenExternal: (destination: ExternalDestination) => Promise<void>;
   onOpenPermissions: () => void;
   onCollapse: () => void;
@@ -49,11 +63,7 @@ function SidebarAgentIndicator(props: { state: SidebarAgentState }) {
       aria-hidden="true"
     >
       <Show when={props.state.kind === "working"}>
-        <span class="bot-row-thinking-dots">
-          <i />
-          <i />
-          <i />
-        </span>
+        <TypingDots class="bot-row-thinking-dots" />
       </Show>
       <Show when={props.state.kind === "responded"}>
         <svg viewBox="0 0 12 12">
@@ -180,6 +190,15 @@ function PermissionsIcon() {
   );
 }
 
+function LogoutIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
+      <path d="M8.2 4.2H5.5v11.6h2.7" />
+      <path d="M11.6 6.6 15 10l-3.4 3.4M7.8 10H15" />
+    </svg>
+  );
+}
+
 export function Sidebar(props: SidebarProps) {
   const [query, setQuery] = createSignal("");
   const [contextMenu, setContextMenu] = createSignal<BotContextMenu | null>(null);
@@ -191,8 +210,12 @@ export function Sidebar(props: SidebarProps) {
   const [accountMenuOpen, setAccountMenuOpen] = createSignal(false);
   const [usageLoading, setUsageLoading] = createSignal(false);
   const [accountError, setAccountError] = createSignal<string | null>(null);
+  const [avatarUploadBusy, setAvatarUploadBusy] = createSignal(false);
+  const [accountAvatarFailed, setAccountAvatarFailed] = createSignal(false);
+  const [loggingOut, setLoggingOut] = createSignal(false);
   let firstMenuItem: HTMLButtonElement | undefined;
   let botList: HTMLElement | undefined;
+  let accountAvatarInput: HTMLInputElement | undefined;
   const filteredBots = createMemo(() => {
     const normalizedQuery = query().trim().toLowerCase();
     return normalizedQuery
@@ -201,18 +224,43 @@ export function Sidebar(props: SidebarProps) {
         )
       : props.bots;
   });
-  const accountEmail = createMemo(() => {
-    const auth = props.agentStatus.auth;
-    return auth.kind === "chatgpt" || auth.kind === "claude" ? auth.email : null;
+  const directThreadByMember = createMemo(
+    () => new Map(props.directThreads.map((thread) => [thread.otherMemberId, thread])),
+  );
+  const filteredPeople = createMemo(() => {
+    const normalizedQuery = query().trim().toLowerCase();
+    return [...props.people]
+      .filter((member) => {
+        if (!normalizedQuery) return true;
+        const thread = directThreadByMember().get(member.id);
+        return `${teamMemberName(member)} ${member.email ?? member.username} ${thread?.lastMessage.text ?? ""}`
+          .toLowerCase()
+          .includes(normalizedQuery);
+      })
+      .sort((left, right) => {
+        const leftThread = directThreadByMember().get(left.id);
+        const rightThread = directThreadByMember().get(right.id);
+        if (leftThread || rightThread) {
+          return (rightThread?.updatedAt ?? "").localeCompare(leftThread?.updatedAt ?? "");
+        }
+        if (left.online !== right.online) return left.online ? -1 : 1;
+        return teamMemberName(left).localeCompare(teamMemberName(right));
+      });
   });
-  const accountName = createMemo(() => accountEmail() ?? "OpenBot");
+  const accountName = createMemo(() => props.account.name?.trim() || props.account.email);
   const accountInitials = createMemo(() => {
-    const localPart = accountEmail()?.split("@")[0] ?? "OpenBot";
+    const localPart = accountName().split("@")[0] ?? "OpenBot";
     const parts = localPart.split(/[._\-\s]+/).filter(Boolean);
     return (
       parts.length > 1 ? `${parts[0]?.[0]}${parts[1]?.[0]}` : localPart.slice(0, 2)
     ).toUpperCase();
   });
+  createEffect(
+    () => props.account.avatarUrl,
+    () => {
+      setAccountAvatarFailed(false);
+    },
+  );
   const weeklyUsage = createMemo(() => {
     const limit =
       props.accountUsage?.limits.find((candidate) => candidate.id === "codex") ??
@@ -277,7 +325,7 @@ export function Sidebar(props: SidebarProps) {
   }
 
   createEffect(
-    () => filteredBots(),
+    () => [filteredBots(), filteredPeople()],
     () => {
       requestAnimationFrame(updateScrollFade);
     },
@@ -374,6 +422,60 @@ export function Sidebar(props: SidebarProps) {
       );
   }
 
+  async function logout(): Promise<void> {
+    if (loggingOut()) return;
+    setLoggingOut(true);
+    setAccountError(null);
+    try {
+      await props.onLogout();
+    } catch (error) {
+      setAccountError(error instanceof Error ? error.message : "Could not sign out.");
+      setLoggingOut(false);
+    }
+  }
+
+  async function updateAccountAvatar(image: AvatarImageInput | null): Promise<void> {
+    if (avatarUploadBusy()) return;
+    setAvatarUploadBusy(true);
+    setAccountError(null);
+    try {
+      await props.onUpdateAccountAvatar(image);
+    } catch (error) {
+      setAccountError(error instanceof Error ? error.message : "Could not update your avatar.");
+    } finally {
+      setAvatarUploadBusy(false);
+    }
+  }
+
+  async function uploadAccountAvatar(file: File | undefined): Promise<void> {
+    if (!file) return;
+    setAvatarUploadBusy(true);
+    setAccountError(null);
+    try {
+      await props.onUpdateAccountAvatar(await normalizeAvatarFile(file));
+    } catch (error) {
+      setAccountError(error instanceof Error ? error.message : "Could not update your avatar.");
+    } finally {
+      setAvatarUploadBusy(false);
+      if (accountAvatarInput) accountAvatarInput.value = "";
+    }
+  }
+
+  function accountAvatar(className: string) {
+    return (
+      <span class={className} aria-hidden="true">
+        <Show
+          when={props.account.avatarUrl && !accountAvatarFailed() ? props.account.avatarUrl : null}
+          fallback={accountInitials()}
+        >
+          {(avatarUrl) => (
+            <img src={avatarUrl()} alt="" onError={() => setAccountAvatarFailed(true)} />
+          )}
+        </Show>
+      </span>
+    );
+  }
+
   return (
     <aside id="bot-sidebar" aria-label="Bot navigation" class="sidebar panel-edge">
       <div class="window-drag sidebar-topbar">
@@ -415,7 +517,7 @@ export function Sidebar(props: SidebarProps) {
 
       <nav
         ref={(element) => (botList = element)}
-        aria-label="Bot list"
+        aria-label="Chat list"
         class={[
           "bot-list",
           {
@@ -426,56 +528,113 @@ export function Sidebar(props: SidebarProps) {
         onScroll={() => updateScrollFade()}
       >
         <Show
-          when={filteredBots().length > 0}
+          when={filteredBots().length > 0 || filteredPeople().length > 0}
           fallback={
-            <p class="empty-search">{props.bots.length ? "No matches" : "No agents yet"}</p>
+            <p class="empty-search">
+              {query().trim() ? "No matches" : props.bots.length ? "No matches" : "No agents yet"}
+            </p>
           }
         >
-          <For each={filteredBots()}>
-            {(bot) => (
-              <button
-                type="button"
-                class={[
-                  "bot-row",
-                  {
-                    "bot-row-active": props.activeBotId === bot.id,
-                    "bot-row-menu-open": contextMenu()?.botId === bot.id,
-                  },
-                ]}
-                aria-pressed={props.activeBotId === bot.id ? "true" : "false"}
-                onClick={() => props.onSelectBot(bot.id)}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  openContextMenu(bot.id, event.clientX, event.clientY);
+          <Show when={filteredPeople().length > 0}>
+            <section class="sidebar-chat-group" aria-labelledby="sidebar-people-heading">
+              <header>
+                <h2 id="sidebar-people-heading">People</h2>
+                <span>{props.people.filter((member) => member.online).length} active</span>
+              </header>
+              <For each={filteredPeople()}>
+                {(member) => {
+                  const thread = () => directThreadByMember().get(member.id);
+                  return (
+                    <button
+                      type="button"
+                      class={[
+                        "bot-row person-row",
+                        { "bot-row-active": props.activeDirectMemberId === member.id },
+                      ]}
+                      aria-pressed={props.activeDirectMemberId === member.id ? "true" : "false"}
+                      onClick={() => props.onSelectPerson(member.id)}
+                    >
+                      <span class="bot-row-avatar">
+                        <TeamPersonAvatar member={member} />
+                        <Show when={(thread()?.unreadCount ?? 0) > 0}>
+                          <span class="person-unread-badge" aria-hidden="true">
+                            {Math.min(thread()?.unreadCount ?? 0, 99)}
+                          </span>
+                        </Show>
+                      </span>
+                      <span class="bot-row-copy">
+                        <span class="bot-row-heading">
+                          <strong>{teamMemberName(member)}</strong>
+                          <span>
+                            {thread() ? sidebarMessageTime(thread()?.updatedAt ?? "") : ""}
+                          </span>
+                        </span>
+                        <span class="bot-row-preview">
+                          {thread()?.lastMessage.text ?? (member.online ? "Online now" : "Offline")}
+                        </span>
+                      </span>
+                      <Show when={(thread()?.unreadCount ?? 0) > 0}>
+                        <span class="sr-only">{thread()?.unreadCount} unread direct messages</span>
+                      </Show>
+                    </button>
+                  );
                 }}
-                onKeyDown={(event) => {
-                  if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) {
-                    return;
-                  }
-                  event.preventDefault();
-                  const bounds = event.currentTarget.getBoundingClientRect();
-                  openContextMenu(bot.id, bounds.left + 28, bounds.top + 32);
-                }}
-              >
-                <span class="bot-row-avatar">
-                  <AgentAvatar bot={bot} />
-                  <Show when={props.agentStates[bot.id]}>
-                    {(state) => <SidebarAgentIndicator state={state()} />}
-                  </Show>
-                </span>
-                <span class="bot-row-copy">
-                  <span class="bot-row-heading">
-                    <strong>{bot.name}</strong>
-                    <span>{bot.time}</span>
-                  </span>
-                  <span class="bot-row-preview">{bot.preview}</span>
-                </span>
-                <Show when={props.agentStates[bot.id]}>
-                  {(state) => <span class="sr-only">{sidebarAgentStateLabel(state())}</span>}
-                </Show>
-              </button>
-            )}
-          </For>
+              </For>
+            </section>
+          </Show>
+          <Show when={filteredBots().length > 0}>
+            <section class="sidebar-chat-group" aria-labelledby="sidebar-agents-heading">
+              <header>
+                <h2 id="sidebar-agents-heading">Agents</h2>
+                <span>{props.bots.length}</span>
+              </header>
+              <For each={filteredBots()}>
+                {(bot) => (
+                  <button
+                    type="button"
+                    class={[
+                      "bot-row",
+                      {
+                        "bot-row-active": props.activeBotId === bot.id,
+                        "bot-row-menu-open": contextMenu()?.botId === bot.id,
+                      },
+                    ]}
+                    aria-pressed={props.activeBotId === bot.id ? "true" : "false"}
+                    onClick={() => props.onSelectBot(bot.id)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      openContextMenu(bot.id, event.clientX, event.clientY);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) {
+                        return;
+                      }
+                      event.preventDefault();
+                      const bounds = event.currentTarget.getBoundingClientRect();
+                      openContextMenu(bot.id, bounds.left + 28, bounds.top + 32);
+                    }}
+                  >
+                    <span class="bot-row-avatar">
+                      <AgentAvatar bot={bot} />
+                      <Show when={props.agentStates[bot.id]}>
+                        {(state) => <SidebarAgentIndicator state={state()} />}
+                      </Show>
+                    </span>
+                    <span class="bot-row-copy">
+                      <span class="bot-row-heading">
+                        <strong>{bot.name}</strong>
+                        <span>{bot.time}</span>
+                      </span>
+                      <span class="bot-row-preview">{bot.preview}</span>
+                    </span>
+                    <Show when={props.agentStates[bot.id]}>
+                      {(state) => <span class="sr-only">{sidebarAgentStateLabel(state())}</span>}
+                    </Show>
+                  </button>
+                )}
+              </For>
+            </section>
+          </Show>
         </Show>
       </nav>
 
@@ -487,6 +646,44 @@ export function Sidebar(props: SidebarProps) {
             aria-label="Account menu"
             onPointerDown={(event) => event.stopPropagation()}
           >
+            <div class="account-profile-card">
+              <input
+                ref={(element) => (accountAvatarInput = element)}
+                class="sr-only"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={(event) => void uploadAccountAvatar(event.currentTarget.files?.[0])}
+              />
+              {accountAvatar("account-profile-avatar")}
+              <div class="account-profile-copy">
+                <strong>{accountName()}</strong>
+                <span>{props.account.email}</span>
+                <div class="account-profile-actions">
+                  <button
+                    type="button"
+                    onClick={() => accountAvatarInput?.click()}
+                    disabled={avatarUploadBusy()}
+                  >
+                    {avatarUploadBusy()
+                      ? "Saving…"
+                      : props.account.avatarUrl
+                        ? "Replace photo"
+                        : "Upload photo"}
+                  </button>
+                  <Show when={props.account.avatarUrl}>
+                    <button
+                      type="button"
+                      class="account-profile-remove"
+                      onClick={() => void updateAccountAvatar(null)}
+                      disabled={avatarUploadBusy()}
+                    >
+                      Remove
+                    </button>
+                  </Show>
+                </div>
+              </div>
+            </div>
+            <div class="account-menu-separator" />
             <Show when={props.updateStatus.phase !== "unsupported"}>
               <button
                 type="button"
@@ -544,6 +741,17 @@ export function Sidebar(props: SidebarProps) {
               <MessageIcon />
               <span>Message</span>
             </button>
+            <div class="account-menu-separator" />
+            <button
+              type="button"
+              role="menuitem"
+              class="account-menu-row account-menu-danger"
+              onClick={() => void logout()}
+              disabled={loggingOut()}
+            >
+              <LogoutIcon />
+              <span>{loggingOut() ? "Signing out…" : "Sign out"}</span>
+            </button>
             <Show when={popoverError()}>
               {(message) => <p class="account-popover-error">{message()}</p>}
             </Show>
@@ -558,7 +766,7 @@ export function Sidebar(props: SidebarProps) {
           onClick={toggleAccountMenu}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          <span class="profile-dot">{accountInitials()}</span>
+          {accountAvatar("profile-dot")}
           <span class="profile-copy">
             <strong>{accountName()}</strong>
             <Show when={props.appInfo}>
@@ -671,4 +879,14 @@ export function Sidebar(props: SidebarProps) {
       </Show>
     </aside>
   );
+}
+
+function sidebarMessageTime(value: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) {
+    return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" }).format(date);
+  }
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
 }

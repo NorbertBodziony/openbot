@@ -39,6 +39,9 @@ describe("OpenBotDatabase", () => {
         "projection_reactions",
         "projection_attachments",
         "projection_thread_summaries",
+        "projection_direct_threads",
+        "projection_direct_messages",
+        "projection_direct_reads",
         "file_deletion_outbox",
       ]),
     );
@@ -183,6 +186,7 @@ function testBot(): BotSummary {
     updatedAt: "2026-08-18T10:00:01.000Z",
     avatarSeed: "chief",
     avatarHue: null,
+    avatarUrl: null,
   };
 }
 

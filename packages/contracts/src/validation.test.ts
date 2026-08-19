@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { isUuidV4, isValidHostname, normalizeEmailAddress } from "./validation";
+import {
+  isOpenBotTeamApiHostname,
+  isOpenBotTeamVncHostname,
+  isUuidV4,
+  isValidHostname,
+  normalizeEmailAddress,
+} from "./validation";
 
 describe("shared boundary validation", () => {
   it("normalizes valid email addresses", () => {
@@ -20,5 +26,12 @@ describe("shared boundary validation", () => {
   it("accepts only version 4 UUIDs", () => {
     expect(isUuidV4("3f5c2c9c-f0c8-4c59-9917-cb91aec9e3cd")).toBe(true);
     expect(isUuidV4("3f5c2c9c-f0c8-1c59-9917-cb91aec9e3cd")).toBe(false);
+  });
+
+  it("accepts new team hosts and existing root-domain hosts", () => {
+    expect(isOpenBotTeamApiHostname(`h-${"a".repeat(32)}.teams.openbot.run`)).toBe(true);
+    expect(isOpenBotTeamApiHostname(`h-${"a".repeat(32)}.openbot.run`)).toBe(true);
+    expect(isOpenBotTeamVncHostname(`vnc-h-${"a".repeat(32)}.teams.openbot.run`)).toBe(true);
+    expect(isOpenBotTeamApiHostname("host.example.com")).toBe(false);
   });
 });

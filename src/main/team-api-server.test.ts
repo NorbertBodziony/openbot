@@ -7,12 +7,15 @@ import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type { TeamPresenceSnapshot } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
+import { OpenBotDatabase } from "../backend/openbot-database";
+import { TeamChatStore } from "../backend/team-chat-store";
 import { TeamApiServer } from "./team-api-server";
 import { TeamStore } from "./team-store";
 
@@ -22,6 +25,12 @@ const requireModule = createRequire(import.meta.url);
 const { WebSocket: NodeWebSocket } = requireModule(
   join(dirname(requireModule.resolve("ws/package.json")), "index.js"),
 ) as typeof Ws;
+
+interface TestRealtimeEvent {
+  type: string;
+  code?: string;
+  snapshot?: TeamPresenceSnapshot;
+}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -45,7 +54,11 @@ describe("TeamApiServer administration", () => {
       avatarUrl: null,
     });
     const invite = await store.createInvite("member", "alice@example.com");
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    const chat = new TeamChatStore(database);
     const agentEvents = new EventEmitter();
+    const presenceSnapshots: TeamPresenceSnapshot[] = [];
     const agents = agentEvents as unknown as AgentService;
     const api = new TeamApiServer({
       store,
@@ -59,9 +72,11 @@ describe("TeamApiServer administration", () => {
               id: "alice-account",
               email: "alice@example.com",
               name: "Alice",
-              avatarUrl: null,
+              avatarUrl: "https://api.openbot.run/v1/avatars/alice-account?v=image-1",
             }
           : null,
+      onPresence: (snapshot) => presenceSnapshots.push(snapshot),
+      chat,
     });
     const port = await api.start();
 
@@ -78,27 +93,112 @@ describe("TeamApiServer administration", () => {
       });
       expect(response.status).toBe(201);
       const joined = (await response.json()) as {
-        member: { email: string; role: string };
+        member: { id: string; email: string; role: string; avatarUrl: string | null };
         sessionToken: string;
       };
-      expect(joined.member).toMatchObject({ email: "alice@example.com", role: "member" });
+      expect(joined.member).toMatchObject({
+        email: "alice@example.com",
+        role: "member",
+        avatarUrl: "https://api.openbot.run/v1/avatars/alice-account?v=image-1",
+      });
       expect(store.authenticate(joined.sessionToken)?.email).toBe("alice@example.com");
 
       const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
         "openbot-events",
         `openbot-token.${joined.sessionToken}`,
       ]);
+      const initialPresence = nextJsonEvent(socket);
       await new Promise<void>((resolve, reject) => {
         socket.addEventListener("open", () => resolve(), { once: true });
         socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), {
           once: true,
         });
       });
-      const received = new Promise<unknown>((resolve) => {
-        socket.addEventListener("message", (message) => resolve(JSON.parse(String(message.data))), {
-          once: true,
-        });
+      await expect(initialPresence).resolves.toMatchObject({
+        type: "team-presence",
+        snapshot: {
+          members: expect.arrayContaining([
+            expect.objectContaining({
+              email: "alice@example.com",
+              online: true,
+              avatarUrl: "https://api.openbot.run/v1/avatars/alice-account?v=image-1",
+            }),
+          ]),
+        },
       });
+
+      const typingPresence = nextJsonEvent(socket);
+      socket.send(JSON.stringify({ type: "team-typing", botId: "chief", typing: true }));
+      await expect(typingPresence).resolves.toMatchObject({
+        type: "team-presence",
+        snapshot: {
+          members: expect.arrayContaining([
+            expect.objectContaining({
+              email: "alice@example.com",
+              online: true,
+              typingBotId: "chief",
+            }),
+          ]),
+        },
+      });
+
+      const stoppedTypingPresence = nextJsonEvent(socket);
+      socket.send(JSON.stringify({ type: "team-typing", botId: null, typing: false }));
+      await expect(stoppedTypingPresence).resolves.toMatchObject({
+        type: "team-presence",
+        snapshot: {
+          members: expect.arrayContaining([
+            expect.objectContaining({ email: "alice@example.com", typingBotId: null }),
+          ]),
+        },
+      });
+
+      const owner = store.listMembers().find((member) => member.role === "owner");
+      expect(owner).toBeDefined();
+      const directTypingEvent = nextJsonEvent(socket);
+      socket.send(
+        JSON.stringify({
+          type: "team-direct-typing",
+          recipientMemberId: owner?.id,
+          typing: true,
+        }),
+      );
+      await expect(directTypingEvent).resolves.toMatchObject({
+        type: "team-direct-typing",
+        senderMemberId: joined.member.id,
+        recipientMemberId: owner?.id,
+        typing: true,
+      });
+      const directMessageEvent = nextJsonEvent(socket);
+      const directResponse = await fetch(`http://127.0.0.1:${port}/v1/direct/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${joined.sessionToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          memberId: owner?.id,
+          clientMessageId: "message-alice-owner",
+          text: "Can we review this together?",
+        }),
+      });
+      expect(directResponse.status).toBe(201);
+      await expect(directMessageEvent).resolves.toMatchObject({
+        type: "team-direct-message",
+        message: {
+          senderMemberId: joined.member.id,
+          recipientMemberId: owner?.id,
+          text: "Can we review this together?",
+        },
+      });
+      const threads = await jsonRequest<Array<{ unreadCount: number }>>(
+        `http://127.0.0.1:${port}`,
+        "/v1/direct/threads",
+        { token: joined.sessionToken },
+      );
+      expect(threads).toMatchObject([{ unreadCount: 0 }]);
+
+      const received = nextJsonEvent(socket);
       agentEvents.emit("event", {
         type: "error",
         code: "smoke_event",
@@ -106,8 +206,16 @@ describe("TeamApiServer administration", () => {
       });
       await expect(received).resolves.toMatchObject({ type: "error", code: "smoke_event" });
       socket.close();
+      await expect
+        .poll(
+          () =>
+            presenceSnapshots.at(-1)?.members.find((member) => member.email === "alice@example.com")
+              ?.online,
+        )
+        .toBe(false);
     } finally {
       await api.stop();
+      database.close();
     }
   });
 
@@ -172,6 +280,11 @@ describe("TeamApiServer administration", () => {
         method: "DELETE",
         token: ownerToken,
       });
+      await emptyRequest(base, `/v1/team/members/${joined.member.id}`, {
+        method: "DELETE",
+        token: ownerToken,
+      });
+      expect(store.listMembers().map((member) => member.username)).toEqual(["owner"]);
       await emptyRequest(base, "/v1/auth/password", {
         token: ownerToken,
         body: {
@@ -304,6 +417,19 @@ function nextWebSocketMessage(websocket: Ws.WebSocket): Promise<Buffer> {
       );
     });
     websocket.once("error", reject);
+  });
+}
+
+function nextJsonEvent(websocket: WebSocket): Promise<TestRealtimeEvent> {
+  return new Promise((resolve, reject) => {
+    websocket.addEventListener(
+      "message",
+      (message) => resolve(JSON.parse(String(message.data)) as TestRealtimeEvent),
+      { once: true },
+    );
+    websocket.addEventListener("error", () => reject(new Error("WebSocket event failed.")), {
+      once: true,
+    });
   });
 }
 

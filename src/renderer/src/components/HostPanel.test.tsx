@@ -24,6 +24,7 @@ describe("HostPanel", () => {
         members={[]}
         invites={[]}
         sessions={[]}
+        presence={{ serverId: null, members: [], updatedAt: "" }}
         onClose={vi.fn()}
         onConfigure={vi.fn()}
         onConfigureRemoteDesktop={vi.fn()}
@@ -31,6 +32,7 @@ describe("HostPanel", () => {
         onStop={vi.fn()}
         onCreateInvite={vi.fn()}
         onUpdateMember={vi.fn()}
+        onRemoveMember={vi.fn()}
         onRevokeSession={vi.fn()}
         onRevokeInvite={vi.fn()}
         onCopyAddressUpdate={vi.fn()}
@@ -71,6 +73,7 @@ describe("HostPanel", () => {
         members={[]}
         invites={[]}
         sessions={[]}
+        presence={{ serverId: "server-1", members: [], updatedAt: "" }}
         onClose={vi.fn()}
         onConfigure={vi.fn()}
         onConfigureRemoteDesktop={vi.fn()}
@@ -78,19 +81,21 @@ describe("HostPanel", () => {
         onStop={vi.fn()}
         onCreateInvite={onCreateInvite}
         onUpdateMember={vi.fn()}
+        onRemoveMember={vi.fn()}
         onRevokeSession={vi.fn()}
         onRevokeInvite={vi.fn()}
         onCopyAddressUpdate={vi.fn()}
       />
     ));
 
-    await fireEvent.click(screen.getByRole("button", { name: "Send email" }));
+    await fireEvent.click(screen.getByRole("button", { name: /^People/ }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Email invitation" }));
     const emailInput = screen.getByRole("textbox", { name: "Email address" });
     expect(emailInput).toHaveAttribute("maxlength", String(INPUT_LIMITS.email));
     await fireEvent.input(emailInput, {
       target: { value: "alice@example.com" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Send invitation" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Send email invitation" }));
 
     await waitFor(() =>
       expect(onCreateInvite).toHaveBeenCalledWith({
@@ -98,6 +103,148 @@ describe("HostPanel", () => {
         email: "alice@example.com",
       }),
     );
-    expect(await screen.findByText(/Invitation sent to alice@example.com/)).toBeInTheDocument();
+    expect(await screen.findByText("Invitation sent")).toBeInTheDocument();
+    expect(screen.getByText(/alice@example.com can join until/)).toBeInTheDocument();
+  });
+
+  it("removes a member only after inline confirmation", async () => {
+    const onRemoveMember = vi.fn().mockResolvedValue(undefined);
+    render(() => (
+      <HostPanel
+        accountEmail="owner@example.com"
+        status={{
+          phase: "online",
+          configured: true,
+          enabledOnLaunch: true,
+          serverId: "server-1",
+          serverName: "Studio Mac",
+          apiUrl: "https://studio.teams.openbot.run",
+          vncHostname: null,
+          apiOnline: true,
+          vncOnline: false,
+          remoteDesktopCredentialConfigured: false,
+          message: "The team server is online.",
+        }}
+        members={[
+          {
+            id: "owner-1",
+            username: "owner@example.com",
+            email: "owner@example.com",
+            name: null,
+            role: "owner",
+            createdAt: "2026-08-18T10:00:00.000Z",
+            disabled: false,
+          },
+          {
+            id: "member-1",
+            username: "alice@example.com",
+            email: "alice@example.com",
+            name: "Alice",
+            role: "member",
+            createdAt: "2026-08-18T11:00:00.000Z",
+            disabled: false,
+          },
+        ]}
+        invites={[]}
+        sessions={[]}
+        presence={{
+          serverId: "server-1",
+          updatedAt: "2026-08-18T11:01:00.000Z",
+          members: [
+            {
+              id: "member-1",
+              username: "alice@example.com",
+              email: "alice@example.com",
+              name: "Alice",
+              role: "member",
+              createdAt: "2026-08-18T11:00:00.000Z",
+              disabled: false,
+              online: true,
+              typingBotId: "chief",
+            },
+          ],
+        }}
+        onClose={vi.fn()}
+        onConfigure={vi.fn()}
+        onConfigureRemoteDesktop={vi.fn()}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onCreateInvite={vi.fn()}
+        onUpdateMember={vi.fn()}
+        onRemoveMember={onRemoveMember}
+        onRevokeSession={vi.fn()}
+        onRevokeInvite={vi.fn()}
+        onCopyAddressUpdate={vi.fn()}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("button", { name: /^People/ }));
+    expect(screen.getByText("Typing now")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove owner@example.com" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Remove Alice" }));
+    expect(screen.getByText(/end all active sessions/)).toBeInTheDocument();
+    expect(onRemoveMember).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Remove person" }));
+    await waitFor(() => expect(onRemoveMember).toHaveBeenCalledWith("member-1"));
+  });
+
+  it("creates and copies a one-time invitation link", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const onCreateInvite = vi.fn().mockResolvedValue({
+      id: "invite-link",
+      role: "admin",
+      email: null,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      usedAt: null,
+      inviteUrl: "openbot://join?invite=private-token",
+    });
+    render(() => (
+      <HostPanel
+        accountEmail="owner@example.com"
+        status={{
+          phase: "online",
+          configured: true,
+          enabledOnLaunch: true,
+          serverId: "server-1",
+          serverName: "Studio Mac",
+          apiUrl: "https://studio.teams.openbot.run",
+          vncHostname: null,
+          apiOnline: true,
+          vncOnline: false,
+          remoteDesktopCredentialConfigured: false,
+          message: "The team server is online.",
+        }}
+        members={[]}
+        invites={[]}
+        sessions={[]}
+        presence={{ serverId: "server-1", members: [], updatedAt: "" }}
+        onClose={vi.fn()}
+        onConfigure={vi.fn()}
+        onConfigureRemoteDesktop={vi.fn()}
+        onStart={vi.fn()}
+        onStop={vi.fn()}
+        onCreateInvite={onCreateInvite}
+        onUpdateMember={vi.fn()}
+        onRemoveMember={vi.fn()}
+        onRevokeSession={vi.fn()}
+        onRevokeInvite={vi.fn()}
+        onCopyAddressUpdate={vi.fn()}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("button", { name: /^People/ }));
+    await fireEvent.change(screen.getByRole("combobox", { name: "Invitation role" }), {
+      target: { value: "admin" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Create invitation link" }));
+
+    await waitFor(() => expect(onCreateInvite).toHaveBeenCalledWith({ role: "admin" }));
+    expect(writeText).toHaveBeenCalledWith("openbot://join?invite=private-token");
+    expect(await screen.findByText("Link copied")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy again" })).toBeInTheDocument();
   });
 });

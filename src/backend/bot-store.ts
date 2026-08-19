@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import {
+  avatarFileExtension,
+  isAvatarMimeType,
+  isValidAvatarImage,
+} from "@openbot/contracts/avatar-images";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   type AgentModelId,
   type AgentReasoningEffort,
+  type AvatarImageInput,
   type BotSummary,
   isAgentModel,
   isAvatarHue,
@@ -13,6 +19,7 @@ import {
   type UpdateBotInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isString } from "@openbot/contracts/runtime-values";
+import { isUuidV4 } from "@openbot/contracts/validation";
 import {
   OpenBotDatabase,
   type ProviderSession,
@@ -22,7 +29,8 @@ import {
 import { isRecord } from "./protocol";
 
 type StoredBot = BotSummary;
-type StoredBotBase = Omit<StoredBot, "avatarSeed" | "avatarHue"> & DynamicRecord;
+type PersistedStoredBot = Omit<StoredBot, "avatarUrl"> & { avatarUrl?: string | null };
+type StoredBotBase = Omit<PersistedStoredBot, "avatarSeed" | "avatarHue"> & DynamicRecord;
 
 interface StoredState {
   version: 2;
@@ -30,7 +38,7 @@ interface StoredState {
   bots: StoredBot[];
 }
 
-type LegacyStoredBot = Omit<StoredBot, "avatarSeed" | "avatarHue"> & {
+type LegacyStoredBot = Omit<PersistedStoredBot, "avatarSeed" | "avatarHue"> & {
   avatarShape: string;
   avatarColor: string;
 };
@@ -67,8 +75,10 @@ export class BotStore {
   readonly #botsRoot: string;
   readonly #sharedRoot: string;
   readonly #downloadsRoot: string;
+  readonly #avatarsRoot: string;
   readonly #database: OpenBotDatabase;
   #state: StoredState = { version: 2, examplesInitialized: false, bots: [] };
+  #avatarUpdateQueue: Promise<void> = Promise.resolve();
 
   constructor(
     userDataPath: string,
@@ -80,6 +90,7 @@ export class BotStore {
     this.#botsRoot = join(openbotRoot, "Bots");
     this.#sharedRoot = join(openbotRoot, "Shared");
     this.#downloadsRoot = join(openbotRoot, "Downloads");
+    this.#avatarsRoot = join(userDataPath, "avatars", "agents");
     this.#database = database;
   }
 
@@ -100,13 +111,18 @@ export class BotStore {
       mkdir(this.#botsRoot, { recursive: true, mode: 0o700 }),
       mkdir(this.#sharedRoot, { recursive: true, mode: 0o700 }),
       mkdir(this.#downloadsRoot, { recursive: true, mode: 0o700 }),
+      mkdir(this.#avatarsRoot, { recursive: true, mode: 0o700 }),
       mkdir(dirname(this.#statePath), { recursive: true, mode: 0o700 }),
     ]);
 
     await this.#database.initialize();
     const persisted = this.#database.listAgents();
     if (persisted.length > 0 || this.#database.hasAggregateEvents("agents", "agents")) {
-      this.#state = { version: 2, examplesInitialized: true, bots: persisted };
+      this.#state = {
+        version: 2,
+        examplesInitialized: true,
+        bots: persisted.map(normalizeStoredBot),
+      };
       return;
     }
 
@@ -174,6 +190,73 @@ export class BotStore {
     return { ...bot };
   }
 
+  async setAvatar(botId: string, image: AvatarImageInput | null): Promise<BotSummary> {
+    const operation = this.#avatarUpdateQueue.then(() => this.#setAvatar(botId, image));
+    this.#avatarUpdateQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  async #setAvatar(botId: string, image: AvatarImageInput | null): Promise<BotSummary> {
+    const bot = this.#requireBot(botId);
+    const previous = this.resolveAvatar(botId);
+    const previousAvatarUrl = bot.avatarUrl;
+    const previousUpdatedAt = bot.updatedAt;
+    if (image === null) {
+      bot.avatarUrl = null;
+      bot.updatedAt = new Date().toISOString();
+      try {
+        this.#persist("agent.avatar-removed");
+      } catch (error) {
+        bot.avatarUrl = previousAvatarUrl;
+        bot.updatedAt = previousUpdatedAt;
+        throw error;
+      }
+      if (previous) await rm(previous.path, { force: true }).catch(() => undefined);
+      return { ...bot };
+    }
+    if (!isValidAvatarImage(image.mimeType, image.bytes)) {
+      throw new Error("Choose a valid PNG, JPEG, or WebP image up to 512 KB.");
+    }
+    const version = randomUUID();
+    const extension = avatarFileExtension(image.mimeType);
+    const directory = join(this.#avatarsRoot, bot.id);
+    const target = join(directory, `${version}.${extension}`);
+    const temporary = `${target}.tmp`;
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await writeFile(temporary, image.bytes, { mode: 0o600 });
+    await rename(temporary, target);
+    bot.avatarUrl = agentAvatarUrl(bot.id, version, image.mimeType);
+    bot.updatedAt = new Date().toISOString();
+    try {
+      this.#persist("agent.avatar-updated");
+    } catch (error) {
+      bot.avatarUrl = previousAvatarUrl;
+      bot.updatedAt = previousUpdatedAt;
+      await rm(target, { force: true });
+      throw error;
+    }
+    if (previous) await rm(previous.path, { force: true }).catch(() => undefined);
+    return { ...bot };
+  }
+
+  resolveAvatar(
+    botId: string,
+  ): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
+    const bot = this.#requireBot(botId);
+    if (!bot.avatarUrl) return null;
+    const parsed = parseAgentAvatarUrl(bot.avatarUrl, bot.id);
+    if (!parsed) return null;
+    const extension = avatarFileExtension(parsed.mimeType);
+    return {
+      path: join(this.#avatarsRoot, bot.id, `${parsed.version}.${extension}`),
+      mimeType: parsed.mimeType,
+      version: parsed.version,
+    };
+  }
+
   async deleteBot(id: string): Promise<BotSummary> {
     const bot = this.#requireBot(id);
     this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== id);
@@ -183,6 +266,7 @@ export class BotStore {
       bot.threadId,
       this.#state.bots,
     );
+    await rm(join(this.#avatarsRoot, id), { recursive: true, force: true });
     return { ...bot };
   }
 
@@ -252,7 +336,7 @@ export class BotStore {
       if (parsed.version === 1 && parsed.bots.every(isLegacyStoredBot)) {
         bots = parsed.bots.map(migrateLegacyBot);
       } else if (parsed.version === 2 && parsed.bots.every(isStoredBot)) {
-        bots = parsed.bots.map((bot) => ({ ...bot }));
+        bots = parsed.bots.map(normalizeStoredBot);
       } else {
         throw new Error(
           "Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.",
@@ -294,6 +378,7 @@ export class BotStore {
       updatedAt: null,
       avatarSeed: id,
       avatarHue: null,
+      avatarUrl: null,
     };
   }
 
@@ -352,7 +437,7 @@ function isStoredBotBase(value: unknown): value is StoredBotBase {
   );
 }
 
-function isStoredBot(value: unknown): value is StoredBot {
+function isStoredBot(value: unknown): value is PersistedStoredBot {
   if (!isRecord(value) || !isStoredBotBase(value)) return false;
   const record = value;
   return (
@@ -388,5 +473,45 @@ function migrateLegacyBot(bot: LegacyStoredBot): StoredBot {
     updatedAt: bot.updatedAt,
     avatarSeed: bot.id,
     avatarHue: null,
+    avatarUrl: null,
   };
+}
+
+function normalizeStoredBot(bot: PersistedStoredBot): StoredBot {
+  return {
+    ...bot,
+    avatarUrl:
+      isString(bot.avatarUrl) && parseAgentAvatarUrl(bot.avatarUrl, bot.id) ? bot.avatarUrl : null,
+  };
+}
+
+function agentAvatarUrl(botId: string, version: string, mimeType: string): string {
+  const url = new URL(`openbot-avatar://agent/${encodeURIComponent(botId)}`);
+  url.searchParams.set("v", version);
+  url.searchParams.set("type", mimeType);
+  return url.toString();
+}
+
+function parseAgentAvatarUrl(
+  value: string,
+  expectedBotId: string,
+): { version: string; mimeType: AvatarImageInput["mimeType"] } | null {
+  try {
+    const url = new URL(value);
+    const botId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
+    const version = url.searchParams.get("v") ?? "";
+    const mimeType = url.searchParams.get("type") ?? "";
+    if (
+      url.protocol !== "openbot-avatar:" ||
+      url.hostname !== "agent" ||
+      botId !== expectedBotId ||
+      !isUuidV4(version) ||
+      !isAvatarMimeType(mimeType)
+    ) {
+      return null;
+    }
+    return { version, mimeType };
+  } catch {
+    return null;
+  }
 }

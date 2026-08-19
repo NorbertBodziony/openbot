@@ -5,16 +5,26 @@ import type {
   ConfigureHostInput,
   ConfigureRemoteDesktopInput,
   CreateTeamInviteInput,
+  DirectConversationSnapshot,
+  DirectMessage,
+  DirectMessageRealtimeEvent,
+  DirectThreadSummary,
+  DirectTypingInput,
+  DirectTypingRealtimeEvent,
   HostStatus,
   InviteSummary,
+  SendDirectMessageInput,
+  SetTeamTypingInput,
   TeamInviteSummary,
   TeamMemberSummary,
+  TeamPresenceSnapshot,
   TeamSessionSummary,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
+import type { TeamChatStore } from "../backend/team-chat-store";
 import type { ProvisionedTeamTunnel } from "./central-auth-manager";
 import {
   appendDiagnosticLog,
@@ -27,6 +37,9 @@ import type { TeamStore } from "./team-store";
 
 interface HostEvents {
   changed: [status: HostStatus];
+  presence: [snapshot: TeamPresenceSnapshot];
+  directMessage: [event: DirectMessageRealtimeEvent];
+  directTyping: [event: DirectTypingRealtimeEvent];
 }
 
 interface HostServiceOptions {
@@ -34,6 +47,7 @@ interface HostServiceOptions {
   agents: AgentService;
   mailbox: MailboxStore;
   browser: BrowserHost;
+  chat?: TeamChatStore;
   resolveCloudflared?: () => Promise<string | null>;
   spawnProcess?: typeof spawn;
   tunnelTimeoutMs?: number;
@@ -110,11 +124,20 @@ export class HostService extends EventEmitter<HostEvents> {
       }),
       getRemoteDesktopPassword: options.getRemoteDesktopPassword,
       redeemCentralTicket: options.redeemCentralTicket,
+      chat: options.chat,
+      onPresence: (snapshot) => this.emit("presence", snapshot),
+      onDirectMessage: (event) => this.emit("directMessage", event),
+      onDirectTyping: (event) => this.emit("directTyping", event),
     });
   }
 
   getStatus(): HostStatus {
     return { ...this.#status };
+  }
+
+  async syncSignedInAccount(user: CentralAuthUser): Promise<void> {
+    if (!this.#options.store.configured) return;
+    if (await this.#options.store.syncAccount(user)) this.#api.refreshPresence();
   }
 
   async configure(input: ConfigureHostInput): Promise<HostStatus> {
@@ -130,6 +153,7 @@ export class HostService extends EventEmitter<HostEvents> {
       enabledOnLaunch: false,
       message: null,
     });
+    this.#api.refreshPresence();
     try {
       const tunnel = await this.#options.provisionTeamTunnel({
         serverId: identity.serverId,
@@ -150,7 +174,9 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async configureRemoteDesktop(input: ConfigureRemoteDesktopInput): Promise<HostStatus> {
-    this.#options.store.assertOwnerAccount(this.#options.getSignedInUser());
+    const signedInUser = this.#options.getSignedInUser();
+    this.#options.store.assertOwnerAccount(signedInUser);
+    await this.syncSignedInAccount(signedInUser);
     await this.#options.setRemoteDesktopPassword(input.password);
     const vncOnline = this.#status.apiOnline ? await probeRfbHandshake(5900, 2_000) : false;
     this.#setStatus({
@@ -168,7 +194,9 @@ export class HostService extends EventEmitter<HostEvents> {
     if (this.#status.phase === "online" || this.#status.phase === "starting") {
       return this.getStatus();
     }
-    this.#options.store.assertOwnerAccount(this.#options.getSignedInUser());
+    const signedInUser = this.#options.getSignedInUser();
+    this.#options.store.assertOwnerAccount(signedInUser);
+    await this.syncSignedInAccount(signedInUser);
     this.#setStatus({ phase: "starting", message: "Starting the team API…" });
     const executable = await (this.#options.resolveCloudflared?.() ??
       resolveCloudflaredExecutable());
@@ -184,7 +212,7 @@ export class HostService extends EventEmitter<HostEvents> {
       const apiPort = await this.#api.start();
       const screenSharingReady = await probeRfbHandshake(5900, 2_000);
       const vncReady = screenSharingReady && this.#options.getRemoteDesktopPassword() !== null;
-      this.#setStatus({ message: "Provisioning a stable openbot.run address…" });
+      this.#setStatus({ message: "Provisioning a stable teams.openbot.run address…" });
       const identity = this.#options.store.getIdentity();
       if (!identity) throw new Error("Configure the team server first.");
       const provisioned = await this.#options.provisionTeamTunnel({
@@ -252,6 +280,35 @@ export class HostService extends EventEmitter<HostEvents> {
     return this.#options.store.listMembers();
   }
 
+  getPresence(): TeamPresenceSnapshot {
+    return this.#api.getPresence();
+  }
+
+  setTyping(input: SetTeamTypingInput): void {
+    this.#api.setLocalTyping(input.botId, input.typing);
+  }
+
+  listDirectThreads(): DirectThreadSummary[] {
+    if (!this.#options.store.configured) return [];
+    return this.#api.listDirectThreads(this.#currentMemberId());
+  }
+
+  readDirectConversation(memberId: string): DirectConversationSnapshot {
+    return this.#api.readDirectConversation(this.#currentMemberId(), memberId);
+  }
+
+  sendDirectMessage(input: SendDirectMessageInput): DirectMessage {
+    return this.#api.sendDirectMessage(this.#currentMemberId(), input);
+  }
+
+  markDirectRead(memberId: string): void {
+    this.#api.markDirectRead(this.#currentMemberId(), memberId);
+  }
+
+  setDirectTyping(input: DirectTypingInput): void {
+    this.#api.setLocalDirectTyping(this.#currentMemberId(), input.memberId, input.typing);
+  }
+
   listInvites(): TeamInviteSummary[] {
     return this.#options.store.listInvites();
   }
@@ -260,15 +317,23 @@ export class HostService extends EventEmitter<HostEvents> {
     return this.#options.store.listSessions();
   }
 
-  updateMember(input: UpdateTeamMemberInput): Promise<TeamMemberSummary> {
-    return this.#options.store.updateMember(input.memberId, {
+  async updateMember(input: UpdateTeamMemberInput): Promise<TeamMemberSummary> {
+    const member = await this.#options.store.updateMember(input.memberId, {
       ...(input.role ? { role: input.role } : {}),
       ...(input.disabled === undefined ? {} : { disabled: input.disabled }),
     });
+    this.#api.refreshPresence();
+    return member;
   }
 
-  revokeSession(sessionId: string): Promise<void> {
-    return this.#options.store.revokeSession(sessionId);
+  async removeMember(memberId: string): Promise<void> {
+    await this.#options.store.removeMember(memberId);
+    this.#api.refreshPresence();
+  }
+
+  async revokeSession(sessionId: string): Promise<void> {
+    await this.#options.store.revokeSession(sessionId);
+    this.#api.refreshPresence();
   }
 
   revokeInvite(inviteId: string): Promise<void> {
@@ -369,6 +434,19 @@ export class HostService extends EventEmitter<HostEvents> {
   #setStatus(patch: Partial<HostStatus>): void {
     this.#status = { ...this.#status, ...patch };
     this.emit("changed", this.getStatus());
+  }
+
+  #currentMemberId(): string {
+    const email = this.#options.getSignedInUser().email.trim().toLowerCase();
+    const member = this.#options.store
+      .listMembers()
+      .find(
+        (candidate) =>
+          candidate.email?.trim().toLowerCase() === email ||
+          candidate.username.trim().toLowerCase() === email,
+      );
+    if (!member || member.disabled) throw new Error("Your team access is unavailable.");
+    return member.id;
   }
 }
 

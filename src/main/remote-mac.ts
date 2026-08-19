@@ -11,6 +11,7 @@ import type {
   RemoteMacErrorCode,
   RemoteMacSession,
 } from "@openbot/contracts/ipc";
+import { isOpenBotTeamVncHostname } from "@openbot/contracts/validation";
 import {
   type RemoteDesktopWebSocketTarget,
   startVncWebSocketBridge,
@@ -48,7 +49,7 @@ interface ManagedSession {
 
 export function isValidTunnelHostname(value: string): boolean {
   if (value.length > 253 || value !== value.toLowerCase()) return false;
-  if (/^vnc-h-[0-9a-f]{32}\.openbot\.run$/u.test(value)) return true;
+  if (isOpenBotTeamVncHostname(value)) return true;
   if (!value.endsWith(".trycloudflare.com")) return false;
   const labels = value.split(".");
   if (labels.length < 3) return false;

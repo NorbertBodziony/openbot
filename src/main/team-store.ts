@@ -166,6 +166,7 @@ export class TeamStore {
           username: username.trim().toLowerCase(),
           email: null,
           name: null,
+          avatarUrl: null,
           role: "owner",
           disabled: false,
           createdAt: new Date().toISOString(),
@@ -200,6 +201,7 @@ export class TeamStore {
           username: email,
           email,
           name: normalizeName(user.name),
+          avatarUrl: normalizeAvatarUrl(user.avatarUrl),
           role: "owner",
           disabled: false,
           createdAt: new Date().toISOString(),
@@ -220,6 +222,11 @@ export class TeamStore {
 
   listMembers(): TeamMemberSummary[] {
     return this.#requireState().members.map(publicMember);
+  }
+
+  getMember(memberId: string): TeamMemberSummary | null {
+    const member = this.#state?.members.find((candidate) => candidate.id === memberId);
+    return member ? publicMember(member) : null;
   }
 
   listInvites(): TeamInviteSummary[] {
@@ -305,6 +312,7 @@ export class TeamStore {
       username: email,
       email,
       name: normalizeName(user.name),
+      avatarUrl: normalizeAvatarUrl(user.avatarUrl),
       role: invite.role,
       disabled: false,
       createdAt: new Date().toISOString(),
@@ -327,6 +335,7 @@ export class TeamStore {
     member.email = email;
     member.username = email;
     member.name = normalizeName(user.name);
+    member.avatarUrl = normalizeAvatarUrl(user.avatarUrl);
     const result = this.#createSession(member);
     await this.#persist();
     return result;
@@ -355,6 +364,7 @@ export class TeamStore {
       username: normalizedUsername,
       email: null,
       name: null,
+      avatarUrl: null,
       role: invite.role,
       disabled: false,
       createdAt: new Date().toISOString(),
@@ -436,6 +446,16 @@ export class TeamStore {
     return publicMember(member);
   }
 
+  async removeMember(memberId: string): Promise<void> {
+    const state = this.#requireState();
+    const member = state.members.find((candidate) => candidate.id === memberId);
+    if (!member) throw new Error("Team member not found.");
+    if (member.role === "owner") throw new Error("The owner account cannot be removed.");
+    state.members = state.members.filter((candidate) => candidate.id !== memberId);
+    state.sessions = state.sessions.filter((session) => session.memberId !== memberId);
+    await this.#persist();
+  }
+
   async revokeSession(sessionId: string): Promise<void> {
     const state = this.#requireState();
     state.sessions = state.sessions.filter((session) => session.id !== sessionId);
@@ -446,6 +466,31 @@ export class TeamStore {
     const state = this.#requireState();
     state.invites = state.invites.filter((invite) => invite.id !== inviteId);
     await this.#persist();
+  }
+
+  async syncAccount(user: CentralAuthUser): Promise<boolean> {
+    const state = this.#requireState();
+    const email = normalizeEmail(user.email);
+    const member = state.members.find(
+      (candidate) => candidate.email === email || candidate.username === email,
+    );
+    if (!member) return false;
+    const name = normalizeName(user.name);
+    const avatarUrl = normalizeAvatarUrl(user.avatarUrl);
+    if (
+      member.email === email &&
+      member.username === email &&
+      member.name === name &&
+      (member.avatarUrl ?? null) === avatarUrl
+    ) {
+      return false;
+    }
+    member.email = email;
+    member.username = email;
+    member.name = name;
+    member.avatarUrl = avatarUrl;
+    await this.#persist();
+    return true;
   }
 
   #createSession(member: StoredMember): AuthenticatedMember {
@@ -552,6 +597,7 @@ function publicMember(member: StoredMember): TeamMemberSummary {
     username: member.username,
     email: member.email ?? null,
     name: member.name ?? null,
+    avatarUrl: member.avatarUrl ?? null,
     role: member.role,
     createdAt: member.createdAt,
     disabled: member.disabled,
@@ -568,6 +614,16 @@ function normalizeName(value: string | null): string | null {
   const normalized = value?.trim() ?? "";
   if (normalized.length > INPUT_LIMITS.accountName) throw new Error("Account name is too long.");
   return normalized || null;
+}
+
+function normalizeAvatarUrl(value: string | null): string | null {
+  if (!value) return null;
+  if (value.length > INPUT_LIMITS.avatarUrl) throw new Error("The account avatar URL is too long.");
+  const url = new URL(value);
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("The account avatar URL is invalid.");
+  }
+  return url.toString();
 }
 
 function validateServerName(value: string): void {

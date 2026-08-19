@@ -6,6 +6,9 @@ import {
   IPC_CHANNELS,
   type OpenBotDesktopApi,
   type ScopedAgentEvent,
+  type ScopedDirectMessageEvent,
+  type ScopedDirectTypingEvent,
+  type ScopedTeamPresenceSnapshot,
   type UpdateStatus,
 } from "@openbot/contracts/ipc";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
@@ -91,6 +94,7 @@ const openbotApi: OpenBotDesktopApi = {
     requestEmailCode: (email) => ipcRenderer.invoke(IPC_CHANNELS.authRequestEmailCode, email),
     verifyEmailCode: (challengeId, code) =>
       ipcRenderer.invoke(IPC_CHANNELS.authVerifyEmailCode, { challengeId, code }),
+    updateAvatar: (image) => ipcRenderer.invoke(IPC_CHANNELS.authUpdateAvatar, image),
     logout: () => ipcRenderer.invoke(IPC_CHANNELS.authLogout),
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) =>
@@ -119,6 +123,10 @@ const openbotApi: OpenBotDesktopApi = {
     updateBot: (input) =>
       invokeAgent(IPC_CHANNELS.agentUpdateBot, input) as ReturnType<
         OpenBotDesktopApi["agent"]["updateBot"]
+      >,
+    setAvatar: (input) =>
+      invokeAgent(IPC_CHANNELS.agentSetAvatar, input) as ReturnType<
+        OpenBotDesktopApi["agent"]["setAvatar"]
       >,
     deleteBot: (botId) => invokeAgent(IPC_CHANNELS.agentDeleteBot, botId) as Promise<void>,
     readConversation: (botId) =>
@@ -201,6 +209,35 @@ const openbotApi: OpenBotDesktopApi = {
     },
     updateAddress: (updateUrl) => ipcRenderer.invoke(IPC_CHANNELS.serversUpdateAddress, updateUrl),
     remove: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversRemove, serverId),
+    getPresence: () => ipcRenderer.invoke(IPC_CHANNELS.serversGetPresence),
+    setTyping: (input) => ipcRenderer.invoke(IPC_CHANNELS.serversSetTyping, input),
+    onPresence: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: ScopedTeamPresenceSnapshot) => {
+        if (payload.serverId === selectedServerId) listener(payload.snapshot);
+      };
+      ipcRenderer.on(IPC_CHANNELS.serversPresence, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.serversPresence, handler);
+    },
+    listDirectThreads: () => ipcRenderer.invoke(IPC_CHANNELS.serversListDirectThreads),
+    readDirectConversation: (memberId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.serversReadDirectConversation, memberId),
+    sendDirectMessage: (input) => ipcRenderer.invoke(IPC_CHANNELS.serversSendDirectMessage, input),
+    markDirectRead: (memberId) => ipcRenderer.invoke(IPC_CHANNELS.serversMarkDirectRead, memberId),
+    setDirectTyping: (input) => ipcRenderer.invoke(IPC_CHANNELS.serversSetDirectTyping, input),
+    onDirectMessage: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: ScopedDirectMessageEvent) => {
+        if (payload.serverId === selectedServerId) listener(payload.event);
+      };
+      ipcRenderer.on(IPC_CHANNELS.serversDirectMessage, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.serversDirectMessage, handler);
+    },
+    onDirectTyping: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: ScopedDirectTypingEvent) => {
+        if (payload.serverId === selectedServerId) listener(payload.event);
+      };
+      ipcRenderer.on(IPC_CHANNELS.serversDirectTyping, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.serversDirectTyping, handler);
+    },
     onEvent: (listener) => {
       const handler = (
         _event: Electron.IpcRendererEvent,
@@ -224,6 +261,7 @@ const openbotApi: OpenBotDesktopApi = {
     stop: () => ipcRenderer.invoke(IPC_CHANNELS.hostStop),
     listMembers: () => ipcRenderer.invoke(IPC_CHANNELS.hostListMembers),
     updateMember: (input) => ipcRenderer.invoke(IPC_CHANNELS.hostUpdateMember, input),
+    removeMember: (memberId) => ipcRenderer.invoke(IPC_CHANNELS.hostRemoveMember, memberId),
     listSessions: () => ipcRenderer.invoke(IPC_CHANNELS.hostListSessions),
     revokeSession: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.hostRevokeSession, sessionId),
     listInvites: () => ipcRenderer.invoke(IPC_CHANNELS.hostListInvites),

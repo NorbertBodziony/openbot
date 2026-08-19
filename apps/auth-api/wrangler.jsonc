@@ -12,7 +12,7 @@
     "EMAIL_FROM": "hello@openbot.run",
     "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
     "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
-    "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run"
+    "CLOUDFLARE_TUNNEL_DOMAIN": "teams.openbot.run"
   },
   "d1_databases": [
     {
@@ -20,6 +20,13 @@
       "database_name": "openbot-auth",
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "AVATARS",
+      "bucket_name": "openbot-avatars",
+      "preview_bucket_name": "openbot-avatars-test"
     }
   ],
   "env": {
@@ -35,7 +42,7 @@
         "EMAIL_FROM": "hello@openbot.run",
         "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
         "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
-        "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run"
+        "CLOUDFLARE_TUNNEL_DOMAIN": "teams.openbot.run"
       },
       "d1_databases": [
         {
@@ -43,6 +50,12 @@
           "database_name": "openbot-auth-test",
           "database_id": "38f1a836-6c70-44bb-bbf3-f0bbc5b766b3",
           "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "AVATARS",
+          "bucket_name": "openbot-avatars-test"
         }
       ]
     }

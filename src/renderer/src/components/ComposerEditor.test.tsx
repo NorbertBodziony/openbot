@@ -132,6 +132,7 @@ describe("ComposerEditor", () => {
       threadId: null,
       avatarSeed: "sales:avatar:0:2",
       avatarHue: 215,
+      avatarUrl: null,
       time: "",
       preview: "",
     };

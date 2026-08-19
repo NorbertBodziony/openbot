@@ -8,12 +8,18 @@ import type {
   AgentStatus,
   AppInfo,
   AppSetupState,
+  AvatarImageInput,
   BotSummary,
   BrowserControlState,
   BrowserTab,
   CentralAuthState,
   ConversationMessage,
   ConversationSnapshot,
+  DirectConversationSnapshot,
+  DirectMessage,
+  DirectMessageRealtimeEvent,
+  DirectThreadSummary,
+  DirectTypingRealtimeEvent,
   HostStatus,
   InviteSummary,
   QueueSnapshot,
@@ -21,6 +27,7 @@ import type {
   ServerSummary,
   TeamInviteSummary,
   TeamMemberSummary,
+  TeamPresenceSnapshot,
   TeamSessionSummary,
   UpdateBotInput,
   UpdateStatus,
@@ -37,6 +44,7 @@ import {
 } from "solid-js";
 import { AccountLogin } from "./components/AccountLogin";
 import { Conversation } from "./components/Conversation";
+import { DirectConversation } from "./components/DirectConversation";
 import { HostPanel } from "./components/HostPanel";
 import { InitialSetup } from "./components/InitialSetup";
 import { JoinServerDialog } from "./components/JoinServerDialog";
@@ -79,6 +87,12 @@ const FALLBACK_HOST_STATUS: HostStatus = {
   vncOnline: false,
   remoteDesktopCredentialConfigured: false,
   message: null,
+};
+
+const EMPTY_TEAM_PRESENCE: TeamPresenceSnapshot = {
+  serverId: null,
+  members: [],
+  updatedAt: "",
 };
 
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
@@ -188,19 +202,64 @@ export function App() {
   const [teamMembers, setTeamMembers] = createSignal<TeamMemberSummary[]>([]);
   const [teamInvites, setTeamInvites] = createSignal<TeamInviteSummary[]>([]);
   const [teamSessions, setTeamSessions] = createSignal<TeamSessionSummary[]>([]);
+  const [teamPresence, setTeamPresence] = createSignal<TeamPresenceSnapshot>(EMPTY_TEAM_PRESENCE);
+  const [directThreads, setDirectThreads] = createSignal<DirectThreadSummary[]>([]);
+  const [directConversations, setDirectConversations] = createSignal<
+    Record<string, DirectConversationSnapshot>
+  >({});
+  const [activeDirectMemberId, setActiveDirectMemberId] = createSignal<string | null>(null);
+  const [directConversationLoading, setDirectConversationLoading] = createSignal(false);
+  const [directConversationError, setDirectConversationError] = createSignal<string | null>(null);
+  const [directTypingMemberIds, setDirectTypingMemberIds] = createSignal<Set<string>>(new Set());
   const [remoteDesktopRequest, setRemoteDesktopRequest] = createSignal(0);
   const [remoteMacSessions, setRemoteMacSessions] = createSignal<RemoteMacSession[]>([]);
   const pendingConversationSnapshots = new Map<string, ConversationSnapshot>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let conversationFrame: number | undefined;
+  let directConversationRequest = 0;
 
-  const activeBot = createMemo(
-    () => botList().find((bot) => bot.id === activeBotId()) ?? botList()[0],
+  const currentTeamMember = createMemo(() => {
+    const state = centralAuth();
+    if (state.status !== "signed_in") return undefined;
+    const email = state.user.email.trim().toLowerCase();
+    return teamPresence().members.find(
+      (member) =>
+        member.email?.trim().toLowerCase() === email ||
+        member.username.trim().toLowerCase() === email,
+    );
+  });
+  const directPeople = createMemo(() => {
+    const currentMemberId = currentTeamMember()?.id;
+    return teamPresence().members.filter(
+      (member) => member.id !== currentMemberId && !member.disabled,
+    );
+  });
+  const activeDirectMember = createMemo(() =>
+    directPeople().find((member) => member.id === activeDirectMemberId()),
   );
+  const activeBot = createMemo(() => {
+    if (activeDirectMemberId()) return undefined;
+    return botList().find((bot) => bot.id === activeBotId()) ?? botList()[0];
+  });
   const activeMessages = createMemo(() => {
     const bot = activeBot();
     return bot ? [...(liveMessages()[bot.id] ?? []), ...(uiErrors()[bot.id] ?? [])] : [];
   });
+
+  createEffect(
+    () => ({
+      memberId: activeDirectMemberId(),
+      memberExists: activeDirectMember() !== undefined,
+    }),
+    ({ memberId, memberExists }) => {
+      if (memberId && !memberExists) {
+        directConversationRequest += 1;
+        setActiveDirectMemberId(null);
+        setDirectConversationError(null);
+        setDirectConversationLoading(false);
+      }
+    },
+  );
 
   onSettled(() => {
     const unsubscribe = window.openbot.agent.onEvent((event) => {
@@ -214,6 +273,15 @@ export function App() {
     });
     const unsubscribeServers = window.openbot.servers.onEvent((value) =>
       flush(() => setServers(value)),
+    );
+    const unsubscribePresence = window.openbot.servers.onPresence((snapshot) =>
+      flush(() => setTeamPresence(snapshot)),
+    );
+    const unsubscribeDirectMessage = window.openbot.servers.onDirectMessage((event) =>
+      flush(() => handleDirectMessageEvent(event)),
+    );
+    const unsubscribeDirectTyping = window.openbot.servers.onDirectTyping((event) =>
+      flush(() => handleDirectTypingEvent(event)),
     );
     const unsubscribeInvite = window.openbot.servers.onInvite((inviteUrl) => {
       flush(() => {
@@ -232,6 +300,9 @@ export function App() {
       unsubscribeUpdate();
       unsubscribeAuth();
       unsubscribeServers();
+      unsubscribePresence();
+      unsubscribeDirectMessage();
+      unsubscribeDirectTyping();
       unsubscribeInvite();
       unsubscribeHost();
       unsubscribeRemoteMac();
@@ -293,6 +364,11 @@ export function App() {
       .list()
       .then(setServers)
       .catch(() => undefined);
+    void window.openbot.servers
+      .getPresence()
+      .then(setTeamPresence)
+      .catch(() => undefined);
+    void refreshDirectThreads();
     void window.openbot.host
       .getStatus()
       .then(setHostStatus)
@@ -468,6 +544,7 @@ export function App() {
       setLiveMessages((current) => ({ ...current, [newAgent.id]: [] }));
       setConversationLoaded((current) => ({ ...current, [newAgent.id]: true }));
       setAgentPickerOpen(false);
+      setActiveDirectMemberId(null);
       setActiveBotId(newAgent.id);
       setOnboardingRequest({ botId: newAgent.id, nonce: Date.now() });
     } catch (error) {
@@ -480,12 +557,125 @@ export function App() {
 
   function selectBot(botId: string) {
     setAgentPickerOpen(false);
+    const directMemberId = activeDirectMemberId();
+    if (directMemberId) {
+      void window.openbot.servers
+        .setDirectTyping({ memberId: directMemberId, typing: false })
+        .catch(() => undefined);
+    }
+    setActiveDirectMemberId(null);
     clearReplyIndicators(botId);
     setActiveBotId(botId);
   }
 
+  async function refreshDirectThreads(): Promise<void> {
+    try {
+      setDirectThreads(await window.openbot.servers.listDirectThreads());
+    } catch {
+      setDirectThreads([]);
+    }
+  }
+
+  async function selectDirectMember(memberId: string): Promise<void> {
+    setAgentPickerOpen(false);
+    setSettingsRequest(null);
+    const previousMemberId = activeDirectMemberId();
+    if (previousMemberId && previousMemberId !== memberId) {
+      void window.openbot.servers
+        .setDirectTyping({ memberId: previousMemberId, typing: false })
+        .catch(() => undefined);
+    }
+    setActiveDirectMemberId(memberId);
+    setDirectConversationLoading(true);
+    setDirectConversationError(null);
+    const request = ++directConversationRequest;
+    try {
+      const snapshot = await window.openbot.servers.readDirectConversation(memberId);
+      if (request !== directConversationRequest) return;
+      setDirectConversations((current) => ({ ...current, [memberId]: snapshot }));
+      await window.openbot.servers.markDirectRead(memberId);
+      if (request !== directConversationRequest) return;
+      await refreshDirectThreads();
+    } catch (error) {
+      if (request !== directConversationRequest) return;
+      setDirectConversationError(
+        error instanceof Error ? error.message : "The messages could not load.",
+      );
+    } finally {
+      if (request === directConversationRequest) setDirectConversationLoading(false);
+    }
+  }
+
+  async function sendDirectMessage(text: string, clientMessageId: string): Promise<DirectMessage> {
+    const memberId = activeDirectMemberId();
+    if (!memberId) throw new Error("Select a person first.");
+    const message = await window.openbot.servers.sendDirectMessage({
+      memberId,
+      text,
+      clientMessageId,
+    });
+    mergeDirectMessage(memberId, message);
+    await refreshDirectThreads();
+    return message;
+  }
+
+  function setDirectTyping(typing: boolean): void {
+    const memberId = activeDirectMemberId();
+    if (!memberId) return;
+    void window.openbot.servers.setDirectTyping({ memberId, typing }).catch(() => undefined);
+  }
+
+  function handleDirectMessageEvent(event: DirectMessageRealtimeEvent): void {
+    const currentMemberId = currentTeamMember()?.id;
+    if (!currentMemberId || !event.memberIds.includes(currentMemberId)) return;
+    const otherMemberId =
+      event.message.senderMemberId === currentMemberId
+        ? event.message.recipientMemberId
+        : event.message.senderMemberId;
+    mergeDirectMessage(otherMemberId, event.message);
+    void refreshDirectThreads();
+    if (activeDirectMemberId() === otherMemberId) {
+      void window.openbot.servers
+        .markDirectRead(otherMemberId)
+        .then(refreshDirectThreads)
+        .catch(() => undefined);
+    }
+  }
+
+  function handleDirectTypingEvent(event: DirectTypingRealtimeEvent): void {
+    if (event.recipientMemberId !== currentTeamMember()?.id) return;
+    setDirectTypingMemberIds((current) => {
+      const next = new Set(current);
+      if (event.typing) next.add(event.senderMemberId);
+      else next.delete(event.senderMemberId);
+      return next;
+    });
+  }
+
+  function mergeDirectMessage(memberId: string, message: DirectMessage): void {
+    setDirectConversations((current) => {
+      const snapshot = current[memberId] ?? {
+        threadId: message.threadId,
+        otherMemberId: memberId,
+        messages: [],
+        revision: 0,
+      };
+      if (snapshot.messages.some((candidate) => candidate.id === message.id)) return current;
+      return {
+        ...current,
+        [memberId]: {
+          ...snapshot,
+          messages: [...snapshot.messages, message].sort(
+            (left, right) => left.sequence - right.sequence,
+          ),
+          revision: Math.max(snapshot.revision, message.sequence),
+        },
+      };
+    });
+  }
+
   function markReplyCompleted(botId: string) {
-    if (activeBotId() !== botId) {
+    if (activeDirectMemberId() || activeBotId() !== botId) {
       setUnreadReplies((current) => ({
         ...current,
         [botId]: Math.min(99, (current[botId] ?? 0) + 1),
@@ -536,6 +726,22 @@ export function App() {
       });
     } catch (error) {
       appendUiError(botId, error, "Settings failed");
+      throw error;
+    }
+  }
+
+  async function setAgentAvatar(botId: string, image: AvatarImageInput | null): Promise<void> {
+    try {
+      const stored = await window.openbot.agent.setAvatar({ botId, image });
+      const next = toBotProfile(stored);
+      setBotList((current) => {
+        const existing = current.find((bot) => bot.id === botId);
+        if (!existing) return [...current, createStored(next)];
+        updateStored(existing, next);
+        return current;
+      });
+    } catch (error) {
+      appendUiError(botId, error, "Avatar update failed");
       throw error;
     }
   }
@@ -741,6 +947,10 @@ export function App() {
     setCentralAuth(await window.openbot.auth.logout());
   }
 
+  async function updateAccountAvatar(image: AvatarImageInput | null): Promise<void> {
+    setCentralAuth(await window.openbot.auth.updateAvatar(image));
+  }
+
   async function runUpdateAction(): Promise<void> {
     const phase = updateStatus().phase;
     if (phase === "ready") {
@@ -755,30 +965,47 @@ export function App() {
   }
 
   async function selectServer(serverId: string): Promise<void> {
+    directConversationRequest += 1;
     const nextServers = await window.openbot.servers.select(serverId);
     setServers(nextServers);
     setAgentPickerOpen(false);
     setSettingsRequest(null);
     setBotList([]);
     setActiveBotId("");
+    setActiveDirectMemberId(null);
+    setDirectConversationError(null);
+    setDirectThreads([]);
+    setDirectConversations({});
+    setDirectTypingMemberIds(new Set<string>());
     setLiveMessages({});
     setUiErrors({});
     setConversationLoaded({});
     setConversationRevisions({});
     setQueues({});
-    const [storedBots, status, models, tabs, controlState] = await Promise.all([
+    setTeamPresence(EMPTY_TEAM_PRESENCE);
+    const [storedBots, status, models, tabs, controlState, presence, threads] = await Promise.all([
       window.openbot.agent.listBots(),
       window.openbot.agent.getStatus(),
       window.openbot.agent.listModels(),
       window.openbot.browser.listTabs(),
       window.openbot.browser.getControlState(),
+      window.openbot.servers.getPresence(),
+      window.openbot.servers.listDirectThreads().catch(() => []),
     ]);
     setAgentStatus(status);
     setModelOptions(models);
     setBrowserTabs(tabs);
     setActiveBrowserTabId(tabs[0]?.id ?? null);
     setBrowserControlState(controlState);
+    setTeamPresence(presence);
+    setDirectThreads(threads);
     applyStoredBots(storedBots);
+  }
+
+  function setTeamTyping(botId: string, typing: boolean): void {
+    void window.openbot.servers.setTyping({ botId: typing ? botId : null, typing }).catch(() => {
+      // Typing state is optional and must not interrupt message composition.
+    });
   }
 
   async function joinServer(input: { inviteUrl: string }): Promise<void> {
@@ -860,6 +1087,11 @@ export function App() {
     disabled?: boolean;
   }): Promise<void> {
     await window.openbot.host.updateMember(input);
+    await refreshHostManagement();
+  }
+
+  async function removeHostMember(memberId: string): Promise<void> {
+    await window.openbot.host.removeMember(memberId);
     await refreshHostManagement();
   }
 
@@ -956,18 +1188,25 @@ export function App() {
               <Show when={!leftPanelCollapsed()}>
                 <Sidebar
                   bots={botList()}
-                  activeBotId={activeBot()?.id ?? ""}
+                  activeBotId={activeDirectMemberId() ? "" : (activeBot()?.id ?? "")}
+                  people={directPeople()}
+                  directThreads={directThreads()}
+                  activeDirectMemberId={activeDirectMemberId()}
+                  account={account()}
                   appInfo={appInfo()}
                   agentStatus={agentStatus()}
                   accountUsage={accountUsage()}
                   updateStatus={updateStatus()}
                   agentStates={sidebarAgentStates()}
                   onSelectBot={selectBot}
+                  onSelectPerson={(memberId) => void selectDirectMember(memberId)}
                   onCreateBot={() => setAgentPickerOpen(true)}
                   onEditBot={editBot}
                   onDeleteBot={deleteBot}
                   onRefreshUsage={refreshAccountUsage}
                   onUpdateAction={runUpdateAction}
+                  onUpdateAccountAvatar={updateAccountAvatar}
+                  onLogout={logoutCentralAccount}
                   onOpenExternal={(destination) => window.openbot.openExternal(destination)}
                   onOpenPermissions={() => setPermissionsOpen(true)}
                   onCollapse={() => setSidebarCollapsed(true)}
@@ -985,44 +1224,68 @@ export function App() {
                   onResizeEnd={(value) => savePanelWidth(LEFT_PANEL_STORAGE_KEY, value)}
                 />
               </Show>
-              <Conversation
-                agentStatus={agentStatus()}
-                bot={activeBot()}
-                bots={botList()}
-                modelOptions={modelOptions()}
-                messages={activeMessages()}
-                loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
-                queue={activeQueue()}
-                browserTabs={browserTabs()}
-                activeBrowserTabId={activeBrowserTabId()}
-                browserControlState={browserControlState()}
-                server={activeServer()}
-                remoteMacSession={activeRemoteMacSession()}
-                remoteDesktopRequest={remoteDesktopRequest()}
-                leftSidebarCollapsed={leftPanelCollapsed()}
-                prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
-                activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
-                agentPickerOpen={agentPickerOpen()}
-                creatingAgent={creatingAgent()}
-                settingsRequest={settingsRequest()}
-                onboardingRequest={onboardingRequest()}
-                onCloseAgentPicker={() => setAgentPickerOpen(false)}
-                onCreateAgent={() => void createAgent()}
-                onSelectAgent={selectBot}
-                onUpdateBot={updateBot}
-                onSendMessage={sendMessage}
-                onCompleteOnboarding={completeOnboarding}
-                onAnswerPrompt={answerPrompt}
-                onCancelQueuedMessage={cancelQueuedMessage}
-                onResumeQueue={resumeQueue}
-                onActivateBrowserTab={activateBrowserTab}
-                onCloseBrowserTab={closeBrowserTab}
-                onConnectRemoteMac={connectRemoteMac}
-                onDisconnectRemoteMac={disconnectRemoteMac}
-                onToggleLeftSidebar={() => setSidebarCollapsed(false)}
-                onOpenAgentSetup={() => window.openbot.openExternal("agent-setup")}
-                onStop={stopActiveTurn}
-              />
+              <Show when={activeDirectMember()} keyed>
+                {(member) => (
+                  <DirectConversation
+                    member={member}
+                    currentMemberId={currentTeamMember()?.id ?? ""}
+                    snapshot={directConversations()[member.id]}
+                    loading={directConversationLoading()}
+                    loadError={directConversationError()}
+                    typing={directTypingMemberIds().has(member.id)}
+                    leftSidebarCollapsed={leftPanelCollapsed()}
+                    onToggleLeftSidebar={() => setSidebarCollapsed(false)}
+                    onSend={sendDirectMessage}
+                    onTypingChange={setDirectTyping}
+                  />
+                )}
+              </Show>
+              <Show when={!activeDirectMember()}>
+                <Conversation
+                  agentStatus={agentStatus()}
+                  bot={activeBot()}
+                  bots={botList()}
+                  modelOptions={modelOptions()}
+                  messages={activeMessages()}
+                  loaded={
+                    activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false
+                  }
+                  queue={activeQueue()}
+                  browserTabs={browserTabs()}
+                  activeBrowserTabId={activeBrowserTabId()}
+                  browserControlState={browserControlState()}
+                  server={activeServer()}
+                  presence={teamPresence()}
+                  currentUserEmail={account().email}
+                  remoteMacSession={activeRemoteMacSession()}
+                  remoteDesktopRequest={remoteDesktopRequest()}
+                  leftSidebarCollapsed={leftPanelCollapsed()}
+                  prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
+                  activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
+                  agentPickerOpen={agentPickerOpen()}
+                  creatingAgent={creatingAgent()}
+                  settingsRequest={settingsRequest()}
+                  onboardingRequest={onboardingRequest()}
+                  onCloseAgentPicker={() => setAgentPickerOpen(false)}
+                  onCreateAgent={() => void createAgent()}
+                  onSelectAgent={selectBot}
+                  onUpdateBot={updateBot}
+                  onSetAgentAvatar={setAgentAvatar}
+                  onSendMessage={sendMessage}
+                  onTypingChange={setTeamTyping}
+                  onCompleteOnboarding={completeOnboarding}
+                  onAnswerPrompt={answerPrompt}
+                  onCancelQueuedMessage={cancelQueuedMessage}
+                  onResumeQueue={resumeQueue}
+                  onActivateBrowserTab={activateBrowserTab}
+                  onCloseBrowserTab={closeBrowserTab}
+                  onConnectRemoteMac={connectRemoteMac}
+                  onDisconnectRemoteMac={disconnectRemoteMac}
+                  onToggleLeftSidebar={() => setSidebarCollapsed(false)}
+                  onOpenAgentSetup={() => window.openbot.openExternal("agent-setup")}
+                  onStop={stopActiveTurn}
+                />
+              </Show>
               <Show when={permissionsOpen()}>
                 <InitialSetup
                   reviewing
@@ -1053,6 +1316,7 @@ export function App() {
                   members={teamMembers()}
                   invites={teamInvites()}
                   sessions={teamSessions()}
+                  presence={teamPresence()}
                   accountEmail={account().email}
                   onClose={() => setHostOpen(false)}
                   onConfigure={configureHost}
@@ -1061,6 +1325,7 @@ export function App() {
                   onStop={stopHost}
                   onCreateInvite={createHostInvite}
                   onUpdateMember={updateHostMember}
+                  onRemoveMember={removeHostMember}
                   onRevokeSession={revokeHostSession}
                   onRevokeInvite={revokeHostInvite}
                   onCopyAddressUpdate={copyHostAddressUpdate}
@@ -1086,6 +1351,7 @@ function toBotProfile(stored: BotSummary): BotProfile {
     threadId: stored.threadId,
     avatarSeed: stored.avatarSeed,
     avatarHue: stored.avatarHue,
+    avatarUrl: stored.avatarUrl,
     time: stored.updatedAt ? formatTime(stored.updatedAt) : "now",
     preview: cleanPreview(stored.preview),
   };

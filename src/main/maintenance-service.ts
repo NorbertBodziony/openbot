@@ -195,5 +195,6 @@ function toBackupBot(bot: BotSummary): Omit<BotSummary, "workspacePath"> {
     updatedAt: bot.updatedAt,
     avatarSeed: bot.avatarSeed,
     avatarHue: bot.avatarHue,
+    avatarUrl: bot.avatarUrl,
   };
 }

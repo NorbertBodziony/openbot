@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -146,6 +146,39 @@ const SCHEMA_SQL = `
     estimated_tokens INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     last_event_sequence INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS projection_direct_threads (
+    thread_id TEXT PRIMARY KEY,
+    member_a_id TEXT NOT NULL,
+    member_b_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_message_id TEXT,
+    last_event_sequence INTEGER NOT NULL,
+    UNIQUE(member_a_id, member_b_id)
+  );
+  CREATE INDEX IF NOT EXISTS direct_threads_member_a
+    ON projection_direct_threads(member_a_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS direct_threads_member_b
+    ON projection_direct_threads(member_b_id, updated_at DESC);
+  CREATE TABLE IF NOT EXISTS projection_direct_messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES projection_direct_threads(thread_id) ON DELETE CASCADE,
+    sender_member_id TEXT NOT NULL,
+    recipient_member_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    message_json TEXT NOT NULL CHECK(json_valid(message_json)),
+    last_event_sequence INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS direct_messages_thread
+    ON projection_direct_messages(thread_id, last_event_sequence);
+  CREATE TABLE IF NOT EXISTS projection_direct_reads (
+    thread_id TEXT NOT NULL REFERENCES projection_direct_threads(thread_id) ON DELETE CASCADE,
+    member_id TEXT NOT NULL,
+    last_read_sequence INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(thread_id, member_id)
   );
   CREATE TABLE IF NOT EXISTS file_deletion_outbox (
     id TEXT PRIMARY KEY,

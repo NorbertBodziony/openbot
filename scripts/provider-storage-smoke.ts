@@ -62,6 +62,7 @@ async function runProvider(
     updatedAt: new Date().toISOString(),
     avatarSeed: botId,
     avatarHue: null,
+    avatarUrl: null,
   };
   database.replaceAgents(
     `smoke:agent:${provider}`,

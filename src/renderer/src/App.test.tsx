@@ -3,6 +3,10 @@ import type {
   AttachmentImportEvent,
   BotSummary,
   ConversationSnapshot,
+  DirectConversationSnapshot,
+  DirectMessageRealtimeEvent,
+  DirectTypingRealtimeEvent,
+  TeamPresenceSnapshot,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
@@ -12,6 +16,9 @@ import { App } from "./App";
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
 let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
 let emitUpdateStatus: ((status: UpdateStatus) => void) | undefined;
+let emitPresence: ((snapshot: TeamPresenceSnapshot) => void) | undefined;
+let emitDirectMessage: ((event: DirectMessageRealtimeEvent) => void) | undefined;
+let emitDirectTyping: ((event: DirectTypingRealtimeEvent) => void) | undefined;
 
 const BOTS: BotSummary[] = [
   {
@@ -24,6 +31,7 @@ const BOTS: BotSummary[] = [
     reasoningEffort: "medium",
     avatarSeed: "chief",
     avatarHue: null,
+    avatarUrl: null,
     threadId: "thread-chief",
     workspacePath: "/tmp/OpenBot/Bots/chief",
     preview: "No messages yet",
@@ -39,6 +47,7 @@ const BOTS: BotSummary[] = [
     reasoningEffort: "medium",
     avatarSeed: "sales-outbound",
     avatarHue: 280,
+    avatarUrl: null,
     threadId: null,
     workspacePath: "/tmp/OpenBot/Bots/sales-outbound",
     preview: "No messages yet",
@@ -59,6 +68,9 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent = undefined;
     emitAttachmentImport = undefined;
     emitUpdateStatus = undefined;
+    emitPresence = undefined;
+    emitDirectMessage = undefined;
+    emitDirectTyping = undefined;
     window.localStorage.clear();
     Object.defineProperty(window, "openbot", {
       configurable: true,
@@ -93,6 +105,10 @@ describe("OpenBot connected desktop shell", () => {
             expiresAt: Date.now() + 600_000,
           }),
           verifyEmailCode: vi.fn().mockResolvedValue({
+            status: "signed_in",
+            user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
+          }),
+          updateAvatar: vi.fn().mockResolvedValue({
             status: "signed_in",
             user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
           }),
@@ -185,6 +201,10 @@ describe("OpenBot connected desktop shell", () => {
           updateBot: vi.fn().mockImplementation(async (input) => ({
             ...BOTS.find((bot) => bot.id === input.botId),
             ...input,
+          })),
+          setAvatar: vi.fn().mockImplementation(async (input) => ({
+            ...BOTS.find((bot) => bot.id === input.botId),
+            avatarUrl: input.image ? "openbot-avatar://agent/chief?v=test" : null,
           })),
           deleteBot: vi.fn().mockResolvedValue(undefined),
           readConversation: vi.fn().mockImplementation(async (botId) => ({
@@ -291,6 +311,38 @@ describe("OpenBot connected desktop shell", () => {
           join: vi.fn().mockResolvedValue(undefined),
           login: vi.fn().mockResolvedValue(undefined),
           remove: vi.fn().mockResolvedValue(undefined),
+          getPresence: vi.fn().mockResolvedValue({ serverId: null, members: [], updatedAt: "" }),
+          setTyping: vi.fn().mockResolvedValue(undefined),
+          onPresence: vi.fn((listener) => {
+            emitPresence = listener;
+            return () => undefined;
+          }),
+          listDirectThreads: vi.fn().mockResolvedValue([]),
+          readDirectConversation: vi.fn().mockImplementation(async (memberId) => ({
+            threadId: `thread-${memberId}`,
+            otherMemberId: memberId,
+            messages: [],
+            revision: 0,
+          })),
+          sendDirectMessage: vi.fn().mockImplementation(async (input) => ({
+            id: input.clientMessageId,
+            threadId: `thread-${input.memberId}`,
+            senderMemberId: "member-self",
+            recipientMemberId: input.memberId,
+            text: input.text,
+            createdAt: "2026-08-19T10:00:00.000Z",
+            sequence: 1,
+          })),
+          markDirectRead: vi.fn().mockResolvedValue(undefined),
+          setDirectTyping: vi.fn().mockResolvedValue(undefined),
+          onDirectMessage: vi.fn((listener) => {
+            emitDirectMessage = listener;
+            return () => undefined;
+          }),
+          onDirectTyping: vi.fn((listener) => {
+            emitDirectTyping = listener;
+            return () => undefined;
+          }),
           onEvent: vi.fn(() => () => undefined),
           onInvite: vi.fn(() => () => undefined),
         },
@@ -313,7 +365,14 @@ describe("OpenBot connected desktop shell", () => {
           start: vi.fn().mockResolvedValue(undefined),
           stop: vi.fn().mockResolvedValue(undefined),
           listMembers: vi.fn().mockResolvedValue([]),
+          updateMember: vi.fn().mockResolvedValue(undefined),
+          removeMember: vi.fn().mockResolvedValue(undefined),
+          listSessions: vi.fn().mockResolvedValue([]),
+          revokeSession: vi.fn().mockResolvedValue(undefined),
+          listInvites: vi.fn().mockResolvedValue([]),
+          revokeInvite: vi.fn().mockResolvedValue(undefined),
           createInvite: vi.fn().mockResolvedValue(undefined),
+          createAddressUpdate: vi.fn().mockResolvedValue("openbot://update"),
           onEvent: vi.fn(() => () => undefined),
         },
         remoteMac: {
@@ -679,10 +738,11 @@ describe("OpenBot connected desktop shell", () => {
   it("shows a compact account menu with weekly usage and contact actions", async () => {
     render(() => <App />);
     const accountButton = await screen.findByRole("button", { name: "Open account menu" });
-    expect(accountButton).toHaveTextContent("norbert@example.com");
+    expect(accountButton).toHaveTextContent("person@example.com");
 
     fireEvent.click(accountButton);
     await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Upload photo" })).toBeInTheDocument();
     expect(await screen.findByText("Weekly usage")).toBeInTheDocument();
     expect(screen.getByText("59%")).toBeInTheDocument();
     expect(screen.queryByText(/ChatGPT Pro/i)).not.toBeInTheDocument();
@@ -699,6 +759,34 @@ describe("OpenBot connected desktop shell", () => {
     fireEvent.click(accountButton);
     fireEvent.click(screen.getByRole("menuitem", { name: "Message" }));
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("message"));
+  });
+
+  it("removes a custom account avatar from the account menu", async () => {
+    vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({
+      status: "signed_in",
+      user: {
+        id: "user-1",
+        email: "person@example.com",
+        name: null,
+        avatarUrl: "https://api.openbot.run/v1/avatars/user-1?v=image-1",
+      },
+    });
+    render(() => <App />);
+    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
+    await fireEvent.click(accountButton);
+    await fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(window.openbot.auth.updateAvatar).toHaveBeenCalledWith(null));
+  });
+
+  it("signs out from the account menu without removing local data", async () => {
+    render(() => <App />);
+    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
+    await fireEvent.click(accountButton);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
+
+    await waitFor(() => expect(window.openbot.auth.logout).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeInTheDocument();
+    expect(window.openbot.agent.deleteBot).not.toHaveBeenCalled();
   });
 
   it("shows an available update, downloads it, and exposes restart to install", async () => {
@@ -1073,6 +1161,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(avatarButton);
 
     const editor = within(settings).getByRole("dialog", { name: "Avatar editor" });
+    expect(within(editor).getByRole("button", { name: /Upload image/ })).toBeInTheDocument();
     expect(within(editor).getAllByRole("button", { name: /Avatar option/ })).toHaveLength(11);
     const faceButtons = within(editor).getAllByRole("button", {
       name: /Selected avatar|Avatar option/,
@@ -1136,6 +1225,25 @@ describe("OpenBot connected desktop shell", () => {
         botId: "chief",
         name: "Coordinator",
       }),
+    );
+  });
+
+  it("removes a custom agent avatar and keeps its generated avatar settings", async () => {
+    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([
+      { ...BOTS[0], avatarUrl: "openbot-avatar://agent/chief?v=image-1" },
+    ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    const settings = screen.getByRole("complementary", { name: "Agent settings" });
+    await fireEvent.click(within(settings).getByRole("button", { name: "Edit agent avatar" }));
+    const editor = within(settings).getByRole("dialog", { name: "Avatar editor" });
+    await fireEvent.click(within(editor).getByRole("button", { name: "Remove" }));
+    await waitFor(() =>
+      expect(window.openbot.agent.setAvatar).toHaveBeenCalledWith({ botId: "chief", image: null }),
+    );
+    expect(window.openbot.agent.updateBot).not.toHaveBeenCalledWith(
+      expect.objectContaining({ avatarSeed: expect.any(String) }),
     );
   });
 
@@ -1453,6 +1561,166 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() => expect(composer).toHaveTextContent(""));
+  });
+
+  it("shows online teammates and publishes typing state", async () => {
+    render(() => <App />);
+    await confirmOnboardingModel();
+    emitPresence?.({
+      serverId: "server-1",
+      updatedAt: "2026-08-18T12:00:00.000Z",
+      members: [
+        {
+          id: "member-alice",
+          username: "alice@example.com",
+          email: "alice@example.com",
+          name: "Alice",
+          role: "member",
+          createdAt: "2026-08-18T10:00:00.000Z",
+          disabled: false,
+          online: true,
+          typingBotId: "chief",
+        },
+      ],
+    });
+
+    expect(await screen.findByText("1 online")).toBeInTheDocument();
+    expect(screen.getByText("Alice is typing")).toBeInTheDocument();
+
+    const composer = screen.getByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Review this";
+    await fireEvent.input(composer);
+    await waitFor(() =>
+      expect(window.openbot.servers.setTyping).toHaveBeenCalledWith({
+        botId: "chief",
+        typing: true,
+      }),
+    );
+  });
+
+  it("opens a private person thread and receives direct messages in real time", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitPresence?.({
+      serverId: "server-1",
+      updatedAt: "2026-08-19T10:00:00.000Z",
+      members: [
+        {
+          id: "member-self",
+          username: "person@example.com",
+          email: "person@example.com",
+          name: "Person",
+          role: "owner",
+          createdAt: "2026-08-18T10:00:00.000Z",
+          disabled: false,
+          online: true,
+          typingBotId: null,
+        },
+        {
+          id: "member-alice",
+          username: "alice@example.com",
+          email: "alice@example.com",
+          name: "Alice",
+          role: "member",
+          createdAt: "2026-08-18T11:00:00.000Z",
+          disabled: false,
+          online: true,
+          typingBotId: null,
+        },
+      ],
+    });
+
+    await fireEvent.click(await screen.findByRole("button", { name: /Alice/ }));
+    expect(
+      await screen.findByRole("main", { name: "Direct conversation with Alice" }),
+    ).toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "Message Alice" });
+    await fireEvent.input(input, { target: { value: "Hello Alice" } });
+    await fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(window.openbot.servers.sendDirectMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ memberId: "member-alice", text: "Hello Alice" }),
+      ),
+    );
+    expect(await screen.findByText("Hello Alice")).toBeInTheDocument();
+
+    emitDirectTyping?.({
+      type: "team-direct-typing",
+      senderMemberId: "member-alice",
+      recipientMemberId: "member-self",
+      typing: true,
+    });
+    expect(await screen.findByText("Alice is typing")).toBeInTheDocument();
+
+    emitDirectMessage?.({
+      type: "team-direct-message",
+      memberIds: ["member-alice", "member-self"],
+      message: {
+        id: "message-alice-1",
+        threadId: "thread-member-alice",
+        senderMemberId: "member-alice",
+        recipientMemberId: "member-self",
+        text: "Hi. I am here.",
+        createdAt: "2026-08-19T10:01:00.000Z",
+        sequence: 2,
+      },
+    });
+    expect(await screen.findByText("Hi. I am here.")).toBeInTheDocument();
+  });
+
+  it("does not apply a stale direct-message load after another person is selected", async () => {
+    let resolveAlice: ((snapshot: DirectConversationSnapshot) => void) | undefined;
+    vi.mocked(window.openbot.servers.readDirectConversation).mockImplementation((memberId) => {
+      if (memberId === "member-alice") {
+        return new Promise((resolve) => {
+          resolveAlice = resolve;
+        });
+      }
+      return Promise.resolve({
+        threadId: "thread-member-bob",
+        otherMemberId: "member-bob",
+        messages: [
+          {
+            id: "message-bob",
+            threadId: "thread-member-bob",
+            senderMemberId: "member-bob",
+            recipientMemberId: "member-self",
+            text: "Bob history",
+            createdAt: "2026-08-19T09:00:00.000Z",
+            sequence: 1,
+          },
+        ],
+        revision: 1,
+      });
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitPresence?.({
+      serverId: "server-1",
+      updatedAt: "2026-08-19T10:00:00.000Z",
+      members: [
+        presenceMember("member-self", "person@example.com", "Person"),
+        presenceMember("member-alice", "alice@example.com", "Alice"),
+        presenceMember("member-bob", "bob@example.com", "Bob"),
+      ],
+    });
+
+    await fireEvent.click(await screen.findByRole("button", { name: /Alice/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /Bob/ }));
+    expect(await screen.findByText("Bob history")).toBeInTheDocument();
+    resolveAlice?.({
+      threadId: "thread-member-alice",
+      otherMemberId: "member-alice",
+      messages: [],
+      revision: 0,
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("main", { name: "Direct conversation with Bob" }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByText("Bob history")).toBeInTheDocument();
   });
 
   it("shows the first queued message and closes onboarding when the send event arrives", async () => {
@@ -2273,10 +2541,28 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.click(screen.getByRole("button", { name: "Open host controls" }));
-    expect(screen.getByRole("dialog", { name: "Host an OpenBot team" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Host a team" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Server name" })).toBeInTheDocument();
   });
 });
+
+function presenceMember(
+  id: string,
+  email: string,
+  name: string,
+): TeamPresenceSnapshot["members"][number] {
+  return {
+    id,
+    username: email,
+    email,
+    name,
+    role: id === "member-self" ? "owner" : "member",
+    createdAt: "2026-08-18T10:00:00.000Z",
+    disabled: false,
+    online: true,
+    typingBotId: null,
+  };
+}
 
 function attachment(id: string, name: string, kind: "image" | "pdf") {
   return {

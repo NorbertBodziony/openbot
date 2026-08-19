@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { CentralAuthState, CentralAuthUser } from "@openbot/contracts/ipc";
+import type { AvatarImageInput, CentralAuthState, CentralAuthUser } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
+import { isOpenBotTeamApiHostname, isOpenBotTeamVncHostname } from "@openbot/contracts/validation";
 
 interface CentralAuthEvents {
   changed: [state: CentralAuthState];
@@ -69,11 +70,12 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   async redeemTeamAuthTicket(ticket: string, serverId: string): Promise<CentralAuthUser | null> {
     if (!ticket) return null;
     try {
-      return await this.#request<CentralAuthUser>("/v1/team-auth/redeem", {
+      const user = await this.#request<CentralAuthUser>("/v1/team-auth/redeem", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticket, serverId }),
       });
+      return this.#resolveUserAvatar(user);
     } catch (error) {
       if (error instanceof AuthApiError && error.status === 401) return null;
       throw error;
@@ -114,7 +116,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       ) ||
       !/^openbot-[0-9a-f]{32}$/u.test(result.tunnelName) ||
       !isOpenBotHostUrl(result.apiUrl) ||
-      !/^vnc-h-[0-9a-f]{32}\.openbot\.run$/u.test(result.vncHostname) ||
+      !isOpenBotTeamVncHostname(result.vncHostname) ||
       result.token.length < 40
     ) {
       throw new Error("The account service returned invalid team tunnel details.");
@@ -134,7 +136,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     }
     try {
       const user = await this.#authorizedRequest<CentralAuthUser>("/v1/me", { method: "GET" });
-      return this.#setState({ status: "signed_in", user });
+      return this.#setState({ status: "signed_in", user: this.#resolveUserAvatar(user) });
     } catch (error) {
       if (error instanceof AuthApiError && error.status === 401) {
         await this.#clearStoredSession();
@@ -189,7 +191,10 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       });
       this.#sessionToken = session.sessionToken;
       await this.#writeStoredSession(session.sessionToken);
-      return this.#setState({ status: "signed_in", user: session.user });
+      return this.#setState({
+        status: "signed_in",
+        user: this.#resolveUserAvatar(session.user),
+      });
     } catch (error) {
       await this.#clearStoredSession();
       if (challenge) {
@@ -218,6 +223,22 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     return this.#setState({ status: "signed_out" });
   }
 
+  async updateAvatar(image: AvatarImageInput | null): Promise<CentralAuthState> {
+    const sessionToken = this.#sessionToken;
+    if (!sessionToken) throw new AuthApiError(401, "unauthorized", "Sign in is required.");
+    const user = image
+      ? await this.#authorizedRequest<CentralAuthUser>("/v1/me/avatar", {
+          method: "PUT",
+          headers: { "Content-Type": image.mimeType },
+          body: Buffer.from(image.bytes),
+        })
+      : await this.#authorizedRequest<CentralAuthUser>("/v1/me/avatar", {
+          method: "DELETE",
+        });
+    if (this.#sessionToken !== sessionToken) return this.getState();
+    return this.#setState({ status: "signed_in", user: this.#resolveUserAvatar(user) });
+  }
+
   async #request<T>(path: string, init: RequestInit, timeoutMs = 10_000): Promise<T> {
     const response = await this.#options.fetch(new URL(path, this.#options.apiUrl), {
       ...init,
@@ -238,6 +259,13 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       },
       timeoutMs,
     );
+  }
+
+  #resolveUserAvatar(user: CentralAuthUser): CentralAuthUser {
+    return {
+      ...user,
+      avatarUrl: user.avatarUrl ? new URL(user.avatarUrl, this.#options.apiUrl).toString() : null,
+    };
   }
 
   async #writeStoredSession(token: string): Promise<void> {
@@ -274,7 +302,7 @@ function isOpenBotHostUrl(value: string): boolean {
       url.pathname === "/" &&
       url.search === "" &&
       url.hash === "" &&
-      /^h-[0-9a-f]{32}\.openbot\.run$/u.test(url.hostname)
+      isOpenBotTeamApiHostname(url.hostname)
     );
   } catch {
     return false;

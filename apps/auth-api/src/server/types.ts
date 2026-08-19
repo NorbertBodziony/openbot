@@ -1,5 +1,6 @@
 export interface WorkerBindings {
   DB: D1Database;
+  AVATARS: R2Bucket;
   AUTH_EXPOSE_DEVELOPMENT_CODE?: string;
   EMAIL_SMTP_HOST?: string;
   EMAIL_SMTP_PORT?: string;
@@ -64,6 +65,12 @@ export interface AuthRepository {
   ): Promise<{ allowed: boolean; count: number; windowStart: number }>;
   authenticate(sessionToken: string, now: number): Promise<AuthUser | null>;
   revokeSession(sessionToken: string, now: number): Promise<void>;
+  updateUserAvatar(
+    userId: string,
+    avatarUrl: string | null,
+    expectedAvatarUrl: string | null,
+    now: number,
+  ): Promise<AuthUser | null>;
   createTeamAuthTicket(input: {
     ticketHash: string;
     userId: string;

@@ -1,4 +1,4 @@
-import type { AgentProviderId } from "./ipc-conversation";
+import type { AgentProviderId, AvatarImageInput } from "./ipc-conversation";
 
 export type DesktopPlatform = "darwin" | "win32" | "linux";
 
@@ -67,6 +67,7 @@ export interface CentralAuthDesktopApi {
   getState: () => Promise<CentralAuthState>;
   requestEmailCode: (email: string) => Promise<CentralAuthState>;
   verifyEmailCode: (challengeId: string, code: string) => Promise<CentralAuthState>;
+  updateAvatar: (image: AvatarImageInput | null) => Promise<CentralAuthState>;
   logout: () => Promise<CentralAuthState>;
   onEvent: (listener: (state: CentralAuthState) => void) => () => void;
 }

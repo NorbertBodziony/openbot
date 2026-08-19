@@ -3,6 +3,8 @@ import { INPUT_LIMITS } from "./input-limits";
 const DOMAIN_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/iu;
 const EMAIL_LOCAL_PART_PATTERN = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$/u;
 const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const OPENBOT_TEAM_API_HOST_PATTERN = /^h-[0-9a-f]{32}\.(?:teams\.)?openbot\.run$/u;
+const OPENBOT_TEAM_VNC_HOST_PATTERN = /^vnc-h-[0-9a-f]{32}\.(?:teams\.)?openbot\.run$/u;
 
 export function isValidHostname(value: string, requireDot = true): boolean {
   if (
@@ -36,4 +38,12 @@ export function normalizeEmailAddress(value: string): string | null {
 
 export function isUuidV4(value: string): boolean {
   return UUID_V4_PATTERN.test(value);
+}
+
+export function isOpenBotTeamApiHostname(value: string): boolean {
+  return OPENBOT_TEAM_API_HOST_PATTERN.test(value);
+}
+
+export function isOpenBotTeamVncHostname(value: string): boolean {
+  return OPENBOT_TEAM_VNC_HOST_PATTERN.test(value);
 }

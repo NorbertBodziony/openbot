@@ -3,16 +3,28 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
 import { createConnection, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
-import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { isAvatarMimeType } from "@openbot/contracts/avatar-images";
+import {
+  ATTACHMENT_LIMITS,
+  AVATAR_IMAGE_LIMITS,
+  INPUT_LIMITS,
+} from "@openbot/contracts/input-limits";
 import {
   type AgentEvent,
   type CentralAuthUser,
+  type DirectConversationSnapshot,
+  type DirectMessage,
+  type DirectMessageRealtimeEvent,
+  type DirectThreadSummary,
+  type DirectTypingRealtimeEvent,
   isAgentModel,
   isAvatarHue,
   isAvatarSeed,
   isMessageReaction,
   isReasoningEffort,
   type TeamMemberSummary,
+  type TeamPresenceSnapshot,
+  type TeamRealtimeEvent,
   type UpdateBotInput,
 } from "@openbot/contracts/ipc";
 import {
@@ -26,9 +38,11 @@ import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
+import type { TeamChatStore } from "../backend/team-chat-store";
 import type { TeamStore } from "./team-store";
 
 const JSON_LIMIT = 1024 * 1024;
+const TYPING_TIMEOUT_MS = 5_000;
 const requireModule = createRequire(import.meta.url);
 const webSockets = requireModule(
   join(dirname(requireModule.resolve("ws/package.json")), "index.js"),
@@ -43,6 +57,19 @@ interface TeamApiOptions {
   getRemoteDesktopPassword?: () => string | null;
   remoteDesktopPort?: number;
   redeemCentralTicket?: (ticket: string, serverId: string) => Promise<CentralAuthUser | null>;
+  onPresence?: (snapshot: TeamPresenceSnapshot) => void;
+  chat?: TeamChatStore;
+  onDirectMessage?: (event: DirectMessageRealtimeEvent) => void;
+  onDirectTyping?: (event: DirectTypingRealtimeEvent) => void;
+}
+
+interface EventClientState {
+  token: string;
+  memberId: string;
+  typingBotId: string | null;
+  typingTimer: ReturnType<typeof setTimeout> | null;
+  directTypingRecipientId: string | null;
+  directTypingTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface RateEntry {
@@ -53,7 +80,7 @@ interface RateEntry {
 export class TeamApiServer {
   readonly #options: TeamApiOptions;
   readonly #rateLimits = new Map<string, RateEntry>();
-  readonly #eventClients = new Set<Ws.WebSocket>();
+  readonly #eventClients = new Map<Ws.WebSocket, EventClientState>();
   readonly #desktopClients = new Map<Ws.WebSocket, { token: string; target: Socket }>();
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
@@ -67,6 +94,7 @@ export class TeamApiServer {
   #port: number | null = null;
   #heartbeat: ReturnType<typeof setInterval> | null = null;
   #agentListener: ((event: AgentEvent) => void) | null = null;
+  #localTypingBotId: string | null = null;
 
   constructor(options: TeamApiOptions) {
     this.#options = options;
@@ -94,8 +122,7 @@ export class TeamApiServer {
       }
       if (url.pathname === "/v1/events" && protocols.includes("openbot-events")) {
         this.#webSockets.handleUpgrade(request, socket, head, (client) => {
-          this.#eventClients.add(client);
-          client.once("close", () => this.#eventClients.delete(client));
+          this.#connectEvents(client, token, member.id);
         });
         return;
       }
@@ -120,12 +147,13 @@ export class TeamApiServer {
     const address = this.#server.address();
     if (!address || isString(address)) throw new Error("Could not bind the team API.");
     this.#port = address.port;
-    this.#agentListener = (event) => this.#broadcast(event);
+    this.#agentListener = (event) => this.#broadcastAgentEvent(event);
     this.#options.agents.on("event", this.#agentListener);
     this.#heartbeat = setInterval(() => {
-      for (const client of this.#eventClients) {
-        if (client.readyState === webSockets.WebSocket.OPEN) client.ping();
-        else this.#eventClients.delete(client);
+      for (const [client, connection] of this.#eventClients) {
+        if (!this.#options.store.authenticate(connection.token)) {
+          client.close(1008, "Team access was revoked");
+        } else if (client.readyState === webSockets.WebSocket.OPEN) client.ping();
       }
       for (const [client, connection] of this.#desktopClients) {
         if (!this.#options.store.authenticate(connection.token)) {
@@ -135,6 +163,7 @@ export class TeamApiServer {
       }
     }, 15_000);
     this.#heartbeat.unref?.();
+    this.#publishPresence();
     return this.#port;
   }
 
@@ -143,8 +172,13 @@ export class TeamApiServer {
     this.#heartbeat = null;
     if (this.#agentListener) this.#options.agents.off("event", this.#agentListener);
     this.#agentListener = null;
-    for (const client of this.#eventClients) client.close(1001, "Server stopped");
+    for (const [client, connection] of this.#eventClients) {
+      if (connection.typingTimer) clearTimeout(connection.typingTimer);
+      if (connection.directTypingTimer) clearTimeout(connection.directTypingTimer);
+      client.close(1001, "Server stopped");
+    }
     this.#eventClients.clear();
+    this.#localTypingBotId = null;
     for (const [client, connection] of this.#desktopClients) {
       client.close(1001, "Server stopped");
       connection.target.destroy();
@@ -153,8 +187,85 @@ export class TeamApiServer {
     const server = this.#server;
     this.#server = null;
     this.#port = null;
-    if (!server) return;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    this.#publishPresence();
+  }
+
+  getPresence(): TeamPresenceSnapshot {
+    const identity = this.#options.store.getIdentity();
+    if (!identity) {
+      return { serverId: null, members: [], updatedAt: new Date().toISOString() };
+    }
+    const connections = [...this.#eventClients.values()];
+    const owner = this.#options.store.listMembers().find((member) => member.role === "owner");
+    return {
+      serverId: identity.serverId,
+      members: this.#options.store.listMembers().map((member) => {
+        const memberConnections = connections.filter(
+          (connection) => connection.memberId === member.id,
+        );
+        return {
+          ...member,
+          online:
+            memberConnections.length > 0 || (member.id === owner?.id && this.#server !== null),
+          typingBotId:
+            (member.id === owner?.id ? this.#localTypingBotId : null) ??
+            memberConnections.find((connection) => connection.typingBotId)?.typingBotId ??
+            null,
+        };
+      }),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  setLocalTyping(botId: string | null, typing: boolean): void {
+    const next = typing && this.#server ? botId : null;
+    if (next === this.#localTypingBotId) return;
+    this.#localTypingBotId = next;
+    this.#publishPresence();
+  }
+
+  refreshPresence(): void {
+    for (const [client, connection] of this.#eventClients) {
+      if (!this.#options.store.authenticate(connection.token)) {
+        client.close(1008, "Team access was revoked");
+      }
+    }
+    this.#publishPresence();
+  }
+
+  listDirectThreads(memberId: string): DirectThreadSummary[] {
+    return this.#requireChat().listThreads(memberId);
+  }
+
+  readDirectConversation(memberId: string, otherMemberId: string): DirectConversationSnapshot {
+    this.#requireDirectRecipient(memberId, otherMemberId);
+    return this.#requireChat().readConversation(memberId, otherMemberId);
+  }
+
+  sendDirectMessage(
+    senderMemberId: string,
+    input: { memberId: string; text: string; clientMessageId: string },
+  ): DirectMessage {
+    this.#requireDirectRecipient(senderMemberId, input.memberId);
+    const message = this.#requireChat().sendMessage({
+      clientMessageId: input.clientMessageId,
+      senderMemberId,
+      recipientMemberId: input.memberId,
+      text: input.text,
+    });
+    this.#publishDirectMessage(message);
+    return message;
+  }
+
+  markDirectRead(memberId: string, otherMemberId: string): void {
+    this.#requireDirectRecipient(memberId, otherMemberId);
+    this.#requireChat().markRead(memberId, otherMemberId);
+  }
+
+  setLocalDirectTyping(senderMemberId: string, recipientMemberId: string, typing: boolean): void {
+    this.#requireDirectRecipient(senderMemberId, recipientMemberId);
+    this.#publishDirectTyping(senderMemberId, recipientMemberId, typing);
   }
 
   async #handle(request: import("node:http").IncomingMessage, response: ServerResponse) {
@@ -231,6 +342,7 @@ export class TeamApiServer {
 
       if (method === "POST" && url.pathname === "/v1/auth/logout") {
         await this.#options.store.logout(token);
+        this.refreshPresence();
         return this.#empty(response, 204);
       }
       if (method === "POST" && url.pathname === "/v1/auth/password") {
@@ -240,6 +352,7 @@ export class TeamApiServer {
           stringField(body, "currentPassword", false, 256),
           stringField(body, "newPassword", false, 256),
         );
+        this.refreshPresence();
         return this.#empty(response, 204);
       }
       if (method === "GET" && url.pathname === "/v1/me") {
@@ -257,6 +370,38 @@ export class TeamApiServer {
           configured: password !== null,
           password,
         });
+      }
+      if (method === "GET" && url.pathname === "/v1/direct/threads") {
+        return this.#json(response, 200, this.listDirectThreads(member.id));
+      }
+      if (method === "POST" && url.pathname === "/v1/direct/messages") {
+        const body = await readJson(request);
+        return this.#json(
+          response,
+          201,
+          this.sendDirectMessage(member.id, {
+            memberId: stringField(body, "memberId", false, INPUT_LIMITS.identifier),
+            text: stringField(body, "text", false, INPUT_LIMITS.directMessageText),
+            clientMessageId: stringField(body, "clientMessageId", false, INPUT_LIMITS.identifier),
+          }),
+        );
+      }
+      const directConversationMatch = url.pathname.match(
+        /^\/v1\/direct\/conversations\/([^/]+)(?:\/(read))?$/,
+      );
+      if (method === "GET" && directConversationMatch && !directConversationMatch[2]) {
+        return this.#json(
+          response,
+          200,
+          this.readDirectConversation(
+            member.id,
+            pathIdentifier(directConversationMatch[1], "memberId"),
+          ),
+        );
+      }
+      if (method === "POST" && directConversationMatch?.[2] === "read") {
+        this.markDirectRead(member.id, pathIdentifier(directConversationMatch[1], "memberId"));
+        return this.#empty(response, 204);
       }
       if (method === "GET" && url.pathname === "/v1/browser/tabs") {
         return this.#json(response, 200, this.#options.browser.listTabs());
@@ -347,14 +492,21 @@ export class TeamApiServer {
         if (disabled !== undefined && !isBoolean(disabled)) {
           throw new HttpError(400, "disabled must be a boolean.");
         }
-        return this.#json(
-          response,
-          200,
-          await this.#options.store.updateMember(pathIdentifier(memberMatch[1], "memberId"), {
+        const updated = await this.#options.store.updateMember(
+          pathIdentifier(memberMatch[1], "memberId"),
+          {
             ...(role ? { role } : {}),
             ...(disabled === undefined ? {} : { disabled }),
-          }),
+          },
         );
+        this.refreshPresence();
+        return this.#json(response, 200, updated);
+      }
+      if (method === "DELETE" && memberMatch) {
+        requireAdmin(member);
+        await this.#options.store.removeMember(pathIdentifier(memberMatch[1], "memberId"));
+        this.refreshPresence();
+        return this.#empty(response, 204);
       }
       if (method === "POST" && url.pathname === "/v1/team/invites") {
         requireAdmin(member);
@@ -388,6 +540,7 @@ export class TeamApiServer {
       if (method === "DELETE" && sessionMatch) {
         requireAdmin(member);
         await this.#options.store.revokeSession(pathIdentifier(sessionMatch[1], "sessionId"));
+        this.refreshPresence();
         return this.#empty(response, 204);
       }
 
@@ -423,6 +576,38 @@ export class TeamApiServer {
           if (member.role === "member") throw new HttpError(403, "Members cannot delete agents.");
           await this.#options.agents.deleteBot(botId);
           return this.#empty(response, 204);
+        }
+        if (action === "avatar") {
+          if (method === "PUT") {
+            const mimeType = request.headers["content-type"]?.split(";", 1)[0]?.trim() ?? "";
+            if (!isAvatarMimeType(mimeType)) {
+              throw new HttpError(415, "Choose a PNG, JPEG, or WebP image.");
+            }
+            const bytes = await readBinary(request, AVATAR_IMAGE_LIMITS.storedBytes);
+            return this.#json(
+              response,
+              200,
+              await this.#options.agents.setAvatar(botId, { mimeType, bytes }),
+            );
+          }
+          if (method === "DELETE") {
+            return this.#json(response, 200, await this.#options.agents.setAvatar(botId, null));
+          }
+          if (method === "GET") {
+            const avatar = this.#options.agents.resolveAvatar(botId);
+            if (!avatar || avatar.version !== url.searchParams.get("v")) {
+              throw new HttpError(404, "Agent avatar not found.");
+            }
+            const bytes = await readFile(avatar.path);
+            response.writeHead(200, {
+              "Content-Type": avatar.mimeType,
+              "Content-Length": String(bytes.length),
+              "Cache-Control": "private, max-age=31536000, immutable",
+              "X-Content-Type-Options": "nosniff",
+            });
+            response.end(bytes);
+            return;
+          }
         }
         if (method === "GET" && action === "conversation") {
           return this.#json(response, 200, await this.#options.agents.readConversation(botId));
@@ -503,11 +688,201 @@ export class TeamApiServer {
       throw new HttpError(429, "Too many sign-in attempts. Try again later.");
   }
 
-  #broadcast(event: AgentEvent): void {
+  #broadcastAgentEvent(event: AgentEvent): void {
     const payload = JSON.stringify(event);
-    for (const client of this.#eventClients) {
+    for (const client of this.#eventClients.keys()) {
       if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
     }
+  }
+
+  #connectEvents(client: Ws.WebSocket, token: string, memberId: string): void {
+    const connection: EventClientState = {
+      token,
+      memberId,
+      typingBotId: null,
+      typingTimer: null,
+      directTypingRecipientId: null,
+      directTypingTimer: null,
+    };
+    this.#eventClients.set(client, connection);
+    client.on("message", (data, isBinary) => {
+      if (isBinary) {
+        client.close(1003, "Text events are required");
+        return;
+      }
+      try {
+        const text = Buffer.isBuffer(data)
+          ? data.toString("utf8")
+          : Array.isArray(data)
+            ? Buffer.concat(data).toString("utf8")
+            : Buffer.from(data).toString("utf8");
+        if (text.length > 1_024) throw new Error("Event payload is too large.");
+        const event = JSON.parse(text) as unknown;
+        if (!isDynamicRecord(event)) {
+          throw new Error("Unsupported team event.");
+        }
+        if (event.type === "team-direct-typing") {
+          const typing = event.typing;
+          const recipientMemberId = event.recipientMemberId;
+          if (!isBoolean(typing) || !isString(recipientMemberId)) {
+            throw new Error("Invalid direct typing event.");
+          }
+          if (recipientMemberId.length > INPUT_LIMITS.identifier) {
+            throw new Error("Invalid direct typing recipient.");
+          }
+          this.#requireDirectRecipient(memberId, recipientMemberId);
+          this.#setClientDirectTyping(connection, typing ? recipientMemberId : null);
+          return;
+        }
+        if (event.type !== "team-typing") throw new Error("Unsupported team event.");
+        const typing = event.typing;
+        const botId = event.botId;
+        if (!isBoolean(typing) || (botId !== null && !isString(botId))) {
+          throw new Error("Invalid typing event.");
+        }
+        if (typing && (!botId || botId.length > INPUT_LIMITS.identifier)) {
+          throw new Error("A valid agent is required for typing state.");
+        }
+        this.#setClientTyping(connection, typing ? botId : null);
+      } catch {
+        client.close(1003, "Invalid team event payload");
+      }
+    });
+    client.once("close", () => {
+      if (connection.typingTimer) clearTimeout(connection.typingTimer);
+      if (connection.directTypingTimer) clearTimeout(connection.directTypingTimer);
+      const directTypingRecipientId = connection.directTypingRecipientId;
+      connection.directTypingRecipientId = null;
+      this.#eventClients.delete(client);
+      if (
+        directTypingRecipientId &&
+        !this.#hasDirectTyping(connection.memberId, directTypingRecipientId)
+      ) {
+        this.#publishDirectTyping(connection.memberId, directTypingRecipientId, false);
+      }
+      this.#publishPresence();
+    });
+    this.#publishPresence();
+  }
+
+  #setClientTyping(connection: EventClientState, botId: string | null): void {
+    const changed = connection.typingBotId !== botId;
+    connection.typingBotId = botId;
+    if (connection.typingTimer) clearTimeout(connection.typingTimer);
+    connection.typingTimer = botId
+      ? setTimeout(() => {
+          connection.typingTimer = null;
+          if (!connection.typingBotId) return;
+          connection.typingBotId = null;
+          this.#publishPresence();
+        }, TYPING_TIMEOUT_MS)
+      : null;
+    connection.typingTimer?.unref?.();
+    if (changed) this.#publishPresence();
+  }
+
+  #setClientDirectTyping(connection: EventClientState, recipientMemberId: string | null): void {
+    const previousRecipientId = connection.directTypingRecipientId;
+    const changed = previousRecipientId !== recipientMemberId;
+    const recipientAlreadyActive = recipientMemberId
+      ? this.#hasDirectTyping(connection.memberId, recipientMemberId)
+      : false;
+    connection.directTypingRecipientId = recipientMemberId;
+    if (
+      changed &&
+      previousRecipientId &&
+      !this.#hasDirectTyping(connection.memberId, previousRecipientId)
+    ) {
+      this.#publishDirectTyping(connection.memberId, previousRecipientId, false);
+    }
+    if (connection.directTypingTimer) clearTimeout(connection.directTypingTimer);
+    connection.directTypingTimer = recipientMemberId
+      ? setTimeout(() => {
+          connection.directTypingTimer = null;
+          const expiredRecipientId = connection.directTypingRecipientId;
+          if (!expiredRecipientId) return;
+          connection.directTypingRecipientId = null;
+          if (!this.#hasDirectTyping(connection.memberId, expiredRecipientId)) {
+            this.#publishDirectTyping(connection.memberId, expiredRecipientId, false);
+          }
+        }, TYPING_TIMEOUT_MS)
+      : null;
+    connection.directTypingTimer?.unref?.();
+    if (changed && recipientMemberId && !recipientAlreadyActive) {
+      this.#publishDirectTyping(connection.memberId, recipientMemberId, true);
+    }
+  }
+
+  #hasDirectTyping(senderMemberId: string, recipientMemberId: string): boolean {
+    return [...this.#eventClients.values()].some(
+      (connection) =>
+        connection.memberId === senderMemberId &&
+        connection.directTypingRecipientId === recipientMemberId,
+    );
+  }
+
+  #publishPresence(): void {
+    const snapshot = this.getPresence();
+    this.#options.onPresence?.(snapshot);
+    const event: TeamRealtimeEvent = { type: "team-presence", snapshot };
+    const payload = JSON.stringify(event);
+    for (const client of this.#eventClients.keys()) {
+      if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
+    }
+  }
+
+  #publishDirectMessage(message: DirectMessage): void {
+    const memberIds: [string, string] = [message.senderMemberId, message.recipientMemberId];
+    const event: DirectMessageRealtimeEvent = {
+      type: "team-direct-message",
+      message,
+      memberIds,
+    };
+    this.#sendToMembers(memberIds, event);
+    const owner = this.#options.store.listMembers().find((member) => member.role === "owner");
+    if (owner && memberIds.includes(owner.id)) this.#options.onDirectMessage?.(event);
+  }
+
+  #publishDirectTyping(senderMemberId: string, recipientMemberId: string, typing: boolean): void {
+    const event: DirectTypingRealtimeEvent = {
+      type: "team-direct-typing",
+      senderMemberId,
+      recipientMemberId,
+      typing,
+    };
+    this.#sendToMembers([senderMemberId, recipientMemberId], event);
+    const owner = this.#options.store.listMembers().find((member) => member.role === "owner");
+    if (owner && (owner.id === senderMemberId || owner.id === recipientMemberId)) {
+      this.#options.onDirectTyping?.(event);
+    }
+  }
+
+  #sendToMembers(memberIds: string[], event: TeamRealtimeEvent): void {
+    const payload = JSON.stringify(event);
+    for (const [client, connection] of this.#eventClients) {
+      if (
+        memberIds.includes(connection.memberId) &&
+        client.readyState === webSockets.WebSocket.OPEN
+      ) {
+        client.send(payload);
+      }
+    }
+  }
+
+  #requireChat(): TeamChatStore {
+    if (!this.#options.chat) throw new Error("Direct messages are unavailable.");
+    return this.#options.chat;
+  }
+
+  #requireDirectRecipient(senderMemberId: string, recipientMemberId: string): TeamMemberSummary {
+    if (senderMemberId === recipientMemberId) {
+      throw new Error("You cannot open a direct message with yourself.");
+    }
+    const sender = this.#options.store.getMember(senderMemberId);
+    const recipient = this.#options.store.getMember(recipientMemberId);
+    if (!sender || sender.disabled) throw new Error("Your team access is unavailable.");
+    if (!recipient || recipient.disabled) throw new Error("This team member is unavailable.");
+    return recipient;
   }
 
   #connectDesktop(client: Ws.WebSocket, token: string): void {

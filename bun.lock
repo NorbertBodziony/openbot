@@ -11,7 +11,7 @@
         "@novnc/novnc": "1.7.0",
         "@openbot/contracts": "workspace:*",
         "@solidjs/web": "2.0.0-rc.0",
-        "blobatar": "0.2.0",
+        "blobatar": "2.0.0",
         "electron-updater": "6.8.9",
         "solid-js": "2.0.0-rc.0",
         "ws": "8.21.3",
@@ -666,7 +666,7 @@
 
     "blake3-wasm": ["blake3-wasm@2.1.5", "", {}, "sha512-F1+K8EbfOZE49dtoPtmxUQrpXaBIl3ICvasLh+nJta0xkz+9kF/7uet9fLnwKqhDrmj6g+6K3Tw9yQPUg2ka5g=="],
 
-    "blobatar": ["blobatar@0.2.0", "", { "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"] }, "sha512-TL4blQf9fu+EzsFEKMjh7PVORnf42G9HdpaXzdLR9dTHcMSYJWEj5fPeLhsXTN5YFCNstZaRAQRAWyhW8lRAdw=="],
+    "blobatar": ["blobatar@2.0.0", "", { "peerDependencies": { "react": ">=18" }, "optionalPeers": ["react"] }, "sha512-46STsjELfKv5hnnRYsWKgN1vlWFkaewSkwnqRRnptCD+LwxejfyXs1lYwek4fkwAtGrXabmJHP4fpzDxjnqAEg=="],
 
     "bluebird": ["bluebird@3.7.2", "", {}, "sha512-XpNj6GDQzdfW+r2Wnn7xiSAd7TM3jzkxGXBGTtWKuSXv1xUV+azxAm8jdWZN06QTQk+2N2XB9jRDkvbmQmcRtg=="],
 

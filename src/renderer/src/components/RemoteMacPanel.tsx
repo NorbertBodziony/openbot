@@ -50,20 +50,26 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
       session: props.session,
       canConnect: canConnect(),
       sessionBusy: sessionBusy(),
+      onConnect: props.onConnect,
     }),
-    ({ server, session, canConnect: ready, sessionBusy: connecting }) => {
+    ({ server, session, canConnect: ready, sessionBusy: connecting, onConnect }) => {
       if (!server || !ready || connecting) return;
       if (session?.phase === "connected" || session?.errorCode) return;
       const key = `${server.id}:${server.apiUrl}`;
       if (requestedConnectionKey === key) return;
       requestedConnectionKey = key;
-      void connect();
+      void connect(server, onConnect, false, connecting);
     },
   );
 
   createEffect(
-    () => ({ url: props.session?.websocketUrl, targetElement: viewerElement }),
-    ({ url, targetElement }) => {
+    () => ({
+      url: props.session?.websocketUrl,
+      sessionId: props.session?.id,
+      targetElement: viewerElement,
+      readOnly: viewOnly(),
+    }),
+    ({ url, sessionId, targetElement, readOnly }) => {
       rfb?.disconnect();
       rfb = undefined;
       setViewerError(null);
@@ -74,7 +80,6 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
 
       setViewerState("connecting");
       const client = new RFB(targetElement, url, { shared: true });
-      const sessionId = props.session?.id;
       rfb = client;
       client.scaleViewport = true;
       client.resizeSession = false;
@@ -83,7 +88,7 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
       client.background = "#090a0b";
       client.qualityLevel = 7;
       client.compressionLevel = 2;
-      client.viewOnly = viewOnly();
+      client.viewOnly = readOnly;
 
       const handleConnect = () => {
         setViewerState("connected");
@@ -152,15 +157,19 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
     },
   );
 
-  async function connect(force = false) {
-    const server = props.server;
-    if (!server?.apiUrl || busy()) return;
+  async function connect(
+    server: ServerSummary | undefined,
+    onConnect: RemoteMacPanelProps["onConnect"],
+    force = false,
+    currentlyBusy = busy(),
+  ) {
+    if (!server?.apiUrl || currentlyBusy) return;
     const hostname = server.vncHostname ?? new URL(server.apiUrl).hostname;
     if (force) requestedConnectionKey = `${server.id}:${server.apiUrl}`;
     setBusy(true);
     setViewerError(null);
     try {
-      await props.onConnect(hostname, server.id);
+      await onConnect(hostname, server.id);
     } catch (error) {
       setViewerState("error");
       setViewerError(error instanceof Error ? error.message : "Could not connect to this Mac.");
@@ -173,7 +182,7 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
     const session = props.session;
     if (session) await props.onDisconnect(session.id);
     requestedConnectionKey = "";
-    await connect(true);
+    await connect(props.server, props.onConnect, true);
   }
 
   return (
@@ -292,7 +301,7 @@ export function RemoteMacPanel(props: RemoteMacPanelProps) {
             </span>
             <strong>Desktop disconnected</strong>
             <span>Reconnect when you want to view or control this Mac again.</span>
-            <button type="button" onClick={() => void connect(true)}>
+            <button type="button" onClick={() => void connect(props.server, props.onConnect, true)}>
               Connect
             </button>
           </div>

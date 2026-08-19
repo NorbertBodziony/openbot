@@ -8,6 +8,8 @@ import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import type { AgentService } from "../src/backend/agent-service";
 import type { BrowserHost } from "../src/backend/browser-host";
 import type { MailboxStore } from "../src/backend/mailbox-store";
+import { OpenBotDatabase } from "../src/backend/openbot-database";
+import { TeamChatStore } from "../src/backend/team-chat-store";
 import { buildNamedTunnelArgs, waitForNamedTunnelConnection } from "../src/main/host-service";
 import { resolveCloudflaredExecutable, stopOwnedProcess } from "../src/main/remote-mac";
 import { RemoteServerManager } from "../src/main/remote-server-manager";
@@ -22,6 +24,7 @@ async function main(): Promise<void> {
   let api: TeamApiServer | null = null;
   let tunnel: ReturnType<typeof spawn> | null = null;
   let remote: RemoteServerManager | null = null;
+  let database: OpenBotDatabase | null = null;
   let cleanup: { sessionToken: string; serverId: string } | null = null;
 
   try {
@@ -36,16 +39,20 @@ async function main(): Promise<void> {
     await store.configureWithAccount("Smoke Host", ownerSession.user);
     const identity = store.getIdentity();
     if (!identity) throw new Error("The temporary team identity is missing.");
-    cleanup = { sessionToken: ownerSession.sessionToken, serverId: identity.serverId };
     await provisionDevelopmentTunnel(ownerSession.sessionToken, identity.serverId, null);
+    cleanup = { sessionToken: ownerSession.sessionToken, serverId: identity.serverId };
     await new Promise((resolve) => setTimeout(resolve, 3_000));
     const agentEvents = new EventEmitter();
     const agents = agentEvents as unknown as AgentService;
+    database = new OpenBotDatabase(join(root, "user-data"));
+    await database.initialize();
+    const chat = new TeamChatStore(database);
     api = new TeamApiServer({
       store,
       agents,
       mailbox: {} as MailboxStore,
       browser: {} as BrowserHost,
+      chat,
       getRemoteMac: () => ({ hostname: null, online: false }),
       redeemCentralTicket: redeemDevelopmentTicket,
     });
@@ -94,12 +101,7 @@ async function main(): Promise<void> {
       });
     }, 250);
     try {
-      await Promise.race([
-        remoteEvent,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("The remote WebSocket event did not arrive.")), 10_000),
-        ),
-      ]);
+      await withTimeout(remoteEvent, "The remote WebSocket event did not arrive.");
     } finally {
       clearInterval(eventInterval);
     }
@@ -115,6 +117,75 @@ async function main(): Promise<void> {
     if (storedRemote.includes(memberSession.sessionToken)) {
       throw new Error("The host session token was stored without encryption.");
     }
+    const owner = members.find((member) => member.role === "owner");
+    const member = members.find((candidate) => candidate.email === memberSession.user.email);
+    if (!owner || !member) throw new Error("The smoke-test members are incomplete.");
+
+    const ownerMessageEvent = new Promise<void>((resolve) => {
+      remoteManager.once("directMessage", (_serverId, event) => {
+        if (
+          event.message.senderMemberId === owner.id &&
+          event.message.recipientMemberId === member.id &&
+          event.message.text === "Hello from the host owner."
+        ) {
+          resolve();
+        }
+      });
+    });
+    api.sendDirectMessage(owner.id, {
+      memberId: member.id,
+      text: "Hello from the host owner.",
+      clientMessageId: "smoke-owner-message",
+    });
+    await withTimeout(ownerMessageEvent, "The owner direct message did not reach the member.");
+    const unreadThreads = await remoteManager.listDirectThreads();
+    if (unreadThreads[0]?.unreadCount !== 1) {
+      throw new Error("The member direct-message unread count is invalid.");
+    }
+    await remoteManager.markDirectRead(owner.id);
+    if ((await remoteManager.listDirectThreads())[0]?.unreadCount !== 0) {
+      throw new Error("The member direct-message read state was not stored.");
+    }
+
+    const memberMessageEvent = new Promise<void>((resolve) => {
+      remoteManager.once("directMessage", (_serverId, event) => {
+        if (
+          event.message.senderMemberId === member.id &&
+          event.message.recipientMemberId === owner.id &&
+          event.message.text === "Hello from the remote member."
+        ) {
+          resolve();
+        }
+      });
+    });
+    await remoteManager.sendDirectMessage({
+      memberId: owner.id,
+      text: "Hello from the remote member.",
+      clientMessageId: "smoke-member-message",
+    });
+    await withTimeout(memberMessageEvent, "The member direct message event did not arrive.");
+    const ownerConversation = chat.readConversation(owner.id, member.id);
+    if (
+      ownerConversation.messages.length !== 2 ||
+      chat.listThreads(owner.id)[0]?.unreadCount !== 1
+    ) {
+      throw new Error("The host did not persist the complete direct conversation.");
+    }
+
+    const typingEvent = new Promise<void>((resolve) => {
+      remoteManager.once("directTyping", (_serverId, event) => {
+        if (
+          event.senderMemberId === owner.id &&
+          event.recipientMemberId === member.id &&
+          event.typing
+        ) {
+          resolve();
+        }
+      });
+    });
+    api.setLocalDirectTyping(owner.id, member.id, true);
+    await withTimeout(typingEvent, "The direct-message typing event did not arrive.");
+    api.setLocalDirectTyping(owner.id, member.id, false);
     console.log(
       JSON.stringify({
         status: "passed",
@@ -124,6 +195,8 @@ async function main(): Promise<void> {
         transport: "cloudflare-named-tunnel",
         hostname: new URL(apiUrl).hostname,
         events: "websocket",
+        directMessages: ownerConversation.messages.length,
+        directTyping: "websocket",
       }),
     );
   } finally {
@@ -133,7 +206,22 @@ async function main(): Promise<void> {
       await deprovisionDevelopmentTunnel(cleanup.sessionToken, cleanup.serverId);
     }
     await api?.stop();
+    database?.close();
     await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function withTimeout(operation: Promise<void>, message: string): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), 10_000);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

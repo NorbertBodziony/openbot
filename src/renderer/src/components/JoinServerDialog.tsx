@@ -1,5 +1,5 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import { createSignal, Show } from "solid-js";
+import { createSignal, Show, untrack } from "solid-js";
 
 interface JoinServerDialogProps {
   inviteUrl: string;
@@ -9,7 +9,7 @@ interface JoinServerDialogProps {
 }
 
 export function JoinServerDialog(props: JoinServerDialogProps) {
-  const [inviteUrl, setInviteUrl] = createSignal(props.inviteUrl);
+  const [inviteUrl, setInviteUrl] = createSignal(untrack(() => props.inviteUrl));
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 

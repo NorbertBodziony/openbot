@@ -10,6 +10,7 @@ import type {
   AgentProviderStatus,
   AgentStatus,
   AttachmentDataInput,
+  AvatarImageInput,
   BotSummary,
   ConversationSnapshot,
   DraftAttachment,
@@ -306,6 +307,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.#emit({ type: "bots-changed", bots: this.#store.list() });
     return bot;
+  }
+
+  async setAvatar(botId: string, image: AvatarImageInput | null): Promise<BotSummary> {
+    const bot = await this.#store.setAvatar(botId, image);
+    this.#emit({ type: "bots-changed", bots: this.#store.list() });
+    return bot;
+  }
+
+  resolveAvatar(
+    botId: string,
+  ): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
+    return this.#store.resolveAvatar(botId);
   }
 
   async deleteBot(botId: string): Promise<void> {

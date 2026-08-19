@@ -18,6 +18,10 @@ export function requestAuthService(): AuthService {
   });
 }
 
+export function requestAvatarBucket(): R2Bucket {
+  return (env as unknown as WorkerBindings).AVATARS;
+}
+
 export function requestTeamInviteEmailDelivery(): TeamInviteEmailDelivery | null {
   return createTeamInviteEmailDelivery(env as unknown as WorkerBindings);
 }

@@ -3,9 +3,12 @@ import type {
   ConfigureHostInput,
   ConfigureRemoteDesktopInput,
   CreateTeamInviteInput,
+  DirectTypingInput,
   JoinServerInput,
   LoginServerInput,
   RemoteMacConnectInput,
+  SendDirectMessageInput,
+  SetTeamTypingInput,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isString } from "@openbot/contracts/runtime-values";
@@ -82,5 +85,43 @@ export function parseUpdateTeamMember(value: unknown): UpdateTeamMemberInput {
     memberId: requireString(value.memberId, "memberId"),
     ...(role ? { role } : {}),
     ...(disabled === undefined ? {} : { disabled }),
+  };
+}
+
+export function parseSetTeamTyping(value: unknown): SetTeamTypingInput {
+  if (!isObject(value) || !isBoolean(value.typing)) {
+    throw new Error("Invalid typing state.");
+  }
+  if (value.botId !== null && !isString(value.botId)) {
+    throw new Error("Invalid typing agent.");
+  }
+  if (value.typing && !value.botId) throw new Error("A typing agent is required.");
+  return {
+    botId:
+      value.botId === null ? null : requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    typing: value.typing,
+  };
+}
+
+export function parseSendDirectMessage(value: unknown): SendDirectMessageInput {
+  if (!isObject(value)) throw new Error("Direct message details are required.");
+  return {
+    memberId: requireString(value.memberId, "memberId", INPUT_LIMITS.identifier),
+    text: requireString(value.text, "text", INPUT_LIMITS.directMessageText),
+    clientMessageId: requireString(
+      value.clientMessageId,
+      "clientMessageId",
+      INPUT_LIMITS.identifier,
+    ),
+  };
+}
+
+export function parseDirectTyping(value: unknown): DirectTypingInput {
+  if (!isObject(value) || !isBoolean(value.typing)) {
+    throw new Error("Invalid direct typing state.");
+  }
+  return {
+    memberId: requireString(value.memberId, "memberId", INPUT_LIMITS.identifier),
+    typing: value.typing,
   };
 }

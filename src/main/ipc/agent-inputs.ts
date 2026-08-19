@@ -12,11 +12,13 @@ import {
   type OpenAttachmentInput,
   type RespondToPromptInput,
   type SendMessageInput,
+  type SetAgentAvatarInput,
   type SetMessageReactionInput,
   type SetQueuePausedInput,
   type UpdateBotInput,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { parseAvatarImage } from "./avatar-inputs";
 import { isObject, requireString } from "./validation";
 
 export function parseAgentRequest(value: unknown): AgentIpcRequest {
@@ -110,6 +112,14 @@ export function parseUpdateBot(value: unknown): UpdateBotInput {
     result.avatarHue = value.avatarHue;
   }
   return result;
+}
+
+export function parseSetAgentAvatar(value: unknown): SetAgentAvatarInput {
+  if (!isObject(value)) throw new Error("Invalid agent avatar request.");
+  return {
+    botId: requireString(value.botId, "botId"),
+    image: parseAvatarImage(value.image),
+  };
 }
 
 export function parseImportAttachments(value: unknown): ImportAttachmentsInput {

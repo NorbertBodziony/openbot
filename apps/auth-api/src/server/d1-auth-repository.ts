@@ -172,6 +172,23 @@ export class D1AuthRepository implements AuthRepository {
       .run();
   }
 
+  async updateUserAvatar(
+    userId: string,
+    avatarUrl: string | null,
+    expectedAvatarUrl: string | null,
+    now: number,
+  ): Promise<AuthUser | null> {
+    const row = await this.database
+      .prepare(
+        `UPDATE users SET avatar_url = ?, updated_at = ?
+         WHERE id = ? AND avatar_url IS ?
+         RETURNING id, email, name, avatar_url`,
+      )
+      .bind(avatarUrl, now, userId, expectedAvatarUrl)
+      .first<UserRow>();
+    return row ? mapUser(row) : null;
+  }
+
   async createTeamAuthTicket(input: {
     ticketHash: string;
     userId: string;

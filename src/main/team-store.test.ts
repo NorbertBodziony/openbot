@@ -76,6 +76,35 @@ describe("TeamStore", () => {
     expect(store.authenticate(joined.sessionToken)?.email).toBe("alice@example.com");
   });
 
+  it("synchronizes and persists the account avatar for team members", async () => {
+    const { store, path } = await createStore();
+    await store.configureWithAccount("Studio Mac", {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
+
+    await expect(
+      store.syncAccount({
+        id: "owner-account",
+        email: "owner@example.com",
+        name: "Owner Name",
+        avatarUrl: "https://api.openbot.run/v1/avatars/owner-account?v=image-1",
+      }),
+    ).resolves.toBe(true);
+    expect(store.listMembers()[0]).toMatchObject({
+      name: "Owner Name",
+      avatarUrl: "https://api.openbot.run/v1/avatars/owner-account?v=image-1",
+    });
+
+    const restored = new TeamStore(path);
+    await restored.initialize();
+    expect(restored.listMembers()[0]?.avatarUrl).toBe(
+      "https://api.openbot.run/v1/avatars/owner-account?v=image-1",
+    );
+  });
+
   it("allows only the OpenBot email that created the host to own it", async () => {
     const { store } = await createStore();
     await store.configureWithAccount("Studio Mac", {
@@ -149,6 +178,11 @@ describe("TeamStore", () => {
     await store.updateMember(joined.member.id, { disabled: true });
     expect(store.authenticate(joined.sessionToken)).toBeNull();
     expect(store.listSessions()).toHaveLength(0);
+    await store.removeMember(joined.member.id);
+    expect(store.listMembers()).toHaveLength(1);
+    await expect(store.removeMember(store.listMembers()[0]?.id ?? "")).rejects.toThrow(
+      "owner account cannot be removed",
+    );
     await store.revokeInvite(invite.id);
     expect(store.listInvites()).toHaveLength(0);
   });

@@ -6,11 +6,13 @@ export const INPUT_LIMITS = {
   inviteUrl: 4_096,
   hostname: 253,
   browserUrl: 8_192,
+  avatarUrl: 2_048,
   browserActionText: 50_000,
   agentName: 80,
   agentTitle: 120,
   agentDescription: 2_000,
   messageText: 100_000,
+  directMessageText: 20_000,
   promptQuestions: 32,
   promptAnswersPerQuestion: 32,
   promptAnswerText: 100_000,
@@ -33,4 +35,10 @@ export const INPUT_LIMITS = {
 export const ATTACHMENT_LIMITS = {
   fileBytes: 100 * 1024 * 1024,
   totalBytes: 250 * 1024 * 1024,
+} as const;
+
+export const AVATAR_IMAGE_LIMITS = {
+  sourceBytes: 10 * 1024 * 1024,
+  storedBytes: 512 * 1024,
+  outputPixels: 512,
 } as const;

@@ -33,6 +33,7 @@ describe("Remote Mac helpers", () => {
     ["PTY.trycloudflare.com", false],
     ["-bad.trycloudflare.com", false],
     ["vnc-h-00000000000040008000000000000000.openbot.run", true],
+    ["vnc-h-00000000000040008000000000000000.teams.openbot.run", true],
     ["h-00000000000040008000000000000000.openbot.run", false],
     ["vnc-h-not-a-server.openbot.run", false],
     ["example.com", false],

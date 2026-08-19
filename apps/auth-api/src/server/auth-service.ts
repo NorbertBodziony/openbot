@@ -127,6 +127,31 @@ export class AuthService {
     return this.#repository.authenticate(sessionToken, this.#now());
   }
 
+  async updateAvatar(
+    sessionToken: string,
+    avatarUrl: string | null,
+    expectedAvatarUrl: string | null,
+  ): Promise<AuthUser> {
+    const user = await this.authenticate(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    const now = this.#now();
+    await this.#enforceRateLimit(`avatar:user:${user.id}`, 20, now);
+    const updated = await this.#repository.updateUserAvatar(
+      user.id,
+      avatarUrl,
+      expectedAvatarUrl,
+      now,
+    );
+    if (!updated) {
+      throw new AuthServiceError(
+        409,
+        "avatar_conflict",
+        "The account avatar changed during this request. Try again.",
+      );
+    }
+    return updated;
+  }
+
   async enforceTeamInviteRateLimit(
     userId: string,
     recipientEmail: string,

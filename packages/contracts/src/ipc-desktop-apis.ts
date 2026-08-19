@@ -31,6 +31,7 @@ import type {
   QueueSnapshot,
   RespondToPromptInput,
   SendMessageInput,
+  SetAgentAvatarInput,
   SetMessageReactionInput,
   SetQueuePausedInput,
   UpdateBotInput,
@@ -39,6 +40,12 @@ import type {
   ConfigureHostInput,
   ConfigureRemoteDesktopInput,
   CreateTeamInviteInput,
+  DirectConversationSnapshot,
+  DirectMessage,
+  DirectMessageRealtimeEvent,
+  DirectThreadSummary,
+  DirectTypingInput,
+  DirectTypingRealtimeEvent,
   HostStatus,
   InviteSummary,
   JoinServerInput,
@@ -46,9 +53,12 @@ import type {
   RemoteMacConnectInput,
   RemoteMacCredentials,
   RemoteMacSession,
+  SendDirectMessageInput,
   ServerSummary,
+  SetTeamTypingInput,
   TeamInviteSummary,
   TeamMemberSummary,
+  TeamPresenceSnapshot,
   TeamSessionSummary,
   UpdateTeamMemberInput,
 } from "./ipc-team-host";
@@ -60,6 +70,7 @@ export interface AgentDesktopApi {
   listBots: () => Promise<BotSummary[]>;
   createBot: () => Promise<BotSummary>;
   updateBot: (input: UpdateBotInput) => Promise<BotSummary>;
+  setAvatar: (input: SetAgentAvatarInput) => Promise<BotSummary>;
   deleteBot: (botId: string) => Promise<void>;
   readConversation: (botId: string) => Promise<ConversationSnapshot>;
   chooseAttachments: () => Promise<DraftAttachment[]>;
@@ -105,6 +116,16 @@ export interface ServersDesktopApi {
   login: (input: LoginServerInput) => Promise<ServerSummary>;
   updateAddress: (updateUrl: string) => Promise<ServerSummary>;
   remove: (serverId: string) => Promise<void>;
+  getPresence: () => Promise<TeamPresenceSnapshot>;
+  setTyping: (input: SetTeamTypingInput) => Promise<void>;
+  onPresence: (listener: (snapshot: TeamPresenceSnapshot) => void) => () => void;
+  listDirectThreads: () => Promise<DirectThreadSummary[]>;
+  readDirectConversation: (memberId: string) => Promise<DirectConversationSnapshot>;
+  sendDirectMessage: (input: SendDirectMessageInput) => Promise<DirectMessage>;
+  markDirectRead: (memberId: string) => Promise<void>;
+  setDirectTyping: (input: DirectTypingInput) => Promise<void>;
+  onDirectMessage: (listener: (event: DirectMessageRealtimeEvent) => void) => () => void;
+  onDirectTyping: (listener: (event: DirectTypingRealtimeEvent) => void) => () => void;
   onEvent: (listener: (servers: ServerSummary[]) => void) => () => void;
   onInvite: (listener: (inviteUrl: string) => void) => () => void;
 }
@@ -117,6 +138,7 @@ export interface HostDesktopApi {
   stop: () => Promise<HostStatus>;
   listMembers: () => Promise<TeamMemberSummary[]>;
   updateMember: (input: UpdateTeamMemberInput) => Promise<TeamMemberSummary>;
+  removeMember: (memberId: string) => Promise<void>;
   listSessions: () => Promise<TeamSessionSummary[]>;
   revokeSession: (sessionId: string) => Promise<void>;
   listInvites: () => Promise<TeamInviteSummary[]>;

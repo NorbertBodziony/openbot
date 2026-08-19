@@ -6,6 +6,7 @@ import type {
   AgentReasoningEffort,
   AgentStatus,
   AttachmentSummary,
+  AvatarImageInput,
   BotAvatarHue,
   BrowserControlAction,
   BrowserControlState,
@@ -15,6 +16,7 @@ import type {
   QueueSnapshot,
   RemoteMacSession,
   ServerSummary,
+  TeamPresenceSnapshot,
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
 import {
@@ -27,6 +29,7 @@ import {
   Show,
   untrack,
 } from "solid-js";
+import { normalizeAvatarFile } from "../avatar-image";
 import { AVATAR_HUE_OPTIONS, avatarCandidateSeeds, avatarHueSwatch } from "../blobatar";
 import type { BotMessage, BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
@@ -58,6 +61,7 @@ import {
   RemoteMacPanel,
 } from "./RemoteMacPanel";
 import { SidebarToggleIcon } from "./Sidebar";
+import { TypingDots } from "./TypingDots";
 
 interface ConversationProps {
   agentStatus: AgentStatus;
@@ -76,6 +80,8 @@ interface ConversationProps {
   activeBrowserTabId: string | null;
   browserControlState: BrowserControlState;
   server: ServerSummary | undefined;
+  presence: TeamPresenceSnapshot;
+  currentUserEmail: string;
   remoteMacSession: RemoteMacSession | undefined;
   remoteDesktopRequest: number;
   leftSidebarCollapsed: boolean;
@@ -84,11 +90,13 @@ interface ConversationProps {
   onCreateAgent: () => void;
   onSelectAgent: (botId: string) => void;
   onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
+  onSetAgentAvatar: (botId: string, image: AvatarImageInput | null) => Promise<void>;
   onSendMessage: (
     body: string,
     attachmentDraftIds: string[],
     replyToMessageId: string | null,
   ) => Promise<boolean>;
+  onTypingChange: (botId: string, typing: boolean) => void;
   onCompleteOnboarding: (
     answer: string,
     model: AgentModelId,
@@ -177,6 +185,8 @@ export function Conversation(props: ConversationProps) {
   const [avatarPickerOpen, setAvatarPickerOpen] = createSignal(false);
   const [avatarSeed, setAvatarSeed] = createSignal("agent");
   const [avatarHue, setAvatarHue] = createSignal<BotAvatarHue | null>(null);
+  const avatarUrl = () => props.bot?.avatarUrl ?? null;
+  const [avatarUploadBusy, setAvatarUploadBusy] = createSignal(false);
   const [avatarCandidateSeed, setAvatarCandidateSeed] = createSignal("agent");
   const [avatarBatch, setAvatarBatch] = createSignal(0);
   const avatarCandidates = createMemo(() => {
@@ -191,6 +201,8 @@ export function Conversation(props: ConversationProps) {
   const [openMoreMessageId, setOpenMoreMessageId] = createSignal<string | null>(null);
   const [expandedEmojiMessageId, setExpandedEmojiMessageId] = createSignal<string | null>(null);
   const [copiedMessageId, setCopiedMessageId] = createSignal<string | null>(null);
+  let typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
+  let typingBotId: string | null = null;
   const [settingsPanelWidth, setSettingsPanelWidth] = createSignal(
     readPanelWidth(
       SETTINGS_PANEL_STORAGE_KEY,
@@ -235,6 +247,26 @@ export function Conversation(props: ConversationProps) {
   const currentDraft = createMemo(() => {
     const id = props.bot?.id;
     return id ? (drafts()[id] ?? EMPTY_DRAFT) : EMPTY_DRAFT;
+  });
+  const onlinePeople = createMemo(() => props.presence.members.filter((member) => member.online));
+  const typingPeople = createMemo(() => {
+    const botId = props.bot?.id;
+    const ownEmail = props.currentUserEmail.trim().toLowerCase();
+    if (!botId) return [];
+    return props.presence.members.filter(
+      (member) =>
+        member.online &&
+        member.typingBotId === botId &&
+        (member.email ?? member.username).trim().toLowerCase() !== ownEmail,
+    );
+  });
+  const typingLabel = createMemo(() => {
+    const people = typingPeople();
+    if (people.length === 0) return "";
+    const names = people.map((member) => member.name ?? member.email ?? member.username);
+    if (names.length === 1) return `${names[0]} is typing`;
+    if (names.length === 2) return `${names[0]} and ${names[1]} are typing`;
+    return `${names.length} people are typing`;
   });
   const replyTarget = createMemo(() => {
     const id = currentDraft().replyToMessageId;
@@ -337,6 +369,7 @@ export function Conversation(props: ConversationProps) {
   let browserVisibilityGeneration = 0;
   let pickerInput: HTMLInputElement | undefined;
   let avatarPickerRoot: HTMLDivElement | undefined;
+  let avatarFileInput: HTMLInputElement | undefined;
   let stickToLatest = true;
   let lastConversationBotId: string | undefined;
   let lastPanelBotId: string | undefined;
@@ -360,6 +393,49 @@ export function Conversation(props: ConversationProps) {
       );
       return false;
     }
+  }
+
+  async function setCustomAvatar(image: AvatarImageInput | null): Promise<boolean> {
+    const botId = props.bot?.id;
+    if (!botId || avatarUploadBusy()) return false;
+    setAvatarUploadBusy(true);
+    setSettingsSaveError(null);
+    try {
+      await props.onSetAgentAvatar(botId, image);
+      return true;
+    } catch (error) {
+      setSettingsSaveError(
+        error instanceof Error ? error.message : "Could not save the agent avatar.",
+      );
+      return false;
+    } finally {
+      setAvatarUploadBusy(false);
+    }
+  }
+
+  async function uploadAgentAvatar(file: File | undefined): Promise<void> {
+    if (!file) return;
+    setAvatarUploadBusy(true);
+    setSettingsSaveError(null);
+    try {
+      const image = await normalizeAvatarFile(file);
+      const botId = props.bot?.id;
+      if (!botId) return;
+      await props.onSetAgentAvatar(botId, image);
+    } catch (error) {
+      setSettingsSaveError(
+        error instanceof Error ? error.message : "Could not process the agent avatar.",
+      );
+    } finally {
+      setAvatarUploadBusy(false);
+      if (avatarFileInput) avatarFileInput.value = "";
+    }
+  }
+
+  async function selectGeneratedAvatar(seed: string): Promise<void> {
+    if (avatarUrl() && !(await setCustomAvatar(null))) return;
+    setAvatarSeed(seed);
+    await saveBotPatch({ avatarSeed: seed });
   }
 
   async function selectModel(
@@ -499,7 +575,7 @@ export function Conversation(props: ConversationProps) {
       lastHandledOnboardingRequestNonce = request.nonce;
       setOnboardingBots((current) => ({ ...current, [request.botId]: true }));
       setModelConfirmedBots((current) => ({ ...current, [request.botId]: true }));
-      setActiveRightPanel("none");
+      setActiveRightPanel("none", botId);
     },
   );
 
@@ -624,16 +700,16 @@ export function Conversation(props: ConversationProps) {
       if (!request || botId !== request.botId || request.nonce === lastHandledSettingsRequestNonce)
         return;
       lastHandledSettingsRequestNonce = request.nonce;
-      setActiveRightPanel("settings");
+      setActiveRightPanel("settings", botId);
     },
   );
 
   createEffect(
-    () => props.remoteDesktopRequest,
-    (request) => {
+    () => ({ request: props.remoteDesktopRequest, botId: props.bot?.id }),
+    ({ request, botId }) => {
       if (!request || request === lastHandledRemoteDesktopRequest) return;
       lastHandledRemoteDesktopRequest = request;
-      setActiveRightPanel("desktop");
+      setActiveRightPanel("desktop", botId);
     },
   );
 
@@ -749,8 +825,31 @@ export function Conversation(props: ConversationProps) {
     browserResizeObserver?.disconnect();
     if (browserWindowResizeHandler)
       window.removeEventListener("resize", browserWindowResizeHandler);
+    if (typingIdleTimer) clearTimeout(typingIdleTimer);
+    if (typingBotId) props.onTypingChange(typingBotId, false);
     void window.openbot.browser.setVisible({ visible: false });
   });
+
+  function updateTeamTyping(text: string): void {
+    const botId = props.bot?.id;
+    if (typingIdleTimer) clearTimeout(typingIdleTimer);
+    if (!botId || !text.trim()) {
+      stopTeamTyping();
+      return;
+    }
+    if (typingBotId && typingBotId !== botId) props.onTypingChange(typingBotId, false);
+    typingBotId = botId;
+    props.onTypingChange(botId, true);
+    typingIdleTimer = setTimeout(stopTeamTyping, 3_000);
+  }
+
+  function stopTeamTyping(): void {
+    if (typingIdleTimer) clearTimeout(typingIdleTimer);
+    typingIdleTimer = undefined;
+    if (!typingBotId) return;
+    props.onTypingChange(typingBotId, false);
+    typingBotId = null;
+  }
 
   function addAttachments(selected: DraftAttachment[], botId = props.bot?.id) {
     if (!botId) return;
@@ -796,6 +895,7 @@ export function Conversation(props: ConversationProps) {
       (!text.trim() && attachments.length === 0)
     )
       return;
+    stopTeamTyping();
     stickToLatest = true;
     setSubmitting(true);
     setComposerError(null);
@@ -896,8 +996,7 @@ export function Conversation(props: ConversationProps) {
     void window.openbot.browser.setVisible({ visible: false });
   }
 
-  function setActiveRightPanel(mode: RightPanelMode) {
-    const botId = props.bot?.id;
+  function setActiveRightPanel(mode: RightPanelMode, botId = props.bot?.id) {
     if (!botId) return;
     setRightPanels((current) =>
       current[botId] === mode ? current : { ...current, [botId]: mode },
@@ -1005,21 +1104,40 @@ export function Conversation(props: ConversationProps) {
           when={props.agentPickerOpen}
           fallback={
             <>
-              <Show when={props.bot}>
-                {(bot) => (
-                  <button
-                    type="button"
-                    class="conversation-title no-drag"
-                    aria-label="View agent settings"
-                    onClick={() => {
-                      setActiveRightPanel("settings");
-                    }}
+              <div class="conversation-heading-group">
+                <Show when={props.bot}>
+                  {(bot) => (
+                    <button
+                      type="button"
+                      class="conversation-title no-drag"
+                      aria-label="View agent settings"
+                      onClick={() => {
+                        setActiveRightPanel("settings");
+                      }}
+                    >
+                      <AgentAvatar bot={bot()} />
+                      <h1>{bot().name}</h1>
+                    </button>
+                  )}
+                </Show>
+                <Show when={props.presence.members.length > 0}>
+                  <div
+                    class="conversation-presence no-drag"
+                    title={onlinePeople()
+                      .map((member) => member.name ?? member.email ?? member.username)
+                      .join(", ")}
                   >
-                    <AgentAvatar bot={bot()} />
-                    <h1>{bot().name}</h1>
-                  </button>
-                )}
-              </Show>
+                    <span class="conversation-presence-faces" aria-hidden="true">
+                      <For each={onlinePeople().slice(0, 3)}>
+                        {(member) => (
+                          <i>{personInitial(member.name ?? member.email ?? member.username)}</i>
+                        )}
+                      </For>
+                    </span>
+                    <span>{onlinePeople().length} online</span>
+                  </div>
+                </Show>
+              </div>
               <div class="conversation-header-actions no-drag">
                 <Show when={props.bot}>
                   <ProviderModelPicker
@@ -1360,6 +1478,12 @@ export function Conversation(props: ConversationProps) {
       </div>
 
       <div class="composer-wrap">
+        <Show when={typingPeople().length > 0}>
+          <div class="team-typing-indicator" role="status" aria-live="polite">
+            <TypingDots class="team-typing-dots" />
+            {typingLabel()}
+          </div>
+        </Show>
         <Show when={showAttachments()}>
           <div class="attachment-menu">
             <button
@@ -1474,7 +1598,10 @@ export function Conversation(props: ConversationProps) {
                       : `Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`
               }
               ariaLabel={`Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`}
-              onValueChange={(text) => updateCurrentDraft({ text })}
+              onValueChange={(text) => {
+                updateCurrentDraft({ text });
+                updateTeamTyping(text);
+              }}
               onSubmit={() => void submitMessage()}
             />
           </div>
@@ -1782,12 +1909,65 @@ export function Conversation(props: ConversationProps) {
                   setAvatarPickerOpen(nextOpen);
                 }}
               >
-                <AgentAvatar seed={avatarSeed()} hue={avatarHue()} motion="always" />
+                <AgentAvatar
+                  seed={avatarSeed()}
+                  hue={avatarHue()}
+                  url={avatarUrl()}
+                  motion="always"
+                />
               </button>
               <Show when={avatarPickerOpen()}>
                 <section class="avatar-editor" role="dialog" aria-label="Avatar editor">
+                  <input
+                    ref={(element) => (avatarFileInput = element)}
+                    class="sr-only"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={(event) => void uploadAgentAvatar(event.currentTarget.files?.[0])}
+                  />
                   <div class="avatar-editor-heading">
-                    <span>Face</span>
+                    <span>Image</span>
+                    <div class="avatar-editor-actions">
+                      <Show when={avatarUrl()}>
+                        <button
+                          type="button"
+                          disabled={avatarUploadBusy()}
+                          onClick={() => void setCustomAvatar(null)}
+                        >
+                          Remove
+                        </button>
+                      </Show>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class={[
+                      "avatar-image-upload",
+                      { "avatar-image-upload-active": Boolean(avatarUrl()) },
+                    ]}
+                    disabled={avatarUploadBusy()}
+                    onClick={() => avatarFileInput?.click()}
+                  >
+                    <span class="avatar-image-upload-preview">
+                      <Show
+                        when={avatarUrl()}
+                        fallback={
+                          <svg aria-hidden="true" viewBox="0 0 24 24">
+                            <path d="M12 5v14M5 12h14" />
+                          </svg>
+                        }
+                      >
+                        <AgentAvatar seed={avatarSeed()} hue={avatarHue()} url={avatarUrl()} />
+                      </Show>
+                    </span>
+                    <span>
+                      <strong>{avatarUrl() ? "Replace image" : "Upload image"}</strong>
+                      <small>PNG, JPEG or WebP · square crop</small>
+                    </span>
+                  </button>
+                  <div class="avatar-editor-divider" />
+                  <div class="avatar-editor-heading">
+                    <span>Generated face</span>
                     <div class="avatar-editor-actions">
                       <Show when={props.bot && avatarSeed() !== props.bot.id}>
                         <button
@@ -1795,10 +1975,9 @@ export function Conversation(props: ConversationProps) {
                           onClick={() => {
                             const botId = props.bot?.id;
                             if (!botId) return;
-                            setAvatarSeed(botId);
                             setAvatarCandidateSeed(botId);
                             setAvatarBatch(0);
-                            void saveBotPatch({ avatarSeed: botId });
+                            void selectGeneratedAvatar(botId);
                           }}
                         >
                           Reset to ID
@@ -1822,18 +2001,17 @@ export function Conversation(props: ConversationProps) {
                           type="button"
                           class={[
                             "avatar-face-choice",
-                            { "avatar-choice-selected": avatarSeed() === seed },
+                            {
+                              "avatar-choice-selected": !avatarUrl() && avatarSeed() === seed,
+                            },
                           ]}
                           aria-label={
-                            avatarSeed() === seed
+                            !avatarUrl() && avatarSeed() === seed
                               ? "Selected avatar"
                               : `Avatar option ${index() + 1}`
                           }
-                          aria-pressed={avatarSeed() === seed ? "true" : "false"}
-                          onClick={() => {
-                            setAvatarSeed(seed);
-                            void saveBotPatch({ avatarSeed: seed });
-                          }}
+                          aria-pressed={!avatarUrl() && avatarSeed() === seed ? "true" : "false"}
+                          onClick={() => void selectGeneratedAvatar(seed)}
                         >
                           <AgentAvatar seed={seed} hue={avatarHue()} />
                         </button>
@@ -1999,4 +2177,8 @@ export function Conversation(props: ConversationProps) {
 function reasoningLabel(effort: AgentReasoningEffort): string {
   if (effort === "xhigh") return "Extra high";
   return `${effort.slice(0, 1).toUpperCase()}${effort.slice(1)}`;
+}
+
+function personInitial(value: string): string {
+  return value.trim().slice(0, 1).toUpperCase() || "?";
 }

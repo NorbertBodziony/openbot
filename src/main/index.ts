@@ -35,6 +35,7 @@ import { AgentService } from "../backend/agent-service";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
 import { MailboxStore } from "../backend/mailbox-store";
+import { TeamChatStore } from "../backend/team-chat-store";
 import { AgentInitializationGate } from "./agent-initialization";
 import { notificationForAgentEvent } from "./agent-notifications";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
@@ -53,18 +54,23 @@ import {
   parseOpenAttachment,
   parsePromptResponse,
   parseSendMessage,
+  parseSetAgentAvatar,
   parseSetQueuePaused,
   parseUpdateBot,
 } from "./ipc/agent-inputs";
 import { parseMacPermission, parseProvider } from "./ipc/app-inputs";
+import { parseAvatarImage } from "./ipc/avatar-inputs";
 import { parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
 import {
   parseCreateTeamInvite,
+  parseDirectTyping,
   parseHostConfig,
   parseJoinServer,
   parseLoginServer,
   parseRemoteDesktopConfig,
   parseRemoteMacConnect,
+  parseSendDirectMessage,
+  parseSetTeamTyping,
   parseUpdateTeamMember,
 } from "./ipc/server-inputs";
 import { isObject, requireString } from "./ipc/validation";
@@ -98,6 +104,14 @@ protocol.registerSchemesAsPrivileged([
     scheme: "openbot-remote-attachment",
     privileges: { standard: true, secure: true, supportFetchAPI: true },
   },
+  {
+    scheme: "openbot-avatar",
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
+  {
+    scheme: "openbot-remote-avatar",
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
 ]);
 
 let mainWindow: BrowserWindow | null = null;
@@ -129,11 +143,12 @@ const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
 
 function configureContentSecurityPolicy(): void {
   const developmentSources = app.isPackaged ? "" : " http://localhost:* ws://localhost:*";
+  const developmentImageSources = app.isPackaged ? "" : " http://127.0.0.1:* http://localhost:*";
   const policy = [
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: openbot-attachment: openbot-remote-attachment: https:",
+    `img-src 'self' data: openbot-attachment: openbot-remote-attachment: openbot-avatar: openbot-remote-avatar: https:${developmentImageSources}`,
     "font-src 'self' data:",
     `connect-src 'self' ws://127.0.0.1:*${developmentSources}`,
     "object-src 'none'",
@@ -206,6 +221,9 @@ function registerIpcHandlers(
       requireString(input.code, "code", 32),
     );
   });
+  handleTrusted(IPC_CHANNELS.authUpdateAvatar, (input: unknown) =>
+    centralAuth.updateAvatar(parseAvatarImage(input)),
+  );
   handleTrusted(IPC_CHANNELS.authLogout, () => centralAuth.logout());
   handleTrusted(IPC_CHANNELS.updateGetStatus, () => updater.getStatus());
   handleTrusted(IPC_CHANNELS.updateCheck, () => updater.checkForUpdates());
@@ -234,6 +252,42 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.serversRemove, (serverId: unknown) =>
     remoteServers.remove(requireString(serverId, "serverId")),
   );
+  handleTrusted(IPC_CHANNELS.serversGetPresence, () =>
+    remoteServers.activeServerId === "local" ? host.getPresence() : remoteServers.getPresence(),
+  );
+  handleTrusted(IPC_CHANNELS.serversSetTyping, (input: unknown) => {
+    const parsed = parseSetTeamTyping(input);
+    if (remoteServers.activeServerId === "local") host.setTyping(parsed);
+    else remoteServers.setTyping(parsed);
+  });
+  handleTrusted(IPC_CHANNELS.serversListDirectThreads, () =>
+    remoteServers.activeServerId === "local"
+      ? host.listDirectThreads()
+      : remoteServers.listDirectThreads(),
+  );
+  handleTrusted(IPC_CHANNELS.serversReadDirectConversation, (memberId: unknown) => {
+    const parsedMemberId = requireString(memberId, "memberId");
+    return remoteServers.activeServerId === "local"
+      ? host.readDirectConversation(parsedMemberId)
+      : remoteServers.readDirectConversation(parsedMemberId);
+  });
+  handleTrusted(IPC_CHANNELS.serversSendDirectMessage, (input: unknown) => {
+    const parsed = parseSendDirectMessage(input);
+    return remoteServers.activeServerId === "local"
+      ? host.sendDirectMessage(parsed)
+      : remoteServers.sendDirectMessage(parsed);
+  });
+  handleTrusted(IPC_CHANNELS.serversMarkDirectRead, (memberId: unknown) => {
+    const parsedMemberId = requireString(memberId, "memberId");
+    return remoteServers.activeServerId === "local"
+      ? host.markDirectRead(parsedMemberId)
+      : remoteServers.markDirectRead(parsedMemberId);
+  });
+  handleTrusted(IPC_CHANNELS.serversSetDirectTyping, (input: unknown) => {
+    const parsed = parseDirectTyping(input);
+    if (remoteServers.activeServerId === "local") host.setDirectTyping(parsed);
+    else remoteServers.setDirectTyping(parsed);
+  });
   handleTrusted(IPC_CHANNELS.hostGetStatus, () => host.getStatus());
   handleTrusted(IPC_CHANNELS.hostConfigure, (input: unknown) =>
     host.configure(parseHostConfig(input)),
@@ -246,6 +300,9 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.hostListMembers, () => host.listMembers());
   handleTrusted(IPC_CHANNELS.hostUpdateMember, (input: unknown) =>
     host.updateMember(parseUpdateTeamMember(input)),
+  );
+  handleTrusted(IPC_CHANNELS.hostRemoveMember, (memberId: unknown) =>
+    host.removeMember(requireString(memberId, "memberId")),
   );
   handleTrusted(IPC_CHANNELS.hostListSessions, () => host.listSessions());
   handleTrusted(IPC_CHANNELS.hostRevokeSession, (sessionId: unknown) =>
@@ -303,6 +360,13 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.agentUpdateBot, (input: unknown) => {
     const scoped = parseAgentRequest(input);
     return routeUpdateBot(service, remoteServers, scoped.serverId, parseUpdateBot(scoped.payload));
+  });
+  handleTrusted(IPC_CHANNELS.agentSetAvatar, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseSetAgentAvatar(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.setAvatar(parsed.botId, parsed.image)
+      : remoteServers.setAgentAvatar(parsed.botId, parsed.image, scoped.serverId);
   });
   handleTrusted(IPC_CHANNELS.agentDeleteBot, (input: unknown) => {
     const scoped = parseAgentRequest(input);
@@ -621,7 +685,36 @@ function forwardServers(servers: import("@openbot/contracts/ipc").ServerSummary[
   mainWindow.webContents.send(IPC_CHANNELS.serversEvent, servers);
 }
 
+function forwardTeamPresence(
+  serverId: string,
+  snapshot: import("@openbot/contracts/ipc").TeamPresenceSnapshot,
+): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_CHANNELS.serversPresence, { serverId, snapshot });
+}
+
+function forwardDirectMessage(
+  serverId: string,
+  event: import("@openbot/contracts/ipc").DirectMessageRealtimeEvent,
+): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_CHANNELS.serversDirectMessage, { serverId, event });
+}
+
+function forwardDirectTyping(
+  serverId: string,
+  event: import("@openbot/contracts/ipc").DirectTypingRealtimeEvent,
+): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_CHANNELS.serversDirectTyping, { serverId, event });
+}
+
 function forwardCentralAuth(state: CentralAuthState): void {
+  if (state.status === "signed_in") {
+    void hostService?.syncSignedInAccount(state.user).catch((error) => {
+      console.error("Unable to synchronize the team account profile:", error);
+    });
+  }
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.authEvent, state);
 }
@@ -697,7 +790,6 @@ if (!hasSingleInstanceLock) {
       mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot, store.database);
       await mailboxStore.initialize();
       configureApplicationProtocol();
-      configureAttachmentProtocol(mailboxStore);
       browserHost = new BrowserHost(
         mainWindow,
         store.downloadsRoot,
@@ -715,8 +807,10 @@ if (!hasSingleInstanceLock) {
         setupState.preferredProvider ?? "codex",
       );
       const service = agentService;
+      configureAttachmentProtocol(mailboxStore, service);
       const teamStore = new TeamStore(join(app.getPath("userData"), TEAM_FILE));
       await teamStore.initialize();
+      const teamChatStore = new TeamChatStore(store.database);
       const remoteDesktopCredentials = new RemoteDesktopCredentialStore(
         join(app.getPath("userData"), REMOTE_DESKTOP_CREDENTIAL_FILE),
         {
@@ -735,6 +829,7 @@ if (!hasSingleInstanceLock) {
         agents: service,
         mailbox: mailboxStore,
         browser: browserHost,
+        chat: teamChatStore,
         logDirectory: join(app.getPath("userData"), "logs", "remote"),
         getSignedInUser: () => {
           if (!centralAuthManager) throw new Error("The account service is not ready.");
@@ -755,6 +850,10 @@ if (!hasSingleInstanceLock) {
           return centralAuthManager.provisionTeamTunnel(input);
         },
       });
+      const signedInState = centralAuthManager.getState();
+      if (signedInState.status === "signed_in") {
+        await hostService.syncSignedInAccount(signedInState.user);
+      }
       remoteServerManager = new RemoteServerManager(
         join(app.getPath("userData"), REMOTE_SERVERS_FILE),
         {
@@ -808,11 +907,17 @@ if (!hasSingleInstanceLock) {
       });
       service.on("event", (event) => forwardAgentEvent("local", event));
       host.on("changed", forwardHostStatus);
+      host.on("presence", (snapshot) => forwardTeamPresence("local", snapshot));
+      host.on("directMessage", (event) => forwardDirectMessage("local", event));
+      host.on("directTyping", (event) => forwardDirectTyping("local", event));
       remoteMac.on("changed", forwardRemoteMacSessions);
       remoteServers.on("changed", forwardServers);
       remoteServers.on("agent", (serverId, event) => {
         forwardAgentEvent(serverId, event);
       });
+      remoteServers.on("presence", forwardTeamPresence);
+      remoteServers.on("directMessage", forwardDirectMessage);
+      remoteServers.on("directTyping", forwardDirectTyping);
       updateService.on("status", forwardUpdateStatus);
       updateService.start();
       const agentInitialization = new AgentInitializationGate(() => service.initialize());
@@ -1095,7 +1200,7 @@ function mimeTypeForName(name: string): string {
   }
 }
 
-function configureAttachmentProtocol(mailbox: MailboxStore): void {
+function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService): void {
   session.defaultSession.protocol.handle("openbot-attachment", async (request) => {
     try {
       const url = new URL(request.url);
@@ -1129,6 +1234,48 @@ function configureAttachmentProtocol(mailbox: MailboxStore): void {
           "Cache-Control": "no-store",
           "X-Content-Type-Options": "nosniff",
           "Content-Disposition": "inline",
+        },
+      });
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+  session.defaultSession.protocol.handle("openbot-avatar", async (request) => {
+    try {
+      const url = new URL(request.url);
+      if (url.hostname !== "agent") return new Response("Not found", { status: 404 });
+      const botId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
+      const avatar = botId ? agents.resolveAvatar(botId) : null;
+      if (!avatar || avatar.version !== url.searchParams.get("v")) {
+        return new Response("Not found", { status: 404 });
+      }
+      return new Response(await readFile(avatar.path), {
+        headers: {
+          "Content-Type": avatar.mimeType,
+          "Cache-Control": "private, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+  session.defaultSession.protocol.handle("openbot-remote-avatar", async (request) => {
+    try {
+      const url = new URL(request.url);
+      const serverId = decodeURIComponent(url.hostname);
+      const botId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
+      if (!remoteServerManager || !serverId || !botId) {
+        return new Response("Not found", { status: 404 });
+      }
+      const version = url.searchParams.get("v");
+      if (!version) return new Response("Not found", { status: 404 });
+      const avatar = await remoteServerManager.downloadAgentAvatar(botId, serverId, version);
+      return new Response(Buffer.from(avatar.bytes), {
+        headers: {
+          "Content-Type": avatar.mimeType,
+          "Cache-Control": "private, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
         },
       });
     } catch {

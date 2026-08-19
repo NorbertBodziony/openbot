@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BotStore } from "./bot-store";
 
 const temporaryRoots: string[] = [];
@@ -231,6 +231,57 @@ describe("BotStore", () => {
       avatarSeed: "chief:avatar:2:4",
       avatarHue: 215,
     });
+  });
+
+  it("stores, restores, and removes managed agent avatar files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const store = new BotStore(userData, join(root, "home"));
+    await store.initialize();
+    await store.getOrCreate("chief");
+    const image = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+    const updated = await store.setAvatar("chief", { mimeType: "image/png", bytes: image });
+    expect(updated.avatarUrl).toMatch(/^openbot-avatar:\/\/agent\/chief\?v=/u);
+    const storedAvatar = store.resolveAvatar("chief");
+    expect(storedAvatar?.mimeType).toBe("image/png");
+    await expect(readFile(storedAvatar?.path ?? "")).resolves.toEqual(Buffer.from(image));
+
+    const restored = new BotStore(userData, join(root, "home"));
+    await restored.initialize();
+    expect(restored.list().find((bot) => bot.id === "chief")?.avatarUrl).toBe(updated.avatarUrl);
+    const restoredPath = restored.resolveAvatar("chief")?.path ?? "";
+    await restored.setAvatar("chief", null);
+    expect(restored.list().find((bot) => bot.id === "chief")?.avatarUrl).toBeNull();
+    await expect(readFile(restoredPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("restores the previous avatar when SQLite persistence fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
+    temporaryRoots.push(root);
+    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    await store.initialize();
+    await store.getOrCreate("chief");
+    const image = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const original = await store.setAvatar("chief", { mimeType: "image/png", bytes: image });
+    const originalAvatar = store.resolveAvatar("chief");
+    vi.spyOn(store.database, "replaceAgents").mockImplementation(() => {
+      throw new Error("database unavailable");
+    });
+
+    await expect(store.setAvatar("chief", { mimeType: "image/png", bytes: image })).rejects.toThrow(
+      "database unavailable",
+    );
+    expect(store.list().find((bot) => bot.id === "chief")).toMatchObject({
+      avatarUrl: original.avatarUrl,
+      updatedAt: original.updatedAt,
+    });
+    await expect(readFile(originalAvatar?.path ?? "")).resolves.toEqual(Buffer.from(image));
+
+    await expect(store.setAvatar("chief", null)).rejects.toThrow("database unavailable");
+    expect(store.list().find((bot) => bot.id === "chief")?.avatarUrl).toBe(original.avatarUrl);
+    await expect(readFile(originalAvatar?.path ?? "")).resolves.toEqual(Buffer.from(image));
   });
 
   it("rejects agent fields above their limits without truncating stored values", async () => {

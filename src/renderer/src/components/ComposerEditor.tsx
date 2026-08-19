@@ -271,7 +271,18 @@ function createMentionToken(bot: BotProfile): HTMLSpanElement {
   token.setAttribute("aria-label", `Agent ${bot.name}`);
   const avatar = document.createElement("span");
   avatar.className = "composer-mention-avatar bot-avatar-motion-hover";
-  avatar.innerHTML = buildAnimatedAvatarSvg(bot.avatarSeed, bot.avatarHue);
+  if (bot.avatarUrl) {
+    const image = document.createElement("img");
+    image.src = bot.avatarUrl;
+    image.alt = "";
+    image.draggable = false;
+    image.addEventListener("error", () => {
+      avatar.innerHTML = buildAnimatedAvatarSvg(bot.avatarSeed, bot.avatarHue);
+    });
+    avatar.append(image);
+  } else {
+    avatar.innerHTML = buildAnimatedAvatarSvg(bot.avatarSeed, bot.avatarHue);
+  }
   const name = document.createElement("span");
   name.textContent = bot.name;
   token.append(avatar, name);
@@ -300,6 +311,7 @@ function renderEditorValue(editor: HTMLDivElement, value: string, bots: BotProfi
           threadId: null,
           avatarSeed: id || "agent",
           avatarHue: null,
+          avatarUrl: null,
           time: "",
           preview: "",
         },

@@ -4,13 +4,26 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AgentEvent,
+  AvatarImageInput,
+  BotSummary,
+  DirectConversationSnapshot,
+  DirectMessage,
+  DirectMessageRealtimeEvent,
+  DirectThreadSummary,
+  DirectTypingInput,
+  DirectTypingRealtimeEvent,
   DraftAttachment,
   JoinServerInput,
   LoginServerInput,
+  SendDirectMessageInput,
   ServerSummary,
+  SetTeamTypingInput,
+  TeamPresenceSnapshot,
   TeamRole,
 } from "@openbot/contracts/ipc";
+import { isTeamRealtimeEvent } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isObjectValue, isString } from "@openbot/contracts/runtime-values";
+import { isOpenBotTeamApiHostname, isOpenBotTeamVncHostname } from "@openbot/contracts/validation";
 import { addressUpdatePayload, fingerprint } from "./team-store";
 
 interface StoredRemoteServer {
@@ -34,6 +47,9 @@ interface StoredRemoteServers {
 interface RemoteServerEvents {
   changed: [servers: ServerSummary[]];
   agent: [serverId: string, event: AgentEvent];
+  presence: [serverId: string, snapshot: TeamPresenceSnapshot];
+  directMessage: [serverId: string, event: DirectMessageRealtimeEvent];
+  directTyping: [serverId: string, event: DirectTypingRealtimeEvent];
 }
 
 interface TokenCipher {
@@ -45,6 +61,8 @@ interface CentralAccountSession {
   createTeamAuthTicket: (serverId: string) => Promise<string>;
   getEmail: () => string;
 }
+
+const REMOTE_REQUEST_TIMEOUT_MS = 15_000;
 
 export interface RemoteDesktopAccess {
   url: string;
@@ -59,6 +77,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #state: StoredRemoteServers = { version: 1, activeServerId: "local", servers: [] };
   #states = new Map<string, ServerSummary["state"]>();
   #eventControllers = new Map<string, AbortController>();
+  #eventSockets = new Map<string, WebSocket>();
+  #presence = new Map<string, TeamPresenceSnapshot>();
 
   constructor(path: string, cipher: TokenCipher, centralAccount: CentralAccountSession) {
     super();
@@ -111,6 +131,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       throw new Error("Remote server not found.");
     }
     this.#state.activeServerId = serverId;
+    for (const [connectedServerId, controller] of this.#eventControllers) {
+      if (connectedServerId === serverId) continue;
+      controller.abort();
+      this.#eventControllers.delete(connectedServerId);
+      this.#eventSockets.delete(connectedServerId);
+    }
     await this.#persist();
     this.#emitChanged();
     if (serverId !== "local") void this.#connectEvents(serverId);
@@ -192,6 +218,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventControllers.get(serverId)?.abort();
     this.#eventControllers.delete(serverId);
     this.#states.delete(serverId);
+    this.#eventSockets.delete(serverId);
+    this.#presence.delete(serverId);
     this.#state.servers = this.#state.servers.filter((server) => server.id !== serverId);
     if (this.#state.activeServerId === serverId) this.#state.activeServerId = "local";
     await this.#persist();
@@ -225,6 +253,56 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       token: this.#token(server),
     });
     return addRemotePreviewUrls(value, server.id);
+  }
+
+  getPresence(serverId = this.#state.activeServerId): TeamPresenceSnapshot {
+    const cached = this.#presence.get(serverId);
+    if (cached) return structuredClone(cached);
+    return { serverId, members: [], updatedAt: new Date().toISOString() };
+  }
+
+  setTyping(input: SetTeamTypingInput, serverId = this.#state.activeServerId): void {
+    const socket = this.#eventSockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ type: "team-typing", ...input }));
+  }
+
+  listDirectThreads(serverId = this.#state.activeServerId): Promise<DirectThreadSummary[]> {
+    return this.request("/v1/direct/threads", {}, serverId);
+  }
+
+  readDirectConversation(
+    memberId: string,
+    serverId = this.#state.activeServerId,
+  ): Promise<DirectConversationSnapshot> {
+    return this.request(`/v1/direct/conversations/${encodeURIComponent(memberId)}`, {}, serverId);
+  }
+
+  sendDirectMessage(
+    input: SendDirectMessageInput,
+    serverId = this.#state.activeServerId,
+  ): Promise<DirectMessage> {
+    return this.request("/v1/direct/messages", { method: "POST", body: input }, serverId);
+  }
+
+  async markDirectRead(memberId: string, serverId = this.#state.activeServerId): Promise<void> {
+    await this.request(
+      `/v1/direct/conversations/${encodeURIComponent(memberId)}/read`,
+      { method: "POST" },
+      serverId,
+    );
+  }
+
+  setDirectTyping(input: DirectTypingInput, serverId = this.#state.activeServerId): void {
+    const socket = this.#eventSockets.get(serverId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(
+      JSON.stringify({
+        type: "team-direct-typing",
+        recipientMemberId: input.memberId,
+        typing: input.typing,
+      }),
+    );
   }
 
   async getRemoteDesktopAccess(serverId: string): Promise<RemoteDesktopAccess> {
@@ -266,7 +344,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const url = new URL("/v1/attachments", server.apiUrl);
     url.searchParams.set("name", name);
     url.searchParams.set("mime", mimeType || "application/octet-stream");
-    const response = await fetch(url, {
+    const response = await remoteFetch(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.#token(server)}`,
@@ -279,6 +357,46 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return addRemotePreviewUrls(value as DraftAttachment, server.id);
   }
 
+  async setAgentAvatar(
+    botId: string,
+    image: AvatarImageInput | null,
+    serverId = this.#state.activeServerId,
+  ): Promise<BotSummary> {
+    const server = this.#requireServer(serverId);
+    const url = new URL(`/v1/agents/${encodeURIComponent(botId)}/avatar`, server.apiUrl);
+    const response = await remoteFetch(url, {
+      method: image ? "PUT" : "DELETE",
+      headers: {
+        Authorization: `Bearer ${this.#token(server)}`,
+        ...(image ? { "Content-Type": image.mimeType } : {}),
+      },
+      body: image ? Buffer.from(image.bytes) : undefined,
+    });
+    const value = (await response.json()) as BotSummary | { error?: string };
+    if (!response.ok) {
+      throw new Error("error" in value ? value.error : "Agent avatar update failed.");
+    }
+    return addRemotePreviewUrls(value as BotSummary, server.id);
+  }
+
+  async downloadAgentAvatar(
+    botId: string,
+    serverId = this.#state.activeServerId,
+    version?: string,
+  ): Promise<{ bytes: Uint8Array; mimeType: string }> {
+    const server = this.#requireServer(serverId);
+    const url = new URL(`/v1/agents/${encodeURIComponent(botId)}/avatar`, server.apiUrl);
+    if (version) url.searchParams.set("v", version);
+    const response = await remoteFetch(url, {
+      headers: { Authorization: `Bearer ${this.#token(server)}` },
+    });
+    if (!response.ok) throw new Error("Agent avatar download failed.");
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      mimeType: response.headers.get("content-type") ?? "application/octet-stream",
+    };
+  }
+
   async downloadAttachment(
     attachmentId: string,
     serverId = this.#state.activeServerId,
@@ -288,7 +406,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     mimeType: string;
   }> {
     const server = this.#requireServer(serverId);
-    const response = await fetch(
+    const response = await remoteFetch(
       `${server.apiUrl}/v1/attachments/${encodeURIComponent(attachmentId)}`,
       { headers: { Authorization: `Bearer ${this.#token(server)}` } },
     );
@@ -367,6 +485,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         socket.addEventListener(
           "open",
           () => {
+            this.#eventSockets.set(serverId, socket);
             this.#states.set(serverId, "online");
             this.#emitChanged();
           },
@@ -375,7 +494,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         socket.addEventListener("message", (message) => {
           if (!isString(message.data)) return;
           try {
-            this.emit("agent", serverId, JSON.parse(message.data) as AgentEvent);
+            const event = JSON.parse(message.data) as unknown;
+            if (isTeamRealtimeEvent(event)) {
+              if (event.type === "team-presence") {
+                this.#presence.set(serverId, event.snapshot);
+                this.emit("presence", serverId, structuredClone(event.snapshot));
+              } else if (event.type === "team-direct-message") {
+                this.emit("directMessage", serverId, event);
+              } else {
+                this.emit("directTyping", serverId, event);
+              }
+            } else {
+              this.emit("agent", serverId, event as AgentEvent);
+            }
           } catch {
             socket.close(1003, "Invalid event payload");
           }
@@ -387,15 +518,26 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             once: true,
           },
         );
-        socket.addEventListener("close", () => resolve(), { once: true });
+        socket.addEventListener(
+          "close",
+          () => {
+            if (this.#eventSockets.get(serverId) === socket) {
+              this.#eventSockets.delete(serverId);
+            }
+            resolve();
+          },
+          { once: true },
+        );
       });
       if (!controller.signal.aborted) {
         this.#states.set(serverId, "offline");
+        this.#setPresenceOffline(serverId);
         this.#emitChanged();
       }
     } catch {
       if (!controller.signal.aborted) {
         this.#states.set(serverId, "offline");
+        this.#setPresenceOffline(serverId);
         this.#emitChanged();
       }
     }
@@ -423,6 +565,22 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #emitChanged(): void {
     this.emit("changed", this.list());
   }
+
+  #setPresenceOffline(serverId: string): void {
+    const current = this.#presence.get(serverId);
+    if (!current) return;
+    const snapshot: TeamPresenceSnapshot = {
+      ...current,
+      members: current.members.map((member) => ({
+        ...member,
+        online: false,
+        typingBotId: null,
+      })),
+      updatedAt: new Date().toISOString(),
+    };
+    this.#presence.set(serverId, snapshot);
+    this.emit("presence", serverId, structuredClone(snapshot));
+  }
 }
 
 export function isValidRemoteApiUrl(value: string): boolean {
@@ -437,7 +595,7 @@ export function isValidRemoteApiUrl(value: string): boolean {
       url.search === "" &&
       url.hash === "" &&
       (/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com$/.test(url.hostname) ||
-        /^h-[0-9a-f]{32}\.openbot\.run$/u.test(url.hostname))
+        isOpenBotTeamApiHostname(url.hostname))
     );
   } catch {
     return false;
@@ -508,7 +666,7 @@ export function parseAddressUpdateUrl(value: string): {
 function isValidRemoteVncHostname(value: string): boolean {
   return (
     /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com$/.test(value) ||
-    /^vnc-h-[0-9a-f]{32}\.openbot\.run$/u.test(value)
+    isOpenBotTeamVncHostname(value)
   );
 }
 
@@ -534,7 +692,7 @@ async function requestJson<T>(
   path: string,
   options: { method?: string; body?: unknown; token?: string } = {},
 ): Promise<T> {
-  const response = await fetch(`${apiUrl}${path}`, {
+  const response = await remoteFetch(`${apiUrl}${path}`, {
     method: options.method ?? (options.body === undefined ? "GET" : "POST"),
     headers: {
       Accept: "application/json",
@@ -554,6 +712,10 @@ async function requestJson<T>(
   return value as T;
 }
 
+function remoteFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, { ...init, signal: AbortSignal.timeout(REMOTE_REQUEST_TIMEOUT_MS) });
+}
+
 function addRemotePreviewUrls<T>(value: T, serverId: string): T {
   if (Array.isArray(value)) {
     for (const item of value) addRemotePreviewUrls(item, serverId);
@@ -564,10 +726,26 @@ function addRemotePreviewUrls<T>(value: T, serverId: string): T {
   if ("previewUrl" in record && isString(record.id)) {
     record.previewUrl = remoteAttachmentPreviewUrl(serverId, record.id);
   }
+  if (
+    isString(record.avatarUrl) &&
+    record.avatarUrl.startsWith("openbot-avatar:") &&
+    isString(record.id)
+  ) {
+    record.avatarUrl = remoteAgentAvatarUrl(serverId, record.id, record.avatarUrl);
+  }
   for (const item of Object.values(record)) addRemotePreviewUrls(item, serverId);
   return value;
 }
 
 export function remoteAttachmentPreviewUrl(serverId: string, attachmentId: string): string {
   return `openbot-remote-attachment://${encodeURIComponent(serverId)}/${encodeURIComponent(attachmentId)}`;
+}
+
+export function remoteAgentAvatarUrl(serverId: string, botId: string, sourceUrl: string): string {
+  const source = new URL(sourceUrl);
+  const target = new URL(
+    `openbot-remote-avatar://${encodeURIComponent(serverId)}/${encodeURIComponent(botId)}`,
+  );
+  target.search = source.search;
+  return target.toString();
 }

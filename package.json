@@ -94,13 +94,13 @@
     "dist:release": "bun run build && electron-builder --mac --arm64 --publish never"
   },
   "dependencies": {
-    "@openbot/contracts": "workspace:*",
     "@anthropic-ai/claude-agent-sdk": "0.3.232",
     "@anthropic-ai/sdk": "0.116.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@novnc/novnc": "1.7.0",
+    "@openbot/contracts": "workspace:*",
     "@solidjs/web": "2.0.0-rc.0",
-    "blobatar": "0.2.0",
+    "blobatar": "2.0.0",
     "electron-updater": "6.8.9",
     "solid-js": "2.0.0-rc.0",
     "ws": "8.21.3",

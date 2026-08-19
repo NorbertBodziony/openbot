@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./avatar-images": "./src/avatar-images.ts",
     "./input-limits": "./src/input-limits.ts",
     "./ipc": "./src/ipc.ts",
     "./runtime-values": "./src/runtime-values.ts",

@@ -14,6 +14,9 @@ describe("remote server links", () => {
     expect(isValidRemoteApiUrl("https://h-00000000000040008000000000000000.openbot.run/")).toBe(
       true,
     );
+    expect(
+      isValidRemoteApiUrl("https://h-00000000000040008000000000000000.teams.openbot.run/"),
+    ).toBe(true);
     expect(isValidRemoteApiUrl("http://team-host.trycloudflare.com/")).toBe(false);
     expect(isValidRemoteApiUrl("https://team-host.trycloudflare.com/path")).toBe(false);
     expect(isValidRemoteApiUrl("https://example.com/")).toBe(false);
@@ -34,7 +37,7 @@ describe("remote server links", () => {
   });
 
   it("parses a stable openbot.run invitation", () => {
-    const apiUrl = "https://h-00000000000040008000000000000000.openbot.run/";
+    const apiUrl = "https://h-00000000000040008000000000000000.teams.openbot.run/";
     const url = new URL("openbot://join");
     url.searchParams.set("api", apiUrl);
     url.searchParams.set("server", "00000000-0000-4000-8000-000000000000");

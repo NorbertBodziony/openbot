@@ -74,6 +74,7 @@ export interface BotSummary {
   updatedAt: string | null;
   avatarSeed: string;
   avatarHue: BotAvatarHue | null;
+  avatarUrl: string | null;
 }
 
 export const AGENT_MODELS = [
@@ -130,6 +131,16 @@ export interface UpdateBotInput {
   reasoningEffort?: AgentReasoningEffort;
   avatarSeed?: string;
   avatarHue?: BotAvatarHue | null;
+}
+
+export interface AvatarImageInput {
+  mimeType: "image/png" | "image/jpeg" | "image/webp";
+  bytes: Uint8Array;
+}
+
+export interface SetAgentAvatarInput {
+  botId: string;
+  image: AvatarImageInput | null;
 }
 
 export type ConversationMessageAuthor = "user" | "assistant" | "agent" | "system";

@@ -1,12 +1,23 @@
 import type { BotAvatarHue } from "@openbot/contracts/ipc";
 import { palette, traits } from "blobatar";
-import { blobatar, layout } from "blobatar/blob";
+import { blobatar, layout, type Shape } from "blobatar/blob";
 
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
 export type AvatarMotion = "hover" | "always";
 
-const BLOBATAR_BODY_VARIANTS = ["round", "organic", "boxy", "nub", "cloud", "sun"] as const;
+const BLOBATAR_BODY_VARIANTS = [
+  "round",
+  "organic",
+  "boxy",
+  "nub",
+  "cloud",
+  "sun",
+  "capsule",
+  "triangle",
+  "hexagon",
+  "droplet",
+] as const satisfies readonly Shape[];
 
 export const AVATAR_HUE_OPTIONS: ReadonlyArray<{
   hue: BotAvatarHue;
@@ -115,7 +126,7 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-/** Ported from Blobatar v0.2.0 under its MIT license. */
+/** Matches Blobatar 2 motion variables for the SolidJS inline-SVG adapter. */
 function motionVariables(reader: ReturnType<typeof traits>): Record<string, string> {
   const negativeMilliseconds = (value: number) => `${-Math.round(value)}ms`;
   const blink = Math.round(reader.num("motion.blink", 3500, 6500));
