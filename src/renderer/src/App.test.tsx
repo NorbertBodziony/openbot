@@ -2917,9 +2917,7 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "2 new messages" })).not.toBeInTheDocument());
-    await waitFor(() =>
-      expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 1080 }),
-    );
+    await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 1080 }));
     expect(scrollElement.scrollTop).toBe(1080);
   });
 
@@ -3040,9 +3038,7 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
-    await waitFor(() =>
-      expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 660 }),
-    );
+    await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "auto", top: 660 }));
     expect(scrollElement.scrollTop).toBe(660);
   });
 });
