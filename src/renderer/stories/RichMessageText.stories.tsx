@@ -107,7 +107,16 @@ export const CitationEdges: Story = {
   args: { body: "", citations },
   parameters: { layout: "fullscreen" },
   render: (storyArgs) => (
-    <div style={{ position: "fixed", top: "0", left: "0", width: "320px", padding: "0 8px" }}>
+    <div
+      style={{
+        position: "fixed",
+        top: "0",
+        left: "0",
+        width: "100vw",
+        "box-sizing": "border-box",
+        padding: "0 8px",
+      }}
+    >
       <p style={{ margin: "0" }}>
         <RichMessageText {...storyArgs} body="[1] Citation at the left edge." />
       </p>
