@@ -21,7 +21,7 @@
 }
 
 .account-login-shell {
-  width: min(100%, 400px);
+  width: min(100%, 360px);
   display: flex;
   flex-direction: column;
   -webkit-app-region: no-drag;
@@ -31,31 +31,30 @@
   display: inline-flex;
   align-items: center;
   align-self: center;
-  gap: 10px;
-  margin-bottom: 18px;
+  gap: 12px;
+  margin-bottom: 32px;
 }
 
 .account-login-logo {
   display: block;
-  width: 30px;
-  height: 30px;
+  width: 40px;
+  height: 40px;
 }
 
 .account-login-wordmark {
   color: var(--openbot-text-primary);
-  font-size: var(--openbot-text-lg);
+  font-size: var(--openbot-text-xl);
   font-weight: 620;
   letter-spacing: -0.015em;
-  line-height: 20px;
+  line-height: 22px;
 }
 
 .account-login {
   width: 100%;
-  border: 1px solid var(--openbot-border);
-  border-radius: var(--openbot-radius-lg);
-  background: var(--openbot-bg-sidebar);
-  padding: 28px;
-  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: center;
 }
 
 .app-logo {
@@ -402,14 +401,6 @@
     border-color var(--openbot-duration-normal) ease,
     background-color var(--openbot-duration-normal) ease,
     box-shadow var(--openbot-duration-normal) ease;
-}
-
-.account-login-note {
-  margin: 16px 0 0;
-  color: var(--openbot-text-readable);
-  font-size: var(--openbot-text-xs);
-  line-height: 16px;
-  text-align: center;
 }
 
 .account-login-form input:not(.otp-input-native):focus {

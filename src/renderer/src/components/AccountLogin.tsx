@@ -483,7 +483,6 @@ export function AccountLogin(props: AccountLoginProps) {
             </Show>
           </Show>
         </section>
-        <p class="account-login-note">Passwordless sign-in · Codes expire after 10 minutes</p>
       </div>
     </main>
   );
