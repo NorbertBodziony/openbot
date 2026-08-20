@@ -26,3 +26,10 @@ export function isGlobalSearchShortcut(input: BrowserShortcutInput): boolean {
     !input.shift
   );
 }
+
+export function isToggleDevToolsShortcut(input: BrowserShortcutInput): boolean {
+  if (input.type !== "keyDown") return false;
+  const key = input.key.toLowerCase();
+  if (key === "f12") return !input.control && !input.meta && !input.alt && !input.shift;
+  return key === "i" && (input.control || input.meta) && input.alt !== input.shift;
+}
