@@ -1,54 +1,91 @@
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
-import { For, Show } from "solid-js";
+import { createSignal, createUniqueId, For, Show } from "solid-js";
 import { Button } from "../ui";
+import { AnchoredTooltip } from "./AnchoredTooltip";
+import { attachmentReferenceTone } from "./AttachmentReference";
 
 export function AttachmentCards(props: {
   attachments: AttachmentSummary[];
   onPreview: (attachment: AttachmentSummary) => void;
   onAction: (attachment: AttachmentSummary, action: "open" | "reveal") => void;
 }) {
+  const tooltipId = `attachment-action-tooltip-${createUniqueId()}`;
+  const [tooltip, setTooltip] = createSignal<{ anchor: HTMLElement; content: string } | null>(null);
+
+  const openTooltip = (anchor: HTMLElement) => {
+    setTooltip({ anchor, content: "Open file" });
+  };
+  const closeTooltip = (anchor: HTMLElement) => {
+    if (tooltip()?.anchor === anchor) setTooltip(null);
+  };
+  const closeTooltipOnEscape = (event: KeyboardEvent) => {
+    if (event.key === "Escape" && event.currentTarget instanceof HTMLElement) closeTooltip(event.currentTarget);
+  };
+
   return (
-    <div class="message-attachments">
-      <For each={props.attachments}>
-        {(attachment) => (
-          <div class="message-attachment">
-            <Button
-              type="button"
-              class="attachment-preview-button"
-              disabled={attachment.previewKind === "none"}
-              aria-label={`Preview ${attachment.name}`}
-              onClick={() => props.onPreview(attachment)}
-            >
-              <Show
-                when={attachment.previewKind === "image"}
-                fallback={
-                  <span class="attachment-file-visual" aria-hidden="true">
-                    <AttachmentFileIcon />
-                  </span>
-                }
+    <>
+      <div class="message-attachments">
+        <For each={props.attachments}>
+          {(attachment) => (
+            <div class="message-attachment">
+              <Button
+                type="button"
+                class="attachment-preview-button"
+                disabled={attachment.previewKind === "none"}
+                aria-label={`Preview ${attachment.name}`}
+                onClick={() => props.onPreview(attachment)}
               >
-                <span class="attachment-file-visual attachment-file-image">
-                  <img src={attachment.previewUrl ?? ""} alt="" />
+                <Show
+                  when={attachment.previewKind === "image"}
+                  fallback={
+                    <span
+                      class="attachment-file-visual"
+                      data-file-tone={attachmentReferenceTone(attachment.name)}
+                      aria-hidden="true"
+                    >
+                      <AttachmentFileIcon />
+                    </span>
+                  }
+                >
+                  <span
+                    class="attachment-file-visual attachment-file-image"
+                    data-file-tone={attachmentReferenceTone(attachment.name)}
+                  >
+                    <img src={attachment.previewUrl ?? ""} alt="" />
+                  </span>
+                </Show>
+                <span class="attachment-file-copy">
+                  <strong>{attachment.name}</strong>
+                  <small>{formatFileSize(attachment.size)}</small>
                 </span>
-              </Show>
-              <span class="attachment-file-copy">
-                <strong>{attachment.name}</strong>
-                <small>{formatFileSize(attachment.size)}</small>
-              </span>
-            </Button>
-            <Button
-              type="button"
-              class="attachment-open-button"
-              aria-label={`Open ${attachment.name}`}
-              title="Open file"
-              onClick={() => props.onAction(attachment, "open")}
-            >
-              <AttachmentOpenIcon />
-            </Button>
-          </div>
-        )}
-      </For>
-    </div>
+              </Button>
+              <Button
+                type="button"
+                class="attachment-open-button"
+                aria-label={`Open ${attachment.name}`}
+                aria-describedby={tooltipId}
+                onPointerEnter={(event) => openTooltip(event.currentTarget)}
+                onMouseEnter={(event) => openTooltip(event.currentTarget)}
+                onPointerLeave={(event) => closeTooltip(event.currentTarget)}
+                onMouseLeave={(event) => closeTooltip(event.currentTarget)}
+                onFocus={(event) => openTooltip(event.currentTarget)}
+                onBlur={(event) => closeTooltip(event.currentTarget)}
+                onKeyDown={closeTooltipOnEscape}
+                onClick={() => {
+                  setTooltip(null);
+                  props.onAction(attachment, "open");
+                }}
+              >
+                <AttachmentOpenIcon />
+              </Button>
+            </div>
+          )}
+        </For>
+      </div>
+      <Show when={tooltip()}>
+        {(current) => <AnchoredTooltip id={tooltipId} anchor={current().anchor} content={current().content} />}
+      </Show>
+    </>
   );
 }
 
@@ -70,8 +107,8 @@ function AttachmentFileIcon() {
 function AttachmentOpenIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20">
-      <path d="M6.1 14.75H5.5a3.25 3.25 0 0 1-.2-6.5A4.85 4.85 0 0 1 14.55 7a3.65 3.65 0 0 1-.05 7.3h-.6" />
-      <path d="M10 8.75v7.5m-2.6-2.6L10 16.25l2.6-2.6" />
+      <path d="M8.25 5.25H5.5v9.25h9.25v-2.75" />
+      <path d="M10.25 5.25h4.5v4.5M14.5 5.5l-6 6" />
     </svg>
   );
 }

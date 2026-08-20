@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attachmentReferenceBadge } from "./AttachmentReference";
+import { attachmentReferenceBadge, attachmentReferenceTone } from "./AttachmentReference";
 
 describe("attachmentReferenceBadge", () => {
   it.each([
@@ -17,5 +17,22 @@ describe("attachmentReferenceBadge", () => {
 
   it.each(["LICENSE", "payload.unknown", ".env"])("uses the document fallback for %s", (name) => {
     expect(attachmentReferenceBadge(name)).toBeNull();
+  });
+});
+
+describe("attachmentReferenceTone", () => {
+  it.each([
+    ["start-types.d.ts", "blue"],
+    ["component.JSX", "yellow"],
+    ["index.html", "orange"],
+    ["styles.css", "teal"],
+    ["budget.xlsx", "green"],
+    ["brief.PDF", "red"],
+    ["diagram.png", "pink"],
+    ["Program.cs", "purple"],
+    ["payload.unknown", "purple"],
+    ["LICENSE", "purple"],
+  ])("uses the expected file tone for %s", (name, tone) => {
+    expect(attachmentReferenceTone(name)).toBe(tone);
   });
 });

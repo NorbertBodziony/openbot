@@ -27,6 +27,7 @@ const agentStates: Record<string, SidebarAgentState> = {
 };
 
 const args: Parameters<typeof Sidebar>[0] = {
+  serverName: "Local",
   bots: STORY_BOTS,
   activeBotId: "chief",
   people: STORY_PRESENCE.members,
@@ -122,6 +123,19 @@ export const AgentContextMenu: Story = {
 
 export const Compact: Story = {
   args: { compact: true },
+};
+
+export const LongServerName: Story = {
+  args: { serverName: "Synthetify production workspace with a long name" },
+  decorators: [(Story) => <div style={{ width: "240px", height: "100vh" }}>{Story()}</div>],
+  play: async ({ canvas }) => {
+    const name = canvas.getByText("Synthetify production workspace with a long name");
+    const actions = canvas.getByRole("button", { name: "Collapse sidebar" }).parentElement;
+    if (!actions) throw new Error("Sidebar header actions are missing.");
+    await expect(getComputedStyle(name).textOverflow).toBe("ellipsis");
+    await expect(name.scrollWidth).toBeGreaterThan(name.clientWidth);
+    await expect(name.getBoundingClientRect().right).toBeLessThanOrEqual(actions.getBoundingClientRect().left);
+  },
 };
 
 export const Empty: Story = {

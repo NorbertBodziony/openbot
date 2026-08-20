@@ -1454,7 +1454,8 @@
   text-align: left;
   transition:
     background var(--openbot-duration-fast) ease,
-    color var(--openbot-duration-fast) ease;
+    color var(--openbot-duration-fast) ease,
+    opacity var(--openbot-duration-fast) ease;
 }
 
 .agent-picker-option:hover {
@@ -3597,8 +3598,8 @@
 
 .message-citation-mark {
   display: inline-flex;
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   align-items: center;
   justify-content: center;
   margin: 0 2px;
@@ -3606,12 +3607,12 @@
   border-radius: var(--openbot-radius-xs);
   background: var(--openbot-bg-control-hover);
   padding: 0;
-  color: var(--openbot-text-muted);
+  color: var(--openbot-text-secondary);
   font-size: var(--openbot-text-2xs);
   font-weight: 600;
-  line-height: 9px;
+  line-height: 1;
   text-decoration: none;
-  vertical-align: 5.5px;
+  vertical-align: 4px;
   transition:
     background var(--openbot-duration-fast) ease,
     color var(--openbot-duration-fast) ease;
@@ -3697,7 +3698,7 @@
 }
 
 .message-citation-ref .message-citation-mark {
-  flex: 0 0 12px;
+  flex: 0 0 16px;
   margin: 0;
 }
 
@@ -3869,24 +3870,63 @@
 
 .message-file-reference,
 .composer-file-reference {
+  --file-reference-color: var(--openbot-file-purple);
+  --file-reference-soft: var(--openbot-file-purple-soft);
+
   display: inline-flex;
   min-width: 0;
   max-width: min(240px, calc(100% - 8px));
   align-items: center;
-  gap: 5px;
-  margin: 0 2px;
+  gap: 4px;
+  margin: 0 1px;
   border: 0;
   border-radius: var(--openbot-radius-sm);
   background: transparent;
-  padding: 1px 3px 1px 1px;
-  color: var(--openbot-accent-text);
+  padding: 1px 6px 1px 3px;
+  color: var(--file-reference-color);
   font: inherit;
   font-weight: 550;
   line-height: 20px;
-  transform: translateY(-1.5px);
   vertical-align: middle;
   white-space: nowrap;
-  transition: background var(--openbot-duration-fast) ease;
+  transition:
+    background-color var(--openbot-duration-fast) ease,
+    color var(--openbot-duration-fast) ease;
+}
+
+:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="blue"] {
+  --file-reference-color: var(--openbot-file-blue);
+  --file-reference-soft: var(--openbot-file-blue-soft);
+}
+
+:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="yellow"] {
+  --file-reference-color: var(--openbot-file-yellow);
+  --file-reference-soft: var(--openbot-file-yellow-soft);
+}
+
+:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="orange"] {
+  --file-reference-color: var(--openbot-file-orange);
+  --file-reference-soft: var(--openbot-file-orange-soft);
+}
+
+:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="teal"] {
+  --file-reference-color: var(--openbot-file-teal);
+  --file-reference-soft: var(--openbot-file-teal-soft);
+}
+
+:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="green"] {
+  --file-reference-color: var(--openbot-file-green);
+  --file-reference-soft: var(--openbot-file-green-soft);
+}
+
+:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="red"] {
+  --file-reference-color: var(--openbot-file-red);
+  --file-reference-soft: var(--openbot-file-red-soft);
+}
+
+:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="pink"] {
+  --file-reference-color: var(--openbot-file-pink);
+  --file-reference-soft: var(--openbot-file-pink-soft);
 }
 
 .inline-file-reference-name {
@@ -3896,42 +3936,44 @@
   white-space: nowrap;
 }
 
-.message-file-reference {
+.ui-button.message-file-reference {
+  height: 22px;
   cursor: pointer;
 }
 
-.message-file-reference:focus-visible,
+.ui-button.message-file-reference:focus-visible,
 .composer-file-reference:focus-visible {
-  outline: 2px solid var(--openbot-border-focus);
+  outline: 2px solid var(--file-reference-color);
   outline-offset: 2px;
+  box-shadow: none;
 }
 
 .attachment-reference-visual {
   display: inline-grid;
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--openbot-radius-xs);
-  background: var(--openbot-accent-soft);
-  color: var(--openbot-accent-text);
+  background: var(--file-reference-soft);
+  color: var(--file-reference-color);
 }
 
 .attachment-reference-visual > span {
-  font-size: var(--openbot-text-2xs);
+  font-size: 8px;
   font-weight: 750;
   letter-spacing: -0.2px;
   line-height: 1;
 }
 
 .attachment-reference-visual[data-badge-length="4"] > span {
-  font-size: var(--openbot-text-2xs);
-  letter-spacing: -0.35px;
+  font-size: 7px;
+  letter-spacing: -0.4px;
 }
 
 .attachment-reference-visual > svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
@@ -3940,13 +3982,14 @@
 }
 
 .user-bubble .message-file-reference {
-  color: var(--openbot-accent);
+  color: var(--file-reference-color);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .message-file-reference:hover,
+  .ui-button.message-file-reference:hover:not(:disabled),
   .composer-file-reference:hover {
-    background: var(--openbot-accent-soft);
+    background-color: var(--file-reference-soft);
+    color: var(--file-reference-color);
   }
 }
 
@@ -3980,6 +4023,9 @@
 }
 
 .attachment-file-visual {
+  --file-reference-color: var(--openbot-file-purple);
+  --file-reference-soft: var(--openbot-file-purple-soft);
+
   display: grid;
   width: 40px;
   height: 40px;
@@ -3987,8 +4033,8 @@
   place-items: center;
   overflow: hidden;
   border-radius: var(--openbot-radius-md);
-  background: var(--openbot-accent-soft);
-  color: var(--openbot-accent-hover);
+  background: var(--file-reference-soft);
+  color: var(--file-reference-color);
 }
 
 .attachment-file-visual svg {
@@ -4132,17 +4178,6 @@
   padding: 0 12px 15px;
 }
 
-.team-typing-indicator {
-  display: flex;
-  min-height: 18px;
-  align-items: center;
-  gap: 7px;
-  margin: 0 12px 5px;
-  color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-2xs);
-  line-height: 14px;
-}
-
 .team-typing-dots {
   display: flex;
   align-items: center;
@@ -4256,6 +4291,8 @@
 }
 
 .composer {
+  position: relative;
+  z-index: 11;
   display: flex;
   max-width: none;
   min-height: 44px;
@@ -4699,7 +4736,7 @@
 
 .message-attachment {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
+  grid-template-columns: minmax(0, 1fr) 40px;
   min-width: 0;
   min-height: 56px;
   align-items: center;
@@ -4713,10 +4750,13 @@
     border-color var(--openbot-duration-normal) ease;
 }
 
-.attachment-preview-button {
+.ui-button.attachment-preview-button {
+  width: 100%;
+  height: 40px;
   display: flex;
   min-width: 0;
   align-items: center;
+  justify-content: flex-start;
   gap: 10px;
   border: 0;
   background: transparent;
@@ -4759,8 +4799,8 @@
 
 .attachment-open-button {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   place-items: center;
   border: 0;
   border-radius: var(--openbot-radius-md);
@@ -4806,50 +4846,86 @@
 }
 
 .agent-queue-panel {
+  --queue-row-height: 29px;
+  --queue-composer-overlap: 14px;
+
   position: absolute;
   z-index: 10;
-  right: 14px;
-  bottom: calc(100% - 2px);
-  left: 14px;
+  right: 24px;
+  bottom: calc(100% - var(--queue-composer-overlap));
+  left: 24px;
   overflow: visible;
-  border: 1px solid var(--openbot-border-strong);
-  border-radius: var(--openbot-radius-pill) var(--openbot-radius-pill) var(--openbot-radius-lg) var(--openbot-radius-lg);
-  background: var(--openbot-bg-surface);
-  box-shadow: 0 -12px 34px color-mix(in srgb, var(--openbot-bg-canvas) 42%, transparent);
+  border: 1px solid var(--openbot-queue-border);
+  border-radius: 20px 20px var(--openbot-radius-lg) var(--openbot-radius-lg);
+  background: var(--openbot-queue-surface);
+  padding-bottom: var(--queue-composer-overlap);
+  box-shadow: none;
   animation: queue-panel-in var(--openbot-duration-normal) cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
 .agent-queue-panel-list {
-  max-height: 266px;
+  max-height: 212px;
   overflow-y: auto;
-  padding: 11px 10px 9px;
+  padding: 5px 13px 4px;
   overscroll-behavior: contain;
 }
 
 .agent-queue-item {
+  --queue-drag-step: 0;
+
   position: relative;
   display: grid;
-  min-height: 38px;
+  min-height: var(--queue-row-height);
   min-width: 0;
-  grid-template-columns: 15px 20px minmax(0, 1fr) auto;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
   margin: 0;
   border: 0;
   padding: 0;
   border-radius: var(--openbot-radius-md);
-  color: var(--openbot-text-primary);
+  color: var(--openbot-queue-text);
+  cursor: grab;
   outline: 0;
+  transform: translate3d(0, calc(var(--queue-drag-step) * var(--queue-row-height)), 0);
   transition:
-    background var(--openbot-duration-fast) ease,
     opacity var(--openbot-duration-fast) ease,
-    transform var(--openbot-duration-fast) ease;
+    transform var(--openbot-duration-slow) var(--openbot-ease-out);
+}
+
+.agent-queue-panel-dragging .agent-queue-item {
+  will-change: transform;
+}
+
+.agent-queue-item::before {
+  position: absolute;
+  z-index: 0;
+  inset: -2px -8px;
+  border-radius: var(--openbot-radius-md);
+  background: transparent;
+  content: "";
+  pointer-events: none;
+  transition: background-color var(--openbot-duration-fast) ease;
+}
+
+.agent-queue-item > * {
+  position: relative;
+  z-index: 1;
 }
 
 .agent-queue-item:hover,
 .agent-queue-item:focus-visible,
 .agent-queue-item-drag-over {
+  z-index: 1;
+}
+
+.agent-queue-item:hover::before,
+.agent-queue-item:focus-visible::before {
   background: var(--openbot-hover);
+}
+
+.agent-queue-panel-dragging .agent-queue-item:not(.agent-queue-item-dragging):hover::before {
+  background: transparent;
 }
 
 .agent-queue-item:focus-visible {
@@ -4857,64 +4933,102 @@
 }
 
 .agent-queue-item-dragging {
-  opacity: 0.44;
+  z-index: 0;
+  cursor: grabbing;
+  opacity: 0;
+}
+
+.agent-queue-item-dragging::before {
+  background: transparent;
+  box-shadow: none;
+}
+
+.agent-queue-drag-preview {
+  position: fixed;
+  z-index: var(--openbot-layer-dropdown);
+  top: 0;
+  left: -200vw;
+  min-height: 31px;
+  border: 1px solid var(--openbot-border-strong);
+  background: var(--openbot-bg-surface-raised);
+  box-shadow: var(--openbot-shadow-raised);
+  opacity: 0.96;
+  pointer-events: none;
+  transform: none;
+}
+
+.agent-queue-drag-preview::before {
+  display: none;
 }
 
 .agent-queue-item-steering {
   color: var(--openbot-text-muted);
 }
 
-.agent-queue-drag-handle {
-  display: grid;
-  place-items: center;
-  color: var(--openbot-text-dim);
-  cursor: grab;
-  opacity: 0;
-  transition: opacity var(--openbot-duration-fast) ease;
-}
-
-.agent-queue-item:hover .agent-queue-drag-handle,
-.agent-queue-item:focus-visible .agent-queue-drag-handle,
-.agent-queue-item-drag-over .agent-queue-drag-handle {
-  opacity: 1;
-}
-
-.agent-queue-drag-handle:active {
-  cursor: grabbing;
-}
-
-.agent-queue-drag-handle svg {
-  width: 12px;
-  height: 20px;
-  fill: currentColor;
-  stroke: none;
+.agent-queue-item-has-attachment {
+  grid-template-columns: 14px 24px minmax(0, 1fr) auto;
 }
 
 .agent-queue-icon {
   display: grid;
   place-items: center;
-  color: var(--openbot-text-muted);
+  color: var(--openbot-queue-action);
 }
 
-.agent-queue-icon svg,
-.agent-queue-steer svg,
-.agent-queue-icon-button svg,
-.agent-queue-menu svg {
-  width: 18px;
-  height: 18px;
+.agent-queue-icon svg {
+  width: 15px;
+  height: 15px;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 1.25;
+  stroke-width: 1.5;
+}
+
+.agent-queue-attachment {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--openbot-queue-border);
+  border-radius: var(--openbot-radius-xs);
+  background: var(--openbot-bg-canvas);
+  color: var(--openbot-queue-action);
+  font-family: var(--openbot-font-mono);
+  font-size: 7px;
+  line-height: 1;
+}
+
+.agent-queue-attachment img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.agent-queue-steer svg,
+.agent-queue-icon-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.agent-queue-icon-button .conversation-more-icon {
+  fill: currentColor;
+  stroke: none;
 }
 
 .agent-queue-message {
   min-width: 0;
   overflow: hidden;
   color: inherit;
-  font-size: var(--openbot-text-lg);
-  line-height: 22px;
+  font-size: 15px;
+  line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4922,21 +5036,21 @@
 .agent-queue-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  color: var(--openbot-text-muted);
+  gap: 4px;
+  color: var(--openbot-queue-action);
 }
 
 .agent-queue-steer,
 .agent-queue-icon-button {
   display: inline-flex;
-  height: 30px;
+  height: 26px;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   border: 0;
   border-radius: var(--openbot-radius-md);
   background: transparent;
-  padding: 0 5px;
+  padding: 0 4px;
   color: inherit;
   font-size: var(--openbot-text-lg);
   line-height: 18px;
@@ -4948,8 +5062,7 @@
 .agent-queue-steer:hover:not(:disabled),
 .agent-queue-steer:focus-visible,
 .agent-queue-icon-button:hover:not(:disabled),
-.agent-queue-icon-button:focus-visible,
-.agent-queue-menu-anchor > button[aria-expanded="true"] {
+.agent-queue-icon-button:focus-visible {
   background: var(--openbot-bg-control-hover);
   color: var(--openbot-text-primary);
   outline: 0;
@@ -4962,45 +5075,21 @@
 }
 
 .agent-queue-icon-button {
-  width: 30px;
+  width: 26px;
   padding: 0;
 }
 
-.agent-queue-menu-anchor {
-  position: relative;
+.agent-queue-icon-button.agent-queue-delete {
+  background: var(--openbot-danger-soft);
+  color: var(--openbot-danger);
+  opacity: 0.72;
 }
 
-.agent-queue-menu {
-  position: relative;
-  z-index: 30;
-  width: 174px;
-  border: 1px solid var(--openbot-border-strong);
-  border-radius: var(--openbot-radius-lg);
-  background: var(--openbot-bg-surface-raised);
-  padding: 5px;
-  box-shadow: 0 14px 30px color-mix(in srgb, var(--openbot-bg-canvas) 48%, transparent);
-}
-
-.agent-queue-menu [role="menuitem"] {
-  display: flex;
-  width: 100%;
-  min-height: 35px;
-  align-items: center;
-  gap: 9px;
-  border: 0;
-  border-radius: var(--openbot-radius-md);
-  background: transparent;
-  padding: 0 9px;
-  color: var(--openbot-text-primary);
-  font-size: var(--openbot-text-md);
-  text-align: left;
-}
-
-.agent-queue-menu [role="menuitem"]:hover,
-.agent-queue-menu [role="menuitem"]:focus-visible,
-.agent-queue-menu [role="menuitem"][data-highlighted] {
-  background: var(--openbot-bg-control-hover);
-  outline: 0;
+.agent-queue-icon-button.agent-queue-delete:hover:not(:disabled),
+.agent-queue-icon-button.agent-queue-delete:focus-visible {
+  background: var(--openbot-danger-soft);
+  color: var(--openbot-danger);
+  opacity: 1;
 }
 
 .agent-queue-panel-footer {
@@ -5028,6 +5117,22 @@
 .agent-queue-panel-footer button:focus-visible {
   background: var(--openbot-accent-strong);
   outline: 0;
+}
+
+@media (max-width: 620px) {
+  .agent-queue-panel {
+    right: 14px;
+    left: 14px;
+  }
+
+  .agent-queue-steer {
+    width: 26px;
+    padding: 0;
+  }
+
+  .agent-queue-steer span {
+    display: none;
+  }
 }
 
 .composer-queue-edit-preview {
@@ -5219,6 +5324,10 @@
   .agent-settings-panel,
   .agent-picker-menu {
     animation: none;
+    transition: none;
+  }
+
+  .agent-queue-item {
     transition: none;
   }
 

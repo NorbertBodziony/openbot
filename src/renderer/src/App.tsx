@@ -105,6 +105,9 @@ const LEFT_PANEL_COMPACT = 88;
 const LEFT_PANEL_COLLAPSE_THRESHOLD = 210;
 const LEFT_PANEL_EXPAND_THRESHOLD = 220;
 const CONVERSATION_MIN_WIDTH = 424;
+const MAC_SERVER_RAIL_WIDTH = 72;
+const SERVER_RAIL_WIDTH = 64;
+const NARROW_SERVER_RAIL_WIDTH = 56;
 
 type StoredValue = BotProfile | BotMessage;
 type StoredSetter = (value: StoredValue) => void;
@@ -259,8 +262,14 @@ export function App() {
   const leftPanelCompact = createMemo(() => leftPanelCollapsed() || leftPanelAutoCompact());
 
   function shouldAutoCompactSidebar(platform: AppInfo["platform"] | undefined, panelWidth: number) {
-    const hasServerRail = platform === "darwin" || platform === "win32";
-    const serverRailWidth = hasServerRail ? (window.innerWidth <= 800 ? 56 : 64) : 0;
+    const serverRailWidth =
+      platform === "darwin"
+        ? MAC_SERVER_RAIL_WIDTH
+        : platform === "win32"
+          ? window.innerWidth <= 800
+            ? NARROW_SERVER_RAIL_WIDTH
+            : SERVER_RAIL_WIDTH
+          : 0;
     return window.innerWidth - serverRailWidth - panelWidth < CONVERSATION_MIN_WIDTH;
   }
 
@@ -1496,6 +1505,7 @@ export function App() {
                 {
                   "app-frame-sidebar-compact": leftPanelCompact(),
                   "app-frame-with-server-rail": appInfo()?.platform === "darwin" || appInfo()?.platform === "win32",
+                  "app-frame-platform-darwin": appInfo()?.platform === "darwin",
                 },
               ]}
               style={`--left-panel-width: ${leftPanelCompact() ? LEFT_PANEL_COMPACT : leftPanelWidth()}px`}
@@ -1504,7 +1514,6 @@ export function App() {
                 <ServerRail
                   platform={appInfo()?.platform ?? "darwin"}
                   servers={servers()}
-                  hostStatus={hostStatus()}
                   onSelect={(serverId) => void selectServer(serverId)}
                   onAdd={() => setJoinServerOpen(true)}
                   onOpenHost={openHostPanel}
@@ -1512,6 +1521,7 @@ export function App() {
                 />
               </Show>
               <Sidebar
+                serverName={activeServer()?.name ?? "Local"}
                 bots={botList()}
                 activeBotId={activeDirectMemberId() ? "" : (activeBot()?.id ?? "")}
                 people={directPeople()}

@@ -93,7 +93,7 @@ export function ReplyIcon() {
 
 export function MoreIcon() {
   return (
-    <svg aria-hidden="true" viewBox="0 0 20 20">
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="conversation-more-icon">
       <circle cx="5" cy="10" r="1" />
       <circle cx="10" cy="10" r="1" />
       <circle cx="15" cy="10" r="1" />
@@ -104,8 +104,8 @@ export function MoreIcon() {
 export function QueueIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20">
-      <path d="M5 4.5v11M8.5 6.5h7M8.5 10h5.5M8.5 13.5h7" />
-      <path d="m3 15.5 2 1.8 2-1.8" />
+      <path d="M4.5 4.5v8.25a2 2 0 0 0 2 2h8.75" />
+      <path d="m12.25 11.75 3 3-3 3" />
     </svg>
   );
 }
@@ -126,7 +126,7 @@ export function DragHandleIcon() {
 export function TrashIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20">
-      <path d="M5.5 6.5h9M8 6.5V4.75h4V6.5M7 8.5v6.25h6V8.5M8.5 9.5v4M11.5 9.5v4" />
+      <path d="M4.5 6.5h11M8 6.5V4.75h4V6.5M6.25 6.5l.75 9h6l.75-9M8.5 9v4M11.5 9v4" />
     </svg>
   );
 }
@@ -143,7 +143,8 @@ export function EditIcon() {
 export function SteerIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20">
-      <path d="M4 5.5h3v9h9M12.5 11.5 16 14.5l-3.5 3" />
+      <path d="M4.25 5.5h3.5v5.75a3.5 3.5 0 0 0 3.5 3.5h4" />
+      <path d="m12.25 11.75 3 3-3 3" />
     </svg>
   );
 }

@@ -1,4 +1,7 @@
 .app-frame {
+  --left-header-height: 38px;
+  --server-rail-width: 64px;
+
   position: relative;
   display: grid;
   container-type: inline-size;
@@ -16,7 +19,11 @@
 }
 
 .app-frame-with-server-rail {
-  grid-template-columns: 64px var(--left-panel-width, 280px) 0 minmax(0, 1fr);
+  grid-template-columns: var(--server-rail-width) var(--left-panel-width, 280px) 0 minmax(0, 1fr);
+}
+
+.app-frame-platform-darwin {
+  --server-rail-width: 72px;
 }
 
 .global-search-overlay {
@@ -258,12 +265,23 @@
   position: relative;
   z-index: 45;
   display: flex;
-  min-width: 64px;
+  min-width: var(--server-rail-width);
   flex-direction: column;
   justify-content: space-between;
   padding: 42px 7px 9px;
   background: var(--openbot-bg-sidebar);
   -webkit-app-region: drag;
+}
+
+.server-rail::before {
+  position: absolute;
+  top: calc(var(--left-header-height) - 1px);
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--openbot-border);
+  content: "";
+  pointer-events: none;
 }
 
 .server-rail-list,
@@ -1335,10 +1353,12 @@
 
 @media (max-width: 800px) {
   .app-frame-with-server-rail {
-    grid-template-columns: 56px var(--left-panel-width, 280px) 0 minmax(0, 1fr);
+    --server-rail-width: 56px;
+  }
+  .app-frame-platform-darwin {
+    --server-rail-width: 72px;
   }
   .server-rail {
-    min-width: 56px;
     padding-inline: 5px;
   }
   .remote-status-grid {
@@ -1486,12 +1506,34 @@ textarea {
 
 .sidebar-topbar {
   display: flex;
-  height: 38px;
+  height: var(--left-header-height);
   flex: 0 0 auto;
   align-items: center;
-  justify-content: flex-end;
-  gap: 3px;
+  justify-content: space-between;
+  gap: var(--openbot-space-2);
+  border-bottom: 1px solid var(--openbot-border);
   padding: 2px 15px 0 10px;
+}
+
+.sidebar-server-name {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-md);
+  font-weight: var(--openbot-weight-semibold);
+  line-height: var(--openbot-leading-md);
+  opacity: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity var(--openbot-duration-fast) ease;
+}
+
+.sidebar-topbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
 }
 
 .sidebar-icon-button {
@@ -2537,6 +2579,11 @@ textarea {
 
 .sidebar-compact .sidebar-topbar {
   padding-inline: 12px;
+}
+
+.sidebar-compact .sidebar-server-name {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .sidebar-compact .sidebar-new-button {

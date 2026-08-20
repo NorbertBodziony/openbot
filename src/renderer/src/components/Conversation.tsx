@@ -74,7 +74,6 @@ import {
   REMOTE_DESKTOP_PANEL_STORAGE_KEY,
   RemoteMacPanel,
 } from "./RemoteMacPanel";
-import { TypingDots } from "./TypingDots";
 import { Button, Combobox, Dialog, Input, NativeSelect, Paperclip, Popover, Switch, Tabs, Textarea } from "./ui";
 
 type AgentPickerOption = { kind: "create" } | { kind: "bot"; bot: BotProfile };
@@ -267,25 +266,6 @@ export function Conversation(props: ConversationProps) {
   const unreferencedDraftAttachments = createMemo(() => {
     const referencedIds = attachmentReferenceIds(currentDraft().text);
     return currentDraft().attachments.filter((attachment) => !referencedIds.has(attachment.id));
-  });
-  const typingPeople = createMemo(() => {
-    const botId = props.bot?.id;
-    const ownEmail = props.currentUserEmail.trim().toLowerCase();
-    if (!botId) return [];
-    return props.presence.members.filter(
-      (member) =>
-        member.online &&
-        member.typingBotId === botId &&
-        (member.email ?? member.username).trim().toLowerCase() !== ownEmail,
-    );
-  });
-  const typingLabel = createMemo(() => {
-    const people = typingPeople();
-    if (people.length === 0) return "";
-    const names = people.map((member) => member.name ?? member.email ?? member.username);
-    if (names.length === 1) return `${names[0]} is typing`;
-    if (names.length === 2) return `${names[0]} and ${names[1]} are typing`;
-    return `${names.length} people are typing`;
   });
   const replyTarget = createMemo(() => {
     const id = currentDraft().replyToMessageId;
@@ -1887,12 +1867,6 @@ export function Conversation(props: ConversationProps) {
 
       <Show when={!props.prompt && !props.approval}>
         <div class="composer-wrap">
-          <Show when={typingPeople().length > 0}>
-            <div class="team-typing-indicator" role="status" aria-live="polite">
-              <TypingDots class="team-typing-dots" />
-              {typingLabel()}
-            </div>
-          </Show>
           <For each={unreferencedDraftAttachments()}>
             {(attachment) => (
               <div class="composer-attachment">

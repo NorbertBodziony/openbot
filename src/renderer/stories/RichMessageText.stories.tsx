@@ -50,16 +50,13 @@ type AttachmentFixtureInput = readonly [
 
 const fileTypeInputs: AttachmentFixtureInput[] = [
   ["type-ts", "start-types.ts", "text/plain", "text", "file"],
+  ["type-js", "client.js", "text/javascript", "text", "file"],
+  ["type-html", "index.html", "text/html", "text", "file"],
+  ["type-css", "styles.css", "text/css", "text", "file"],
+  ["type-xlsx", "budget.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "none", "file"],
   ["type-pdf", "brief.pdf", "application/pdf", "pdf", "file"],
   ["type-png", "diagram.png", "image/png", "image", "image"],
-  ["type-zip", "archive.zip", "application/zip", "none", "file"],
-  [
-    "type-docx",
-    "zażółć-gęślą.docx",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "none",
-    "file",
-  ],
+  ["type-cs", "Program.cs", "text/plain", "text", "file"],
   ["type-extensionless", "LICENSE", "application/octet-stream", "none", "file"],
 ];
 
@@ -96,6 +93,9 @@ export const InlineCitations: Story = {
     const marker = canvas.getByRole("link", {
       name: "Open citation 1: Attention Is All You Need",
     });
+    await expect(marker.getBoundingClientRect().width).toBe(16);
+    await expect(marker.getBoundingClientRect().height).toBe(16);
+    await expect(getComputedStyle(marker).color).toBe("rgba(255, 255, 255, 0.72)");
     await userEvent.hover(marker);
     await expect(within(document.body).findByRole("tooltip")).resolves.toBeInTheDocument();
     await userEvent.click(marker);
@@ -216,15 +216,42 @@ export const FileReferenceTypes: Story = {
   ),
   play: async ({ canvas }) => {
     await expect(canvas.getByText("TS")).toBeInTheDocument();
+    await expect(canvas.getByText("JS")).toBeInTheDocument();
+    await expect(canvas.getByText("HTML")).toBeInTheDocument();
+    await expect(canvas.getByText("CSS")).toBeInTheDocument();
+    await expect(canvas.getByText("XLSX")).toBeInTheDocument();
     await expect(canvas.getByText("PDF")).toBeInTheDocument();
     await expect(canvas.getByText("PNG")).toBeInTheDocument();
-    await expect(canvas.getByText("ZIP")).toBeInTheDocument();
-    await expect(canvas.getByText("DOCX")).toBeInTheDocument();
+    await expect(canvas.getByText("CS")).toBeInTheDocument();
     const references = canvas.getAllByRole("button", { name: /Open attached file/u });
-    await expect(references).toHaveLength(6);
+    await expect(references).toHaveLength(9);
+    await expect(references.map((reference) => reference.dataset.fileTone)).toEqual([
+      "blue",
+      "yellow",
+      "orange",
+      "teal",
+      "green",
+      "red",
+      "pink",
+      "purple",
+      "purple",
+    ]);
     const root = references[0]?.parentElement;
     if (!root) throw new Error("The file reference story root is missing");
     await expect(root.querySelectorAll(".attachment-reference-visual > svg")).toHaveLength(1);
+
+    const typeScriptReference = references[0];
+    if (!typeScriptReference) throw new Error("The TypeScript file reference is missing");
+    const typeScriptBadge = typeScriptReference.querySelector<HTMLElement>(".attachment-reference-visual");
+    if (!typeScriptBadge) throw new Error("The TypeScript badge is missing");
+    await expect(typeScriptReference.getBoundingClientRect().height).toBe(22);
+    await expect(typeScriptBadge.getBoundingClientRect().width).toBe(16);
+    await expect(typeScriptBadge.getBoundingClientRect().height).toBe(16);
+    await expect(getComputedStyle(typeScriptReference).gap).toBe("4px");
+    await expect(getComputedStyle(typeScriptReference).padding).toBe("1px 6px 1px 3px");
+    typeScriptReference.focus();
+    await expect(getComputedStyle(typeScriptReference).outlineColor).toBe("rgb(116, 185, 255)");
+    await expect(getComputedStyle(typeScriptReference).boxShadow).toBe("none");
   },
 };
 

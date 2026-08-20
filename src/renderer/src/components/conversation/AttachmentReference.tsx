@@ -38,9 +38,35 @@ const BADGED_EXTENSIONS = new Set([
   ...MEDIA_BADGES,
 ]);
 
+export type AttachmentReferenceTone = "blue" | "yellow" | "orange" | "teal" | "green" | "red" | "pink" | "purple";
+
+const BLUE_EXTENSIONS = new Set(["c", "cc", "cpp", "md", "py", "ts", "tsx", "doc", "docx", "odt", "rtf"]);
+const YELLOW_EXTENSIONS = new Set(["js", "jsx", "json", ...ARCHIVE_BADGES]);
+const ORANGE_EXTENSIONS = new Set(["html", "java", "rs", "swift", ...PRESENTATION_BADGES]);
+const TEAL_EXTENSIONS = new Set(["css", "go", "sql"]);
+const GREEN_EXTENSIONS = new Set(["vue", ...DATA_BADGES]);
+const RED_EXTENSIONS = new Set(["rb", "pdf"]);
+const PINK_EXTENSIONS = new Set([...IMAGE_BADGES, ...MEDIA_BADGES]);
+
+function attachmentReferenceExtension(name: string): string {
+  return name.split(".").at(-1)?.toLocaleLowerCase() ?? "";
+}
+
 export function attachmentReferenceBadge(name: string): string | null {
-  const extension = name.split(".").at(-1)?.toLocaleLowerCase() ?? "";
+  const extension = attachmentReferenceExtension(name);
   return BADGED_EXTENSIONS.has(extension) ? extension.slice(0, 4).toLocaleUpperCase() : null;
+}
+
+export function attachmentReferenceTone(name: string): AttachmentReferenceTone {
+  const extension = attachmentReferenceExtension(name);
+  if (BLUE_EXTENSIONS.has(extension)) return "blue";
+  if (YELLOW_EXTENSIONS.has(extension)) return "yellow";
+  if (ORANGE_EXTENSIONS.has(extension)) return "orange";
+  if (TEAL_EXTENSIONS.has(extension)) return "teal";
+  if (GREEN_EXTENSIONS.has(extension)) return "green";
+  if (RED_EXTENSIONS.has(extension)) return "red";
+  if (PINK_EXTENSIONS.has(extension)) return "pink";
+  return "purple";
 }
 
 export function AttachmentReferenceVisual(props: { name: string }) {
@@ -53,6 +79,7 @@ export function AttachmentReferenceVisual(props: { name: string }) {
 }
 
 export function appendAttachmentReferenceVisual(target: HTMLElement, name: string): void {
+  target.dataset.fileTone = attachmentReferenceTone(name);
   const visual = document.createElement("span");
   visual.className = "attachment-reference-visual";
   visual.setAttribute("aria-hidden", "true");

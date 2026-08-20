@@ -1,12 +1,11 @@
 import { fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { ServerRail } from "../src/components/ServerRail";
-import { STORY_HOST_STATUS, STORY_SERVERS } from "./fixtures";
+import { STORY_SERVERS } from "./fixtures";
 
 const args: Parameters<typeof ServerRail>[0] = {
   platform: "darwin",
   servers: STORY_SERVERS,
-  hostStatus: STORY_HOST_STATUS,
   onSelect: fn(),
   onAdd: fn(),
   onOpenHost: fn(),

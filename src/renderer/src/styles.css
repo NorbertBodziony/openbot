@@ -4,6 +4,7 @@
 @import "./styles/auth.css";
 @import "./styles/app-shell.css";
 @import "./styles/conversation.css";
+@import "./styles/settings-modal.css";
 
 :root {
   color-scheme: dark;
@@ -11,6 +12,7 @@
   --openbot-bg-canvas: #070707;
   --openbot-bg-sidebar: #111111;
   --openbot-bg-surface: #262626;
+  --openbot-bg-surface-clear: rgba(38, 38, 38, 0);
   --openbot-bg-surface-raised: #2f2f2f;
   --openbot-bg-control: #1b1b1b;
   --openbot-bg-control-hover: #313131;
@@ -22,6 +24,10 @@
   --openbot-bg-host-canvas: #14161b;
   --openbot-bg-host-header: #15171c;
   --openbot-bg-host-inset: #101216;
+  --openbot-queue-surface: var(--openbot-bg-surface);
+  --openbot-queue-border: var(--openbot-border-strong);
+  --openbot-queue-text: var(--openbot-text-primary);
+  --openbot-queue-action: var(--openbot-text-muted);
   --openbot-border: rgba(255, 255, 255, 0.08);
   --openbot-border-strong: rgba(255, 255, 255, 0.14);
   --openbot-border-focus: rgba(105, 96, 241, 0.72);
@@ -55,6 +61,22 @@
   --openbot-danger: #e47d75;
   --openbot-danger-soft: rgba(228, 125, 117, 0.13);
   --openbot-danger-strong: #ff4058;
+  --openbot-file-blue: #74b9ff;
+  --openbot-file-blue-soft: rgba(116, 185, 255, 0.14);
+  --openbot-file-yellow: var(--openbot-warning);
+  --openbot-file-yellow-soft: var(--openbot-warning-soft);
+  --openbot-file-orange: #f0a06a;
+  --openbot-file-orange-soft: rgba(240, 160, 106, 0.14);
+  --openbot-file-teal: #6bc7d9;
+  --openbot-file-teal-soft: rgba(107, 199, 217, 0.14);
+  --openbot-file-green: var(--openbot-success);
+  --openbot-file-green-soft: var(--openbot-success-soft);
+  --openbot-file-red: var(--openbot-danger);
+  --openbot-file-red-soft: var(--openbot-danger-soft);
+  --openbot-file-pink: #d98ac9;
+  --openbot-file-pink-soft: rgba(217, 138, 201, 0.14);
+  --openbot-file-purple: var(--openbot-accent-text);
+  --openbot-file-purple-soft: rgba(105, 96, 241, 0.14);
   --openbot-data-table-header-bg: #242424;
   --openbot-data-table-body-bg: #1a1a1a;
   --openbot-data-table-border: #303030;

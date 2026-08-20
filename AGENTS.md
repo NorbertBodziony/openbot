@@ -5,6 +5,12 @@
 - For renderer UI work, use only one of the supported visual verification paths: the dev app or Storybook. Do not use ad-hoc preview or rendering paths.
 - Use the dev app for integrated application behavior and Storybook for isolated component visual checks.
 
+## UI code reuse
+
+- When you build or change a UI component, first search the codebase for existing components, hooks, styles, and utilities that you can reuse.
+- Prefer reuse, composition, or a small extension of existing UI code over duplicate implementation.
+- Create new UI code only when the existing code does not meet the requirement or reuse would make the code less clear or harder to maintain.
+
 ## UI colors
 
 - Treat the custom properties in `src/renderer/src/styles.css` under `:root` as the single source of truth for the renderer color palette.

@@ -670,7 +670,7 @@ function createWindow(): BrowserWindow {
     title: "OpenBot",
     icon: appIconPath,
     ...(process.platform === "darwin"
-      ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 13, y: 14 } }
+      ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 8, y: 14 } }
       : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),

@@ -5,7 +5,7 @@ import type { BotProfile, MessageCitation } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui";
 import { AnchoredTooltip } from "./AnchoredTooltip";
-import { AttachmentReferenceVisual } from "./AttachmentReference";
+import { AttachmentReferenceVisual, attachmentReferenceTone } from "./AttachmentReference";
 import { LinkIcon } from "./ConversationIcons";
 
 export function RichMessageText(props: {
@@ -64,6 +64,7 @@ export function RichMessageText(props: {
               <Button
                 type="button"
                 class="message-file-reference"
+                data-file-tone={attachmentReferenceTone(attachment.name)}
                 aria-label={`Open attached file ${attachment.name}`}
                 aria-describedby={tooltipId}
                 onPointerEnter={(event) => openTooltip(event.currentTarget, attachment.name, true)}

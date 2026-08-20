@@ -187,6 +187,7 @@ describe("ComposerEditor", () => {
     expect(onValueChange).toHaveBeenLastCalledWith(`${serializeAttachmentReference(attachment.name, attachment.id)} `);
     const chip = editor.querySelector<HTMLElement>('[data-attachment-reference-id="draft-types"]');
     if (!chip) throw new Error("Composer editor did not insert the file reference");
+    expect(chip).toHaveAttribute("data-file-tone", "blue");
     await fireEvent.click(chip);
     expect(onOpenAttachment).toHaveBeenCalledWith(attachment);
   });

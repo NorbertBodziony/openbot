@@ -19,6 +19,7 @@ import { TypingDots } from "./TypingDots";
 import { AlertDialog, Badge, Button, ContextMenu, Input, Popover } from "./ui";
 
 interface SidebarProps {
+  serverName: string;
   bots: BotProfile[];
   activeBotId: string;
   people: TeamPresenceMember[];
@@ -424,27 +425,32 @@ export function Sidebar(props: SidebarProps) {
       class={["sidebar panel-edge", { "sidebar-compact": props.compact }]}
     >
       <div class="window-drag sidebar-topbar">
-        <Button
-          type="button"
-          class="sidebar-icon-button sidebar-toggle-button no-drag"
-          onClick={() => (props.compact ? props.onExpand() : props.onCollapse())}
-          aria-label={props.compact ? "Expand sidebar" : "Collapse sidebar"}
-          aria-controls="bot-sidebar"
-          aria-expanded={props.compact ? "false" : "true"}
-          title={props.compact ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          <SidebarToggleIcon />
-        </Button>
-        <Button
-          type="button"
-          class="sidebar-icon-button sidebar-new-button no-drag"
-          onClick={props.onCreateBot}
-          aria-label="New agent"
-          aria-hidden={props.compact ? "true" : undefined}
-          tabindex={props.compact ? -1 : 0}
-        >
-          <PlusIcon />
-        </Button>
+        <span class="sidebar-server-name" title={props.serverName} aria-hidden={props.compact ? "true" : undefined}>
+          {props.serverName}
+        </span>
+        <div class="sidebar-topbar-actions">
+          <Button
+            type="button"
+            class="sidebar-icon-button sidebar-toggle-button no-drag"
+            onClick={() => (props.compact ? props.onExpand() : props.onCollapse())}
+            aria-label={props.compact ? "Expand sidebar" : "Collapse sidebar"}
+            aria-controls="bot-sidebar"
+            aria-expanded={props.compact ? "false" : "true"}
+            title={props.compact ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            <SidebarToggleIcon />
+          </Button>
+          <Button
+            type="button"
+            class="sidebar-icon-button sidebar-new-button no-drag"
+            onClick={props.onCreateBot}
+            aria-label="New agent"
+            aria-hidden={props.compact ? "true" : undefined}
+            tabindex={props.compact ? -1 : 0}
+          >
+            <PlusIcon />
+          </Button>
+        </div>
       </div>
 
       <div class="sidebar-search-wrap">

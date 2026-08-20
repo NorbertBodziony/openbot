@@ -17,8 +17,6 @@ import {
   STORY_AGENT_STATUS,
   STORY_ATTACHMENTS,
   STORY_BOTS,
-  STORY_BROWSER_CONTROL,
-  STORY_BROWSER_TABS,
   STORY_CONVERSATION_MESSAGES,
   STORY_MODELS,
   STORY_PRESENCE,
@@ -115,6 +113,7 @@ const imageGenerationMessages: RendererBotMessage[] = [
 ];
 
 const generatedImagePreview = new URL("../src/assets/openbot-logo-production.png", import.meta.url).href;
+const generatedImagePreviewAlternate = new URL("../src/assets/openbot-logo-dev.png", import.meta.url).href;
 const generatedImageAttachment: AttachmentSummary = {
   id: "generated-image-in-chat",
   name: "generated-image.png",
@@ -124,6 +123,15 @@ const generatedImageAttachment: AttachmentSummary = {
   previewKind: "image",
   previewUrl: generatedImagePreview,
 };
+const queuePreviewAttachments: AttachmentSummary[] = [
+  { ...generatedImageAttachment, id: "queue-preview-primary", name: "command-search.png" },
+  {
+    ...generatedImageAttachment,
+    id: "queue-preview-alternate",
+    name: "message-search.png",
+    previewUrl: generatedImagePreviewAlternate,
+  },
+];
 
 const completedImageGenerationMessages: RendererBotMessage[] = imageGenerationMessages.map((message) =>
   message.id === "image-generation-in-chat"
@@ -307,6 +315,25 @@ function queueWithItems(count: number, text = "Add the final checklist and verif
   };
 }
 
+const queueReferenceMessages = [
+  "Improve how right-clicking an agent works in the sidebar. It should match the app…",
+  "The inputs are still not right. Check exactly how they work in the application…",
+  "Add Command+F to chat, like in Grok Bot, and keep message reordering consistent…",
+  "Add the same search modal as Grok Bot for messages and agents…",
+  "The latest chat message is too low. Move it up so it stays visible…",
+  "Run all checks and fix every failure",
+  "Push the final changes to main",
+] as const;
+
+const referenceQueue: QueueSnapshot = {
+  ...queue,
+  deliveries: queueWithItems(queueReferenceMessages.length).deliveries.map((delivery, index) => ({
+    ...delivery,
+    text: queueReferenceMessages[index],
+    attachments: index === 2 ? [queuePreviewAttachments[0]] : index === 3 ? [queuePreviewAttachments[1]] : [],
+  })),
+};
+
 function MockedConversation(props: { args: Parameters<typeof Conversation>[0] }) {
   const previousApi = window.openbot;
   const mock = createMockOpenBot();
@@ -357,9 +384,9 @@ const args: Parameters<typeof Conversation>[0] = {
   onboardingRequest: null,
   messageFocusRequest: null,
   queue: undefined,
-  browserTabs: STORY_BROWSER_TABS,
-  activeBrowserTabId: STORY_BROWSER_TABS[0].id,
-  browserControlState: STORY_BROWSER_CONTROL,
+  browserTabs: [],
+  activeBrowserTabId: null,
+  browserControlState: { sessions: [] },
   server: STORY_SERVERS[0],
   presence: STORY_PRESENCE,
   currentUserEmail: "person@example.com",
@@ -411,11 +438,6 @@ export const RichConversation: Story = {};
 
 export const SearchConversation: Story = {
   name: "Search conversation",
-  args: {
-    browserTabs: [],
-    activeBrowserTabId: null,
-    browserControlState: { sessions: [] },
-  },
   play: async ({ canvas, canvasElement, userEvent }) => {
     const storyWindow = canvasElement.ownerDocument.defaultView;
     if (!storyWindow) throw new Error("Story window is missing.");
@@ -438,11 +460,6 @@ export const SearchConversation: Story = {
 
 export const AttachFilesPopover: Story = {
   name: "Attach files popover",
-  args: {
-    browserTabs: [],
-    activeBrowserTabId: null,
-    browserControlState: { sessions: [] },
-  },
   play: async ({ canvas, canvasElement, userEvent }) => {
     await userEvent.click(canvas.getByRole("button", { name: "Attach a file" }));
     const popover = await within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "Attach file" });
@@ -452,11 +469,6 @@ export const AttachFilesPopover: Story = {
 
 export const NarrowRichConversation: Story = {
   name: "Narrow rich conversation",
-  args: {
-    browserTabs: [],
-    activeBrowserTabId: null,
-    browserControlState: { sessions: [] },
-  },
   render: (storyArgs) => (
     <section data-testid="narrow-conversation-sample" style={{ width: "360px", height: "820px", overflow: "hidden" }}>
       <MockedConversation args={storyArgs} />
@@ -477,9 +489,6 @@ export const UnreadMessages: Story = {
     messages: unreadStoryMessages,
     unreadCount: 8,
     firstUnreadMessageId: "unread-story-new-1",
-    browserTabs: [],
-    activeBrowserTabId: null,
-    browserControlState: { sessions: [] },
   },
 };
 
@@ -488,9 +497,6 @@ export const ScrollToLatest: Story = {
     messages: unreadStoryMessages,
     unreadCount: 0,
     firstUnreadMessageId: null,
-    browserTabs: [],
-    activeBrowserTabId: null,
-    browserControlState: { sessions: [] },
   },
   play: async ({ canvas, canvasElement }) => {
     const scrollElement = canvasElement.querySelector<HTMLElement>(".conversation-scroll");
@@ -514,9 +520,6 @@ export const ImageGenerationInChat: Story = {
   args: {
     messages: imageGenerationMessages,
     activeTurnId: "turn-image-generation",
-    browserTabs: [],
-    activeBrowserTabId: null,
-    browserControlState: { sessions: [] },
   },
 };
 
@@ -526,9 +529,6 @@ export const ImageGenerationCompletedInChat: Story = {
     messages: completedImageGenerationMessages,
     activeTurnId: "turn-image-generation",
     presence: completedImageGenerationPresence,
-    browserTabs: [],
-    activeBrowserTabId: null,
-    browserControlState: { sessions: [] },
   },
   play: async ({ canvas, canvasElement }) => {
     expect(canvas.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument();
@@ -543,9 +543,6 @@ export const DataTableInChat: Story = {
   name: "Data table in chat",
   args: {
     messages: dataTableMessages,
-    browserTabs: [],
-    activeBrowserTabId: null,
-    browserControlState: { sessions: [] },
   },
   play: async ({ canvas }) => {
     await expect(canvas.getByText("Compare the available models by context window and input price.")).toBeVisible();
@@ -558,9 +555,6 @@ export const ComparisonTableInChat: Story = {
   name: "Comparison table in chat",
   args: {
     messages: comparisonTableMessages,
-    browserTabs: [],
-    activeBrowserTabId: null,
-    browserControlState: { sessions: [] },
   },
   play: async ({ canvas }) => {
     await expect(canvas.getByText("Compare the Personal and Enterprise plans feature by feature.")).toBeVisible();
@@ -574,9 +568,6 @@ export const ImageGenerationUnavailableWithClaude: Story = {
   args: {
     bot: { ...STORY_BOTS[0], model: "claude-sonnet-5" },
     messages: [],
-    browserTabs: [],
-    activeBrowserTabId: null,
-    browserControlState: { sessions: [] },
   },
 };
 
@@ -607,9 +598,6 @@ export const PromptQuestionsInChat: Story = {
   args: {
     messages: promptChatMessages,
     prompt: promptQuestions,
-    browserTabs: [],
-    activeBrowserTabId: null,
-    browserControlState: { sessions: [] },
   },
 };
 
@@ -623,7 +611,7 @@ export const ThreeQueuedMessages: Story = {
 
 export const SevenQueuedMessages: Story = {
   args: {
-    queue: queueWithItems(7, "Review the very long launch brief and summarize every dependency before shipping"),
+    queue: referenceQueue,
     activeTurnId: "turn-active",
   },
 };
