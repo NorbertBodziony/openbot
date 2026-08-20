@@ -8,8 +8,8 @@
   "preview_urls": false,
   "routes": [
     {
-      "pattern": "openbot.run",
-      "custom_domain": true
+      "pattern": "openbot.run/*",
+      "zone_id": "bac5e044ba951c390229f0e93673ebd3"
     },
     {
       "pattern": "api.openbot.run",
