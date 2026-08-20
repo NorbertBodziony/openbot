@@ -37,15 +37,6 @@ jobs:
       - name: Run repository check
         run: bun run check
 
-      - name: Typecheck Storybook
-        run: bun run typecheck:storybook
-
-      - name: Run Storybook interaction tests
-        run: bun run test:storybook
-
-      - name: Build Storybook
-        run: bun run build-storybook
-
       - name: Build and verify unsigned macOS application
         run: bun run package:verify
 

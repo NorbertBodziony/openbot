@@ -157,6 +157,7 @@ export const Interactive: Story = {
     await fireEvent.scroll(scrollElement);
 
     await userEvent.click(body.getByRole("button", { name: "General" }));
+    await waitFor(() => expect(body.getByRole("region", { name: "Access" })).toBeVisible());
     await expect(scrollElement.scrollTop).toBe(0);
     await userEvent.click(body.getByRole("switch", { name: "Publish this server" }));
     await expect(body.getByRole("switch", { name: "Publish this server" })).toBeChecked();
