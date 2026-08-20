@@ -284,6 +284,17 @@
   pointer-events: none;
 }
 
+.server-rail::after {
+  position: absolute;
+  top: var(--left-header-height);
+  right: 0;
+  bottom: 0;
+  width: clamp(0.5px, 0.05123cqw, 1px);
+  background: var(--openbot-border);
+  content: "";
+  pointer-events: none;
+}
+
 .server-rail-list,
 .server-rail-tools {
   display: flex;
