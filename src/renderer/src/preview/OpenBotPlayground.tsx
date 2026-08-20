@@ -1,14 +1,25 @@
+import type { JSX } from "@solidjs/web";
 import { onCleanup } from "solid-js";
 import { App } from "../App";
-import { createMockOpenBot, type MockOpenBotOptions } from "./mock-openbot";
+import { createMockOpenBot, type MockOpenBotControls, type MockOpenBotOptions } from "./mock-openbot";
+
+export interface OpenBotPlaygroundDependencies {
+  createMock: (options?: MockOpenBotOptions) => MockOpenBotControls;
+  renderApp: () => JSX.Element;
+}
 
 export interface OpenBotPlaygroundProps {
+  dependencies?: OpenBotPlaygroundDependencies;
   options?: MockOpenBotOptions;
 }
 
 export function OpenBotPlayground(props: OpenBotPlaygroundProps) {
+  const dependencies = props.dependencies ?? {
+    createMock: createMockOpenBot,
+    renderApp: () => <App />,
+  };
   const previousApi = window.openbot;
-  const mock = createMockOpenBot(props.options);
+  const mock = dependencies.createMock(props.options);
   window.openbot = mock.api;
 
   onCleanup(() => {
@@ -16,5 +27,5 @@ export function OpenBotPlayground(props: OpenBotPlaygroundProps) {
     window.openbot = previousApi;
   });
 
-  return <App />;
+  return dependencies.renderApp();
 }

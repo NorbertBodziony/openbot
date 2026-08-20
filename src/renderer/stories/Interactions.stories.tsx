@@ -5,16 +5,21 @@ import {
   AlertDialog,
   Combobox,
   ContextMenu,
+  Copy,
   Dialog,
   DropdownMenu,
+  ExternalLink,
   Heading,
   Input,
+  Link2,
   Listbox,
+  Pencil,
   Popover,
   RadioGroup,
   Select,
   Tabs,
   Tooltip,
+  Trash2,
 } from "../src/components/ui";
 
 const meta = {
@@ -125,10 +130,19 @@ export const MenuPopoverTooltip: Story = {
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content class="foundation-menu">
-              <DropdownMenu.Item class="foundation-menu-item">Rename</DropdownMenu.Item>
-              <DropdownMenu.Item class="foundation-menu-item">Duplicate</DropdownMenu.Item>
+              <DropdownMenu.Item>
+                <Pencil aria-hidden="true" />
+                Rename
+              </DropdownMenu.Item>
+              <DropdownMenu.Item disabled>
+                <Copy aria-hidden="true" />
+                Duplicate
+              </DropdownMenu.Item>
               <DropdownMenu.Separator />
-              <DropdownMenu.Item class="foundation-menu-item">Delete</DropdownMenu.Item>
+              <DropdownMenu.Item class="ui-action-menu-danger">
+                <Trash2 aria-hidden="true" />
+                Delete
+              </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
@@ -158,8 +172,14 @@ export const MenuPopoverTooltip: Story = {
           <ContextMenu.Trigger class="foundation-context-target">Right-click for actions</ContextMenu.Trigger>
           <ContextMenu.Portal>
             <ContextMenu.Content class="foundation-menu">
-              <ContextMenu.Item class="foundation-menu-item">Open</ContextMenu.Item>
-              <ContextMenu.Item class="foundation-menu-item">Copy link</ContextMenu.Item>
+              <ContextMenu.Item>
+                <ExternalLink aria-hidden="true" />
+                Open
+              </ContextMenu.Item>
+              <ContextMenu.Item>
+                <Link2 aria-hidden="true" />
+                Copy link
+              </ContextMenu.Item>
             </ContextMenu.Content>
           </ContextMenu.Portal>
         </ContextMenu.Root>
@@ -170,7 +190,30 @@ export const MenuPopoverTooltip: Story = {
     const body = within(document.body);
     const menuTrigger = canvas.getByRole("button", { name: "Agent actions" });
     await userEvent.click(menuTrigger);
-    await expect(await body.findByRole("menu")).toBeVisible();
+    const menu = await body.findByRole("menu");
+    const menuItems = within(menu).getAllByRole("menuitem");
+    const menuStyle = getComputedStyle(menu);
+    const firstItemStyle = getComputedStyle(menuItems[0]);
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveClass("ui-action-menu");
+    await expect(menu.getBoundingClientRect().width).toBe(160);
+    await expect(menuStyle.padding).toBe("4px");
+    await expect(menuStyle.borderRadius).toBe("8px");
+    await expect(menuItems[0].getBoundingClientRect().height).toBe(32);
+    await expect(firstItemStyle.padding).toBe("6px 8px");
+    await expect(firstItemStyle.gap).toBe("8px");
+    await expect(firstItemStyle.borderRadius).toBe("6px");
+    await expect(firstItemStyle.fontSize).toBe("14px");
+    await expect(firstItemStyle.lineHeight).toBe("20px");
+    await expect(firstItemStyle.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    await expect(menuItems[0].querySelector("svg")?.getBoundingClientRect().width).toBe(16);
+    await expect(body.getByRole("menuitem", { name: "Duplicate" })).toHaveAttribute("data-disabled");
+    const deleteItem = body.getByRole("menuitem", { name: "Delete" });
+    const deleteIcon = deleteItem.querySelector("svg");
+    await expect(deleteItem).toHaveClass("ui-action-menu-danger");
+    await expect(getComputedStyle(deleteItem).color).not.toBe(firstItemStyle.color);
+    if (!(deleteIcon instanceof SVGElement)) throw new Error("Delete icon was not found.");
+    await expect(getComputedStyle(deleteIcon).color).toBe(getComputedStyle(deleteItem).color);
     await userEvent.keyboard("{ArrowDown}{End}");
     await expect(body.getByRole("menuitem", { name: "Delete" })).toHaveAttribute("data-highlighted");
     await userEvent.keyboard("{Escape}");
@@ -191,7 +234,7 @@ export const MenuPopoverTooltip: Story = {
 
     const contextTrigger = canvas.getByText("Right-click for actions");
     await userEvent.pointer({ keys: "[MouseRight]", target: contextTrigger });
-    await expect(await body.findByRole("menu")).toBeVisible();
+    await expect(await body.findByRole("menu")).toHaveClass("ui-action-menu");
     await userEvent.keyboard("{Home}");
     await expect(body.getByRole("menuitem", { name: "Open" })).toHaveAttribute("data-highlighted");
     await userEvent.keyboard("{Escape}");

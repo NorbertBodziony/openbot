@@ -2,7 +2,6 @@ import { expect, fireEvent, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { App } from "../src/App";
 import { OpenBotPlayground } from "../src/preview/OpenBotPlayground";
-import type { MockOpenBotOptions } from "../src/preview/mock-openbot";
 import { STORY_AGENT_STATUS, STORY_BOT_SUMMARIES } from "./fixtures";
 
 const meta = {

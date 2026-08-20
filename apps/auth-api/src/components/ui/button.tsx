@@ -25,7 +25,7 @@ const buttonVariants = cva("landing-button", {
 export type ButtonProps = Omit<PolymorphicProps<"a", ButtonRootProps<"a">>, "class"> &
   VariantProps<typeof buttonVariants> & {
     class?: string;
-    icon: "contact" | "download";
+    icon: "contact" | "download" | "github";
   };
 
 export function Button(props: ButtonProps) {

@@ -22,16 +22,16 @@ describe("attachmentReferenceBadge", () => {
 
 describe("attachmentReferenceTone", () => {
   it.each([
-    ["start-types.d.ts", "blue"],
-    ["component.JSX", "yellow"],
-    ["index.html", "orange"],
-    ["styles.css", "teal"],
-    ["budget.xlsx", "green"],
-    ["brief.PDF", "red"],
-    ["diagram.png", "pink"],
-    ["Program.cs", "purple"],
-    ["payload.unknown", "purple"],
-    ["LICENSE", "purple"],
+    ["start-types.d.ts", "source"],
+    ["component.JSX", "script"],
+    ["index.html", "markup"],
+    ["styles.css", "style"],
+    ["budget.xlsx", "data"],
+    ["brief.PDF", "document"],
+    ["diagram.png", "media"],
+    ["Program.cs", "default"],
+    ["payload.unknown", "default"],
+    ["LICENSE", "default"],
   ])("uses the expected file tone for %s", (name, tone) => {
     expect(attachmentReferenceTone(name)).toBe(tone);
   });

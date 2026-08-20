@@ -1,5 +1,10 @@
 export const EXTERNAL_LINK_REL = "noopener noreferrer";
 
+export const OPENBOT_DOWNLOAD_LINKS = {
+  macos: "/download/macos",
+  windows: "/download/windows",
+} as const;
+
 export const OPENBOT_LINKS = {
   contact: "https://x.com/norbertbodziony",
   download: "#download",

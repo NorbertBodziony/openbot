@@ -1,20 +1,6 @@
 import { Match, Switch } from "solid-js";
 
-export type LandingIconName =
-  | "arrow-up-right"
-  | "browser"
-  | "check"
-  | "chevron-down"
-  | "contact"
-  | "context"
-  | "download"
-  | "file"
-  | "handoff"
-  | "heart"
-  | "plus"
-  | "search"
-  | "send"
-  | "workspace";
+export type LandingIconName = "arrow-up-right" | "chevron-down" | "contact" | "download" | "heart";
 
 export interface LandingIconProps {
   name: LandingIconName;
@@ -48,43 +34,6 @@ export function LandingIcon(props: LandingIconProps) {
         </Match>
         <Match when={props.name === "chevron-down"}>
           <path d="m6 9 6 6 6-6" />
-        </Match>
-        <Match when={props.name === "browser"}>
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <path d="M3 8h18" />
-          <path d="M7 6h.01M10 6h.01" />
-        </Match>
-        <Match when={props.name === "check"}>
-          <path d="m5 12 4 4L19 6" />
-        </Match>
-        <Match when={props.name === "context"}>
-          <circle cx="12" cy="12" r="8" />
-          <path d="M12 8v4l3 2" />
-        </Match>
-        <Match when={props.name === "file"}>
-          <path d="M6 3h8l4 4v14H6z" />
-          <path d="M14 3v5h5" />
-        </Match>
-        <Match when={props.name === "handoff"}>
-          <path d="M5 7h11" />
-          <path d="m13 4 3 3-3 3" />
-          <path d="M19 17H8" />
-          <path d="m11 14-3 3 3 3" />
-        </Match>
-        <Match when={props.name === "plus"}>
-          <path d="M12 5v14M5 12h14" />
-        </Match>
-        <Match when={props.name === "search"}>
-          <circle cx="11" cy="11" r="7" />
-          <path d="m20 20-4-4" />
-        </Match>
-        <Match when={props.name === "send"}>
-          <path d="m5 12 7-7 7 7" />
-          <path d="M12 19V5" />
-        </Match>
-        <Match when={props.name === "workspace"}>
-          <path d="M3 7h7l2 2h9v11H3z" />
-          <path d="M3 7V5h7l2 2" />
         </Match>
         <Match when={props.name === "arrow-up-right"}>
           <path d="M7 17 17 7" />

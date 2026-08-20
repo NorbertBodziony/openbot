@@ -63,7 +63,7 @@ export const SingleCompactFile: Story = {
     const openBounds = open.getBoundingClientRect();
     await expect(getComputedStyle(preview).justifyContent).toBe("flex-start");
     await expect(previewBounds.height).toBe(40);
-    await expect(visual).toHaveAttribute("data-file-tone", "orange");
+    await expect(visual).toHaveAttribute("data-file-tone", "markup");
     await expect(visualBounds.left).toBe(previewBounds.left);
     await expect(copyBounds.left).toBeGreaterThan(visualBounds.right);
     await expect(openBounds.left).toBeGreaterThan(previewBounds.right);

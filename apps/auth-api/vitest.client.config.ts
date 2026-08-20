@@ -5,11 +5,6 @@ export default defineConfig({
   plugins: [solidPlugin()],
   test: {
     environment: "jsdom",
-    include: [
-      "test/hero-download-selector.test.tsx",
-      "test/landing-glow.test.tsx",
-      "test/landing-reveal.test.tsx",
-      "test/product-demo.test.tsx",
-    ],
+    include: ["test/hero-download-selector.test.tsx", "test/landing-glow.test.tsx", "test/landing-reveal.test.tsx"],
   },
 });

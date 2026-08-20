@@ -608,9 +608,9 @@ export function Sidebar(props: SidebarProps) {
                             <EditIcon />
                             <span>Edit agent</span>
                           </ContextMenu.Item>
-                          <ContextMenu.Separator class="bot-context-separator" />
+                          <ContextMenu.Separator />
                           <ContextMenu.Item
-                            class="bot-context-danger"
+                            class="ui-action-menu-danger bot-context-danger"
                             onSelect={() => {
                               setDeleteError(null);
                               setDeleteTargetId(bot.id);

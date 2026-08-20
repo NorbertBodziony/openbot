@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DOWNLOAD_PLATFORMS, detectDownloadPlatform } from "../src/lib/download-platforms";
-import { OPENBOT_LINKS } from "../src/lib/landing-links";
+import { OPENBOT_DOWNLOAD_LINKS } from "../src/lib/landing-links";
 
 describe("download platforms", () => {
   it.each([
@@ -18,8 +18,8 @@ describe("download platforms", () => {
   });
 
   it("keeps available platform links and Linux state in one data source", () => {
-    expect(DOWNLOAD_PLATFORMS.macos.href).toBe(OPENBOT_LINKS.releases);
-    expect(DOWNLOAD_PLATFORMS.windows.href).toBe(OPENBOT_LINKS.releases);
+    expect(DOWNLOAD_PLATFORMS.macos.href).toBe(OPENBOT_DOWNLOAD_LINKS.macos);
+    expect(DOWNLOAD_PLATFORMS.windows.href).toBe(OPENBOT_DOWNLOAD_LINKS.windows);
     expect(DOWNLOAD_PLATFORMS.linux).toMatchObject({ available: false, status: "Coming soon" });
     expect(DOWNLOAD_PLATFORMS.linux.href).toBeUndefined();
   });

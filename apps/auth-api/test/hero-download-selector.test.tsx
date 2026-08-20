@@ -1,11 +1,18 @@
 import { fireEvent, render, waitFor } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HeroDownloadSelector } from "../src/components/landing/HeroDownloadSelector";
-import { OPENBOT_LINKS } from "../src/lib/landing-links";
+import { OPENBOT_DOWNLOAD_LINKS } from "../src/lib/landing-links";
 
 function setPlatform(platform: string): void {
   vi.stubGlobal("navigator", { platform, userAgent: "" });
 }
+
+const AVAILABLE_PLATFORM_CASES: ReadonlyArray<
+  readonly [source: string, platform: keyof typeof OPENBOT_DOWNLOAD_LINKS, label: string]
+> = [
+  ["MacIntel", "macos", "Download for macOS"],
+  ["Win32", "windows", "Download for Windows"],
+];
 
 describe("HeroDownloadSelector", () => {
   afterEach(() => {
@@ -13,20 +20,20 @@ describe("HeroDownloadSelector", () => {
     vi.restoreAllMocks();
   });
 
-  it.each([
-    ["MacIntel", "macos", "Download for macOS"],
-    ["Win32", "windows", "Download for Windows"],
-  ])("detects %s and renders the available download", async (source, expected, label) => {
-    setPlatform(source);
-    const view = render(() => <HeroDownloadSelector />);
-    const selector = view.container.querySelector(".landing-download-selector");
+  it.each(AVAILABLE_PLATFORM_CASES)(
+    "detects %s and renders the available download",
+    async (source, expected, label) => {
+      setPlatform(source);
+      const view = render(() => <HeroDownloadSelector />);
+      const selector = view.container.querySelector(".landing-download-selector");
 
-    await waitFor(() => expect(selector).toHaveAttribute("data-detected-platform", expected));
-    const download = view.getByRole("link", { name: label });
-    expect(download).toHaveAttribute("href", OPENBOT_LINKS.releases);
-    expect(download).toHaveAttribute("target", "_blank");
-    expect(download).toHaveAttribute("rel", "noopener noreferrer");
-  });
+      await waitFor(() => expect(selector).toHaveAttribute("data-detected-platform", expected));
+      const download = view.getByRole("link", { name: label });
+      expect(download).toHaveAttribute("href", OPENBOT_DOWNLOAD_LINKS[expected]);
+      expect(download).not.toHaveAttribute("target");
+      expect(download).not.toHaveAttribute("rel");
+    },
+  );
 
   it("shows all platforms and keeps Linux as coming soon", async () => {
     setPlatform("MacIntel");

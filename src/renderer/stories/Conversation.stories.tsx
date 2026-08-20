@@ -464,6 +464,11 @@ export const AttachFilesPopover: Story = {
     await userEvent.click(canvas.getByRole("button", { name: "Attach a file" }));
     const popover = await within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "Attach file" });
     await waitFor(() => expect(popover).toBeVisible());
+    const action = within(popover).getByRole("button", { name: "Attach files" });
+    await expect(popover).toHaveClass("ui-action-menu");
+    await expect(popover.getBoundingClientRect().width).toBe(160);
+    await expect(action.getBoundingClientRect().height).toBe(32);
+    await expect(getComputedStyle(action).padding).toBe("6px 8px");
   },
 };
 

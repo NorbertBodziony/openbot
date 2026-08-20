@@ -10,6 +10,9 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppPreviewRouteImport } from './routes/app-preview'
+import { Route as DownloadMacosRouteImport } from './routes/download/macos'
+import { Route as DownloadWindowsRouteImport } from './routes/download/windows'
 import { Route as HealthLiveRouteImport } from './routes/health/live'
 import { Route as HealthReadyRouteImport } from './routes/health/ready'
 import { Route as V1MeRouteImport } from './routes/v1/me'
@@ -26,6 +29,21 @@ import { Route as V1AuthEmailVerifyRouteImport } from './routes/v1/auth/email/ve
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppPreviewRoute = AppPreviewRouteImport.update({
+  id: '/app-preview',
+  path: '/app-preview',
+  getParentRoute: () => rootRouteImport,
+} as any).lazy(() => import('./routes/app-preview.lazy').then((d) => d.Route))
+const DownloadMacosRoute = DownloadMacosRouteImport.update({
+  id: '/download/macos',
+  path: '/download/macos',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DownloadWindowsRoute = DownloadWindowsRouteImport.update({
+  id: '/download/windows',
+  path: '/download/windows',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HealthLiveRoute = HealthLiveRouteImport.update({
@@ -91,6 +109,9 @@ const V1AuthEmailVerifyRoute = V1AuthEmailVerifyRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/app-preview': typeof AppPreviewRoute
+  '/download/macos': typeof DownloadMacosRoute
+  '/download/windows': typeof DownloadWindowsRoute
   '/health/live': typeof HealthLiveRoute
   '/health/ready': typeof HealthReadyRoute
   '/v1/me': typeof V1MeRouteWithChildren
@@ -106,6 +127,9 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/app-preview': typeof AppPreviewRoute
+  '/download/macos': typeof DownloadMacosRoute
+  '/download/windows': typeof DownloadWindowsRoute
   '/health/live': typeof HealthLiveRoute
   '/health/ready': typeof HealthReadyRoute
   '/v1/me': typeof V1MeRouteWithChildren
@@ -122,6 +146,9 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/app-preview': typeof AppPreviewRoute
+  '/download/macos': typeof DownloadMacosRoute
+  '/download/windows': typeof DownloadWindowsRoute
   '/health/live': typeof HealthLiveRoute
   '/health/ready': typeof HealthReadyRoute
   '/v1/me': typeof V1MeRouteWithChildren
@@ -139,6 +166,9 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/app-preview'
+    | '/download/macos'
+    | '/download/windows'
     | '/health/live'
     | '/health/ready'
     | '/v1/me'
@@ -154,6 +184,9 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/app-preview'
+    | '/download/macos'
+    | '/download/windows'
     | '/health/live'
     | '/health/ready'
     | '/v1/me'
@@ -169,6 +202,9 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/app-preview'
+    | '/download/macos'
+    | '/download/windows'
     | '/health/live'
     | '/health/ready'
     | '/v1/me'
@@ -185,6 +221,9 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AppPreviewRoute: typeof AppPreviewRoute
+  DownloadMacosRoute: typeof DownloadMacosRoute
+  DownloadWindowsRoute: typeof DownloadWindowsRoute
   HealthLiveRoute: typeof HealthLiveRoute
   HealthReadyRoute: typeof HealthReadyRoute
   V1MeRoute: typeof V1MeRouteWithChildren
@@ -205,6 +244,27 @@ declare module '@tanstack/solid-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app-preview': {
+      id: '/app-preview'
+      path: '/app-preview'
+      fullPath: '/app-preview'
+      preLoaderRoute: typeof AppPreviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/download/macos': {
+      id: '/download/macos'
+      path: '/download/macos'
+      fullPath: '/download/macos'
+      preLoaderRoute: typeof DownloadMacosRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/download/windows': {
+      id: '/download/windows'
+      path: '/download/windows'
+      fullPath: '/download/windows'
+      preLoaderRoute: typeof DownloadWindowsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/health/live': {
@@ -306,6 +366,9 @@ const V1MeRouteWithChildren = V1MeRoute._addFileChildren(V1MeRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AppPreviewRoute: AppPreviewRoute,
+  DownloadMacosRoute: DownloadMacosRoute,
+  DownloadWindowsRoute: DownloadWindowsRoute,
   HealthLiveRoute: HealthLiveRoute,
   HealthReadyRoute: HealthReadyRoute,
   V1MeRoute: V1MeRouteWithChildren,

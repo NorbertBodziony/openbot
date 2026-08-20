@@ -2009,9 +2009,14 @@ export function Conversation(props: ConversationProps) {
                 <PlusIcon />
               </Popover.Trigger>
               <Popover.Portal>
-                <Popover.Content class="attachment-menu">
+                <Popover.Content class="ui-action-menu attachment-menu">
                   <Popover.Title class="sr-only">Attach file</Popover.Title>
-                  <Button type="button" disabled={attachmentBusy()} onClick={() => void chooseAttachments()}>
+                  <Button
+                    type="button"
+                    class="ui-action-menu-item"
+                    disabled={attachmentBusy()}
+                    onClick={() => void chooseAttachments()}
+                  >
                     <Paperclip aria-hidden="true" />
                     {attachmentBusy() ? "Importing…" : "Attach files"}
                   </Button>

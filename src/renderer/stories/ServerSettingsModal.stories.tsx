@@ -134,14 +134,23 @@ export const Interactive: Story = {
     await expect(body.getByText("Not reachable online. Existing members and invitations remain.")).toBeVisible();
     await expect(body.getByText("Not available while private")).toBeVisible();
     await expect(body.getByRole("button", { name: "Copy address" })).toBeDisabled();
-    await userEvent.click(body.getByRole("button", { name: "Invitations" }));
-    await expect(body.getByRole("heading", { name: "Invitations", level: 2 })).toBeVisible();
-    await waitFor(() => expect(body.getByText("Invitation creation is paused")).toBeVisible());
-    await expect(body.getByText("new-person@example.com")).toBeVisible();
-    await expect(body.getByRole("button", { name: "Create invitation link" })).toBeDisabled();
-
+    await expect(body.queryByRole("button", { name: "Invitations" })).not.toBeInTheDocument();
     await userEvent.click(body.getByRole("button", { name: "Members" }));
-    await waitFor(() => expect(body.getByText(/4 total/)).toBeVisible());
+    await expect(body.getByRole("heading", { name: "Members", level: 2 })).toBeVisible();
+    await waitFor(() => expect(body.getByText("Invitations are paused")).toBeVisible());
+    await expect(body.getByText("new-person@example.com")).toBeVisible();
+    await expect(body.getByRole("button", { name: "Send invite" })).toBeDisabled();
+    await expect(body.getByText(/4 members/)).toBeVisible();
+    const serverMembersHeading = body.getByRole("heading", { name: "Server members" });
+    const pendingInvitationsHeading = body.getByRole("heading", { name: "Pending invitations" });
+    await expect(
+      Boolean(
+        serverMembersHeading.compareDocumentPosition(pendingInvitationsHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+    await expect(document.querySelector(".server-settings-member-table-heading")).not.toBeInTheDocument();
+    await expect(document.querySelector(".server-settings-invite-table-heading")).not.toBeInTheDocument();
+
     const scrollElement = body.getByTestId("settings-modal-scroll-frame").querySelector(".settings-modal-content");
     if (!(scrollElement instanceof HTMLElement)) throw new Error("Settings scroll element was not found.");
     scrollElement.scrollTop = 100;
@@ -156,26 +165,33 @@ export const Interactive: Story = {
     await userEvent.click(copyAddress);
     await expect(copyAddress).toHaveTextContent("Copied");
 
-    await userEvent.click(body.getByRole("button", { name: "Invitations" }));
+    await userEvent.click(body.getByRole("button", { name: "Members" }));
+    await expect(body.getByRole("tab", { name: "Email" })).toHaveAttribute("data-selected");
+    const sendInvite = body.getByRole("button", { name: "Send invite" });
+    const inviteEmail = body.getByRole("textbox", { name: "Email address" });
+    await expect(sendInvite).toBeDisabled();
+    await userEvent.type(inviteEmail, "invalid-email");
+    await userEvent.tab();
+    await expect(body.getByText("Enter a valid email address.")).toBeVisible();
+    await userEvent.clear(inviteEmail);
+    await userEvent.type(inviteEmail, "invitee@example.com");
+    await expect(sendInvite).toBeEnabled();
     const invitationRole = body.getByRole("button", { name: /^Invitation role/ });
     await userEvent.click(invitationRole);
     await userEvent.keyboard("{ArrowDown}{Enter}");
     await expect(invitationRole).toHaveTextContent("Admin");
-    await userEvent.click(body.getByRole("button", { name: "Create invitation link" }));
+    await userEvent.click(sendInvite);
+    await expect(body.getByText("Invitation sent")).toBeVisible();
+    await expect(within(body.getByRole("status")).getByText("invitee@example.com")).toBeVisible();
+
+    await userEvent.click(body.getByRole("tab", { name: "Invite link" }));
+    await userEvent.click(body.getByRole("button", { name: "Create link" }));
     await expect(body.getByText("Invitation link ready")).toBeVisible();
     const copyLink = body.getByRole("button", { name: "Copy link" });
     await userEvent.click(copyLink);
     await waitFor(() => expect(copyLink).toHaveTextContent("Copied"));
-
-    await userEvent.click(body.getByRole("tab", { name: "Email invitation" }));
-    await userEvent.click(body.getByRole("button", { name: "Send invitation" }));
-    await expect(body.getByText("Enter a valid email address.")).toBeVisible();
-    await userEvent.type(body.getByRole("textbox", { name: "Email address" }), "invitee@example.com");
-    await userEvent.click(body.getByRole("button", { name: "Send invitation" }));
-    await expect(body.getByText("Invitation sent")).toBeVisible();
     await userEvent.click(body.getAllByRole("button", { name: "Revoke" })[0]);
 
-    await userEvent.click(body.getByRole("button", { name: "Members" }));
     const membersList = within(body.getByTestId("server-members-list"));
     const memberSearch = body.getByRole("searchbox", { name: "Search members" });
     await userEvent.type(memberSearch, "Jon");
@@ -186,26 +202,48 @@ export const Interactive: Story = {
     const ownerRow = membersList.getByText("Norbert").closest(".server-settings-member-row");
     if (!(ownerRow instanceof HTMLElement)) throw new Error("Owner row was not found.");
     await expect(within(ownerRow).getByText("Owner")).toBeVisible();
-    await expect(within(ownerRow).queryByRole("button", { name: /Role for/ })).not.toBeInTheDocument();
-    await expect(within(ownerRow).queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
+    await expect(within(ownerRow).queryByRole("button", { name: "Actions for Norbert" })).not.toBeInTheDocument();
 
-    const jonRole = body.getByRole("button", { name: /^Role for Jon Bell/ });
-    await userEvent.click(jonRole);
-    await userEvent.click(body.getByRole("option", { name: "Admin" }));
-    await expect(body.getByRole("button", { name: /^Role for Jon Bell/ })).toHaveTextContent("Admin");
     const jonRow = membersList.getByText("Jon Bell").closest(".server-settings-member-row");
     if (!(jonRow instanceof HTMLElement)) throw new Error("Jon row was not found.");
-    await userEvent.click(within(jonRow).getByRole("button", { name: "Pause access" }));
-    await expect(within(jonRow).getByText("Access paused")).toBeVisible();
-    await userEvent.click(within(jonRow).getByRole("button", { name: "Restore access" }));
+    await userEvent.click(within(jonRow).getByRole("button", { name: "Actions for Jon Bell" }));
+    const memberMenu = await body.findByRole("menu");
+    const makeAdminItem = within(memberMenu).getByRole("menuitem", { name: "Make admin" });
+    await expect(memberMenu).toHaveClass("ui-action-menu");
+    await expect(memberMenu.getBoundingClientRect().width).toBe(160);
+    await expect(makeAdminItem.getBoundingClientRect().height).toBe(32);
+    await expect(makeAdminItem.querySelector("svg")?.getBoundingClientRect().width).toBe(16);
+    await expect(getComputedStyle(makeAdminItem).backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    const removeItem = within(memberMenu).getByRole("menuitem", { name: "Remove member" });
+    const removeIcon = removeItem.querySelector("svg");
+    if (!(removeIcon instanceof SVGElement)) throw new Error("Remove member icon was not found.");
+    await expect(getComputedStyle(removeItem).color).not.toBe(getComputedStyle(makeAdminItem).color);
+    await expect(getComputedStyle(removeIcon).color).toBe(getComputedStyle(removeItem).color);
+    await userEvent.click(makeAdminItem);
+    await expect(within(jonRow).getByText("Admin")).toBeVisible();
+    await waitFor(() => expect(body.queryByRole("menuitem", { name: "Make admin" })).not.toBeInTheDocument());
+    const jonActions = within(jonRow).getByRole("button", { name: "Actions for Jon Bell" });
+    await waitFor(() => expect(jonActions).toHaveAttribute("data-closed"));
+    await new Promise((resolve) => window.setTimeout(resolve, 160));
+    await userEvent.click(jonActions);
+    await userEvent.click(await body.findByRole("menuitem", { name: "Pause access" }));
+    await waitFor(() => expect(within(jonRow).getByText("Paused")).toBeVisible());
+    await waitFor(() => expect(body.queryByRole("menuitem", { name: "Pause access" })).not.toBeInTheDocument());
+    await waitFor(() => expect(jonActions).toHaveAttribute("data-closed"));
+    await new Promise((resolve) => window.setTimeout(resolve, 160));
+    await userEvent.click(jonActions);
+    await userEvent.click(await body.findByRole("menuitem", { name: "Restore access" }));
+    await waitFor(() => expect(within(jonRow).getByText("Offline")).toBeVisible());
 
-    await userEvent.click(body.getByRole("button", { name: "Remove Maya Singh" }));
+    await waitFor(() => expect(body.queryByRole("menuitem", { name: "Restore access" })).not.toBeInTheDocument());
+    await new Promise((resolve) => window.setTimeout(resolve, 160));
+    await userEvent.click(body.getByRole("button", { name: "Actions for Maya Singh" }));
+    await userEvent.click(await body.findByRole("menuitem", { name: "Remove member" }));
     const confirmation = body.getByRole("alert");
     await expect(confirmation).toBeVisible();
     await userEvent.click(within(confirmation).getByRole("button", { name: "Remove member" }));
     await expect(membersList.queryByText("Maya Singh")).not.toBeInTheDocument();
-    await userEvent.click(within(body.getByTestId("server-sessions-list")).getByRole("button", { name: "Sign out" }));
-    await expect(body.getByText("No active sessions.")).toBeVisible();
+    await expect(body.queryByRole("heading", { name: "Active sessions" })).not.toBeInTheDocument();
 
     await userEvent.click(body.getByRole("button", { name: "Close server settings" }));
     await expect(dialog).toHaveAttribute("data-motion", "closing");

@@ -3,6 +3,9 @@
   "compilerOptions": {
     "jsx": "preserve",
     "jsxImportSource": "@solidjs/web",
+    "paths": {
+      "@openbot/renderer-preview": ["./src/types/renderer-preview.d.ts"]
+    },
     "types": ["@cloudflare/workers-types", "vite/client"]
   },
   "include": [
@@ -11,6 +14,7 @@
     "test/**/*.ts",
     "test/**/*.tsx",
     "vite.config.ts",
+    "renderer-preview-alias.ts",
     "vitest.config.ts",
     "vitest.client.config.ts"
   ]
