@@ -1,7 +1,7 @@
 # OpenBot
 
 [![CI](https://github.com/NorbertBodziony/openbot/actions/workflows/ci.yml/badge.svg)](https://github.com/NorbertBodziony/openbot/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-PolyForm_Noncommercial_1.0.0-blue.svg)](LICENSE)
 
 OpenBot is a local-first desktop workspace for persistent AI teammates. It supports the local
 [Codex App Server](https://learn.chatgpt.com/docs/app-server) and
@@ -215,15 +215,18 @@ popover. Release signing secrets and the complete procedure are documented in
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). By contributing, you agree that your contribution is licensed
-under Apache-2.0. Community behavior is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
+under PolyForm Noncommercial 1.0.0. Community behavior is governed by the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License and attribution
 
 Copyright 2026 Norbert Bodziony.
 
-Licensed under the [Apache License 2.0](LICENSE). You may use, modify, and distribute the code under
-that license, provided its license and attribution notices are preserved. See [NOTICE](NOTICE).
+Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE). You may use, modify, and
+distribute the code for permitted noncommercial purposes. Commercial use requires a separate license
+from the copyright owner. Versions up to and including 0.1.11 remain available under Apache-2.0.
+See [NOTICE](NOTICE) for attribution and third-party notices.
 
-OpenBot is an independent open-source project and is not affiliated with, endorsed by, or
+OpenBot is an independent source-available project and is not affiliated with, endorsed by, or
 sponsored by OpenAI. OpenAI, ChatGPT, and Codex are used only to describe compatibility with their
 respective products and services.

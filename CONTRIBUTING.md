@@ -61,5 +61,6 @@ Keep tool versions pinned; compatibility upgrades should be isolated and verifie
 ## Licensing
 
 By submitting a contribution, you agree that it is your original work (or that you have the right to
-submit it) and that it is licensed under the repository's Apache-2.0 license. Do not submit copied UI
-assets, proprietary code, private plugin binaries, or material whose license is unclear.
+submit it) and that it is licensed under the repository's PolyForm Noncommercial 1.0.0 license. Do
+not submit copied UI assets, proprietary code, private plugin binaries, or material whose license is
+unclear.

@@ -5,6 +5,10 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+### Changed
+
+- Changed the project license from Apache-2.0 to PolyForm Noncommercial 1.0.0.
+
 ## [0.1.11] - 2026-08-16
 
 ### Added
