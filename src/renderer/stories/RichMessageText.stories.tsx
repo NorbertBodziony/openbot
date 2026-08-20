@@ -226,15 +226,15 @@ export const FileReferenceTypes: Story = {
     const references = canvas.getAllByRole("button", { name: /Open attached file/u });
     await expect(references).toHaveLength(9);
     await expect(references.map((reference) => reference.dataset.fileTone)).toEqual([
-      "blue",
-      "yellow",
-      "orange",
-      "teal",
-      "green",
-      "red",
-      "pink",
-      "purple",
-      "purple",
+      "source",
+      "script",
+      "markup",
+      "style",
+      "data",
+      "document",
+      "media",
+      "default",
+      "default",
     ]);
     const root = references[0]?.parentElement;
     if (!root) throw new Error("The file reference story root is missing");

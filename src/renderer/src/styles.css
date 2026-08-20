@@ -1,9 +1,11 @@
 @import "tailwindcss";
 @import "@openbot/brand/logo.css";
 @import "./styles/primitives.css";
+@import "./styles/action-menu.css";
 @import "./styles/base.css";
 @import "./styles/auth.css";
 @import "./styles/app-shell.css";
+@import "./styles/join-server-dialog.css";
 @import "./styles/conversation.css";
 @import "./styles/settings-modal.css";
 @import "./styles/server-settings-modal.css";
@@ -120,11 +122,14 @@
   --openbot-vnc-background: var(--openbot-bg-canvas);
   --openbot-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --openbot-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  --openbot-text-nano: 7px;
+  --openbot-text-micro: 8px;
   --openbot-text-2xs: 10px;
   --openbot-text-xs: 11px;
   --openbot-text-sm: 12px;
   --openbot-text-md: 13px;
   --openbot-text-lg: 14px;
+  --openbot-text-base: 15px;
   --openbot-text-xl: 16px;
   --openbot-text-2xl: 20px;
   --openbot-text-3xl: 24px;
@@ -157,6 +162,7 @@
   --openbot-radius-sm: 6px;
   --openbot-radius-md: 8px;
   --openbot-radius-lg: 12px;
+  --openbot-radius-xl: 20px;
   --openbot-radius-pill: 999px;
   --openbot-radius-logo: 20%;
   --openbot-control-xs: 24px;

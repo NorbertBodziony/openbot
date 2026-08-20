@@ -16,8 +16,9 @@ import {
   Ellipsis,
   Field,
   Heading,
-  IconButton,
   Input,
+  Pause,
+  Play,
   Search,
   Select,
   Settings,
@@ -26,6 +27,7 @@ import {
   Tabs,
   Text,
   Trash2,
+  UserRound,
   UsersRound,
 } from "./ui";
 
@@ -154,6 +156,9 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   });
   const onlineMembers = createMemo(
     () => members().filter((member) => member.online && !pausedMemberIds().includes(member.id)).length,
+  );
+  const canCreateInvite = createMemo(
+    () => published() && (inviteMode() === "link" || normalizeEmailAddress(inviteEmail()) !== null),
   );
 
   function memberRole(member: TeamPresenceMember): TeamRole {
@@ -330,7 +335,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   <div class="server-settings-logo-actions">
                     <Button
                       type="button"
-                      size="sm"
+                      size="md"
                       variant="ghost"
                       aria-label="Change server logo"
                       onClick={() => logoInput?.click()}
@@ -340,7 +345,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                     <Show when={draftLogoUrl()}>
                       <Button
                         type="button"
-                        size="sm"
+                        size="md"
                         variant="ghost"
                         aria-label="Remove server logo"
                         onClick={() => {
@@ -363,6 +368,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
               >
                 <Input
                   id="server-settings-name"
+                  size="lg"
                   maxlength={INPUT_LIMITS.serverName}
                   value={draftName()}
                   onInput={(event) => changeDraftName(event.currentTarget.value)}
@@ -404,7 +410,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   <code>{published() ? SERVER_ADDRESS : "Not available while private"}</code>
                   <Button
                     type="button"
-                    size="sm"
+                    size="md"
                     variant="ghost"
                     disabled={!published()}
                     onClick={() => void copyText(SERVER_ADDRESS, setAddressCopied)}
@@ -419,22 +425,23 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
         </div>
       </Show>
 
-      <Show when={activeSection() === "invitations"}>
-        <div class="settings-modal-tab-panel server-settings-panel" data-tab="invitations">
+      <Show when={activeSection() === "members"}>
+        <div class="settings-modal-tab-panel server-settings-panel" data-tab="members">
           <Show when={!published()}>
             <div class="server-settings-notice" role="status">
               <ShieldCheck aria-hidden="true" />
               <div>
-                <strong>Invitation creation is paused</strong>
-                <span>Publish the server in General to create new invitations. Existing invitations are kept.</span>
+                <strong>Invitations are paused</strong>
+                <span>Publish the server in General to invite new people. Existing access is unchanged.</span>
               </div>
             </div>
           </Show>
-          <section class="settings-modal-group" aria-labelledby="create-invitation-heading">
-            <Heading id="create-invitation-heading" as="h3" size="sm" tone="secondary">
-              Invite a person
+
+          <section class="settings-modal-group" aria-labelledby="invite-people-heading">
+            <Heading id="invite-people-heading" as="h3" size="sm" tone="secondary">
+              Invite people
             </Heading>
-            <Card class="settings-modal-card server-settings-invite-card">
+            <Card class="server-settings-people-card server-settings-invite-card">
               <Tabs.Root
                 value={inviteMode()}
                 onChange={(value) => {
@@ -445,115 +452,94 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 }}
               >
                 <Tabs.List class="server-settings-invite-tabs" aria-label="Invitation method">
-                  <Tabs.Trigger value="link">
-                    <Link2 aria-hidden="true" />
-                    Invitation link
-                  </Tabs.Trigger>
-                  <Tabs.Trigger value="email">
-                    <Mail aria-hidden="true" />
-                    Email invitation
-                  </Tabs.Trigger>
+                  <Tabs.Trigger value="email">Email</Tabs.Trigger>
+                  <Tabs.Trigger value="link">Invite link</Tabs.Trigger>
                 </Tabs.List>
-                <Tabs.Content value="email" class="server-settings-email-panel">
-                  <Field
-                    label="Email address"
-                    description="Only this address can accept the invitation."
-                    error={inviteEmailError() ?? undefined}
-                    htmlFor="server-invite-email"
+                <div class="server-settings-invite-composer">
+                  <Tabs.Content value="email" class="server-settings-invite-mode-panel">
+                    <label class="server-settings-invite-email-control">
+                      <span class="sr-only">Email address</span>
+                      <Input
+                        id="server-invite-email"
+                        size="lg"
+                        type="email"
+                        autocomplete="email"
+                        maxlength={INPUT_LIMITS.email}
+                        disabled={!published()}
+                        aria-invalid={inviteEmailError() ? "true" : undefined}
+                        aria-describedby={inviteEmailError() ? "server-invite-email-error" : undefined}
+                        placeholder="person@company.com"
+                        value={inviteEmail()}
+                        onInput={(event) => {
+                          setInviteEmail(event.currentTarget.value);
+                          setInviteEmailError(null);
+                        }}
+                        onBlur={() => {
+                          if (inviteEmail() && !normalizeEmailAddress(inviteEmail())) {
+                            setInviteEmailError("Enter a valid email address.");
+                          }
+                        }}
+                      />
+                    </label>
+                  </Tabs.Content>
+                  <Tabs.Content value="link" class="server-settings-invite-mode-panel">
+                    <Text variant="body-sm" tone="secondary">
+                      Create a private one-time link.
+                    </Text>
+                  </Tabs.Content>
+                  <SettingsSelect
+                    label="Invitation role"
+                    options={INVITE_ROLE_OPTIONS}
+                    value={roleLabel(inviteRole())}
+                    disabled={!published()}
+                    mount={modalElement}
+                    onChange={(value) => setInviteRole(value === "Admin" ? "admin" : "member")}
+                  />
+                  <Button
+                    type="button"
+                    size="lg"
+                    variant="primary"
+                    disabled={!canCreateInvite()}
+                    onClick={createInvite}
                   >
-                    <Input
-                      id="server-invite-email"
-                      type="email"
-                      autocomplete="email"
-                      maxlength={INPUT_LIMITS.email}
-                      disabled={!published()}
-                      placeholder="person@company.com"
-                      value={inviteEmail()}
-                      onInput={(event) => {
-                        setInviteEmail(event.currentTarget.value);
-                        setInviteEmailError(null);
-                      }}
-                    />
-                  </Field>
-                </Tabs.Content>
-              </Tabs.Root>
-              <div class="server-settings-invite-actions">
-                <SettingsSelect
-                  label="Invitation role"
-                  options={INVITE_ROLE_OPTIONS}
-                  value={roleLabel(inviteRole())}
-                  disabled={!published()}
-                  mount={modalElement}
-                  onChange={(value) => setInviteRole(value === "Admin" ? "admin" : "member")}
-                />
-                <Button type="button" disabled={!published()} onClick={createInvite}>
-                  {inviteMode() === "email" ? "Send invitation" : "Create invitation link"}
-                </Button>
-              </div>
-              <Text variant="caption" tone="muted">
-                Invitations can be used once and expire after 24 hours.
-              </Text>
-              <Show when={inviteResult()}>
-                {(result) => (
-                  <div class="server-settings-invite-result" role="status">
-                    <Check aria-hidden="true" />
-                    <div>
-                      <strong>{result().email ? "Invitation sent" : "Invitation link ready"}</strong>
-                      <span>{result().email ?? "The private link"} can be used once during the next 24 hours.</span>
-                    </div>
-                    <Show when={!result().email}>
-                      <Button type="button" size="sm" onClick={() => void copyText(result().url, setInviteCopied)}>
-                        {inviteCopied() ? "Copied" : "Copy link"}
-                      </Button>
-                    </Show>
-                  </div>
-                )}
-              </Show>
-            </Card>
-          </section>
-
-          <section class="settings-modal-group" aria-labelledby="pending-invitations-heading">
-            <div class="server-settings-section-title">
-              <Heading id="pending-invitations-heading" as="h3" size="sm" tone="secondary">
-                Pending invitations
-              </Heading>
-              <Badge tone="neutral" shape="pill">
-                {invites().length}
-              </Badge>
-            </div>
-            <Card class="settings-modal-card server-settings-list-card">
-              <Show when={invites().length > 0} fallback={<p class="server-settings-empty">No pending invitations.</p>}>
-                <For each={invites()}>
-                  {(invite) => (
-                    <div class="server-settings-list-row">
-                      <div class="server-settings-row-icon">
-                        {invite.email ? <Mail aria-hidden="true" /> : <Link2 aria-hidden="true" />}
+                    {inviteMode() === "email" ? "Send invite" : "Create link"}
+                  </Button>
+                </div>
+                <Show when={inviteEmailError()}>
+                  {(message) => (
+                    <Text id="server-invite-email-error" variant="caption" tone="danger" role="alert">
+                      {message()}
+                    </Text>
+                  )}
+                </Show>
+                <Text class="server-settings-invite-help" variant="caption" tone="muted">
+                  Invitations can be used once and expire after 24 hours.
+                </Text>
+                <Show when={inviteResult()}>
+                  {(result) => (
+                    <div class="server-settings-invite-result" role="status">
+                      <Check aria-hidden="true" />
+                      <div>
+                        <strong>{result().email ? "Invitation sent" : "Invitation link ready"}</strong>
+                        <span>{result().email ?? "The private link"}</span>
                       </div>
-                      <div class="server-settings-row-copy">
-                        <strong>{invite.email ?? "Private invitation link"}</strong>
-                        <span>
-                          {roleLabel(invite.role)} · Expires {formatDate(invite.expiresAt)}
-                        </span>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setInvites((items) => items.filter((item) => item.id !== invite.id))}
-                      >
-                        Revoke
-                      </Button>
+                      <Show when={!result().email}>
+                        <Button
+                          type="button"
+                          size="md"
+                          variant="ghost"
+                          onClick={() => void copyText(result().url, setInviteCopied)}
+                        >
+                          {inviteCopied() ? "Copied" : "Copy link"}
+                        </Button>
+                      </Show>
                     </div>
                   )}
-                </For>
-              </Show>
+                </Show>
+              </Tabs.Root>
             </Card>
           </section>
-        </div>
-      </Show>
 
-      <Show when={activeSection() === "members"}>
-        <div class="settings-modal-tab-panel server-settings-panel" data-tab="members">
           <section class="settings-modal-group" aria-labelledby="server-members-heading">
             <div class="server-settings-section-title server-settings-members-heading">
               <div>
@@ -561,7 +547,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   Server members
                 </Heading>
                 <Text variant="caption" tone="muted">
-                  {onlineMembers()} online · {members().length} total
+                  {members().length} members · {onlineMembers()} online
                 </Text>
               </div>
               <label class="server-settings-search">
@@ -575,118 +561,103 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 />
               </label>
             </div>
-            <Card
-              class="settings-modal-card server-settings-list-card server-settings-members-list"
-              data-testid="server-members-list"
-            >
+            <Card class="server-settings-people-card server-settings-members-list" data-testid="server-members-list">
               <Show
                 when={filteredMembers().length > 0}
                 fallback={<p class="server-settings-empty">No members match this search.</p>}
               >
                 <For each={filteredMembers()}>
-                  {(member) => (
-                    <div class="server-settings-member-wrap" data-disabled={memberDisabled(member) ? "" : undefined}>
-                      <div class="server-settings-member-row">
-                        <TeamPersonAvatar member={member} />
-                        <div class="server-settings-row-copy">
-                          <strong>{teamMemberName(member)}</strong>
-                          <span>{member.email ?? member.username}</span>
-                          <small>
-                            {memberDisabled(member) ? "Access paused" : member.online ? "Online" : "Offline"}
-                          </small>
+                  {(member) => {
+                    const currentRole = createMemo(() => memberRole(member));
+                    const accessPaused = createMemo(() => memberDisabled(member));
+                    const presenceState = createMemo(() =>
+                      accessPaused() ? "paused" : member.online ? "online" : "offline",
+                    );
+                    const presenceLabel = createMemo(() =>
+                      accessPaused() ? "Paused" : member.online ? "Online" : "Offline",
+                    );
+
+                    return (
+                      <div class="server-settings-member-wrap" data-disabled={accessPaused() ? "" : undefined}>
+                        <div class="server-settings-member-row">
+                          <div class="server-settings-member-identity">
+                            <TeamPersonAvatar member={member} />
+                            <div class="server-settings-row-copy">
+                              <strong>{teamMemberName(member)}</strong>
+                              <div class="server-settings-member-meta">
+                                <span>{member.email ?? member.username}</span>
+                                <span aria-hidden="true">·</span>
+                                <span class="server-settings-member-status" data-state={presenceState()}>
+                                  <span aria-hidden="true" />
+                                  {presenceLabel()}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <Show when={member.role !== "owner"} fallback={<Badge tone="accent">Owner</Badge>}>
+                            <Text variant="label-sm" tone="secondary">
+                              {roleLabel(currentRole())}
+                            </Text>
+                            <MemberActionsMenu
+                              member={member}
+                              role={currentRole()}
+                              paused={accessPaused()}
+                              mount={modalElement}
+                              onRoleChange={(role) => updateMember(member.id, { role })}
+                              onPausedChange={(disabled) => updateMember(member.id, { disabled })}
+                              onRemove={() => setRemoveMemberId(member.id)}
+                            />
+                          </Show>
                         </div>
-                        <Show
-                          when={member.role !== "owner"}
-                          fallback={
-                            <Badge tone="accent" shape="pill">
-                              Owner
-                            </Badge>
-                          }
-                        >
-                          <SettingsSelect
-                            label={`Role for ${teamMemberName(member)}`}
-                            options={INVITE_ROLE_OPTIONS}
-                            value={roleLabel(memberRole(member))}
-                            disabled={memberDisabled(member)}
-                            mount={modalElement}
-                            onChange={(value) =>
-                              updateMember(member.id, { role: value === "Admin" ? "admin" : "member" })
-                            }
-                          />
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => updateMember(member.id, { disabled: !memberDisabled(member) })}
-                          >
-                            {memberDisabled(member) ? "Restore access" : "Pause access"}
-                          </Button>
-                          <IconButton
-                            label={`Remove ${teamMemberName(member)}`}
-                            tooltip={`Remove ${teamMemberName(member)}`}
-                            variant="ghost"
-                            onClick={() => setRemoveMemberId(member.id)}
-                          >
-                            <Trash2 aria-hidden="true" />
-                          </IconButton>
+                        <Show when={removeMemberId() === member.id}>
+                          <div class="server-settings-remove-confirmation" role="alert">
+                            <span>Remove this member from the server?</span>
+                            <Button type="button" size="md" onClick={() => setRemoveMemberId(null)}>
+                              Cancel
+                            </Button>
+                            <Button type="button" size="md" variant="danger" onClick={() => removeMember(member.id)}>
+                              Remove member
+                            </Button>
+                          </div>
                         </Show>
                       </div>
-                      <Show when={removeMemberId() === member.id}>
-                        <div class="server-settings-remove-confirmation" role="alert">
-                          <span>Remove this member and end all active sessions?</span>
-                          <Button type="button" size="sm" onClick={() => setRemoveMemberId(null)}>
-                            Cancel
-                          </Button>
-                          <Button type="button" size="sm" variant="danger" onClick={() => removeMember(member.id)}>
-                            Remove member
-                          </Button>
-                        </div>
-                      </Show>
-                    </div>
-                  )}
+                    );
+                  }}
                 </For>
               </Show>
             </Card>
           </section>
 
-          <section class="settings-modal-group" aria-labelledby="active-sessions-heading">
+          <section class="settings-modal-group" aria-labelledby="pending-invitations-heading">
             <div class="server-settings-section-title">
-              <Heading id="active-sessions-heading" as="h3" size="sm" tone="secondary">
-                Active sessions
+              <Heading id="pending-invitations-heading" as="h3" size="sm" tone="secondary">
+                Pending invitations
               </Heading>
-              <Badge tone="neutral" shape="pill">
-                {sessions().length}
-              </Badge>
+              <Text variant="caption" tone="muted">
+                {invites().length} pending
+              </Text>
             </div>
-            <Card class="settings-modal-card server-settings-list-card" data-testid="server-sessions-list">
-              <Show when={sessions().length > 0} fallback={<p class="server-settings-empty">No active sessions.</p>}>
-                <For each={sessions()}>
-                  {(session) => {
-                    const member = () => members().find((item) => item.id === session.memberId);
-                    const displayName = () => {
-                      const currentMember = member();
-                      return currentMember ? teamMemberName(currentMember) : session.username;
-                    };
-                    return (
-                      <div class="server-settings-list-row">
-                        <div class="server-settings-row-icon">
-                          <ShieldCheck aria-hidden="true" />
-                        </div>
-                        <div class="server-settings-row-copy">
-                          <strong>{displayName()}</strong>
-                          <span>Expires {formatDate(session.expiresAt)}</span>
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setSessions((items) => items.filter((item) => item.id !== session.id))}
-                        >
-                          Sign out
-                        </Button>
+            <Card class="server-settings-people-card server-settings-invites-list">
+              <Show when={invites().length > 0} fallback={<p class="server-settings-empty">No pending invitations.</p>}>
+                <For each={invites()}>
+                  {(invite) => (
+                    <div class="server-settings-invite-row">
+                      <div class="server-settings-row-copy">
+                        <strong>{invite.email ?? "Private invitation link"}</strong>
+                        <span>
+                          {roleLabel(invite.role)} · Expires {formatDate(invite.expiresAt)}
+                        </span>
                       </div>
-                    );
-                  }}
+                      <Button
+                        type="button"
+                        size="md"
+                        variant="ghost"
+                        onClick={() => setInvites((items) => items.filter((item) => item.id !== invite.id))}
+                      >
+                        Revoke
+                      </Button>
+                    </div>
+                  )}
                 </For>
               </Show>
             </Card>
@@ -720,6 +691,50 @@ function ServerLogo(props: { name: string; url: string | null }) {
         {(url) => <img src={url()} alt="" draggable={false} />}
       </Show>
     </span>
+  );
+}
+
+function MemberActionsMenu(props: {
+  member: TeamPresenceMember;
+  role: TeamRole;
+  paused: boolean;
+  mount: HTMLElement | undefined;
+  onRoleChange: (role: InviteRole) => void;
+  onPausedChange: (paused: boolean) => void;
+  onRemove: () => void;
+}) {
+  const displayName = () => teamMemberName(props.member);
+  return (
+    <DropdownMenu.Root placement="bottom-end" gutter={4} modal={false}>
+      <DropdownMenu.Trigger
+        class="ui-button ui-icon-button server-settings-member-menu-trigger"
+        data-variant="ghost"
+        data-size="md"
+        aria-label={`Actions for ${displayName()}`}
+      >
+        <Ellipsis aria-hidden="true" />
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal mount={props.mount}>
+        <DropdownMenu.Content class="server-settings-member-menu">
+          <DropdownMenu.Item
+            disabled={props.paused}
+            onSelect={() => props.onRoleChange(props.role === "admin" ? "member" : "admin")}
+          >
+            {props.role === "admin" ? <UserRound aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}
+            {props.role === "admin" ? "Make member" : "Make admin"}
+          </DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => props.onPausedChange(!props.paused)}>
+            {props.paused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />}
+            {props.paused ? "Restore access" : "Pause access"}
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator />
+          <DropdownMenu.Item class="ui-action-menu-danger" onSelect={props.onRemove}>
+            <Trash2 aria-hidden="true" />
+            Remove member
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
 

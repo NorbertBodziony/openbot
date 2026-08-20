@@ -38,7 +38,15 @@ const BADGED_EXTENSIONS = new Set([
   ...MEDIA_BADGES,
 ]);
 
-export type AttachmentReferenceTone = "blue" | "yellow" | "orange" | "teal" | "green" | "red" | "pink" | "purple";
+export type AttachmentReferenceTone =
+  | "source"
+  | "script"
+  | "markup"
+  | "style"
+  | "data"
+  | "document"
+  | "media"
+  | "default";
 
 const BLUE_EXTENSIONS = new Set(["c", "cc", "cpp", "md", "py", "ts", "tsx", "doc", "docx", "odt", "rtf"]);
 const YELLOW_EXTENSIONS = new Set(["js", "jsx", "json", ...ARCHIVE_BADGES]);
@@ -59,14 +67,14 @@ export function attachmentReferenceBadge(name: string): string | null {
 
 export function attachmentReferenceTone(name: string): AttachmentReferenceTone {
   const extension = attachmentReferenceExtension(name);
-  if (BLUE_EXTENSIONS.has(extension)) return "blue";
-  if (YELLOW_EXTENSIONS.has(extension)) return "yellow";
-  if (ORANGE_EXTENSIONS.has(extension)) return "orange";
-  if (TEAL_EXTENSIONS.has(extension)) return "teal";
-  if (GREEN_EXTENSIONS.has(extension)) return "green";
-  if (RED_EXTENSIONS.has(extension)) return "red";
-  if (PINK_EXTENSIONS.has(extension)) return "pink";
-  return "purple";
+  if (BLUE_EXTENSIONS.has(extension)) return "source";
+  if (YELLOW_EXTENSIONS.has(extension)) return "script";
+  if (ORANGE_EXTENSIONS.has(extension)) return "markup";
+  if (TEAL_EXTENSIONS.has(extension)) return "style";
+  if (GREEN_EXTENSIONS.has(extension)) return "data";
+  if (RED_EXTENSIONS.has(extension)) return "document";
+  if (PINK_EXTENSIONS.has(extension)) return "media";
+  return "default";
 }
 
 export function AttachmentReferenceVisual(props: { name: string }) {

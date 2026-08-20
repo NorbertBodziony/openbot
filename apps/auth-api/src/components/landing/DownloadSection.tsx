@@ -1,7 +1,6 @@
 import { PlatformLogo, type PlatformLogoVariant } from "@openbot/brand";
 import { Show } from "solid-js";
 import { DOWNLOAD_PLATFORMS } from "../../lib/download-platforms";
-import { EXTERNAL_LINK_REL } from "../../lib/landing-links";
 import { createLandingReveal } from "./createLandingReveal";
 import { LandingIcon } from "./LandingIcon";
 
@@ -54,8 +53,6 @@ export function DownloadSection() {
           <a
             class="landing-download-card"
             href={macos.href}
-            target="_blank"
-            rel={EXTERNAL_LINK_REL}
             data-download-platform="macos"
             data-state="available"
             data-revealed={revealState()}
@@ -72,8 +69,6 @@ export function DownloadSection() {
           <a
             class="landing-download-card"
             href={windows.href}
-            target="_blank"
-            rel={EXTERNAL_LINK_REL}
             data-download-platform="windows"
             data-state="available"
             data-revealed={revealState()}

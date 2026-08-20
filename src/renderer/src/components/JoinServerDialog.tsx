@@ -1,6 +1,8 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { createSignal, Show, untrack } from "solid-js";
-import { Button, Dialog, Textarea } from "./ui";
+import { Button, Dialog, Field, IconButton, Input, X } from "./ui";
+
+const joinTeamSignalUrl = new URL("../assets/join-team-signal.webp", import.meta.url).href;
 
 interface JoinServerDialogProps {
   inviteUrl: string;
@@ -13,13 +15,15 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
   const [inviteUrl, setInviteUrl] = createSignal(untrack(() => props.inviteUrl));
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  let inviteInput: HTMLInputElement | undefined;
 
   async function join() {
-    if (busy()) return;
+    const normalizedInviteUrl = inviteUrl().trim();
+    if (busy() || !normalizedInviteUrl) return;
     setBusy(true);
     setError(null);
     try {
-      await props.onJoin({ inviteUrl: inviteUrl() });
+      await props.onJoin({ inviteUrl: normalizedInviteUrl });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not join the server.");
     } finally {
@@ -30,53 +34,96 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
   return (
     <Dialog.Root open onOpenChange={(open) => !open && !busy() && props.onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay class="remote-dialog-backdrop">
-          <Dialog.Content as="section" class="remote-dialog">
-            <header>
-              <div>
-                <span class="remote-dialog-eyebrow">Remote server</span>
-                <Dialog.Title as="h2" id="join-title">
-                  Join an OpenBot team
-                </Dialog.Title>
-              </div>
-              <Button type="button" aria-label="Close" disabled={busy()} onClick={props.onClose}>
-                ×
-              </Button>
-            </header>
-            <Dialog.Description>
-              Paste the one-time invitation link. You will join with your signed-in OpenBot account.
-            </Dialog.Description>
-            <label class="remote-field">
-              <span>Invitation link</span>
-              <Textarea
-                value={inviteUrl()}
-                onInput={(event) => setInviteUrl(event.currentTarget.value)}
-                rows="3"
-                maxlength={INPUT_LIMITS.inviteUrl}
-                spellcheck={false}
-              />
-            </label>
-            <div class="remote-account-chip">
-              <span aria-hidden="true">@</span>
-              <div>
-                <small>Joining as</small>
-                <strong>{props.accountEmail}</strong>
-              </div>
-            </div>
-            <Show when={error()}>{(message) => <p class="remote-dialog-error">{message()}</p>}</Show>
-            <footer>
-              <Button
-                type="button"
-                class="remote-secondary-button"
-                disabled={busy() || !inviteUrl().trim()}
-                onClick={props.onClose}
+        <Dialog.Overlay class="join-server-backdrop">
+          <Dialog.Content
+            as="section"
+            class="join-server-dialog"
+            onOpenAutoFocus={(event) => {
+              event.preventDefault();
+              queueMicrotask(() => inviteInput?.focus({ preventScroll: true }));
+            }}
+          >
+            <img class="join-server-artwork" src={joinTeamSignalUrl} alt="" draggable={false} />
+            <IconButton
+              class="join-server-close"
+              label="Close"
+              tooltip="Close"
+              variant="ghost"
+              disabled={busy()}
+              onClick={props.onClose}
+            >
+              <X />
+            </IconButton>
+
+            <div class="join-server-content">
+              <header class="join-server-header">
+                <div class="join-server-heading">
+                  <Dialog.Title as="h2">Join an OpenBot team</Dialog.Title>
+                  <Dialog.Description>Paste a one-time invite to connect OpenBot to your team.</Dialog.Description>
+                </div>
+              </header>
+
+              <form
+                class="join-server-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void join();
+                }}
               >
-                Cancel
-              </Button>
-              <Button type="button" class="remote-primary-button" disabled={busy()} onClick={() => void join()}>
-                {busy() ? "Joining…" : "Join server"}
-              </Button>
-            </footer>
+                <Field label="Invitation link" htmlFor="join-server-invite-url">
+                  <Input
+                    ref={(element) => (inviteInput = element)}
+                    id="join-server-invite-url"
+                    class="join-server-link-input"
+                    type="text"
+                    inputmode="url"
+                    autocomplete="off"
+                    placeholder="openbot://join?invite=…"
+                    value={inviteUrl()}
+                    onInput={(event) => {
+                      setInviteUrl(event.currentTarget.value);
+                      setError(null);
+                    }}
+                    maxlength={INPUT_LIMITS.inviteUrl}
+                    spellcheck={false}
+                    disabled={busy()}
+                    required
+                  />
+                </Field>
+
+                <div class="join-server-feedback">
+                  <Show when={error()}>
+                    {(message) => (
+                      <p class="join-server-error" role="alert">
+                        {message()}
+                      </p>
+                    )}
+                  </Show>
+                </div>
+
+                <p class="join-server-account">
+                  Joining as <strong>{props.accountEmail}</strong>
+                </p>
+
+                <footer class="join-server-actions">
+                  <Button type="button" variant="ghost" size="lg" disabled={busy()} onClick={props.onClose}>
+                    Cancel
+                  </Button>
+                  <Button
+                    class="join-server-submit"
+                    type="submit"
+                    variant="primary"
+                    size="lg"
+                    fullWidth
+                    loading={busy()}
+                    loadingLabel="Joining…"
+                    disabled={!inviteUrl().trim()}
+                  >
+                    Join server
+                  </Button>
+                </footer>
+              </form>
+            </div>
           </Dialog.Content>
         </Dialog.Overlay>
       </Dialog.Portal>

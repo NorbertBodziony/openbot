@@ -1976,79 +1976,6 @@ textarea {
   }
 }
 
-.bot-context-menu {
-  position: relative;
-  z-index: 90;
-  width: 200px;
-  border: 0;
-  border-radius: var(--openbot-radius-md);
-  background: var(--openbot-bg-surface);
-  padding: var(--openbot-space-1);
-  outline: 0;
-  box-shadow:
-    inset 0 0 0 0.5px var(--openbot-border),
-    0 10px 20px -3px var(--openbot-shadow-popover-ambient),
-    0 4px 6px -4px var(--openbot-shadow-popover-key),
-    0 0 0 1px var(--openbot-shadow-ring);
-  transform-origin: var(--kb-menu-content-transform-origin);
-}
-
-.bot-context-menu [role="menuitem"] {
-  display: flex;
-  width: 100%;
-  min-height: 26px;
-  align-items: center;
-  gap: var(--openbot-space-2);
-  border: 0;
-  border-radius: var(--openbot-radius-xs);
-  background: transparent;
-  padding: var(--openbot-space-1) var(--openbot-space-2);
-  color: var(--openbot-text-primary);
-  font-size: var(--openbot-text-md);
-  font-weight: var(--openbot-weight-regular);
-  line-height: var(--openbot-leading-md);
-  text-align: left;
-  transition:
-    background-color var(--openbot-duration-fast) ease,
-    color var(--openbot-duration-fast) ease,
-    transform var(--openbot-duration-fast) ease;
-}
-
-.bot-context-menu [role="menuitem"]:hover,
-.bot-context-menu [role="menuitem"]:focus-visible,
-.bot-context-menu [role="menuitem"][data-highlighted] {
-  background-color: var(--openbot-bg-control-hover);
-  outline: 0;
-}
-
-.bot-context-icon {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
-  color: var(--openbot-text-secondary);
-}
-
-.bot-context-separator {
-  height: 1px;
-  margin: 3px -3px 2px;
-  background: var(--openbot-border);
-}
-
-.bot-context-menu .bot-context-danger {
-  color: var(--openbot-danger);
-}
-
-.bot-context-danger-icon {
-  color: var(--openbot-danger);
-}
-
-.bot-context-menu .bot-context-danger:hover,
-.bot-context-menu .bot-context-danger:focus-visible,
-.bot-context-menu .bot-context-danger[data-highlighted] {
-  background-color: var(--openbot-bg-control-hover);
-  color: var(--openbot-danger);
-}
-
 .bot-delete-backdrop {
   position: fixed;
   z-index: 100;
@@ -3075,11 +3002,7 @@ textarea {
 .provider-model-panel,
 .provider-model-rail,
 .avatar-editor,
-.mention-picker,
-.attachment-menu,
-.reaction-picker,
-.message-more-menu,
-.exchange-agent-menu {
+.mention-picker {
   border-color: var(--openbot-border);
   background: var(--openbot-bg-surface);
   color: var(--openbot-text-primary);
@@ -3106,15 +3029,4 @@ textarea {
 .bot-delete-dialog {
   border-color: var(--openbot-border-strong);
   background: var(--openbot-bg-surface);
-}
-
-.bot-context-menu .bot-context-danger,
-.bot-context-danger-icon {
-  color: var(--openbot-danger);
-}
-
-.bot-context-menu .bot-context-danger:hover,
-.bot-context-menu .bot-context-danger:focus-visible {
-  background: var(--openbot-bg-control-hover);
-  color: var(--openbot-danger);
 }

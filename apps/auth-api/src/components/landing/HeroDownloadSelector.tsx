@@ -6,7 +6,6 @@ import {
   type DownloadPlatform,
   detectDownloadPlatform,
 } from "../../lib/download-platforms";
-import { EXTERNAL_LINK_REL } from "../../lib/landing-links";
 import { LandingIcon } from "./LandingIcon";
 
 export function HeroDownloadSelector() {
@@ -94,13 +93,7 @@ export function HeroDownloadSelector() {
           }
         >
           {(href) => (
-            <a
-              class="landing-download-primary"
-              href={href()}
-              target="_blank"
-              rel={EXTERNAL_LINK_REL}
-              data-state="available"
-            >
+            <a class="landing-download-primary" href={href()} data-state="available">
               <PlatformLogo platform={platform()} />
               {current().action}
             </a>
@@ -154,8 +147,6 @@ export function HeroDownloadSelector() {
                     <a
                       class="landing-download-menu-item"
                       href={href()}
-                      target="_blank"
-                      rel={EXTERNAL_LINK_REL}
                       role="menuitem"
                       data-state="available"
                       data-selected={platform() === menuPlatform ? "true" : undefined}

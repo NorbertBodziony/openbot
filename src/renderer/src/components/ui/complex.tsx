@@ -14,6 +14,10 @@ import type { ValidComponent } from "@solidjs/web";
 
 type OpenChangeHandler = (open: boolean) => void;
 
+function actionMenuClass(className: string | undefined): string {
+  return className ? `ui-action-menu ${className}` : "ui-action-menu";
+}
+
 function focusRestoreHandler(upstream: () => OpenChangeHandler | undefined): OpenChangeHandler {
   let restoreTarget: HTMLElement | null = null;
   return (open) => {
@@ -121,7 +125,7 @@ export const DropdownMenu: DropdownMenuApi = {
   ),
   Portal: (props) => <DropdownMenuPrimitive.Portal {...props} />,
   Trigger: (props) => <DropdownMenuPrimitive.Trigger {...props} />,
-  Content: (props) => <DropdownMenuPrimitive.Content {...props} />,
+  Content: (props) => <DropdownMenuPrimitive.Content {...props} class={actionMenuClass(props.class)} />,
   Item: (props) => <DropdownMenuPrimitive.Item {...props} />,
   CheckboxItem: (props) => <DropdownMenuPrimitive.CheckboxItem {...props} />,
   RadioGroup: (props) => <DropdownMenuPrimitive.RadioGroup {...props} />,
@@ -144,7 +148,7 @@ export const ContextMenu: ContextMenuApi = {
   ),
   Portal: (props) => <ContextMenuPrimitive.Portal {...props} />,
   Trigger: (props) => <ContextMenuPrimitive.Trigger {...props} />,
-  Content: (props) => <ContextMenuPrimitive.Content {...props} />,
+  Content: (props) => <ContextMenuPrimitive.Content {...props} class={actionMenuClass(props.class)} />,
   Item: (props) => <ContextMenuPrimitive.Item {...props} />,
   Separator: (props) => <ContextMenuPrimitive.Separator {...props} />,
 };

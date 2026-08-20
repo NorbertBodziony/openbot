@@ -29,6 +29,22 @@
   background: var(--openbot-bg-control);
 }
 
+.server-settings-modal-shell.settings-modal {
+  grid-template-columns: 188px minmax(0, 1fr);
+}
+
+.server-settings-modal-shell .ui-input,
+.server-settings-modal-shell .ui-button[data-size="md"],
+.server-settings-modal-shell .ui-button[data-size="lg"] {
+  font-size: var(--openbot-text-md);
+  line-height: var(--openbot-leading-md);
+}
+
+.server-settings-modal-shell .ui-button:active:not(:disabled),
+.server-settings-modal-shell .ui-switch-control:active:not([data-disabled]) {
+  transform: scale(0.96);
+}
+
 .server-settings-modal-shell .settings-modal-scroll-frame::before {
   background: linear-gradient(
     to bottom,
@@ -164,6 +180,20 @@
   gap: var(--openbot-space-6);
 }
 
+.server-settings-general-card .ui-switch-control {
+  width: 38px;
+  height: 22px;
+}
+
+.server-settings-general-card .ui-switch-thumb {
+  width: 16px;
+  height: 16px;
+}
+
+.server-settings-general-card .ui-switch-thumb[data-checked] {
+  transform: translateX(16px);
+}
+
 .server-settings-general-card .ui-switch[data-checked] .ui-switch-control {
   border-color: var(--openbot-accent-hover);
   background: var(--openbot-accent);
@@ -172,7 +202,7 @@
 .server-settings-address-control {
   width: 300px;
   min-width: 0;
-  min-height: var(--openbot-control-md);
+  min-height: calc(var(--openbot-control-lg) + var(--openbot-space-1));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -218,80 +248,77 @@
   gap: var(--openbot-space-1);
 }
 
-.server-settings-invite-card.ui-card {
-  padding-block: var(--openbot-space-4);
+.server-settings-panel[data-tab="members"] {
+  gap: var(--openbot-space-6);
 }
 
-.server-settings-invite-card > :not(:first-child) {
-  border-top: 0;
+.server-settings-people-card.ui-card {
+  overflow: hidden;
+  border-color: var(--openbot-border);
+  background: var(--openbot-bg-surface);
 }
 
-.server-settings-notice,
-.server-settings-invite-result {
+.server-settings-notice {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: var(--openbot-space-3);
-  border: 1px solid var(--openbot-accent-strong);
+  border: 1px solid var(--openbot-border);
   border-radius: var(--openbot-radius-lg);
-  background: var(--openbot-accent-soft);
+  background: var(--openbot-bg-surface);
   padding: var(--openbot-space-3) var(--openbot-space-4);
-  color: var(--openbot-accent-text);
 }
 
-.server-settings-notice > svg,
-.server-settings-invite-result > svg {
+.server-settings-notice > svg {
   width: var(--openbot-icon-md);
   height: var(--openbot-icon-md);
+  color: var(--openbot-text-muted);
 }
 
-.server-settings-notice > div,
-.server-settings-invite-result > div {
+.server-settings-notice > div {
   min-width: 0;
   display: grid;
-  gap: var(--openbot-space-1);
+  gap: var(--openbot-space-0-5);
 }
 
 .server-settings-notice span,
 .server-settings-invite-result span {
-  color: var(--openbot-text-secondary);
+  color: var(--openbot-text-muted);
   font-size: var(--openbot-text-xs);
   line-height: var(--openbot-leading-xs);
 }
 
-.server-settings-invite-card {
-  gap: var(--openbot-space-4);
+.server-settings-invite-card.ui-card {
+  padding: var(--openbot-space-4);
 }
 
 .server-settings-invite-tabs {
   width: fit-content;
-  display: inline-flex;
-  gap: var(--openbot-space-1);
-  border: 1px solid var(--openbot-border);
+  display: flex;
   border-radius: var(--openbot-radius-md);
-  background: var(--openbot-bg-surface-raised);
-  padding: var(--openbot-space-1);
+  background: var(--openbot-bg-control);
+  padding: var(--openbot-space-0-5);
 }
 
 .server-settings-invite-tabs button {
-  min-height: var(--openbot-control-sm);
-  display: inline-flex;
-  align-items: center;
-  gap: var(--openbot-space-2);
+  min-height: var(--openbot-control-md);
   border: 0;
   border-radius: var(--openbot-radius-sm);
   outline: 0;
   background: transparent;
-  padding: 0 var(--openbot-space-3);
+  padding-inline: var(--openbot-space-3);
   color: var(--openbot-text-muted);
   font: inherit;
   font-size: var(--openbot-text-sm);
   cursor: pointer;
+  transition:
+    background-color var(--openbot-duration-normal) ease,
+    color var(--openbot-duration-normal) ease;
 }
 
 .server-settings-invite-tabs button[data-selected] {
-  background: var(--openbot-bg-control-active);
-  color: var(--openbot-text-primary);
+  background: var(--openbot-accent-soft);
+  color: var(--openbot-accent-text);
 }
 
 .server-settings-invite-tabs button:focus-visible {
@@ -305,20 +332,66 @@
   }
 }
 
-.server-settings-email-panel {
-  margin-top: var(--openbot-space-4);
+.server-settings-invite-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 116px auto;
+  align-items: center;
+  gap: var(--openbot-space-2);
+  margin-top: var(--openbot-space-3);
 }
 
-.server-settings-invite-actions {
-  display: flex;
+.server-settings-invite-composer > .ui-button {
+  padding-inline: var(--openbot-space-4);
+}
+
+.server-settings-invite-mode-panel,
+.server-settings-invite-email-control {
+  min-width: 0;
+}
+
+.server-settings-invite-mode-panel .ui-text {
+  padding-inline: var(--openbot-space-1);
+}
+
+.server-settings-invite-email-control,
+.server-settings-invite-email-control .ui-input {
+  width: 100%;
+}
+
+.server-settings-invite-help {
+  display: block;
+  margin-top: var(--openbot-space-2);
+  color: var(--openbot-text-secondary);
+}
+
+.server-settings-invite-result {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--openbot-space-2);
+  gap: var(--openbot-space-3);
+  margin-top: var(--openbot-space-2);
+  border-top: 1px solid var(--openbot-border);
+  padding-top: var(--openbot-space-3);
+}
+
+.server-settings-invite-result > svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  color: var(--openbot-success);
+}
+
+.server-settings-invite-result > div {
+  min-width: 0;
+  display: grid;
+  gap: var(--openbot-space-0-5);
 }
 
 .server-settings-role-select {
-  width: 116px;
-  min-width: 116px;
+  width: 112px;
+  min-width: 112px;
+  height: var(--openbot-control-lg);
+  padding-inline: var(--openbot-space-3);
+  font-size: var(--openbot-text-md);
 }
 
 .settings-modal-select-trigger:disabled {
@@ -334,64 +407,21 @@
   gap: var(--openbot-space-3);
 }
 
-.server-settings-list-card.ui-card {
-  overflow: hidden;
-  padding: 0;
-}
-
-.server-settings-list-row,
-.server-settings-member-row {
-  min-height: 64px;
+.server-settings-invite-row {
+  min-height: 60px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--openbot-space-3);
-  padding: var(--openbot-space-3) var(--openbot-space-4);
+  padding: var(--openbot-space-2) var(--openbot-space-4);
 }
 
-.server-settings-list-row {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-}
-
-.server-settings-list-card > :not(:first-child),
-.server-settings-member-wrap:not(:first-child) {
+.server-settings-invite-row + .server-settings-invite-row {
   border-top: 1px solid var(--openbot-border);
 }
 
-.server-settings-row-icon {
-  width: 32px;
-  height: 32px;
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid var(--openbot-border);
-  border-radius: var(--openbot-radius-md);
-  background: var(--openbot-bg-surface-raised);
-  color: var(--openbot-text-muted);
-}
-
-.server-settings-row-icon svg {
-  width: var(--openbot-icon-sm);
-  height: var(--openbot-icon-sm);
-}
-
-.server-settings-row-copy {
-  min-width: 0;
-  display: grid;
-  gap: var(--openbot-space-0-5);
-}
-
-.server-settings-row-copy span,
-.server-settings-row-copy small {
-  overflow: hidden;
-  color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-xs);
-  line-height: var(--openbot-leading-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.server-settings-row-copy small {
-  color: var(--openbot-text-dim);
+.server-settings-members-heading {
+  align-items: flex-end;
 }
 
 .server-settings-members-heading > div {
@@ -402,7 +432,7 @@
 
 .server-settings-search {
   position: relative;
-  width: 190px;
+  width: 176px;
   flex: 0 0 auto;
 }
 
@@ -422,16 +452,114 @@
   padding-left: var(--openbot-space-8);
 }
 
+.server-settings-member-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 28px;
+  align-items: center;
+  gap: var(--openbot-space-3);
+  padding-inline: var(--openbot-space-4);
+}
+
+.server-settings-member-wrap:not(:first-child) {
+  border-top: 1px solid var(--openbot-border);
+}
+
 .server-settings-member-wrap[data-disabled] {
   background: var(--openbot-bg-control);
 }
 
 .server-settings-member-row {
-  grid-template-columns: auto minmax(120px, 1fr) auto auto auto;
+  min-height: 64px;
+  padding-block: calc(var(--openbot-space-2) + var(--openbot-space-0-5));
+}
+
+.server-settings-member-identity {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--openbot-space-3);
+}
+
+.server-settings-row-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--openbot-space-0-5);
+}
+
+.server-settings-row-copy > span,
+.server-settings-member-meta > span {
+  overflow: hidden;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-settings-member-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-1-5);
+}
+
+.server-settings-member-meta > span:first-child {
+  min-width: 0;
+}
+
+.server-settings-member-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--openbot-space-1-5);
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-xs);
+  white-space: nowrap;
+}
+
+.server-settings-member-row > .ui-badge,
+.server-settings-member-row > .ui-text {
+  justify-self: end;
+}
+
+.server-settings-member-status > span {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-text-dim);
+}
+
+.server-settings-member-status[data-state="online"] > span {
+  background: var(--openbot-success);
+}
+
+.server-settings-member-status[data-state="paused"] > span {
+  background: var(--openbot-warning);
+}
+
+.server-settings-member-menu-trigger {
+  position: relative;
+  justify-self: end;
+}
+
+.server-settings-member-menu-trigger::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.server-settings-member-menu-trigger svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
 }
 
 .server-settings-remove-confirmation {
-  min-height: 52px;
+  min-height: 48px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -469,19 +597,11 @@
   }
 }
 
-@media (max-width: 760px) {
-  .server-settings-member-row {
-    grid-template-columns: auto minmax(120px, 1fr) auto;
-  }
-
-  .server-settings-member-row > .ui-button,
-  .server-settings-member-row > .ui-icon-button {
-    grid-column: 2 / -1;
-    justify-self: end;
-  }
-}
-
 @media (max-width: 700px) {
+  .server-settings-modal-shell.settings-modal {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .server-settings-logo-row,
   .server-settings-address-setting {
     grid-template-columns: minmax(0, 1fr);
@@ -530,8 +650,12 @@
     padding-inline: var(--openbot-space-4);
   }
 
-  .server-settings-member-row {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+  .server-settings-invite-composer {
+    grid-template-columns: minmax(0, 1fr) 108px;
+  }
+
+  .server-settings-invite-composer > .ui-button {
+    grid-column: 1 / -1;
   }
 }
 

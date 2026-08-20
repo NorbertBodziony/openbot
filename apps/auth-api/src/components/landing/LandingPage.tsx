@@ -3,9 +3,9 @@ import { EXTERNAL_LINK_REL, OPENBOT_LINKS } from "../../lib/landing-links";
 import { Button } from "../ui/button";
 import { DownloadSection } from "./DownloadSection";
 import { HeroDownloadSelector } from "./HeroDownloadSelector";
+import { LandingAppPreview } from "./LandingAppPreview";
 import { LandingFooter } from "./LandingFooter";
 import { LandingGlow } from "./LandingGlow";
-import { ProductDemo } from "./ProductDemo";
 
 export function LandingPage() {
   return (
@@ -24,8 +24,21 @@ export function LandingPage() {
             variant="secondary"
             size="sm"
             icon="contact"
+            class="landing-header-contact"
           >
             Contact
+          </Button>
+          <Button
+            href={OPENBOT_LINKS.repository}
+            target="_blank"
+            rel={EXTERNAL_LINK_REL}
+            variant="secondary"
+            size="sm"
+            icon="github"
+            class="landing-button-glass landing-header-github"
+            aria-label="Open OpenBot on GitHub"
+          >
+            <span class="landing-header-github-label">GitHub</span>
           </Button>
           <Button href={OPENBOT_LINKS.download} variant="primary" size="sm" icon="download">
             Download
@@ -82,13 +95,14 @@ export function LandingPage() {
                 variant="secondary"
                 size="lg"
                 icon="contact"
+                class="landing-button-glass"
               >
                 Contact
               </Button>
             </div>
           </div>
 
-          <ProductDemo />
+          <LandingAppPreview />
         </section>
         <DownloadSection />
       </main>

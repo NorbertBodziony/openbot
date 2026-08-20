@@ -276,6 +276,7 @@ export function MessageActions(props: {
     >
       <div class="message-action-popover-anchor">
         <DropdownMenu.Root
+          open={props.pickerOpen}
           onOpenChange={props.onTogglePicker}
           placement={props.message.author === "you" ? "top-end" : "top-start"}
           gutter={6}
@@ -286,6 +287,7 @@ export function MessageActions(props: {
           </DropdownMenu.Trigger>
           <DropdownMenu.Content
             class="reaction-picker"
+            data-menu-layout="grid"
             aria-label="Choose a reaction"
             aria-hidden={props.pickerOpen ? undefined : "true"}
           >
@@ -341,7 +343,13 @@ export function MessageActions(props: {
         <ReplyIcon />
       </Button>
       <div class="message-action-popover-anchor">
-        <DropdownMenu.Root onOpenChange={props.onToggleMore} placement="top-end" gutter={6} modal={false}>
+        <DropdownMenu.Root
+          open={props.moreOpen}
+          onOpenChange={props.onToggleMore}
+          placement="top-end"
+          gutter={6}
+          modal={false}
+        >
           <DropdownMenu.Trigger class="message-action-button" aria-label="More message actions">
             <MoreIcon />
           </DropdownMenu.Trigger>

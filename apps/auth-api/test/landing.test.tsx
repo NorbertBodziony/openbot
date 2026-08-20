@@ -1,7 +1,8 @@
 import { renderToString } from "@solidjs/web";
 import { describe, expect, it } from "vitest";
 import { LandingPage } from "../src/components/landing/LandingPage";
-import { OPENBOT_LINKS } from "../src/lib/landing-links";
+import { OPENBOT_DOWNLOAD_LINKS, OPENBOT_LINKS } from "../src/lib/landing-links";
+import { AppPreviewPage } from "../src/routes/app-preview.lazy";
 
 describe("landing page", () => {
   it("renders the marketing hero during SSR", () => {
@@ -20,33 +21,34 @@ describe("landing page", () => {
     expect(markup).toContain('aria-hidden="true"');
     expect(markup).not.toContain("Open source · macOS and Windows");
     expect(markup).not.toContain("Interactive demo coming soon");
-    expect(markup).toContain("OpenBot interactive product demo");
-    expect(markup).toContain("Live demo");
+    expect(markup).toContain("Interactive OpenBot application preview");
+    expect(markup).toContain("landing-button-glass");
+    expect(markup).toContain(`href="${OPENBOT_LINKS.repository}"`);
+    expect(markup).toContain("GitHub");
+    expect(markup.indexOf(`href="${OPENBOT_LINKS.repository}"`)).toBeLessThan(markup.indexOf("</header>"));
     expect(markup).toContain("Download for macOS");
     expect(markup).toContain('aria-label="Choose download platform"');
     expect(markup).toContain('data-detected-platform="macos"');
   });
 
-  it("renders the complete product demo during SSR", () => {
+  it("embeds the real OpenBot application preview during SSR", () => {
     const markup = renderToString(() => <LandingPage />);
 
-    for (const name of ["Chief", "Research", "Release"]) expect(markup).toContain(name);
-    expect(markup).toContain("Codex · Luna");
-    expect(markup).toContain('data-model="Sonnet"');
-    expect(markup).toContain('data-model="Terra"');
-    expect(markup).toContain("~/OpenBot/Bots/chief");
-    expect(markup).toContain("~/OpenBot/Bots/research");
-    expect(markup).toContain("~/OpenBot/Bots/release");
-    expect(markup).toContain("Messaged Research");
-    expect(markup).toContain("source-check.md");
-    expect(markup).toContain("Persistent context");
-    expect(markup).toContain("Verify Windows package");
-    expect(markup).toContain("Generate release checksums");
-    expect(markup).toContain("Embedded browser");
-    expect(markup).toContain("github.com/NorbertBodziony/openbot/releases");
-    expect(markup).toContain("Download OpenBot to send messages");
-    expect(markup).toContain('data-demo-agent="chief"');
-    expect(markup).toContain("disabled");
+    expect(markup).toContain('src="/app-preview"');
+    expect(markup).toContain('title="Interactive OpenBot application preview"');
+    expect(markup).toContain('loading="lazy"');
+    expect(markup).toContain('sandbox="allow-forms allow-same-origin allow-scripts"');
+    expect(markup).not.toContain("landing-product-demo");
+    expect(markup).not.toContain("data-demo-agent");
+  });
+
+  it("keeps the application preview SSR-safe until hydration", () => {
+    expect(() => renderToString(() => <AppPreviewPage />)).not.toThrow();
+    const markup = renderToString(() => <AppPreviewPage />);
+
+    expect(markup).toContain('id="root"');
+    expect(markup).toContain('aria-label="Loading OpenBot preview"');
+    expect(markup).not.toContain('aria-label="Bot navigation"');
   });
 
   it("renders the download section and exact platform details", () => {
@@ -68,7 +70,9 @@ describe("landing page", () => {
     const linuxEnd = markup.indexOf("</article>", linuxStart);
     const linuxCard = markup.slice(linuxStart, linuxEnd);
 
-    expect(markup.match(new RegExp(`href=\\"${OPENBOT_LINKS.releases}\\"`, "g"))).toHaveLength(4);
+    expect(markup.match(new RegExp(`href=\\"${OPENBOT_LINKS.releases}\\"`, "g"))).toHaveLength(1);
+    expect(markup.match(new RegExp(`href=\\"${OPENBOT_DOWNLOAD_LINKS.macos}\\"`, "g"))).toHaveLength(2);
+    expect(markup.match(new RegExp(`href=\\"${OPENBOT_DOWNLOAD_LINKS.windows}\\"`, "g"))).toHaveLength(1);
     expect(markup).toContain("Download for macOS");
     expect(markup).toContain("Download for Windows");
     expect(linuxCard).not.toContain("href=");
@@ -97,8 +101,8 @@ describe("landing page", () => {
     expect(markup.match(new RegExp(`href=\\"${OPENBOT_LINKS.download}\\"`, "g"))).toHaveLength(4);
     expect(markup.match(new RegExp(`href=\\"${OPENBOT_LINKS.contact}\\"`, "g"))).toHaveLength(3);
     for (const href of Object.values(OPENBOT_LINKS)) expect(markup).toContain(`href="${href}"`);
-    expect(markup.match(/target="_blank"/g)).toHaveLength(16);
-    expect(markup.match(/rel="noopener noreferrer"/g)).toHaveLength(16);
+    expect(markup.match(/target="_blank"/g)).toHaveLength(14);
+    expect(markup.match(/rel="noopener noreferrer"/g)).toHaveLength(14);
     expect(markup).not.toMatch(/href="#download"[^>]+target=/);
   });
 

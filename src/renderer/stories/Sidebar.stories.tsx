@@ -109,15 +109,17 @@ export const AgentContextMenu: Story = {
     const menuStyle = getComputedStyle(menu);
     const itemStyle = getComputedStyle(items[0]);
 
-    await expect(menu.getBoundingClientRect().width).toBe(200);
+    await expect(menu).toHaveClass("ui-action-menu");
+    await expect(menu.getBoundingClientRect().width).toBe(160);
     await expect(menuStyle.padding).toBe("4px");
     await expect(menuStyle.outlineStyle).toBe("none");
-    await expect(items[0].getBoundingClientRect().height).toBe(26);
-    await expect(itemStyle.padding).toBe("4px 8px");
+    await expect(items[0].getBoundingClientRect().height).toBe(32);
+    await expect(itemStyle.padding).toBe("6px 8px");
     await expect(itemStyle.gap).toBe("8px");
-    await expect(itemStyle.borderRadius).toBe("4px");
-    await expect(itemStyle.fontSize).toBe("13px");
-    await expect(itemStyle.lineHeight).toBe("18px");
+    await expect(itemStyle.borderRadius).toBe("6px");
+    await expect(itemStyle.fontSize).toBe("14px");
+    await expect(itemStyle.lineHeight).toBe("20px");
+    await expect(items[0].querySelector("svg")?.getBoundingClientRect().width).toBe(16);
   },
 };
 

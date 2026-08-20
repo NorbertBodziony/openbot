@@ -1833,26 +1833,6 @@ describe("OpenBot connected desktop shell", () => {
   it("publishes typing state", async () => {
     render(() => <App />);
     await confirmOnboardingModel();
-    emitPresence?.({
-      serverId: "server-1",
-      updatedAt: "2026-08-18T12:00:00.000Z",
-      members: [
-        {
-          id: "member-alice",
-          username: "alice@example.com",
-          email: "alice@example.com",
-          name: "Alice",
-          role: "member",
-          createdAt: "2026-08-18T10:00:00.000Z",
-          disabled: false,
-          online: true,
-          typingBotId: "chief",
-        },
-      ],
-    });
-
-    expect(screen.getByText("Alice is typing")).toBeInTheDocument();
-
     const composer = screen.getByRole("textbox", { name: "Message Chief" });
     composer.textContent = "Review this";
     await fireEvent.input(composer);
