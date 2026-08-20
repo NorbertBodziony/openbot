@@ -18,6 +18,7 @@ interface ComposerEditorProps {
   placeholder: string;
   ariaLabel: string;
   disabled: boolean;
+  focusRequest?: number;
   onValueChange: (value: string) => void;
   onSubmit: () => void;
   onOpenAttachment?: (attachment: DraftAttachment) => void;
@@ -95,7 +96,11 @@ export function ComposerEditor(props: ComposerEditorProps) {
   let lastBotId: string | undefined;
   let lastAttachmentKey = "";
   let lastEmittedValue = "";
+  let lastFocusRequest = 0;
   let isComposing = false;
+  let nextPrintableKeyId = 0;
+  let manualPrintableInput = false;
+  const pendingPrintableKeys = new Map<number, string>();
   const attachmentTokenActions: AttachmentTokenActions = {
     tooltipId: attachmentTooltipId,
     open: (attachment, keepTooltip = false) => {
@@ -127,17 +132,26 @@ export function ComposerEditor(props: ComposerEditorProps) {
       value: props.value,
       bots: props.bots,
       attachments: props.attachments ?? [],
+      focusRequest: props.focusRequest ?? 0,
     }),
-    ({ botId, value, bots, attachments }) => {
+    ({ botId, value, bots, attachments, focusRequest }) => {
       if (!editor) return;
       const attachmentKey = attachments.map((attachment) => `${attachment.id}:${attachment.name}`).join("|");
-      if (botId === lastBotId && value === lastEmittedValue && attachmentKey === lastAttachmentKey) return;
-      lastBotId = botId;
-      lastAttachmentKey = attachmentKey;
-      lastEmittedValue = value;
-      setAttachmentTooltip(null);
-      renderEditorValue(editor, value, bots, attachments, attachmentTokenActions);
-      setMention(null);
+      const contentChanged = botId !== lastBotId || value !== lastEmittedValue || attachmentKey !== lastAttachmentKey;
+      const focusRequested = focusRequest > lastFocusRequest;
+      if (contentChanged) {
+        lastBotId = botId;
+        lastAttachmentKey = attachmentKey;
+        lastEmittedValue = value;
+        setAttachmentTooltip(null);
+        renderEditorValue(editor, value, bots, attachments, attachmentTokenActions);
+        setMention(null);
+      }
+      if (focusRequested) {
+        lastFocusRequest = focusRequest;
+        editor.focus();
+        placeCaretAtEnd(editor);
+      }
     },
   );
 
@@ -152,6 +166,33 @@ export function ComposerEditor(props: ComposerEditorProps) {
     }
     lastEmittedValue = value;
     props.onValueChange(value);
+  }
+
+  function insertPrintableKey(key: string) {
+    if (!editor) return;
+    insertPlainText(editor, key);
+    emitValue();
+    updateMention();
+    editor.scrollTop = editor.scrollHeight;
+  }
+
+  function acknowledgeNativePrintableInput(event: InputEvent) {
+    if (event.inputType !== "insertText" || !event.data) return;
+    let matchingKeyId: number | undefined;
+    for (const [keyId, key] of pendingPrintableKeys) {
+      if (key === event.data) matchingKeyId = keyId;
+    }
+    if (matchingKeyId !== undefined) pendingPrintableKeys.delete(matchingKeyId);
+  }
+
+  function schedulePrintableInputFallback(key: string) {
+    const keyId = ++nextPrintableKeyId;
+    pendingPrintableKeys.set(keyId, key);
+    window.setTimeout(() => {
+      if (!pendingPrintableKeys.delete(keyId) || !editor || editor.ownerDocument.activeElement !== editor) return;
+      manualPrintableInput = true;
+      insertPrintableKey(key);
+    }, 0);
   }
 
   function updateMention() {
@@ -206,6 +247,17 @@ export function ComposerEditor(props: ComposerEditorProps) {
 
   function handleKeyDown(event: KeyboardEvent) {
     if (event.key === "Enter" && (isComposing || event.isComposing)) return;
+
+    const printableKey = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.isComposing;
+    if (printableKey) {
+      if (manualPrintableInput) {
+        event.preventDefault();
+        insertPrintableKey(event.key);
+      } else {
+        schedulePrintableInputFallback(event.key);
+      }
+      return;
+    }
 
     const options = matchingOptions();
     if (mention() && options.length > 0) {
@@ -280,7 +332,8 @@ export function ComposerEditor(props: ComposerEditorProps) {
         aria-disabled={props.disabled ? "true" : "false"}
         aria-multiline="true"
         spellcheck="true"
-        onInput={() => {
+        onInput={(event) => {
+          acknowledgeNativePrintableInput(event);
           emitValue();
           updateMention();
         }}
@@ -294,6 +347,8 @@ export function ComposerEditor(props: ComposerEditorProps) {
         }}
         onPaste={handlePaste}
         onBlur={() => {
+          pendingPrintableKeys.clear();
+          manualPrintableInput = false;
           isComposing = false;
           window.setTimeout(() => setMention(null), 100);
         }}

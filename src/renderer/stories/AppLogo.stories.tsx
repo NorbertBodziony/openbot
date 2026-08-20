@@ -1,5 +1,5 @@
+import { AppLogo, type AppLogoAnimation } from "@openbot/brand";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { AppLogo, type AppLogoAnimation } from "../src/components/AppLogo";
 
 const ANIMATIONS: Array<{ animation: AppLogoAnimation; label: string }> = [
   { animation: "blink", label: "Blink" },

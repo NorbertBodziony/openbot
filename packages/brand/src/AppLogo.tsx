@@ -1,10 +1,10 @@
-import type { AppVariant } from "@openbot/contracts/ipc";
 import { createSignal, flush, onCleanup } from "solid-js";
 
 export type AppLogoAnimation = "none" | "blink" | "look-around" | "surprised";
+export type AppLogoVariant = "production" | "dev" | "preview";
 
-interface AppLogoProps {
-  variant: AppVariant;
+export interface AppLogoProps {
+  variant: AppLogoVariant;
   animation?: AppLogoAnimation;
   interactive?: boolean;
   class?: string;
@@ -78,8 +78,8 @@ export function AppLogo(props: AppLogoProps) {
   }
 
   onCleanup(() => {
-    window.clearTimeout(clickReactionTimer);
-    window.clearTimeout(easterEggTimer);
+    globalThis.clearTimeout(clickReactionTimer);
+    globalThis.clearTimeout(easterEggTimer);
   });
 
   return (

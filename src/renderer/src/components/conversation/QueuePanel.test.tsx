@@ -1,5 +1,6 @@
 import type { AttachmentSummary, QueueDelivery } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { QueuePanel } from "./QueuePanel";
 
@@ -87,7 +88,7 @@ describe("QueuePanel", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Resume queue" }));
 
     expect(props.onSteer).toHaveBeenCalledWith("delivery-1");
-    expect(props.onCancel).toHaveBeenCalledWith("delivery-1");
+    await waitFor(() => expect(props.onCancel).toHaveBeenCalledWith("delivery-1"));
     await waitFor(() => expect(props.onEdit).toHaveBeenCalledWith(expect.objectContaining({ id: "delivery-1" })));
     expect(props.onResume).toHaveBeenCalledOnce();
   });
@@ -122,6 +123,7 @@ describe("QueuePanel", () => {
 
     await fireEvent.keyDown(rows[1], { key: "ArrowUp", altKey: true });
     expect(props.onReorder).toHaveBeenLastCalledWith(["delivery-2", "delivery-1", "delivery-3"]);
+    expect(screen.getByRole("status")).toHaveTextContent("Moved queued message to position 1 of 3.");
 
     for (const [index, row] of rows.entries()) {
       vi.spyOn(row, "getBoundingClientRect").mockReturnValue({
@@ -151,5 +153,139 @@ describe("QueuePanel", () => {
     expect(props.onReorder).toHaveBeenLastCalledWith(["delivery-2", "delivery-3", "delivery-1"]);
     expect(rows[0].style.getPropertyValue("--queue-drag-step")).toBe("0");
     expect(view.container.querySelector(".agent-queue-panel")).not.toHaveClass("agent-queue-panel-dragging");
+    expect(screen.getByRole("status")).toHaveTextContent("Moved queued message to position 3 of 3.");
+  });
+
+  it("does not start row dragging from an action button", async () => {
+    const props = callbacks();
+    const view = render(() => (
+      <QueuePanel deliveries={[delivery(1), delivery(2)]} paused={false} canSteer {...props} />
+    ));
+    const edit = screen.getByRole("button", { name: "Edit queued message 1" });
+    const dataTransfer = { setData: vi.fn(), effectAllowed: "move", dropEffect: "move" };
+
+    await fireEvent.dragStart(edit, { dataTransfer });
+
+    expect(dataTransfer.setData).not.toHaveBeenCalled();
+    expect(view.container.querySelector(".agent-queue-panel")).not.toHaveClass("agent-queue-panel-dragging");
+  });
+
+  it("auto-scrolls a long queue while dragging near its edge", async () => {
+    const props = callbacks();
+    const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    const view = render(() => (
+      <QueuePanel
+        deliveries={Array.from({ length: 10 }, (_, index) => delivery(index + 1))}
+        paused={false}
+        canSteer
+        {...props}
+      />
+    ));
+    const list = view.container.querySelector<HTMLDivElement>(".agent-queue-panel-list");
+    const panel = view.container.querySelector<HTMLElement>(".agent-queue-panel");
+    const rows = view.container.querySelectorAll<HTMLFieldSetElement>(".agent-queue-item");
+    if (!list || !panel) throw new Error("Queue panel is missing.");
+    Object.defineProperty(list, "clientHeight", { configurable: true, value: 212 });
+    Object.defineProperty(list, "scrollHeight", { configurable: true, value: 290 });
+    list.scrollTop = 50;
+    const listBounds = vi.spyOn(list, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      bottom: 212,
+      left: 0,
+      right: 600,
+      width: 600,
+      height: 212,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    for (const [index, row] of Array.from(rows).entries()) {
+      vi.spyOn(row, "getBoundingClientRect").mockReturnValue({
+        top: index * 29,
+        bottom: (index + 1) * 29,
+        left: 0,
+        right: 600,
+        width: 600,
+        height: 29,
+        x: 0,
+        y: index * 29,
+        toJSON: () => ({}),
+      });
+    }
+
+    const dataTransfer = { setData: vi.fn(), effectAllowed: "move", dropEffect: "move" };
+    await fireEvent.dragStart(rows[0], { dataTransfer });
+    const dragOver = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperties(dragOver, {
+      clientY: { value: 2 },
+      dataTransfer: { value: dataTransfer },
+    });
+    fireEvent(panel, dragOver);
+    expect(listBounds).toHaveBeenCalled();
+    expect(list.scrollTop).toBeLessThan(50);
+    expect(requestFrame).toHaveBeenCalled();
+    const nextFrame = requestFrame.mock.calls[0]?.[0];
+    if (!nextFrame) throw new Error("Auto-scroll frame is missing.");
+    nextFrame(performance.now());
+    expect(list.scrollTop).toBeLessThan(42);
+    await fireEvent.dragEnd(rows[0], { dataTransfer });
+  });
+
+  it("animates queue additions and removals", async () => {
+    const props = callbacks();
+    const [deliveries, setDeliveries] = createSignal([delivery(1)]);
+    const view = render(() => <QueuePanel deliveries={deliveries()} paused={false} canSteer {...props} />);
+
+    setDeliveries([delivery(1), delivery(2)]);
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-queue-delivery-id="delivery-2"]')).toHaveClass(
+        "agent-queue-item-entering",
+      ),
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: "Delete queued message 1" }));
+    expect(view.container.querySelector('[data-queue-delivery-id="delivery-1"]')).toHaveClass(
+      "agent-queue-item-removing",
+    );
+    await waitFor(() => expect(props.onCancel).toHaveBeenCalledWith("delivery-1"));
+  });
+
+  it("animates an edited row out and restores it at the same position", async () => {
+    const props = callbacks();
+    const [editingDeliveryId, setEditingDeliveryId] = createSignal<string | null>(null);
+    const view = render(() => (
+      <QueuePanel
+        deliveries={[delivery(1), delivery(2), delivery(3)]}
+        editingDeliveryId={editingDeliveryId()}
+        paused={false}
+        canSteer
+        {...props}
+      />
+    ));
+
+    setEditingDeliveryId("delivery-2");
+
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-queue-delivery-id="delivery-2"]')).toHaveClass(
+        "agent-queue-item-removing",
+      ),
+    );
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-queue-delivery-id="delivery-2"]')).not.toBeInTheDocument(),
+    );
+
+    setEditingDeliveryId(null);
+
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-queue-delivery-id="delivery-2"]')).toHaveClass(
+        "agent-queue-item-entering",
+      ),
+    );
+    expect(Array.from(view.container.querySelectorAll(".agent-queue-message"), (node) => node.textContent)).toEqual([
+      "Queued task 1",
+      "Queued task 2",
+      "Queued task 3",
+    ]);
   });
 });

@@ -1,8 +1,8 @@
+import { AppLogo } from "@openbot/brand";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { AppVariant, CentralAuthIssue, CentralAuthState } from "@openbot/contracts/ipc";
 import { normalizeEmailAddress, normalizeOneTimeCode } from "@openbot/contracts/validation";
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
-import { AppLogo } from "./AppLogo";
 import { OtpInput, type OtpInputStatus } from "./OtpInput";
 import { ArrowLeft, Button, Input, RefreshCw } from "./ui";
 

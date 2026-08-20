@@ -4369,6 +4369,7 @@
   max-height: 130px;
   flex: 1;
   align-items: flex-end;
+  cursor: text;
 }
 
 .composer-editor-root {
@@ -4378,6 +4379,7 @@
   min-width: 0;
   min-height: 30px;
   max-height: 130px;
+  cursor: text;
 }
 
 .composer-editor-surface {
@@ -4395,11 +4397,14 @@
   outline: 0;
   background: transparent;
   padding: 5px 0;
+  caret-color: var(--openbot-text-primary);
   color: var(--openbot-white);
+  cursor: text;
   font-size: var(--openbot-text-lg);
   line-height: 20px;
   white-space: pre-wrap;
   word-break: break-word;
+  user-select: text;
 }
 
 .composer-editor-surface[aria-disabled="true"] {
@@ -4591,6 +4596,8 @@
 }
 
 .composer-attachment {
+  position: relative;
+  z-index: 11;
   display: flex;
   max-width: 360px;
   min-height: 42px;
@@ -4860,7 +4867,12 @@
   background: var(--openbot-queue-surface);
   padding-bottom: var(--queue-composer-overlap);
   box-shadow: none;
+  transition: bottom var(--openbot-duration-slow) var(--openbot-ease-out);
   animation: queue-panel-in var(--openbot-duration-normal) cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.composer-wrap:has(.composer-attachment) .agent-queue-panel {
+  bottom: 100%;
 }
 
 .agent-queue-panel-list {
@@ -4875,7 +4887,8 @@
 
   position: relative;
   display: grid;
-  min-height: var(--queue-row-height);
+  height: var(--queue-row-height);
+  min-height: 0;
   min-width: 0;
   grid-template-columns: 14px minmax(0, 1fr) auto;
   align-items: center;
@@ -4889,8 +4902,22 @@
   outline: 0;
   transform: translate3d(0, calc(var(--queue-drag-step) * var(--queue-row-height)), 0);
   transition:
+    height var(--openbot-duration-slow) var(--openbot-ease-out),
     opacity var(--openbot-duration-fast) ease,
     transform var(--openbot-duration-slow) var(--openbot-ease-out);
+}
+
+.agent-queue-item-entering {
+  animation: queue-item-in var(--openbot-duration-slow) var(--openbot-ease-out) both;
+}
+
+.agent-queue-item-removing {
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(0, -4px, 0) scale(0.985);
+  will-change: height, opacity, transform;
 }
 
 .agent-queue-panel-dragging .agent-queue-item {
@@ -5079,12 +5106,6 @@
   padding: 0;
 }
 
-.agent-queue-icon-button.agent-queue-delete {
-  background: var(--openbot-danger-soft);
-  color: var(--openbot-danger);
-  opacity: 0.72;
-}
-
 .agent-queue-icon-button.agent-queue-delete:hover:not(:disabled),
 .agent-queue-icon-button.agent-queue-delete:focus-visible {
   background: var(--openbot-danger-soft);
@@ -5135,60 +5156,6 @@
   }
 }
 
-.composer-queue-edit-preview {
-  display: flex;
-  min-height: 42px;
-  align-items: center;
-  gap: 10px;
-  margin: 0 10px 6px;
-  border: 1px solid var(--openbot-accent-strong);
-  border-radius: var(--openbot-radius-lg);
-  background: var(--openbot-accent-soft);
-  padding: 6px 8px 6px 12px;
-}
-
-.composer-queue-edit-preview > div {
-  min-width: 0;
-  flex: 1;
-}
-
-.composer-queue-edit-preview span {
-  display: block;
-  color: var(--openbot-accent-hover);
-  font-size: var(--openbot-text-2xs);
-  font-weight: 600;
-  line-height: 14px;
-}
-
-.composer-queue-edit-preview p {
-  overflow: hidden;
-  margin: 1px 0 0;
-  color: var(--openbot-text-secondary);
-  font-size: var(--openbot-text-sm);
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.composer-queue-edit-preview > button {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 0;
-  border-radius: var(--openbot-radius-pill);
-  background: transparent;
-  color: var(--openbot-text-muted);
-}
-
-.composer-queue-edit-preview > button:hover,
-.composer-queue-edit-preview > button:focus-visible {
-  background: var(--openbot-hover);
-  color: var(--openbot-text-primary);
-  outline: 0;
-}
-
 @keyframes queue-panel-in {
   from {
     opacity: 0;
@@ -5197,6 +5164,19 @@
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes queue-item-in {
+  from {
+    height: 0;
+    opacity: 0;
+    transform: translate3d(0, -4px, 0) scale(0.985);
+  }
+  to {
+    height: var(--queue-row-height);
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
   }
 }
 
@@ -5328,6 +5308,11 @@
   }
 
   .agent-queue-item {
+    animation: none;
+    transition: none;
+  }
+
+  .agent-queue-panel {
     transition: none;
   }
 

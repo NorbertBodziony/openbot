@@ -49,6 +49,22 @@ export const Interactive: Story = {
     await expect(body.getByRole("button", { name: "Notifications" })).toBeDisabled();
     await expect(body.getByRole("button", { name: "Advanced" })).toBeDisabled();
 
+    const profileTab = body.getByRole("button", { name: "Profile" });
+    await userEvent.click(profileTab);
+    await expect(profileTab).toHaveAttribute("aria-current", "page");
+    await expect(body.getByRole("heading", { name: "Profile", level: 2 })).toBeVisible();
+    await expect(body.getByRole("textbox", { name: "Display name" })).toHaveValue("OpenBot user");
+
+    const generalTab = body.getByRole("button", { name: "General" });
+    await userEvent.click(generalTab);
+    await expect(generalTab).toHaveAttribute("aria-current", "page");
+
+    const linkTarget = body.getByRole("button", { name: /Open external links in/ });
+    await userEvent.click(linkTarget);
+    await waitFor(() => expect(body.getByRole("listbox")).toBeVisible());
+    await userEvent.click(body.getByRole("option", { name: "OpenBot" }));
+    await expect(linkTarget).toHaveTextContent("OpenBot");
+
     const launchSwitch = body.getByRole("switch", { name: "Launch OpenBot at login" });
     await expect(launchSwitch).toBeChecked();
     await userEvent.click(launchSwitch);

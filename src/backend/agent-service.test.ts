@@ -508,6 +508,23 @@ describe.sequential("AgentService", () => {
     expect(instructions).toContain("standing remit");
   });
 
+  it("keeps rapid messages in FIFO order before the first turn-start event is observed", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    await service.sendMessage({ botId: "chief", text: "Start immediately" });
+    await service.sendMessage({ botId: "chief", text: "Wait behind the first message" });
+
+    await waitFor(() => {
+      const deliveries = service?.listQueue("chief").deliveries ?? [];
+      return deliveries[0]?.status === "running" && deliveries[1]?.status === "queued";
+    });
+    const deliveries = service.listQueue("chief").deliveries;
+    expect(deliveries.map((delivery) => delivery.text)).toEqual(["Start immediately", "Wait behind the first message"]);
+    expect((await protocolMessages()).filter((message) => message.method === "turn/start")).toHaveLength(1);
+  });
+
   it("queues FIFO instead of steering and pause/resume controls draining", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());

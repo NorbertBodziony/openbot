@@ -1044,7 +1044,7 @@ export function App() {
       });
       setUiErrors((current) => ({ ...current, [botId]: [] }));
       try {
-        await markAgentMessagesRead(botId, receipt.messageId);
+        await markAgentMessagesRead(botId, receipt.deliveries[0]?.id ?? receipt.messageId);
       } catch (error) {
         appendUiError(botId, error, "Read state failed");
       }

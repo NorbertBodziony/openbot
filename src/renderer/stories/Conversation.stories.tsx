@@ -616,6 +616,9 @@ export const SevenQueuedMessages: Story = {
   },
   render: (storyArgs) => {
     const [queueState, setQueueState] = createSignal(storyArgs.queue ?? referenceQueue);
+    let nextStoryDeliveryId = 1;
+    const normalizePositions = (deliveries: QueueSnapshot["deliveries"]) =>
+      deliveries.map((delivery, index) => ({ ...delivery, position: index + 1 }));
     const reorderQueue = (deliveryIds: string[]) => {
       storyArgs.onReorderQueue(deliveryIds);
       setQueueState((current) => {
@@ -635,16 +638,143 @@ export const SevenQueuedMessages: Story = {
         };
       });
     };
+    const cancelQueuedMessage = (deliveryId: string) => {
+      storyArgs.onCancelQueuedMessage(deliveryId);
+      setQueueState((current) => ({
+        ...current,
+        deliveries: normalizePositions(current.deliveries.filter((delivery) => delivery.id !== deliveryId)),
+      }));
+    };
+    const updateQueuedMessage = async (
+      deliveryId: string,
+      text: string,
+      keepAttachmentIds: string[],
+      attachmentDraftIds: string[],
+    ) => {
+      const saved = await storyArgs.onUpdateQueuedMessage(deliveryId, text, keepAttachmentIds, attachmentDraftIds);
+      if (!saved) return false;
+      setQueueState((current) => ({
+        ...current,
+        deliveries: current.deliveries.map((delivery) =>
+          delivery.id === deliveryId
+            ? {
+                ...delivery,
+                text,
+                attachments: delivery.attachments.filter((attachment) => keepAttachmentIds.includes(attachment.id)),
+              }
+            : delivery,
+        ),
+      }));
+      return true;
+    };
+    const sendMessage = async (body: string, attachmentDraftIds: string[], replyToMessageId: string | null) => {
+      const sent = await storyArgs.onSendMessage(body, attachmentDraftIds, replyToMessageId);
+      if (!sent || !storyArgs.activeTurnId) return sent;
+      const id = `storybook-queued-${nextStoryDeliveryId++}`;
+      setQueueState((current) => ({
+        ...current,
+        deliveries: [
+          ...current.deliveries,
+          {
+            id,
+            messageId: `${id}-message`,
+            recipientBotId: current.botId,
+            sender: { kind: "user" },
+            text: body,
+            attachments: [],
+            replyToMessageId,
+            status: "queued",
+            position: current.deliveries.length + 1,
+            turnId: null,
+            error: null,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      }));
+      return true;
+    };
 
     return (
       <MockedConversation
         args={{
           ...storyArgs,
           queue: queueState(),
+          onSendMessage: sendMessage,
+          onCancelQueuedMessage: cancelQueuedMessage,
+          onUpdateQueuedMessage: updateQueuedMessage,
           onReorderQueue: reorderQueue,
         }}
       />
     );
+  },
+};
+
+export const SevenQueuedMessagesInteractions: Story = {
+  ...SevenQueuedMessages,
+  name: "Seven queued messages interactions",
+  tags: ["!dev"],
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    const messagesInQueue = () =>
+      Array.from(canvasElement.querySelectorAll(".agent-queue-message"), (element) => element.textContent);
+    const composer = canvasElement.querySelector<HTMLElement>(".composer");
+    const editor = canvas.getByRole("textbox", { name: "Message Chief" });
+    if (!composer) throw new Error("Composer is missing.");
+
+    const paddingPointerDown = new PointerEvent("pointerdown", { bubbles: true, cancelable: true });
+    expect(composer.dispatchEvent(paddingPointerDown)).toBe(false);
+    await waitFor(() => expect(editor).toHaveFocus());
+
+    const firstRow = canvasElement.querySelector<HTMLFieldSetElement>(".agent-queue-item");
+    if (!firstRow) throw new Error("Queue row is missing.");
+
+    fireEvent.keyDown(firstRow, { key: "ArrowDown", altKey: true });
+    await waitFor(() =>
+      expect(messagesInQueue().slice(0, 2)).toEqual([queueReferenceMessages[1], queueReferenceMessages[0]]),
+    );
+
+    const movedRow = Array.from(canvasElement.querySelectorAll<HTMLFieldSetElement>(".agent-queue-item")).find((row) =>
+      row.textContent?.includes(queueReferenceMessages[0]),
+    );
+    if (!movedRow) throw new Error("Moved queue row is missing.");
+    fireEvent.keyDown(movedRow, { key: "ArrowUp", altKey: true });
+    await waitFor(() =>
+      expect(messagesInQueue().slice(0, 2)).toEqual([queueReferenceMessages[0], queueReferenceMessages[1]]),
+    );
+
+    await userEvent.click(canvas.getByRole("button", { name: "Edit queued message 1" }));
+    await waitFor(() => expect(editor).toHaveFocus());
+    await waitFor(() => expect(canvas.getByRole("button", { name: "Save queued message" })).toBeVisible());
+    await waitFor(() => expect(messagesInQueue()).toHaveLength(queueReferenceMessages.length - 1));
+    expect(messagesInQueue()).not.toContain(queueReferenceMessages[0]);
+    editor.textContent = "Updated queue message from Storybook";
+    await fireEvent.input(editor);
+    await userEvent.click(canvas.getByRole("button", { name: "Save queued message" }));
+    await waitFor(() => expect(messagesInQueue()[0]).toBe("Updated queue message from Storybook"));
+
+    await userEvent.click(canvas.getByRole("button", { name: "Edit queued message 1" }));
+    await waitFor(() => expect(messagesInQueue()).toHaveLength(queueReferenceMessages.length - 1));
+    editor.textContent = queueReferenceMessages[0];
+    await fireEvent.input(editor);
+    await userEvent.click(canvas.getByRole("button", { name: "Save queued message" }));
+    await waitFor(() => expect(messagesInQueue()[0]).toBe(queueReferenceMessages[0]));
+
+    await userEvent.click(canvas.getByRole("button", { name: "Edit queued message 3" }));
+    const attachmentCard = canvasElement.querySelector<HTMLElement>(".composer-attachment");
+    const queuePanel = canvasElement.querySelector<HTMLElement>(".agent-queue-panel");
+    if (!attachmentCard || !queuePanel) throw new Error("Queue attachment edit layout is missing.");
+    await waitFor(() =>
+      expect(queuePanel.getBoundingClientRect().bottom).toBeLessThanOrEqual(attachmentCard.getBoundingClientRect().top),
+    );
+    await userEvent.click(canvas.getByRole("button", { name: "Save queued message" }));
+    await waitFor(() => expect(messagesInQueue()).toHaveLength(queueReferenceMessages.length));
+
+    editor.textContent = "Queued from the Storybook composer";
+    await fireEvent.input(editor);
+    await userEvent.click(canvas.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(messagesInQueue().at(-1)).toBe("Queued from the Storybook composer"));
+
+    await userEvent.click(canvas.getByRole("button", { name: "Delete queued message 8" }));
+    await waitFor(() => expect(messagesInQueue()).toHaveLength(queueReferenceMessages.length));
   },
 };
 

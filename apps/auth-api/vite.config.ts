@@ -1,5 +1,6 @@
 import { cloudflare } from "@cloudflare/vite-plugin";
 import solidPlugin from "@solidjs/vite-plugin";
+import tailwindcss from "@tailwindcss/vite";
 import { tanstackStart } from "@tanstack/solid-start/plugin/vite";
 import { defineConfig } from "vite";
 import { readLocalRuntimeVars } from "./src/server/runtime-env";
@@ -17,6 +18,7 @@ export default defineConfig(({ command }) => {
       }),
       tanstackStart(),
       solidPlugin({ ssr: true }),
+      tailwindcss(),
     ],
   };
 });

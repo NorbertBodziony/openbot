@@ -1,7 +1,8 @@
 import type { AttachmentSummary, QueueDelivery } from "@openbot/contracts/ipc";
 import { fireEvent, render } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import { expect, test, vi } from "vitest";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import "../../src/renderer/src/styles.css";
 import "../../.storybook/preview.css";
 import { QueuePanel } from "../../src/renderer/src/components/conversation/QueuePanel";
@@ -43,7 +44,7 @@ const deliveries: QueueDelivery[] = messages.map((text, index) => ({
 }));
 
 test("the queue panel matches the dense seven-row reference", async () => {
-  render(() => (
+  const view = render(() => (
     <div
       data-testid="queue-reference-stage"
       style={{
@@ -83,4 +84,44 @@ test("the queue panel matches the dense seven-row reference", async () => {
   });
 
   await expect(page.getByTestId("queue-reference-stage")).toMatchScreenshot("queue-panel-drag-state");
+  await fireEvent.dragEnd(rows[0], { dataTransfer });
+  view.unmount();
+});
+
+test("mouse drag-and-drop changes the interactive queue order", async () => {
+  const [queue, setQueue] = createSignal(deliveries.slice(0, 4));
+  const view = render(() => (
+    <div style={{ position: "relative", width: "758px", height: "260px" }}>
+      <div class="composer-wrap" style={{ position: "absolute", right: "0", bottom: "0", left: "0" }}>
+        <QueuePanel
+          deliveries={queue()}
+          paused={false}
+          canSteer
+          onSteer={vi.fn()}
+          onCancel={vi.fn()}
+          onEdit={vi.fn()}
+          onReorder={(ids) => {
+            const byId = new Map(queue().map((delivery) => [delivery.id, delivery]));
+            setQueue(
+              ids.flatMap((id, index) => {
+                const delivery = byId.get(id);
+                return delivery ? [{ ...delivery, position: index + 1 }] : [];
+              }),
+            );
+          }}
+          onResume={vi.fn()}
+        />
+        <div class="composer" aria-hidden="true" />
+      </div>
+    </div>
+  ));
+
+  const rows = view.container.querySelectorAll<HTMLFieldSetElement>(".agent-queue-item");
+  const first = rows[0];
+  const third = rows[2];
+  await userEvent.dragAndDrop(first, third);
+
+  await expect
+    .poll(() => Array.from(view.container.querySelectorAll(".agent-queue-message"), (row) => row.textContent))
+    .toEqual([messages[1], messages[2], messages[0], messages[3]]);
 });

@@ -1,21 +1,9 @@
-import { onCleanup } from "solid-js";
 import { expect, fireEvent, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { App } from "../src/App";
+import { OpenBotPlayground } from "../src/preview/OpenBotPlayground";
+import type { MockOpenBotOptions } from "../src/preview/mock-openbot";
 import { STORY_AGENT_STATUS, STORY_BOT_SUMMARIES } from "./fixtures";
-import type { MockOpenBotOptions } from "./mock-openbot";
-import { createMockOpenBot } from "./mock-openbot";
-
-function MockedApp(props: { options?: MockOpenBotOptions }) {
-  const previousApi = window.openbot;
-  const mock = createMockOpenBot(props.options);
-  window.openbot = mock.api;
-  onCleanup(() => {
-    mock.dispose();
-    window.openbot = previousApi;
-  });
-  return <App />;
-}
 
 const meta = {
   title: "App",
@@ -29,7 +17,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Playground: Story = {
-  render: () => <MockedApp />,
+  render: () => <OpenBotPlayground />,
   play: async ({ canvas, userEvent }) => {
     await expect(canvas.getByRole("navigation", { name: "Chat list" })).toBeInTheDocument();
     await expect(canvas.findByRole("heading", { name: "Agents" })).resolves.toBeInTheDocument();
@@ -51,7 +39,7 @@ export const Playground: Story = {
 };
 
 export const SettingsTyping: Story = {
-  render: () => <MockedApp />,
+  render: () => <OpenBotPlayground />,
   play: async ({ canvas, userEvent }) => {
     await canvas.findByRole("heading", { name: "Chief" });
     await userEvent.click(canvas.getByRole("button", { name: "View agent settings" }));
@@ -77,7 +65,7 @@ export const SettingsTyping: Story = {
 };
 
 export const CommandSearch: Story = {
-  render: () => <MockedApp />,
+  render: () => <OpenBotPlayground />,
   play: async ({ canvas, canvasElement, userEvent }) => {
     await canvas.findByRole("heading", { name: "Chief" });
     await fireEvent.keyDown(window, { key: "k", metaKey: true });
@@ -102,20 +90,20 @@ export const CommandSearch: Story = {
 };
 
 export const EmptyWorkspace: Story = {
-  render: () => <MockedApp options={{ bots: [] }} />,
+  render: () => <OpenBotPlayground options={{ bots: [] }} />,
 };
 
 export const Onboarding: Story = {
-  render: () => <MockedApp options={{ setupState: { completed: false, preferredProvider: null } }} />,
+  render: () => <OpenBotPlayground options={{ setupState: { completed: false, preferredProvider: null } }} />,
 };
 
 export const SignedOut: Story = {
-  render: () => <MockedApp options={{ authState: { status: "signed_out" } }} />,
+  render: () => <OpenBotPlayground options={{ authState: { status: "signed_out" } }} />,
 };
 
 export const AgentStarting: Story = {
   render: () => (
-    <MockedApp
+    <OpenBotPlayground
       options={{
         agentStatus: {
           ...STORY_AGENT_STATUS,

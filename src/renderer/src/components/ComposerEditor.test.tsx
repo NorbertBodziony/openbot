@@ -1,7 +1,7 @@
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { DraftAttachment } from "@openbot/contracts/ipc";
-import { fireEvent, render, screen } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BotProfile } from "../data";
@@ -57,6 +57,58 @@ function placeCaretAtEnd(editor: HTMLElement): void {
 }
 
 describe("ComposerEditor", () => {
+  it("focuses the editor and places the caret at the end for a focus request", async () => {
+    const [focusRequest, setFocusRequest] = createSignal(0);
+    render(() => (
+      <ComposerEditor
+        botId="chief"
+        bots={[]}
+        value="Queued message"
+        placeholder="Message Chief"
+        ariaLabel="Message Chief"
+        disabled={false}
+        focusRequest={focusRequest()}
+        onValueChange={vi.fn()}
+        onSubmit={vi.fn()}
+      />
+    ));
+    const editor = screen.getByRole("textbox", { name: "Message Chief" });
+
+    setFocusRequest(1);
+
+    await waitFor(() => expect(editor).toHaveFocus());
+    const selection = window.getSelection();
+    const range = selection?.getRangeAt(0);
+    expect(range?.collapsed).toBe(true);
+    expect(range?.endContainer).toBe(editor);
+    expect(range?.endOffset).toBe(editor.childNodes.length);
+  });
+
+  it("inserts printable keys when the browser omits native input events", async () => {
+    const { editor, onValueChange } = renderComposer();
+    editor.focus();
+
+    await fireEvent.keyDown(editor, { key: "a" });
+    await waitFor(() => expect(editor).toHaveTextContent("a"));
+    await fireEvent.keyDown(editor, { key: "b" });
+
+    expect(editor).toHaveTextContent("ab");
+    expect(onValueChange).toHaveBeenLastCalledWith("ab");
+  });
+
+  it("does not duplicate printable keys when a native input event arrives", async () => {
+    const { editor, onValueChange } = renderComposer();
+    editor.focus();
+
+    await fireEvent.keyDown(editor, { key: "a" });
+    editor.textContent = "a";
+    await fireEvent.input(editor, { inputType: "insertText", data: "a" });
+    await new Promise((resolve) => window.setTimeout(resolve, 10));
+
+    expect(editor).toHaveTextContent("a");
+    expect(onValueChange).toHaveBeenLastCalledWith("a");
+  });
+
   it("keeps repeated Shift+Enter line breaks in the draft", async () => {
     const { editor, onSubmit, onValueChange } = renderComposer();
     editor.textContent = "First line";

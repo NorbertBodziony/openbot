@@ -7,6 +7,7 @@ import type {
   DirectConversationSnapshot,
   DirectMessageRealtimeEvent,
   DirectTypingRealtimeEvent,
+  QueueDelivery,
   TeamPresenceSnapshot,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
@@ -63,6 +64,29 @@ async function confirmOnboardingModel(): Promise<void> {
   const picker = screen.getByRole("dialog", { name: "Choose agent model" });
   await fireEvent.click(within(picker).getByRole("option", { name: "Luna, default" }));
   await screen.findByRole("radiogroup", { name: "What do you want me helping with most?" });
+}
+
+function queuedDelivery(
+  id: string,
+  text: string,
+  position: number | null,
+  overrides: Partial<QueueDelivery> = {},
+): QueueDelivery {
+  return {
+    id,
+    messageId: `${id}-message`,
+    recipientBotId: "chief",
+    sender: { kind: "user" },
+    text,
+    attachments: [],
+    replyToMessageId: null,
+    status: "queued",
+    position,
+    turnId: null,
+    error: null,
+    createdAt: `2026-08-20T10:00:0${position ?? 0}.000Z`,
+    ...overrides,
+  };
 }
 
 describe("OpenBot connected desktop shell", () => {
@@ -1800,7 +1824,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
         botId: "chief",
-        throughMessageId: "message-1",
+        throughMessageId: "delivery-1",
       }),
     );
     await waitFor(() => expect(composer).toHaveTextContent(""));
@@ -2618,12 +2642,194 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Cancel queued message 1" }));
-    expect(window.openbot.agent.cancelQueuedMessage).toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Delete queued message 1" }));
+    await waitFor(() => expect(window.openbot.agent.cancelQueuedMessage).toHaveBeenCalled());
     expect(window.openbot.agent.setQueuePaused).toHaveBeenCalledWith({
       botId: "chief",
       paused: false,
     });
+  });
+
+  it("keeps the first idle delivery in the foreground and shows later deliveries in Queue", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const first = queuedDelivery("delivery-foreground", "Start this work", 1);
+    const second = queuedDelivery("delivery-waiting-1", "Run this second", 2);
+    const third = queuedDelivery("delivery-waiting-2", "Run this third", 3);
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: first.id,
+            author: "user",
+            text: first.text,
+            createdAt: first.createdAt,
+            status: "completed",
+            delivery: { id: first.id, status: "queued", position: 1 },
+          },
+        ],
+      },
+    });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", paused: false, deliveries: [first] },
+    });
+
+    expect(await screen.findByText("Start this work", { selector: ".message-copy" })).toBeInTheDocument();
+    expect(document.querySelector(".agent-queue-panel")).toBeNull();
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", paused: false, deliveries: [first, second, third] },
+    });
+    await waitFor(() =>
+      expect(Array.from(document.querySelectorAll(".agent-queue-message"), (element) => element.textContent)).toEqual([
+        "Run this second",
+        "Run this third",
+      ]),
+    );
+
+    const firstWaitingRow = document.querySelector<HTMLFieldSetElement>(".agent-queue-item");
+    if (!firstWaitingRow) throw new Error("The first waiting queue row is missing.");
+    await fireEvent.keyDown(firstWaitingRow, { key: "ArrowDown", altKey: true });
+    await waitFor(() =>
+      expect(window.openbot.agent.reorderQueue).toHaveBeenCalledWith({
+        botId: "chief",
+        deliveryIds: [first.id, third.id, second.id],
+      }),
+    );
+  });
+
+  it("smokes two composer submissions through the live Queue projection", async () => {
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 0,
+      messages: [
+        {
+          id: "existing-message",
+          author: "assistant",
+          text: "Ready for the queue smoke test.",
+          createdAt: "2026-08-20T09:59:59.000Z",
+          status: "completed",
+        },
+      ],
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    const deliveries: QueueDelivery[] = [];
+    vi.mocked(window.openbot.agent.sendMessage).mockImplementation(async (input) => {
+      const delivery = queuedDelivery(`delivery-smoke-${deliveries.length + 1}`, input.text, deliveries.length + 1);
+      deliveries.push(delivery);
+      emitAgentEvent?.({
+        type: "queue-changed",
+        snapshot: { botId: input.botId, paused: false, deliveries: [...deliveries] },
+      });
+      return {
+        messageId: delivery.messageId,
+        deliveries: [
+          {
+            id: delivery.id,
+            recipientBotId: delivery.recipientBotId,
+            status: delivery.status,
+            position: delivery.position,
+          },
+        ],
+      };
+    });
+
+    render(() => <App />);
+    await screen.findByText("Ready for the queue smoke test.");
+    const composer = screen.getByRole("textbox", { name: "Message Chief" });
+
+    composer.textContent = "First live smoke message";
+    await fireEvent.input(composer);
+    await fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() => expect(window.openbot.agent.sendMessage).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(composer).toHaveTextContent(""));
+    expect(document.querySelector(".agent-queue-panel")).toBeNull();
+
+    composer.textContent = "Second live smoke message";
+    await fireEvent.input(composer);
+    await fireEvent.keyDown(composer, { key: "Enter" });
+    await waitFor(() => expect(window.openbot.agent.sendMessage).toHaveBeenCalledTimes(2));
+    expect(
+      await screen.findByText("Second live smoke message", { selector: ".agent-queue-message" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("First live smoke message", { selector: ".agent-queue-message" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps foreground starts out of Queue and promotes the next delivery after completion", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const firstStarting = queuedDelivery("delivery-starting", "Current work", null, { status: "starting" });
+    const second = queuedDelivery("delivery-next", "Next work", 1);
+    const third = queuedDelivery("delivery-later", "Later work", 2);
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", paused: false, deliveries: [firstStarting] },
+    });
+    expect(document.querySelector(".agent-queue-panel")).toBeNull();
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", paused: false, deliveries: [firstStarting, second] },
+    });
+    expect(await screen.findByText("Next work", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    expect(screen.queryByText("Current work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "turn-started", botId: "chief", threadId: "thread-chief", turnId: "turn-live" });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        paused: false,
+        deliveries: [
+          { ...firstStarting, status: "running", turnId: "turn-live" },
+          { ...second, status: "starting", position: null, turnId: "turn-live" },
+          third,
+        ],
+      },
+    });
+    await waitFor(() =>
+      expect(Array.from(document.querySelectorAll(".agent-queue-message"), (element) => element.textContent)).toEqual([
+        "Later work",
+        "Next work",
+      ]),
+    );
+
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live",
+      status: "completed",
+    });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        paused: false,
+        deliveries: [
+          { ...second, position: 1, turnId: null },
+          { ...third, position: 2 },
+        ],
+      },
+    });
+    await waitFor(() =>
+      expect(Array.from(document.querySelectorAll(".agent-queue-message"), (element) => element.textContent)).toEqual([
+        "Later work",
+      ]),
+    );
   });
 
   it("persists the onboarding focus before queuing the first user message", async () => {

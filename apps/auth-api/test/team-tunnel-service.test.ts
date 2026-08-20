@@ -178,7 +178,7 @@ describe("TeamTunnelService", () => {
 describe("CloudflareTunnelProvider", () => {
   it("configures authenticated API ingress and closes raw VNC ingress", async () => {
     const requests: Array<{ path: string; method: string; body: unknown; auth: string | null }> = [];
-    const fetchMock: typeof fetch = async (input, init) => {
+    const fetchMock = async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const url = new URL(input.toString());
       const method = init?.method ?? "GET";
       requests.push({

@@ -10,6 +10,7 @@
         "@kobalte/core": "2.0.0-alpha.0",
         "@modelcontextprotocol/sdk": "1.30.0",
         "@novnc/novnc": "1.7.0",
+        "@openbot/brand": "workspace:*",
         "@openbot/contracts": "workspace:*",
         "@solidjs/signals": "2.0.0-rc.0",
         "@solidjs/web": "2.0.0-rc.0",
@@ -51,22 +52,46 @@
       "name": "@openbot/auth-api",
       "version": "0.0.0",
       "dependencies": {
+        "@kobalte/core": "2.0.0-alpha.0",
+        "@openbot/brand": "workspace:*",
         "@openbot/contracts": "workspace:*",
         "@solidjs/signals": "2.0.0-rc.0",
         "@solidjs/web": "2.0.0-rc.0",
         "@tanstack/solid-router": "2.0.0-rc.0",
         "@tanstack/solid-start": "2.0.0-rc.0",
+        "class-variance-authority": "0.7.1",
         "solid-js": "2.0.0-rc.0",
       },
       "devDependencies": {
         "@cloudflare/vite-plugin": "1.52.1",
         "@cloudflare/workers-types": "5.20260815.1",
+        "@solidjs/testing-library": "1.0.0-beta.2",
         "@solidjs/vite-plugin": "3.0.0-next.28",
+        "@tailwindcss/vite": "4.3.3",
         "@types/node": "22.20.1",
+        "jsdom": "30.0.1",
+        "tailwindcss": "4.3.3",
         "typescript": "5.9.3",
         "vite": "7.3.6",
         "vitest": "4.1.10",
         "wrangler": "4.123.0",
+      },
+    },
+    "packages/brand": {
+      "name": "@openbot/brand",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@solidjs/testing-library": "1.0.0-beta.2",
+        "@solidjs/vite-plugin": "3.0.0-next.28",
+        "@testing-library/jest-dom": "7.0.1",
+        "jsdom": "30.0.1",
+        "typescript": "5.9.3",
+        "vite": "7.3.6",
+        "vitest": "4.1.10",
+      },
+      "peerDependencies": {
+        "@solidjs/web": "2.0.0-rc.0",
+        "solid-js": "2.0.0-rc.0",
       },
     },
     "packages/contracts": {
@@ -410,6 +435,8 @@
     "@oozcitak/util": ["@oozcitak/util@10.0.0", "", {}, "sha512-hAX0pT/73190NLqBPPWSdBVGtbY6VOhWYK3qqHqtXQ1gK7kS2yz4+ivsN07hpJ6I3aeMtKP6J6npsEKOAzuTLA=="],
 
     "@openbot/auth-api": ["@openbot/auth-api@workspace:apps/auth-api"],
+
+    "@openbot/brand": ["@openbot/brand@workspace:packages/brand"],
 
     "@openbot/contracts": ["@openbot/contracts@workspace:packages/contracts"],
 
@@ -889,9 +916,13 @@
 
     "ci-info": ["ci-info@4.4.0", "", {}, "sha512-77PSwercCZU2Fc4sX94eF8k8Pxte6JAwL4/ICZLFjJLqegs7kCuAsqqj/70NQF6TvDpgFjkubQB2FW2ZZddvQg=="],
 
+    "class-variance-authority": ["class-variance-authority@0.7.1", "", { "dependencies": { "clsx": "^2.1.1" } }, "sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg=="],
+
     "cliui": ["cliui@8.0.1", "", { "dependencies": { "string-width": "^4.2.0", "strip-ansi": "^6.0.1", "wrap-ansi": "^7.0.0" } }, "sha512-BSeNnyus75C4//NQ9gQt1/csTXyo/8Sb+afLAkzAptFuMsod9HFokGNudZpi/oQV73hnVK+sR+5PVRMd+Dr7YQ=="],
 
     "clone-response": ["clone-response@1.0.3", "", { "dependencies": { "mimic-response": "^1.0.0" } }, "sha512-ROoL94jJH2dUVML2Y/5PEDNaSHgeOdSDicUyS7izcF63G6sTc/FTjLub4b8Il9S8S0beOfYt0TaA5qvFK+w0wA=="],
+
+    "clsx": ["clsx@2.1.1", "", {}, "sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA=="],
 
     "color-convert": ["color-convert@2.0.1", "", { "dependencies": { "color-name": "~1.1.4" } }, "sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ=="],
 

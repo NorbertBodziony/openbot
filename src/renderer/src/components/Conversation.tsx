@@ -190,6 +190,7 @@ export function Conversation(props: ConversationProps) {
   const [drafts, setDrafts] = createSignal<Record<string, ComposerDraft>>({});
   const [editingDeliveryId, setEditingDeliveryId] = createSignal<string | null>(null);
   const [editingDraftBackup, setEditingDraftBackup] = createSignal<ComposerDraft | null>(null);
+  const [composerFocusRequest, setComposerFocusRequest] = createSignal(0);
   const [showAttachments, setShowAttachments] = createSignal(false);
   const [attachmentBusy, setAttachmentBusy] = createSignal(false);
   const [composerError, setComposerError] = createSignal<string | null>(null);
@@ -267,6 +268,9 @@ export function Conversation(props: ConversationProps) {
     const referencedIds = attachmentReferenceIds(currentDraft().text);
     return currentDraft().attachments.filter((attachment) => !referencedIds.has(attachment.id));
   });
+  const composerHasContent = createMemo(
+    () => Boolean(currentDraft().text.trim()) || currentDraft().attachments.length > 0,
+  );
   const replyTarget = createMemo(() => {
     const id = currentDraft().replyToMessageId;
     return id ? props.messages.find((message) => message.id === id) : undefined;
@@ -364,11 +368,36 @@ export function Conversation(props: ConversationProps) {
     );
     return imageGenerationFinished ? null : activity;
   };
-  const queueBarVisible = createMemo(
-    () =>
-      Boolean(props.queue?.paused) ||
-      Boolean(props.queue?.deliveries.some((item) => item.status === "queued" || item.status === "starting")),
+  const orderedQueuedDeliveries = createMemo(() =>
+    [...(props.queue?.deliveries ?? [])]
+      .filter((delivery) => delivery.status === "queued")
+      .sort((left, right) => {
+        const leftPosition = left.position ?? Number.MAX_SAFE_INTEGER;
+        const rightPosition = right.position ?? Number.MAX_SAFE_INTEGER;
+        return leftPosition - rightPosition || left.createdAt.localeCompare(right.createdAt);
+      }),
   );
+  const presentedQueueDeliveries = createMemo(() => {
+    const snapshot = props.queue;
+    if (!snapshot) return [];
+    const queued = orderedQueuedDeliveries();
+    if (snapshot.paused) return queued;
+
+    const activeTurnId = props.activeTurnId;
+    const steering = snapshot.deliveries.filter(
+      (delivery) => delivery.status === "starting" && Boolean(activeTurnId) && delivery.turnId === activeTurnId,
+    );
+    const hasForegroundDelivery =
+      Boolean(activeTurnId) ||
+      snapshot.deliveries.some(
+        (delivery) =>
+          delivery.status === "running" ||
+          (delivery.status === "starting" && !(Boolean(activeTurnId) && delivery.turnId === activeTurnId)),
+      );
+    const waiting = hasForegroundDelivery ? queued : queued.slice(1);
+    return [...waiting, ...steering];
+  });
+  const queueBarVisible = createMemo(() => Boolean(props.queue?.paused) || presentedQueueDeliveries().length > 0);
   const seenMessageIds = new Set<string>();
   const [fadeAtTop, setFadeAtTop] = createSignal(false);
   const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
@@ -1157,6 +1186,7 @@ export function Conversation(props: ConversationProps) {
         replyToMessageId: delivery.replyToMessageId,
       },
     }));
+    setComposerFocusRequest((current) => current + 1);
     setShowAttachments(false);
     setComposerError(null);
   }
@@ -1164,9 +1194,13 @@ export function Conversation(props: ConversationProps) {
   function cancelQueuedMessageEdit() {
     const botId = props.bot?.id;
     const backup = editingDraftBackup();
-    const backupAttachmentIds = new Set(backup?.attachments.map((attachment) => attachment.id));
+    const editedDelivery = props.queue?.deliveries.find((delivery) => delivery.id === editingDeliveryId());
+    const preservedAttachmentIds = new Set([
+      ...(backup?.attachments.map((attachment) => attachment.id) ?? []),
+      ...(editedDelivery?.attachments.map((attachment) => attachment.id) ?? []),
+    ]);
     for (const attachment of currentDraft().attachments) {
-      if (!backupAttachmentIds.has(attachment.id)) {
+      if (!preservedAttachmentIds.has(attachment.id)) {
         void window.openbot.agent.discardDraftAttachment(attachment.id);
       }
     }
@@ -1201,12 +1235,37 @@ export function Conversation(props: ConversationProps) {
     stopTeamTyping();
     setSubmitting(true);
     setComposerError(null);
-    const saved = await props.onUpdateQueuedMessage(deliveryId, text, keepAttachmentIds, attachmentDraftIds);
-    setSubmitting(false);
+    let saved = false;
+    try {
+      saved = await props.onUpdateQueuedMessage(deliveryId, text, keepAttachmentIds, attachmentDraftIds);
+    } catch (error) {
+      setComposerError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSubmitting(false);
+    }
     if (!saved) return;
     setDrafts((current) => ({ ...current, [botId]: EMPTY_DRAFT }));
     setEditingDeliveryId(null);
     setEditingDraftBackup(null);
+  }
+
+  function reorderPresentedQueue(deliveryIds: string[]) {
+    const allQueuedIds = orderedQueuedDeliveries().map((delivery) => delivery.id);
+    const presentedQueuedIds = presentedQueueDeliveries()
+      .filter((delivery) => delivery.status === "queued")
+      .map((delivery) => delivery.id);
+    if (presentedQueuedIds.length === allQueuedIds.length) {
+      props.onReorderQueue(deliveryIds);
+      return;
+    }
+
+    const presentedIds = new Set(presentedQueuedIds);
+    let nextPresentedIndex = 0;
+    props.onReorderQueue(
+      allQueuedIds.map((deliveryId) =>
+        presentedIds.has(deliveryId) ? (deliveryIds[nextPresentedIndex++] ?? deliveryId) : deliveryId,
+      ),
+    );
   }
 
   async function submitMessage(override?: string) {
@@ -1919,33 +1978,26 @@ export function Conversation(props: ConversationProps) {
           </Show>
           <Show when={queueBarVisible()}>
             <QueuePanel
-              deliveries={props.queue?.deliveries ?? []}
+              deliveries={presentedQueueDeliveries()}
+              editingDeliveryId={editingDeliveryId()}
               paused={Boolean(props.queue?.paused)}
               canSteer={Boolean(props.activeTurnId)}
               onSteer={props.onSteerQueuedMessage}
               onCancel={props.onCancelQueuedMessage}
               onEdit={editQueuedMessage}
-              onReorder={props.onReorderQueue}
+              onReorder={reorderPresentedQueue}
               onResume={props.onResumeQueue}
             />
           </Show>
-          <Show when={editingDeliveryId()}>
-            {(deliveryId) => {
-              const delivery = () => props.queue?.deliveries.find((item) => item.id === deliveryId());
-              return (
-                <div class="composer-queue-edit-preview">
-                  <div>
-                    <span>Editing queued message</span>
-                    <p>{delivery()?.text || "Attachment"}</p>
-                  </div>
-                  <Button type="button" aria-label="Cancel queued message edit" onClick={cancelQueuedMessageEdit}>
-                    <CloseIcon />
-                  </Button>
-                </div>
-              );
+          <div
+            class="composer"
+            onPointerDown={(event) => {
+              if (!(event.target instanceof Element)) return;
+              if (event.target.closest("button, .composer-editor-surface")) return;
+              event.preventDefault();
+              setComposerFocusRequest((current) => current + 1);
             }}
-          </Show>
-          <div class="composer">
+          >
             <Popover.Root open={showAttachments()} placement="top-start" gutter={4} onOpenChange={setShowAttachments}>
               <Popover.Trigger
                 as={Button}
@@ -1989,6 +2041,7 @@ export function Conversation(props: ConversationProps) {
                         : `Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`
                 }
                 ariaLabel={`Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`}
+                focusRequest={composerFocusRequest()}
                 onValueChange={(text) => {
                   updateCurrentDraft({ text });
                   updateTeamTyping(text);
@@ -2002,7 +2055,7 @@ export function Conversation(props: ConversationProps) {
               />
             </div>
             <Show
-              when={props.activeTurnId && !editingDeliveryId()}
+              when={props.activeTurnId && !editingDeliveryId() && !composerHasContent()}
               fallback={
                 <Button
                   type="button"

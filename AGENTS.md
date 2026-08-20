@@ -3,6 +3,7 @@
 ## UI verification
 
 - For renderer UI work, use only one of the supported visual verification paths: the dev app or Storybook. Do not use ad-hoc preview or rendering paths.
+- Always run visual tests against the development version of the app or Storybook. Do not use a production build or another built version for visual verification.
 - Use the dev app for integrated application behavior and Storybook for isolated component visual checks.
 
 ## UI code reuse

@@ -1,0 +1,27 @@
+{
+  "name": "@openbot/brand",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./logo.css": "./src/logo.css"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "peerDependencies": {
+    "@solidjs/web": "2.0.0-rc.0",
+    "solid-js": "2.0.0-rc.0"
+  },
+  "devDependencies": {
+    "@solidjs/testing-library": "1.0.0-beta.2",
+    "@solidjs/vite-plugin": "3.0.0-next.28",
+    "@testing-library/jest-dom": "7.0.1",
+    "jsdom": "30.0.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vitest": "4.1.10"
+  }
+}

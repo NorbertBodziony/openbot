@@ -17,18 +17,23 @@ interface CloudflareDnsRecord extends CloudflareTunnelRecord {
   proxied?: boolean;
 }
 
+type FetchRequest = (
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+) => ReturnType<typeof fetch>;
+
 interface CloudflareTunnelProviderOptions {
   accountId: string;
   zoneId: string;
   apiToken: string;
-  fetch?: typeof fetch;
+  fetch?: FetchRequest;
 }
 
 export class CloudflareTunnelProvider implements TeamTunnelProvider {
   readonly #accountId: string;
   readonly #zoneId: string;
   readonly #apiToken: string;
-  readonly #fetch: typeof fetch;
+  readonly #fetch: FetchRequest;
 
   constructor(options: CloudflareTunnelProviderOptions) {
     this.#accountId = requireIdentifier(options.accountId, "account");

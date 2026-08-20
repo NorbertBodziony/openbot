@@ -1,0 +1,546 @@
+.server-settings-logo {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-semibold);
+  letter-spacing: var(--openbot-tracking-wide);
+}
+
+.server-settings-logo img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.server-settings-panel {
+  gap: var(--openbot-space-6);
+}
+
+.server-settings-modal-shell .settings-modal-main {
+  background: var(--openbot-bg-control);
+}
+
+.server-settings-modal-shell .settings-modal-scroll-frame::before {
+  background: linear-gradient(
+    to bottom,
+    var(--openbot-bg-control) 0%,
+    var(--openbot-bg-control) 28%,
+    var(--openbot-bg-surface-clear) 100%
+  );
+}
+
+.server-settings-modal-shell .settings-modal-scroll-frame::after {
+  background: linear-gradient(
+    to top,
+    var(--openbot-bg-control) 0%,
+    var(--openbot-bg-control) 28%,
+    var(--openbot-bg-surface-clear) 100%
+  );
+}
+
+.server-settings-panel[data-tab="general"] {
+  width: 100%;
+  gap: var(--openbot-space-8);
+  padding-bottom: calc(var(--openbot-control-lg) + var(--openbot-space-8));
+}
+
+.server-settings-general-section {
+  display: grid;
+  gap: var(--openbot-space-3);
+}
+
+.server-settings-section-heading {
+  color: var(--openbot-text-secondary);
+  font-weight: var(--openbot-weight-medium);
+}
+
+.server-settings-general-card.ui-card {
+  display: grid;
+  overflow: hidden;
+  border-color: var(--openbot-border-strong);
+  background: var(--openbot-bg-surface);
+}
+
+.server-settings-general-row {
+  min-height: 64px;
+  padding: var(--openbot-space-3) var(--openbot-space-4);
+}
+
+.server-settings-general-row + .server-settings-general-row {
+  border-top: 1px solid var(--openbot-border);
+}
+
+.server-settings-logo-row,
+.server-settings-address-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--openbot-space-6);
+}
+
+.server-settings-general-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--openbot-space-0-5);
+}
+
+.server-settings-row-copy strong,
+.server-settings-invite-result strong,
+.server-settings-notice strong {
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-md);
+  font-weight: var(--openbot-weight-medium);
+  line-height: var(--openbot-leading-md);
+}
+
+.server-settings-logo-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--openbot-space-3);
+}
+
+.server-settings-logo-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-1);
+}
+
+.server-settings-address-control svg,
+.server-settings-invite-tabs svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+}
+
+.server-settings-name-field {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 280px);
+  grid-template-rows: auto auto;
+  column-gap: var(--openbot-space-6);
+  row-gap: var(--openbot-space-0-5);
+  align-items: center;
+}
+
+.server-settings-name-field .ui-label {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: end;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-md);
+}
+
+.server-settings-name-field .ui-field-description {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: start;
+}
+
+.server-settings-name-field .ui-input {
+  width: 100%;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  background: var(--openbot-bg-control);
+}
+
+.server-settings-name-field .ui-field-error {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.server-settings-publish-setting.ui-switch {
+  width: 100%;
+  justify-content: space-between;
+  gap: var(--openbot-space-6);
+}
+
+.server-settings-general-card .ui-switch[data-checked] .ui-switch-control {
+  border-color: var(--openbot-accent-hover);
+  background: var(--openbot-accent);
+}
+
+.server-settings-address-control {
+  width: 300px;
+  min-width: 0;
+  min-height: var(--openbot-control-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--openbot-space-2);
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-bg-control);
+  padding: var(--openbot-space-1) var(--openbot-space-1) var(--openbot-space-1) var(--openbot-space-3);
+}
+
+.server-settings-address-control code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--openbot-text-secondary);
+  font-family: var(--openbot-font-mono);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-settings-save-bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--openbot-space-4);
+  border-top: 1px solid var(--openbot-border);
+  background: var(--openbot-bg-control);
+  padding: var(--openbot-space-3) var(--openbot-space-6);
+  animation: server-settings-save-bar-in var(--openbot-duration-normal) var(--openbot-ease-out) both;
+  will-change: opacity, transform;
+}
+
+.server-settings-save-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-1);
+}
+
+.server-settings-invite-card.ui-card {
+  padding-block: var(--openbot-space-4);
+}
+
+.server-settings-invite-card > :not(:first-child) {
+  border-top: 0;
+}
+
+.server-settings-notice,
+.server-settings-invite-result {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--openbot-space-3);
+  border: 1px solid var(--openbot-accent-strong);
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-accent-soft);
+  padding: var(--openbot-space-3) var(--openbot-space-4);
+  color: var(--openbot-accent-text);
+}
+
+.server-settings-notice > svg,
+.server-settings-invite-result > svg {
+  width: var(--openbot-icon-md);
+  height: var(--openbot-icon-md);
+}
+
+.server-settings-notice > div,
+.server-settings-invite-result > div {
+  min-width: 0;
+  display: grid;
+  gap: var(--openbot-space-1);
+}
+
+.server-settings-notice span,
+.server-settings-invite-result span {
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-xs);
+}
+
+.server-settings-invite-card {
+  gap: var(--openbot-space-4);
+}
+
+.server-settings-invite-tabs {
+  width: fit-content;
+  display: inline-flex;
+  gap: var(--openbot-space-1);
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-bg-surface-raised);
+  padding: var(--openbot-space-1);
+}
+
+.server-settings-invite-tabs button {
+  min-height: var(--openbot-control-sm);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--openbot-space-2);
+  border: 0;
+  border-radius: var(--openbot-radius-sm);
+  outline: 0;
+  background: transparent;
+  padding: 0 var(--openbot-space-3);
+  color: var(--openbot-text-muted);
+  font: inherit;
+  font-size: var(--openbot-text-sm);
+  cursor: pointer;
+}
+
+.server-settings-invite-tabs button[data-selected] {
+  background: var(--openbot-bg-control-active);
+  color: var(--openbot-text-primary);
+}
+
+.server-settings-invite-tabs button:focus-visible {
+  box-shadow: var(--openbot-focus-ring);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .server-settings-invite-tabs button:not([data-selected]):hover {
+    background: var(--openbot-hover);
+    color: var(--openbot-text-secondary);
+  }
+}
+
+.server-settings-email-panel {
+  margin-top: var(--openbot-space-4);
+}
+
+.server-settings-invite-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--openbot-space-2);
+}
+
+.server-settings-role-select {
+  width: 116px;
+  min-width: 116px;
+}
+
+.settings-modal-select-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.server-settings-section-title {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--openbot-space-3);
+}
+
+.server-settings-list-card.ui-card {
+  overflow: hidden;
+  padding: 0;
+}
+
+.server-settings-list-row,
+.server-settings-member-row {
+  min-height: 64px;
+  display: grid;
+  align-items: center;
+  gap: var(--openbot-space-3);
+  padding: var(--openbot-space-3) var(--openbot-space-4);
+}
+
+.server-settings-list-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.server-settings-list-card > :not(:first-child),
+.server-settings-member-wrap:not(:first-child) {
+  border-top: 1px solid var(--openbot-border);
+}
+
+.server-settings-row-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-bg-surface-raised);
+  color: var(--openbot-text-muted);
+}
+
+.server-settings-row-icon svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+}
+
+.server-settings-row-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--openbot-space-0-5);
+}
+
+.server-settings-row-copy span,
+.server-settings-row-copy small {
+  overflow: hidden;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-settings-row-copy small {
+  color: var(--openbot-text-dim);
+}
+
+.server-settings-members-heading > div {
+  min-width: 0;
+  display: grid;
+  gap: var(--openbot-space-1);
+}
+
+.server-settings-search {
+  position: relative;
+  width: 190px;
+  flex: 0 0 auto;
+}
+
+.server-settings-search > svg {
+  position: absolute;
+  top: 50%;
+  left: var(--openbot-space-3);
+  z-index: 1;
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  color: var(--openbot-text-muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.server-settings-search .ui-input {
+  padding-left: var(--openbot-space-8);
+}
+
+.server-settings-member-wrap[data-disabled] {
+  background: var(--openbot-bg-control);
+}
+
+.server-settings-member-row {
+  grid-template-columns: auto minmax(120px, 1fr) auto auto auto;
+}
+
+.server-settings-remove-confirmation {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--openbot-space-2);
+  border-top: 1px solid var(--openbot-danger-soft);
+  background: var(--openbot-danger-soft);
+  padding: var(--openbot-space-2) var(--openbot-space-4);
+}
+
+.server-settings-remove-confirmation span {
+  min-width: 0;
+  flex: 1;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-xs);
+}
+
+.server-settings-empty {
+  margin: 0;
+  padding: var(--openbot-space-6) var(--openbot-space-4);
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  text-align: center;
+}
+
+@keyframes server-settings-save-bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--openbot-space-1));
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 760px) {
+  .server-settings-member-row {
+    grid-template-columns: auto minmax(120px, 1fr) auto;
+  }
+
+  .server-settings-member-row > .ui-button,
+  .server-settings-member-row > .ui-icon-button {
+    grid-column: 2 / -1;
+    justify-self: end;
+  }
+}
+
+@media (max-width: 700px) {
+  .server-settings-logo-row,
+  .server-settings-address-setting {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--openbot-space-3);
+  }
+
+  .server-settings-logo-control {
+    justify-content: space-between;
+  }
+
+  .server-settings-name-field {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+    row-gap: var(--openbot-space-1);
+  }
+
+  .server-settings-name-field .ui-label,
+  .server-settings-name-field .ui-field-description,
+  .server-settings-name-field .ui-input,
+  .server-settings-name-field .ui-field-error {
+    grid-column: 1;
+  }
+
+  .server-settings-name-field .ui-label {
+    grid-row: 1;
+  }
+
+  .server-settings-name-field .ui-field-description {
+    grid-row: 2;
+  }
+
+  .server-settings-name-field .ui-input {
+    grid-row: 3;
+    margin-top: var(--openbot-space-2);
+  }
+
+  .server-settings-name-field .ui-field-error {
+    grid-row: 4;
+  }
+
+  .server-settings-address-control {
+    width: 100%;
+  }
+
+  .server-settings-save-bar {
+    padding-inline: var(--openbot-space-4);
+  }
+
+  .server-settings-member-row {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .server-settings-save-bar {
+    animation: none;
+  }
+
+  .server-settings-invite-tabs button {
+    transition: none;
+  }
+}
