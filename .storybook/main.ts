@@ -5,7 +5,7 @@ import { mergeConfig, type PluginOption } from "vite";
 
 const config = {
   stories: ["../src/renderer/**/*.stories.@(ts|tsx)"],
-  addons: ["@storybook/addon-vitest", "@storybook/addon-a11y"],
+  addons: ["@storybook/addon-a11y"],
   framework: {
     name: "storybook-solidjs-vite",
   },

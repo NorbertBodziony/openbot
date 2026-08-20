@@ -31,9 +31,6 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install Playwright Chromium
-        run: bunx playwright install chromium
-
       - name: Run repository check
         run: bun run check
 
