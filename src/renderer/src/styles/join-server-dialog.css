@@ -13,7 +13,7 @@
   position: relative;
   isolation: isolate;
   width: min(640px, 100%);
-  height: min(380px, calc(100dvh - 48px));
+  height: min(460px, calc(100dvh - 48px));
   overflow: hidden;
   border: 1px solid var(--openbot-border-strong);
   border-radius: var(--openbot-radius-lg);
@@ -137,6 +137,95 @@
 .join-server-account strong {
   color: var(--openbot-text-secondary);
   font-weight: var(--openbot-weight-medium);
+}
+
+.join-server-preview {
+  display: grid;
+  gap: var(--openbot-space-3);
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-control);
+  padding: var(--openbot-space-4);
+}
+
+.join-server-preview-signal {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-2);
+}
+
+.join-server-preview-signal i,
+.join-server-preview-signal span {
+  display: block;
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-success);
+}
+
+.join-server-preview-signal i {
+  width: 8px;
+  height: 8px;
+  box-shadow: 0 0 0 4px var(--openbot-success-soft);
+}
+
+.join-server-preview-signal span {
+  width: 42px;
+  height: 1px;
+  opacity: 0.52;
+}
+
+.join-server-preview-heading {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.join-server-verified {
+  color: var(--openbot-success);
+  font-size: var(--openbot-text-xs);
+  font-weight: var(--openbot-weight-medium);
+}
+
+.join-server-preview-heading strong,
+.join-server-preview-heading small,
+.join-server-preview dd {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.join-server-preview-heading strong {
+  font-size: var(--openbot-text-lg);
+}
+
+.join-server-preview-heading small,
+.join-server-preview dt,
+.join-server-preview p {
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+}
+
+.join-server-preview dl {
+  display: grid;
+  gap: var(--openbot-space-2);
+  margin: 0;
+}
+
+.join-server-preview dl div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: var(--openbot-space-2);
+}
+
+.join-server-preview dd {
+  margin: 0;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-xs);
+}
+
+.join-server-preview p {
+  margin: 0;
+  line-height: var(--openbot-leading-xs);
 }
 
 .join-server-actions {

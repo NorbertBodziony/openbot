@@ -33,7 +33,6 @@ interface HostPanelProps {
   onRemoveMember: (memberId: string) => Promise<void>;
   onRevokeSession: (sessionId: string) => Promise<void>;
   onRevokeInvite: (inviteId: string) => Promise<void>;
-  onCopyAddressUpdate: () => Promise<void>;
 }
 
 export function HostPanel(props: HostPanelProps) {
@@ -245,14 +244,6 @@ export function HostPanel(props: HostPanelProps) {
                               Make private
                             </Button>
                           </Show>
-                          <Button
-                            type="button"
-                            class="remote-secondary-button"
-                            disabled={!props.status.apiOnline || busy()}
-                            onClick={() => void run(props.onCopyAddressUpdate)}
-                          >
-                            Copy address update
-                          </Button>
                         </div>
                       </section>
                     </section>

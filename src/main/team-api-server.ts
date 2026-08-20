@@ -307,6 +307,14 @@ export class TeamApiServer {
           challenge ? this.#options.store.getIdentityProof(challenge) : this.#options.store.getIdentity(),
         );
       }
+      if (method === "POST" && url.pathname === "/v1/invitations/preview") {
+        const body = await readJson(request);
+        return this.#json(
+          response,
+          200,
+          this.#options.store.previewInvite(stringField(body, "inviteToken", false, INPUT_LIMITS.identifier)),
+        );
+      }
       if (method === "POST" && url.pathname === "/v1/join") {
         const body = await readJson(request);
         this.#checkRate(request, stringField(body, "username", false, 64));

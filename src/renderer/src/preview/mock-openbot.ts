@@ -576,12 +576,20 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         servers = [...servers, server];
         return clone(server);
       },
+      previewInvite: async () => ({
+        serverId: "00000000-0000-4000-8000-000000000000",
+        serverName: "Joined workspace",
+        apiHostname: "story-host.openbot.run",
+        role: "member",
+        expiresAt: "2026-09-19T10:00:00.000Z",
+        emailBound: false,
+      }),
+      takePendingInvite: async () => null,
       login: async (input) => {
         const server = servers.find((candidate) => candidate.id === input.serverId);
         if (!server) throw new Error("Server not found");
         return clone(server);
       },
-      updateAddress: async () => clone(servers[0] ?? STORY_SERVERS[0]),
       remove: async (serverId) => {
         servers = servers.filter((server) => server.id !== serverId);
       },
@@ -704,10 +712,9 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         role: input.role,
         expiresAt: "2026-09-19T10:00:00.000Z",
         usedAt: null,
-        inviteUrl: "openbot://invite/mock-invite",
+        inviteUrl: "https://openbot.run/join?invite=mock-invite",
         email: input.email ?? null,
       }),
-      createAddressUpdate: async () => "openbot://server-update/mock",
       onEvent: (listener) => {
         hostListeners.add(listener);
         return () => hostListeners.delete(listener);

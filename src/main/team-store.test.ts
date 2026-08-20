@@ -4,13 +4,13 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import { afterEach, describe, expect, it } from "vitest";
-import { parseAddressUpdateUrl, verifyAddressUpdate } from "./remote-server-manager";
-import { fingerprint, TeamStore } from "./team-store";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TeamStore } from "./team-store";
 
 const roots: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -50,6 +50,41 @@ describe("TeamStore", () => {
     await expect(store.acceptInvite(invite.token, "bob", "another secure password")).rejects.toThrow(
       "invalid or expired",
     );
+  });
+
+  it("previews an invitation without consuming it", async () => {
+    const { store } = await createStore();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const invite = await store.createInvite("admin", "alice@example.com");
+
+    expect(store.previewInvite(invite.token)).toEqual({
+      role: "admin",
+      expiresAt: invite.expiresAt,
+      emailBound: true,
+    });
+    await expect(
+      store.acceptInviteWithAccount(invite.token, {
+        id: "alice-account",
+        email: "alice@example.com",
+        name: "Alice",
+        avatarUrl: null,
+      }),
+    ).resolves.toBeDefined();
+    expect(() => store.previewInvite(invite.token)).toThrow("invalid or expired");
+  });
+
+  it("rejects expired and revoked invitation previews", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-20T10:00:00.000Z"));
+    const { store } = await createStore();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const expired = await store.createInvite("member");
+    const revoked = await store.createInvite("admin");
+    await store.revokeInvite(revoked.id);
+
+    expect(() => store.previewInvite(revoked.token)).toThrow("invalid or expired");
+    vi.setSystemTime(new Date("2026-08-21T10:00:00.001Z"));
+    expect(() => store.previewInvite(expired.token)).toThrow("invalid or expired");
   });
 
   it("uses the verified OpenBot email as the team identity", async () => {
@@ -191,23 +226,6 @@ describe("TeamStore", () => {
     expect(store.authenticate(login.sessionToken)).toBeNull();
     await expect(store.login("owner", "correct horse battery")).rejects.toThrow("incorrect");
     await expect(store.login("owner", "a newer secure password")).resolves.toBeDefined();
-  });
-
-  it("signs an address update that is bound to the pinned fingerprint", async () => {
-    const { store } = await createStore();
-    const identity = await store.configure("Studio Mac", "owner", "correct horse battery");
-    const proof = store.createAddressUpdateProof("https://new-api.trycloudflare.com/", "new-vnc.trycloudflare.com");
-    const url = new URL("openbot://update");
-    url.searchParams.set("api", proof.apiUrl);
-    url.searchParams.set("server", proof.serverId);
-    url.searchParams.set("vnc", proof.vncHostname ?? "");
-    url.searchParams.set("key", Buffer.from(proof.publicKey).toString("base64url"));
-    url.searchParams.set("signature", proof.signature);
-    const parsed = parseAddressUpdateUrl(url.toString());
-    expect(fingerprint(verifyAddressUpdate(parsed, identity.fingerprint))).toBe(identity.fingerprint);
-    expect(() =>
-      verifyAddressUpdate({ ...parsed, apiUrl: "https://other.trycloudflare.com/" }, identity.fingerprint),
-    ).toThrow("signature");
   });
 });
 

@@ -715,6 +715,19 @@
   line-height: 16px;
 }
 
+.setup-remote-change {
+  width: fit-content;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+}
+
+.setup-remote-change:hover:not(:disabled) {
+  color: var(--openbot-text-secondary);
+}
+
 .provider-picker {
   min-width: 0;
   margin: 0;

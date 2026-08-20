@@ -1,4 +1,5 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { isCanonicalInviteUrl } from "@openbot/contracts/invite-links";
 import { isString } from "@openbot/contracts/runtime-values";
 import { createFileRoute } from "@tanstack/solid-router";
 import { normalizeEmail } from "../../../server/auth-service";
@@ -70,8 +71,7 @@ export const Route = createFileRoute("/v1/team-invitations/email")({
 function isValidInviteUrl(value: string): boolean {
   if (value.length > 4_096 || /[\r\n]/u.test(value)) return false;
   try {
-    const url = new URL(value);
-    return url.protocol === "openbot:" && url.hostname === "join" && Boolean(url.searchParams.get("invite"));
+    return isCanonicalInviteUrl(value);
   } catch {
     return false;
   }

@@ -8,6 +8,11 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
-    exclude: ["test/hero-download-selector.test.tsx", "test/landing-glow.test.tsx", "test/landing-reveal.test.tsx"],
+    exclude: [
+      "test/hero-download-selector.test.tsx",
+      "test/join-page.test.tsx",
+      "test/landing-glow.test.tsx",
+      "test/landing-reveal.test.tsx",
+    ],
   },
 });

@@ -356,11 +356,14 @@ export function App() {
     const unsubscribeDirectTyping = window.openbot.servers.onDirectTyping((event) =>
       flush(() => handleDirectTypingEvent(event)),
     );
-    const unsubscribeInvite = window.openbot.servers.onInvite((inviteUrl) => {
+    const receiveInvite = (inviteUrl: string) => {
       flush(() => {
         setPendingInviteUrl(inviteUrl);
-        setJoinServerOpen(true);
+        if (setupState()?.completed === true && centralAuth().status === "signed_in") setJoinServerOpen(true);
       });
+    };
+    const unsubscribeInvite = window.openbot.servers.onInvite((inviteUrl) => {
+      receiveInvite(inviteUrl);
     });
     const unsubscribeHost = window.openbot.host.onEvent((status) => flush(() => setHostStatus(status)));
     const unsubscribeRemoteMac = window.openbot.remoteMac.onEvent((sessions) =>
@@ -419,6 +422,10 @@ export function App() {
       .getSetupState()
       .then(setSetupState)
       .finally(() => setSetupLoaded(true));
+    void window.openbot.servers
+      .takePendingInvite()
+      .then((inviteUrl) => inviteUrl && receiveInvite(inviteUrl))
+      .catch(() => undefined);
 
     void Promise.all([
       window.openbot
@@ -481,6 +488,19 @@ export function App() {
       .catch(() => undefined);
     return cleanup;
   });
+
+  createEffect(
+    () => ({
+      inviteUrl: pendingInviteUrl(),
+      setupCompleted: setupState()?.completed === true,
+      signedIn: centralAuth().status === "signed_in",
+    }),
+    ({ inviteUrl, setupCompleted, signedIn }) => {
+      if (inviteUrl && setupCompleted && signedIn) {
+        setJoinServerOpen(true);
+      }
+    },
+  );
 
   createEffect(
     () => ({ botId: activeBotId(), agentPhase: agentStatus().phase }),
@@ -1350,6 +1370,10 @@ export function App() {
     );
   }
 
+  async function previewInvite(input: { inviteUrl: string }) {
+    return window.openbot.servers.previewInvite(input);
+  }
+
   async function joinRemoteDuringSetup(input: { inviteUrl: string }, provider: AgentProviderId): Promise<void> {
     await joinServer(input);
     await saveSetup(provider);
@@ -1436,10 +1460,6 @@ export function App() {
     await refreshHostManagement();
   }
 
-  async function copyHostAddressUpdate(): Promise<void> {
-    await navigator.clipboard.writeText(await window.openbot.host.createAddressUpdate());
-  }
-
   async function connectRemoteMac(hostname: string, serverId: string | null): Promise<void> {
     const session = await window.openbot.remoteMac.connect({
       hostname,
@@ -1493,7 +1513,9 @@ export function App() {
                 agentStatus={agentStatus()}
                 platform={appInfo()?.platform ?? "darwin"}
                 accountEmail={account().email}
+                inviteUrl={pendingInviteUrl()}
                 onSave={saveSetup}
+                onPreviewInvite={previewInvite}
                 onJoinRemote={joinRemoteDuringSetup}
                 onLogout={logoutCentralAccount}
               />
@@ -1652,6 +1674,7 @@ export function App() {
                   platform={appInfo()?.platform ?? "darwin"}
                   accountEmail={account().email}
                   onSave={saveSetup}
+                  onPreviewInvite={previewInvite}
                   onJoinRemote={joinRemoteDuringSetup}
                   onLogout={logoutCentralAccount}
                   onClose={() => setPermissionsOpen(false)}
@@ -1665,6 +1688,7 @@ export function App() {
                     setJoinServerOpen(false);
                     setPendingInviteUrl("");
                   }}
+                  onPreview={previewInvite}
                   onJoin={joinServer}
                 />
               </Show>
@@ -1687,7 +1711,6 @@ export function App() {
                   onRemoveMember={removeHostMember}
                   onRevokeSession={revokeHostSession}
                   onRevokeInvite={revokeHostInvite}
-                  onCopyAddressUpdate={copyHostAddressUpdate}
                 />
               </Show>
               <Show when={globalSearchOpen()}>

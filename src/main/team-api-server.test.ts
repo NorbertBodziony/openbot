@@ -140,6 +140,19 @@ describe("TeamApiServer administration", () => {
     const port = await api.start();
 
     try {
+      const previewResponse = await fetch(`http://127.0.0.1:${port}/v1/invitations/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inviteToken: invite.token }),
+      });
+      expect(previewResponse.status).toBe(200);
+      expect(previewResponse.headers.get("Cache-Control")).toBe("no-store");
+      await expect(previewResponse.json()).resolves.toEqual({
+        role: "member",
+        expiresAt: invite.expiresAt,
+        emailBound: true,
+      });
+
       const response = await fetch(`http://127.0.0.1:${port}/v1/join/account`, {
         method: "POST",
         headers: {
@@ -158,6 +171,13 @@ describe("TeamApiServer administration", () => {
         avatarUrl: "https://api.openbot.run/v1/avatars/alice-account?v=image-1",
       });
       expect(store.authenticate(joined.sessionToken)?.email).toBe("alice@example.com");
+
+      const usedPreview = await fetch(`http://127.0.0.1:${port}/v1/invitations/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inviteToken: invite.token }),
+      });
+      expect(usedPreview.status).toBe(400);
 
       const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
         "openbot-events",

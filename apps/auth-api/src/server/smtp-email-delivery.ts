@@ -1,4 +1,5 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { isCanonicalInviteUrl } from "@openbot/contracts/invite-links";
 import { isValidHostname as isSharedValidHostname } from "@openbot/contracts/validation";
 
 export interface SmtpEmailConfig {
@@ -81,8 +82,7 @@ export function sendPrivateTeamInvite(
   ) {
     throw new Error("smtp_invalid_server_name");
   }
-  const inviteUrl = new URL(message.inviteUrl);
-  if (inviteUrl.protocol !== "openbot:" || inviteUrl.hostname !== "join") {
+  if (!isCanonicalInviteUrl(message.inviteUrl)) {
     throw new Error("smtp_invalid_invite_url");
   }
   return sendPrivateEmail(

@@ -49,6 +49,7 @@ import type {
   DirectTypingInput,
   DirectTypingRealtimeEvent,
   HostStatus,
+  InvitePreview,
   InviteSummary,
   JoinServerInput,
   LoginServerInput,
@@ -122,8 +123,9 @@ export interface ServersDesktopApi {
   list: () => Promise<ServerSummary[]>;
   select: (serverId: string) => Promise<ServerSummary[]>;
   join: (input: JoinServerInput) => Promise<ServerSummary>;
+  previewInvite: (input: JoinServerInput) => Promise<InvitePreview>;
+  takePendingInvite: () => Promise<string | null>;
   login: (input: LoginServerInput) => Promise<ServerSummary>;
-  updateAddress: (updateUrl: string) => Promise<ServerSummary>;
   remove: (serverId: string) => Promise<void>;
   getPresence: () => Promise<TeamPresenceSnapshot>;
   setTyping: (input: SetTeamTypingInput) => Promise<void>;
@@ -153,7 +155,6 @@ export interface HostDesktopApi {
   listInvites: () => Promise<TeamInviteSummary[]>;
   revokeInvite: (inviteId: string) => Promise<void>;
   createInvite: (input: CreateTeamInviteInput) => Promise<InviteSummary>;
-  createAddressUpdate: () => Promise<string>;
   onEvent: (listener: (status: HostStatus) => void) => () => void;
 }
 

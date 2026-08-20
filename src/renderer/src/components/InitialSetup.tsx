@@ -5,11 +5,13 @@ import type {
   AgentStatus,
   AppSetupState,
   DesktopPlatform,
+  InvitePreview,
   JoinServerInput,
   MacPermissionId,
   MacPermissionsState,
 } from "@openbot/contracts/ipc";
-import { createEffect, createMemo, createSignal, For, flush, onCleanup, Show, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, For, flush, onCleanup, onSettled, Show, untrack } from "solid-js";
+import { InvitePreviewCard } from "./JoinServerDialog";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 import { Button, Dialog, Textarea } from "./ui";
 
@@ -19,7 +21,9 @@ interface InitialSetupProps {
   agentStatus: AgentStatus;
   platform: DesktopPlatform;
   accountEmail: string;
+  inviteUrl?: string;
   onSave: (provider: AgentProviderId) => Promise<void>;
+  onPreviewInvite: (input: JoinServerInput) => Promise<InvitePreview>;
   onJoinRemote: (input: JoinServerInput, provider: AgentProviderId) => Promise<void>;
   onLogout: () => Promise<void>;
   onClose?: () => void;
@@ -55,7 +59,10 @@ const EMPTY_PERMISSIONS: MacPermissionsState = {
 };
 
 export function InitialSetup(props: InitialSetupProps) {
-  const [route, setRoute] = createSignal<SetupRoute | null>(untrack(() => (props.reviewing ? "local" : null)));
+  const initialInviteUrl = untrack(() => props.inviteUrl?.trim() ?? "");
+  const [route, setRoute] = createSignal<SetupRoute | null>(
+    untrack(() => (props.reviewing ? "local" : initialInviteUrl ? "remote" : null)),
+  );
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(
     untrack(() => props.state.preferredProvider),
   );
@@ -63,7 +70,8 @@ export function InitialSetup(props: InitialSetupProps) {
   const [saving, setSaving] = createSignal(false);
   const [permissionBusy, setPermissionBusy] = createSignal<MacPermissionId | null>(null);
   const [error, setError] = createSignal("");
-  const [inviteUrl, setInviteUrl] = createSignal("");
+  const [inviteUrl, setInviteUrl] = createSignal(initialInviteUrl);
+  const [invitePreview, setInvitePreview] = createSignal<InvitePreview | null>(null);
   let permissionRevision = 0;
   const providerOptions = createMemo<ProviderPickerOption[]>(() =>
     PROVIDERS.map((provider) => {
@@ -91,6 +99,21 @@ export function InitialSetup(props: InitialSetupProps) {
       setSelectedProvider(preferred?.id ?? available[0]?.id ?? options[0]?.id ?? null);
     },
   );
+
+  createEffect(
+    () => props.inviteUrl?.trim() ?? "",
+    (nextInviteUrl) => {
+      if (!nextInviteUrl || nextInviteUrl === inviteUrl()) return;
+      setInviteUrl(nextInviteUrl);
+      setInvitePreview(null);
+      setRoute("remote");
+      void previewRemote(nextInviteUrl);
+    },
+  );
+
+  onSettled(() => {
+    if (initialInviteUrl) void previewRemote(initialInviteUrl);
+  });
 
   async function loadPermissions(): Promise<void> {
     const revision = ++permissionRevision;
@@ -149,9 +172,29 @@ export function InitialSetup(props: InitialSetupProps) {
     }
   }
 
+  async function previewRemote(value = inviteUrl().trim()): Promise<boolean> {
+    if (!value || saving()) return false;
+    setSaving(true);
+    setError("");
+    try {
+      setInvitePreview(await props.onPreviewInvite({ inviteUrl: value }));
+      return true;
+    } catch (cause) {
+      setInvitePreview(null);
+      setError(errorMessage(cause, "OpenBot could not verify this invitation."));
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function connectRemote(): Promise<void> {
     const provider = selectedProvider() ?? "codex";
     if (saving()) return;
+    if (!invitePreview()) {
+      await previewRemote();
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -318,23 +361,51 @@ export function InitialSetup(props: InitialSetupProps) {
                 void connectRemote();
               }}
             >
-              <label>
-                <span>Host invitation</span>
-                <Textarea
-                  rows="3"
-                  maxlength={INPUT_LIMITS.inviteUrl}
-                  value={inviteUrl()}
-                  onInput={(event) => setInviteUrl(event.currentTarget.value)}
-                  placeholder="Paste an openbot:// invitation link"
-                  spellcheck={false}
-                  autofocus
-                  required
-                />
-              </label>
-              <p class="setup-remote-note">
-                You will join as <strong>{props.accountEmail}</strong>. Email invitations only work for the address that
-                received them.
-              </p>
+              <Show
+                when={invitePreview()}
+                fallback={
+                  <label>
+                    <span>Host invitation</span>
+                    <Textarea
+                      rows="3"
+                      maxlength={INPUT_LIMITS.inviteUrl}
+                      value={inviteUrl()}
+                      onInput={(event) => {
+                        setInviteUrl(event.currentTarget.value);
+                        setInvitePreview(null);
+                        setError("");
+                      }}
+                      placeholder="Paste an https://openbot.run/join invitation link"
+                      spellcheck={false}
+                      autofocus
+                      required
+                    />
+                  </label>
+                }
+              >
+                {(preview) => (
+                  <>
+                    <InvitePreviewCard preview={preview()} accountEmail={props.accountEmail} />
+                    <Button
+                      type="button"
+                      class="setup-remote-change"
+                      disabled={saving()}
+                      onClick={() => {
+                        setInvitePreview(null);
+                        setError("");
+                      }}
+                    >
+                      Use another invitation
+                    </Button>
+                  </>
+                )}
+              </Show>
+              <Show when={!invitePreview()}>
+                <p class="setup-remote-note">
+                  You will join as <strong>{props.accountEmail}</strong>. Email invitations only work for the address
+                  that received them.
+                </p>
+              </Show>
             </form>
           </Show>
 
@@ -368,7 +439,9 @@ export function InitialSetup(props: InitialSetupProps) {
                   : props.reviewing
                     ? "Save changes"
                     : route() === "remote"
-                      ? "Connect to host"
+                      ? invitePreview()
+                        ? "Connect to host"
+                        : "Review invitation"
                       : selectedProvider()
                         ? `Continue with ${providerName(selectedProvider())}`
                         : "Choose a provider"}

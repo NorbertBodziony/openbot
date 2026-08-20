@@ -378,12 +378,13 @@ const openbotApi: OpenBotDesktopApi = {
       selectedServerId = server.id;
       return server;
     },
+    previewInvite: (input) => ipcRenderer.invoke(IPC_CHANNELS.serversPreviewInvite, input),
+    takePendingInvite: () => ipcRenderer.invoke(IPC_CHANNELS.serversTakePendingInvite),
     login: async (input) => {
       const server = await ipcRenderer.invoke(IPC_CHANNELS.serversLogin, input);
       selectedServerId = server.id;
       return server;
     },
-    updateAddress: (updateUrl) => ipcRenderer.invoke(IPC_CHANNELS.serversUpdateAddress, updateUrl),
     remove: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversRemove, serverId),
     getPresence: () => ipcRenderer.invoke(IPC_CHANNELS.serversGetPresence),
     setTyping: (input) => ipcRenderer.invoke(IPC_CHANNELS.serversSetTyping, input),
@@ -439,7 +440,6 @@ const openbotApi: OpenBotDesktopApi = {
     listInvites: () => ipcRenderer.invoke(IPC_CHANNELS.hostListInvites),
     revokeInvite: (inviteId) => ipcRenderer.invoke(IPC_CHANNELS.hostRevokeInvite, inviteId),
     createInvite: (input) => ipcRenderer.invoke(IPC_CHANNELS.hostCreateInvite, input),
-    createAddressUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.hostCreateAddressUpdate),
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, status: Parameters<typeof listener>[0]) => listener(status);
       ipcRenderer.on(IPC_CHANNELS.hostEvent, handler);

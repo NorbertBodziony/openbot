@@ -21,14 +21,13 @@ const args: Parameters<typeof HostPanel>[0] = {
     role: input.role,
     expiresAt: "2026-09-19T10:00:00.000Z",
     usedAt: null,
-    inviteUrl: "openbot://invite/created",
+    inviteUrl: "https://openbot.run/join?invite=created",
     email: input.email ?? null,
   }),
   onUpdateMember: async () => undefined,
   onRemoveMember: async () => undefined,
   onRevokeSession: async () => undefined,
   onRevokeInvite: async () => undefined,
-  onCopyAddressUpdate: async () => undefined,
 };
 
 const meta = {

@@ -37,7 +37,6 @@ describe("HostPanel", () => {
         onRemoveMember={vi.fn()}
         onRevokeSession={vi.fn()}
         onRevokeInvite={vi.fn()}
-        onCopyAddressUpdate={vi.fn()}
       />
     ));
 
@@ -80,7 +79,6 @@ describe("HostPanel", () => {
         onRemoveMember={vi.fn()}
         onRevokeSession={vi.fn()}
         onRevokeInvite={vi.fn()}
-        onCopyAddressUpdate={vi.fn()}
       />
     ));
 
@@ -96,7 +94,7 @@ describe("HostPanel", () => {
       email: "alice@example.com",
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       usedAt: null,
-      inviteUrl: "openbot://join?invite=token",
+      inviteUrl: "https://openbot.run/join?invite=token",
     });
     render(() => (
       <HostPanel
@@ -129,7 +127,6 @@ describe("HostPanel", () => {
         onRemoveMember={vi.fn()}
         onRevokeSession={vi.fn()}
         onRevokeInvite={vi.fn()}
-        onCopyAddressUpdate={vi.fn()}
       />
     ));
 
@@ -220,7 +217,6 @@ describe("HostPanel", () => {
         onRemoveMember={onRemoveMember}
         onRevokeSession={vi.fn()}
         onRevokeInvite={vi.fn()}
-        onCopyAddressUpdate={vi.fn()}
       />
     ));
 
@@ -246,7 +242,7 @@ describe("HostPanel", () => {
       email: null,
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       usedAt: null,
-      inviteUrl: "openbot://join?invite=private-token",
+      inviteUrl: "https://openbot.run/join?invite=private-token",
     });
     render(() => (
       <HostPanel
@@ -279,7 +275,6 @@ describe("HostPanel", () => {
         onRemoveMember={vi.fn()}
         onRevokeSession={vi.fn()}
         onRevokeInvite={vi.fn()}
-        onCopyAddressUpdate={vi.fn()}
       />
     ));
 
@@ -290,7 +285,7 @@ describe("HostPanel", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Create invitation link" }));
 
     await waitFor(() => expect(onCreateInvite).toHaveBeenCalledWith({ role: "admin" }));
-    expect(writeText).toHaveBeenCalledWith("openbot://join?invite=private-token");
+    expect(writeText).toHaveBeenCalledWith("https://openbot.run/join?invite=private-token");
     expect(await screen.findByText("Link copied")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy again" })).toBeInTheDocument();
   });

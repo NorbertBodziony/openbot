@@ -2,6 +2,7 @@ import { randomBytes, verify } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import type {
   AccountUsage,
   AgentEvent,
@@ -21,6 +22,7 @@ import type {
   DirectTypingInput,
   DirectTypingRealtimeEvent,
   DraftAttachment,
+  InvitePreview,
   JoinServerInput,
   LoginServerInput,
   MarkConversationReadInput,
@@ -49,8 +51,9 @@ import {
   isOneOf,
   isString,
 } from "@openbot/contracts/runtime-values";
-import { isOpenBotTeamApiHostname, isOpenBotTeamVncHostname } from "@openbot/contracts/validation";
-import { addressUpdatePayload, fingerprint } from "./team-store";
+import { fingerprint } from "./team-store";
+
+export { isValidRemoteApiUrl } from "@openbot/contracts/invite-links";
 
 interface StoredRemoteServer {
   id: string;
@@ -172,7 +175,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async join(input: JoinServerInput): Promise<ServerSummary> {
-    const invite = parseJoinUrl(input.inviteUrl);
+    const invite = parseInviteUrl(input.inviteUrl);
     const verifiedIdentity = await this.#verifyIdentity(invite.apiUrl, invite.serverId, invite.fingerprint);
     const accountTicket = await this.#centralAccount.createTeamAuthTicket(invite.serverId);
     const result = await requestJson(invite.apiUrl, "/v1/join/account", decodeJoinResult, {
@@ -201,6 +204,21 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#emitChanged();
     void this.#connectEvents(stored.id);
     return requiredServerSummary(this.list(), stored.id);
+  }
+
+  async previewInvite(input: JoinServerInput): Promise<InvitePreview> {
+    const invite = parseInviteUrl(input.inviteUrl);
+    const identity = await this.#verifyIdentity(invite.apiUrl, invite.serverId, invite.fingerprint);
+    const preview = await requestJson(invite.apiUrl, "/v1/invitations/preview", decodeInvitePreview, {
+      method: "POST",
+      body: { inviteToken: invite.token },
+    });
+    return {
+      serverId: invite.serverId,
+      serverName: identity.serverName,
+      apiHostname: new URL(invite.apiUrl).hostname,
+      ...preview,
+    };
   }
 
   async login(input: LoginServerInput): Promise<ServerSummary> {
@@ -241,22 +259,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (this.#state.activeServerId === serverId) this.#state.activeServerId = "local";
     await this.#persist();
     this.#emitChanged();
-  }
-
-  async updateAddress(updateUrl: string): Promise<ServerSummary> {
-    const update = parseAddressUpdateUrl(updateUrl);
-    const server = this.#requireServer(update.serverId);
-    verifyAddressUpdate(update, server.fingerprint);
-    const identity = await this.#verifyIdentity(update.apiUrl, server.id, server.fingerprint);
-    server.apiUrl = update.apiUrl;
-    server.vncHostname = update.vncHostname;
-    server.publicKey = identity.publicKey;
-    server.name = identity.serverName;
-    this.#states.set(server.id, "online");
-    await this.#persist();
-    this.#emitChanged();
-    void this.#connectEvents(server.id);
-    return requiredServerSummary(this.list(), server.id);
   }
 
   async request<T>(
@@ -608,107 +610,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#presence.set(serverId, snapshot);
     this.emit("presence", serverId, structuredClone(snapshot));
   }
-}
-
-export function isValidRemoteApiUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
-      url.username === "" &&
-      url.password === "" &&
-      url.port === "" &&
-      url.pathname === "/" &&
-      url.search === "" &&
-      url.hash === "" &&
-      (/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com$/.test(url.hostname) ||
-        isOpenBotTeamApiHostname(url.hostname))
-    );
-  } catch {
-    return false;
-  }
-}
-
-export function parseJoinUrl(value: string): {
-  apiUrl: string;
-  serverId: string;
-  fingerprint: string;
-  token: string;
-} {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error("Enter a valid OpenBot invitation link.");
-  }
-  const apiUrl = url.searchParams.get("api") ?? "";
-  const serverId = url.searchParams.get("server") ?? "";
-  const expectedFingerprint = url.searchParams.get("fingerprint") ?? "";
-  const token = url.searchParams.get("invite") ?? "";
-  if (
-    url.protocol !== "openbot:" ||
-    url.hostname !== "join" ||
-    !isValidRemoteApiUrl(apiUrl) ||
-    !/^[0-9a-f-]{36}$/i.test(serverId) ||
-    !/^[A-Za-z0-9_-]{32,64}$/.test(expectedFingerprint) ||
-    !/^[A-Za-z0-9_-]{32,64}$/.test(token)
-  ) {
-    throw new Error("The OpenBot invitation link is invalid.");
-  }
-  return { apiUrl, serverId, fingerprint: expectedFingerprint, token };
-}
-
-export function parseAddressUpdateUrl(value: string): {
-  apiUrl: string;
-  serverId: string;
-  vncHostname: string | null;
-  publicKey: string;
-  signature: string;
-} {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new Error("Enter a valid OpenBot address update link.");
-  }
-  const apiUrl = url.searchParams.get("api") ?? "";
-  const serverId = url.searchParams.get("server") ?? "";
-  const vncHostname = url.searchParams.get("vnc");
-  const publicKey = url.searchParams.get("key") ?? "";
-  const signature = url.searchParams.get("signature") ?? "";
-  if (
-    url.protocol !== "openbot:" ||
-    url.hostname !== "update" ||
-    !isValidRemoteApiUrl(apiUrl) ||
-    !/^[0-9a-f-]{36}$/i.test(serverId) ||
-    (vncHostname !== null && !isValidRemoteVncHostname(vncHostname)) ||
-    !/^[A-Za-z0-9_-]{64,2048}$/.test(publicKey) ||
-    !/^[A-Za-z0-9_-]{64,128}$/.test(signature)
-  ) {
-    throw new Error("The OpenBot address update link is invalid.");
-  }
-  return { apiUrl, serverId, vncHostname, publicKey, signature };
-}
-
-function isValidRemoteVncHostname(value: string): boolean {
-  return /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.trycloudflare\.com$/.test(value) || isOpenBotTeamVncHostname(value);
-}
-
-export function verifyAddressUpdate(
-  update: ReturnType<typeof parseAddressUpdateUrl>,
-  expectedFingerprint: string,
-): string {
-  const publicKey = Buffer.from(update.publicKey, "base64url").toString("utf8");
-  const valid =
-    fingerprint(publicKey) === expectedFingerprint &&
-    verify(
-      null,
-      Buffer.from(addressUpdatePayload(update.serverId, update.apiUrl, update.vncHostname)),
-      publicKey,
-      Buffer.from(update.signature, "base64url"),
-    );
-  if (!valid) throw new Error("The address update signature is invalid.");
-  return publicKey;
 }
 
 async function requestJson<T>(
@@ -1076,6 +977,17 @@ function decodeIdentityProof(value: unknown): {
     fingerprint: requiredString(record, "fingerprint"),
     challenge: requiredString(record, "challenge"),
     signature: requiredString(record, "signature"),
+  };
+}
+
+function decodeInvitePreview(value: unknown): Pick<InvitePreview, "role" | "expiresAt" | "emailBound"> {
+  const record = decodeRecord(value, "invitation preview");
+  const role = requiredString(record, "role");
+  if (role !== "admin" && role !== "member") throw new Error("Invalid invitation preview response.");
+  return {
+    role,
+    expiresAt: requiredString(record, "expiresAt"),
+    emailBound: requiredBoolean(record, "emailBound"),
   };
 }
 

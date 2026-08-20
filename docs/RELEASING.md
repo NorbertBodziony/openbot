@@ -11,6 +11,8 @@ are not built on a developer machine.
 Create the `release` environment in `NorbertBodziony/openbot`, then add these environment secrets:
 
 - `CSC_LINK` — a base64-encoded Developer ID Application `.p12` file.
+- `MAC_PROVISIONING_PROFILE` — the base64-encoded Developer ID provisioning profile for
+  `app.openbot.desktop`, with the `applinks:openbot.run` entitlement.
 - `CSC_KEY_PASSWORD` — the `.p12` export password.
 - `APPLE_ID` — the Apple Account used for notarization.
 - `APPLE_APP_SPECIFIC_PASSWORD` — a dedicated app-specific password for `notarytool`.
@@ -57,6 +59,8 @@ git push origin vX.Y.Z
 ```
 
 Pushing the version tag runs `.github/workflows/release.yml`.
+The tag workflow starts only after `https://openbot.run/join` and the Apple association file return
+direct `200` responses with the required security headers, MIME type, app ID, and `/join` scope.
 
 The workflow:
 
@@ -83,15 +87,16 @@ different binaries.
 Before creating the first tag or any later release:
 
 1. run `bun run release:preflight` and resolve every reported signing or repository gate;
-2. confirm the `release` environment contains all five secrets above;
-3. run `bun install --frozen-lockfile` and `bun run check` from a clean clone;
-4. run `bun run package:verify` and launch the generated `dist/mac-arm64/OpenBot.app`;
-5. confirm that the Windows x64 job passes on `main`; it builds and launches the Windows package on
+2. confirm the `release` environment contains all six secrets above;
+3. confirm the production `/join` page and Apple association file pass the deployment checks in CI;
+4. run `bun install --frozen-lockfile` and `bun run check` from a clean clone;
+5. run `bun run package:verify` and launch the generated `dist/mac-arm64/OpenBot.app`;
+6. confirm that the Windows x64 job passes on `main`; it builds and launches the Windows package on
    a GitHub-hosted Windows runner;
-6. smoke-test sign-in/setup, chat streaming, queues, attachments, agent messaging, browser control,
+7. smoke-test sign-in/setup, chat streaming, queues, attachments, agent messaging, browser control,
    context compaction, and the update popover;
-7. confirm `CHANGELOG.md` describes the version and the working tree is clean;
-8. create and push the version commit and tag only after CI passes on `main`.
+8. confirm `CHANGELOG.md` describes the version and the working tree is clean;
+9. create and push the version commit and tag only after CI passes on `main`.
 
 The unsigned local macOS package is a development artifact. It does not prove Gatekeeper,
 notarization, or auto-update readiness. Those are proven only by the signed release workflow's

@@ -74,12 +74,10 @@ export interface CreatedInvite {
   email: string | null;
 }
 
-export interface AddressUpdateProof {
-  serverId: string;
-  apiUrl: string;
-  vncHostname: string | null;
-  publicKey: string;
-  signature: string;
+export interface TeamInvitePreview {
+  role: Exclude<TeamRole, "owner">;
+  expiresAt: string;
+  emailBound: boolean;
 }
 
 export interface AuthenticatedMember {
@@ -250,18 +248,6 @@ export class TeamStore {
     }));
   }
 
-  createAddressUpdateProof(apiUrl: string, vncHostname: string | null): AddressUpdateProof {
-    const state = this.#requireState();
-    const payload = addressUpdatePayload(state.serverId, apiUrl, vncHostname);
-    return {
-      serverId: state.serverId,
-      apiUrl,
-      vncHostname,
-      publicKey: state.publicKey,
-      signature: sign(null, Buffer.from(payload), state.privateKey).toString("base64url"),
-    };
-  }
-
   async createInvite(role: Exclude<TeamRole, "owner">, emailInput?: string): Promise<CreatedInvite> {
     if (role !== "admin" && role !== "member") throw new Error("Invalid invite role.");
     const state = this.#requireState();
@@ -284,6 +270,16 @@ export class TeamStore {
     state.invites.push(invite);
     await this.#persist();
     return { id: invite.id, role, token, expiresAt: invite.expiresAt, email };
+  }
+
+  previewInvite(token: string): TeamInvitePreview {
+    const invite = this.#findUsableInvite(token);
+    if (!invite) throw new Error("The invitation is invalid or expired.");
+    return {
+      role: invite.role,
+      expiresAt: invite.expiresAt,
+      emailBound: Boolean(invite.email),
+    };
   }
 
   async acceptInviteWithAccount(token: string, user: CentralAuthUser): Promise<AuthenticatedMember> {
@@ -343,6 +339,7 @@ export class TeamStore {
     }
     const invite = this.#findUsableInvite(token);
     if (!invite) throw new Error("The invitation is invalid or expired.");
+    if (invite.email) throw new Error("This invitation requires a verified OpenBot account.");
     if (state.members.length >= INPUT_LIMITS.teamMembers) {
       throw new Error(`A host can have up to ${INPUT_LIMITS.teamMembers} members.`);
     }
@@ -532,10 +529,6 @@ export class TeamStore {
 
 export function fingerprint(publicKey: string): string {
   return createHash("sha256").update(publicKey).digest("base64url");
-}
-
-export function addressUpdatePayload(serverId: string, apiUrl: string, vncHostname: string | null): string {
-  return JSON.stringify({ version: 1, serverId, apiUrl, vncHostname });
 }
 
 async function hashPassword(password: string): Promise<{ passwordSalt: string; passwordHash: string }> {

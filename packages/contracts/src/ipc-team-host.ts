@@ -16,6 +16,15 @@ export interface JoinServerInput {
   inviteUrl: string;
 }
 
+export interface InvitePreview {
+  serverId: string;
+  serverName: string;
+  apiHostname: string;
+  role: Exclude<TeamRole, "owner">;
+  expiresAt: string;
+  emailBound: boolean;
+}
+
 export interface LoginServerInput {
   serverId: string;
 }

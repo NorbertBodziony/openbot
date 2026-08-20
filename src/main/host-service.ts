@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { createInviteUrl } from "@openbot/contracts/invite-links";
 import type {
   CentralAuthUser,
   ConfigureHostInput,
@@ -344,34 +345,23 @@ export class HostService extends EventEmitter<HostEvents> {
     return this.#options.store.revokeInvite(inviteId);
   }
 
-  createAddressUpdate(): string {
-    if (!this.#status.apiUrl) throw new Error("Make this OpenBot public first.");
-    const proof = this.#options.store.createAddressUpdateProof(this.#status.apiUrl, this.#status.vncHostname);
-    const url = new URL("openbot://update");
-    url.searchParams.set("api", proof.apiUrl);
-    url.searchParams.set("server", proof.serverId);
-    if (proof.vncHostname) url.searchParams.set("vnc", proof.vncHostname);
-    url.searchParams.set("key", Buffer.from(proof.publicKey).toString("base64url"));
-    url.searchParams.set("signature", proof.signature);
-    return url.toString();
-  }
-
   async createInvite(input: CreateTeamInviteInput): Promise<InviteSummary> {
     if (!this.#status.apiUrl) throw new Error("Make this OpenBot public before creating an invite.");
     const identity = this.#options.store.getIdentity();
     if (!identity) throw new Error("Name this OpenBot before publishing it.");
     const invite = await this.#options.store.createInvite(input.role, input.email);
-    const url = new URL("openbot://join");
-    url.searchParams.set("api", this.#status.apiUrl);
-    url.searchParams.set("server", identity.serverId);
-    url.searchParams.set("fingerprint", identity.fingerprint);
-    url.searchParams.set("invite", invite.token);
+    const inviteUrl = createInviteUrl({
+      apiUrl: this.#status.apiUrl,
+      serverId: identity.serverId,
+      fingerprint: identity.fingerprint,
+      token: invite.token,
+    });
     const result: InviteSummary = {
       id: invite.id,
       role: input.role,
       expiresAt: invite.expiresAt,
       usedAt: null,
-      inviteUrl: url.toString(),
+      inviteUrl,
       email: invite.email,
     };
     if (invite.email) {

@@ -29,6 +29,10 @@ expectEqual(plist.CFBundleExecutable, "OpenBot", "executable name");
 expectEqual(plist.CFBundleIdentifier, "app.openbot.desktop", "bundle identifier");
 expectEqual(plist.CFBundleIconFile, "icon.icns", "application icon");
 expectEqual(plist.LSMinimumSystemVersion, "12.0", "minimum macOS version");
+expectEqual(plist.ElectronTeamID, "ZTRDTUL87R", "Apple Team ID");
+if (!Array.isArray(plist.NSUserActivityTypes) || !plist.NSUserActivityTypes.includes("NSUserActivityTypeBrowsingWeb")) {
+  throw new Error("The Universal Links activity type is missing.");
+}
 if (!plist.ElectronAsarIntegrity) throw new Error("ASAR integrity metadata is missing.");
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));

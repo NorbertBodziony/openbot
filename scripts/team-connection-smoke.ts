@@ -1,13 +1,12 @@
 import { spawn } from "node:child_process";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createInviteUrl } from "@openbot/contracts/invite-links";
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
-import { AgentService } from "../src/backend/agent-service";
-import { BotStore } from "../src/backend/bot-store";
-import { MailboxStore } from "../src/backend/mailbox-store";
 import { OpenBotDatabase } from "../src/backend/openbot-database";
 import { TeamChatStore } from "../src/backend/team-chat-store";
 import { buildNamedTunnelArgs, waitForNamedTunnelConnection } from "../src/main/host-service";
@@ -44,8 +43,9 @@ async function main(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 3_000));
     database = new OpenBotDatabase(join(root, "user-data"));
     await database.initialize();
-    const botStore = new BotStore(join(root, "user-data"), join(root, "home"), database);
-    const mailbox = new MailboxStore(join(root, "user-data"), botStore.sharedRoot, database);
+    const agentEvents = new EventEmitter();
+    const agents = createSmokeAgents(agentEvents);
+    const mailbox = { resolveAttachment: unimplemented };
     const browser = {
       onChanged: () => () => undefined,
       onControlChanged: () => () => undefined,
@@ -61,7 +61,6 @@ async function main(): Promise<void> {
       close: async () => undefined,
       setVisible: async () => undefined,
     };
-    const agents = new AgentService(botStore, mailbox, browser);
     const chat = new TeamChatStore(database);
     api = new TeamApiServer({
       store,
@@ -84,11 +83,12 @@ async function main(): Promise<void> {
     const apiUrl = provisioned.apiUrl;
     await waitForPublicTunnel(apiUrl);
     const invite = await store.createInvite("member");
-    const inviteUrl = new URL("openbot://join");
-    inviteUrl.searchParams.set("api", apiUrl);
-    inviteUrl.searchParams.set("server", identity.serverId);
-    inviteUrl.searchParams.set("fingerprint", identity.fingerprint);
-    inviteUrl.searchParams.set("invite", invite.token);
+    const inviteUrl = createInviteUrl({
+      apiUrl,
+      serverId: identity.serverId,
+      fingerprint: identity.fingerprint,
+      token: invite.token,
+    });
 
     const cipher = createTemporaryCipher();
     const remotePath = join(root, "remote-servers.json");
@@ -98,14 +98,30 @@ async function main(): Promise<void> {
     });
     remote = remoteManager;
     await remoteManager.initialize();
+    const preview = await remoteManager.previewInvite({ inviteUrl });
+    if (
+      preview.serverName !== "Smoke Host" ||
+      preview.role !== "member" ||
+      preview.emailBound ||
+      preview.serverId !== identity.serverId
+    ) {
+      throw new Error("The invitation preview did not match the host invitation.");
+    }
     const remoteEvent = new Promise<void>((resolve) => {
       remoteManager.once("agent", (_serverId, event) => {
         if (event.type === "error" && event.code === "team_smoke_event") resolve();
       });
     });
-    const server = await remoteManager.join({ inviteUrl: inviteUrl.toString() });
+    const server = await remoteManager.join({ inviteUrl });
+    let reuseRejected = false;
+    try {
+      await remoteManager.join({ inviteUrl });
+    } catch {
+      reuseRejected = true;
+    }
+    if (!reuseRejected) throw new Error("The host accepted a reused invitation.");
     const eventInterval = setInterval(() => {
-      agents.emit("event", {
+      agentEvents.emit("event", {
         type: "error",
         code: "team_smoke_event",
         message: "WebSocket event delivery works.",
@@ -216,6 +232,48 @@ async function main(): Promise<void> {
     database?.close();
     await rm(root, { recursive: true, force: true });
   }
+}
+
+type SmokeAgents = ConstructorParameters<typeof TeamApiServer>[0]["agents"];
+
+function createSmokeAgents(events: EventEmitter): SmokeAgents {
+  return {
+    on: (event, listener) => {
+      events.on(event, listener);
+    },
+    off: (event, listener) => {
+      events.off(event, listener);
+    },
+    getStatus: unimplemented,
+    getUsage: unimplemented,
+    listModels: unimplemented,
+    listBots: unimplemented,
+    listConversationReads: unimplemented,
+    createBot: unimplemented,
+    updateBot: unimplemented,
+    deleteBot: unimplemented,
+    setAvatar: unimplemented,
+    resolveAvatar: unimplemented,
+    readConversationFor: unimplemented,
+    markConversationRead: unimplemented,
+    prepareImportedAttachments: unimplemented,
+    discardDraftAttachment: unimplemented,
+    sendMessage: unimplemented,
+    listQueue: unimplemented,
+    setMessageReaction: unimplemented,
+    cancelQueuedMessage: unimplemented,
+    setQueuePaused: unimplemented,
+    steerQueuedMessage: unimplemented,
+    updateQueuedMessage: unimplemented,
+    reorderQueue: unimplemented,
+    interrupt: unimplemented,
+    respondToPrompt: unimplemented,
+    respondToApproval: unimplemented,
+  };
+}
+
+function unimplemented(): never {
+  throw new Error("This operation is not used by the team connection smoke test.");
 }
 
 async function withTimeout(operation: Promise<void>, message: string): Promise<void> {

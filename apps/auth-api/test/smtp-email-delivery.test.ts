@@ -47,7 +47,8 @@ describe("Private Email SMTP delivery", () => {
         email: "alice@example.com",
         inviterEmail: "owner@example.com",
         serverName: "Studio Mac",
-        inviteUrl: "openbot://join?invite=one-time-token",
+        inviteUrl:
+          "https://openbot.run/join?api=https%3A%2F%2Fstudio-mac-k7m4q2pz-host.openbot.run%2F&server=00000000-0000-4000-8000-000000000000&fingerprint=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&invite=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         role: "member",
       },
       connector,
@@ -56,7 +57,7 @@ describe("Private Email SMTP delivery", () => {
     expect(writes).toContain("RCPT TO:<alice@example.com>\r\n");
     expect(writes[7]).toContain("Subject: Join Studio Mac on OpenBot");
     expect(writes[7]).toContain("owner@example.com invited you");
-    expect(writes[7]).toContain("openbot://join?invite=one-time-token");
+    expect(writes[7]).toContain("https://openbot.run/join?");
   });
 
   it("uses TLS on port 465 and sends the code without SMTP injection", async () => {

@@ -22,6 +22,7 @@ let emitAuth: ((state: CentralAuthState) => void) | undefined;
 let emitPresence: ((snapshot: TeamPresenceSnapshot) => void) | undefined;
 let emitDirectMessage: ((event: DirectMessageRealtimeEvent) => void) | undefined;
 let emitDirectTyping: ((event: DirectTypingRealtimeEvent) => void) | undefined;
+let emitInvite: ((inviteUrl: string) => void) | undefined;
 
 const BOTS: BotSummary[] = [
   {
@@ -98,6 +99,7 @@ describe("OpenBot connected desktop shell", () => {
     emitPresence = undefined;
     emitDirectMessage = undefined;
     emitDirectTyping = undefined;
+    emitInvite = undefined;
     window.localStorage.clear();
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
     Object.defineProperty(window, "openbot", {
@@ -352,6 +354,15 @@ describe("OpenBot connected desktop shell", () => {
             },
           ]),
           join: vi.fn().mockResolvedValue(undefined),
+          previewInvite: vi.fn().mockResolvedValue({
+            serverId: "00000000-0000-4000-8000-000000000000",
+            serverName: "Studio Mac",
+            apiHostname: "studio-host.openbot.run",
+            role: "member",
+            expiresAt: "2026-08-21T10:00:00.000Z",
+            emailBound: false,
+          }),
+          takePendingInvite: vi.fn().mockResolvedValue(null),
           login: vi.fn().mockResolvedValue(undefined),
           remove: vi.fn().mockResolvedValue(undefined),
           getPresence: vi.fn().mockResolvedValue({ serverId: null, members: [], updatedAt: "" }),
@@ -392,7 +403,10 @@ describe("OpenBot connected desktop shell", () => {
             return () => undefined;
           }),
           onEvent: vi.fn(() => () => undefined),
-          onInvite: vi.fn(() => () => undefined),
+          onInvite: vi.fn((listener) => {
+            emitInvite = listener;
+            return () => undefined;
+          }),
         },
         host: {
           getStatus: vi.fn().mockResolvedValue({
@@ -420,7 +434,6 @@ describe("OpenBot connected desktop shell", () => {
           listInvites: vi.fn().mockResolvedValue([]),
           revokeInvite: vi.fn().mockResolvedValue(undefined),
           createInvite: vi.fn().mockResolvedValue(undefined),
-          createAddressUpdate: vi.fn().mockResolvedValue("openbot://update"),
           onEvent: vi.fn(() => () => undefined),
         },
         remoteMac: {
@@ -468,18 +481,49 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("dialog", { name: "Connect to a host" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Email" })).not.toBeInTheDocument();
 
+    const inviteUrl = "https://openbot.run/join?invite=test";
     await fireEvent.input(screen.getByRole("textbox", { name: "Host invitation" }), {
-      target: { value: "openbot://join/invite" },
+      target: { value: inviteUrl },
     });
     expect(screen.getAllByText(/person@example.com/).length).toBeGreaterThan(0);
+    await fireEvent.click(screen.getByRole("button", { name: "Review invitation" }));
+    expect(await screen.findByText("Studio Mac")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Connect to host" }));
 
     await waitFor(() =>
       expect(window.openbot.servers.join).toHaveBeenCalledWith({
-        inviteUrl: "openbot://join/invite",
+        inviteUrl,
       }),
     );
     await waitFor(() => expect(window.openbot.saveSetup).toHaveBeenCalledWith({ preferredProvider: "codex" }));
+  });
+
+  it("loads a cold-start invitation into first-run remote setup", async () => {
+    const inviteUrl = "https://openbot.run/join?invite=cold-start";
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.servers.takePendingInvite).mockResolvedValueOnce(inviteUrl);
+
+    render(() => <App />);
+
+    expect(await screen.findByRole("dialog", { name: "Connect to a host" })).toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.servers.previewInvite).toHaveBeenCalledWith({ inviteUrl }));
+    expect(await screen.findByText("Studio Mac")).toBeInTheDocument();
+    expect(window.openbot.servers.join).not.toHaveBeenCalled();
+  });
+
+  it("opens a verified invitation received while the configured app is running", async () => {
+    const inviteUrl = "https://openbot.run/join?invite=second-instance";
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitInvite?.(inviteUrl);
+
+    expect(await screen.findByRole("dialog", { name: "Join an OpenBot team" })).toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.servers.previewInvite).toHaveBeenCalledWith({ inviteUrl }));
+    expect(window.openbot.servers.join).not.toHaveBeenCalled();
   });
 
   it("opens the shared remote desktop inside the active remote host", async () => {
@@ -594,6 +638,24 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
     expect(screen.queryByText("Codex")).not.toBeInTheDocument();
+  });
+
+  it("keeps a cold-start invitation until a signed-out user signs in", async () => {
+    const inviteUrl = "https://openbot.run/join?invite=after-sign-in";
+    vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({ status: "signed_out" });
+    vi.mocked(window.openbot.servers.takePendingInvite).mockResolvedValueOnce(inviteUrl);
+    render(() => <App />);
+
+    expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Join an OpenBot team" })).not.toBeInTheDocument();
+
+    emitAuth?.({
+      status: "signed_in",
+      user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
+    });
+
+    expect(await screen.findByRole("dialog", { name: "Join an OpenBot team" })).toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.servers.previewInvite).toHaveBeenCalledWith({ inviteUrl }));
   });
 
   it("lets the user choose a provider while provider checks are running", async () => {
@@ -1284,7 +1346,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(faceButtons).toHaveLength(12);
     for (const faceButton of faceButtons) {
       expect(faceButton.querySelector(".bot-avatar-motion-hover")).not.toBeNull();
-      expect(faceButton.querySelector(".bot-avatar > svg .mo-root")).not.toBeNull();
+      expect(faceButton.querySelector(".bot-avatar-bloub > svg")).not.toBeNull();
       expect(faceButton.querySelector(".agent-mark")).toBeNull();
     }
     const optionTwo = within(editor).getByRole("button", { name: "Avatar option 2" });

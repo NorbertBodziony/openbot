@@ -221,7 +221,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
     const id = `invite-${inviteSequence++}`;
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString();
     const email = normalizedEmail ?? null;
-    const url = `openbot://invite/${id}`;
+    const url = `https://openbot.run/join?invite=${encodeURIComponent(id)}`;
     setInvites((items) => [...items, { id, role: inviteRole(), expiresAt, usedAt: null, email }]);
     setInviteResult({ email, url });
     setInviteCopied(false);

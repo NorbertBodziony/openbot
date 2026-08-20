@@ -57,6 +57,26 @@ jobs:
           echo "version=$package_version" >> "$GITHUB_OUTPUT"
           echo "tag=v$package_version" >> "$GITHUB_OUTPUT"
 
+      - name: Require deployed Universal Links support
+        shell: bash
+        run: |
+          verification_dir="$(mktemp -d)"
+          trap 'rm -rf "$verification_dir"' EXIT
+          join_status="$(curl --silent --show-error --retry 5 --retry-all-errors \
+            --max-redirs 0 --dump-header "$verification_dir/join.headers" \
+            --output "$verification_dir/join.html" --write-out '%{http_code}' \
+            https://openbot.run/join)"
+          test "$join_status" = "200"
+          tr -d '\r' < "$verification_dir/join.headers" | grep -Eiq '^cache-control:.*no-store'
+          association_status="$(curl --silent --show-error --retry 5 --retry-all-errors \
+            --max-redirs 0 --dump-header "$verification_dir/association.headers" \
+            --output "$verification_dir/association.json" --write-out '%{http_code}' \
+            https://openbot.run/.well-known/apple-app-site-association)"
+          test "$association_status" = "200"
+          tr -d '\r' < "$verification_dir/association.headers" | grep -Eiq '^content-type: application/json'
+          jq -e '.applinks.details == [{"appID":"ZTRDTUL87R.app.openbot.desktop","paths":["/join"]}]' \
+            "$verification_dir/association.json" >/dev/null
+
   macos:
     name: Build signed macOS ARM64 release
     needs: validate
@@ -88,9 +108,10 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
+          MAC_PROVISIONING_PROFILE: ${{ secrets.MAC_PROVISIONING_PROFILE }}
         run: |
           missing=()
-          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID MAC_PROVISIONING_PROFILE; do
             if [[ -z "${!name}" ]]; then missing+=("$name"); fi
           done
           if (( ${#missing[@]} > 0 )); then
@@ -105,6 +126,16 @@ jobs:
       - name: Run repository check
         run: bun run check
 
+      - name: Install Developer ID provisioning profile
+        shell: bash
+        env:
+          MAC_PROVISIONING_PROFILE: ${{ secrets.MAC_PROVISIONING_PROFILE }}
+        run: |
+          profile_path="$RUNNER_TEMP/OpenBot.provisionprofile"
+          printf '%s' "$MAC_PROVISIONING_PROFILE" | /usr/bin/base64 -D > "$profile_path"
+          security cms -D -i "$profile_path" >/dev/null
+          echo "OPENBOT_PROVISIONING_PROFILE=$profile_path" >> "$GITHUB_ENV"
+
       - name: Build, sign, and notarize ARM64 update artifacts
         env:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -112,7 +143,10 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
-        run: bun run dist:release
+        run: |
+          bun run build
+          bun x electron-builder --mac --arm64 --publish never \
+            --config.mac.provisioningProfile="$OPENBOT_PROVISIONING_PROFILE"
 
       - name: Verify packaged application metadata and launch
         run: bun run verify:package
@@ -123,6 +157,15 @@ jobs:
           app_path="dist/mac-arm64/OpenBot.app"
           test -d "$app_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
+          test -f "$app_path/Contents/embedded.provisionprofile"
+          codesign -d --entitlements "$RUNNER_TEMP/openbot-entitlements.plist" "$app_path"
+          plutil -extract com.apple.developer.associated-domains.0 raw \
+            "$RUNNER_TEMP/openbot-entitlements.plist" | grep -Fx 'applinks:openbot.run'
+          plutil -extract com.apple.developer.team-identifier raw \
+            "$RUNNER_TEMP/openbot-entitlements.plist" | grep -Fx 'ZTRDTUL87R'
+          plutil -extract NSUserActivityTypes.0 raw "$app_path/Contents/Info.plist" \
+            | grep -Fx 'NSUserActivityTypeBrowsingWeb'
+          plutil -extract ElectronTeamID raw "$app_path/Contents/Info.plist" | grep -Fx 'ZTRDTUL87R'
           spctl --assess --type execute --verbose=2 "$app_path"
           xcrun stapler validate "$app_path"
 

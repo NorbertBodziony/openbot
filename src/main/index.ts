@@ -3,6 +3,7 @@ import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import {
   type AgentEvent,
   type AppInfo,
@@ -34,7 +35,7 @@ import electronUpdater from "electron-updater";
 import { AgentService } from "../backend/agent-service";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
-import { isCloseBrowserTabShortcut } from "../backend/browser-shortcuts";
+import { isCloseBrowserTabShortcut, isToggleDevToolsShortcut } from "../backend/browser-shortcuts";
 import { MailboxStore } from "../backend/mailbox-store";
 import { TeamChatStore } from "../backend/team-chat-store";
 import { AgentInitializationGate } from "./agent-initialization";
@@ -148,8 +149,8 @@ let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
-let pendingInviteUrl: string | null = null;
-let pendingAddressUpdateUrl: string | null = null;
+let pendingInviteUrl: string | null = findInviteUrl(process.argv);
+let inviteReceiverReady = false;
 
 const SETUP_FILE = "openbot-setup-v2.json";
 const BROWSER_STATE_FILE = "openbot-browser-state-v1.json";
@@ -263,10 +264,16 @@ function registerIpcHandlers(
     remoteServers.select(requireString(serverId, "serverId")),
   );
   handleTrusted(IPC_CHANNELS.serversJoin, (input: unknown) => remoteServers.join(parseJoinServer(input)));
-  handleTrusted(IPC_CHANNELS.serversLogin, (input: unknown) => remoteServers.login(parseLoginServer(input)));
-  handleTrusted(IPC_CHANNELS.serversUpdateAddress, (updateUrl: unknown) =>
-    remoteServers.updateAddress(requireString(updateUrl, "updateUrl", INPUT_LIMITS.inviteUrl)),
+  handleTrusted(IPC_CHANNELS.serversPreviewInvite, (input: unknown) =>
+    remoteServers.previewInvite(parseJoinServer(input)),
   );
+  handleTrusted(IPC_CHANNELS.serversTakePendingInvite, () => {
+    inviteReceiverReady = true;
+    const inviteUrl = pendingInviteUrl;
+    pendingInviteUrl = null;
+    return inviteUrl;
+  });
+  handleTrusted(IPC_CHANNELS.serversLogin, (input: unknown) => remoteServers.login(parseLoginServer(input)));
   handleTrusted(IPC_CHANNELS.serversRemove, (serverId: unknown) =>
     remoteServers.remove(requireString(serverId, "serverId")),
   );
@@ -325,7 +332,6 @@ function registerIpcHandlers(
     host.revokeInvite(requireString(inviteId, "inviteId")),
   );
   handleTrusted(IPC_CHANNELS.hostCreateInvite, (input: unknown) => host.createInvite(parseCreateTeamInvite(input)));
-  handleTrusted(IPC_CHANNELS.hostCreateAddressUpdate, () => host.createAddressUpdate());
   handleTrusted(IPC_CHANNELS.remoteMacList, () => remoteMac.list());
   handleTrusted(IPC_CHANNELS.remoteMacConnect, (input: unknown) => remoteMac.connect(parseRemoteMacConnect(input)));
   handleTrusted(IPC_CHANNELS.remoteMacDisconnect, (sessionId: unknown) =>
@@ -660,6 +666,7 @@ function registerIpcHandlers(
 }
 
 function createWindow(): BrowserWindow {
+  let inspectElementModifierPressed = false;
   const window = new BrowserWindow({
     width: 1200,
     height: 820,
@@ -675,6 +682,7 @@ function createWindow(): BrowserWindow {
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
+      devTools: true,
       sandbox: true,
       nodeIntegration: false,
       webSecurity: true,
@@ -694,10 +702,26 @@ function createWindow(): BrowserWindow {
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("before-input-event", (event, input) => {
+    if (input.key.toLowerCase() === "shift") {
+      inspectElementModifierPressed = input.type === "keyDown";
+    }
+    if (isToggleDevToolsShortcut(input)) {
+      event.preventDefault();
+      window.webContents.toggleDevTools();
+      return;
+    }
     const tabId = browserHost?.activeTabId;
     if (!browserHost?.visible || !tabId || !isCloseBrowserTabShortcut(input)) return;
     event.preventDefault();
     setImmediate(() => void browserHost?.close(tabId).catch(() => undefined));
+  });
+  window.webContents.on("context-menu", (event, params) => {
+    if (!inspectElementModifierPressed) return;
+    event.preventDefault();
+    window.webContents.inspectElement(params.x, params.y);
+  });
+  window.on("blur", () => {
+    inspectElementModifierPressed = false;
   });
   window.webContents.on("will-navigate", (event, targetUrl) => {
     if (!isTrustedRendererUrl(targetUrl)) event.preventDefault();
@@ -707,6 +731,7 @@ function createWindow(): BrowserWindow {
 }
 
 function loadRenderer(window: BrowserWindow): Promise<void> {
+  inviteReceiverReady = false;
   const developmentUrl = process.env.ELECTRON_RENDERER_URL;
   return developmentUrl ? window.loadURL(developmentUrl) : window.loadURL("openbot-app://app/index.html");
 }
@@ -811,43 +836,62 @@ function forwardCentralAuth(state: CentralAuthState): void {
 }
 
 function acceptInviteUrl(value: string): void {
-  if (!value.startsWith("openbot://join?")) return;
-  if (mainWindow && !mainWindow.isDestroyed()) {
+  try {
+    parseInviteUrl(value);
+  } catch {
+    return;
+  }
+  pendingInviteUrl = value;
+  if (mainWindow && !mainWindow.isDestroyed() && inviteReceiverReady) {
     mainWindow.show();
     mainWindow.focus();
     mainWindow.webContents.send(IPC_CHANNELS.serversInvite, value);
-  } else {
-    pendingInviteUrl = value;
+    pendingInviteUrl = null;
   }
-}
-
-function acceptAddressUpdateUrl(value: string): void {
-  if (!value.startsWith("openbot://update?")) return;
-  if (!remoteServerManager) {
-    pendingAddressUpdateUrl = value;
-    return;
-  }
-  void remoteServerManager.updateAddress(value).catch((error) => {
-    const message = error instanceof Error ? error.message : "The server address was not updated.";
-    dialog.showErrorBox("OpenBot server update failed", message);
-  });
 }
 
 function acceptOpenbotUrl(value: string): void {
-  if (value.startsWith("openbot://join?")) acceptInviteUrl(value);
-  else if (value.startsWith("openbot://update?")) acceptAddressUpdateUrl(value);
+  acceptInviteUrl(value);
+}
+
+function findInviteUrl(values: string[]): string | null {
+  for (const value of values) {
+    try {
+      parseInviteUrl(value);
+      return value;
+    } catch {
+      // Most command-line arguments are not invitations.
+    }
+  }
+  return null;
 }
 
 app.on("open-url", (event, url) => {
+  try {
+    parseInviteUrl(url);
+  } catch {
+    return;
+  }
   event.preventDefault();
   acceptOpenbotUrl(url);
+});
+
+app.on("continue-activity", (event, type, _userInfo, details) => {
+  if (type !== "NSUserActivityTypeBrowsingWeb" || !details.webpageURL) return;
+  try {
+    parseInviteUrl(details.webpageURL);
+  } catch {
+    return;
+  }
+  event.preventDefault();
+  acceptInviteUrl(details.webpageURL);
 });
 
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
   app.on("second-instance", (_event, argv) => {
-    const deepLink = argv.find((value) => value.startsWith("openbot://join?") || value.startsWith("openbot://update?"));
+    const deepLink = findInviteUrl(argv);
     if (deepLink) acceptOpenbotUrl(deepLink);
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -973,14 +1017,6 @@ if (!hasSingleInstanceLock) {
           return remoteServerManager.getRemoteDesktopAccess(serverId);
         },
       });
-      if (pendingAddressUpdateUrl) {
-        const updateUrl = pendingAddressUpdateUrl;
-        pendingAddressUpdateUrl = null;
-        void remoteServerManager.updateAddress(updateUrl).catch((error) => {
-          const message = error instanceof Error ? error.message : "The server address was not updated.";
-          dialog.showErrorBox("OpenBot server update failed", message);
-        });
-      }
       const host = hostService;
       const remoteMac = remoteMacManager;
       const remoteServers = remoteServerManager;
@@ -1023,10 +1059,6 @@ if (!hasSingleInstanceLock) {
       );
       configureApplicationMenu(service, updateService);
       await loadRenderer(mainWindow);
-      if (pendingInviteUrl) {
-        mainWindow.webContents.send(IPC_CHANNELS.serversInvite, pendingInviteUrl);
-        pendingInviteUrl = null;
-      }
       const teamIdentity = teamStore.getIdentity();
       if (
         shouldAutoStartHost({

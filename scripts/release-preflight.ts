@@ -32,7 +32,14 @@ try {
 } catch {
   failures.push("GitHub release secrets could not be inspected");
 }
-for (const name of ["CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"]) {
+for (const name of [
+  "CSC_LINK",
+  "CSC_KEY_PASSWORD",
+  "APPLE_ID",
+  "APPLE_APP_SPECIFIC_PASSWORD",
+  "APPLE_TEAM_ID",
+  "MAC_PROVISIONING_PROFILE",
+]) {
   if (!releaseSecrets.split("\n").some((line) => line.startsWith(`${name}\t`))) {
     failures.push(`GitHub release secret ${name} is missing`);
   }

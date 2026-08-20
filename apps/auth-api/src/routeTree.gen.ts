@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppPreviewRouteImport } from './routes/app-preview'
+import { Route as JoinRouteImport } from './routes/join'
+import { Route as DotwellKnownAppleAppSiteAssociationRouteImport } from './routes/[.]well-known/apple-app-site-association'
 import { Route as DownloadMacosRouteImport } from './routes/download/macos'
 import { Route as DownloadWindowsRouteImport } from './routes/download/windows'
 import { Route as HealthLiveRouteImport } from './routes/health/live'
@@ -36,6 +38,17 @@ const AppPreviewRoute = AppPreviewRouteImport.update({
   path: '/app-preview',
   getParentRoute: () => rootRouteImport,
 } as any).lazy(() => import('./routes/app-preview.lazy').then((d) => d.Route))
+const JoinRoute = JoinRouteImport.update({
+  id: '/join',
+  path: '/join',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DotwellKnownAppleAppSiteAssociationRoute =
+  DotwellKnownAppleAppSiteAssociationRouteImport.update({
+    id: '/.well-known/apple-app-site-association',
+    path: '/.well-known/apple-app-site-association',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const DownloadMacosRoute = DownloadMacosRouteImport.update({
   id: '/download/macos',
   path: '/download/macos',
@@ -110,6 +123,8 @@ const V1AuthEmailVerifyRoute = V1AuthEmailVerifyRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app-preview': typeof AppPreviewRoute
+  '/join': typeof JoinRoute
+  '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/download/macos': typeof DownloadMacosRoute
   '/download/windows': typeof DownloadWindowsRoute
   '/health/live': typeof HealthLiveRoute
@@ -128,6 +143,8 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/app-preview': typeof AppPreviewRoute
+  '/join': typeof JoinRoute
+  '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/download/macos': typeof DownloadMacosRoute
   '/download/windows': typeof DownloadWindowsRoute
   '/health/live': typeof HealthLiveRoute
@@ -147,6 +164,8 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app-preview': typeof AppPreviewRoute
+  '/join': typeof JoinRoute
+  '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/download/macos': typeof DownloadMacosRoute
   '/download/windows': typeof DownloadWindowsRoute
   '/health/live': typeof HealthLiveRoute
@@ -167,6 +186,8 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/app-preview'
+    | '/join'
+    | '/.well-known/apple-app-site-association'
     | '/download/macos'
     | '/download/windows'
     | '/health/live'
@@ -185,6 +206,8 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/app-preview'
+    | '/join'
+    | '/.well-known/apple-app-site-association'
     | '/download/macos'
     | '/download/windows'
     | '/health/live'
@@ -203,6 +226,8 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/app-preview'
+    | '/join'
+    | '/.well-known/apple-app-site-association'
     | '/download/macos'
     | '/download/windows'
     | '/health/live'
@@ -222,6 +247,8 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppPreviewRoute: typeof AppPreviewRoute
+  JoinRoute: typeof JoinRoute
+  DotwellKnownAppleAppSiteAssociationRoute: typeof DotwellKnownAppleAppSiteAssociationRoute
   DownloadMacosRoute: typeof DownloadMacosRoute
   DownloadWindowsRoute: typeof DownloadWindowsRoute
   HealthLiveRoute: typeof HealthLiveRoute
@@ -251,6 +278,20 @@ declare module '@tanstack/solid-router' {
       path: '/app-preview'
       fullPath: '/app-preview'
       preLoaderRoute: typeof AppPreviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/join': {
+      id: '/join'
+      path: '/join'
+      fullPath: '/join'
+      preLoaderRoute: typeof JoinRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/.well-known/apple-app-site-association': {
+      id: '/.well-known/apple-app-site-association'
+      path: '/.well-known/apple-app-site-association'
+      fullPath: '/.well-known/apple-app-site-association'
+      preLoaderRoute: typeof DotwellKnownAppleAppSiteAssociationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/download/macos': {
@@ -367,6 +408,9 @@ const V1MeRouteWithChildren = V1MeRoute._addFileChildren(V1MeRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppPreviewRoute: AppPreviewRoute,
+  JoinRoute: JoinRoute,
+  DotwellKnownAppleAppSiteAssociationRoute:
+    DotwellKnownAppleAppSiteAssociationRoute,
   DownloadMacosRoute: DownloadMacosRoute,
   DownloadWindowsRoute: DownloadWindowsRoute,
   HealthLiveRoute: HealthLiveRoute,

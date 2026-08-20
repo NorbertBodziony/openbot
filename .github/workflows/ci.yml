@@ -180,6 +180,23 @@ jobs:
       - name: Verify production deployment
         shell: bash
         run: |
+          verification_dir="$(mktemp -d)"
+          trap 'rm -rf "$verification_dir"' EXIT
           curl --fail --silent --show-error --retry 5 --retry-all-errors https://openbot.run/ >/dev/null
+          join_status="$(curl --silent --show-error --retry 5 --retry-all-errors \
+            --max-redirs 0 --dump-header "$verification_dir/join.headers" \
+            --output "$verification_dir/join.html" --write-out '%{http_code}' \
+            https://openbot.run/join)"
+          test "$join_status" = "200"
+          tr -d '\r' < "$verification_dir/join.headers" | grep -Eiq '^cache-control:.*no-store'
+          tr -d '\r' < "$verification_dir/join.headers" | grep -Eiq '^referrer-policy:.*no-referrer'
+          association_status="$(curl --silent --show-error --retry 5 --retry-all-errors \
+            --max-redirs 0 --dump-header "$verification_dir/association.headers" \
+            --output "$verification_dir/association.json" --write-out '%{http_code}' \
+            https://openbot.run/.well-known/apple-app-site-association)"
+          test "$association_status" = "200"
+          tr -d '\r' < "$verification_dir/association.headers" | grep -Eiq '^content-type: application/json'
+          jq -e '.applinks.details == [{"appID":"ZTRDTUL87R.app.openbot.desktop","paths":["/join"]}]' \
+            "$verification_dir/association.json" >/dev/null
           curl --fail --silent --show-error --retry 5 --retry-all-errors https://api.openbot.run/health/live >/dev/null
           curl --fail --silent --show-error --retry 5 --retry-all-errors https://api.openbot.run/health/ready >/dev/null

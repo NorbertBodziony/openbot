@@ -5,6 +5,12 @@ export default defineConfig({
   plugins: [solidPlugin()],
   test: {
     environment: "jsdom",
-    include: ["test/hero-download-selector.test.tsx", "test/landing-glow.test.tsx", "test/landing-reveal.test.tsx"],
+    environmentOptions: { jsdom: { url: "https://openbot.run/" } },
+    include: [
+      "test/hero-download-selector.test.tsx",
+      "test/join-page.test.tsx",
+      "test/landing-glow.test.tsx",
+      "test/landing-reveal.test.tsx",
+    ],
   },
 });
