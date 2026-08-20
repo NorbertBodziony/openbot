@@ -210,8 +210,14 @@ export const MenuPopoverTooltip: Story = {
     await expect(body.getByRole("menuitem", { name: "Duplicate" })).toHaveAttribute("data-disabled");
     const deleteItem = body.getByRole("menuitem", { name: "Delete" });
     const deleteIcon = deleteItem.querySelector("svg");
+    const menuSeparator = within(menu).getByRole("separator");
+    const subtleDividerColor = getComputedStyle(document.documentElement)
+      .getPropertyValue("--openbot-shadow-ring")
+      .trim();
     await expect(deleteItem).toHaveClass("ui-action-menu-danger");
     await expect(getComputedStyle(deleteItem).color).not.toBe(firstItemStyle.color);
+    await expect(getComputedStyle(menuSeparator).backgroundColor).toBe(subtleDividerColor);
+    await expect(getComputedStyle(menuSeparator).margin).toBe("4px 0px");
     if (!(deleteIcon instanceof SVGElement)) throw new Error("Delete icon was not found.");
     await expect(getComputedStyle(deleteIcon).color).toBe(getComputedStyle(deleteItem).color);
     await userEvent.keyboard("{ArrowDown}{End}");

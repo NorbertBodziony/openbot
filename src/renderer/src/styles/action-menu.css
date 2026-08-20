@@ -94,12 +94,13 @@
   background: transparent;
 }
 
+.ui-action-menu > hr,
 .ui-action-menu [role="separator"],
 .ui-action-menu-separator {
   height: 1px;
   margin: var(--openbot-space-1) 0;
   border: 0;
-  background: var(--openbot-border);
+  background: var(--openbot-shadow-ring);
 }
 
 .ui-action-menu:not([data-menu-layout="grid"])
