@@ -197,7 +197,7 @@ export const Interactive: Story = {
     const memberSearch = body.getByRole("searchbox", { name: "Search members" });
     await userEvent.type(memberSearch, "Jon");
     await expect(membersList.getByText("Jon Bell")).toBeVisible();
-    await expect(membersList.queryByText("Alice Chen")).not.toBeInTheDocument();
+    await waitFor(() => expect(membersList.queryByText("Alice Chen")).not.toBeInTheDocument());
     await userEvent.clear(memberSearch);
 
     const ownerRow = membersList.getByText("Norbert").closest(".server-settings-member-row");
@@ -243,7 +243,7 @@ export const Interactive: Story = {
     const confirmation = body.getByRole("alert");
     await expect(confirmation).toBeVisible();
     await userEvent.click(within(confirmation).getByRole("button", { name: "Remove member" }));
-    await expect(membersList.queryByText("Maya Singh")).not.toBeInTheDocument();
+    await waitFor(() => expect(membersList.queryByText("Maya Singh")).not.toBeInTheDocument());
     await expect(body.queryByRole("heading", { name: "Active sessions" })).not.toBeInTheDocument();
 
     await userEvent.click(body.getByRole("button", { name: "Close server settings" }));
