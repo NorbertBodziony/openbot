@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     environmentOptions: { jsdom: { url: "https://openbot.run/" } },
+    setupFiles: ["@testing-library/jest-dom/vitest"],
     include: [
       "test/hero-download-selector.test.tsx",
       "test/join-page.test.tsx",

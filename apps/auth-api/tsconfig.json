@@ -6,7 +6,7 @@
     "paths": {
       "@openbot/renderer-preview": ["./src/types/renderer-preview.d.ts"]
     },
-    "types": ["@cloudflare/workers-types", "vite/client"]
+    "types": ["@cloudflare/workers-types", "vite/client", "@testing-library/jest-dom"]
   },
   "include": [
     "src/**/*.ts",
