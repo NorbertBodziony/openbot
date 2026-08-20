@@ -863,7 +863,10 @@ if (!hasSingleInstanceLock) {
       configureContentSecurityPolicy();
       mainWindow = createWindow();
       centralAuthManager = new CentralAuthManager({
-        apiUrl: readCentralAuthApiUrl(process.env.OPENBOT_AUTH_API_URL),
+        apiUrl: readCentralAuthApiUrl(
+          process.env.OPENBOT_AUTH_API_URL,
+          app.isPackaged ? "https://api.openbot.run" : "http://127.0.0.1:3100",
+        ),
         storagePath: join(app.getPath("userData"), CENTRAL_AUTH_FILE),
         encrypt: (value) => {
           if (!safeStorage.isEncryptionAvailable()) {

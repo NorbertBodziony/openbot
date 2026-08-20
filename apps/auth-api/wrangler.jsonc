@@ -4,6 +4,21 @@
   "compatibility_date": "2026-08-18",
   "compatibility_flags": ["nodejs_compat"],
   "main": "@tanstack/solid-start/server-entry",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "openbot.run",
+      "custom_domain": true
+    },
+    {
+      "pattern": "api.openbot.run",
+      "custom_domain": true
+    }
+  ],
+  "secrets": {
+    "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN"]
+  },
   "vars": {
     "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
     "EMAIL_SMTP_HOST": "mail.privateemail.com",
@@ -18,7 +33,7 @@
     {
       "binding": "DB",
       "database_name": "openbot-auth",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "0cf7e5c1-63ad-4089-810a-e9eb67dd863d",
       "migrations_dir": "migrations"
     }
   ],
@@ -30,10 +45,35 @@
     }
   ],
   "env": {
+    "preview": {
+      "name": "openbot-landing-preview",
+      "workers_dev": true,
+      "preview_urls": true,
+      "routes": [],
+      "secrets": {
+        "required": []
+      },
+      "vars": {
+        "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
+        "EMAIL_SMTP_HOST": "mail.privateemail.com",
+        "EMAIL_SMTP_PORT": "465",
+        "EMAIL_SMTP_USERNAME": "hello@openbot.run",
+        "EMAIL_FROM": "hello@openbot.run",
+        "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
+        "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
+        "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run"
+      },
+      "d1_databases": [],
+      "r2_buckets": []
+    },
     "test": {
       "name": "openbot-auth-api-test",
       "workers_dev": true,
       "preview_urls": false,
+      "routes": [],
+      "secrets": {
+        "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN"]
+      },
       "vars": {
         "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
         "EMAIL_SMTP_HOST": "mail.privateemail.com",
