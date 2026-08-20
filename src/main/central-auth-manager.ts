@@ -423,8 +423,8 @@ function isOpenBotHostUrl(value: string): boolean {
   }
 }
 
-export function readCentralAuthApiUrl(value: string | undefined): string {
-  const url = new URL(value ?? "http://127.0.0.1:3100");
+export function readCentralAuthApiUrl(value: string | undefined, fallback = "http://127.0.0.1:3100"): string {
+  const url = new URL(value ?? fallback);
   const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
   if ((url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) || url.pathname !== "/") {
     throw new Error("OPENBOT_AUTH_API_URL must be HTTPS or an HTTP loopback origin.");

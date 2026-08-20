@@ -462,6 +462,7 @@ describe("CentralAuthManager", () => {
 
   it("accepts only HTTPS and local HTTP API origins", () => {
     expect(readCentralAuthApiUrl(undefined)).toBe("http://127.0.0.1:3100");
+    expect(readCentralAuthApiUrl(undefined, "https://api.openbot.run")).toBe("https://api.openbot.run");
     expect(readCentralAuthApiUrl("https://auth.example.com")).toBe("https://auth.example.com");
     expect(() => readCentralAuthApiUrl("http://auth.example.com")).toThrow("HTTPS");
   });
