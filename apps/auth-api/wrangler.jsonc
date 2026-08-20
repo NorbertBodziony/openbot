@@ -3,9 +3,12 @@
   "name": "openbot-auth-api",
   "compatibility_date": "2026-08-18",
   "compatibility_flags": ["nodejs_compat"],
-  "main": "@tanstack/solid-start/server-entry",
+  "main": "src/worker-entry.ts",
   "workers_dev": false,
   "preview_urls": false,
+  "triggers": {
+    "crons": ["17 3 * * *"]
+  },
   "routes": [
     {
       "pattern": "openbot.run/*",
@@ -50,6 +53,9 @@
       "workers_dev": true,
       "preview_urls": true,
       "routes": [],
+      "triggers": {
+        "crons": []
+      },
       "secrets": {
         "required": []
       },
@@ -71,6 +77,9 @@
       "workers_dev": true,
       "preview_urls": false,
       "routes": [],
+      "triggers": {
+        "crons": []
+      },
       "secrets": {
         "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN"]
       },

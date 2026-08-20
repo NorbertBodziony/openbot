@@ -1055,8 +1055,8 @@
 }
 
 .agent-settings-avatar .bot-avatar > svg {
-  width: 100%;
-  height: 100%;
+  width: 128%;
+  height: 128%;
 }
 
 .agent-settings-avatar:hover {
@@ -4385,8 +4385,8 @@
 
 .composer-mention-avatar > svg {
   display: block;
-  width: 113%;
-  height: 113%;
+  width: 128%;
+  height: 128%;
   overflow: visible;
 }
 

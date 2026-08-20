@@ -2,7 +2,7 @@ import { serializeAttachmentReference } from "@openbot/contracts/attachment-refe
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
-import { avatarHeadColor } from "../../blobatar";
+import { avatarHeadColor } from "../../bloub-avatar";
 import type { BotMessage, BotProfile } from "../../data";
 import { ImageGeneration } from "./ImageGeneration";
 import { ExchangeSystemRow, MessageBody } from "./MessageRendering";

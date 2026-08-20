@@ -57,6 +57,47 @@ describe("AccountLogin", () => {
     expect(onRequestEmailCode).toHaveBeenCalledWith("person.name+tag@example.com");
   });
 
+  it("shakes an invalid email and clears the error when the user types", async () => {
+    const view = renderLogin();
+    const email = screen.getByRole("textbox", { name: "Email" });
+
+    await fireEvent.input(email, { target: { value: "not-an-email" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+
+    expect(email).toHaveClass("t-input", "is-error", "is-shaking");
+    expect(view.container.querySelector(".t-input-wrap")).toHaveClass("is-error");
+    expect(screen.getByRole("alert")).toHaveClass("t-error-msg");
+
+    await fireEvent.input(email, { target: { value: "person@example.com" } });
+
+    expect(email).not.toHaveClass("is-error");
+    expect(email).not.toHaveClass("is-shaking");
+    expect(view.container.querySelector(".t-input-wrap")).not.toHaveClass("is-error");
+  });
+
+  it("automatically reverts the email error after the hold time", async () => {
+    vi.useFakeTimers();
+    const view = renderLogin();
+
+    try {
+      const email = screen.getByRole("textbox", { name: "Email" });
+      await fireEvent.input(email, { target: { value: "not-an-email" } });
+      await fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+
+      expect(email).toHaveClass("is-error");
+      await vi.advanceTimersByTimeAsync(3_300);
+
+      expect(email).not.toHaveClass("is-error");
+      expect(view.container.querySelector(".t-input-wrap")).not.toHaveClass("is-error");
+
+      await vi.advanceTimersByTimeAsync(280);
+      expect(view.container.querySelector(".t-error-msg")).toBeEmptyDOMElement();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("formats a pasted safe code and verifies it once automatically", async () => {
     let finishVerification: (() => void) | undefined;
     const onVerifyEmailCode = vi.fn(

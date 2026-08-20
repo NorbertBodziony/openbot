@@ -31,22 +31,22 @@
   display: inline-flex;
   align-items: center;
   align-self: center;
-  gap: 12px;
-  margin-bottom: 32px;
+  gap: 24px;
+  margin-bottom: 42px;
 }
 
 .account-login-logo {
   display: block;
-  width: 40px;
-  height: 40px;
+  width: 80px;
+  height: 80px;
 }
 
 .account-login-wordmark {
   color: var(--openbot-text-primary);
-  font-size: var(--openbot-text-xl);
+  font-size: var(--openbot-text-display);
   font-weight: 620;
   letter-spacing: -0.015em;
-  line-height: 22px;
+  line-height: var(--openbot-leading-display);
 }
 
 .account-login {
@@ -153,6 +153,11 @@
   margin-top: 24px;
 }
 
+.account-login-email-field {
+  display: grid;
+  gap: 12px;
+}
+
 .account-login-form input:not(.otp-input-native) {
   width: 100%;
   height: 44px;
@@ -184,11 +189,90 @@
 }
 
 .account-login-field-error {
+  height: 16px;
+  overflow: hidden;
   margin: -2px 0 0;
   color: var(--openbot-danger);
   font-size: var(--openbot-text-sm);
   line-height: 16px;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Border-color tween. Define your input's default / focused
+   / error border-color in your own component CSS — this rule
+   only owns the interpolation. Use a constant border-width
+   across states so the tween never shifts inner content. */
+.t-input {
+  transition: border-color var(--openbot-duration-normal) ease-out;
+  will-change: transform;
+}
+.t-input.is-error {
+  /* Error border auto-reverts on the hold timer, so the
+     fade-out uses the slower revert duration (matches the
+     message fade). */
+  transition: border-color var(--revert-dur, 280ms) ease-out;
+}
+
+.account-login-form input:not(.otp-input-native).t-input.is-error {
+  border-color: var(--openbot-danger);
+}
+
+/* Error message reveal. Visibility is delayed by --revert-dur
+   on hide so the message stays painted for the full opacity
+   fade-out. Entering .is-error drops the delay to 0 so the
+   message becomes visible immediately. */
+.t-error-msg {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--revert-dur, 280ms) ease-out,
+    visibility 0s linear var(--revert-dur, 280ms);
+}
+.t-input-wrap.is-error .t-error-msg {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity var(--revert-dur, 280ms) ease-out,
+    visibility 0s linear 0s;
+}
+
+/* Multi-segment keyframe with per-stop easing so each leg
+   of the shake follows its own cubic-bezier independently.
+   %-stops are cumulative durations as a fraction of the
+   total (80, 60, 80, 60 = 280ms): 28.57%, 57.14%, 78.57%,
+   100%. Recompute if any segment duration changes. */
+.t-input.is-shaking {
+  animation: t-input-shake calc(var(--shake-dur-a) * 2 + var(--shake-dur-b) * 2) linear;
+}
+@keyframes t-input-shake {
+  0% {
+    transform: translateX(0);
+    animation-timing-function: var(--shake-ease);
+  }
+  28.57% {
+    transform: translateX(var(--shake-distance));
+    animation-timing-function: var(--shake-ease);
+  }
+  57.14% {
+    transform: translateX(calc(var(--shake-distance) * -1));
+    animation-timing-function: var(--shake-ease);
+  }
+  78.57% {
+    transform: translateX(var(--shake-overshoot));
+    animation-timing-function: var(--shake-ease);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-input {
+    animation: none !important;
+    transform: none !important;
+  }
 }
 
 .account-login-primary:disabled,

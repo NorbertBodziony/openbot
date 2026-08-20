@@ -1,9 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { InvitePreview, JoinServerInput } from "@openbot/contracts/ipc";
 import { createSignal, onSettled, Show, untrack } from "solid-js";
-import { Button, Dialog, Field, IconButton, Input, X } from "./ui";
-
-const joinTeamSignalUrl = new URL("../assets/join-team-signal.webp", import.meta.url).href;
+import { Button, Dialog, Field, IconButton, Input, ShieldCheck, X } from "./ui";
 
 interface JoinServerDialogProps {
   inviteUrl: string;
@@ -77,7 +75,6 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
               if (!inviteUrl().trim()) queueMicrotask(() => inviteInput?.focus({ preventScroll: true }));
             }}
           >
-            <img class="join-server-artwork" src={joinTeamSignalUrl} alt="" draggable={false} />
             <IconButton
               class="join-server-close"
               label="Close"
@@ -92,9 +89,9 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
             <div class="join-server-content">
               <header class="join-server-header">
                 <div class="join-server-heading">
-                  <Dialog.Title as="h2">Join an OpenBot team</Dialog.Title>
+                  <Dialog.Title as="h2">Join a team</Dialog.Title>
                   <Dialog.Description>
-                    {preview() ? "Confirm the verified host before you connect." : "Review a one-time invitation."}
+                    {preview() ? "Check the host before you connect." : "Paste your invitation link."}
                   </Dialog.Description>
                 </div>
               </header>
@@ -132,18 +129,16 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
                     </Field>
                   }
                 >
-                  {(item) => <InvitePreviewCard preview={item()} accountEmail={props.accountEmail} />}
+                  {(item) => <InvitePreviewCard preview={item()} accountEmail={props.accountEmail} variant="dialog" />}
                 </Show>
 
-                <div class="join-server-feedback">
-                  <Show when={error()}>
-                    {(message) => (
-                      <p class="join-server-error" role="alert">
-                        {message()}
-                      </p>
-                    )}
-                  </Show>
-                </div>
+                <Show when={error()}>
+                  {(message) => (
+                    <p class="join-server-error" role="alert">
+                      {message()}
+                    </p>
+                  )}
+                </Show>
 
                 <Show when={!preview()}>
                   <p class="join-server-account">
@@ -183,15 +178,35 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
   );
 }
 
-export function InvitePreviewCard(props: { preview: InvitePreview; accountEmail: string }) {
+interface InvitePreviewCardProps {
+  preview: InvitePreview;
+  accountEmail: string;
+  variant?: "embedded" | "dialog";
+}
+
+export function InvitePreviewCard(props: InvitePreviewCardProps) {
+  const dialogVariant = () => props.variant === "dialog";
+
   return (
-    <section class="join-server-preview" aria-label="Verified invitation">
-      <div class="join-server-preview-signal" aria-hidden="true">
-        <i />
-        <span />
-      </div>
+    <section class="join-server-preview" data-variant={props.variant ?? "embedded"} aria-label="Verified invitation">
+      <Show
+        when={dialogVariant()}
+        fallback={
+          <div class="join-server-preview-signal" aria-hidden="true">
+            <i />
+            <span />
+          </div>
+        }
+      >
+        <div class="join-server-preview-status">
+          <ShieldCheck aria-hidden="true" />
+          <span>Verified host</span>
+        </div>
+      </Show>
       <div class="join-server-preview-heading">
-        <span class="join-server-verified">Verified host</span>
+        <Show when={!dialogVariant()}>
+          <span class="join-server-verified">Verified host</span>
+        </Show>
         <strong>{props.preview.serverName}</strong>
         <small>{props.preview.apiHostname}</small>
       </div>

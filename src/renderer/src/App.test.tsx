@@ -521,7 +521,7 @@ describe("OpenBot connected desktop shell", () => {
 
     emitInvite?.(inviteUrl);
 
-    expect(await screen.findByRole("dialog", { name: "Join an OpenBot team" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Join a team" })).toBeInTheDocument();
     await waitFor(() => expect(window.openbot.servers.previewInvite).toHaveBeenCalledWith({ inviteUrl }));
     expect(window.openbot.servers.join).not.toHaveBeenCalled();
   });
@@ -647,14 +647,14 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
 
     expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Join an OpenBot team" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Join a team" })).not.toBeInTheDocument();
 
     emitAuth?.({
       status: "signed_in",
       user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
     });
 
-    expect(await screen.findByRole("dialog", { name: "Join an OpenBot team" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Join a team" })).toBeInTheDocument();
     await waitFor(() => expect(window.openbot.servers.previewInvite).toHaveBeenCalledWith({ inviteUrl }));
   });
 
@@ -3317,7 +3317,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("complementary", { name: "Servers" })).toBeInTheDocument();
     expect(screen.getByText("Local", { selector: ".sidebar-server-name" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Add remote server" }));
-    expect(screen.getByRole("dialog", { name: "Join an OpenBot team" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Join a team" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Invitation link" })).toBeInTheDocument();
   });
 

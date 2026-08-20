@@ -24,6 +24,7 @@ describe("JoinServerDialog", () => {
     const onClose = vi.fn();
     render(() => <JoinServerDialog {...defaultProps} onClose={onClose} />);
 
+    expect(screen.getByRole("dialog", { name: "Join a team" })).toBeInTheDocument();
     const inviteField = screen.getByRole("textbox", { name: "Invitation link" });
     await waitFor(() => expect(inviteField).toHaveFocus());
     expect(screen.getByRole("button", { name: "Review invitation" })).toBeDisabled();
@@ -81,5 +82,22 @@ describe("JoinServerDialog", () => {
     expect(onJoin).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "Connect to host" }));
     await waitFor(() => expect(onJoin).toHaveBeenCalledOnce());
+  });
+
+  it("shows a join error and permits a retry", async () => {
+    const onJoin = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("OpenBot could not connect to this host."))
+      .mockResolvedValueOnce(undefined);
+    render(() => (
+      <JoinServerDialog {...defaultProps} inviteUrl="https://openbot.run/join?invite=valid" onJoin={onJoin} />
+    ));
+
+    expect(await screen.findByText("Studio host")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Connect to host" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("OpenBot could not connect to this host.");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Connect to host" }));
+    await waitFor(() => expect(onJoin).toHaveBeenCalledTimes(2));
   });
 });

@@ -1,9 +1,10 @@
 # OpenBot Auth API
 
 This TanStack Start and Solid 2 package is the central OpenBot account API. It
-runs on Cloudflare Workers and stores data in D1. Users sign in with an
-eight-character one-time email code. The API stores only code hashes and OpenBot
-session-token hashes.
+runs on Cloudflare Workers, stores account and authentication records in D1,
+and stores account avatars in R2. Users sign in with an eight-character
+one-time email code. D1 stores hashes instead of plaintext codes, session tokens,
+and team authentication tickets.
 
 ## Local development
 
@@ -79,6 +80,22 @@ bun run api:deploy
 ```
 
 The service applies limits per email, per IP, per challenge, and per resend.
+
+## Authentication data retention
+
+The production Worker runs `17 3 * * *`, which is once each day at 03:17 UTC.
+The scheduled handler deletes expired or consumed email challenges, expired or
+revoked sessions, expired or consumed team authentication tickets, and rate-limit
+records after their 15-minute window ends. A successful run logs only aggregate
+deletion counts.
+
+The `preview` and `test` environments do not install an automatic Cron Trigger.
+To run the scheduled handler during local development, start the API and request
+the Cloudflare scheduled-handler test route:
+
+```bash
+curl "http://127.0.0.1:3100/cdn-cgi/handler/scheduled?cron=17+3+*+*+*"
+```
 
 ## Named team tunnels
 

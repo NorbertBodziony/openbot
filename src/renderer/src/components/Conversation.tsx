@@ -28,7 +28,7 @@ import type {
 import { isClaudeModel } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onCleanup, onSettled, Show, untrack } from "solid-js";
 import { normalizeAvatarFile } from "../avatar-image";
-import { AVATAR_HUE_OPTIONS, avatarCandidateSeeds, avatarHueSwatch } from "../blobatar";
+import { AVATAR_HUE_OPTIONS, avatarCandidateSeeds, avatarHueSwatch } from "../bloub-avatar";
 import type { BotMessage, BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";

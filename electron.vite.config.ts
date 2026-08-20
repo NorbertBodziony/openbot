@@ -21,6 +21,12 @@ export default defineConfig({
   },
   renderer: {
     plugins: [solidPlugin(), tailwindcss({ optimize: false })],
+    optimizeDeps: {
+      include: ["@norbert_bodziony/bloub"],
+    },
+    resolve: {
+      dedupe: ["solid-js", "@solidjs/web"],
+    },
     server: rendererPort ? { port: rendererPort, strictPort: true } : undefined,
   },
 });

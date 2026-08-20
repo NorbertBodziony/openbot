@@ -3,7 +3,7 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { DraftAttachment } from "@openbot/contracts/ipc";
 import { Portal } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, createUniqueId, Show } from "solid-js";
-import { buildAnimatedAvatarSvg } from "../blobatar";
+import { createStaticAvatarSvg } from "../bloub-avatar";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 import { AnchoredTooltip } from "./conversation/AnchoredTooltip";
@@ -516,11 +516,11 @@ function createMentionToken(bot: BotProfile): HTMLSpanElement {
     image.alt = "";
     image.draggable = false;
     image.addEventListener("error", () => {
-      avatar.innerHTML = buildAnimatedAvatarSvg(bot.avatarSeed, bot.avatarHue);
+      scheduleStaticMentionAvatar(avatar, bot);
     });
     avatar.append(image);
   } else {
-    avatar.innerHTML = buildAnimatedAvatarSvg(bot.avatarSeed, bot.avatarHue);
+    scheduleStaticMentionAvatar(avatar, bot);
   }
   const name = document.createElement("span");
   name.textContent = bot.name;
@@ -575,6 +575,13 @@ function renderEditorValue(
     cursor = index + match[0].length;
   }
   if (cursor < value.length) editor.append(document.createTextNode(value.slice(cursor)));
+}
+
+function scheduleStaticMentionAvatar(avatar: HTMLElement, bot: BotProfile): void {
+  queueMicrotask(() => {
+    if (!avatar.isConnected) return;
+    avatar.replaceChildren(createStaticAvatarSvg(bot.avatarSeed, bot.avatarHue));
+  });
 }
 
 function serializeEditor(editor: HTMLDivElement): string {

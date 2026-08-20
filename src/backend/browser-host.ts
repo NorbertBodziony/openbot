@@ -13,7 +13,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { app, type BrowserWindow, type Session, session, type WebContents, WebContentsView } from "electron";
-import { isCloseBrowserTabShortcut, isGlobalSearchShortcut } from "./browser-shortcuts";
+import { isCloseBrowserTabShortcut, isGlobalSearchShortcut, isToggleDevToolsShortcut } from "./browser-shortcuts";
 import { persistentBrowserUrl, xLoginUrlForLanding } from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
@@ -445,6 +445,11 @@ export class BrowserHost {
     const contents = tab.view.webContents;
     const changed = () => this.#emitChanged();
     contents.on("before-input-event", (event, input) => {
+      if (isToggleDevToolsShortcut(input)) {
+        event.preventDefault();
+        this.#window.webContents.toggleDevTools();
+        return;
+      }
       if (isGlobalSearchShortcut(input)) {
         event.preventDefault();
         this.#window.webContents.focus();

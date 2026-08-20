@@ -2,19 +2,21 @@ import { expect, fn, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { JoinServerDialog } from "../src/components/JoinServerDialog";
 
+const preview = {
+  serverId: "00000000-0000-4000-8000-000000000000",
+  serverName: "Studio host",
+  apiHostname: "story-host.openbot.run",
+  role: "member" as const,
+  expiresAt: "2026-08-21T10:00:00.000Z",
+  emailBound: false,
+};
+
 const args: Parameters<typeof JoinServerDialog>[0] = {
   inviteUrl:
     "https://openbot.run/join?api=https%3A%2F%2Fstory-host.openbot.run%2F&server=00000000-0000-4000-8000-000000000000&fingerprint=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&invite=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   accountEmail: "person@example.com",
   onClose: fn(),
-  onPreview: fn(async () => ({
-    serverId: "00000000-0000-4000-8000-000000000000",
-    serverName: "Studio host",
-    apiHostname: "story-host.openbot.run",
-    role: "member" as const,
-    expiresAt: "2026-08-21T10:00:00.000Z",
-    emailBound: false,
-  })),
+  onPreview: fn(async () => preview),
   onJoin: fn(async () => undefined),
 };
 
@@ -40,6 +42,12 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const VerifiedInvite: Story = {};
+
+export const EmailBoundInvite: Story = {
+  args: {
+    onPreview: fn(async () => ({ ...preview, emailBound: true })),
+  },
+};
 
 export const InviteReady: Story = {
   play: async ({ args: storyArgs, userEvent }) => {
@@ -81,7 +89,36 @@ export const Joining: Story = {
   },
 };
 
+export const JoinError: Story = {
+  args: {
+    onJoin: async () => {
+      throw new Error("OpenBot could not connect to this host.");
+    },
+  },
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    await expect(body.findByText("Studio host")).resolves.toBeTruthy();
+    await userEvent.click(body.getByRole("button", { name: "Connect to host" }));
+    await expect(body.getByRole("alert")).toHaveTextContent("OpenBot could not connect to this host.");
+  },
+};
+
+export const LongIdentity: Story = {
+  args: {
+    accountEmail: "person.with.a.long.address@example-company-name.com",
+    onPreview: fn(async () => ({
+      ...preview,
+      serverName: "Product design and research studio host",
+      apiHostname: "product-design-research-studio.openbot.run",
+    })),
+  },
+};
+
 export const Narrow: Story = {
   args: { inviteUrl: "" },
+  parameters: { viewport: { defaultViewport: "joinServerNarrow" } },
+};
+
+export const NarrowVerified: Story = {
   parameters: { viewport: { defaultViewport: "joinServerNarrow" } },
 };

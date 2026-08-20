@@ -5,80 +5,44 @@
   display: grid;
   place-items: center;
   padding: var(--openbot-space-6);
-  background: var(--openbot-bg-overlay);
+  background: var(--openbot-command-overlay);
   animation: join-server-backdrop-in var(--openbot-duration-normal) var(--openbot-ease-out) both;
 }
 
 .join-server-dialog {
   position: relative;
-  isolation: isolate;
-  width: min(640px, 100%);
-  height: min(460px, calc(100dvh - 48px));
+  width: min(440px, 100%);
+  max-height: calc(100dvh - 48px);
   overflow: hidden;
   border: 1px solid var(--openbot-border-strong);
   border-radius: var(--openbot-radius-lg);
   outline: 0;
-  background: var(--openbot-bg-canvas);
+  background: var(--openbot-bg-surface);
   color: var(--openbot-text-primary);
   box-shadow:
-    0 28px 90px var(--openbot-shadow-dialog),
+    0 24px 80px var(--openbot-shadow-dialog),
     0 0 0 1px var(--openbot-shadow-ring);
   animation: join-server-dialog-in var(--openbot-duration-overlay) var(--openbot-ease-out) both;
-}
-
-.join-server-dialog::before {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  background: linear-gradient(
-    to right,
-    transparent 0%,
-    transparent 24%,
-    var(--openbot-bg-surface-clear) 38%,
-    var(--openbot-bg-canvas) 66%,
-    var(--openbot-bg-canvas) 100%
-  );
-  content: "";
-  pointer-events: none;
-}
-
-.join-server-artwork {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  width: 100%;
-  height: 100%;
-  filter: blur(2px);
-  object-fit: cover;
-  object-position: center;
-  transform: scale(1.02);
-  user-select: none;
-  pointer-events: none;
 }
 
 .join-server-close {
   position: absolute;
   top: var(--openbot-space-4);
   right: var(--openbot-space-4);
-  z-index: 3;
+  z-index: 1;
 }
 
 .join-server-content {
-  position: relative;
-  z-index: 2;
-  width: 368px;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  margin-left: auto;
+  width: 100%;
+  max-height: inherit;
   overflow-y: auto;
-  padding: 44px var(--openbot-space-8) 28px;
+  padding: var(--openbot-space-6);
 }
 
 .join-server-heading {
   display: grid;
-  gap: var(--openbot-space-2);
+  gap: var(--openbot-space-1);
+  padding-right: 40px;
 }
 
 .join-server-heading h2,
@@ -87,7 +51,7 @@
 }
 
 .join-server-heading h2 {
-  font-size: var(--openbot-text-3xl);
+  font-size: var(--openbot-text-2xl);
   font-weight: var(--openbot-weight-semibold);
   line-height: var(--openbot-leading-2xl);
   letter-spacing: var(--openbot-tracking-tight);
@@ -95,13 +59,13 @@
 
 .join-server-heading p {
   color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-md);
-  line-height: var(--openbot-leading-md);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
 }
 
 .join-server-form {
   display: grid;
-  gap: var(--openbot-space-3);
+  gap: var(--openbot-space-4);
   margin-top: var(--openbot-space-6);
 }
 
@@ -112,12 +76,10 @@
   font-size: var(--openbot-text-sm);
 }
 
-.join-server-feedback {
-  min-height: var(--openbot-leading-xs);
-}
-
 .join-server-error {
   margin: 0;
+  border-left: 2px solid var(--openbot-danger);
+  padding-left: var(--openbot-space-3);
   color: var(--openbot-danger);
   font-size: var(--openbot-text-xs);
   line-height: var(--openbot-leading-xs);
@@ -228,11 +190,80 @@
   line-height: var(--openbot-leading-xs);
 }
 
+.join-server-preview[data-variant="dialog"] {
+  gap: var(--openbot-space-4);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.join-server-preview-status {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-1-5);
+  color: var(--openbot-success);
+  font-size: var(--openbot-text-xs);
+  font-weight: var(--openbot-weight-medium);
+  line-height: var(--openbot-leading-xs);
+}
+
+.join-server-preview-status svg {
+  width: var(--openbot-icon-md);
+  height: var(--openbot-icon-md);
+  flex: 0 0 auto;
+  stroke-width: 1.75;
+}
+
+.join-server-preview[data-variant="dialog"] .join-server-preview-heading {
+  gap: var(--openbot-space-1);
+}
+
+.join-server-preview[data-variant="dialog"] .join-server-preview-heading strong {
+  font-size: var(--openbot-text-2xl);
+  font-weight: var(--openbot-weight-semibold);
+  line-height: var(--openbot-leading-2xl);
+  letter-spacing: var(--openbot-tracking-tight);
+}
+
+.join-server-preview[data-variant="dialog"] .join-server-preview-heading small {
+  font-family: var(--openbot-font-mono);
+}
+
+.join-server-preview[data-variant="dialog"] dl {
+  gap: 0;
+  border-top: 1px solid var(--openbot-border);
+}
+
+.join-server-preview[data-variant="dialog"] dl div {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--openbot-space-4);
+  border-bottom: 1px solid var(--openbot-border);
+  padding: var(--openbot-space-2) 0;
+}
+
+.join-server-preview[data-variant="dialog"] dt,
+.join-server-preview[data-variant="dialog"] dd {
+  line-height: var(--openbot-leading-md);
+}
+
+.join-server-preview[data-variant="dialog"] dd {
+  max-width: 260px;
+  text-align: right;
+}
+
+.join-server-preview[data-variant="dialog"] > p {
+  padding-left: calc(var(--openbot-icon-md) + var(--openbot-space-1-5));
+}
+
 .join-server-actions {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: var(--openbot-space-2);
+  border-top: 1px solid var(--openbot-border);
   margin-top: var(--openbot-space-1);
+  padding-top: var(--openbot-space-4);
 }
 
 .join-server-submit {
@@ -248,7 +279,7 @@
 @keyframes join-server-dialog-in {
   from {
     opacity: 0;
-    transform: translateY(6px) scale(0.99);
+    transform: translateY(4px);
   }
 }
 
@@ -259,21 +290,7 @@
 
   .join-server-dialog {
     width: 100%;
-    height: min(460px, calc(100dvh - 24px));
-  }
-
-  .join-server-dialog::before {
-    background: linear-gradient(
-      to bottom,
-      transparent 0%,
-      var(--openbot-bg-surface-clear) 24%,
-      var(--openbot-bg-canvas) 48%,
-      var(--openbot-bg-canvas) 100%
-    );
-  }
-
-  .join-server-artwork {
-    object-position: 35% center;
+    max-height: calc(100dvh - 24px);
   }
 
   .join-server-close {
@@ -282,13 +299,7 @@
   }
 
   .join-server-content {
-    width: 100%;
-    justify-content: flex-end;
-    padding: 88px var(--openbot-space-4) var(--openbot-space-4);
-  }
-
-  .join-server-form {
-    margin-top: var(--openbot-space-4);
+    padding: var(--openbot-space-6);
   }
 }
 

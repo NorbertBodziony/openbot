@@ -158,7 +158,8 @@ SolidJS renderer
 
 Cloudflare Workers
 └── TanStack Start + Solid 2 account API
-    └── D1 users, OAuth flows, and hashed sessions
+    ├── D1 accounts, email challenges, hashed sessions, and team tunnels
+    └── R2 account avatars
 ```
 
 - `src/main` owns the Electron lifecycle, window security, local protocol, and IPC registration.
@@ -190,8 +191,9 @@ The Electron renderer is never exposed as a public website. It communicates with
 over stdio. When the owner publishes OpenBot, its authenticated Team API binds to localhost and a
 Cloudflare Tunnel exposes only that API. The optional account flow connects to the configured HTTPS
 account API. The client stores only an encrypted OpenBot session token. One-time codes expire after
-10 minutes and are stored only as hashes. The embedded browser uses a separate sandboxed Electron
-session and cannot access `window.openbot` or managed local attachments.
+10 minutes and are stored only as hashes. A daily maintenance task removes expired or consumed
+authentication records from D1. The embedded browser uses a separate sandboxed Electron session and
+cannot access `window.openbot` or managed local attachments.
 
 ## Security
 

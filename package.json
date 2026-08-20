@@ -103,6 +103,7 @@
     "@anthropic-ai/sdk": "0.116.0",
     "@kobalte/core": "2.0.0-alpha.0",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "@norbert_bodziony/bloub": "0.2.1",
     "@novnc/novnc": "1.7.0",
     "@openbot/brand": "workspace:*",
     "@openbot/contracts": "workspace:*",

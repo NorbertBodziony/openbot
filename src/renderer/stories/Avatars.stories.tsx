@@ -1,4 +1,6 @@
+import { BloubBot, POSES, type StateId } from "@norbert_bodziony/bloub";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
+import { bloubAvatarProfile } from "../src/bloub-avatar";
 import { AgentAvatar } from "../src/components/AgentAvatar";
 import { TeamPersonAvatar } from "../src/components/TeamPersonAvatar";
 import { STORY_BOTS, STORY_PRESENCE } from "./fixtures";
@@ -22,6 +24,46 @@ export const Thinking: AgentStory = {
 
 export const CustomImageFallback: AgentStory = {
   args: { bot: { ...STORY_BOTS[2], avatarUrl: "mock-avatar://missing" } },
+};
+
+const AVATAR_SIZES = [16, 18, 24, 32, 36, 42, 62] as const;
+const AVATAR_STATES = ["idle", "thinking", "wink", "orbit"] as const satisfies readonly StateId[];
+
+export const SizesAndStates: AgentStory = {
+  render: () => {
+    const profile = bloubAvatarProfile("story-avatar", 215);
+    return (
+      <div
+        class="grid gap-6 p-8"
+        style={{ background: "var(--openbot-bg-canvas)", color: "var(--openbot-text-primary)" }}
+      >
+        {AVATAR_STATES.map((state) => (
+          <section class="grid gap-3" aria-label={`${state} avatar sizes`}>
+            <strong class="text-sm capitalize">{state}</strong>
+            <div class="flex items-end gap-5">
+              {AVATAR_SIZES.map((size) => (
+                <div class="grid justify-items-center gap-2">
+                  <span class="bot-avatar bot-avatar-bloub" style={{ width: `${size}px`, height: `${size}px` }}>
+                    <BloubBot
+                      size={100}
+                      shape={profile.shape}
+                      color={profile.color}
+                      expression={profile.expression}
+                      state={state}
+                      frozenAt={POSES[state]}
+                      ariaLabel={`${state} avatar at ${size} pixels`}
+                      class="bloub-avatar-svg"
+                    />
+                  </span>
+                  <small style={{ color: "var(--openbot-text-muted)" }}>{size}</small>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    );
+  },
 };
 
 export const PersonAvatars: AgentStory = {

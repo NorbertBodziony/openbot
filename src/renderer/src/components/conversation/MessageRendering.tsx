@@ -2,7 +2,7 @@ import { attachmentReferenceIds } from "@openbot/contracts/attachment-references
 import type { AttachmentSummary, MessageReaction } from "@openbot/contracts/ipc";
 import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "@openbot/contracts/ipc";
 import { createMemo, For, Show } from "solid-js";
-import { avatarHeadColor } from "../../blobatar";
+import { avatarHeadColor } from "../../bloub-avatar";
 import type { BotMessage, BotProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button, DropdownMenu } from "../ui";

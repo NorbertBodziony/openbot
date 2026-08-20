@@ -145,14 +145,13 @@ test("advanced panels and pickers are visually stable", async () => {
         role: input.role,
         expiresAt: "2026-09-19T10:00:00.000Z",
         usedAt: null,
-        inviteUrl: "openbot://invite/visual",
+        inviteUrl: "https://openbot.run/join?invite=visual",
         email: input.email ?? null,
       })}
       onUpdateMember={async () => undefined}
       onRemoveMember={async () => undefined}
       onRevokeSession={async () => undefined}
       onRevokeInvite={async () => undefined}
-      onCopyAddressUpdate={async () => undefined}
     />
   ));
 

@@ -30,8 +30,9 @@ const NEW_CODE_ISSUES = new Set(["sign_in_code_expired", "too_many_code_attempts
 export function AccountLogin(props: AccountLoginProps) {
   const [email, setEmail] = createSignal("");
   const [code, setCode] = createSignal("");
-  const [emailTouched, setEmailTouched] = createSignal(false);
-  const [emailError, setEmailError] = createSignal<string | null>(null);
+  const [presentedEmailError, setPresentedEmailError] = createSignal<string | null>(null);
+  const [emailErrorActive, setEmailErrorActive] = createSignal(false);
+  const [emailShaking, setEmailShaking] = createSignal(false);
   const [codeError, setCodeError] = createSignal<string | null>(null);
   const [localError, setLocalError] = createSignal<string | null>(null);
   const [pendingAction, setPendingAction] = createSignal<PendingAction | null>(null);
@@ -40,9 +41,15 @@ export function AccountLogin(props: AccountLoginProps) {
   const [now, setNow] = createSignal(Date.now());
   const [loginTransition, setLoginTransition] = createSignal<LoginTransition>("none");
   let emailInput: HTMLInputElement | undefined;
+  let emailShakeTimer: number | undefined;
+  let emailRevertTimer: number | undefined;
+  let emailMessageTimer: number | undefined;
 
   const clock = window.setInterval(() => setNow(Date.now()), 1_000);
-  onCleanup(() => window.clearInterval(clock));
+  onCleanup(() => {
+    window.clearInterval(clock);
+    clearEmailErrorTimers();
+  });
 
   const codeSent = () => props.state.status === "code_sent";
   const verified = () => props.state.status === "signed_in";
@@ -76,10 +83,6 @@ export function AccountLogin(props: AccountLoginProps) {
     const issue = displayedIssue();
     return issue && !FIELD_ISSUES.has(issue.code) ? issue : undefined;
   });
-  const displayedEmailError = () => {
-    const issue = displayedIssue();
-    return emailError() ?? (issue?.code === "invalid_email" ? issue.message : null);
-  };
   const displayedCodeError = () => {
     const visibleIssue = displayedIssue();
     const issue = currentIssue();
@@ -108,6 +111,7 @@ export function AccountLogin(props: AccountLoginProps) {
       setNow(Date.now());
       setIssueVisible(true);
       setIssueBlockedUntil(issue?.retryAfterSeconds ? Date.now() + issue.retryAfterSeconds * 1_000 : 0);
+      if (issue?.code === "invalid_email") showEmailError(issue.message);
     },
   );
 
@@ -137,11 +141,66 @@ export function AccountLogin(props: AccountLoginProps) {
     return normalizeEmailAddress(value) ? null : "Enter a valid email address.";
   }
 
+  function clearEmailErrorTimers(): void {
+    if (emailShakeTimer !== undefined) window.clearTimeout(emailShakeTimer);
+    if (emailRevertTimer !== undefined) window.clearTimeout(emailRevertTimer);
+    if (emailMessageTimer !== undefined) window.clearTimeout(emailMessageTimer);
+    emailShakeTimer = undefined;
+    emailRevertTimer = undefined;
+    emailMessageTimer = undefined;
+  }
+
+  function motionDuration(name: string, fallback: number): number {
+    const value = Number.parseFloat(window.getComputedStyle(document.documentElement).getPropertyValue(name));
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function hideEmailError(): void {
+    clearEmailErrorTimers();
+    setEmailErrorActive(false);
+    setEmailShaking(false);
+    emailMessageTimer = window.setTimeout(
+      () => {
+        emailMessageTimer = undefined;
+        setPresentedEmailError(null);
+      },
+      motionDuration("--revert-dur", 280),
+    );
+  }
+
+  function showEmailError(message: string): void {
+    clearEmailErrorTimers();
+    setPresentedEmailError(message);
+    setEmailErrorActive(true);
+
+    setEmailShaking(false);
+    if (emailInput) void emailInput.offsetWidth;
+    setEmailShaking(true);
+
+    const shakeDuration = motionDuration("--shake-dur-a", 80) * 2 + motionDuration("--shake-dur-b", 60) * 2;
+    emailShakeTimer = window.setTimeout(() => {
+      emailShakeTimer = undefined;
+      setEmailShaking(false);
+    }, shakeDuration + 20);
+
+    emailRevertTimer = window.setTimeout(() => {
+      emailRevertTimer = undefined;
+      setEmailErrorActive(false);
+      emailMessageTimer = window.setTimeout(
+        () => {
+          emailMessageTimer = undefined;
+          setPresentedEmailError(null);
+        },
+        motionDuration("--revert-dur", 280),
+      );
+    }, shakeDuration + motionDuration("--revert-hold", 3_000));
+  }
+
   function handleEmailInput(value: string): void {
     setEmail(value);
     setIssueVisible(false);
     setLocalError(null);
-    if (emailTouched()) setEmailError(validateEmail(value));
+    hideEmailError();
   }
 
   function handleCodeInput(value: string): void {
@@ -153,10 +212,9 @@ export function AccountLogin(props: AccountLoginProps) {
 
   async function submitEmail(): Promise<void> {
     if (pendingAction() || emailBusy() || emailRetryIn() > 0) return;
-    setEmailTouched(true);
     const validationError = validateEmail(email());
-    setEmailError(validationError);
     if (validationError) {
+      showEmailError(validationError);
       emailInput?.focus();
       return;
     }
@@ -330,33 +388,38 @@ export function AccountLogin(props: AccountLoginProps) {
                   <label class="sr-only" for="account-email">
                     Email
                   </label>
-                  <Input
-                    ref={(element) => (emailInput = element)}
-                    id="account-email"
-                    type="email"
-                    autocomplete="email"
-                    autocapitalize="none"
-                    inputmode="email"
-                    spellcheck={false}
-                    placeholder="you@example.com"
-                    maxlength={INPUT_LIMITS.email}
-                    value={email()}
-                    aria-invalid={displayedEmailError() ? "true" : undefined}
-                    aria-describedby={displayedEmailError() ? "account-email-error" : undefined}
-                    autofocus
-                    onBlur={() => {
-                      setEmailTouched(true);
-                      setEmailError(validateEmail(email()));
-                    }}
-                    onInput={(event) => handleEmailInput(event.currentTarget.value)}
-                  />
-                  <Show when={displayedEmailError()}>
-                    {(message) => (
-                      <p id="account-email-error" class="account-login-field-error" role="alert">
-                        {message()}
-                      </p>
-                    )}
-                  </Show>
+                  <div class={`account-login-email-field t-input-wrap${emailErrorActive() ? " is-error" : ""}`}>
+                    <Input
+                      ref={(element) => (emailInput = element)}
+                      class={`t-input${emailErrorActive() ? " is-error" : ""}${emailShaking() ? " is-shaking" : ""}`}
+                      id="account-email"
+                      type="email"
+                      autocomplete="email"
+                      autocapitalize="none"
+                      inputmode="email"
+                      spellcheck={false}
+                      placeholder="you@example.com"
+                      maxlength={INPUT_LIMITS.email}
+                      value={email()}
+                      aria-invalid={emailErrorActive() ? "true" : undefined}
+                      aria-describedby={emailErrorActive() ? "account-email-error" : undefined}
+                      autofocus
+                      onBlur={() => {
+                        const validationError = validateEmail(email());
+                        if (validationError) showEmailError(validationError);
+                        else hideEmailError();
+                      }}
+                      onInput={(event) => handleEmailInput(event.currentTarget.value)}
+                    />
+                    <p
+                      id="account-email-error"
+                      class="account-login-field-error t-error-msg"
+                      role="alert"
+                      aria-hidden={emailErrorActive() ? undefined : "true"}
+                    >
+                      {presentedEmailError()}
+                    </p>
+                  </div>
 
                   <Show when={formIssue()}>
                     {(issue) => (

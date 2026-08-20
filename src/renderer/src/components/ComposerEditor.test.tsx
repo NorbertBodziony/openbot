@@ -184,7 +184,7 @@ describe("ComposerEditor", () => {
     expect(onValueChange).toHaveBeenLastCalledWith("y".repeat(INPUT_LIMITS.messageText));
   });
 
-  it("renders saved mentions with the animated agent avatar", () => {
+  it("renders saved mentions with the static agent avatar", async () => {
     const sales: BotProfile = {
       id: "sales",
       name: "Sales",
@@ -215,7 +215,9 @@ describe("ComposerEditor", () => {
     ));
 
     const token = document.querySelector<HTMLElement>('[data-mention-id="sales"]');
-    expect(token?.querySelector(".composer-mention-avatar svg .mo-root")).not.toBeNull();
+    await waitFor(() =>
+      expect(token?.querySelector('.composer-mention-avatar svg[aria-hidden="true"]')).not.toBeNull(),
+    );
   });
 
   it("inserts an attached file from the mention picker and opens the chip", async () => {

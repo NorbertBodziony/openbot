@@ -180,6 +180,13 @@
   --openbot-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --openbot-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --openbot-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --shake-distance: 6px;
+  --shake-overshoot: 4px;
+  --shake-dur-a: 80ms;
+  --shake-dur-b: 60ms;
+  --shake-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --revert-hold: 3000ms;
+  --revert-dur: 280ms;
   --openbot-shadow-raised: 0 12px 32px var(--openbot-shadow-popover-ambient);
   --openbot-focus-ring: 0 0 0 3px var(--openbot-accent-soft);
   --openbot-layer-dropdown: 40;

@@ -16,8 +16,12 @@ const config = {
         // Storybook bundles axe and its preview runtime into intentionally large development-only chunks.
         chunkSizeWarningLimit: 1_200,
       },
+      optimizeDeps: {
+        include: ["@norbert_bodziony/bloub"],
+      },
       resolve: {
         alias: [{ find: "solid-js/web", replacement: "@solidjs/web" }],
+        dedupe: ["solid-js", "@solidjs/web"],
       },
     });
     const plugins = (mergedConfig.plugins ?? []).filter((plugin: PluginOption) => !isLegacySolidPlugin(plugin));
