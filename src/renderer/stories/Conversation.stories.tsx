@@ -614,6 +614,38 @@ export const SevenQueuedMessages: Story = {
     queue: referenceQueue,
     activeTurnId: "turn-active",
   },
+  render: (storyArgs) => {
+    const [queueState, setQueueState] = createSignal(storyArgs.queue ?? referenceQueue);
+    const reorderQueue = (deliveryIds: string[]) => {
+      storyArgs.onReorderQueue(deliveryIds);
+      setQueueState((current) => {
+        const deliveriesById = new Map(current.deliveries.map((delivery) => [delivery.id, delivery]));
+        const reordered = deliveryIds.flatMap((id) => {
+          const delivery = deliveriesById.get(id);
+          return delivery ? [delivery] : [];
+        });
+        let queuedIndex = 0;
+        return {
+          ...current,
+          deliveries: current.deliveries.map((delivery) => {
+            if (delivery.status !== "queued") return delivery;
+            const next = reordered[queuedIndex++];
+            return next ? { ...next, position: delivery.position } : delivery;
+          }),
+        };
+      });
+    };
+
+    return (
+      <MockedConversation
+        args={{
+          ...storyArgs,
+          queue: queueState(),
+          onReorderQueue: reorderQueue,
+        }}
+      />
+    );
+  },
 };
 
 export const PausedQueue: Story = {
