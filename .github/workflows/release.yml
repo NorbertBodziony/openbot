@@ -126,8 +126,11 @@ jobs:
       - name: Run repository check
         run: bun run check
 
-      - name: Install and verify remote desktop runtime
-        run: bun run install:remote-desktop-runtime && bun run verify:remote-desktop-runtime
+      - name: Install and verify native runtimes
+        run: |
+          bun run install:cloudflared
+          bun run install:remote-desktop-runtime
+          bun run verify:remote-desktop-runtime
 
       - name: Install Developer ID provisioning profile
         shell: bash
