@@ -585,12 +585,16 @@ async function waitForHttps(port: number, certificatePath: string): Promise<void
 }
 
 async function sunshineTlsOptions(certificatePath: string): Promise<{
+  allowPartialTrustChain: true;
   ca: Buffer;
   checkServerIdentity: (hostname: string, certificate: PeerCertificate) => Error | undefined;
 }> {
   const ca = await readFile(certificatePath);
   const expected = new X509Certificate(ca).raw;
   return {
+    // Sunshine creates a self-signed leaf certificate without a CA basic constraint.
+    // Treat only this pinned leaf as the local trust anchor on strict TLS implementations.
+    allowPartialTrustChain: true,
     ca,
     checkServerIdentity: (_hostname, certificate) => {
       const presented = certificate.raw;
