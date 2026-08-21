@@ -3825,37 +3825,72 @@
     color var(--openbot-duration-fast) ease;
 }
 
-:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="source"] {
+:is(
+  .message-file-reference,
+  .composer-file-reference,
+  .attachment-file-visual,
+  .composer-attachment-preview
+)[data-file-tone="source"] {
   --file-reference-color: var(--openbot-file-blue);
   --file-reference-soft: var(--openbot-file-blue-soft);
 }
 
-:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="script"] {
+:is(
+  .message-file-reference,
+  .composer-file-reference,
+  .attachment-file-visual,
+  .composer-attachment-preview
+)[data-file-tone="script"] {
   --file-reference-color: var(--openbot-file-yellow);
   --file-reference-soft: var(--openbot-file-yellow-soft);
 }
 
-:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="markup"] {
+:is(
+  .message-file-reference,
+  .composer-file-reference,
+  .attachment-file-visual,
+  .composer-attachment-preview
+)[data-file-tone="markup"] {
   --file-reference-color: var(--openbot-file-orange);
   --file-reference-soft: var(--openbot-file-orange-soft);
 }
 
-:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="style"] {
+:is(
+  .message-file-reference,
+  .composer-file-reference,
+  .attachment-file-visual,
+  .composer-attachment-preview
+)[data-file-tone="style"] {
   --file-reference-color: var(--openbot-file-teal);
   --file-reference-soft: var(--openbot-file-teal-soft);
 }
 
-:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="data"] {
+:is(
+  .message-file-reference,
+  .composer-file-reference,
+  .attachment-file-visual,
+  .composer-attachment-preview
+)[data-file-tone="data"] {
   --file-reference-color: var(--openbot-file-green);
   --file-reference-soft: var(--openbot-file-green-soft);
 }
 
-:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="document"] {
+:is(
+  .message-file-reference,
+  .composer-file-reference,
+  .attachment-file-visual,
+  .composer-attachment-preview
+)[data-file-tone="document"] {
   --file-reference-color: var(--openbot-file-red);
   --file-reference-soft: var(--openbot-file-red-soft);
 }
 
-:is(.message-file-reference, .composer-file-reference, .attachment-file-visual)[data-file-tone="media"] {
+:is(
+  .message-file-reference,
+  .composer-file-reference,
+  .attachment-file-visual,
+  .composer-attachment-preview
+)[data-file-tone="media"] {
   --file-reference-color: var(--openbot-file-pink);
   --file-reference-soft: var(--openbot-file-pink-soft);
 }
@@ -4576,74 +4611,120 @@
   line-height: var(--openbot-leading-sm);
 }
 
-.composer-attachment {
+.composer-attachments {
   position: relative;
   z-index: 11;
   display: flex;
-  max-width: 360px;
-  min-height: 42px;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin: 0 auto 6px;
-  border: 1px solid var(--openbot-border);
-  border-radius: var(--openbot-radius-md);
-  background: var(--openbot-hover);
-  padding: 5px 7px;
+  margin: 0 10px 6px;
 }
 
-.composer-attachment > span:nth-child(2) {
+.composer-attachment {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.composer-attachment[data-kind="image"] {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-bg-control);
+  padding: 3px;
+}
+
+.composer-attachment[data-kind="file"] {
+  width: 220px;
+  max-width: calc(100vw - 56px);
+  height: 52px;
+  gap: 10px;
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-control);
+  padding: 7px 10px;
+}
+
+.composer-attachment-copy {
+  display: block;
   min-width: 0;
   flex: 1;
 }
 
-.composer-attachment strong,
-.composer-attachment small {
+.composer-attachment-copy strong,
+.composer-attachment-copy small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.composer-attachment strong {
+.composer-attachment-copy strong {
   color: var(--openbot-text-primary);
   font-size: var(--openbot-text-xs);
   font-weight: 500;
   line-height: 16px;
 }
 
-.composer-attachment small {
+.composer-attachment-copy small {
   color: var(--openbot-text-muted);
   font-size: var(--openbot-text-2xs);
   line-height: 14px;
 }
 
 .composer-attachment > button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
   display: grid;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   place-items: center;
   border: 0;
   border-radius: var(--openbot-radius-pill);
-  background: transparent;
-  color: var(--openbot-text-muted);
+  background: var(--openbot-bg-overlay);
+  color: var(--openbot-text-secondary);
+  opacity: 0;
+  transition: opacity var(--openbot-duration-fast) var(--openbot-ease-out);
 }
 
-.composer-attachment > button:hover {
+.composer-attachment:hover > button,
+.composer-attachment > button:focus-visible {
+  opacity: 1;
+}
+
+.composer-attachment > button:hover,
+.composer-attachment > button:focus-visible {
   background: var(--openbot-border);
   color: var(--openbot-white);
 }
 
-.attachment-thumb {
-  display: block;
-  width: 34px;
-  height: 32px;
+.composer-attachment-preview {
+  display: grid;
+  width: 36px;
+  height: 36px;
   overflow: hidden;
   flex: 0 0 auto;
-  border-radius: var(--openbot-radius-sm);
-  background: var(--openbot-bg-control);
+  place-items: center;
+  border-radius: var(--openbot-radius-md);
+  background: var(--file-reference-soft, var(--openbot-hover));
+  color: var(--file-reference-color, var(--openbot-text-muted));
+  font-size: var(--openbot-text-2xs);
+  font-weight: 700;
+  line-height: 1;
 }
 
-.attachment-thumb img {
+.composer-attachment[data-kind="image"] .composer-attachment-preview {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--openbot-radius-pill);
+}
+
+.composer-attachment-preview img {
   display: block;
   width: 100%;
   height: 100%;

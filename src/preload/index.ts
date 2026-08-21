@@ -286,6 +286,11 @@ window.addEventListener("paste", (event) => {
     void importFiles(files);
   }
 });
+window.addEventListener("change", (event) => {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement) || input.dataset.openbotAttachmentPicker !== "true") return;
+  void importFiles([...(input.files ?? [])]);
+});
 
 const openbotApi: OpenBotDesktopApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC_CHANNELS.getAppInfo),

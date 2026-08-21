@@ -2608,20 +2608,26 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("supports picker and attachment-only messages", async () => {
-    vi.mocked(window.openbot.agent.chooseAttachments)
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([attachment("draft-1", "brief.pdf", "pdf")]);
+    const filePickerClick = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
     await fireEvent.pointerDown(screen.getByRole("button", { name: "Add to prompt" }), { button: 0 });
-    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: /Attach image/ }), { button: 0 });
-    await waitFor(() => expect(window.openbot.agent.chooseAttachments).toHaveBeenLastCalledWith({ filter: "images" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Add to prompt" })).toBeEnabled());
+    await fireEvent.pointerDown(screen.getByRole("menuitem", { name: /Attach image/ }), { button: 0 });
+    expect(filePickerClick).toHaveBeenCalledTimes(1);
+    expect(document.querySelector<HTMLInputElement>('input[type="file"][accept]')?.accept).toBe(
+      ".png,.jpg,.jpeg,.gif,.webp,.avif",
+    );
     await fireEvent.pointerDown(screen.getByRole("button", { name: "Add to prompt" }), { button: 0 });
     expect(screen.getByRole("menuitem", { name: /Use a skill/ })).toHaveAttribute("data-disabled");
-    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: /Add context/ }), { button: 0 });
-    await waitFor(() => expect(window.openbot.agent.chooseAttachments).toHaveBeenLastCalledWith({ filter: "all" }));
+    await fireEvent.pointerDown(screen.getByRole("menuitem", { name: /Add context/ }), { button: 0 });
+    expect(filePickerClick).toHaveBeenCalledTimes(2);
+    emitAttachmentImport?.({ type: "started", requestId: "picker-1" });
+    emitAttachmentImport?.({
+      type: "completed",
+      requestId: "picker-1",
+      attachments: [attachment("draft-1", "brief.pdf", "pdf")],
+    });
     expect(await screen.findByText("brief.pdf")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() =>
@@ -2642,7 +2648,7 @@ describe("OpenBot connected desktop shell", () => {
       requestId: "paste-1",
       attachments: [attachment("pasted-1", "pasted.png", "image")],
     });
-    expect(await screen.findByText("pasted.png")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Remove pasted.png" })).toBeInTheDocument();
   });
 
   it("keeps an asynchronous pasted attachment with the bot that received the paste", async () => {
@@ -2656,9 +2662,9 @@ describe("OpenBot connected desktop shell", () => {
       attachments: [attachment("pasted-switch", "for-chief.png", "image")],
     });
 
-    expect(screen.queryByText("for-chief.png")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove for-chief.png" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
-    expect(await screen.findByText("for-chief.png")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Remove for-chief.png" })).toBeInTheDocument();
   });
 
   it("shows and controls queued work", async () => {

@@ -35,6 +35,7 @@ import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
 import { ApprovalCard, ChoiceCard } from "./ConversationPrompts";
 import { AgentActivityIndicator, ThinkingDisclosure } from "./conversation/AgentActivity";
 import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
+import { attachmentReferenceTone } from "./conversation/AttachmentReference";
 import { ChatSearch } from "./conversation/ChatSearch";
 import {
   BackIcon,
@@ -249,6 +250,8 @@ export function Conversation(props: ConversationProps) {
   const [activeChatSearchIndex, setActiveChatSearchIndex] = createSignal(-1);
   let typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
   let typingBotId: string | null = null;
+  let imageAttachmentPicker: HTMLInputElement | undefined;
+  let contextAttachmentPicker: HTMLInputElement | undefined;
   const [settingsPanelWidth, setSettingsPanelWidth] = createSignal(
     readPanelWidth(SETTINGS_PANEL_STORAGE_KEY, SETTINGS_PANEL_DEFAULT, SETTINGS_PANEL_MIN, SETTINGS_PANEL_MAX),
   );
@@ -1169,18 +1172,17 @@ export function Conversation(props: ConversationProps) {
     setShowComposerActions(false);
   }
 
-  async function chooseAttachments(filter: "all" | "images") {
-    if (attachmentBusy()) return;
+  function openAttachmentPicker(filter: "all" | "images") {
     setShowComposerActions(false);
-    setAttachmentBusy(true);
     setComposerError(null);
-    try {
-      addAttachments(await window.openbot.agent.chooseAttachments({ filter }));
-    } catch (error) {
-      setComposerError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAttachmentBusy(false);
-    }
+    const picker = filter === "images" ? imageAttachmentPicker : contextAttachmentPicker;
+    if (!picker) return;
+    picker.value = "";
+    picker.click();
+  }
+
+  function openAttachmentPickerFromKey(event: KeyboardEvent, filter: "all" | "images") {
+    if (event.key === "Enter" || event.key === " ") openAttachmentPicker(filter);
   }
 
   function editQueuedMessage(delivery: QueueDelivery) {
@@ -1940,28 +1942,37 @@ export function Conversation(props: ConversationProps) {
 
       <Show when={!props.prompt && !props.approval}>
         <div class="composer-wrap">
-          <For each={unreferencedDraftAttachments()}>
-            {(attachment) => (
-              <div class="composer-attachment">
-                <span class={attachment.kind === "file" ? "file-type-badge" : "attachment-thumb"}>
-                  <Show when={attachment.kind === "image"} fallback={fileBadge(attachment)}>
-                    <img src={attachment.previewUrl ?? ""} alt="" />
-                  </Show>
-                </span>
-                <span>
-                  <strong>{attachment.name}</strong>
-                  <small>{formatFileSize(attachment.size)}</small>
-                </span>
-                <Button
-                  type="button"
-                  aria-label={`Remove ${attachment.name}`}
-                  onClick={() => removeAttachment(attachment.id)}
-                >
-                  <CloseIcon />
-                </Button>
-              </div>
-            )}
-          </For>
+          <Show when={unreferencedDraftAttachments().length > 0}>
+            <div class="composer-attachments">
+              <For each={unreferencedDraftAttachments()}>
+                {(attachment) => (
+                  <div class="composer-attachment" data-kind={attachment.kind}>
+                    <span
+                      class="composer-attachment-preview"
+                      data-file-tone={attachment.kind === "file" ? attachmentReferenceTone(attachment.name) : undefined}
+                    >
+                      <Show when={attachment.kind === "image"} fallback={fileBadge(attachment)}>
+                        <img src={attachment.previewUrl ?? ""} alt="" />
+                      </Show>
+                    </span>
+                    <Show when={attachment.kind === "file"}>
+                      <span class="composer-attachment-copy">
+                        <strong title={attachment.name}>{attachment.name}</strong>
+                        <small>{formatFileSize(attachment.size)}</small>
+                      </span>
+                    </Show>
+                    <Button
+                      type="button"
+                      aria-label={`Remove ${attachment.name}`}
+                      onClick={() => removeAttachment(attachment.id)}
+                    >
+                      <CloseIcon />
+                    </Button>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
           <Show when={replyTarget()}>
             {(message) => (
               <div class="composer-reply-preview">
@@ -2050,6 +2061,23 @@ export function Conversation(props: ConversationProps) {
               />
             </div>
             <div class="composer-toolbar">
+              <input
+                ref={imageAttachmentPicker}
+                type="file"
+                accept=".png,.jpg,.jpeg,.gif,.webp,.avif"
+                multiple
+                hidden
+                tabindex={-1}
+                data-openbot-attachment-picker="true"
+              />
+              <input
+                ref={contextAttachmentPicker}
+                type="file"
+                multiple
+                hidden
+                tabindex={-1}
+                data-openbot-attachment-picker="true"
+              />
               <DropdownMenu.Root
                 open={showComposerActions()}
                 onOpenChange={setShowComposerActions}
@@ -2076,7 +2104,10 @@ export function Conversation(props: ConversationProps) {
                     <DropdownMenu.Item
                       class="composer-action-item"
                       disabled={attachmentBusy()}
-                      onSelect={() => void chooseAttachments("images")}
+                      onPointerDown={(event) => {
+                        if (event.button === 0) openAttachmentPicker("images");
+                      }}
+                      onKeyDown={(event) => openAttachmentPickerFromKey(event, "images")}
                     >
                       <Image aria-hidden="true" />
                       <span>
@@ -2098,7 +2129,10 @@ export function Conversation(props: ConversationProps) {
                     <DropdownMenu.Item
                       class="composer-action-item"
                       disabled={attachmentBusy()}
-                      onSelect={() => void chooseAttachments("all")}
+                      onPointerDown={(event) => {
+                        if (event.button === 0) openAttachmentPicker("all");
+                      }}
+                      onKeyDown={(event) => openAttachmentPickerFromKey(event, "all")}
                     >
                       <File aria-hidden="true" />
                       <span>
