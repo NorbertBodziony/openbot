@@ -180,6 +180,7 @@ jobs:
           "OPENBOT_BUN_DIR=$(Split-Path (Get-Command bun).Source -Parent)" >> $env:GITHUB_ENV
           "OPENBOT_CARGO_DIR=$(Split-Path (Get-Command cargo).Source -Parent)" >> $env:GITHUB_ENV
           "OPENBOT_NODE_DIR=$(Split-Path (Get-Command node).Source -Parent)" >> $env:GITHUB_ENV
+          "OPENBOT_PERL_DIR=$(Split-Path (Get-Command perl).Source -Parent)" >> $env:GITHUB_ENV
 
       - name: Install macOS build dependencies
         if: runner.os == 'macOS'
@@ -223,7 +224,8 @@ jobs:
         env:
           CMAKE_GENERATOR: Ninja
         run: |
-          export PATH="$PATH:$(cygpath "$OPENBOT_BUN_DIR"):$(cygpath "$OPENBOT_CARGO_DIR"):$(cygpath "$OPENBOT_NODE_DIR")"
+          export PATH="$(cygpath "$OPENBOT_BUN_DIR"):$(cygpath "$OPENBOT_CARGO_DIR"):$(cygpath "$OPENBOT_NODE_DIR"):$(cygpath "$OPENBOT_PERL_DIR"):$PATH"
+          perl -e 'die "Windows Perl is required\n" unless $^O eq "MSWin32";'
           bun run build:remote-desktop-runtime
 
       - name: Verify runtime
