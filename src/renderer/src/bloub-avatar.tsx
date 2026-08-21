@@ -11,7 +11,7 @@ import type { BotAvatarHue } from "@openbot/contracts/ipc";
 import { render } from "@solidjs/web";
 import { flush } from "solid-js";
 
-export type AvatarMotion = "hover" | "always";
+export type AvatarMotion = "hover" | "always" | "idle" | "working";
 
 export interface BloubAvatarProfile {
   shape: ShapeId;

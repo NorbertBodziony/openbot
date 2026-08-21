@@ -2267,6 +2267,8 @@ describe("OpenBot connected desktop shell", () => {
     const firstMessage = await screen.findByText("Do the work");
     const firstMessageEntry = firstMessage.closest(".message-entry");
     expect(firstMessageEntry).not.toHaveClass("message-entry-animated");
+    const sidebarAvatar = document.querySelector(".agent-row .bot-avatar");
+    expect(sidebarAvatar).toHaveClass("bot-avatar-motion-idle");
 
     emitAgentEvent?.({
       type: "turn-started",
@@ -2275,6 +2277,7 @@ describe("OpenBot connected desktop shell", () => {
       turnId: "turn-live",
     });
     const workingIndicator = await screen.findByRole("status", { name: "Chief is working" });
+    expect(sidebarAvatar).toHaveClass("bot-avatar-motion-working");
 
     emitAgentEvent?.({
       type: "conversation",
@@ -2389,6 +2392,7 @@ describe("OpenBot connected desktop shell", () => {
       status: "completed",
     });
     await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
+    expect(sidebarAvatar).toHaveClass("bot-avatar-motion-idle");
     expect(document.querySelector(".agent-activity-entry")).toBeNull();
   });
 
