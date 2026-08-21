@@ -3170,7 +3170,12 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     expect(await screen.findByText("Messaged")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open exchange with Sales Outbound" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Open exchange with Sales Outbound" }));
+    expect(await screen.findByRole("dialog", { name: "Messages with Sales Outbound" })).toBeInTheDocument();
+    expect(screen.getByText("Prepare report")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Close message history" }));
+    expect(screen.queryByRole("dialog", { name: "Messages with Sales Outbound" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Chief" })).toBeInTheDocument();
   });
 
   it("shows an incoming agent marker without duplicating raw collaborator input", async () => {

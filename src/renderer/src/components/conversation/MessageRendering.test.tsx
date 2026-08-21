@@ -40,7 +40,7 @@ const bots: BotProfile[] = [
   },
 ];
 
-const message: BotMessage = {
+const message = {
   id: "exchange-1",
   author: "bot",
   body: "",
@@ -54,11 +54,11 @@ const message: BotMessage = {
     replyToMessageId: null,
     deliveries: [],
   },
-};
+} satisfies BotMessage;
 
 describe("ExchangeSystemRow", () => {
   it("mixes every recipient avatar color for a multi-agent trigger", () => {
-    render(() => <ExchangeSystemRow message={message} bots={bots} onSelectAgent={vi.fn()} />);
+    render(() => <ExchangeSystemRow message={message} bots={bots} onOpenAgentHistory={vi.fn()} />);
 
     const trigger = screen.getByRole("button", { name: "2 agents, show list" });
     const researchColor = avatarHeadColor(bots[0].avatarSeed, bots[0].avatarHue);
@@ -66,6 +66,48 @@ describe("ExchangeSystemRow", () => {
     expect(trigger.style.getPropertyValue("--exchange-agent-color")).toBe(
       `color-mix(in oklab, ${researchColor} 50%, ${salesColor})`,
     );
+  });
+
+  it("opens history for a single outgoing recipient", async () => {
+    const onOpenAgentHistory = vi.fn();
+    render(() => (
+      <ExchangeSystemRow
+        message={{
+          ...message,
+          exchange: {
+            ...message.exchange,
+            recipientBotIds: [bots[0].id],
+          },
+        }}
+        bots={bots}
+        onOpenAgentHistory={onOpenAgentHistory}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open exchange with Research" }));
+    expect(onOpenAgentHistory).toHaveBeenCalledWith("research");
+  });
+
+  it("opens history for an incoming sender", async () => {
+    const onOpenAgentHistory = vi.fn();
+    render(() => (
+      <ExchangeSystemRow
+        message={{
+          ...message,
+          exchange: {
+            ...message.exchange,
+            direction: "incoming",
+            senderBotId: "sales",
+            recipientBotIds: ["chief"],
+          },
+        }}
+        bots={bots}
+        onOpenAgentHistory={onOpenAgentHistory}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open exchange with Sales" }));
+    expect(onOpenAgentHistory).toHaveBeenCalledWith("sales");
   });
 });
 

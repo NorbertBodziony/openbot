@@ -5,6 +5,7 @@
 @import "./styles/base.css";
 @import "./styles/auth.css";
 @import "./styles/app-shell.css";
+@import "./styles/center-morph-modal.css";
 @import "./styles/join-server-dialog.css";
 @import "./styles/conversation.css";
 @import "./styles/settings-modal.css";
@@ -163,6 +164,7 @@
   --openbot-radius-md: 8px;
   --openbot-radius-lg: 12px;
   --openbot-radius-xl: 20px;
+  --openbot-radius-modal: 30px;
   --openbot-radius-pill: 999px;
   --openbot-radius-logo: 20%;
   --openbot-control-xs: 24px;

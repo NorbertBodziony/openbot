@@ -59,6 +59,57 @@ const messages: RendererBotMessage[] = STORY_CONVERSATION_MESSAGES.map((message)
   kind: message.exchange ? "exchange" : "text",
 }));
 
+const exchangeHistoryMessages: RendererBotMessage[] = [
+  ...messages,
+  {
+    id: "exchange-history-outgoing",
+    author: "bot",
+    body: "Verify the launch sources and flag anything that needs a stronger citation.",
+    time: "10:04",
+    kind: "exchange",
+    attachments: [STORY_ATTACHMENTS[0]],
+    exchange: {
+      direction: "outgoing",
+      messageId: "exchange-history-outgoing",
+      senderBotId: "chief",
+      recipientBotIds: ["research"],
+      replyToMessageId: null,
+      deliveries: [
+        {
+          id: "exchange-history-outgoing-delivery",
+          recipientBotId: "research",
+          status: "completed",
+          position: null,
+          error: null,
+        },
+      ],
+    },
+  },
+  {
+    id: "exchange-history-incoming",
+    author: "bot",
+    body: "The primary sources are verified. I replaced one secondary citation with the original paper.",
+    time: "10:06",
+    kind: "exchange",
+    exchange: {
+      direction: "incoming",
+      messageId: "exchange-history-incoming",
+      senderBotId: "research",
+      recipientBotIds: ["chief"],
+      replyToMessageId: "exchange-history-outgoing",
+      deliveries: [
+        {
+          id: "exchange-history-incoming-delivery",
+          recipientBotId: "chief",
+          status: "completed",
+          position: null,
+          error: null,
+        },
+      ],
+    },
+  },
+];
+
 const unreadStoryMessages: RendererBotMessage[] = [
   ...Array.from(
     { length: 12 },
@@ -435,6 +486,23 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const RichConversation: Story = {};
+
+export const AgentExchangeHistory: Story = {
+  name: "Agent exchange history",
+  args: { messages: exchangeHistoryMessages },
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    await userEvent.click(canvas.getAllByRole("button", { name: "Open exchange with Research" })[0]);
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog", { name: "Messages with Research" });
+    await expect(dialog).toBeVisible();
+    await expect(
+      body.getByText("Verify the launch sources and flag anything that needs a stronger citation."),
+    ).toBeVisible();
+    await expect(
+      body.getByText("The primary sources are verified. I replaced one secondary citation with the original paper."),
+    ).toBeVisible();
+  },
+};
 
 export const SearchConversation: Story = {
   name: "Search conversation",
