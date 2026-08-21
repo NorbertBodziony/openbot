@@ -35,6 +35,7 @@ import type {
   UpdateStatus,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, createStore, flush, onSettled, Show } from "solid-js";
+import { playCompletionSoundForAgentEvent } from "./completion-sound";
 import { AccountLogin } from "./components/AccountLogin";
 import { Conversation } from "./components/Conversation";
 import { DirectConversation } from "./components/DirectConversation";
@@ -570,7 +571,10 @@ export function App() {
         setActiveTurns((current) => ({ ...current, [event.botId]: null }));
         setPendingPrompts((current) => ({ ...current, [event.botId]: undefined }));
         setPendingApprovals((current) => ({ ...current, [event.botId]: undefined }));
-        if (event.status === "completed") markReplyCompleted(event.botId);
+        if (event.status === "completed") {
+          markReplyCompleted(event.botId);
+          playCompletionSoundForAgentEvent(event, botList());
+        }
         return;
       case "prompt":
         setPendingPrompts((current) => ({ ...current, [event.botId]: event }));

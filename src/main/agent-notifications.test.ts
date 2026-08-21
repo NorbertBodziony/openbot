@@ -26,6 +26,7 @@ describe("notificationForAgentEvent", () => {
     expect(notificationForAgentEvent(completed("completed"), [bot])).toEqual({
       title: "Chief",
       body: "Finished working.",
+      silent: true,
     });
     expect(
       notificationForAgentEvent(
