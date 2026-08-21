@@ -566,6 +566,7 @@ async function requestStream(url: string, headers: Record<string, string>, body:
 
 async function waitForHttps(port: number, certificatePath: string): Promise<void> {
   const deadline = Date.now() + 20_000;
+  let lastError: unknown;
   while (Date.now() < deadline) {
     try {
       const tls = await sunshineTlsOptions(certificatePath);
@@ -577,11 +578,13 @@ async function waitForHttps(port: number, certificatePath: string): Promise<void
         request.once("error", reject);
       });
       return;
-    } catch {
+    } catch (error) {
+      lastError = error;
       await shortDelay();
     }
   }
-  throw new Error("Sunshine did not become ready.");
+  const detail = lastError instanceof Error ? ` ${lastError.message}` : "";
+  throw new Error(`Sunshine did not become ready.${detail}`, { cause: lastError });
 }
 
 async function sunshineTlsOptions(certificatePath: string): Promise<{
@@ -592,8 +595,8 @@ async function sunshineTlsOptions(certificatePath: string): Promise<{
   const ca = await readFile(certificatePath);
   const expected = new X509Certificate(ca).raw;
   return {
-    // Sunshine creates a self-signed leaf certificate without a CA basic constraint.
-    // Treat only this pinned leaf as the local trust anchor on strict TLS implementations.
+    // Sunshine creates a self-signed certificate for its loopback API.
+    // Treat only this pinned certificate as the local trust anchor.
     allowPartialTrustChain: true,
     ca,
     checkServerIdentity: (_hostname, certificate) => {

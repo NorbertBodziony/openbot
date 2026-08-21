@@ -235,7 +235,7 @@ index 195a666c..f0b09b8a 100644
  TEST_F(ConfigHttpTest, AuthenticateRejectsInvalidPassword) {
    SimpleWeb::CaseInsensitiveMultimap headers;
 diff --git a/src/crypto.cpp b/src/crypto.cpp
-index c5e236e9..ac0a1555 100644
+index c5e236e9..d6f8cd74 100644
 --- a/src/crypto.cpp
 +++ b/src/crypto.cpp
 @@ -5,12 +5,14 @@
@@ -253,7 +253,7 @@ index c5e236e9..ac0a1555 100644
  
    cert_chain_t::cert_chain_t():
        _certs {},
-@@ -465,6 +467,15 @@ namespace crypto {
+@@ -465,6 +467,19 @@ namespace crypto {
      X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (const std::uint8_t *) cn.data(), (int) cn.size(), -1, 0);
  
      X509_set_issuer_name(x509.get(), name);
@@ -265,6 +265,10 @@ index c5e236e9..ac0a1555 100644
 +      X509V3_EXT_conf_nid(nullptr, &extension_context, NID_basic_constraints, (char *) "critical,CA:TRUE")
 +    };
 +    X509_add_ext(x509.get(), basic_constraints.get(), -1);
++    x509_extension_t subject_alt_name {
++      X509V3_EXT_conf_nid(nullptr, &extension_context, NID_subject_alt_name, (char *) "IP:127.0.0.1,DNS:localhost")
++    };
++    X509_add_ext(x509.get(), subject_alt_name.get(), -1);
 +
      X509_sign(x509.get(), pkey.get(), EVP_sha256());
  
