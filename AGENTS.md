@@ -1,23 +1,7 @@
 # Repository guidance
 
-## UI verification
+## Renderer UI
 
-- For renderer UI work, use only one of the supported visual verification paths: the dev app or Storybook. Do not use ad-hoc preview or rendering paths.
-- Always run visual tests against the development version of the app or Storybook. Do not use a production build or another built version for visual verification.
-- Use the dev app for integrated application behavior and Storybook for isolated component visual checks.
-
-## UI code reuse
-
-- When you build or change a UI component, first search the codebase for existing components, hooks, styles, and utilities that you can reuse.
-- Prefer reuse, composition, or a small extension of existing UI code over duplicate implementation.
-- Create new UI code only when the existing code does not meet the requirement or reuse would make the code less clear or harder to maintain.
-
-## UI colors
-
-- Treat the custom properties in `src/renderer/src/styles.css` under `:root` as the single source of truth for the renderer color palette.
-- Reuse the existing semantic tokens, such as `var(--openbot-bg-*)`, `var(--openbot-text-*)`, `var(--openbot-border*)`, `var(--openbot-accent*)`, `var(--openbot-success*)`, `var(--openbot-warning*)`, and `var(--openbot-danger*)`, instead of adding new color literals.
-- Do not introduce ad-hoc hex, `rgb()`, `rgba()`, `hsl()`, or named colors in components or new CSS rules when an existing palette token is suitable.
-- Before creating a new shade or token, search the palette and existing styles for a suitable semantic color. Prefer the closest existing role over a visually tweaked duplicate.
-- If a genuinely new semantic role is needed, add one to the `:root` palette first and reference it through `var(...)` everywhere else. Keep aliases for backwards compatibility only when they are already used.
-- Color variants with different opacity are palette tokens too; do not assemble one-off translucent colors inline.
-- Keep colors required by third-party integrations, generated avatars, SVG assets, or platform APIs isolated to the integration boundary and do not use them as general UI colors.
+- Verify integrated UI behavior in the dev app and isolated components in Storybook. Run visual tests only through these development paths; do not use production builds or ad-hoc previews.
+- Before adding or changing UI code, search for reusable components, hooks, styles, and utilities. Prefer reuse, composition, or a small extension; add new code only when the existing code does not fit or would reduce clarity.
+- Treat the `:root` properties in `src/renderer/src/styles.css` as the renderer color palette. Use the closest semantic `--openbot-*` token, including opacity variants, instead of ad-hoc color literals. Add a token there only for a new semantic role. Keep existing compatibility aliases when used, and isolate fixed integration, generated asset, SVG, or platform colors at their boundaries.
