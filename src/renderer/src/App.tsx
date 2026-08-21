@@ -236,6 +236,7 @@ export function App() {
     string,
     { snapshot: ConversationSnapshot; markNewMessagesRead: boolean }
   >();
+  const agentChatsToMarkRead = new Set<string>();
   const autoReadAgentMessageIds = new Map<string, string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let conversationFrame: number | undefined;
@@ -506,11 +507,17 @@ export function App() {
     () => ({ botId: activeBotId(), agentPhase: agentStatus().phase }),
     ({ botId }) => {
       if (!botId) return;
+      const markReadOnOpen = agentChatsToMarkRead.delete(botId);
       void Promise.all([window.openbot.agent.readConversation(botId), window.openbot.agent.listQueue(botId)])
         .then(([snapshot, queue]) => {
           setQueues((current) => ({ ...current, [botId]: queue }));
           if (snapshot.readState) applyConversationReadState(botId, snapshot.readState);
           scheduleConversation(snapshot);
+          if (markReadOnOpen && (snapshot.readState?.unreadCount ?? 0) > 0) {
+            void markAgentMessagesRead(botId, snapshot.messages.at(-1)?.id ?? null).catch((error) =>
+              appendUiError(botId, error, "Read state failed"),
+            );
+          }
         })
         .catch((error) => appendUiError(botId, error, "Load failed"));
     },
@@ -767,6 +774,7 @@ export function App() {
     }
     setActiveDirectMemberId(null);
     clearReplyIndicators(botId);
+    agentChatsToMarkRead.add(botId);
     setActiveBotId(botId);
   }
 

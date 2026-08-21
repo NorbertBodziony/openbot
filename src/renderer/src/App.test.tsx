@@ -3594,6 +3594,58 @@ describe("OpenBot connected desktop shell", () => {
     );
   });
 
+  it("clears unread messages when entering an agent chat", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "sales-new",
+      throughMessageId: null,
+    };
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({
+      "sales-outbound": unreadState,
+    });
+    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) =>
+      botId === "sales-outbound"
+        ? {
+            botId,
+            threadId: "thread-sales",
+            activeTurnId: null,
+            revision: 1,
+            readState: unreadState,
+            messages: [
+              {
+                id: "sales-new",
+                author: "assistant",
+                text: "A new sales reply",
+                createdAt: "2026-08-19T09:03:00.000Z",
+                status: "completed",
+              },
+            ],
+          }
+        : {
+            botId,
+            threadId: null,
+            activeTurnId: null,
+            revision: 0,
+            readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+            messages: [],
+          },
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+
+    expect(await screen.findByText("A new sales reply")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "sales-outbound",
+        throughMessageId: "sales-new",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
   it("keeps the agent unread state when marking it fails", async () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
