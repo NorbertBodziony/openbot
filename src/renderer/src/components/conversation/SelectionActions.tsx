@@ -116,20 +116,26 @@ export function MessageSelectionActions(props: {
   const [fallbackHighlight, setFallbackHighlight] = createSignal(false);
   let lastContextKey: string | undefined;
 
-  const dismiss = () => {
+  const clearSelection = () => {
     setSelection(null);
     clearPersistentHighlight();
+  };
+
+  // Only for deliberate dismissals: the composer is contenteditable, so its caret is the document
+  // selection and clearing it here would wipe the caret out from under the person typing.
+  const dismiss = () => {
+    clearSelection();
     window.getSelection()?.removeAllRanges();
   };
 
   const captureSelection = () => {
     if (props.disabled) {
-      dismiss();
+      clearSelection();
       return;
     }
     const next = messageTextSelection(window.getSelection());
     if (!next) {
-      dismiss();
+      clearSelection();
       return;
     }
     setSelection(next);
@@ -138,7 +144,7 @@ export function MessageSelectionActions(props: {
   createEffect(
     () => props.contextKey,
     (contextKey) => {
-      if (lastContextKey !== undefined && contextKey !== lastContextKey) dismiss();
+      if (lastContextKey !== undefined && contextKey !== lastContextKey) clearSelection();
       lastContextKey = contextKey;
     },
   );
@@ -146,7 +152,7 @@ export function MessageSelectionActions(props: {
   createEffect(
     () => props.disabled && selection(),
     (active) => {
-      if (active) dismiss();
+      if (active) clearSelection();
     },
   );
 
