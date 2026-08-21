@@ -178,6 +178,7 @@ jobs:
         shell: pwsh
         run: |
           "OPENBOT_BUN_DIR=$(Split-Path (Get-Command bun).Source -Parent)" >> $env:GITHUB_ENV
+          "OPENBOT_CARGO_DIR=$(Split-Path (Get-Command cargo).Source -Parent)" >> $env:GITHUB_ENV
           "OPENBOT_NODE_DIR=$(Split-Path (Get-Command node).Source -Parent)" >> $env:GITHUB_ENV
 
       - name: Install macOS build dependencies
@@ -222,7 +223,7 @@ jobs:
         env:
           CMAKE_GENERATOR: Ninja
         run: |
-          export PATH="$PATH:$(cygpath "$OPENBOT_BUN_DIR"):$(cygpath "$OPENBOT_NODE_DIR")"
+          export PATH="$PATH:$(cygpath "$OPENBOT_BUN_DIR"):$(cygpath "$OPENBOT_CARGO_DIR"):$(cygpath "$OPENBOT_NODE_DIR")"
           bun run build:remote-desktop-runtime
 
       - name: Verify runtime
