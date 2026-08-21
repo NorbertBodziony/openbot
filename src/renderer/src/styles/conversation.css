@@ -5639,7 +5639,7 @@
   display: flex;
   width: min(460px, 100%);
   overflow: hidden;
-  margin: 12px auto 20px;
+  margin: 12px 0 20px;
   border: 0;
   border-radius: var(--openbot-radius-lg);
   background: var(--openbot-bg-surface);
@@ -5749,6 +5749,7 @@
   display: flex;
   width: 100%;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   border: 0.5px solid var(--openbot-border);
   border-radius: var(--openbot-radius-sm);
