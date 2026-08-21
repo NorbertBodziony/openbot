@@ -67,6 +67,7 @@ import type {
   TeamSessionSummary,
   UpdateTeamMemberInput,
 } from "./ipc-team-host";
+import type { VoiceTranscriptionInput, VoiceTranscriptionResult } from "./ipc-voice";
 
 export interface AgentDesktopApi {
   getStatus: () => Promise<AgentStatus>;
@@ -167,6 +168,10 @@ export interface RemoteMacDesktopApi {
   onEvent: (listener: (sessions: RemoteMacSession[]) => void) => () => void;
 }
 
+export interface VoiceDesktopApi {
+  transcribe: (input: VoiceTranscriptionInput) => Promise<VoiceTranscriptionResult>;
+}
+
 export interface OpenBotDesktopApi {
   getAppInfo: () => Promise<AppInfo>;
   getSetupState: () => Promise<AppSetupState>;
@@ -175,6 +180,7 @@ export interface OpenBotDesktopApi {
   requestMacPermission: (permission: MacPermissionId) => Promise<MacPermissionsState>;
   openExternal: (destination: ExternalDestination) => Promise<void>;
   openUrl: (url: string) => Promise<void>;
+  voice: VoiceDesktopApi;
   auth: CentralAuthDesktopApi;
   agent: AgentDesktopApi;
   browser: BrowserDesktopApi;

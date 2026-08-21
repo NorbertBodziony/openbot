@@ -4405,7 +4405,7 @@
 }
 
 .composer[data-compact] {
-  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
   min-height: 46px;
   align-items: center;
   gap: 8px;
@@ -4431,6 +4431,7 @@
 }
 
 .composer-button,
+.dictation-button,
 .voice-button {
   display: grid;
   width: 28px;
@@ -4450,6 +4451,79 @@
 .composer-button:hover {
   background: var(--openbot-border);
   color: var(--openbot-white);
+}
+
+.composer-primary-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.voice-recording-status {
+  display: flex;
+  height: 28px;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  border: 0;
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-hover);
+  padding: 0 7px 0 4px;
+  color: var(--openbot-text-secondary);
+}
+
+.voice-recording-stop {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--openbot-radius-pill);
+  background: transparent;
+  color: var(--openbot-text-primary);
+  transition: transform var(--openbot-duration-fast) var(--openbot-ease-out);
+}
+
+.voice-recording-stop:hover {
+  background: var(--openbot-border);
+}
+
+.voice-recording-stop:active {
+  transform: scale(0.96);
+}
+
+.voice-recording-stop svg {
+  width: 14px;
+  height: 14px;
+}
+
+.voice-recording-duration {
+  min-width: 2.5em;
+  font-size: var(--openbot-text-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: center;
+}
+
+.voice-recording-status > .conversation-more-icon {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  color: var(--openbot-text-muted);
+}
+
+.dictation-button:hover:not(:disabled) {
+  background: var(--openbot-border);
+  color: var(--openbot-white);
+}
+
+.dictation-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dictation-spinner {
+  animation: ui-spin 720ms linear infinite;
 }
 
 .voice-button {
@@ -4500,7 +4574,7 @@
   grid-row: 1;
 }
 
-.composer[data-compact] .composer-toolbar > .voice-button {
+.composer[data-compact] .composer-toolbar > .composer-primary-actions {
   grid-column: 3;
   grid-row: 1;
 }

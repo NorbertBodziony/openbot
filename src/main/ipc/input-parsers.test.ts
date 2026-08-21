@@ -32,6 +32,7 @@ import {
   parseUpdateTeamMember,
 } from "./server-inputs";
 import { requireString } from "./validation";
+import { parseVoiceTranscription } from "./voice-inputs";
 
 describe("app IPC input parsing", () => {
   it("parses setup and permission values", () => {
@@ -47,6 +48,45 @@ describe("app IPC input parsing", () => {
     expect(() => parseMacPermission("camera")).toThrowError("Unknown macOS permission.");
   });
 });
+
+describe("voice IPC input parsing", () => {
+  it("accepts canonical 16 kHz mono PCM WAV audio", () => {
+    const audio = voiceWav(8);
+    expect(parseVoiceTranscription({ audio })).toEqual({ audio });
+  });
+
+  it("rejects malformed and oversized voice audio", () => {
+    expect(() => parseVoiceTranscription({ audio: new Uint8Array(44) })).toThrowError(
+      "Voice audio must be a 16 kHz mono PCM WAV file.",
+    );
+    const wrongRate = voiceWav(8);
+    new DataView(wrongRate.buffer).setUint32(24, 44_100, true);
+    expect(() => parseVoiceTranscription({ audio: wrongRate })).toThrowError(
+      "Voice audio must be a 16 kHz mono PCM WAV file.",
+    );
+    expect(() => parseVoiceTranscription({ audio: new Uint8Array(3_840_045) })).toThrowError(
+      "Voice audio has an invalid length.",
+    );
+  });
+});
+
+function voiceWav(sampleBytes: number): Uint8Array {
+  const audio = new Uint8Array(44 + sampleBytes);
+  const view = new DataView(audio.buffer);
+  audio.set(new TextEncoder().encode("RIFF"), 0);
+  view.setUint32(4, audio.byteLength - 8, true);
+  audio.set(new TextEncoder().encode("WAVEfmt "), 8);
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 16_000, true);
+  view.setUint32(28, 32_000, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  audio.set(new TextEncoder().encode("data"), 36);
+  view.setUint32(40, sampleBytes, true);
+  return audio;
+}
 
 describe("server IPC input parsing", () => {
   it("parses host and connection values", () => {

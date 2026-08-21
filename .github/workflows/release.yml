@@ -144,6 +144,7 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
         run: |
+          bun run voice:prepare
           bun run build
           bun x electron-builder --mac --arm64 --publish never \
             --config.mac.provisioningProfile="$OPENBOT_PROVISIONING_PROFILE"
@@ -163,6 +164,8 @@ jobs:
             "$RUNNER_TEMP/openbot-entitlements.plist" | grep -Fx 'applinks:openbot.run'
           plutil -extract com.apple.developer.team-identifier raw \
             "$RUNNER_TEMP/openbot-entitlements.plist" | grep -Fx 'ZTRDTUL87R'
+          plutil -extract com.apple.security.device.audio-input raw \
+            "$RUNNER_TEMP/openbot-entitlements.plist" | grep -Fx 'true'
           plutil -extract NSUserActivityTypes.0 raw "$app_path/Contents/Info.plist" \
             | grep -Fx 'NSUserActivityTypeBrowsingWeb'
           plutil -extract ElectronTeamID raw "$app_path/Contents/Info.plist" | grep -Fx 'ZTRDTUL87R'

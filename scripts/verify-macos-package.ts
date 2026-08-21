@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -13,6 +14,8 @@ const contentsPath = resolve(appPath, "Contents");
 const executablePath = resolve(contentsPath, "MacOS/OpenBot");
 const resourcesPath = resolve(contentsPath, "Resources");
 const plistPath = resolve(contentsPath, "Info.plist");
+const whisperExecutablePath = resolve(resourcesPath, "whisper/bin/whisper-cli");
+const whisperModelPath = resolve(resourcesPath, "whisper/model/ggml-medium-q5_0.bin");
 
 await Promise.all([
   access(executablePath),
@@ -20,6 +23,10 @@ await Promise.all([
   access(resolve(resourcesPath, "icon.icns")),
   access(resolve(resourcesPath, "licenses/Electron-LICENSE")),
   access(resolve(resourcesPath, "licenses/LICENSES.chromium.html")),
+  access(resolve(resourcesPath, "licenses/OpenAI-Whisper-LICENSE")),
+  access(resolve(resourcesPath, "licenses/whisper.cpp-LICENSE")),
+  access(whisperExecutablePath),
+  access(whisperModelPath),
 ]);
 
 const plist = JSON.parse(run("plutil", ["-convert", "json", "-o", "-", plistPath]));
@@ -34,6 +41,11 @@ if (!Array.isArray(plist.NSUserActivityTypes) || !plist.NSUserActivityTypes.incl
   throw new Error("The Universal Links activity type is missing.");
 }
 if (!plist.ElectronAsarIntegrity) throw new Error("ASAR integrity metadata is missing.");
+expectEqual(
+  plist.NSMicrophoneUsageDescription,
+  "OpenBot uses the microphone to transcribe voice prompts locally on this Mac.",
+  "microphone usage description",
+);
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 if (!isDynamicRecord(packageJson)) throw new Error("package.json is not a JSON object.");
@@ -41,6 +53,17 @@ expectEqual(plist.CFBundleShortVersionString, packageJson.version, "application 
 
 const architecture = run("file", [executablePath]);
 if (!architecture.includes("arm64")) throw new Error(`Expected an ARM64 executable: ${architecture}`);
+const whisperArchitecture = run("file", [whisperExecutablePath]);
+if (!whisperArchitecture.includes("arm64")) {
+  throw new Error(`Expected an ARM64 Whisper executable: ${whisperArchitecture}`);
+}
+expectEqual(
+  createHash("sha256")
+    .update(await readFile(whisperModelPath))
+    .digest("hex"),
+  "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
+  "Whisper model digest",
+);
 
 const fuses = await getCurrentFuseWire(executablePath);
 const expectedFuses: Array<[FuseV1Options, number]> = [

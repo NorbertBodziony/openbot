@@ -6,6 +6,7 @@ export const IPC_CHANNELS = {
   requestMacPermission: "app:request-mac-permission",
   openExternal: "app:open-external",
   openUrl: "app:open-url",
+  voiceTranscribe: "voice:transcribe",
   authGetState: "auth:get-state",
   authRetry: "auth:retry",
   authRequestEmailCode: "auth:request-email-code",

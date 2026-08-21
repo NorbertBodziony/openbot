@@ -4,3 +4,4 @@ export * from "./ipc-channels";
 export * from "./ipc-conversation";
 export * from "./ipc-desktop-apis";
 export * from "./ipc-team-host";
+export * from "./ipc-voice";
