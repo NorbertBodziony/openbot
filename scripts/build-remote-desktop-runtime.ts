@@ -16,6 +16,8 @@ if (
 ) {
   throw new Error(`Unsupported remote desktop target: ${process.platform}-${process.arch}.`);
 }
+const tarExecutable =
+  process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
 
 const lock = await loadNativeRuntimeLock();
 const outputRoot = resolve("build/remote-desktop-runtime", platform, architecture);
@@ -98,7 +100,7 @@ async function packageCorrespondingSource(
     "--exclude=build-openbot",
   ];
   execFileSync(
-    "tar",
+    tarExecutable,
     [
       "-czf",
       join(sourceOutput, `Sunshine-${lock.remoteDesktop.sunshine.version}-source.tar.gz`),
@@ -110,7 +112,7 @@ async function packageCorrespondingSource(
     { stdio: "inherit" },
   );
   execFileSync(
-    "tar",
+    tarExecutable,
     [
       "-czf",
       join(sourceOutput, `moonlight-web-stream-${lock.remoteDesktop.moonlightWeb.version}-openbot-source.tar.gz`),
@@ -143,9 +145,7 @@ async function downloadAndExtract(url: string, expectedSha256: string, destinati
   if (sha256(bytes) !== expectedSha256) throw new Error(`Runtime source checksum failed for ${url}.`);
   await writeFile(archive, bytes);
   await mkdir(destination, { recursive: true });
-  const tar =
-    process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
-  execFileSync(tar, ["-xzf", archive, "--strip-components=1", "-C", destination], { stdio: "inherit" });
+  execFileSync(tarExecutable, ["-xzf", archive, "--strip-components=1", "-C", destination], { stdio: "inherit" });
   return destination;
 }
 
