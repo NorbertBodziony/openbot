@@ -845,13 +845,13 @@ describe("OpenBot connected desktop shell", () => {
       screen.queryByRole("radiogroup", { name: "What do you want me helping with most?" }),
     ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "false");
-    expect(screen.getByRole("button", { name: "Attach a file" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add to prompt" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
 
     await confirmOnboardingModel();
     expect(screen.getByRole("radiogroup", { name: "What do you want me helping with most?" })).toBeInTheDocument();
     expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "true");
-    expect(screen.getByRole("button", { name: "Attach a file" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add to prompt" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
     expect(screen.queryByText(/Salesforce account queue/i)).not.toBeInTheDocument();
   });
@@ -1892,6 +1892,27 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(composer).toHaveTextContent(""));
   });
 
+  it("keeps the composer compact until the draft becomes multiline", async () => {
+    render(() => <App />);
+    await confirmOnboardingModel();
+    const editor = screen.getByRole("textbox", { name: "Message Chief" });
+    const composer = editor.closest(".composer");
+
+    expect(composer).toHaveAttribute("data-compact");
+
+    editor.textContent = "Start a message";
+    await fireEvent.input(editor);
+    expect(composer).toHaveAttribute("data-compact");
+
+    editor.textContent = "Start a message\nContinue here";
+    await fireEvent.input(editor);
+    expect(composer).not.toHaveAttribute("data-compact");
+
+    editor.textContent = "Start a message";
+    await fireEvent.input(editor);
+    expect(composer).toHaveAttribute("data-compact");
+  });
+
   it("publishes typing state", async () => {
     render(() => <App />);
     await confirmOnboardingModel();
@@ -2587,14 +2608,20 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("supports picker and attachment-only messages", async () => {
-    vi.mocked(window.openbot.agent.chooseAttachments).mockResolvedValueOnce([
-      attachment("draft-1", "brief.pdf", "pdf"),
-    ]);
+    vi.mocked(window.openbot.agent.chooseAttachments)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([attachment("draft-1", "brief.pdf", "pdf")]);
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
-    await fireEvent.click(screen.getByRole("button", { name: "Attach a file" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    await fireEvent.pointerDown(screen.getByRole("button", { name: "Add to prompt" }), { button: 0 });
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: /Attach image/ }), { button: 0 });
+    await waitFor(() => expect(window.openbot.agent.chooseAttachments).toHaveBeenLastCalledWith({ filter: "images" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add to prompt" })).toBeEnabled());
+    await fireEvent.pointerDown(screen.getByRole("button", { name: "Add to prompt" }), { button: 0 });
+    expect(screen.getByRole("menuitem", { name: /Use a skill/ })).toHaveAttribute("data-disabled");
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: /Add context/ }), { button: 0 });
+    await waitFor(() => expect(window.openbot.agent.chooseAttachments).toHaveBeenLastCalledWith({ filter: "all" }));
     expect(await screen.findByText("brief.pdf")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() =>

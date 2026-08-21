@@ -4224,20 +4224,27 @@
 .composer {
   position: relative;
   z-index: 11;
-  display: flex;
+  display: grid;
   max-width: none;
-  min-height: 44px;
-  align-items: flex-end;
-  gap: 8px;
+  min-height: 96px;
+  gap: 4px;
   margin: 0 auto;
   border: 0.5px solid var(--openbot-border);
-  border-radius: var(--openbot-radius-pill);
+  border-radius: var(--openbot-radius-lg);
   background: var(--openbot-bg-surface);
-  padding: 7px 8px;
+  padding: 10px;
   box-shadow: none;
   transition:
-    border-color var(--openbot-duration-normal) ease,
-    box-shadow var(--openbot-duration-normal) ease;
+    border-color var(--openbot-duration-normal) var(--openbot-ease-out),
+    box-shadow var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+.composer[data-compact] {
+  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  min-height: 46px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
 }
 
 .composer:focus-within {
@@ -4269,7 +4276,10 @@
   border-radius: var(--openbot-radius-pill);
   background: var(--openbot-hover);
   color: var(--openbot-text-secondary);
-  transition: var(--openbot-duration-normal) ease;
+  transition:
+    background-color var(--openbot-duration-fast) var(--openbot-ease-out),
+    color var(--openbot-duration-fast) var(--openbot-ease-out),
+    transform var(--openbot-duration-fast) var(--openbot-ease-out);
 }
 
 .composer-button:hover {
@@ -4296,11 +4306,52 @@
 .composer-input-label {
   display: flex;
   min-width: 0;
-  min-height: 30px;
-  max-height: 130px;
-  flex: 1;
+  min-height: 48px;
+  max-height: 117px;
   align-items: flex-end;
   cursor: text;
+}
+
+.composer-toolbar {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.composer[data-compact] .composer-input-label {
+  grid-column: 2;
+  grid-row: 1;
+  min-height: 28px;
+}
+
+.composer[data-compact] .composer-toolbar {
+  display: contents;
+}
+
+.composer[data-compact] .composer-toolbar > .composer-button {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.composer[data-compact] .composer-toolbar > .voice-button {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.composer[data-compact] .composer-editor-root,
+.composer[data-compact] .composer-editor-surface {
+  min-height: 28px;
+}
+
+.composer[data-compact] .composer-editor-surface {
+  padding: 4px 0;
+}
+
+.composer[data-compact] .composer-editor-placeholder {
+  top: 4px;
+  left: 0;
 }
 
 .composer-editor-root {
@@ -4308,8 +4359,8 @@
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: 30px;
-  max-height: 130px;
+  min-height: 48px;
+  max-height: 117px;
   cursor: text;
 }
 
@@ -4318,8 +4369,8 @@
   box-sizing: border-box;
   width: 100%;
   height: auto;
-  min-height: 30px;
-  max-height: 130px;
+  min-height: 48px;
+  max-height: 117px;
   margin: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -4327,7 +4378,7 @@
   border: 0;
   outline: 0;
   background: transparent;
-  padding: 5px 0;
+  padding: 2px 4px 8px;
   caret-color: var(--openbot-text-primary);
   color: var(--openbot-white);
   cursor: text;
@@ -4344,13 +4395,21 @@
 
 .composer-editor-placeholder {
   position: absolute;
-  top: 5px;
-  left: 0;
+  top: 2px;
+  left: 4px;
   color: var(--openbot-text-muted);
   font-size: var(--openbot-text-lg);
   line-height: 20px;
   pointer-events: none;
   user-select: none;
+}
+
+.composer-trailing-line {
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .composer-mention-token {
@@ -4473,7 +4532,48 @@
 }
 
 .attachment-menu {
-  translate: calc(var(--openbot-space-3) * -1) 0;
+  translate: 0;
+}
+
+.composer-action-menu {
+  width: min(300px, calc(100vw - var(--openbot-space-6)));
+  max-width: min(300px, calc(100vw - var(--openbot-space-6)));
+}
+
+.ui-action-menu:not([data-menu-layout="grid"]) .composer-action-item {
+  height: auto;
+  min-height: 52px;
+  align-items: flex-start;
+  padding: 8px;
+  white-space: normal;
+}
+
+.composer-action-item > svg {
+  margin-top: 2px;
+}
+
+.composer-action-item > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.composer-action-item strong,
+.composer-action-item small {
+  display: block;
+}
+
+.composer-action-item strong {
+  color: inherit;
+  font-size: var(--openbot-text-md);
+  font-weight: var(--openbot-weight-medium);
+  line-height: var(--openbot-leading-md);
+}
+
+.composer-action-item small {
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-sm);
 }
 
 .composer-attachment {

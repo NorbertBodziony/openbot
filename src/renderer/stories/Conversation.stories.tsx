@@ -458,17 +458,19 @@ export const SearchConversation: Story = {
   },
 };
 
-export const AttachFilesPopover: Story = {
-  name: "Attach files popover",
+export const ComposerActionMenu: Story = {
+  name: "Composer action menu",
   play: async ({ canvas, canvasElement, userEvent }) => {
-    await userEvent.click(canvas.getByRole("button", { name: "Attach a file" }));
-    const popover = await within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "Attach file" });
-    await waitFor(() => expect(popover).toBeVisible());
-    const action = within(popover).getByRole("button", { name: "Attach files" });
-    await expect(popover).toHaveClass("ui-action-menu");
-    await expect(popover.getBoundingClientRect().width).toBe(160);
-    await expect(action.getBoundingClientRect().height).toBe(32);
-    await expect(getComputedStyle(action).padding).toBe("6px 8px");
+    await userEvent.click(canvas.getByRole("button", { name: "Add to prompt" }));
+    const menu = await within(canvasElement.ownerDocument.body).findByRole("menu", { name: "Add to prompt" });
+    await waitFor(() => expect(menu).toBeVisible());
+    const attachImage = within(menu).getByRole("menuitem", { name: /Attach image/ });
+    const useSkill = within(menu).getByRole("menuitem", { name: /Use a skill/ });
+    const addContext = within(menu).getByRole("menuitem", { name: /Add context/ });
+    await expect(menu).toHaveClass("ui-action-menu");
+    await expect(attachImage.getBoundingClientRect().height).toBeGreaterThanOrEqual(52);
+    await expect(useSkill).toHaveAttribute("data-disabled");
+    await expect(addContext).toBeVisible();
   },
 };
 

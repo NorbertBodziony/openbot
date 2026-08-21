@@ -74,7 +74,21 @@ import {
   REMOTE_DESKTOP_PANEL_STORAGE_KEY,
   RemoteMacPanel,
 } from "./RemoteMacPanel";
-import { Button, Combobox, Dialog, Input, NativeSelect, Paperclip, Popover, Switch, Tabs, Textarea } from "./ui";
+import {
+  Button,
+  Combobox,
+  Dialog,
+  DropdownMenu,
+  File,
+  Image,
+  Input,
+  NativeSelect,
+  Popover,
+  Puzzle,
+  Switch,
+  Tabs,
+  Textarea,
+} from "./ui";
 
 type AgentPickerOption = { kind: "create" } | { kind: "bot"; bot: BotProfile };
 
@@ -191,7 +205,7 @@ export function Conversation(props: ConversationProps) {
   const [editingDeliveryId, setEditingDeliveryId] = createSignal<string | null>(null);
   const [editingDraftBackup, setEditingDraftBackup] = createSignal<ComposerDraft | null>(null);
   const [composerFocusRequest, setComposerFocusRequest] = createSignal(0);
-  const [showAttachments, setShowAttachments] = createSignal(false);
+  const [showComposerActions, setShowComposerActions] = createSignal(false);
   const [attachmentBusy, setAttachmentBusy] = createSignal(false);
   const [composerError, setComposerError] = createSignal<string | null>(null);
   const [markingRead, setMarkingRead] = createSignal(false);
@@ -1152,16 +1166,16 @@ export function Conversation(props: ConversationProps) {
       },
     }));
     if (selected.length > accepted.length) setComposerError("You can attach at most 10 files.");
-    setShowAttachments(false);
+    setShowComposerActions(false);
   }
 
-  async function chooseAttachments() {
+  async function chooseAttachments(filter: "all" | "images") {
     if (attachmentBusy()) return;
-    setShowAttachments(false);
+    setShowComposerActions(false);
     setAttachmentBusy(true);
     setComposerError(null);
     try {
-      addAttachments(await window.openbot.agent.chooseAttachments());
+      addAttachments(await window.openbot.agent.chooseAttachments({ filter }));
     } catch (error) {
       setComposerError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1187,7 +1201,7 @@ export function Conversation(props: ConversationProps) {
       },
     }));
     setComposerFocusRequest((current) => current + 1);
-    setShowAttachments(false);
+    setShowComposerActions(false);
     setComposerError(null);
   }
 
@@ -1991,6 +2005,7 @@ export function Conversation(props: ConversationProps) {
           </Show>
           <div
             class="composer"
+            data-compact={currentDraft().text.includes("\n") ? undefined : ""}
             onPointerDown={(event) => {
               if (!(event.target instanceof Element)) return;
               if (event.target.closest("button, .composer-editor-surface")) return;
@@ -1998,31 +2013,6 @@ export function Conversation(props: ConversationProps) {
               setComposerFocusRequest((current) => current + 1);
             }}
           >
-            <Popover.Root open={showAttachments()} placement="top-start" gutter={4} onOpenChange={setShowAttachments}>
-              <Popover.Trigger
-                as={Button}
-                type="button"
-                class="composer-button"
-                aria-label="Attach a file"
-                disabled={props.agentPickerOpen || attachmentBusy() || !agentReady() || onboardingModelRequired()}
-              >
-                <PlusIcon />
-              </Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Content class="ui-action-menu attachment-menu">
-                  <Popover.Title class="sr-only">Attach file</Popover.Title>
-                  <Button
-                    type="button"
-                    class="ui-action-menu-item"
-                    disabled={attachmentBusy()}
-                    onClick={() => void chooseAttachments()}
-                  >
-                    <Paperclip aria-hidden="true" />
-                    {attachmentBusy() ? "Importing…" : "Attach files"}
-                  </Button>
-                </Popover.Content>
-              </Popover.Portal>
-            </Popover.Root>
             <div class="composer-input-label">
               <ComposerEditor
                 botId={props.bot?.id}
@@ -2059,29 +2049,90 @@ export function Conversation(props: ConversationProps) {
                 }
               />
             </div>
-            <Show
-              when={props.activeTurnId && !editingDeliveryId() && !composerHasContent()}
-              fallback={
+            <div class="composer-toolbar">
+              <DropdownMenu.Root
+                open={showComposerActions()}
+                onOpenChange={setShowComposerActions}
+                placement="top-start"
+                gutter={8}
+                modal={false}
+              >
+                <DropdownMenu.Trigger
+                  class="composer-button"
+                  aria-label="Add to prompt"
+                  disabled={
+                    props.agentPickerOpen ||
+                    attachmentBusy() ||
+                    submitting() ||
+                    selectionSending() ||
+                    !agentReady() ||
+                    onboardingModelRequired()
+                  }
+                >
+                  <PlusIcon />
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content class="attachment-menu composer-action-menu" aria-label="Add to prompt">
+                    <DropdownMenu.Item
+                      class="composer-action-item"
+                      disabled={attachmentBusy()}
+                      onSelect={() => void chooseAttachments("images")}
+                    >
+                      <Image aria-hidden="true" />
+                      <span>
+                        <strong>Attach image</strong>
+                        <small>Add a screenshot or visual reference.</small>
+                      </span>
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      class="composer-action-item"
+                      disabled
+                      title="Skill selection is not available yet."
+                    >
+                      <Puzzle aria-hidden="true" />
+                      <span>
+                        <strong>Use a skill</strong>
+                        <small>Skill selection is not available yet.</small>
+                      </span>
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      class="composer-action-item"
+                      disabled={attachmentBusy()}
+                      onSelect={() => void chooseAttachments("all")}
+                    >
+                      <File aria-hidden="true" />
+                      <span>
+                        <strong>Add context</strong>
+                        <small>Include a file with supporting details.</small>
+                      </span>
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+              <Show
+                when={props.activeTurnId && !editingDeliveryId() && !composerHasContent()}
+                fallback={
+                  <Button
+                    type="button"
+                    class="voice-button"
+                    aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
+                    disabled={submitting() || selectionSending() || !agentReady() || onboardingModelRequired()}
+                    onClick={() => void submitMessage()}
+                  >
+                    {submitting() ? "…" : "↑"}
+                  </Button>
+                }
+              >
                 <Button
                   type="button"
-                  class="voice-button"
-                  aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
-                  disabled={submitting() || selectionSending() || !agentReady() || onboardingModelRequired()}
-                  onClick={() => void submitMessage()}
+                  class="voice-button voice-button-active"
+                  aria-label="Stop agent"
+                  onClick={props.onStop}
                 >
-                  {submitting() ? "…" : "↑"}
+                  <StopIcon />
                 </Button>
-              }
-            >
-              <Button
-                type="button"
-                class="voice-button voice-button-active"
-                aria-label="Stop agent"
-                onClick={props.onStop}
-              >
-                <StopIcon />
-              </Button>
-            </Show>
+              </Show>
+            </div>
           </div>
         </div>
       </Show>

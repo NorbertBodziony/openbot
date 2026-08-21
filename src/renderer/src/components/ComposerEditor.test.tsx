@@ -91,9 +91,13 @@ describe("ComposerEditor", () => {
     await fireEvent.keyDown(editor, { key: "a" });
     await waitFor(() => expect(editor).toHaveTextContent("a"));
     await fireEvent.keyDown(editor, { key: "b" });
+    await fireEvent.keyDown(editor, { key: "c" });
 
-    expect(editor).toHaveTextContent("ab");
-    expect(onValueChange).toHaveBeenLastCalledWith("ab");
+    expect(editor).toHaveTextContent("abc");
+    expect(editor.childNodes).toHaveLength(1);
+    expect(editor.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+    expect(onValueChange).toHaveBeenLastCalledWith("abc");
+    expect(editor.contains(window.getSelection()?.getRangeAt(0).commonAncestorContainer ?? null)).toBe(true);
   });
 
   it("does not duplicate printable keys when a native input event arrives", async () => {
@@ -116,12 +120,29 @@ describe("ComposerEditor", () => {
     await fireEvent.input(editor);
 
     await fireEvent.keyDown(editor, { key: "Enter", shiftKey: true });
+
+    expect(editor.querySelector("[data-composer-trailing-line]")).not.toBeNull();
+    expect(onValueChange).toHaveBeenLastCalledWith("First line\n");
+
     placeCaretAtEnd(editor);
     await fireEvent.keyDown(editor, { key: "Enter", shiftKey: true });
 
     expect(onSubmit).not.toHaveBeenCalled();
     expect(onValueChange).toHaveBeenLastCalledWith("First line\n\n");
     expect(editor.textContent).toBe("First line\n\n");
+    expect(editor.querySelectorAll("[data-composer-trailing-line]")).toHaveLength(1);
+  });
+
+  it("removes a trailing line break without creating a phantom row", async () => {
+    const { editor, onValueChange } = renderComposer([], "First line\n");
+    editor.focus();
+    placeCaretAtEnd(editor);
+
+    await fireEvent.keyDown(editor, { key: "Backspace" });
+
+    expect(editor.textContent).toBe("First line");
+    expect(editor.querySelector("[data-composer-trailing-line]")).toBeNull();
+    expect(onValueChange).toHaveBeenLastCalledWith("First line");
   });
 
   it("submits with Enter without changing the multiline draft", async () => {
@@ -135,6 +156,61 @@ describe("ComposerEditor", () => {
     expect(onValueChange).toHaveBeenLastCalledWith("First line\nSecond line");
     expect(onSubmit).toHaveBeenCalledOnce();
     expect(editor.textContent).toBe("First line\nSecond line");
+  });
+
+  it.each([
+    ["Control+A", { ctrlKey: true }],
+    ["Command+A", { metaKey: true }],
+  ])("selects the full draft with %s and keeps editor focus", async (_shortcut, modifier) => {
+    const { editor } = renderComposer([], "Select this entire draft");
+    editor.focus();
+    placeCaretAtEnd(editor);
+
+    await fireEvent.keyDown(editor, { key: "a", ...modifier });
+
+    const selection = window.getSelection();
+    expect(editor).toHaveFocus();
+    expect(selection?.toString()).toBe("Select this entire draft");
+    expect(selection?.getRangeAt(0).commonAncestorContainer).toBe(editor);
+  });
+
+  it.each([
+    ["ArrowLeft", { metaKey: true }],
+    ["ArrowRight", { altKey: true }],
+    ["Backspace", { altKey: true }],
+    ["Delete", {}],
+  ])("restores an escaped DOM selection before native %s handling", async (key, modifier) => {
+    const { editor } = renderComposer([], "Keep native editing active");
+    editor.focus();
+    const outsideRange = document.createRange();
+    outsideRange.selectNodeContents(document.body);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(outsideRange);
+
+    const handled = await fireEvent.keyDown(editor, { key, ...modifier });
+
+    expect(handled).toBe(true);
+    expect(editor).toHaveFocus();
+    expect(editor.contains(selection?.getRangeAt(0).commonAncestorContainer ?? null)).toBe(true);
+  });
+
+  it("normalizes fragmented text nodes on focus without moving the caret", async () => {
+    const { editor } = renderComposer();
+    editor.replaceChildren(document.createTextNode("First"), document.createTextNode(" second"));
+    const range = document.createRange();
+    range.setStart(editor.childNodes[1] ?? editor, 3);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    await fireEvent.focus(editor);
+
+    expect(editor.childNodes).toHaveLength(1);
+    expect(editor.textContent).toBe("First second");
+    expect(selection?.getRangeAt(0).startContainer).toBe(editor.firstChild);
+    expect(selection?.getRangeAt(0).startOffset).toBe(8);
   });
 
   it("does not submit when Enter confirms IME composition", async () => {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isCloseBrowserTabShortcut, isGlobalSearchShortcut, isToggleDevToolsShortcut } from "./browser-shortcuts";
+import {
+  isCloseBrowserTabShortcut,
+  isGlobalSearchShortcut,
+  isSelectAllShortcut,
+  isToggleDevToolsShortcut,
+} from "./browser-shortcuts";
 
 const input = (overrides: Partial<Parameters<typeof isCloseBrowserTabShortcut>[0]> = {}) => ({
   type: "keyDown",
@@ -36,6 +41,20 @@ describe("isCloseBrowserTabShortcut", () => {
     expect(isCloseBrowserTabShortcut(input({ control: true, shift: true }))).toBe(false);
     expect(isCloseBrowserTabShortcut(input({ meta: true, alt: true }))).toBe(false);
     expect(isCloseBrowserTabShortcut(input({ control: true, type: "keyUp" }))).toBe(false);
+  });
+});
+
+describe("isSelectAllShortcut", () => {
+  it("accepts Control+A and Command+A", () => {
+    expect(isSelectAllShortcut(input({ control: true, key: "a" }))).toBe(true);
+    expect(isSelectAllShortcut(input({ meta: true, key: "A" }))).toBe(true);
+  });
+
+  it("does not claim modified shortcuts or key-up events", () => {
+    expect(isSelectAllShortcut(input({ key: "a" }))).toBe(false);
+    expect(isSelectAllShortcut(input({ control: true, key: "a", shift: true }))).toBe(false);
+    expect(isSelectAllShortcut(input({ meta: true, key: "a", alt: true }))).toBe(false);
+    expect(isSelectAllShortcut(input({ control: true, key: "a", type: "keyUp" }))).toBe(false);
   });
 });
 

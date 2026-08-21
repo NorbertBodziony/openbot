@@ -5,6 +5,7 @@ import {
   parseAgentRequest,
   parseApprovalResponse,
   parseCancelQueuedMessage,
+  parseChooseAttachments,
   parseImportAttachments,
   parseInterrupt,
   parseMarkConversationRead,
@@ -140,6 +141,8 @@ describe("agent IPC input parsing", () => {
       paths: ["/tmp/readme.md"],
       data: [{ name: "image.png", mimeType: "image/png", bytes }],
     });
+    expect(parseChooseAttachments({ filter: "all" })).toEqual({ filter: "all" });
+    expect(parseChooseAttachments({ filter: "images" })).toEqual({ filter: "images" });
     expect(parseOpenAttachment({ attachmentId: "attachment-1", action: "reveal" })).toEqual({
       attachmentId: "attachment-1",
       action: "reveal",
@@ -200,6 +203,7 @@ describe("agent IPC input parsing", () => {
     );
     expect(() => parseUpdateBot({ botId: "bot-1", notifications: "yes" })).toThrowError("Invalid notifications value.");
     expect(() => parseImportAttachments({ paths: [""], data: [] })).toThrowError("Invalid attachment path.");
+    expect(() => parseChooseAttachments({ filter: "documents" })).toThrowError("Invalid attachment picker filter.");
     expect(() => parseOpenAttachment({ attachmentId: "attachment-1", action: "delete" })).toThrowError(
       "Invalid attachment action.",
     );

@@ -2,6 +2,7 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   type AgentIpcRequest,
   type CancelQueuedMessageInput,
+  type ChooseAttachmentsInput,
   type ImportAttachmentsInput,
   type InterruptTurnInput,
   isAgentModel,
@@ -161,6 +162,13 @@ export function parseImportAttachments(value: unknown): ImportAttachmentsInput {
     return { name: item.name, mimeType: item.mimeType, bytes: item.bytes };
   });
   return { paths: value.paths, data };
+}
+
+export function parseChooseAttachments(value: unknown): ChooseAttachmentsInput {
+  if (!isObject(value) || (value.filter !== "all" && value.filter !== "images")) {
+    throw new Error("Invalid attachment picker filter.");
+  }
+  return { filter: value.filter };
 }
 
 export function parseOpenAttachment(value: unknown): OpenAttachmentInput {

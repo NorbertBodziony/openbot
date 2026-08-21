@@ -35,7 +35,7 @@ import electronUpdater from "electron-updater";
 import { AgentService } from "../backend/agent-service";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
-import { isCloseBrowserTabShortcut, isToggleDevToolsShortcut } from "../backend/browser-shortcuts";
+import { isCloseBrowserTabShortcut, isSelectAllShortcut, isToggleDevToolsShortcut } from "../backend/browser-shortcuts";
 import { MailboxStore } from "../backend/mailbox-store";
 import { TeamChatStore } from "../backend/team-chat-store";
 import { AgentInitializationGate } from "./agent-initialization";
@@ -48,6 +48,7 @@ import {
   parseAgentRequest,
   parseApprovalResponse,
   parseCancelQueuedMessage,
+  parseChooseAttachments,
   parseImportAttachments,
   parseInterrupt,
   parseMarkConversationRead,
@@ -423,8 +424,15 @@ function registerIpcHandlers(
         );
   });
   handleTrusted(IPC_CHANNELS.agentChooseAttachments, async (input: unknown) => {
-    const { serverId } = parseAgentRequest(input);
-    const options: OpenDialogOptions = { properties: ["openFile", "multiSelections"] };
+    const { serverId, payload } = parseAgentRequest(input);
+    const { filter } = parseChooseAttachments(payload);
+    const options: OpenDialogOptions = {
+      properties: ["openFile", "multiSelections"],
+      filters:
+        filter === "images"
+          ? [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "avif"] }]
+          : undefined,
+    };
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     if (result.canceled) return [];
     if (serverId === "local") return service.prepareAttachments(result.filePaths);
@@ -708,6 +716,26 @@ function createWindow(): BrowserWindow {
     if (isToggleDevToolsShortcut(input)) {
       event.preventDefault();
       window.webContents.toggleDevTools();
+      return;
+    }
+    if (isSelectAllShortcut(input)) {
+      event.preventDefault();
+      void window.webContents.executeJavaScript(
+        `(() => {
+          const active = document.activeElement;
+          if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+            active.select();
+            return;
+          }
+          if (!(active instanceof HTMLElement) || !active.isContentEditable) return;
+          const range = document.createRange();
+          range.selectNodeContents(active);
+          const selection = window.getSelection();
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+        })()`,
+        true,
+      );
       return;
     }
     const tabId = browserHost?.activeTabId;

@@ -320,7 +320,7 @@ const openbotApi: OpenBotDesktopApi = {
     readConversation: (botId) => invokeAgent(IPC_CHANNELS.agentReadConversation, botId, decodeConversation),
     listConversationReads: () => invokeAgent(IPC_CHANNELS.agentListConversationReads, null, decodeReadStates),
     markConversationRead: (input) => invokeAgent(IPC_CHANNELS.agentMarkConversationRead, input, decodeReadState),
-    chooseAttachments: () => invokeAgent(IPC_CHANNELS.agentChooseAttachments, null, decodeAttachments),
+    chooseAttachments: (input) => invokeAgent(IPC_CHANNELS.agentChooseAttachments, input, decodeAttachments),
     onAttachmentImport: (listener) => {
       attachmentImportListeners.add(listener);
       return () => attachmentImportListeners.delete(listener);

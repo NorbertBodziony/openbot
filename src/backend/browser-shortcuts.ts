@@ -27,6 +27,16 @@ export function isGlobalSearchShortcut(input: BrowserShortcutInput): boolean {
   );
 }
 
+export function isSelectAllShortcut(input: BrowserShortcutInput): boolean {
+  return (
+    input.type === "keyDown" &&
+    input.key.toLowerCase() === "a" &&
+    (input.control || input.meta) &&
+    !input.alt &&
+    !input.shift
+  );
+}
+
 export function isToggleDevToolsShortcut(input: BrowserShortcutInput): boolean {
   if (input.type !== "keyDown") return false;
   const key = input.key.toLowerCase();
