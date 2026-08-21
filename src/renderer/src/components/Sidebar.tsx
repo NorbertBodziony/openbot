@@ -561,6 +561,7 @@ export function Sidebar(props: SidebarProps) {
               <For each={filteredBots()}>
                 {(bot) => {
                   const role = () => bot.role.trim();
+                  const working = () => props.agentStates[bot.id]?.kind === "working";
                   return (
                     <ContextMenu.Root modal={false}>
                       <ContextMenu.Trigger
@@ -572,7 +573,7 @@ export function Sidebar(props: SidebarProps) {
                         onClick={() => props.onSelectBot(bot.id)}
                       >
                         <span class="bot-row-avatar">
-                          <AgentAvatar bot={bot} />
+                          <AgentAvatar bot={bot} motion={working() ? "working" : "idle"} />
                           <Show when={props.agentStates[bot.id]}>
                             {(state) => <SidebarAgentIndicator state={state()} />}
                           </Show>

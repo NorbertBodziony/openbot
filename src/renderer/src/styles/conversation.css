@@ -1474,6 +1474,8 @@
 }
 
 .agent-picker-option .bot-avatar {
+  --bot-avatar-optical-offset: -2px;
+
   width: 24px;
   height: 24px;
 }
@@ -2541,22 +2543,14 @@
 }
 
 .exchange-agent-avatar {
+  --bot-avatar-optical-offset: -2px;
+
   position: relative;
   width: 16px;
   height: 16px;
   flex: 0 0 16px;
   border: 0;
   background: transparent;
-}
-
-.exchange-agent-trigger .exchange-agent-avatar {
-  transition: transform var(--openbot-duration-normal) cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-.exchange-agent-trigger:hover .exchange-agent-avatar,
-.exchange-agent-trigger:focus-visible .exchange-agent-avatar,
-.exchange-agent-trigger[aria-expanded="true"] .exchange-agent-avatar {
-  transform: scale(1.06);
 }
 
 .exchange-avatar-stack .exchange-agent-avatar + .exchange-agent-avatar {
@@ -3929,6 +3923,8 @@
 }
 
 .message-agent-tag .bot-avatar {
+  --bot-avatar-optical-offset: -2px;
+
   width: 16px;
   height: 16px;
 }
@@ -4616,6 +4612,7 @@
   width: 128%;
   height: 128%;
   overflow: visible;
+  translate: 0 -2px;
 }
 
 .mention-picker {
@@ -4679,6 +4676,8 @@
 }
 
 .mention-picker-option .bot-avatar {
+  --bot-avatar-optical-offset: -2px;
+
   width: 23px;
   height: 23px;
 }

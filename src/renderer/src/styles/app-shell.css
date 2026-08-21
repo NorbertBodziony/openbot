@@ -195,6 +195,8 @@
 }
 
 .global-search-avatar.bot-avatar {
+  --bot-avatar-optical-offset: -2px;
+
   width: 28px;
   height: 28px;
   flex: 0 0 auto;
@@ -2104,6 +2106,7 @@ textarea {
   width: 128%;
   height: 128%;
   overflow: visible;
+  translate: 0 var(--bot-avatar-optical-offset, 0);
 }
 
 .bot-avatar-custom {
@@ -2121,6 +2124,8 @@ textarea {
 }
 
 .bot-row .bot-avatar {
+  --bot-avatar-optical-offset: -4px;
+
   width: 36px;
   height: 36px;
 }
@@ -2372,6 +2377,8 @@ textarea {
 }
 
 .conversation-title .bot-avatar {
+  --bot-avatar-optical-offset: -2px;
+
   width: 18px;
   height: 18px;
 }
