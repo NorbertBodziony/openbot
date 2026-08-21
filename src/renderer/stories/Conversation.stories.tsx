@@ -418,6 +418,33 @@ function MockedConversation(props: { args: Parameters<typeof Conversation>[0] })
   );
 }
 
+function RecordingConversation(props: { args: Parameters<typeof Conversation>[0] }) {
+  const previousMediaDevices = navigator.mediaDevices;
+  const previousMediaRecorder = window.MediaRecorder;
+  class StoryMediaRecorder extends EventTarget {
+    readonly mimeType = "audio/webm";
+    state: RecordingState = "inactive";
+
+    start(): void {
+      this.state = "recording";
+    }
+
+    stop(): void {
+      this.state = "inactive";
+    }
+  }
+  Object.defineProperty(window, "MediaRecorder", { configurable: true, value: StoryMediaRecorder });
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: { getUserMedia: async () => ({ getTracks: () => [{ stop: () => undefined }] }) },
+  });
+  onCleanup(() => {
+    Object.defineProperty(window, "MediaRecorder", { configurable: true, value: previousMediaRecorder });
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: previousMediaDevices });
+  });
+  return <MockedConversation args={props.args} />;
+}
+
 const args: Parameters<typeof Conversation>[0] = {
   agentStatus: STORY_AGENT_STATUS,
   bot: STORY_BOTS[0],
@@ -486,6 +513,16 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const RichConversation: Story = {};
+
+export const VoiceRecording: Story = {
+  name: "Voice recording",
+  render: (storyArgs) => <RecordingConversation args={storyArgs} />,
+  play: async ({ canvas, userEvent }) => {
+    await userEvent.click(canvas.getByRole("button", { name: "Create prompt with voice" }));
+    await expect(canvas.findByRole("group", { name: "Voice recording" })).resolves.toBeVisible();
+    await expect(canvas.findByRole("button", { name: "Stop voice recording" })).resolves.toBeVisible();
+  },
+};
 
 export const AgentExchangeHistory: Story = {
   name: "Agent exchange history",

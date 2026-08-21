@@ -47,6 +47,7 @@ import {
   BrowserReloadIcon,
   CloseIcon,
   ComputerIcon,
+  MoreIcon,
   PlusIcon,
   RemoteDesktopIcon,
   SettingsForwardIcon,
@@ -214,6 +215,7 @@ export function Conversation(props: ConversationProps) {
   const [attachmentBusy, setAttachmentBusy] = createSignal(false);
   const [composerError, setComposerError] = createSignal<string | null>(null);
   const [voicePhase, setVoicePhase] = createSignal<"idle" | "requesting" | "recording" | "transcribing">("idle");
+  const [voiceElapsedSeconds, setVoiceElapsedSeconds] = createSignal(0);
   const [markingRead, setMarkingRead] = createSignal(false);
   const [settingsSaveError, setSettingsSaveError] = createSignal<string | null>(null);
   const [submitting, setSubmitting] = createSignal(false);
@@ -261,6 +263,7 @@ export function Conversation(props: ConversationProps) {
   let voiceRecorder: MediaRecorder | undefined;
   let voiceStream: MediaStream | undefined;
   let voiceRecordingTimer: ReturnType<typeof setTimeout> | undefined;
+  let voiceElapsedTimer: ReturnType<typeof setInterval> | undefined;
   let voiceChunks: Blob[] = [];
   let voiceBotId: string | undefined;
   let voiceDisposed = false;
@@ -714,6 +717,7 @@ export function Conversation(props: ConversationProps) {
       });
       recorder.addEventListener("stop", () => void finishVoiceRecording(recorder.mimeType));
       recorder.start();
+      startVoiceElapsedTimer();
       setVoicePhase("recording");
       voiceRecordingTimer = setTimeout(stopVoiceRecording, VOICE_AUDIO_LIMITS.maximumSeconds * 1_000);
     } catch (error) {
@@ -725,6 +729,7 @@ export function Conversation(props: ConversationProps) {
   function stopVoiceRecording(): void {
     if (voicePhase() !== "recording" || !voiceRecorder) return;
     setVoicePhase("transcribing");
+    stopVoiceElapsedTimer();
     if (voiceRecordingTimer) clearTimeout(voiceRecordingTimer);
     voiceRecordingTimer = undefined;
     voiceRecorder.stop();
@@ -762,6 +767,20 @@ export function Conversation(props: ConversationProps) {
   function stopVoiceStream(): void {
     for (const track of voiceStream?.getTracks() ?? []) track.stop();
     voiceStream = undefined;
+  }
+
+  function startVoiceElapsedTimer(): void {
+    stopVoiceElapsedTimer();
+    const startedAt = Date.now();
+    setVoiceElapsedSeconds(0);
+    voiceElapsedTimer = setInterval(() => {
+      setVoiceElapsedSeconds(Math.min(VOICE_AUDIO_LIMITS.maximumSeconds, Math.floor((Date.now() - startedAt) / 1_000)));
+    }, 250);
+  }
+
+  function stopVoiceElapsedTimer(): void {
+    if (voiceElapsedTimer) clearInterval(voiceElapsedTimer);
+    voiceElapsedTimer = undefined;
   }
 
   onSettled(() => {
@@ -1214,6 +1233,7 @@ export function Conversation(props: ConversationProps) {
   onCleanup(() => {
     voiceDisposed = true;
     if (voiceRecordingTimer) clearTimeout(voiceRecordingTimer);
+    stopVoiceElapsedTimer();
     if (voiceRecorder?.state === "recording") voiceRecorder.stop();
     stopVoiceStream();
     browserVisibilityGeneration += 1;
@@ -2242,32 +2262,45 @@ export function Conversation(props: ConversationProps) {
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
               <div class="composer-primary-actions">
-                <Button
-                  type="button"
-                  class={`dictation-button${voicePhase() === "recording" ? " dictation-button-recording" : ""}`}
-                  aria-label={voiceButtonLabel(voicePhase())}
-                  disabled={
-                    voicePhase() === "requesting" ||
-                    voicePhase() === "transcribing" ||
-                    (voicePhase() === "idle" &&
-                      (props.agentPickerOpen || !props.bot || !agentReady() || onboardingModelRequired()))
-                  }
-                  onClick={() => (voicePhase() === "recording" ? stopVoiceRecording() : void startVoiceRecording())}
-                >
-                  <Show
-                    when={voicePhase() === "recording"}
-                    fallback={
+                <Show
+                  when={voicePhase() === "recording"}
+                  fallback={
+                    <Button
+                      type="button"
+                      class="dictation-button"
+                      aria-label={voiceButtonLabel(voicePhase())}
+                      disabled={
+                        voicePhase() === "requesting" ||
+                        voicePhase() === "transcribing" ||
+                        (voicePhase() === "idle" &&
+                          (props.agentPickerOpen || !props.bot || !agentReady() || onboardingModelRequired()))
+                      }
+                      onClick={() => void startVoiceRecording()}
+                    >
                       <Show
                         when={voicePhase() === "requesting" || voicePhase() === "transcribing"}
                         fallback={<Mic aria-hidden="true" />}
                       >
                         <LoaderCircle class="dictation-spinner" aria-hidden="true" />
                       </Show>
-                    }
-                  >
-                    <StopIcon />
-                  </Show>
-                </Button>
+                    </Button>
+                  }
+                >
+                  <fieldset class="voice-recording-status" aria-label="Voice recording">
+                    <Button
+                      type="button"
+                      class="voice-recording-stop"
+                      aria-label="Stop voice recording"
+                      onClick={stopVoiceRecording}
+                    >
+                      <StopIcon />
+                    </Button>
+                    <time class="voice-recording-duration" datetime={`PT${voiceElapsedSeconds()}S`}>
+                      {formatVoiceDuration(voiceElapsedSeconds())}
+                    </time>
+                    <MoreIcon />
+                  </fieldset>
+                </Show>
                 <Show
                   when={props.activeTurnId && !editingDeliveryId() && !composerHasContent()}
                   fallback={
@@ -2858,6 +2891,12 @@ function voiceButtonLabel(phase: "idle" | "requesting" | "recording" | "transcri
   if (phase === "requesting") return "Requesting microphone access";
   if (phase === "transcribing") return "Transcribing voice prompt";
   return "Create prompt with voice";
+}
+
+function formatVoiceDuration(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, "0");
+  return `${minutes}:${seconds}`;
 }
 
 function voiceCaptureError(error: unknown) {

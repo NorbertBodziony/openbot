@@ -4459,15 +4459,62 @@
   gap: 6px;
 }
 
+.voice-recording-status {
+  display: flex;
+  height: 28px;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  border: 0;
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-hover);
+  padding: 0 7px 0 4px;
+  color: var(--openbot-text-secondary);
+}
+
+.voice-recording-stop {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--openbot-radius-pill);
+  background: transparent;
+  color: var(--openbot-text-primary);
+  transition: transform var(--openbot-duration-fast) var(--openbot-ease-out);
+}
+
+.voice-recording-stop:hover {
+  background: var(--openbot-border);
+}
+
+.voice-recording-stop:active {
+  transform: scale(0.96);
+}
+
+.voice-recording-stop svg {
+  width: 14px;
+  height: 14px;
+}
+
+.voice-recording-duration {
+  min-width: 2.5em;
+  font-size: var(--openbot-text-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: center;
+}
+
+.voice-recording-status > .conversation-more-icon {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  color: var(--openbot-text-muted);
+}
+
 .dictation-button:hover:not(:disabled) {
   background: var(--openbot-border);
   color: var(--openbot-white);
-}
-
-.dictation-button-recording,
-.dictation-button-recording:hover:not(:disabled) {
-  background: var(--openbot-warning-soft);
-  color: var(--openbot-warning);
 }
 
 .dictation-button svg {

@@ -975,6 +975,37 @@ describe("OpenBot connected desktop shell", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows the recording timer and stop control while capturing voice", async () => {
+    class RecordingMediaRecorder extends EventTarget {
+      readonly mimeType = "audio/webm";
+      state: RecordingState = "inactive";
+
+      start(): void {
+        this.state = "recording";
+      }
+
+      stop(): void {
+        this.state = "inactive";
+        this.dispatchEvent(new Event("stop"));
+      }
+    }
+    Object.defineProperty(window, "MediaRecorder", { configurable: true, value: RecordingMediaRecorder });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }),
+      },
+    });
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Create prompt with voice" }));
+
+    const status = await screen.findByRole("group", { name: "Voice recording" });
+    expect(within(status).getByText("0:00")).toBeVisible();
+    expect(within(status).getByRole("button", { name: "Stop voice recording" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Create prompt with voice" })).not.toBeInTheDocument();
+  });
+
   it("renders loaded history without replaying entrance animations", async () => {
     vi.mocked(window.openbot.agent.readConversation).mockResolvedValueOnce({
       botId: "chief",
