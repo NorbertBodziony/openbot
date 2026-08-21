@@ -5,9 +5,34 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-08-22
+
+### Added
+
+- Add full-window P2P Remote Control for active server members, with shared mouse and keyboard control,
+  four concurrent sessions, monitor selection, hide and resume, retry, and explicit disconnect.
+- Bundle pinned Sunshine and Moonlight Web runtimes built from source, with immutable artifacts,
+  corresponding GPL source, checksums, SBOMs, and build provenance.
+- Add speech-to-text message input with local Whisper model preparation.
+- Add universal server invitation links and updated account, server, queue, attachment, and conversation
+  controls.
+
 ### Changed
 
 - Changed the project license from Apache-2.0 to PolyForm Noncommercial 1.0.0.
+- Publish the OpenBot application for macOS only in this release while Windows application packaging is
+  paused.
+- Start Remote Control only from the server header and keep a hidden session active until the user
+  disconnects or changes servers.
+
+### Removed
+
+- Remove QuickDesk, VNC, noVNC, remote passwords, and view-only remote access paths.
+
+### Security
+
+- Authorize Remote Control through active team membership and one-time in-memory viewer grants.
+- Verify the local Sunshine TLS chain and pin the exact generated certificate.
 
 ## [0.1.11] - 2026-08-16
 
