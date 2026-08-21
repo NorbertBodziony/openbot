@@ -143,7 +143,9 @@ async function downloadAndExtract(url: string, expectedSha256: string, destinati
   if (sha256(bytes) !== expectedSha256) throw new Error(`Runtime source checksum failed for ${url}.`);
   await writeFile(archive, bytes);
   await mkdir(destination, { recursive: true });
-  execFileSync("tar", ["-xzf", archive, "--strip-components=1", "-C", destination], { stdio: "inherit" });
+  const tarArguments = ["-xzf", archive, "--strip-components=1", "-C", destination];
+  if (process.platform === "win32") tarArguments.unshift("--force-local");
+  execFileSync("tar", tarArguments, { stdio: "inherit" });
   return destination;
 }
 
