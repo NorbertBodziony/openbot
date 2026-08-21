@@ -145,6 +145,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
         lastEmittedValue = value;
         setAttachmentTooltip(null);
         renderEditorValue(editor, value, bots, attachments, attachmentTokenActions);
+        syncTrailingLineSentinel(editor, value);
         setMention(null);
       }
       if (focusRequested) {
@@ -164,6 +165,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
       renderEditorValue(editor, value, props.bots, props.attachments ?? [], attachmentTokenActions);
       placeCaretAtEnd(editor);
     }
+    syncTrailingLineSentinel(editor, value);
     lastEmittedValue = value;
     props.onValueChange(value);
   }
@@ -245,8 +247,49 @@ export function ComposerEditor(props: ComposerEditorProps) {
     editor.focus();
   }
 
+  function ensureEditorSelection() {
+    if (!editor) return;
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (!range || !editor.contains(range.commonAncestorContainer)) {
+      editor.normalize();
+      placeCaretAtEnd(editor);
+      return;
+    }
+    const startPrefix = range.cloneRange();
+    startPrefix.selectNodeContents(editor);
+    startPrefix.setEnd(range.startContainer, range.startOffset);
+    const endPrefix = range.cloneRange();
+    endPrefix.selectNodeContents(editor);
+    endPrefix.setEnd(range.endContainer, range.endOffset);
+    const start = startPrefix.toString().length;
+    const end = endPrefix.toString().length;
+    editor.normalize();
+    const normalizedRange = rangeFromTextOffsets(editor, start, end);
+    if (!normalizedRange) return;
+    selection?.removeAllRanges();
+    selection?.addRange(normalizedRange);
+  }
+
   function handleKeyDown(event: KeyboardEvent) {
     if (event.key === "Enter" && (isComposing || event.isComposing)) return;
+    ensureEditorSelection();
+
+    if (event.key === "Backspace" && removeTrailingLineBreak()) {
+      event.preventDefault();
+      return;
+    }
+
+    if (event.key.toLocaleLowerCase() === "a" && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey) {
+      event.preventDefault();
+      if (!editor) return;
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      return;
+    }
 
     const printableKey = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.isComposing;
     if (printableKey) {
@@ -298,6 +341,26 @@ export function ComposerEditor(props: ComposerEditorProps) {
     }
   }
 
+  function removeTrailingLineBreak(): boolean {
+    if (!editor) return false;
+    const value = serializeEditor(editor);
+    if (!value.endsWith("\n")) return false;
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (!range?.collapsed || !editor.contains(range.commonAncestorContainer)) return false;
+    const afterCaret = range.cloneRange();
+    afterCaret.setEndAfter(editor.lastChild ?? editor);
+    if (afterCaret.toString()) return false;
+
+    const nextValue = value.slice(0, -1);
+    renderEditorValue(editor, nextValue, props.bots, props.attachments ?? [], attachmentTokenActions);
+    syncTrailingLineSentinel(editor, nextValue);
+    placeCaretAtEnd(editor);
+    emitValue();
+    updateMention();
+    return true;
+  }
+
   function handlePaste(event: ClipboardEvent) {
     event.preventDefault();
     if (!editor || props.disabled) return;
@@ -332,6 +395,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
         aria-disabled={props.disabled ? "true" : "false"}
         aria-multiline="true"
         spellcheck="true"
+        onFocus={ensureEditorSelection}
         onInput={(event) => {
           acknowledgeNativePrintableInput(event);
           emitValue();
@@ -593,6 +657,7 @@ function serializeEditor(editor: HTMLDivElement): string {
 function serializeNode(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
   if (!(node instanceof HTMLElement)) return "";
+  if (node.dataset.composerTrailingLine !== undefined) return "";
   const attachmentId = node.dataset.attachmentReferenceId;
   const attachmentName = node.dataset.attachmentReferenceName;
   if (attachmentId && attachmentName) {
@@ -618,13 +683,31 @@ function insertPlainText(editor: HTMLDivElement, text: string): void {
     range.collapse(false);
   }
 
+  const prefix = range.cloneRange();
+  prefix.selectNodeContents(editor);
+  prefix.setEnd(range.startContainer, range.startOffset);
+  const caretOffset = prefix.toString().length + text.length;
   range.deleteContents();
-  const textNode = document.createTextNode(text);
-  range.insertNode(textNode);
-  range.setStart(textNode, textNode.data.length);
-  range.collapse(true);
+  range.insertNode(document.createTextNode(text));
+  editor.normalize();
+  syncTrailingLineSentinel(editor);
+  const caretRange = rangeFromTextOffsets(editor, caretOffset, caretOffset);
+  if (!caretRange) return;
   selection?.removeAllRanges();
-  selection?.addRange(range);
+  selection?.addRange(caretRange);
+}
+
+function syncTrailingLineSentinel(editor: HTMLDivElement, value = serializeEditor(editor)): void {
+  const existing = editor.querySelector<HTMLElement>("[data-composer-trailing-line]");
+  existing?.remove();
+  if (!value.endsWith("\n")) return;
+
+  const sentinel = document.createElement("span");
+  sentinel.className = "composer-trailing-line";
+  sentinel.dataset.composerTrailingLine = "";
+  sentinel.contentEditable = "false";
+  sentinel.setAttribute("aria-hidden", "true");
+  editor.append(sentinel);
 }
 
 function placeCaretAtEnd(editor: HTMLDivElement): void {

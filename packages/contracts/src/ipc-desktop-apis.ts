@@ -18,6 +18,7 @@ import type {
   AttachmentImportEvent,
   BotSummary,
   CancelQueuedMessageInput,
+  ChooseAttachmentsInput,
   ConversationReadState,
   ConversationWithReadState,
   DraftAttachment,
@@ -79,7 +80,7 @@ export interface AgentDesktopApi {
   readConversation: (botId: string) => Promise<ConversationWithReadState>;
   listConversationReads: () => Promise<Record<string, ConversationReadState>>;
   markConversationRead: (input: MarkConversationReadInput) => Promise<ConversationReadState>;
-  chooseAttachments: () => Promise<DraftAttachment[]>;
+  chooseAttachments: (input: ChooseAttachmentsInput) => Promise<DraftAttachment[]>;
   onAttachmentImport: (listener: (event: AttachmentImportEvent) => void) => () => void;
   discardDraftAttachment: (attachmentId: string) => Promise<void>;
   openAttachment: (input: OpenAttachmentInput) => Promise<void>;

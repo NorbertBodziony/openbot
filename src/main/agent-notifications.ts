@@ -3,6 +3,7 @@ import type { AgentEvent, BotSummary } from "@openbot/contracts/ipc";
 export interface AgentNotificationContent {
   title: string;
   body: string;
+  silent?: boolean;
 }
 
 export function notificationForAgentEvent(event: AgentEvent, bots: BotSummary[]): AgentNotificationContent | null {
@@ -21,5 +22,5 @@ export function notificationForAgentEvent(event: AgentEvent, bots: BotSummary[])
     return { title: bot.name, body: "Needs your approval." };
   }
   if (event.status !== "completed") return null;
-  return { title: bot.name, body: "Finished working." };
+  return { title: bot.name, body: "Finished working.", silent: true };
 }

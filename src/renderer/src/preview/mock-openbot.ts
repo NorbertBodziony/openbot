@@ -349,7 +349,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         firstUnreadMessageId: null,
         throughMessageId: input.throughMessageId,
       }),
-      chooseAttachments: async () => [],
+      chooseAttachments: async (_input) => [],
       onAttachmentImport: (listener) => {
         attachmentListeners.add(listener);
         return () => attachmentListeners.delete(listener);

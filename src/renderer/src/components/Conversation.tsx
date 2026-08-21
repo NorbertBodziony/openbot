@@ -34,7 +34,9 @@ import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
 import { ApprovalCard, ChoiceCard } from "./ConversationPrompts";
 import { AgentActivityIndicator, ThinkingDisclosure } from "./conversation/AgentActivity";
+import { AgentExchangeHistoryModal } from "./conversation/AgentExchangeHistoryModal";
 import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
+import { attachmentReferenceTone } from "./conversation/AttachmentReference";
 import { ChatSearch } from "./conversation/ChatSearch";
 import {
   BackIcon,
@@ -74,7 +76,21 @@ import {
   REMOTE_DESKTOP_PANEL_STORAGE_KEY,
   RemoteMacPanel,
 } from "./RemoteMacPanel";
-import { Button, Combobox, Dialog, Input, NativeSelect, Paperclip, Popover, Switch, Tabs, Textarea } from "./ui";
+import {
+  Button,
+  Combobox,
+  Dialog,
+  DropdownMenu,
+  File,
+  Image,
+  Input,
+  NativeSelect,
+  Popover,
+  Puzzle,
+  Switch,
+  Tabs,
+  Textarea,
+} from "./ui";
 
 type AgentPickerOption = { kind: "create" } | { kind: "bot"; bot: BotProfile };
 
@@ -191,7 +207,7 @@ export function Conversation(props: ConversationProps) {
   const [editingDeliveryId, setEditingDeliveryId] = createSignal<string | null>(null);
   const [editingDraftBackup, setEditingDraftBackup] = createSignal<ComposerDraft | null>(null);
   const [composerFocusRequest, setComposerFocusRequest] = createSignal(0);
-  const [showAttachments, setShowAttachments] = createSignal(false);
+  const [showComposerActions, setShowComposerActions] = createSignal(false);
   const [attachmentBusy, setAttachmentBusy] = createSignal(false);
   const [composerError, setComposerError] = createSignal<string | null>(null);
   const [markingRead, setMarkingRead] = createSignal(false);
@@ -225,6 +241,7 @@ export function Conversation(props: ConversationProps) {
   });
   const [browserAddress, setBrowserAddress] = createSignal("https://www.google.com");
   const [mediaPreview, setMediaPreview] = createSignal<MediaPreview | null>(null);
+  const [exchangeHistoryAgentId, setExchangeHistoryAgentId] = createSignal<string | null>(null);
   const [openReactionMessageId, setOpenReactionMessageId] = createSignal<string | null>(null);
   const [openMoreMessageId, setOpenMoreMessageId] = createSignal<string | null>(null);
   const [expandedEmojiMessageId, setExpandedEmojiMessageId] = createSignal<string | null>(null);
@@ -235,6 +252,8 @@ export function Conversation(props: ConversationProps) {
   const [activeChatSearchIndex, setActiveChatSearchIndex] = createSignal(-1);
   let typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
   let typingBotId: string | null = null;
+  let imageAttachmentPicker: HTMLInputElement | undefined;
+  let contextAttachmentPicker: HTMLInputElement | undefined;
   const [settingsPanelWidth, setSettingsPanelWidth] = createSignal(
     readPanelWidth(SETTINGS_PANEL_STORAGE_KEY, SETTINGS_PANEL_DEFAULT, SETTINGS_PANEL_MIN, SETTINGS_PANEL_MAX),
   );
@@ -279,6 +298,7 @@ export function Conversation(props: ConversationProps) {
     { kind: "create" },
     ...props.bots.map((bot) => ({ kind: "bot" as const, bot })),
   ]);
+  const exchangeHistoryAgent = createMemo(() => props.bots.find((bot) => bot.id === exchangeHistoryAgentId()));
   const activeRightPanel = createMemo<RightPanelMode>(() => {
     if (props.agentPickerOpen) return "none";
     const botId = props.bot?.id;
@@ -304,6 +324,12 @@ export function Conversation(props: ConversationProps) {
       const browserWasClosed = open && previousBrowserTabCount > 0 && count === 0;
       previousBrowserTabCount = count;
       if (browserWasClosed) hideBrowserPanel();
+    },
+  );
+  createEffect(
+    () => props.bot?.id,
+    () => {
+      setExchangeHistoryAgentId(null);
     },
   );
   const activeBrowserControl = createMemo(() => {
@@ -1152,21 +1178,20 @@ export function Conversation(props: ConversationProps) {
       },
     }));
     if (selected.length > accepted.length) setComposerError("You can attach at most 10 files.");
-    setShowAttachments(false);
+    setShowComposerActions(false);
   }
 
-  async function chooseAttachments() {
-    if (attachmentBusy()) return;
-    setShowAttachments(false);
-    setAttachmentBusy(true);
+  function openAttachmentPicker(filter: "all" | "images") {
+    setShowComposerActions(false);
     setComposerError(null);
-    try {
-      addAttachments(await window.openbot.agent.chooseAttachments());
-    } catch (error) {
-      setComposerError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setAttachmentBusy(false);
-    }
+    const picker = filter === "images" ? imageAttachmentPicker : contextAttachmentPicker;
+    if (!picker) return;
+    picker.value = "";
+    picker.click();
+  }
+
+  function openAttachmentPickerFromKey(event: KeyboardEvent, filter: "all" | "images") {
+    if (event.key === "Enter" || event.key === " ") openAttachmentPicker(filter);
   }
 
   function editQueuedMessage(delivery: QueueDelivery) {
@@ -1187,7 +1212,7 @@ export function Conversation(props: ConversationProps) {
       },
     }));
     setComposerFocusRequest((current) => current + 1);
-    setShowAttachments(false);
+    setShowComposerActions(false);
     setComposerError(null);
   }
 
@@ -1888,7 +1913,11 @@ export function Conversation(props: ConversationProps) {
                         data-chat-search-message={message.id}
                         class={["exchange-message-entry", { "exchange-message-entry-animated": animateEntrance }]}
                       >
-                        <ExchangeSystemRow message={message} bots={props.bots} onSelectAgent={props.onSelectAgent} />
+                        <ExchangeSystemRow
+                          message={message}
+                          bots={props.bots}
+                          onOpenAgentHistory={setExchangeHistoryAgentId}
+                        />
                         <Show when={exchange().direction === "incoming" && (message.attachments?.length ?? 0) > 0}>
                           <div class="exchange-agent-attachments">
                             <AttachmentCards
@@ -1926,28 +1955,37 @@ export function Conversation(props: ConversationProps) {
 
       <Show when={!props.prompt && !props.approval}>
         <div class="composer-wrap">
-          <For each={unreferencedDraftAttachments()}>
-            {(attachment) => (
-              <div class="composer-attachment">
-                <span class={attachment.kind === "file" ? "file-type-badge" : "attachment-thumb"}>
-                  <Show when={attachment.kind === "image"} fallback={fileBadge(attachment)}>
-                    <img src={attachment.previewUrl ?? ""} alt="" />
-                  </Show>
-                </span>
-                <span>
-                  <strong>{attachment.name}</strong>
-                  <small>{formatFileSize(attachment.size)}</small>
-                </span>
-                <Button
-                  type="button"
-                  aria-label={`Remove ${attachment.name}`}
-                  onClick={() => removeAttachment(attachment.id)}
-                >
-                  <CloseIcon />
-                </Button>
-              </div>
-            )}
-          </For>
+          <Show when={unreferencedDraftAttachments().length > 0}>
+            <div class="composer-attachments">
+              <For each={unreferencedDraftAttachments()}>
+                {(attachment) => (
+                  <div class="composer-attachment" data-kind={attachment.kind}>
+                    <span
+                      class="composer-attachment-preview"
+                      data-file-tone={attachment.kind === "file" ? attachmentReferenceTone(attachment.name) : undefined}
+                    >
+                      <Show when={attachment.kind === "image"} fallback={fileBadge(attachment)}>
+                        <img src={attachment.previewUrl ?? ""} alt="" />
+                      </Show>
+                    </span>
+                    <Show when={attachment.kind === "file"}>
+                      <span class="composer-attachment-copy">
+                        <strong title={attachment.name}>{attachment.name}</strong>
+                        <small>{formatFileSize(attachment.size)}</small>
+                      </span>
+                    </Show>
+                    <Button
+                      type="button"
+                      aria-label={`Remove ${attachment.name}`}
+                      onClick={() => removeAttachment(attachment.id)}
+                    >
+                      <CloseIcon />
+                    </Button>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
           <Show when={replyTarget()}>
             {(message) => (
               <div class="composer-reply-preview">
@@ -1991,6 +2029,7 @@ export function Conversation(props: ConversationProps) {
           </Show>
           <div
             class="composer"
+            data-compact={currentDraft().text.includes("\n") ? undefined : ""}
             onPointerDown={(event) => {
               if (!(event.target instanceof Element)) return;
               if (event.target.closest("button, .composer-editor-surface")) return;
@@ -1998,31 +2037,6 @@ export function Conversation(props: ConversationProps) {
               setComposerFocusRequest((current) => current + 1);
             }}
           >
-            <Popover.Root open={showAttachments()} placement="top-start" gutter={4} onOpenChange={setShowAttachments}>
-              <Popover.Trigger
-                as={Button}
-                type="button"
-                class="composer-button"
-                aria-label="Attach a file"
-                disabled={props.agentPickerOpen || attachmentBusy() || !agentReady() || onboardingModelRequired()}
-              >
-                <PlusIcon />
-              </Popover.Trigger>
-              <Popover.Portal>
-                <Popover.Content class="ui-action-menu attachment-menu">
-                  <Popover.Title class="sr-only">Attach file</Popover.Title>
-                  <Button
-                    type="button"
-                    class="ui-action-menu-item"
-                    disabled={attachmentBusy()}
-                    onClick={() => void chooseAttachments()}
-                  >
-                    <Paperclip aria-hidden="true" />
-                    {attachmentBusy() ? "Importing…" : "Attach files"}
-                  </Button>
-                </Popover.Content>
-              </Popover.Portal>
-            </Popover.Root>
             <div class="composer-input-label">
               <ComposerEditor
                 botId={props.bot?.id}
@@ -2059,32 +2073,129 @@ export function Conversation(props: ConversationProps) {
                 }
               />
             </div>
-            <Show
-              when={props.activeTurnId && !editingDeliveryId() && !composerHasContent()}
-              fallback={
+            <div class="composer-toolbar">
+              <Input
+                ref={imageAttachmentPicker}
+                type="file"
+                accept=".png,.jpg,.jpeg,.gif,.webp,.avif"
+                multiple
+                hidden
+                tabindex={-1}
+                data-openbot-attachment-picker="true"
+              />
+              <Input
+                ref={contextAttachmentPicker}
+                type="file"
+                multiple
+                hidden
+                tabindex={-1}
+                data-openbot-attachment-picker="true"
+              />
+              <DropdownMenu.Root
+                open={showComposerActions()}
+                onOpenChange={setShowComposerActions}
+                placement="top-start"
+                gutter={8}
+                modal={false}
+              >
+                <DropdownMenu.Trigger
+                  class="composer-button"
+                  aria-label="Add to prompt"
+                  disabled={
+                    props.agentPickerOpen ||
+                    attachmentBusy() ||
+                    submitting() ||
+                    selectionSending() ||
+                    !agentReady() ||
+                    onboardingModelRequired()
+                  }
+                >
+                  <PlusIcon />
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content class="attachment-menu composer-action-menu" aria-label="Add to prompt">
+                    <DropdownMenu.Item
+                      class="composer-action-item"
+                      disabled={attachmentBusy()}
+                      onPointerDown={(event) => {
+                        if (event.button === 0) openAttachmentPicker("images");
+                      }}
+                      onKeyDown={(event) => openAttachmentPickerFromKey(event, "images")}
+                    >
+                      <Image aria-hidden="true" />
+                      <span>
+                        <strong>Attach image</strong>
+                        <small>Add a screenshot or visual reference.</small>
+                      </span>
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      class="composer-action-item"
+                      disabled
+                      title="Skill selection is not available yet."
+                    >
+                      <Puzzle aria-hidden="true" />
+                      <span>
+                        <strong>Use a skill</strong>
+                        <small>Skill selection is not available yet.</small>
+                      </span>
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      class="composer-action-item"
+                      disabled={attachmentBusy()}
+                      onPointerDown={(event) => {
+                        if (event.button === 0) openAttachmentPicker("all");
+                      }}
+                      onKeyDown={(event) => openAttachmentPickerFromKey(event, "all")}
+                    >
+                      <File aria-hidden="true" />
+                      <span>
+                        <strong>Add context</strong>
+                        <small>Include a file with supporting details.</small>
+                      </span>
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+              <Show
+                when={props.activeTurnId && !editingDeliveryId() && !composerHasContent()}
+                fallback={
+                  <Button
+                    type="button"
+                    class="voice-button"
+                    aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
+                    disabled={submitting() || selectionSending() || !agentReady() || onboardingModelRequired()}
+                    onClick={() => void submitMessage()}
+                  >
+                    {submitting() ? "…" : "↑"}
+                  </Button>
+                }
+              >
                 <Button
                   type="button"
-                  class="voice-button"
-                  aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
-                  disabled={submitting() || selectionSending() || !agentReady() || onboardingModelRequired()}
-                  onClick={() => void submitMessage()}
+                  class="voice-button voice-button-active"
+                  aria-label="Stop agent"
+                  onClick={props.onStop}
                 >
-                  {submitting() ? "…" : "↑"}
+                  <StopIcon />
                 </Button>
-              }
-            >
-              <Button
-                type="button"
-                class="voice-button voice-button-active"
-                aria-label="Stop agent"
-                onClick={props.onStop}
-              >
-                <StopIcon />
-              </Button>
-            </Show>
+              </Show>
+            </div>
           </div>
         </div>
       </Show>
+
+      <AgentExchangeHistoryModal
+        open={Boolean(exchangeHistoryAgent())}
+        currentBot={props.bot}
+        agent={exchangeHistoryAgent()}
+        bots={props.bots}
+        messages={props.messages}
+        onOpenChange={(open) => !open && setExchangeHistoryAgentId(null)}
+        onSelectAgent={props.onSelectAgent}
+        onOpenLink={(url) => void openMessageLink(url)}
+        onPreview={(attachment) => void previewAttachment(attachment)}
+        onAttachmentAction={attachmentAction}
+      />
 
       <Dialog.Root open={Boolean(mediaPreview())} onOpenChange={(open) => !open && setMediaPreview(null)}>
         <Show when={mediaPreview()}>

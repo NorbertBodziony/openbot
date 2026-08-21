@@ -184,6 +184,10 @@ export interface AttachmentSummary {
 
 export type DraftAttachment = AttachmentSummary;
 
+export interface ChooseAttachmentsInput {
+  filter: "all" | "images";
+}
+
 export interface AttachmentDataInput {
   name: string;
   mimeType: string;

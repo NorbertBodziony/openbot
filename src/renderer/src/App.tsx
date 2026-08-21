@@ -35,6 +35,7 @@ import type {
   UpdateStatus,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, createStore, flush, onSettled, Show } from "solid-js";
+import { playCompletionSoundForAgentEvent } from "./completion-sound";
 import { AccountLogin } from "./components/AccountLogin";
 import { Conversation } from "./components/Conversation";
 import { DirectConversation } from "./components/DirectConversation";
@@ -236,6 +237,7 @@ export function App() {
     string,
     { snapshot: ConversationSnapshot; markNewMessagesRead: boolean }
   >();
+  const agentChatsToMarkRead = new Set<string>();
   const autoReadAgentMessageIds = new Map<string, string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let conversationFrame: number | undefined;
@@ -506,11 +508,17 @@ export function App() {
     () => ({ botId: activeBotId(), agentPhase: agentStatus().phase }),
     ({ botId }) => {
       if (!botId) return;
+      const markReadOnOpen = agentChatsToMarkRead.delete(botId);
       void Promise.all([window.openbot.agent.readConversation(botId), window.openbot.agent.listQueue(botId)])
         .then(([snapshot, queue]) => {
           setQueues((current) => ({ ...current, [botId]: queue }));
           if (snapshot.readState) applyConversationReadState(botId, snapshot.readState);
           scheduleConversation(snapshot);
+          if (markReadOnOpen && (snapshot.readState?.unreadCount ?? 0) > 0) {
+            void markAgentMessagesRead(botId, snapshot.messages.at(-1)?.id ?? null).catch((error) =>
+              appendUiError(botId, error, "Read state failed"),
+            );
+          }
         })
         .catch((error) => appendUiError(botId, error, "Load failed"));
     },
@@ -563,7 +571,10 @@ export function App() {
         setActiveTurns((current) => ({ ...current, [event.botId]: null }));
         setPendingPrompts((current) => ({ ...current, [event.botId]: undefined }));
         setPendingApprovals((current) => ({ ...current, [event.botId]: undefined }));
-        if (event.status === "completed") markReplyCompleted(event.botId);
+        if (event.status === "completed") {
+          markReplyCompleted(event.botId);
+          playCompletionSoundForAgentEvent(event, botList());
+        }
         return;
       case "prompt":
         setPendingPrompts((current) => ({ ...current, [event.botId]: event }));
@@ -767,6 +778,7 @@ export function App() {
     }
     setActiveDirectMemberId(null);
     clearReplyIndicators(botId);
+    agentChatsToMarkRead.add(botId);
     setActiveBotId(botId);
   }
 

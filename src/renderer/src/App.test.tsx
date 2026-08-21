@@ -845,13 +845,13 @@ describe("OpenBot connected desktop shell", () => {
       screen.queryByRole("radiogroup", { name: "What do you want me helping with most?" }),
     ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "false");
-    expect(screen.getByRole("button", { name: "Attach a file" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add to prompt" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
 
     await confirmOnboardingModel();
     expect(screen.getByRole("radiogroup", { name: "What do you want me helping with most?" })).toBeInTheDocument();
     expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "true");
-    expect(screen.getByRole("button", { name: "Attach a file" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add to prompt" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
     expect(screen.queryByText(/Salesforce account queue/i)).not.toBeInTheDocument();
   });
@@ -1892,6 +1892,27 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(composer).toHaveTextContent(""));
   });
 
+  it("keeps the composer compact until the draft becomes multiline", async () => {
+    render(() => <App />);
+    await confirmOnboardingModel();
+    const editor = screen.getByRole("textbox", { name: "Message Chief" });
+    const composer = editor.closest(".composer");
+
+    expect(composer).toHaveAttribute("data-compact");
+
+    editor.textContent = "Start a message";
+    await fireEvent.input(editor);
+    expect(composer).toHaveAttribute("data-compact");
+
+    editor.textContent = "Start a message\nContinue here";
+    await fireEvent.input(editor);
+    expect(composer).not.toHaveAttribute("data-compact");
+
+    editor.textContent = "Start a message";
+    await fireEvent.input(editor);
+    expect(composer).toHaveAttribute("data-compact");
+  });
+
   it("publishes typing state", async () => {
     render(() => <App />);
     await confirmOnboardingModel();
@@ -2591,14 +2612,26 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("supports picker and attachment-only messages", async () => {
-    vi.mocked(window.openbot.agent.chooseAttachments).mockResolvedValueOnce([
-      attachment("draft-1", "brief.pdf", "pdf"),
-    ]);
+    const filePickerClick = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
-    await fireEvent.click(screen.getByRole("button", { name: "Attach a file" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Attach files" }));
+    await fireEvent.pointerDown(screen.getByRole("button", { name: "Add to prompt" }), { button: 0 });
+    await fireEvent.pointerDown(screen.getByRole("menuitem", { name: /Attach image/ }), { button: 0 });
+    expect(filePickerClick).toHaveBeenCalledTimes(1);
+    expect(document.querySelector<HTMLInputElement>('input[type="file"][accept]')?.accept).toBe(
+      ".png,.jpg,.jpeg,.gif,.webp,.avif",
+    );
+    await fireEvent.pointerDown(screen.getByRole("button", { name: "Add to prompt" }), { button: 0 });
+    expect(screen.getByRole("menuitem", { name: /Use a skill/ })).toHaveAttribute("data-disabled");
+    await fireEvent.pointerDown(screen.getByRole("menuitem", { name: /Add context/ }), { button: 0 });
+    expect(filePickerClick).toHaveBeenCalledTimes(2);
+    emitAttachmentImport?.({ type: "started", requestId: "picker-1" });
+    emitAttachmentImport?.({
+      type: "completed",
+      requestId: "picker-1",
+      attachments: [attachment("draft-1", "brief.pdf", "pdf")],
+    });
     expect(await screen.findByText("brief.pdf")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() =>
@@ -2619,7 +2652,7 @@ describe("OpenBot connected desktop shell", () => {
       requestId: "paste-1",
       attachments: [attachment("pasted-1", "pasted.png", "image")],
     });
-    expect(await screen.findByText("pasted.png")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Remove pasted.png" })).toBeInTheDocument();
   });
 
   it("keeps an asynchronous pasted attachment with the bot that received the paste", async () => {
@@ -2633,9 +2666,9 @@ describe("OpenBot connected desktop shell", () => {
       attachments: [attachment("pasted-switch", "for-chief.png", "image")],
     });
 
-    expect(screen.queryByText("for-chief.png")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove for-chief.png" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
-    expect(await screen.findByText("for-chief.png")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Remove for-chief.png" })).toBeInTheDocument();
   });
 
   it("shows and controls queued work", async () => {
@@ -3141,7 +3174,12 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     expect(await screen.findByText("Messaged")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open exchange with Sales Outbound" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Open exchange with Sales Outbound" }));
+    expect(await screen.findByRole("dialog", { name: "Messages with Sales Outbound" })).toBeInTheDocument();
+    expect(screen.getByText("Prepare report")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Close message history" }));
+    expect(screen.queryByRole("dialog", { name: "Messages with Sales Outbound" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Chief" })).toBeInTheDocument();
   });
 
   it("shows an incoming agent marker without duplicating raw collaborator input", async () => {
@@ -3558,6 +3596,58 @@ describe("OpenBot connected desktop shell", () => {
         throughMessageId: "agent-visible-answer",
       }),
     );
+  });
+
+  it("clears unread messages when entering an agent chat", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "sales-new",
+      throughMessageId: null,
+    };
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({
+      "sales-outbound": unreadState,
+    });
+    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) =>
+      botId === "sales-outbound"
+        ? {
+            botId,
+            threadId: "thread-sales",
+            activeTurnId: null,
+            revision: 1,
+            readState: unreadState,
+            messages: [
+              {
+                id: "sales-new",
+                author: "assistant",
+                text: "A new sales reply",
+                createdAt: "2026-08-19T09:03:00.000Z",
+                status: "completed",
+              },
+            ],
+          }
+        : {
+            botId,
+            threadId: null,
+            activeTurnId: null,
+            revision: 0,
+            readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+            messages: [],
+          },
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+
+    expect(await screen.findByText("A new sales reply")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "sales-outbound",
+        throughMessageId: "sales-new",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
   });
 
   it("keeps the agent unread state when marking it fails", async () => {

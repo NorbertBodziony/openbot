@@ -59,6 +59,57 @@ const messages: RendererBotMessage[] = STORY_CONVERSATION_MESSAGES.map((message)
   kind: message.exchange ? "exchange" : "text",
 }));
 
+const exchangeHistoryMessages: RendererBotMessage[] = [
+  ...messages,
+  {
+    id: "exchange-history-outgoing",
+    author: "bot",
+    body: "Verify the launch sources and flag anything that needs a stronger citation.",
+    time: "10:04",
+    kind: "exchange",
+    attachments: [STORY_ATTACHMENTS[0]],
+    exchange: {
+      direction: "outgoing",
+      messageId: "exchange-history-outgoing",
+      senderBotId: "chief",
+      recipientBotIds: ["research"],
+      replyToMessageId: null,
+      deliveries: [
+        {
+          id: "exchange-history-outgoing-delivery",
+          recipientBotId: "research",
+          status: "completed",
+          position: null,
+          error: null,
+        },
+      ],
+    },
+  },
+  {
+    id: "exchange-history-incoming",
+    author: "bot",
+    body: "The primary sources are verified. I replaced one secondary citation with the original paper.",
+    time: "10:06",
+    kind: "exchange",
+    exchange: {
+      direction: "incoming",
+      messageId: "exchange-history-incoming",
+      senderBotId: "research",
+      recipientBotIds: ["chief"],
+      replyToMessageId: "exchange-history-outgoing",
+      deliveries: [
+        {
+          id: "exchange-history-incoming-delivery",
+          recipientBotId: "chief",
+          status: "completed",
+          position: null,
+          error: null,
+        },
+      ],
+    },
+  },
+];
+
 const unreadStoryMessages: RendererBotMessage[] = [
   ...Array.from(
     { length: 12 },
@@ -436,6 +487,23 @@ type Story = StoryObj<typeof meta>;
 
 export const RichConversation: Story = {};
 
+export const AgentExchangeHistory: Story = {
+  name: "Agent exchange history",
+  args: { messages: exchangeHistoryMessages },
+  play: async ({ canvas, canvasElement, userEvent }) => {
+    await userEvent.click(canvas.getAllByRole("button", { name: "Open exchange with Research" })[0]);
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog", { name: "Messages with Research" });
+    await expect(dialog).toBeVisible();
+    await expect(
+      body.getByText("Verify the launch sources and flag anything that needs a stronger citation."),
+    ).toBeVisible();
+    await expect(
+      body.getByText("The primary sources are verified. I replaced one secondary citation with the original paper."),
+    ).toBeVisible();
+  },
+};
+
 export const SearchConversation: Story = {
   name: "Search conversation",
   play: async ({ canvas, canvasElement, userEvent }) => {
@@ -458,17 +526,19 @@ export const SearchConversation: Story = {
   },
 };
 
-export const AttachFilesPopover: Story = {
-  name: "Attach files popover",
+export const ComposerActionMenu: Story = {
+  name: "Composer action menu",
   play: async ({ canvas, canvasElement, userEvent }) => {
-    await userEvent.click(canvas.getByRole("button", { name: "Attach a file" }));
-    const popover = await within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "Attach file" });
-    await waitFor(() => expect(popover).toBeVisible());
-    const action = within(popover).getByRole("button", { name: "Attach files" });
-    await expect(popover).toHaveClass("ui-action-menu");
-    await expect(popover.getBoundingClientRect().width).toBe(160);
-    await expect(action.getBoundingClientRect().height).toBe(32);
-    await expect(getComputedStyle(action).padding).toBe("6px 8px");
+    await userEvent.click(canvas.getByRole("button", { name: "Add to prompt" }));
+    const menu = await within(canvasElement.ownerDocument.body).findByRole("menu", { name: "Add to prompt" });
+    await waitFor(() => expect(menu).toBeVisible());
+    const attachImage = within(menu).getByRole("menuitem", { name: /Attach image/ });
+    const useSkill = within(menu).getByRole("menuitem", { name: /Use a skill/ });
+    const addContext = within(menu).getByRole("menuitem", { name: /Add context/ });
+    await expect(menu).toHaveClass("ui-action-menu");
+    await expect(attachImage.getBoundingClientRect().height).toBeGreaterThanOrEqual(52);
+    await expect(useSkill).toHaveAttribute("data-disabled");
+    await expect(addContext).toBeVisible();
   },
 };
 

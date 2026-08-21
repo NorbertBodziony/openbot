@@ -11,17 +11,24 @@ export function AgentActivityIndicator(props: { bot: BotProfile | undefined; sta
         role="status"
         aria-label={`${props.bot?.name ?? "Agent"} is ${props.state?.toLowerCase()}`}
       >
-        <Show when={props.state !== "Working"}>
-          <AgentAvatar bot={props.bot} class="agent-activity-avatar" />
+        <Show
+          when={props.state === "Working"}
+          fallback={
+            <>
+              <AgentAvatar bot={props.bot} class="agent-activity-avatar" />
+              <div class="agent-activity-bubble" aria-hidden="true">
+                <span>{props.state}</span>
+                <span class="agent-activity-dots">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+              </div>
+            </>
+          }
+        >
+          <AgentAvatar bot={props.bot} url={null} motion="always" class="agent-activity-avatar" />
         </Show>
-        <div class="agent-activity-bubble" aria-hidden="true">
-          <span>{props.state}</span>
-          <span class="agent-activity-dots">
-            <i />
-            <i />
-            <i />
-          </span>
-        </div>
       </div>
     </Show>
   );

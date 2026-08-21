@@ -20,11 +20,17 @@ const bot: BotProfile = {
 };
 
 describe("AgentActivityIndicator", () => {
-  it("does not show an avatar while working", () => {
-    const view = render(() => <AgentActivityIndicator bot={bot} state="Working" />);
+  it("shows only an animated Bloub while working", () => {
+    const view = render(() => (
+      <AgentActivityIndicator bot={{ ...bot, avatarUrl: "mock-avatar://chief" }} state="Working" />
+    ));
 
     expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
-    expect(view.container.querySelector(".agent-activity-avatar")).toBeNull();
+    expect(
+      view.container.querySelector(".agent-activity-avatar.bot-avatar-motion-always.bot-avatar-bloub > svg"),
+    ).not.toBeNull();
+    expect(view.container.querySelector(".agent-activity-avatar img")).toBeNull();
+    expect(view.container.querySelector(".agent-activity-bubble")).toBeNull();
   });
 
   it("keeps the avatar for queued work", () => {

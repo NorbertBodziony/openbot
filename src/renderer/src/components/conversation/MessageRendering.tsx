@@ -35,7 +35,7 @@ function exchangeAgentsStyle(bots: Array<BotProfile | undefined>): string | unde
 export function ExchangeSystemRow(props: {
   message: BotMessage;
   bots: BotProfile[];
-  onSelectAgent: (botId: string) => void;
+  onOpenAgentHistory: (botId: string) => void;
 }) {
   const exchange = () => props.message.exchange;
   const recipients = () => exchange()?.recipientBotIds ?? [];
@@ -63,7 +63,7 @@ export function ExchangeSystemRow(props: {
               aria-label={`Open exchange with ${sender()?.name ?? exchange()?.senderBotId ?? "agent"}`}
               onClick={() => {
                 const senderId = exchange()?.senderBotId;
-                if (senderId) props.onSelectAgent(senderId);
+                if (senderId) props.onOpenAgentHistory(senderId);
               }}
             >
               <ExchangeAgentAvatar bot={sender()} />
@@ -99,7 +99,7 @@ export function ExchangeSystemRow(props: {
                       return (
                         <DropdownMenu.Item
                           class="exchange-agent-menu-item"
-                          onSelect={() => props.onSelectAgent(recipientId)}
+                          onSelect={() => props.onOpenAgentHistory(recipientId)}
                         >
                           <ExchangeAgentAvatar bot={recipient()} />
                           <span>{recipient()?.name ?? recipientId}</span>
@@ -120,7 +120,7 @@ export function ExchangeSystemRow(props: {
             title={singleRecipient()?.name ?? recipients()[0] ?? "Agent"}
             onClick={() => {
               const recipientId = recipients()[0];
-              if (recipientId) props.onSelectAgent(recipientId);
+              if (recipientId) props.onOpenAgentHistory(recipientId);
             }}
           >
             <ExchangeAgentAvatar bot={singleRecipient()} />

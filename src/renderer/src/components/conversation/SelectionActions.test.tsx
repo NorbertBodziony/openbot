@@ -192,6 +192,31 @@ describe("SelectionActionsBar", () => {
       "Fix the grammar in this selected text.\n\n> Selected sentence",
     );
   });
+
+  it("leaves a collapsed composer caret alone on keyup", async () => {
+    const editor = document.createElement("div");
+    editor.dataset.selectionTestRoot = "true";
+    editor.contentEditable = "true";
+    editor.textContent = "asd";
+    document.body.append(editor);
+    const text = editor.firstChild;
+    if (!text) throw new Error("Missing text node");
+    const caret = document.createRange();
+    caret.setStart(text, 3);
+    caret.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(caret);
+    render(() => <MessageSelectionActions contextKey="bot-1" disabled={false} onSend={vi.fn()} />);
+
+    await fireEvent.keyUp(editor, { key: "d" });
+
+    expect(window.getSelection()?.rangeCount).toBe(1);
+    const remaining = window.getSelection()?.getRangeAt(0);
+    expect(remaining?.collapsed).toBe(true);
+    expect(remaining?.startContainer).toBe(text);
+    expect(remaining?.startOffset).toBe(3);
+  });
 });
 
 function testParagraph(text: string, messageId: string): HTMLParagraphElement {
