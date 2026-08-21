@@ -2074,7 +2074,7 @@ export function Conversation(props: ConversationProps) {
               />
             </div>
             <div class="composer-toolbar">
-              <input
+              <Input
                 ref={imageAttachmentPicker}
                 type="file"
                 accept=".png,.jpg,.jpeg,.gif,.webp,.avif"
@@ -2083,7 +2083,7 @@ export function Conversation(props: ConversationProps) {
                 tabindex={-1}
                 data-openbot-attachment-picker="true"
               />
-              <input
+              <Input
                 ref={contextAttachmentPicker}
                 type="file"
                 multiple
