@@ -102,6 +102,10 @@ describe("OpenBot connected desktop shell", () => {
     emitInvite = undefined;
     window.localStorage.clear();
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn().mockRejectedValue(new DOMException("Denied", "NotAllowedError")) },
+    });
     Object.defineProperty(window, "openbot", {
       configurable: true,
       value: {
@@ -126,6 +130,9 @@ describe("OpenBot connected desktop shell", () => {
         }),
         openExternal: vi.fn().mockResolvedValue(undefined),
         openUrl: vi.fn().mockResolvedValue(undefined),
+        voice: {
+          transcribe: vi.fn().mockResolvedValue({ text: "Voice transcript" }),
+        },
         auth: {
           getState: vi.fn().mockResolvedValue({
             status: "signed_in",
@@ -954,6 +961,18 @@ describe("OpenBot connected desktop shell", () => {
     });
     fireEvent.click(await screen.findByRole("button", { name: /Restart to update/ }));
     await waitFor(() => expect(window.openbot.update.install).toHaveBeenCalledOnce());
+  });
+
+  it("offers local voice prompting and explains blocked microphone access", async () => {
+    render(() => <App />);
+
+    const voiceButton = await screen.findByRole("button", { name: "Create prompt with voice" });
+    await fireEvent.click(voiceButton);
+
+    expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({ audio: true, video: false });
+    expect(
+      await screen.findByText("Microphone access is blocked. Allow OpenBot to use the microphone in system settings."),
+    ).toBeInTheDocument();
   });
 
   it("renders loaded history without replaying entrance animations", async () => {

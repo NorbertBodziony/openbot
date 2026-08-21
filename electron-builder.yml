@@ -37,6 +37,14 @@ extraResources:
     to: licenses/Electron-LICENSE
   - from: node_modules/electron/dist/LICENSES.chromium.html
     to: licenses/LICENSES.chromium.html
+  - from: build/licenses/OpenAI-Whisper-LICENSE
+    to: licenses/OpenAI-Whisper-LICENSE
+  - from: build/licenses/whisper.cpp-LICENSE
+    to: licenses/whisper.cpp-LICENSE
+  - from: .openbot-build/whisper/bin
+    to: whisper/bin
+  - from: .openbot-build/whisper/model
+    to: whisper/model
 directories:
   output: dist
 mac:
@@ -50,6 +58,7 @@ mac:
   darkModeSupport: true
   extendInfo:
     ElectronTeamID: ZTRDTUL87R
+    NSMicrophoneUsageDescription: OpenBot uses the microphone to transcribe voice prompts locally on this Mac.
     NSUserActivityTypes:
       - NSUserActivityTypeBrowsingWeb
   target:

@@ -25,11 +25,12 @@ import type {
   TeamPresenceSnapshot,
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
-import { isClaudeModel } from "@openbot/contracts/ipc";
+import { isClaudeModel, VOICE_AUDIO_LIMITS } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onCleanup, onSettled, Show, untrack } from "solid-js";
 import { normalizeAvatarFile } from "../avatar-image";
 import { AVATAR_HUE_OPTIONS, avatarCandidateSeeds, avatarHueSwatch } from "../bloub-avatar";
 import type { BotMessage, BotProfile } from "../data";
+import { appendVoiceTranscript, recordingToWav } from "../voice-recording";
 import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
 import { ApprovalCard, ChoiceCard } from "./ConversationPrompts";
@@ -84,6 +85,8 @@ import {
   File,
   Image,
   Input,
+  LoaderCircle,
+  Mic,
   NativeSelect,
   Popover,
   Puzzle,
@@ -210,6 +213,7 @@ export function Conversation(props: ConversationProps) {
   const [showComposerActions, setShowComposerActions] = createSignal(false);
   const [attachmentBusy, setAttachmentBusy] = createSignal(false);
   const [composerError, setComposerError] = createSignal<string | null>(null);
+  const [voicePhase, setVoicePhase] = createSignal<"idle" | "requesting" | "recording" | "transcribing">("idle");
   const [markingRead, setMarkingRead] = createSignal(false);
   const [settingsSaveError, setSettingsSaveError] = createSignal<string | null>(null);
   const [submitting, setSubmitting] = createSignal(false);
@@ -254,6 +258,12 @@ export function Conversation(props: ConversationProps) {
   let typingBotId: string | null = null;
   let imageAttachmentPicker: HTMLInputElement | undefined;
   let contextAttachmentPicker: HTMLInputElement | undefined;
+  let voiceRecorder: MediaRecorder | undefined;
+  let voiceStream: MediaStream | undefined;
+  let voiceRecordingTimer: ReturnType<typeof setTimeout> | undefined;
+  let voiceChunks: Blob[] = [];
+  let voiceBotId: string | undefined;
+  let voiceDisposed = false;
   const [settingsPanelWidth, setSettingsPanelWidth] = createSignal(
     readPanelWidth(SETTINGS_PANEL_STORAGE_KEY, SETTINGS_PANEL_DEFAULT, SETTINGS_PANEL_MIN, SETTINGS_PANEL_MAX),
   );
@@ -682,6 +692,77 @@ export function Conversation(props: ConversationProps) {
       [id]: { ...(current[id] ?? EMPTY_DRAFT), ...patch },
     }));
   };
+
+  async function startVoiceRecording(): Promise<void> {
+    const botId = props.bot?.id;
+    if (!botId || voicePhase() !== "idle") return;
+    setComposerError(null);
+    setVoicePhase("requesting");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      if (voiceDisposed || voicePhase() !== "requesting") {
+        for (const track of stream.getTracks()) track.stop();
+        return;
+      }
+      const recorder = new MediaRecorder(stream);
+      voiceStream = stream;
+      voiceRecorder = recorder;
+      voiceBotId = botId;
+      voiceChunks = [];
+      recorder.addEventListener("dataavailable", (event) => {
+        if (event.data.size > 0) voiceChunks.push(event.data);
+      });
+      recorder.addEventListener("stop", () => void finishVoiceRecording(recorder.mimeType));
+      recorder.start();
+      setVoicePhase("recording");
+      voiceRecordingTimer = setTimeout(stopVoiceRecording, VOICE_AUDIO_LIMITS.maximumSeconds * 1_000);
+    } catch (error) {
+      setVoicePhase("idle");
+      setComposerError(voiceCaptureError(error));
+    }
+  }
+
+  function stopVoiceRecording(): void {
+    if (voicePhase() !== "recording" || !voiceRecorder) return;
+    setVoicePhase("transcribing");
+    if (voiceRecordingTimer) clearTimeout(voiceRecordingTimer);
+    voiceRecordingTimer = undefined;
+    voiceRecorder.stop();
+    stopVoiceStream();
+  }
+
+  async function finishVoiceRecording(mimeType: string): Promise<void> {
+    const targetBotId = voiceBotId;
+    const chunks = voiceChunks;
+    voiceRecorder = undefined;
+    voiceBotId = undefined;
+    voiceChunks = [];
+    if (!targetBotId || voiceDisposed) return;
+    try {
+      if (chunks.length === 0) throw new Error("No speech was recorded.");
+      const audio = await recordingToWav(new Blob(chunks, { type: mimeType }));
+      const result = await window.openbot.voice.transcribe({ audio });
+      if (voiceDisposed || !props.bots.some((bot) => bot.id === targetBotId)) return;
+      if (!result.text.trim()) throw new Error("No speech was detected.");
+      setDrafts((current) => {
+        const draft = current[targetBotId] ?? EMPTY_DRAFT;
+        return {
+          ...current,
+          [targetBotId]: { ...draft, text: appendVoiceTranscript(draft.text, result.text) },
+        };
+      });
+      if (props.bot?.id === targetBotId) setComposerFocusRequest((current) => current + 1);
+    } catch (error) {
+      if (!voiceDisposed && props.bot?.id === targetBotId) setComposerError(voiceTranscriptionError(error));
+    } finally {
+      if (!voiceDisposed) setVoicePhase("idle");
+    }
+  }
+
+  function stopVoiceStream(): void {
+    for (const track of voiceStream?.getTracks() ?? []) track.stop();
+    voiceStream = undefined;
+  }
 
   onSettled(() => {
     const unsubscribeImport = window.openbot.agent.onAttachmentImport((event) => {
@@ -1131,6 +1212,10 @@ export function Conversation(props: ConversationProps) {
   );
 
   onCleanup(() => {
+    voiceDisposed = true;
+    if (voiceRecordingTimer) clearTimeout(voiceRecordingTimer);
+    if (voiceRecorder?.state === "recording") voiceRecorder.stop();
+    stopVoiceStream();
     browserVisibilityGeneration += 1;
     if (browserVisibilityFrame !== undefined) cancelAnimationFrame(browserVisibilityFrame);
     if (browserBoundsFrame !== undefined) cancelAnimationFrame(browserBoundsFrame);
@@ -2028,7 +2113,7 @@ export function Conversation(props: ConversationProps) {
             />
           </Show>
           <div
-            class="composer"
+            class={`composer${voicePhase() === "recording" ? " composer-recording" : ""}`}
             data-compact={currentDraft().text.includes("\n") ? undefined : ""}
             onPointerDown={(event) => {
               if (!(event.target instanceof Element)) return;
@@ -2156,29 +2241,57 @@ export function Conversation(props: ConversationProps) {
                   </DropdownMenu.Content>
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
-              <Show
-                when={props.activeTurnId && !editingDeliveryId() && !composerHasContent()}
-                fallback={
-                  <Button
-                    type="button"
-                    class="voice-button"
-                    aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
-                    disabled={submitting() || selectionSending() || !agentReady() || onboardingModelRequired()}
-                    onClick={() => void submitMessage()}
-                  >
-                    {submitting() ? "…" : "↑"}
-                  </Button>
-                }
-              >
+              <div class="composer-primary-actions">
                 <Button
                   type="button"
-                  class="voice-button voice-button-active"
-                  aria-label="Stop agent"
-                  onClick={props.onStop}
+                  class={`dictation-button${voicePhase() === "recording" ? " dictation-button-recording" : ""}`}
+                  aria-label={voiceButtonLabel(voicePhase())}
+                  disabled={
+                    voicePhase() === "requesting" ||
+                    voicePhase() === "transcribing" ||
+                    (voicePhase() === "idle" &&
+                      (props.agentPickerOpen || !props.bot || !agentReady() || onboardingModelRequired()))
+                  }
+                  onClick={() => (voicePhase() === "recording" ? stopVoiceRecording() : void startVoiceRecording())}
                 >
-                  <StopIcon />
+                  <Show
+                    when={voicePhase() === "recording"}
+                    fallback={
+                      <Show
+                        when={voicePhase() === "requesting" || voicePhase() === "transcribing"}
+                        fallback={<Mic aria-hidden="true" />}
+                      >
+                        <LoaderCircle class="dictation-spinner" aria-hidden="true" />
+                      </Show>
+                    }
+                  >
+                    <StopIcon />
+                  </Show>
                 </Button>
-              </Show>
+                <Show
+                  when={props.activeTurnId && !editingDeliveryId() && !composerHasContent()}
+                  fallback={
+                    <Button
+                      type="button"
+                      class="voice-button"
+                      aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
+                      disabled={submitting() || selectionSending() || !agentReady() || onboardingModelRequired()}
+                      onClick={() => void submitMessage()}
+                    >
+                      {submitting() ? "…" : "↑"}
+                    </Button>
+                  }
+                >
+                  <Button
+                    type="button"
+                    class="voice-button voice-button-active"
+                    aria-label="Stop agent"
+                    onClick={props.onStop}
+                  >
+                    <StopIcon />
+                  </Button>
+                </Show>
+              </div>
             </div>
           </div>
         </div>
@@ -2738,4 +2851,23 @@ export function Conversation(props: ConversationProps) {
 function reasoningLabel(effort: AgentReasoningEffort): string {
   if (effort === "xhigh") return "Extra high";
   return `${effort.slice(0, 1).toUpperCase()}${effort.slice(1)}`;
+}
+
+function voiceButtonLabel(phase: "idle" | "requesting" | "recording" | "transcribing") {
+  if (phase === "recording") return "Stop voice recording";
+  if (phase === "requesting") return "Requesting microphone access";
+  if (phase === "transcribing") return "Transcribing voice prompt";
+  return "Create prompt with voice";
+}
+
+function voiceCaptureError(error: unknown) {
+  if (error instanceof DOMException && (error.name === "NotAllowedError" || error.name === "SecurityError")) {
+    return "Microphone access is blocked. Allow OpenBot to use the microphone in system settings.";
+  }
+  if (error instanceof DOMException && error.name === "NotFoundError") return "No microphone is available.";
+  return "OpenBot could not start voice recording.";
+}
+
+function voiceTranscriptionError(error: unknown): string {
+  return error instanceof Error ? error.message : "OpenBot could not transcribe this recording.";
 }

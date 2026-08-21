@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -17,13 +18,27 @@ const appPathArgument = process.argv.slice(2).find((argument) => !argument.start
 const appPath = resolve(appPathArgument ?? "dist/win-unpacked");
 const executablePath = resolve(appPath, "OpenBot.exe");
 const resourcesPath = resolve(appPath, "resources");
+const whisperExecutablePath = resolve(resourcesPath, "whisper/bin/whisper-cli.exe");
+const whisperModelPath = resolve(resourcesPath, "whisper/model/ggml-small-q5_1.bin");
 
 await Promise.all([
   access(executablePath),
   access(resolve(resourcesPath, "app.asar")),
   access(resolve(resourcesPath, "licenses/Electron-LICENSE")),
   access(resolve(resourcesPath, "licenses/LICENSES.chromium.html")),
+  access(resolve(resourcesPath, "licenses/OpenAI-Whisper-LICENSE")),
+  access(resolve(resourcesPath, "licenses/whisper.cpp-LICENSE")),
+  access(whisperExecutablePath),
+  access(whisperModelPath),
 ]);
+
+expectEqual(
+  createHash("sha256")
+    .update(await readFile(whisperModelPath))
+    .digest("hex"),
+  "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+  "Whisper model digest",
+);
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 if (!isDynamicRecord(packageJson)) throw new Error("package.json is not a JSON object.");

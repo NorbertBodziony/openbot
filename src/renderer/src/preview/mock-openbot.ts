@@ -266,6 +266,9 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     }),
     openExternal: async () => undefined,
     openUrl: async () => undefined,
+    voice: {
+      transcribe: async () => ({ text: "Mock voice transcript" }),
+    },
     auth: {
       getState: async () => clone(authState),
       retry: async () => clone(authState),

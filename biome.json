@@ -29,6 +29,8 @@
       "!**/routeTree.gen.ts",
       "!tools/biome/anti-slop",
       "!coverage",
+      "!.openbot-build",
+      "!build/whisper",
       "!.agents"
     ]
   },

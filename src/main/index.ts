@@ -16,6 +16,7 @@ import {
   type MacPermissionsState,
   type SendMessageInput,
   type UpdateBotInput,
+  type VoiceTranscriptionResult,
 } from "@openbot/contracts/ipc";
 import {
   app,
@@ -80,6 +81,7 @@ import {
   parseUpdateTeamMember,
 } from "./ipc/server-inputs";
 import { isObject, requireString } from "./ipc/validation";
+import { parseVoiceTranscription } from "./ipc/voice-inputs";
 import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
 import { RemoteDesktopCredentialStore } from "./remote-desktop-credential-store";
 import { RemoteMacManager } from "./remote-mac";
@@ -101,6 +103,7 @@ import { TeamStore } from "./team-store";
 import { handleTrusted } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 import { supportsInstalledUpdates, UpdateService } from "./update-service";
+import { VoiceTranscriptionService } from "./voice-transcription-service";
 
 if (!app.isPackaged) {
   const profile = readDevelopmentProfile(process.env.OPENBOT_DEV_PROFILE);
@@ -148,6 +151,7 @@ let hostService: HostService | null = null;
 let remoteMacManager: RemoteMacManager | null = null;
 let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
+let voiceTranscriptionService: VoiceTranscriptionService | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
 let pendingInviteUrl: string | null = findInviteUrl(process.argv);
@@ -202,6 +206,7 @@ function registerIpcHandlers(
   remoteMac: RemoteMacManager,
   remoteServers: RemoteServerManager,
   centralAuth: CentralAuthManager,
+  voice: VoiceTranscriptionService,
 ): void {
   handleTrusted(IPC_CHANNELS.getAppInfo, (): AppInfo => {
     const platform = process.platform;
@@ -235,6 +240,10 @@ function registerIpcHandlers(
     }
     return shell.openExternal(url.toString());
   });
+  handleTrusted(
+    IPC_CHANNELS.voiceTranscribe,
+    (input: unknown): Promise<VoiceTranscriptionResult> => voice.transcribe(parseVoiceTranscription(input).audio),
+  );
   handleTrusted(IPC_CHANNELS.authGetState, () => centralAuth.getState());
   handleTrusted(IPC_CHANNELS.authRetry, () => centralAuth.retry());
   handleTrusted(IPC_CHANNELS.authRequestEmailCode, (email: unknown) =>
@@ -933,6 +942,7 @@ if (!hasSingleInstanceLock) {
       if (process.platform === "darwin") app.setAsDefaultProtocolClient("openbot");
       if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
       configureContentSecurityPolicy();
+      configureMediaPermissions();
       mainWindow = createWindow();
       centralAuthManager = new CentralAuthManager({
         apiUrl: readCentralAuthApiUrl(
@@ -1048,6 +1058,9 @@ if (!hasSingleInstanceLock) {
       const host = hostService;
       const remoteMac = remoteMacManager;
       const remoteServers = remoteServerManager;
+      voiceTranscriptionService = new VoiceTranscriptionService(
+        app.isPackaged ? join(process.resourcesPath, "whisper") : resolve(".openbot-build/whisper"),
+      );
       const { autoUpdater } = electronUpdater;
       updateService = new UpdateService(autoUpdater, {
         currentVersion: app.getVersion(),
@@ -1084,6 +1097,7 @@ if (!hasSingleInstanceLock) {
         remoteMac,
         remoteServers,
         centralAuthManager,
+        voiceTranscriptionService,
       );
       configureApplicationMenu(service, updateService);
       await loadRenderer(mainWindow);
@@ -1176,10 +1190,27 @@ async function prepareForShutdown(): Promise<void> {
   isQuitting = true;
   updateService?.stop();
   remoteServerManager?.stop();
+  voiceTranscriptionService?.shutdown();
   await (remoteMacManager?.stop() ?? Promise.resolve());
   await (hostService?.shutdown() ?? Promise.resolve());
   await (browserHost?.destroy() ?? Promise.resolve());
   await (agentService?.stop() ?? Promise.resolve());
+}
+
+function configureMediaPermissions(): void {
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
+    if (permission !== "media" || !isTrustedRendererUrl(requestingOrigin)) return false;
+    return details.mediaType === "audio";
+  });
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const mediaTypes = ("mediaTypes" in details ? details.mediaTypes : undefined) ?? [];
+    callback(
+      permission === "media" &&
+        isTrustedRendererUrl(webContents.getURL()) &&
+        mediaTypes.length > 0 &&
+        mediaTypes.every((mediaType) => mediaType === "audio"),
+    );
+  });
 }
 
 function routeUpdateBot(

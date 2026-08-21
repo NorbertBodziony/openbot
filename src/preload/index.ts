@@ -300,6 +300,9 @@ const openbotApi: OpenBotDesktopApi = {
   requestMacPermission: (permission) => ipcRenderer.invoke(IPC_CHANNELS.requestMacPermission, permission),
   openExternal: (destination) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, destination),
   openUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.openUrl, url),
+  voice: {
+    transcribe: (input) => ipcRenderer.invoke(IPC_CHANNELS.voiceTranscribe, input),
+  },
   auth: {
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.authGetState),
     retry: () => ipcRenderer.invoke(IPC_CHANNELS.authRetry),

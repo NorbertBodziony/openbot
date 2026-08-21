@@ -4405,7 +4405,7 @@
 }
 
 .composer[data-compact] {
-  grid-template-columns: 28px minmax(0, 1fr) 28px;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
   min-height: 46px;
   align-items: center;
   gap: 8px;
@@ -4431,6 +4431,7 @@
 }
 
 .composer-button,
+.dictation-button,
 .voice-button {
   display: grid;
   width: 28px;
@@ -4450,6 +4451,32 @@
 .composer-button:hover {
   background: var(--openbot-border);
   color: var(--openbot-white);
+}
+
+.composer-primary-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dictation-button:hover:not(:disabled) {
+  background: var(--openbot-border);
+  color: var(--openbot-white);
+}
+
+.dictation-button-recording,
+.dictation-button-recording:hover:not(:disabled) {
+  background: var(--openbot-warning-soft);
+  color: var(--openbot-warning);
+}
+
+.dictation-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dictation-spinner {
+  animation: ui-spin 720ms linear infinite;
 }
 
 .voice-button {
@@ -4500,7 +4527,7 @@
   grid-row: 1;
 }
 
-.composer[data-compact] .composer-toolbar > .voice-button {
+.composer[data-compact] .composer-toolbar > .composer-primary-actions {
   grid-column: 3;
   grid-row: 1;
 }
