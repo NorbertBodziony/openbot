@@ -1,9 +1,10 @@
 import { type ChildProcess, spawn as nodeSpawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { randomBytes, timingSafeEqual, X509Certificate } from "node:crypto";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import https from "node:https";
 import { dirname, join } from "node:path";
+import type { PeerCertificate } from "node:tls";
 import type { RemoteDesktopDisplay, RemoteDesktopIceServer } from "@openbot/contracts/ipc";
 import { z } from "zod";
 import { stopOwnedProcess } from "./host-tunnel-runtime";
@@ -249,7 +250,7 @@ export class SunshineMoonlightRuntime {
       windowsHide: true,
     });
     this.#pipeDiagnostics(this.#sunshine, "sunshine");
-    await waitForHttps(SUNSHINE_HTTPS_PORT);
+    await waitForHttps(SUNSHINE_HTTPS_PORT, join(this.#options.stateDirectory, "sunshine-cert.pem"));
   }
 
   #startMoonlight(port: number, iceEndpoint: string): void {
@@ -331,6 +332,7 @@ export class SunshineMoonlightRuntime {
       SUNSHINE_HTTPS_PORT,
       "/api/openbot/displays",
       this.#options.credentials,
+      join(this.#options.stateDirectory, "sunshine-cert.pem"),
       sunshineDisplaysSchema,
     );
     const local = this.#options.getDisplays();
@@ -381,6 +383,7 @@ export class SunshineMoonlightRuntime {
             SUNSHINE_HTTPS_PORT,
             "/api/pin",
             this.#options.credentials,
+            join(this.#options.stateDirectory, "sunshine-cert.pem"),
             JSON.stringify({ pin: message.pin, name: "OpenBot Remote Desktop" }),
           );
           this.#options.onDiagnostic?.("moonlight", "OpenBot: submitted local pairing PIN.\n");
@@ -485,8 +488,10 @@ async function sunshineRequest(
   port: number,
   path: string,
   credentials: { username: string; password: string },
+  certificatePath: string,
   body: string,
 ): Promise<void> {
+  const tls = await sunshineTlsOptions(certificatePath);
   await new Promise<void>((resolve, reject) => {
     const request = https.request(
       {
@@ -494,7 +499,7 @@ async function sunshineRequest(
         port,
         path,
         method: "POST",
-        rejectUnauthorized: false,
+        ...tls,
         auth: `${credentials.username}:${credentials.password}`,
         headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
       },
@@ -516,15 +521,17 @@ async function sunshineJson<T>(
   port: number,
   path: string,
   credentials: { username: string; password: string },
+  certificatePath: string,
   schema: z.ZodType<T>,
 ): Promise<T> {
+  const tls = await sunshineTlsOptions(certificatePath);
   return new Promise<T>((resolve, reject) => {
     const request = https.get(
       {
         hostname: "127.0.0.1",
         port,
         path,
-        rejectUnauthorized: false,
+        ...tls,
         auth: `${credentials.username}:${credentials.password}`,
         headers: { Accept: "application/json" },
       },
@@ -557,12 +564,13 @@ async function requestStream(url: string, headers: Record<string, string>, body:
   });
 }
 
-async function waitForHttps(port: number): Promise<void> {
+async function waitForHttps(port: number, certificatePath: string): Promise<void> {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     try {
+      const tls = await sunshineTlsOptions(certificatePath);
       await new Promise<void>((resolve, reject) => {
-        const request = https.get({ hostname: "127.0.0.1", port, path: "/", rejectUnauthorized: false }, (response) => {
+        const request = https.get({ hostname: "127.0.0.1", port, path: "/", ...tls }, (response) => {
           response.resume();
           resolve();
         });
@@ -574,6 +582,22 @@ async function waitForHttps(port: number): Promise<void> {
     }
   }
   throw new Error("Sunshine did not become ready.");
+}
+
+async function sunshineTlsOptions(certificatePath: string): Promise<{
+  ca: Buffer;
+  checkServerIdentity: (hostname: string, certificate: PeerCertificate) => Error | undefined;
+}> {
+  const ca = await readFile(certificatePath);
+  const expected = new X509Certificate(ca).raw;
+  return {
+    ca,
+    checkServerIdentity: (_hostname, certificate) => {
+      const presented = certificate.raw;
+      if (presented.length === expected.length && timingSafeEqual(presented, expected)) return undefined;
+      return new Error("Sunshine returned an unexpected TLS certificate.");
+    },
+  };
 }
 
 async function waitForHttp(url: string, init: RequestInit): Promise<void> {
