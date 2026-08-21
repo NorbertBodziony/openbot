@@ -169,12 +169,14 @@ jobs:
           codesign --verify --strict --verbose=2 "$runtime_path/web-server"
           codesign --verify --strict --verbose=2 "$runtime_path/streamer"
           test -f "$app_path/Contents/embedded.provisionprofile"
-          codesign -d --entitlements "$RUNNER_TEMP/openbot-entitlements.plist" "$app_path"
-          plutil -extract com.apple.developer.associated-domains.0 raw \
+          codesign -d --entitlements :- "$app_path" > "$RUNNER_TEMP/openbot-entitlements.plist"
+          test -s "$RUNNER_TEMP/openbot-entitlements.plist"
+          plutil -lint "$RUNNER_TEMP/openbot-entitlements.plist"
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.associated-domains:0' \
             "$RUNNER_TEMP/openbot-entitlements.plist" | grep -Fx 'applinks:openbot.run'
-          plutil -extract com.apple.developer.team-identifier raw \
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.team-identifier' \
             "$RUNNER_TEMP/openbot-entitlements.plist" | grep -Fx 'ZTRDTUL87R'
-          plutil -extract com.apple.security.device.audio-input raw \
+          /usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input' \
             "$RUNNER_TEMP/openbot-entitlements.plist" | grep -Fx 'true'
           plutil -extract NSUserActivityTypes.0 raw "$app_path/Contents/Info.plist" \
             | grep -Fx 'NSUserActivityTypeBrowsingWeb'
