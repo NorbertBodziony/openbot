@@ -15,7 +15,7 @@ const executablePath = resolve(contentsPath, "MacOS/OpenBot");
 const resourcesPath = resolve(contentsPath, "Resources");
 const plistPath = resolve(contentsPath, "Info.plist");
 const whisperExecutablePath = resolve(resourcesPath, "whisper/bin/whisper-cli");
-const whisperModelPath = resolve(resourcesPath, "whisper/model/ggml-small-q5_1.bin");
+const whisperModelPath = resolve(resourcesPath, "whisper/model/ggml-medium-q5_0.bin");
 
 await Promise.all([
   access(executablePath),
@@ -61,7 +61,7 @@ expectEqual(
   createHash("sha256")
     .update(await readFile(whisperModelPath))
     .digest("hex"),
-  "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+  "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
   "Whisper model digest",
 );
 

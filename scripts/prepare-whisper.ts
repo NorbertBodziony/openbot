@@ -1,14 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, createReadStream, existsSync } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
 const WHISPER_CPP_COMMIT = "86c40c3bd6fc86f1187fb751d111b49e0fc18e84";
 const MODEL_REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1";
-const MODEL_NAME = "ggml-small-q5_1.bin";
-const MODEL_BYTES = 190_085_487;
-const MODEL_SHA256 = "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb";
+const MODEL_NAME = "ggml-medium-q5_0.bin";
+const MODEL_BYTES = 539_212_467;
+const MODEL_SHA256 = "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f";
 const buildRoot = resolve(".openbot-build/whisper");
 const sourceRoot = join(buildRoot, "source");
 const cmakeRoot = join(buildRoot, "cmake");
@@ -25,6 +25,7 @@ if (process.platform !== "darwin" && process.platform !== "win32") {
 requireCommand("cmake", ["--version"]);
 requireCommand("tar", ["--version"]);
 await Promise.all([mkdir(binaryRoot, { recursive: true }), mkdir(modelRoot, { recursive: true })]);
+await removeOtherModels();
 await prepareModel();
 await prepareSource();
 buildExecutable();
@@ -41,6 +42,15 @@ async function prepareModel(): Promise<void> {
     await rm(modelPath, { force: true });
     throw new Error("The downloaded Whisper model failed its size or SHA-256 check.");
   }
+}
+
+async function removeOtherModels(): Promise<void> {
+  const entries = await readdir(modelRoot);
+  await Promise.all(
+    entries
+      .filter((entry) => entry.endsWith(".bin") && entry !== MODEL_NAME)
+      .map((entry) => rm(join(modelRoot, entry), { force: true })),
+  );
 }
 
 async function isExpectedModel(): Promise<boolean> {

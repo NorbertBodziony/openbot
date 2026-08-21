@@ -23,7 +23,7 @@ export class VoiceTranscriptionService {
       "bin",
       process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli",
     );
-    const model = join(this.resourcesRoot, "model", "ggml-small-q5_1.bin");
+    const model = join(this.resourcesRoot, "model", "ggml-medium-q5_0.bin");
     const startedAt = Date.now();
 
     try {
