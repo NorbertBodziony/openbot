@@ -1,8 +1,18 @@
-import { BloubBot } from "@norbert_bodziony/bloub";
+import { type Block, BloubBot, defaultCycle, makeBlock } from "@norbert_bodziony/bloub";
 import type { BotAvatarHue } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, onSettled, Show } from "solid-js";
 import { type AvatarMotion, bloubAvatarProfile } from "../bloub-avatar";
 import type { BotProfile } from "../data";
+
+const DEFAULT_CYCLE: Block[] = defaultCycle().blocks;
+const SIDEBAR_MOTION_HOLD_FACTOR = 1.25;
+const IDLE_CYCLE: Block[] = [slowerBlock("idle")];
+const WORKING_CYCLE: Block[] = [slowerBlock("orbit")];
+
+function slowerBlock(state: "idle" | "orbit"): Block {
+  const block = makeBlock(state);
+  return { ...block, duration: block.duration * SIDEBAR_MOTION_HOLD_FACTOR };
+}
 
 interface AgentAvatarProps {
   bot?: Pick<BotProfile, "avatarSeed" | "avatarHue" | "avatarUrl">;
@@ -50,7 +60,12 @@ function GeneratedAvatar(props: {
   const [interacting, setInteracting] = createSignal(false);
   const [reducedMotion, setReducedMotion] = createSignal(prefersReducedMotion());
   const profile = createMemo(() => bloubAvatarProfile(props.seed, props.hue));
-  const animated = () => !reducedMotion() && (props.motion === "always" || interacting());
+  const animated = () => !reducedMotion() && (props.motion !== "hover" || interacting());
+  const cycle = () => {
+    if (props.motion === "idle") return IDLE_CYCLE;
+    if (props.motion === "working") return WORKING_CYCLE;
+    return DEFAULT_CYCLE;
+  };
 
   onSettled(() => {
     const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
@@ -86,6 +101,7 @@ function GeneratedAvatar(props: {
       shape={profile().shape}
       color={profile().color}
       expression={profile().expression}
+      cycle={cycle()}
       playing={true}
       ariaLabel=""
       class="bloub-avatar-svg"
