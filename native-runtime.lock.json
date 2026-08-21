@@ -23,7 +23,7 @@
     }
   },
   "remoteDesktop": {
-    "recipeVersion": 2,
+    "recipeVersion": 3,
     "sunshine": {
       "sourceMode": "openbot-fork",
       "repository": "https://github.com/NorbertBodziony/Sunshine.git",
