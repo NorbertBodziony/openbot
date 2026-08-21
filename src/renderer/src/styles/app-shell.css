@@ -264,13 +264,15 @@
 }
 
 .server-rail {
+  --server-rail-inline-padding: 7px;
+
   position: relative;
   z-index: 45;
   display: flex;
   min-width: var(--server-rail-width);
   flex-direction: column;
   justify-content: space-between;
-  padding: 42px 7px 9px;
+  padding: 42px var(--server-rail-inline-padding) calc(9px + 52px);
   background: var(--openbot-bg-sidebar);
   -webkit-app-region: drag;
 }
@@ -297,17 +299,72 @@
   pointer-events: none;
 }
 
-.server-rail-list,
-.server-rail-tools {
+.server-rail-list {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
 }
 
-.server-rail-tools {
-  padding-top: 10px;
-  border-top: 1px solid var(--openbot-hover);
+.server-rail-list {
+  box-sizing: border-box;
+  width: calc(100% + var(--server-rail-inline-padding) + var(--server-rail-inline-padding));
+  min-height: 0;
+  flex: 1 1 auto;
+  margin-inline: calc(-1 * var(--server-rail-inline-padding));
+  padding-inline: var(--server-rail-inline-padding);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.server-rail-list::-webkit-scrollbar {
+  display: none;
+}
+
+.server-rail-tooltip-trigger {
+  display: flex;
+}
+
+.server-rail-remote-list {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.server-rail-server-item {
+  --server-rail-drag-step: 0;
+
+  position: relative;
+  display: flex;
+  width: 100%;
+  justify-content: center;
+  opacity: 1;
+  transform: translate3d(0, calc(var(--server-rail-drag-step) * 54px), 0);
+  transition:
+    transform var(--openbot-duration-normal) var(--openbot-ease-out),
+    opacity var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+.server-rail-server-item .server-rail-button {
+  cursor: grab;
+}
+
+.server-rail-server-item-dragging {
+  z-index: 1;
+  opacity: 0.55;
+}
+
+.server-rail-server-item-dragging .server-rail-button,
+.server-rail-remote-list[data-dragging] {
+  cursor: grabbing;
+}
+
+.server-rail-remote-list[data-dragging] .server-rail-server-item {
+  will-change: transform;
 }
 
 .server-rail-button {
@@ -325,6 +382,13 @@
   -webkit-app-region: no-drag;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .ui-button.server-rail-button[data-variant="secondary"]:hover:not(:disabled) {
+    background: transparent;
+    color: var(--openbot-text-secondary);
+  }
+}
+
 .server-rail-monogram,
 .server-rail-local {
   display: grid;
@@ -338,11 +402,16 @@
   font-size: var(--openbot-text-sm);
   font-weight: 740;
   letter-spacing: -0.02em;
-  transition:
-    border-radius var(--openbot-duration-normal) ease,
-    background-color var(--openbot-duration-normal) ease,
-    color var(--openbot-duration-normal) ease,
-    transform var(--openbot-duration-normal) ease;
+}
+
+.server-rail-logo {
+  width: 40px;
+  height: 40px;
+  display: block;
+  border-radius: var(--openbot-radius-lg);
+  object-fit: cover;
+  outline: 1px solid var(--openbot-image-outline);
+  outline-offset: -1px;
 }
 
 .server-rail-local {
@@ -351,54 +420,29 @@
   font-size: var(--openbot-text-2xl);
 }
 
-.server-rail-button:hover .server-rail-monogram,
-.server-rail-button:hover .server-rail-local,
-.server-rail-button-active .server-rail-monogram,
-.server-rail-button-active .server-rail-local {
-  border-radius: var(--openbot-radius-lg);
-  background-color: var(--openbot-accent-soft);
-  color: var(--openbot-text-primary);
-  transform: translateY(-1px);
-}
-
-.server-rail-button-active .server-rail-local {
-  background: var(--openbot-text-primary);
-  color: var(--openbot-accent);
-}
-
 .server-rail-mark {
   position: absolute;
+  top: 50%;
   left: -7px;
   width: 3px;
   height: 0;
   border-radius: 0 var(--openbot-radius-xs) var(--openbot-radius-xs) 0;
   background: var(--openbot-text-primary);
-  transition: height var(--openbot-duration-normal) cubic-bezier(0.2, 0.8, 0.2, 1);
+  opacity: 0;
+  transform: translateY(-50%);
+  transition:
+    height var(--openbot-duration-normal) var(--openbot-ease-out),
+    opacity var(--openbot-duration-normal) ease;
 }
 
-.server-rail-button-active .server-rail-mark {
+.server-rail-button[aria-pressed="true"] .server-rail-mark {
   height: 26px;
+  opacity: 1;
 }
 
-.server-rail-state {
-  position: absolute;
-  right: 1px;
-  bottom: 1px;
-  width: 9px;
-  height: 9px;
-  border: 2px solid var(--openbot-bg-sidebar);
-  border-radius: var(--openbot-radius-pill);
-  background: var(--openbot-text-muted);
-}
-
-.server-rail-state-online {
-  background: var(--openbot-success);
-}
-.server-rail-state-connecting {
-  background: var(--openbot-warning);
-}
-.server-rail-state-error {
-  background: var(--openbot-danger);
+.server-rail-button[aria-pressed="false"]:hover .server-rail-mark {
+  height: 12px;
+  opacity: 1;
 }
 
 .server-rail-action .server-rail-monogram {
@@ -415,6 +459,34 @@
   fill: none;
   stroke: currentColor;
   stroke-width: 1.35;
+}
+
+.server-rail-tooltip {
+  z-index: var(--openbot-layer-popover);
+  max-width: min(240px, calc(100vw - 16px));
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: var(--openbot-radius-sm);
+  background: var(--openbot-bg-surface-raised);
+  box-shadow: var(--openbot-shadow-raised);
+  padding: var(--openbot-space-2) var(--openbot-space-3);
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-md);
+  font-weight: var(--openbot-weight-semibold);
+  line-height: var(--openbot-leading-md);
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+.server-rail-tooltip::before {
+  position: absolute;
+  top: 50%;
+  left: -6px;
+  width: 6px;
+  height: 12px;
+  background: var(--openbot-bg-surface-raised);
+  clip-path: polygon(100% 0, 100% 100%, 0 50%);
+  content: "";
+  transform: translateY(-50%);
 }
 
 .remote-dialog-backdrop {
@@ -620,60 +692,6 @@
   background: var(--openbot-bg-surface);
 }
 
-.remote-desktop-access-card {
-  margin-top: 20px;
-  border: 1px solid var(--openbot-success-soft);
-  border-radius: var(--openbot-radius-lg);
-  padding: 15px;
-  background: linear-gradient(135deg, var(--openbot-success-soft), transparent 48%), var(--openbot-bg-surface);
-}
-
-.remote-desktop-access-state {
-  flex: 0 0 auto;
-  border: 1px solid var(--openbot-warning-soft);
-  border-radius: var(--openbot-radius-pill);
-  padding: 4px 8px;
-  background: var(--openbot-warning-soft);
-  color: var(--openbot-warning);
-  font-size: var(--openbot-text-2xs);
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.remote-desktop-access-state.ready {
-  border-color: var(--openbot-success-soft);
-  background: var(--openbot-success-soft);
-  color: var(--openbot-success);
-}
-
-.remote-desktop-access-instructions {
-  display: grid;
-  gap: 5px;
-  margin-top: 14px;
-  border-left: 2px solid var(--openbot-border);
-  padding-left: 11px;
-}
-
-.remote-desktop-access-instructions > span {
-  color: var(--openbot-text-primary);
-  font-size: var(--openbot-text-2xs);
-  font-weight: 700;
-}
-
-.remote-desktop-access-instructions p {
-  color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-xs);
-  line-height: 1.5;
-}
-
-.remote-desktop-password-field {
-  margin-bottom: 10px;
-}
-
-.remote-desktop-password-save {
-  width: 100%;
-}
 .remote-section-heading {
   display: flex;
   align-items: flex-start;
@@ -1349,11 +1367,6 @@
   text-align: center;
 }
 
-.remote-admin-view .remote-desktop-access-card {
-  margin-top: 0;
-  padding: 18px;
-}
-
 .remote-host-dialog > .remote-dialog-error {
   position: absolute;
   z-index: 5;
@@ -1372,7 +1385,7 @@
     --server-rail-width: 72px;
   }
   .server-rail {
-    padding-inline: 5px;
+    --server-rail-inline-padding: 5px;
   }
   .remote-status-grid {
     grid-template-columns: 1fr;
@@ -1712,7 +1725,7 @@ textarea {
   flex: 1;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 4px 12px 24px;
+  padding: 4px 12px 76px;
 }
 
 .sidebar-chat-group + .sidebar-chat-group {
@@ -2475,37 +2488,63 @@ textarea {
   text-align: center;
 }
 
-.sidebar-account {
-  position: relative;
+.account-dock {
+  position: absolute;
   z-index: 70;
-  flex: 0 0 auto;
+  bottom: 0;
+  left: 0;
+  width: var(--left-panel-width, 280px);
+  height: 52px;
+  border-top: 1px solid var(--openbot-border);
+  background: var(--openbot-bg-sidebar);
+  padding: 6px;
 }
 
-.sidebar-footer {
-  display: flex;
-  width: calc(100% - 16px);
+.account-dock-with-server-rail {
+  width: calc(var(--server-rail-width) + var(--left-panel-width, 280px));
+}
+
+.account-dock-trigger {
+  display: grid;
+  width: 100%;
+  height: 40px;
   min-width: 0;
   align-items: center;
-  gap: 8px;
-  margin: 0 8px 7px;
   border: 0;
   border-radius: var(--openbot-radius-md);
   background: transparent;
-  padding: 8px 7px;
-  color: inherit;
+  padding: 0 8px;
+  grid-template-columns: 32px minmax(0, 1fr) auto 16px;
+  gap: 8px;
+  color: var(--openbot-text-primary);
   text-align: left;
   transition:
-    background-color var(--openbot-duration-normal) ease,
-    transform var(--openbot-duration-normal) ease;
+    background-color var(--openbot-duration-fast) ease,
+    transform var(--openbot-duration-fast) var(--openbot-ease-out);
 }
 
-.sidebar-footer:hover,
-.sidebar-footer[aria-expanded="true"] {
+.account-dock-with-server-rail .account-dock-trigger {
+  padding-left: 0;
+  grid-template-columns: calc(var(--server-rail-width) - 12px) minmax(0, 1fr) auto 16px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .account-dock-trigger:hover {
+    background: var(--openbot-bg-control-hover);
+  }
+}
+
+.account-dock-trigger[aria-expanded="true"] {
   background: var(--openbot-bg-control-hover);
 }
 
-.sidebar-footer:active {
+.account-dock-trigger:active {
   transform: scale(0.985);
+}
+
+.account-dock-trigger:focus-visible {
+  outline: 2px solid var(--openbot-border-focus);
+  outline-offset: -2px;
 }
 
 .sidebar-compact .sidebar-topbar {
@@ -2582,24 +2621,25 @@ textarea {
   transform: translateX(-8px);
 }
 
-.sidebar-compact .sidebar-footer {
-  pointer-events: auto;
-}
-
 .footer-glyph,
-.profile-dot {
+.account-dock-avatar {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   flex: 0 0 auto;
   place-items: center;
   border-radius: var(--openbot-radius-pill);
   background: var(--openbot-bg-control);
   color: var(--openbot-text-secondary);
-  font-size: var(--openbot-text-lg);
+  font-size: var(--openbot-text-xs);
+  font-weight: var(--openbot-weight-semibold);
 }
 
-.profile-dot > img {
+.account-dock-avatar {
+  justify-self: center;
+}
+
+.account-dock-avatar > img {
   width: 100%;
   height: 100%;
   border-radius: inherit;
@@ -2616,34 +2656,32 @@ textarea {
   font-size: var(--openbot-text-2xs);
 }
 
-.profile-dot {
-  background: var(--openbot-bg-control);
-  color: var(--openbot-text-secondary);
-  font-size: var(--openbot-text-xs);
-  transform: translateX(0);
-  transition: transform var(--panel-resize-duration, var(--openbot-duration-overlay)) cubic-bezier(0.32, 0.72, 0, 1);
-}
-
-.profile-copy {
+.account-dock-copy {
+  display: grid;
   min-width: 0;
-  flex: 1;
-  opacity: 1;
-  transform: translateX(0);
-  transition:
-    opacity var(--openbot-duration-fast) ease,
-    transform var(--openbot-duration-slow) cubic-bezier(0.32, 0.72, 0, 1);
+  gap: 0;
 }
 
-.profile-copy strong {
+.account-dock-copy strong,
+.account-dock-copy > span:not(.sr-only) {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.account-dock-copy strong {
   color: var(--openbot-text-primary);
   font-size: var(--openbot-text-md);
-  line-height: 18px;
+  line-height: 16px;
   letter-spacing: -0.08px;
-  font-weight: 500;
+  font-weight: var(--openbot-weight-semibold);
+}
+
+.account-dock-copy > span:not(.sr-only) {
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+  line-height: 14px;
 }
 
 .sidebar-update-pill {
@@ -2656,67 +2694,133 @@ textarea {
   line-height: 16px;
   letter-spacing: 0.01em;
   font-weight: 600;
-  opacity: 1;
-  transform: translateX(0);
-  transition:
-    opacity var(--openbot-duration-fast) ease,
-    transform var(--openbot-duration-slow) cubic-bezier(0.32, 0.72, 0, 1);
+  justify-self: end;
 }
 
-.sidebar-compact .profile-dot {
-  transform: translateX(15px);
+.account-dock-chevron {
+  width: 16px;
+  height: 16px;
+  grid-column: 4;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: var(--openbot-text-muted);
+  transition: transform var(--openbot-duration-fast) var(--openbot-ease-out);
 }
 
-.sidebar-compact .profile-copy,
-.sidebar-compact .sidebar-update-pill {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateX(-8px);
+.account-dock-trigger[aria-expanded="true"] .account-dock-chevron {
+  transform: rotate(180deg);
+}
+
+.account-dock-compact .account-dock-trigger {
+  grid-template-columns: 32px minmax(0, 1fr) 16px;
+}
+
+.account-dock-with-server-rail.account-dock-compact .account-dock-trigger {
+  grid-template-columns: calc(var(--server-rail-width) - 12px) minmax(0, 1fr) 16px;
+}
+
+.account-dock-compact .account-dock-copy,
+.account-dock-compact .sidebar-update-pill {
+  display: none;
+}
+
+.account-dock-compact .account-dock-chevron {
+  grid-column: 3;
 }
 
 .account-popover {
   position: relative;
-  width: min(218px, calc(100vw - 16px));
+  width: min(max(280px, var(--kb-popper-anchor-width)), calc(100vw - 16px));
   z-index: 80;
   overflow: hidden;
-  border: 1px solid var(--openbot-border-strong);
+  border: 1px solid var(--openbot-border);
   border-radius: var(--openbot-radius-md);
   background: var(--openbot-bg-surface);
-  padding: 5px;
-  box-shadow:
-    0 20px 48px var(--openbot-bg-overlay),
-    0 4px 12px var(--openbot-bg-overlay);
+  padding: 4px;
+  box-shadow: var(--openbot-shadow-raised);
   color: var(--openbot-text-primary);
+  opacity: 1;
+  transform: scale(1);
   transform-origin: var(--kb-popover-content-transform-origin);
+  transition:
+    opacity 120ms ease,
+    transform 140ms var(--openbot-ease-out);
+
+  @starting-style {
+    opacity: 0;
+    transform: scale(0.98);
+  }
 }
 
 .account-profile-card {
   display: grid;
   min-width: 0;
   align-items: center;
-  padding: 10px 9px 9px;
-  grid-template-columns: 46px minmax(0, 1fr);
-  gap: 11px;
+  padding: 8px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.account-profile-photo {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: var(--openbot-radius-pill);
+  background: transparent;
+  padding: 0;
+}
+
+.account-profile-photo:focus-visible {
+  outline: 2px solid var(--openbot-border-focus);
+  outline-offset: 2px;
 }
 
 .account-profile-avatar {
   display: grid;
-  width: 46px;
-  height: 46px;
+  width: 40px;
+  height: 40px;
   place-items: center;
   overflow: hidden;
   border-radius: var(--openbot-radius-pill);
   background: var(--openbot-bg-control-hover);
-  box-shadow: inset 0 0 0 1px var(--openbot-border-strong);
-  color: var(--openbot-success);
-  font-size: var(--openbot-text-md);
-  font-weight: 620;
+  box-shadow: inset 0 0 0 1px var(--openbot-border);
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-semibold);
 }
 
 .account-profile-avatar > img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.account-profile-photo-action {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 2px solid var(--openbot-bg-surface);
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-secondary);
+}
+
+.account-profile-photo-action svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .account-profile-copy {
@@ -2733,64 +2837,57 @@ textarea {
 
 .account-profile-copy > strong {
   color: var(--openbot-text-primary);
-  font-size: var(--openbot-text-lg);
+  font-size: var(--openbot-text-md);
+  line-height: 16px;
   letter-spacing: -0.01em;
-  font-weight: 560;
+  font-weight: var(--openbot-weight-semibold);
 }
 
 .account-profile-copy > span {
-  margin-top: 1px;
   color: var(--openbot-text-muted);
   font-size: var(--openbot-text-xs);
+  line-height: 14px;
 }
 
-.account-profile-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.account-profile-actions button {
+.account-profile-copy .account-profile-remove {
+  display: block;
+  width: fit-content;
+  height: 16px;
+  margin-top: 2px;
   border: 0;
   background: transparent;
   padding: 0;
-  color: var(--openbot-success);
+  color: var(--openbot-text-muted);
   font-size: var(--openbot-text-xs);
   line-height: 14px;
-  font-weight: 560;
+  text-align: left;
 }
 
-.account-profile-actions button:hover:not(:disabled) {
-  color: var(--openbot-success);
-}
-
-.account-profile-actions button:disabled {
+.account-profile-copy .account-profile-remove:disabled,
+.account-profile-photo:disabled {
   cursor: wait;
   opacity: 0.55;
 }
 
-.account-profile-actions .account-profile-remove {
-  color: var(--openbot-text-muted);
-}
-
-.account-profile-actions .account-profile-remove:hover:not(:disabled) {
-  color: var(--openbot-text-secondary);
+@media (hover: hover) and (pointer: fine) {
+  .account-profile-copy .account-profile-remove:hover:not(:disabled) {
+    color: var(--openbot-text-primary);
+  }
 }
 
 .account-menu-row {
   display: grid;
   width: 100%;
-  height: 38px;
+  height: 36px;
   align-items: center;
   border: 0;
   border-radius: var(--openbot-radius-md);
   background: transparent;
-  padding: 0 10px;
-  grid-template-columns: 19px minmax(0, 1fr) auto;
-  gap: 10px;
+  padding: 0 8px;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 8px;
   color: var(--openbot-text-secondary);
-  font-size: var(--openbot-text-lg);
+  font-size: var(--openbot-text-md);
   letter-spacing: -0.01em;
   text-align: left;
   transition:
@@ -2831,20 +2928,20 @@ textarea {
 
 .account-menu-separator {
   height: 1px;
-  margin: 5px 8px;
+  margin: 4px 8px;
   background: var(--openbot-border);
 }
 
 .account-menu-row small {
   color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-md);
+  font-size: var(--openbot-text-sm);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .account-menu-icon {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.4;
@@ -2874,14 +2971,26 @@ textarea {
   line-height: 14px;
 }
 
-@keyframes account-popover-in {
-  from {
-    opacity: 0;
-    transform: translateY(5px) scale(0.975);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
+  .server-rail-mark,
+  .server-rail-server-item {
+    transition: none;
+  }
+
+  .account-popover {
+    transform: none;
+    transition: opacity var(--openbot-duration-fast) ease;
+
+    @starting-style {
+      opacity: 0;
+      transform: none;
+    }
+  }
+
+  .account-dock-chevron {
+    transition: none;
+  }
+
   .account-menu-icon-spinning {
     animation-duration: 1.6s;
   }
@@ -2900,13 +3009,6 @@ textarea {
   color: var(--openbot-text-secondary);
 }
 
-.server-rail-button-active .server-rail-local,
-.server-rail-button-active .server-rail-monogram {
-  border-color: var(--openbot-accent);
-  background: var(--openbot-accent-soft);
-}
-
-.server-rail-state-online,
 .remote-status-card i.online,
 .remote-admin-nav-state i.online,
 .remote-member-presence.online i,
@@ -2915,12 +3017,10 @@ textarea {
   background: var(--openbot-success);
 }
 
-.server-rail-state-connecting,
 .remote-desktop-status-connecting {
   background: var(--openbot-warning);
 }
 
-.server-rail-state-error,
 .remote-desktop-status-error {
   background: var(--openbot-danger);
 }
@@ -2931,9 +3031,6 @@ textarea {
 .browser-tab-active,
 .browser-new-tab:hover,
 .browser-toolbar-button:hover:not(:disabled),
-.remote-desktop-icon-button:hover,
-.remote-desktop-mode:hover,
-.remote-desktop-footer button:hover,
 .message-action-button:hover,
 .message-action-button:focus-visible,
 .message-action-button[aria-expanded="true"],
@@ -2986,7 +3083,6 @@ textarea {
 .agent-settings-model,
 .agent-settings-notifications,
 .remote-admin-control-card,
-.remote-desktop-access-card,
 .remote-invite-composer,
 .remote-status-card,
 .approval-card,

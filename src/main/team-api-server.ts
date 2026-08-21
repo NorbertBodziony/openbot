@@ -1,18 +1,19 @@
 import { readFile } from "node:fs/promises";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
-import { createConnection, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { isAvatarMimeType } from "@openbot/contracts/avatar-images";
 import { ATTACHMENT_LIMITS, AVATAR_IMAGE_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   type AgentEvent,
   type CentralAuthUser,
+  type CreateTeamInviteInput,
   type DirectConversationSnapshot,
   type DirectMessage,
   type DirectMessageRealtimeEvent,
   type DirectThreadSummary,
   type DirectTypingRealtimeEvent,
+  type InviteSummary,
   isAgentModel,
   isAvatarHue,
   isAvatarSeed,
@@ -33,6 +34,7 @@ import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
 import type { TeamChatStore } from "../backend/team-chat-store";
+import { RemoteScreenError, type RemoteScreenGateway } from "./remote-screen-gateway";
 import type { TeamStore } from "./team-store";
 
 const JSON_LIMIT = 1024 * 1024;
@@ -76,20 +78,33 @@ type TeamApiAgents = TeamApiAgentMethods & {
 
 type TeamApiMailbox = Pick<MailboxStore, "resolveAttachment">;
 type TeamApiBrowser = Pick<BrowserHost, "listTabs" | "getControlState" | "open" | "activate" | "close" | "setVisible">;
+type TeamApiRemoteScreen = Pick<
+  RemoteScreenGateway,
+  | "handlesUpgrade"
+  | "handleUpgrade"
+  | "handlesHttp"
+  | "handleHttp"
+  | "stop"
+  | "capabilities"
+  | "createSession"
+  | "selectDisplay"
+  | "closeMemberSession"
+  | "revokeTeamSession"
+  | "revokeMember"
+>;
 
 interface TeamApiOptions {
   store: TeamStore;
   agents: TeamApiAgents;
   mailbox: TeamApiMailbox;
   browser: TeamApiBrowser;
-  getRemoteMac: () => { hostname: string | null; online: boolean };
-  getRemoteDesktopPassword?: () => string | null;
-  remoteDesktopPort?: number;
+  remoteScreen?: TeamApiRemoteScreen;
   redeemCentralTicket?: (ticket: string, serverId: string) => Promise<CentralAuthUser | null>;
   onPresence?: (snapshot: TeamPresenceSnapshot) => void;
   chat?: TeamChatStore;
   onDirectMessage?: (event: DirectMessageRealtimeEvent) => void;
   onDirectTyping?: (event: DirectTypingRealtimeEvent) => void;
+  createInvite?: (input: CreateTeamInviteInput) => Promise<InviteSummary>;
 }
 
 interface EventClientState {
@@ -110,14 +125,9 @@ export class TeamApiServer {
   readonly #options: TeamApiOptions;
   readonly #rateLimits = new Map<string, RateEntry>();
   readonly #eventClients = new Map<Ws.WebSocket, EventClientState>();
-  readonly #desktopClients = new Map<Ws.WebSocket, { token: string; target: Socket }>();
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
     handleProtocols: (protocols) => (protocols.has("openbot-events") ? "openbot-events" : false),
-  });
-  readonly #desktopWebSockets = new webSockets.WebSocketServer({
-    noServer: true,
-    handleProtocols: (protocols) => (protocols.has("openbot-desktop") ? "openbot-desktop" : false),
   });
   #server: Server | null = null;
   #port: number | null = null;
@@ -138,6 +148,10 @@ export class TeamApiServer {
     this.#server = createServer((request, response) => void this.#handle(request, response));
     this.#server.on("upgrade", (request, socket, head) => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      if (this.#options.remoteScreen?.handlesUpgrade(url)) {
+        this.#options.remoteScreen.handleUpgrade(request, socket, head, url);
+        return;
+      }
       const protocols = (request.headers["sec-websocket-protocol"] ?? "").split(",").map((value) => value.trim());
       const encodedToken = protocols.find((value) => value.startsWith("openbot-token."));
       const token = encodedToken?.slice("openbot-token.".length) ?? "";
@@ -153,15 +167,9 @@ export class TeamApiServer {
         });
         return;
       }
-      if (url.pathname === "/v1/remote-desktop" && protocols.includes("openbot-desktop")) {
-        if (!this.#options.getRemoteMac().online || !this.#options.getRemoteDesktopPassword?.()) {
-          socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
-          socket.destroy();
-          return;
-        }
-        this.#desktopWebSockets.handleUpgrade(request, socket, head, (client) => {
-          this.#connectDesktop(client, token);
-        });
+      if (url.pathname === "/v1/remote-desktop") {
+        socket.write("HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\n\r\n");
+        socket.destroy();
         return;
       }
       socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
@@ -182,12 +190,6 @@ export class TeamApiServer {
           client.close(1008, "Team access was revoked");
         } else if (client.readyState === webSockets.WebSocket.OPEN) client.ping();
       }
-      for (const [client, connection] of this.#desktopClients) {
-        if (!this.#options.store.authenticate(connection.token)) {
-          client.close(1008, "Team access was revoked");
-          connection.target.destroy();
-        } else if (client.readyState === webSockets.WebSocket.OPEN) client.ping();
-      }
     }, 15_000);
     this.#heartbeat.unref?.();
     this.#publishPresence();
@@ -206,11 +208,7 @@ export class TeamApiServer {
     }
     this.#eventClients.clear();
     this.#localTypingBotId = null;
-    for (const [client, connection] of this.#desktopClients) {
-      client.close(1001, "Server stopped");
-      connection.target.destroy();
-    }
-    this.#desktopClients.clear();
+    await this.#options.remoteScreen?.stop();
     const server = this.#server;
     this.#server = null;
     this.#port = null;
@@ -258,6 +256,21 @@ export class TeamApiServer {
     this.#publishPresence();
   }
 
+  refreshIdentity(): void {
+    const identity = this.#options.store.getIdentity();
+    if (!identity) return;
+    const event: TeamRealtimeEvent = {
+      type: "team-identity",
+      serverId: identity.serverId,
+      serverName: identity.serverName,
+      logoVersion: identity.logoVersion,
+    };
+    const payload = JSON.stringify(event);
+    for (const client of this.#eventClients.keys()) {
+      if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
+    }
+  }
+
   listDirectThreads(memberId: string): DirectThreadSummary[] {
     return this.#requireChat().listThreads(memberId);
   }
@@ -298,6 +311,11 @@ export class TeamApiServer {
       response.setHeader("X-Content-Type-Options", "nosniff");
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       const method = request.method ?? "GET";
+
+      if (this.#options.remoteScreen?.handlesHttp(url)) {
+        await this.#options.remoteScreen.handleHttp(request, response, url);
+        return;
+      }
 
       if (method === "GET" && url.pathname === "/v1/identity") {
         const challenge = url.searchParams.get("challenge");
@@ -366,11 +384,15 @@ export class TeamApiServer {
       }
 
       const token = bearerToken(request.headers.authorization);
-      const member = token ? this.#options.store.authenticate(token) : null;
-      if (!member || !token) return this.#json(response, 401, { error: "Authentication required." });
+      const authenticated = token ? this.#options.store.authenticateSession(token) : null;
+      const member = authenticated?.member ?? null;
+      if (!member || !token || !authenticated) {
+        return this.#json(response, 401, { error: "Authentication required." });
+      }
 
       if (method === "POST" && url.pathname === "/v1/auth/logout") {
         await this.#options.store.logout(token);
+        await this.#options.remoteScreen?.revokeTeamSession(authenticated.sessionId);
         this.refreshPresence();
         return this.#empty(response, 204);
       }
@@ -381,24 +403,80 @@ export class TeamApiServer {
           stringField(body, "currentPassword", false, 256),
           stringField(body, "newPassword", false, 256),
         );
+        await this.#options.remoteScreen?.revokeMember(member.id);
         this.refreshPresence();
         return this.#empty(response, 204);
       }
       if (method === "GET" && url.pathname === "/v1/me") {
         return this.#json(response, 200, member);
       }
+      if (method === "GET" && url.pathname === "/v1/team/presence") {
+        return this.#json(response, 200, this.getPresence());
+      }
+      if (method === "GET" && url.pathname === "/v1/team/logo") {
+        const logo = this.#options.store.resolveLogo();
+        if (!logo || (url.searchParams.get("v") && url.searchParams.get("v") !== logo.version)) {
+          return this.#json(response, 404, { error: "Server logo not found." });
+        }
+        const bytes = await readFile(logo.path);
+        response.writeHead(200, {
+          "Content-Type": logo.mimeType,
+          "Content-Length": String(bytes.length),
+          "Cache-Control": "private, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
+        });
+        response.end(bytes);
+        return;
+      }
       if (method === "GET" && url.pathname === "/v1/events") {
         return this.#json(response, 426, { error: "Use WebSocket for remote events." });
       }
+      if (method === "GET" && url.pathname === "/v1/remote-screen/capabilities") {
+        if (!this.#options.remoteScreen)
+          throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
+        return this.#json(response, 200, this.#options.remoteScreen.capabilities());
+      }
+      if (method === "POST" && url.pathname === "/v1/remote-screen/sessions") {
+        const identity = this.#options.store.getIdentity();
+        if (!identity || !this.#options.remoteScreen) {
+          throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
+        }
+        return this.#json(
+          response,
+          201,
+          await this.#options.remoteScreen.createSession({
+            serverId: identity.serverId,
+            memberId: member.id,
+            teamSessionId: authenticated.sessionId,
+            teamSessionExpiresAt: authenticated.sessionExpiresAt,
+            publicHttpBaseUrl: publicHttpBaseUrl(request),
+          }),
+        );
+      }
+      if (method === "PUT" && url.pathname === "/v1/remote-screen/display") {
+        if (!this.#options.remoteScreen) {
+          throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
+        }
+        const body = await readJson(request);
+        await this.#options.remoteScreen.selectDisplay(stringField(body, "displayId"));
+        return this.#empty(response, 204);
+      }
+      const remoteScreenSessionMatch = url.pathname.match(/^\/v1\/remote-screen\/sessions\/([^/]+)$/);
+      if (method === "DELETE" && remoteScreenSessionMatch) {
+        if (!this.#options.remoteScreen) {
+          throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
+        }
+        const sessionId = pathIdentifier(remoteScreenSessionMatch[1], "sessionId");
+        if (!(await this.#options.remoteScreen.closeMemberSession(sessionId, member.id))) {
+          throw new RemoteScreenError(404, "session_expired", "Remote control session not found.");
+        }
+        return this.#empty(response, 204);
+      }
       if (method === "GET" && url.pathname === "/v1/host/remote-mac") {
-        return this.#json(response, 200, this.#options.getRemoteMac());
+        return this.#json(response, 426, { error: "Update required.", code: "protocol_mismatch" });
       }
       if (method === "GET" && url.pathname === "/v1/host/remote-desktop-access") {
-        const password = this.#options.getRemoteDesktopPassword?.() ?? null;
-        return this.#json(response, 200, {
-          configured: password !== null,
-          password,
-        });
+        return this.#json(response, 426, { error: "Update required.", code: "protocol_mismatch" });
       }
       if (method === "GET" && url.pathname === "/v1/direct/threads") {
         return this.#json(response, 200, this.listDirectThreads(member.id));
@@ -525,12 +603,15 @@ export class TeamApiServer {
           ...(role ? { role } : {}),
           ...(disabled === undefined ? {} : { disabled }),
         });
+        if (updated.disabled) await this.#options.remoteScreen?.revokeMember(updated.id);
         this.refreshPresence();
         return this.#json(response, 200, updated);
       }
       if (method === "DELETE" && memberMatch) {
         requireAdmin(member);
-        await this.#options.store.removeMember(pathIdentifier(memberMatch[1], "memberId"));
+        const removedMemberId = pathIdentifier(memberMatch[1], "memberId");
+        await this.#options.store.removeMember(removedMemberId);
+        await this.#options.remoteScreen?.revokeMember(removedMemberId);
         this.refreshPresence();
         return this.#empty(response, 204);
       }
@@ -539,11 +620,9 @@ export class TeamApiServer {
         const body = await readJson(request);
         const role = stringField(body, "role");
         if (role !== "admin" && role !== "member") throw new HttpError(400, "Invalid role.");
-        return this.#json(
-          response,
-          201,
-          await this.#options.store.createInvite(role, nullableString(body, "email", INPUT_LIMITS.email) ?? undefined),
-        );
+        const email = nullableString(body, "email", INPUT_LIMITS.email) ?? undefined;
+        if (!this.#options.createInvite) throw new HttpError(503, "Invitation service is unavailable.");
+        return this.#json(response, 201, await this.#options.createInvite({ role, ...(email ? { email } : {}) }));
       }
       if (method === "GET" && url.pathname === "/v1/team/invites") {
         requireAdmin(member);
@@ -562,7 +641,9 @@ export class TeamApiServer {
       const sessionMatch = url.pathname.match(/^\/v1\/team\/sessions\/([^/]+)$/);
       if (method === "DELETE" && sessionMatch) {
         requireAdmin(member);
-        await this.#options.store.revokeSession(pathIdentifier(sessionMatch[1], "sessionId"));
+        const revokedSessionId = pathIdentifier(sessionMatch[1], "sessionId");
+        await this.#options.store.revokeSession(revokedSessionId);
+        await this.#options.remoteScreen?.revokeTeamSession(revokedSessionId);
         this.refreshPresence();
         return this.#empty(response, 204);
       }
@@ -730,9 +811,10 @@ export class TeamApiServer {
 
       return this.#json(response, 404, { error: "Route not found." });
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 400;
+      const status = error instanceof HttpError || error instanceof RemoteScreenError ? error.status : 400;
       const message = error instanceof Error ? error.message : "Request failed.";
-      return this.#json(response, status, { error: message });
+      const code = error instanceof RemoteScreenError ? error.code : undefined;
+      return this.#json(response, status, { error: message, ...(code ? { code } : {}) });
     }
   }
 
@@ -934,44 +1016,6 @@ export class TeamApiServer {
     return recipient;
   }
 
-  #connectDesktop(client: Ws.WebSocket, token: string): void {
-    const target = createConnection({
-      host: "127.0.0.1",
-      port: this.#options.remoteDesktopPort ?? 5900,
-    });
-    const pending: Buffer[] = [];
-    this.#desktopClients.set(client, { token, target });
-
-    client.on("message", (data) => {
-      if (!this.#options.store.authenticate(token)) {
-        client.close(1008, "Team access was revoked");
-        target.destroy();
-        return;
-      }
-      const chunk = Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
-      if (target.connecting) pending.push(chunk);
-      else if (!target.destroyed) target.write(chunk);
-    });
-    client.on("close", () => target.destroy());
-    client.on("error", () => target.destroy());
-
-    target.on("connect", () => {
-      for (const chunk of pending.splice(0)) target.write(chunk);
-    });
-    target.on("data", (chunk) => {
-      if (client.readyState === webSockets.WebSocket.OPEN) client.send(chunk);
-    });
-    target.on("close", () => {
-      this.#desktopClients.delete(client);
-      if (client.readyState === webSockets.WebSocket.OPEN) client.close();
-    });
-    target.on("error", () => {
-      if (client.readyState === webSockets.WebSocket.OPEN) {
-        client.close(1011, "Remote Desktop is unavailable");
-      }
-    });
-  }
-
   #json(response: ServerResponse, status: number, value: unknown): void {
     response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
     response.end(`${JSON.stringify(value)}\n`);
@@ -995,6 +1039,22 @@ class HttpError extends Error {
 function bearerToken(value: string | undefined): string | null {
   const match = value?.match(/^Bearer ([A-Za-z0-9_-]{20,512})$/);
   return match?.[1] ?? null;
+}
+
+function publicHttpBaseUrl(request: import("node:http").IncomingMessage): string {
+  const forwardedHost = firstHeaderValue(request.headers["x-forwarded-host"]);
+  const host = forwardedHost || request.headers.host;
+  if (!host || !/^[A-Za-z0-9.:[\]-]+$/.test(host)) {
+    throw new HttpError(400, "A valid public host is required.");
+  }
+  const forwardedProtocol = firstHeaderValue(request.headers["x-forwarded-proto"]);
+  const protocol = forwardedProtocol === "https" ? "https" : "http";
+  return `${protocol}://${host}`;
+}
+
+function firstHeaderValue(value: string | string[] | undefined): string | undefined {
+  const first = Array.isArray(value) ? value[0] : value?.split(",", 1)[0];
+  return first?.trim();
 }
 
 function requireAdmin(member: TeamMemberSummary): void {

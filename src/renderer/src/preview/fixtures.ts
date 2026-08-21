@@ -11,7 +11,7 @@ import type {
   DirectConversationSnapshot,
   DirectThreadSummary,
   HostStatus,
-  RemoteMacSession,
+  RemoteDesktopSession,
   ServerSummary,
   TeamInviteSummary,
   TeamMemberSummary,
@@ -355,20 +355,22 @@ export const STORY_SERVERS: ServerSummary[] = [
   {
     id: "local",
     name: "Local",
+    logoUrl: null,
     kind: "local",
     state: "online",
     apiUrl: null,
-    vncHostname: null,
+    remoteDesktopAvailable: false,
     role: null,
     active: true,
   },
   {
     id: "team",
     name: "OpenBot team",
+    logoUrl: null,
     kind: "remote",
     state: "online",
     apiUrl: "https://team.example.com",
-    vncHostname: "desktop.example.com",
+    remoteDesktopAvailable: true,
     role: "owner",
     active: false,
   },
@@ -406,11 +408,13 @@ export const STORY_HOST_STATUS: HostStatus = {
   enabledOnLaunch: true,
   serverId: "team",
   serverName: "OpenBot team",
+  logoUrl: null,
   apiUrl: "https://team.example.com",
-  vncHostname: "desktop.example.com",
   apiOnline: true,
-  vncOnline: true,
-  remoteDesktopCredentialConfigured: true,
+  remoteDesktopReady: true,
+  remoteDesktopUnattended: true,
+  remoteDesktopActiveSessions: 1,
+  remoteDesktopMaxSessions: 4,
   message: null,
 };
 
@@ -444,16 +448,19 @@ export const STORY_SESSIONS: TeamSessionSummary[] = [
   },
 ];
 
-export const STORY_REMOTE_MAC_SESSION: RemoteMacSession = {
-  id: "remote-mac-1",
+export const STORY_REMOTE_DESKTOP_SESSION: RemoteDesktopSession = {
+  id: "remote-desktop-1",
   serverId: "team",
-  hostname: "studio-mac.example.com",
-  localPort: 5901,
-  websocketUrl: "wss://desktop.example.com/socket",
+  viewerUrl: "https://team.example.com/v1/remote-screen/sessions/remote-desktop-1/viewer",
+  viewerGrant: "story-viewer-grant",
+  displays: [{ id: "display-1", label: "Main display", width: 1920, height: 1080, primary: true }],
+  selectedDisplayId: "display-1",
   phase: "connected",
+  transport: "p2p",
   errorCode: null,
   message: null,
   createdAt: STORY_NOW,
+  grantExpiresAt: "2026-08-19T10:01:00.000Z",
 };
 
 export const STORY_UPDATE_STATUS: UpdateStatus = {

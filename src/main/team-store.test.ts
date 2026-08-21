@@ -41,6 +41,71 @@ describe("TeamStore", () => {
     expect(raw).not.toContain(login.sessionToken);
   });
 
+  it("stores, restores, replaces, and removes a validated server logo", async () => {
+    const { store, path } = await createStore();
+    const firstLogo = {
+      mimeType: "image/png" as const,
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    };
+    const identity = await store.configureWithAccount(
+      "Studio Mac",
+      {
+        id: "owner-account",
+        email: "owner@example.com",
+        name: "Owner",
+        avatarUrl: null,
+      },
+      firstLogo,
+    );
+    const firstStoredLogo = store.resolveLogo();
+
+    expect(identity.logoVersion).toBe(firstStoredLogo?.version);
+    expect(firstStoredLogo?.mimeType).toBe("image/png");
+    await expect(readFile(firstStoredLogo?.path ?? "")).resolves.toEqual(Buffer.from(firstLogo.bytes));
+    const raw = JSON.parse(await readFile(path, "utf8"));
+    expect(raw.serverLogo).toEqual({ version: firstStoredLogo?.version, mimeType: "image/png" });
+    expect(raw.serverLogo).not.toHaveProperty("bytes");
+
+    const restored = new TeamStore(path);
+    await restored.initialize();
+    expect(restored.resolveLogo()).toEqual(firstStoredLogo);
+
+    const previousServerId = identity.serverId;
+    const updated = await restored.updateIdentity({
+      serverName: "Studio Team",
+      logo: { mimeType: "image/jpeg", bytes: new Uint8Array([0xff, 0xd8, 0xff]) },
+    });
+    expect(updated.serverId).toBe(previousServerId);
+    expect(updated.serverName).toBe("Studio Team");
+    expect(updated.logoVersion).not.toBe(firstStoredLogo?.version);
+    await expect(readFile(firstStoredLogo?.path ?? "")).rejects.toMatchObject({ code: "ENOENT" });
+
+    const replacement = restored.resolveLogo();
+    expect(replacement?.mimeType).toBe("image/jpeg");
+    await restored.updateIdentity({ logo: null });
+    expect(restored.getIdentity()?.logoVersion).toBeNull();
+    expect(restored.resolveLogo()).toBeNull();
+    await expect(readFile(replacement?.path ?? "")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects invalid server logo data without creating the team", async () => {
+    const { store } = await createStore();
+
+    await expect(
+      store.configureWithAccount(
+        "Studio Mac",
+        {
+          id: "owner-account",
+          email: "owner@example.com",
+          name: "Owner",
+          avatarUrl: null,
+        },
+        { mimeType: "image/png", bytes: new Uint8Array([0xff, 0xd8, 0xff]) },
+      ),
+    ).rejects.toThrow("valid PNG, JPEG, or WebP");
+    expect(store.configured).toBe(false);
+  });
+
   it("uses an invitation once and preserves its role", async () => {
     const { store } = await createStore();
     await store.configure("Studio Mac", "owner", "correct horse battery");
@@ -109,6 +174,33 @@ describe("TeamStore", () => {
       role: "member",
     });
     expect(store.authenticate(joined.sessionToken)?.email).toBe("alice@example.com");
+  });
+
+  it("lets an existing account member connect another client with an invitation", async () => {
+    const { store } = await createStore();
+    await store.configureWithAccount("Studio Mac", {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
+    const invite = await store.createInvite("member");
+
+    const connected = await store.acceptInviteWithAccount(invite.token, {
+      id: "owner-account",
+      email: "OWNER@example.com",
+      name: "Owner on another Mac",
+      avatarUrl: null,
+    });
+
+    expect(connected.member).toMatchObject({
+      email: "owner@example.com",
+      name: "Owner on another Mac",
+      role: "owner",
+    });
+    expect(store.listMembers()).toHaveLength(1);
+    expect(store.authenticate(connected.sessionToken)?.email).toBe("owner@example.com");
+    expect(() => store.previewInvite(invite.token)).toThrow("invalid or expired");
   });
 
   it("synchronizes and persists the account avatar for team members", async () => {

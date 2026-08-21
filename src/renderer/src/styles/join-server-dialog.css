@@ -11,7 +11,7 @@
 
 .join-server-dialog {
   position: relative;
-  width: min(440px, 100%);
+  width: min(400px, 100%);
   max-height: calc(100dvh - 48px);
   overflow: hidden;
   border: 1px solid var(--openbot-border-strong);
@@ -78,11 +78,17 @@
 
 .join-server-error {
   margin: 0;
-  border-left: 2px solid var(--openbot-danger);
-  padding-left: var(--openbot-space-3);
   color: var(--openbot-danger);
   font-size: var(--openbot-text-xs);
   line-height: var(--openbot-leading-xs);
+}
+
+.join-server-form[data-state="verified"] {
+  margin-top: 0;
+}
+
+.join-server-form[data-state="verified"] .join-server-error {
+  text-align: center;
 }
 
 .join-server-account {
@@ -190,80 +196,94 @@
   line-height: var(--openbot-leading-xs);
 }
 
-.join-server-preview[data-variant="dialog"] {
-  gap: var(--openbot-space-4);
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
+.join-server-dialog-invite {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: var(--openbot-space-3);
+  padding-top: var(--openbot-space-1);
+  text-align: center;
 }
 
-.join-server-preview-status {
-  display: flex;
-  align-items: center;
-  gap: var(--openbot-space-1-5);
-  color: var(--openbot-success);
-  font-size: var(--openbot-text-xs);
-  font-weight: var(--openbot-weight-medium);
-  line-height: var(--openbot-leading-xs);
-}
-
-.join-server-preview-status svg {
-  width: var(--openbot-icon-md);
-  height: var(--openbot-icon-md);
-  flex: 0 0 auto;
-  stroke-width: 1.75;
-}
-
-.join-server-preview[data-variant="dialog"] .join-server-preview-heading {
-  gap: var(--openbot-space-1);
-}
-
-.join-server-preview[data-variant="dialog"] .join-server-preview-heading strong {
-  font-size: var(--openbot-text-2xl);
-  font-weight: var(--openbot-weight-semibold);
-  line-height: var(--openbot-leading-2xl);
+.join-server-identity-mark {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-control);
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-xl);
+  font-weight: var(--openbot-weight-bold);
   letter-spacing: var(--openbot-tracking-tight);
 }
 
-.join-server-preview[data-variant="dialog"] .join-server-preview-heading small {
-  font-family: var(--openbot-font-mono);
+.join-server-identity {
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: var(--openbot-space-1);
 }
 
-.join-server-preview[data-variant="dialog"] dl {
-  gap: 0;
-  border-top: 1px solid var(--openbot-border);
+.join-server-identity h2 {
+  max-width: 100%;
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-3xl);
+  font-weight: var(--openbot-weight-semibold);
+  line-height: var(--openbot-leading-2xl);
+  letter-spacing: var(--openbot-tracking-tight);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
-.join-server-preview[data-variant="dialog"] dl div {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: var(--openbot-space-4);
-  border-bottom: 1px solid var(--openbot-border);
-  padding: var(--openbot-space-2) 0;
+.join-server-identity-host {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--openbot-space-1);
+  margin: 0;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-xs);
 }
 
-.join-server-preview[data-variant="dialog"] dt,
-.join-server-preview[data-variant="dialog"] dd {
-  line-height: var(--openbot-leading-md);
+.join-server-identity-host > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.join-server-preview[data-variant="dialog"] dd {
-  max-width: 260px;
-  text-align: right;
+.join-server-identity-verified {
+  display: inline-flex;
+  color: var(--openbot-success);
 }
 
-.join-server-preview[data-variant="dialog"] > p {
-  padding-left: calc(var(--openbot-icon-md) + var(--openbot-space-1-5));
+.join-server-identity-verified svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  stroke-width: 1.75;
 }
 
 .join-server-actions {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: var(--openbot-space-2);
-  border-top: 1px solid var(--openbot-border);
   margin-top: var(--openbot-space-1);
-  padding-top: var(--openbot-space-4);
+}
+
+.join-server-form[data-state="verified"] .join-server-actions {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  gap: var(--openbot-space-3);
+  margin-top: var(--openbot-space-2);
 }
 
 .join-server-submit {

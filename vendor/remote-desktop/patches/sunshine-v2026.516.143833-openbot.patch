@@ -1,0 +1,236 @@
+diff --git a/cmake/compile_definitions/common.cmake b/cmake/compile_definitions/common.cmake
+index 73cfdae7..27f2bf1f 100644
+--- a/cmake/compile_definitions/common.cmake
++++ b/cmake/compile_definitions/common.cmake
+@@ -53,7 +53,8 @@ elseif(UNIX)
+     endif()
+ endif()
+ 
+-include_directories(BEFORE SYSTEM "${CMAKE_SOURCE_DIR}/third-party/nv-codec-headers/include")
++# The bundled SDK must take priority over newer headers installed by MSYS2.
++include_directories(BEFORE "${CMAKE_SOURCE_DIR}/third-party/nv-codec-headers/include")
+ file(GLOB NVENC_SOURCES CONFIGURE_DEPENDS "src/nvenc/*.cpp" "src/nvenc/*.h")
+ list(APPEND PLATFORM_TARGET_FILES ${NVENC_SOURCES})
+ 
+diff --git a/package-lock.json b/package-lock.json
+index f8381b16..f4fffa03 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -20,7 +20,7 @@
+         "@codecov/vite-plugin": "2.0.1",
+         "@vitejs/plugin-vue": "6.0.7",
+         "serve": "14.2.6",
+-        "vite": "6.4.2",
++        "vite": "^6.4.3",
+         "vite-plugin-ejs": "1.7.0"
+       }
+     },
+@@ -1581,9 +1581,9 @@
+       }
+     },
+     "node_modules/brace-expansion": {
+-      "version": "1.1.14",
+-      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.14.tgz",
+-      "integrity": "sha512-MWPGfDxnyzKU7rNOW9SP/c50vi3xrmrua/+6hfPbCS2ABNWfx24vPidzvC7krjU/RTo235sV776ymlsMtGKj8g==",
++      "version": "1.1.18",
++      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.18.tgz",
++      "integrity": "sha512-Edep/X9fGqVNmzKBVsDYIOtD+z1tuezV70LBjdCst9Tqu76lsnvRiZ6oTic1n+/BIwX6QDGAO94PN4N2SADvtw==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+@@ -1937,9 +1937,9 @@
+       "license": "MIT"
+     },
+     "node_modules/fast-uri": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.2.tgz",
+-      "integrity": "sha512-rVjf7ArG3LTk+FS6Yw81V1DLuZl1bRbNrev6Tmd/9RaroeeRRJhAt7jg/6YFxbvAQXUCavSoZhPPj6oOx+5KjQ==",
++      "version": "3.1.5",
++      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz",
++      "integrity": "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==",
+       "dev": true,
+       "funding": [
+         {
+@@ -1982,9 +1982,9 @@
+       }
+     },
+     "node_modules/filelist/node_modules/brace-expansion": {
+-      "version": "2.1.0",
+-      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.0.tgz",
+-      "integrity": "sha512-TN1kCZAgdgweJhWWpgKYrQaMNHcDULHkWwQIspdtjV4Y5aurRdZpjAqn6yX3FPqTA9ngHCc4hJxMAMgGfve85w==",
++      "version": "2.1.4",
++      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-2.1.4.tgz",
++      "integrity": "sha512-hGfVzPxthbf3+2yjg/RBs60cB0FhqBS/zvdV/4wn4/BmN0bNMMHPc4V/BbFieqf1TKAGGAHnY4eSjajCl0f2Xg==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+@@ -2274,9 +2274,9 @@
+       "license": "MIT"
+     },
+     "node_modules/nanoid": {
+-      "version": "3.3.12",
+-      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.12.tgz",
+-      "integrity": "sha512-ZB9RH/39qpq5Vu6Y+NmUaFhQR6pp+M2Xt76XBnEwDaGcVAqhlvxrl3B2bKS5D3NH3QR76v3aSrKaF/Kiy7lEtQ==",
++      "version": "3.3.18",
++      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.18.tgz",
++      "integrity": "sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==",
+       "funding": [
+         {
+           "type": "github",
+@@ -2384,9 +2384,9 @@
+       }
+     },
+     "node_modules/postcss": {
+-      "version": "8.5.14",
+-      "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.14.tgz",
+-      "integrity": "sha512-SoSL4+OSEtR99LHFZQiJLkT59C5B1amGO1NzTwj7TT1qCUgUO6hxOvzkOYxD+vMrXBM3XJIKzokoERdqQq/Zmg==",
++      "version": "8.5.26",
++      "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.26.tgz",
++      "integrity": "sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==",
+       "funding": [
+         {
+           "type": "opencollective",
+@@ -2403,7 +2403,7 @@
+       ],
+       "license": "MIT",
+       "dependencies": {
+-        "nanoid": "^3.3.11",
++        "nanoid": "^3.3.17",
+         "picocolors": "^1.1.1",
+         "source-map-js": "^1.2.1"
+       },
+@@ -2762,9 +2762,9 @@
+       }
+     },
+     "node_modules/undici": {
+-      "version": "6.25.0",
+-      "resolved": "https://registry.npmjs.org/undici/-/undici-6.25.0.tgz",
+-      "integrity": "sha512-ZgpWDC5gmNiuY9CnLVXEH8rl50xhRCuLNA97fAUnKi8RRuV4E6KG31pDTsLVUKnohJE0I3XDrTeEydAXRw47xg==",
++      "version": "6.28.0",
++      "resolved": "https://registry.npmjs.org/undici/-/undici-6.28.0.tgz",
++      "integrity": "sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA==",
+       "dev": true,
+       "license": "MIT",
+       "engines": {
+@@ -2814,9 +2814,9 @@
+       }
+     },
+     "node_modules/vite": {
+-      "version": "6.4.2",
+-      "resolved": "https://registry.npmjs.org/vite/-/vite-6.4.2.tgz",
+-      "integrity": "sha512-2N/55r4JDJ4gdrCvGgINMy+HH3iRpNIz8K6SFwVsA+JbQScLiC+clmAxBgwiSPgcG9U15QmvqCGWzMbqda5zGQ==",
++      "version": "6.4.3",
++      "resolved": "https://registry.npmjs.org/vite/-/vite-6.4.3.tgz",
++      "integrity": "sha512-NTKlcQjlAK7MlQoyb6LgaqHc8sso/pVyUJYWMws3jg21uTJw/LddqIFPcPqP6PzpgbIcZyKI85sFE4HBrQDA8A==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+diff --git a/package.json b/package.json
+index f95d49f9..94758cb9 100644
+--- a/package.json
++++ b/package.json
+@@ -21,7 +21,7 @@
+     "@codecov/vite-plugin": "2.0.1",
+     "@vitejs/plugin-vue": "6.0.7",
+     "serve": "14.2.6",
+-    "vite": "6.4.2",
++    "vite": "^6.4.3",
+     "vite-plugin-ejs": "1.7.0"
+   }
+ }
+diff --git a/src/confighttp.cpp b/src/confighttp.cpp
+index 2f703dbc..d508faee 100644
+--- a/src/confighttp.cpp
++++ b/src/confighttp.cpp
+@@ -1356,6 +1356,30 @@ namespace confighttp {
+     }
+   }
+ 
++  /**
++   * @brief Return native output names accepted by Sunshine's output_name setting.
++   * @param response The HTTP response object.
++   * @param request The HTTP request object.
++   */
++  void getOpenBotDisplays(const resp_https_t &response, const req_https_t &request) {
++    if (!authenticate(response, request)) {
++      return;
++    }
++
++    print_req(request);
++
++    nlohmann::json output_tree;
++    output_tree["displays"] = nlohmann::json::array();
++    const auto display_names = platf::display_names(platf::mem_type_e::system);
++    for (const auto &display_name : display_names) {
++      output_tree["displays"].push_back({
++        {"id", display_name},
++        {"name", display_name},
++      });
++    }
++    send_response(response, output_tree);
++  }
++
+   /**
+    * @brief Reset the display device persistence.
+    * @param response The HTTP response object.
+@@ -1780,6 +1804,7 @@ namespace confighttp {
+     server.resource["^/api/password$"]["POST"] = savePassword;
+     server.resource["^/api/pin$"]["POST"] = savePin;
+     server.resource["^/api/logs$"]["GET"] = getLogs;
++    server.resource["^/api/openbot/displays$"]["GET"] = getOpenBotDisplays;
+     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
+     server.resource["^/api/restart$"]["POST"] = restart;
+     server.resource["^/api/vigembus/status$"]["GET"] = getViGEmBusStatus;
+diff --git a/src/confighttp.h b/src/confighttp.h
+index e8c4ea00..dc40bb92 100644
+--- a/src/confighttp.h
++++ b/src/confighttp.h
+@@ -46,6 +46,7 @@ namespace confighttp {
+   void browseDirectory(const resp_https_t &response, const req_https_t &request);
+   void getLocale(const resp_https_t &response, const req_https_t &request);
+   void getCSRFToken(const resp_https_t &response, const req_https_t &request);
++  void getOpenBotDisplays(const resp_https_t &response, const req_https_t &request);
+ 
+   // Browse helper functions (also exposed for unit testing)
+   /**
+diff --git a/tests/unit/test_confighttp.cpp b/tests/unit/test_confighttp.cpp
+index 195a666c..f0b09b8a 100644
+--- a/tests/unit/test_confighttp.cpp
++++ b/tests/unit/test_confighttp.cpp
+@@ -178,6 +178,13 @@ protected:
+       // If not authenticated, authenticate() already sent the response
+     };
+ 
++    server->resource["^/api/openbot/displays$"]["GET"] = [](
++                                                               const std::shared_ptr<SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Response> &response,
++                                                               const std::shared_ptr<SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Request> &request
++                                                             ) {
++      confighttp::getOpenBotDisplays(response, request);
++    };
++
+     // Add a route to test send_unauthorized
+     server->resource["^/unauthorized-test$"]["GET"] = [](
+                                                         const std::shared_ptr<SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Response> &response,
+@@ -405,6 +412,22 @@ TEST_F(ConfigHttpTest, AuthenticateAcceptsValidCredentials) {
+   ASSERT_EQ(body, "authenticated");
+ }
+ 
++TEST_F(ConfigHttpTest, OpenBotDisplaysRejectsNoAuth) {
++  const auto response = client->request("GET", "/api/openbot/displays");
++  ASSERT_EQ(response->status_code, "401 Unauthorized");
++}
++
++TEST_F(ConfigHttpTest, OpenBotDisplaysReturnsAnArray) {
++  SimpleWeb::CaseInsensitiveMultimap headers;
++  headers.emplace("Authorization", create_auth_header("testuser", "testpass"));
++
++  const auto response = client->request("GET", "/api/openbot/displays", "", headers);
++  ASSERT_EQ(response->status_code, "200 OK");
++  const auto body = nlohmann::json::parse(response->content.string());
++  ASSERT_TRUE(body.contains("displays"));
++  ASSERT_TRUE(body["displays"].is_array());
++}
++
+ // Test: confighttp::authenticate() rejects invalid password
+ TEST_F(ConfigHttpTest, AuthenticateRejectsInvalidPassword) {
+   SimpleWeb::CaseInsensitiveMultimap headers;

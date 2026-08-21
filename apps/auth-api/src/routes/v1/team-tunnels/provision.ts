@@ -1,4 +1,4 @@
-import { isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { isNumber, isString } from "@openbot/contracts/runtime-values";
 import { createFileRoute } from "@tanstack/solid-router";
 import { CloudflareTunnelError } from "../../../server/cloudflare-tunnel-provider";
 import { readJsonObject } from "../../../server/json-body";
@@ -25,12 +25,10 @@ export const Route = createFileRoute("/v1/team-tunnels/provision")({
           if (!user) return apiError(401, "unauthorized", "The session is invalid.");
           const body = await readJsonObject(request);
           const apiPort = body.apiPort;
-          const vncEnabled = body.vncEnabled;
           if (
             !isString(body.serverId) ||
             !isString(body.serverName) ||
-            (apiPort !== undefined && apiPort !== null && !isNumber(apiPort)) ||
-            (vncEnabled !== undefined && !isBoolean(vncEnabled))
+            (apiPort !== undefined && apiPort !== null && !isNumber(apiPort))
           ) {
             return apiError(400, "invalid_tunnel_request", "The tunnel details are invalid.");
           }
@@ -45,7 +43,6 @@ export const Route = createFileRoute("/v1/team-tunnels/provision")({
               serverId: body.serverId,
               serverName: body.serverName,
               apiPort,
-              vncEnabled,
             }),
           );
         } catch (error) {

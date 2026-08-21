@@ -1,5 +1,5 @@
 import type { ComponentProps, JSX } from "@solidjs/web";
-import { createContext, createUniqueId, omit, Show, useContext } from "solid-js";
+import { createContext, createUniqueId, flush, omit, Show, useContext } from "solid-js";
 import { cx } from "./utils";
 
 export type ControlSize = "sm" | "md" | "lg";
@@ -18,102 +18,128 @@ interface FieldContextValue {
 
 const FieldContext = createContext<FieldContextValue | null>(null);
 
-export type InputProps = ComponentProps<"input"> & ControlOptions;
+interface TextControlOptions extends ControlOptions {
+  value?: string;
+  defaultValue?: string;
+  onValueChange?: (value: string) => void;
+}
+
+export type InputProps = ComponentProps<"input"> & TextControlOptions;
 
 export function Input(props: InputProps): JSX.Element {
   const local = props;
   const field = useContext(FieldContext);
-  const others = omit(
+  const inputProps = omit(
     props,
     "class",
     "size",
     "invalid",
     "id",
+    "aria-label",
+    "aria-labelledby",
     "aria-describedby",
     "aria-invalid",
     "required",
-    "value",
+    "onValueChange",
     "onInput",
-    "onChange",
+    "value",
+    "defaultValue",
   );
   const describedBy = () => [local["aria-describedby"], field?.describedBy].filter(Boolean).join(" ") || undefined;
   if (!("value" in props)) {
     return (
       <input
-        {...others}
+        {...inputProps}
+        defaultValue={local.defaultValue}
         class={cx("ui-input", local.class)}
         data-size={local.size ?? "md"}
         id={local.id ?? field?.controlId}
+        aria-label={local["aria-label"]}
+        aria-labelledby={local["aria-labelledby"]}
         aria-describedby={describedBy()}
         aria-invalid={local["aria-invalid"] ?? (local.invalid || field?.invalid ? "true" : undefined)}
         required={local.required ?? field?.required}
-        onInput={local.onInput}
-        onChange={local.onChange}
+        onInput={
+          local.onValueChange ? (event) => flush(() => local.onValueChange?.(event.currentTarget.value)) : local.onInput
+        }
       />
     );
   }
   return (
     <input
-      {...others}
+      {...inputProps}
+      value={local.value}
       class={cx("ui-input", local.class)}
       data-size={local.size ?? "md"}
       id={local.id ?? field?.controlId}
+      aria-label={local["aria-label"]}
+      aria-labelledby={local["aria-labelledby"]}
       aria-describedby={describedBy()}
       aria-invalid={local["aria-invalid"] ?? (local.invalid || field?.invalid ? "true" : undefined)}
       required={local.required ?? field?.required}
-      value={local.value}
-      onInput={local.onInput}
-      onChange={local.onChange}
+      onInput={
+        local.onValueChange ? (event) => flush(() => local.onValueChange?.(event.currentTarget.value)) : local.onInput
+      }
     />
   );
 }
 
-export type TextareaProps = ComponentProps<"textarea"> & ControlOptions;
+export type TextareaProps = ComponentProps<"textarea"> & TextControlOptions;
 
 export function Textarea(props: TextareaProps): JSX.Element {
   const local = props;
   const field = useContext(FieldContext);
-  const others = omit(
+  const textareaProps = omit(
     props,
     "class",
     "size",
     "invalid",
     "id",
+    "aria-label",
+    "aria-labelledby",
     "aria-describedby",
     "aria-invalid",
     "required",
-    "value",
+    "onValueChange",
     "onInput",
-    "onChange",
+    "value",
+    "defaultValue",
   );
   const describedBy = () => [local["aria-describedby"], field?.describedBy].filter(Boolean).join(" ") || undefined;
   if (!("value" in props)) {
     return (
       <textarea
-        {...others}
+        {...textareaProps}
+        defaultValue={local.defaultValue}
         class={cx("ui-textarea", local.class)}
         data-size={local.size ?? "md"}
         id={local.id ?? field?.controlId}
+        aria-label={local["aria-label"]}
+        aria-labelledby={local["aria-labelledby"]}
         aria-describedby={describedBy()}
         aria-invalid={local["aria-invalid"] ?? (local.invalid || field?.invalid ? "true" : undefined)}
         required={local.required ?? field?.required}
-        onInput={local.onInput}
-        onChange={local.onChange}
+        onInput={
+          local.onValueChange ? (event) => flush(() => local.onValueChange?.(event.currentTarget.value)) : local.onInput
+        }
       />
     );
   }
   return (
     <textarea
-      {...others}
+      {...textareaProps}
+      value={local.value}
       class={cx("ui-textarea", local.class)}
       data-size={local.size ?? "md"}
       id={local.id ?? field?.controlId}
+      aria-label={local["aria-label"]}
+      aria-labelledby={local["aria-labelledby"]}
       aria-describedby={describedBy()}
       aria-invalid={local["aria-invalid"] ?? (local.invalid || field?.invalid ? "true" : undefined)}
       required={local.required ?? field?.required}
-      value={local.value}
-      onInput={local.onInput}
-      onChange={local.onChange}
+      onInput={
+        local.onValueChange ? (event) => flush(() => local.onValueChange?.(event.currentTarget.value)) : local.onInput
+      }
     />
   );
 }
@@ -123,35 +149,8 @@ export type NativeSelectProps = ComponentProps<"select"> & ControlOptions;
 export function NativeSelect(props: NativeSelectProps): JSX.Element {
   const local = props;
   const field = useContext(FieldContext);
-  const others = omit(
-    props,
-    "class",
-    "size",
-    "invalid",
-    "id",
-    "aria-describedby",
-    "aria-invalid",
-    "required",
-    "value",
-    "onInput",
-    "onChange",
-  );
+  const others = omit(props, "class", "size", "invalid", "id", "aria-describedby", "aria-invalid", "required");
   const describedBy = () => [local["aria-describedby"], field?.describedBy].filter(Boolean).join(" ") || undefined;
-  if (!("value" in props)) {
-    return (
-      <select
-        {...others}
-        class={cx("ui-native-select", local.class)}
-        data-size={local.size ?? "md"}
-        id={local.id ?? field?.controlId}
-        aria-describedby={describedBy()}
-        aria-invalid={local["aria-invalid"] ?? (local.invalid || field?.invalid ? "true" : undefined)}
-        required={local.required ?? field?.required}
-        onInput={local.onInput}
-        onChange={local.onChange}
-      />
-    );
-  }
   return (
     <select
       {...others}
@@ -161,9 +160,6 @@ export function NativeSelect(props: NativeSelectProps): JSX.Element {
       aria-describedby={describedBy()}
       aria-invalid={local["aria-invalid"] ?? (local.invalid || field?.invalid ? "true" : undefined)}
       required={local.required ?? field?.required}
-      value={local.value}
-      onInput={local.onInput}
-      onChange={local.onChange}
     />
   );
 }
@@ -195,9 +191,15 @@ export function Field(props: FieldProps): JSX.Element {
   const errorId = `${generatedId}-error`;
   const fieldValue: FieldContextValue = {
     controlId: local.htmlFor ?? `${generatedId}-control`,
-    describedBy: local.error ? errorId : local.description ? descriptionId : undefined,
-    invalid: Boolean(local.error),
-    required: Boolean(local.required),
+    get describedBy() {
+      return local.error ? errorId : local.description ? descriptionId : undefined;
+    },
+    get invalid() {
+      return Boolean(local.error);
+    },
+    get required() {
+      return Boolean(local.required);
+    },
   };
   return (
     <FieldContext value={fieldValue}>

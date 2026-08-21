@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@solidjs/testing-library";
-import { createSignal } from "solid-js";
+import { createSignal, flush } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import {
   Badge,
@@ -147,6 +147,111 @@ describe("UI primitives", () => {
     expect(screen.getByLabelText("Instructions")).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByLabelText("Instructions")).toHaveAttribute("aria-describedby");
     expect(screen.getByRole("alert")).toHaveTextContent("Required");
+  });
+
+  it("keeps controlled text input and textarea values during consecutive input events", async () => {
+    const [name, setName] = createSignal("Existing name");
+    const [description, setDescription] = createSignal("Existing description");
+    render(() => (
+      <>
+        <Input aria-label="Name" value={name()} onValueChange={setName} />
+        <Textarea aria-label="Description" value={description()} onValueChange={setDescription} />
+      </>
+    ));
+
+    const nameInput = screen.getByRole("textbox", { name: "Name" });
+    const descriptionInput = screen.getByRole("textbox", { name: "Description" });
+    if (!(nameInput instanceof HTMLInputElement)) throw new Error("Expected a native input.");
+    if (!(descriptionInput instanceof HTMLTextAreaElement)) throw new Error("Expected a native textarea.");
+    await fireEvent.input(nameInput, { target: { value: "" } });
+    for (const character of "Server name") {
+      const nextName = `${nameInput.value}${character}`;
+      await fireEvent.input(nameInput, { target: { value: nextName } });
+      expect(nameInput).toHaveValue(nextName);
+    }
+    await fireEvent.input(descriptionInput, { target: { value: "" } });
+    for (const character of "Every character remains.") {
+      const nextDescription = `${descriptionInput.value}${character}`;
+      await fireEvent.input(descriptionInput, { target: { value: nextDescription } });
+      expect(descriptionInput).toHaveValue(nextDescription);
+    }
+
+    expect(screen.getByRole("textbox", { name: "Name" })).toBe(nameInput);
+    expect(screen.getByRole("textbox", { name: "Description" })).toBe(descriptionInput);
+  });
+
+  it("keeps reactive values and every character from one native typing burst", () => {
+    const [name, setName] = createSignal("");
+    const [description, setDescription] = createSignal("");
+    render(() => (
+      <>
+        <Input aria-label="Burst name" value={name()} onValueChange={setName} />
+        <Textarea aria-label="Burst description" value={description()} onValueChange={setDescription} />
+      </>
+    ));
+
+    const nameInput = screen.getByRole("textbox", { name: "Burst name" });
+    const descriptionInput = screen.getByRole("textbox", { name: "Burst description" });
+    if (!(nameInput instanceof HTMLInputElement)) throw new Error("Expected a native input.");
+    if (!(descriptionInput instanceof HTMLTextAreaElement)) throw new Error("Expected a native textarea.");
+
+    flush(() => {
+      setName("external name");
+      setDescription("external description");
+    });
+    expect(nameInput).toHaveValue("external name");
+    expect(descriptionInput).toHaveValue("external description");
+    flush(() => {
+      setName("");
+      setDescription("");
+    });
+
+    for (const character of "abcdefghijklmnop") {
+      nameInput.setRangeText(character, nameInput.value.length, nameInput.value.length, "end");
+      nameInput.dispatchEvent(new InputEvent("input", { bubbles: true, data: character, inputType: "insertText" }));
+    }
+    for (const character of "fast description") {
+      descriptionInput.setRangeText(character, descriptionInput.value.length, descriptionInput.value.length, "end");
+      descriptionInput.dispatchEvent(
+        new InputEvent("input", { bubbles: true, data: character, inputType: "insertText" }),
+      );
+    }
+
+    expect(nameInput).toHaveValue("abcdefghijklmnop");
+    expect(descriptionInput).toHaveValue("fast description");
+  });
+
+  it("forwards native refs from the shared input and textarea components", async () => {
+    const [name, setName] = createSignal("");
+    const [description, setDescription] = createSignal("");
+    let inputRef: HTMLInputElement | undefined;
+    let textareaRef: HTMLTextAreaElement | undefined;
+    render(() => (
+      <>
+        <Input
+          ref={(element) => (inputRef = element)}
+          aria-label="Fallback name"
+          value={name()}
+          onValueChange={setName}
+        />
+        <Textarea
+          ref={(element) => (textareaRef = element)}
+          aria-label="Fallback description"
+          value={description()}
+          onValueChange={setDescription}
+        />
+      </>
+    ));
+
+    const nameInput = screen.getByRole("textbox", { name: "Fallback name" });
+    await fireEvent.input(nameInput, { target: { value: "Server" } });
+    expect(nameInput).toHaveValue("Server");
+
+    const descriptionInput = screen.getByRole("textbox", { name: "Fallback description" });
+    await fireEvent.input(descriptionInput, { target: { value: "Notes" } });
+    expect(descriptionInput).toHaveValue("Notes");
+    expect(inputRef).toBe(nameInput);
+    expect(textareaRef).toBe(descriptionInput);
   });
 
   it("renders semantic typography, form, and surface primitives", () => {

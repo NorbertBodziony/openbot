@@ -30,7 +30,6 @@ export const INPUT_LIMITS = {
   teamMembers: 100,
   activeInvites: 100,
   sessionsPerMember: 10,
-  remoteDesktopPassword: 8,
 } as const;
 
 export const ATTACHMENT_LIMITS = {

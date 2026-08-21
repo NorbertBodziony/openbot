@@ -62,13 +62,7 @@ export class CloudflareTunnelProvider implements TeamTunnelProvider {
     return tunnel.id;
   }
 
-  async configureTunnel(input: {
-    tunnelId: string;
-    apiHostname: string;
-    vncHostname: string;
-    apiPort: number | null;
-    vncEnabled: boolean;
-  }): Promise<void> {
+  async configureTunnel(input: { tunnelId: string; apiHostname: string; apiPort: number | null }): Promise<void> {
     await this.#request(
       `/accounts/${this.#accountId}/cfd_tunnel/${input.tunnelId}/configurations`,
       {
@@ -79,11 +73,6 @@ export class CloudflareTunnelProvider implements TeamTunnelProvider {
               {
                 hostname: input.apiHostname,
                 service: input.apiPort === null ? "http_status:503" : `http://127.0.0.1:${input.apiPort}`,
-                originRequest: {},
-              },
-              {
-                hostname: input.vncHostname,
-                service: "http_status:404",
                 originRequest: {},
               },
               { service: "http_status:404" },

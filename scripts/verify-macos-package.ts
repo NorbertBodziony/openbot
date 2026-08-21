@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,6 +16,7 @@ const resourcesPath = resolve(contentsPath, "Resources");
 const plistPath = resolve(contentsPath, "Info.plist");
 const whisperExecutablePath = resolve(resourcesPath, "whisper/bin/whisper-cli");
 const whisperModelPath = resolve(resourcesPath, "whisper/model/ggml-medium-q5_0.bin");
+const remoteRuntimePath = resolve(resourcesPath, "remote-desktop-runtime/darwin/arm64");
 
 await Promise.all([
   access(executablePath),
@@ -27,6 +28,24 @@ await Promise.all([
   access(resolve(resourcesPath, "licenses/whisper.cpp-LICENSE")),
   access(whisperExecutablePath),
   access(whisperModelPath),
+  access(resolve(resourcesPath, "remote-desktop-runtime/licenses/Sunshine-GPL-3.0.txt")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/licenses/moonlight-web-stream-GPL-3.0.txt")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/source-manifest.json")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/DISTRIBUTION-SHA256SUMS.txt")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/sources/Sunshine-v2026.516.143833-source.tar.gz")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/sources/sunshine-v2026.516.143833-openbot.patch")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/sources/moonlight-web-stream-v2.10.0-openbot-source.tar.gz")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/sources/moonlight-web-stream-v2.10.0-openbot.patch")),
+  access(resolve(remoteRuntimePath, "Sunshine.app/Contents/MacOS/Sunshine")),
+  access(resolve(remoteRuntimePath, "web-server")),
+  access(resolve(remoteRuntimePath, "streamer")),
+  access(resolve(remoteRuntimePath, "static/stream.html")),
+  access(resolve(remoteRuntimePath, "SHA256SUMS.txt")),
+  access(resolve(resourcesPath, "cloudflared/mac/arm64/cloudflared")),
+  access(resolve(resourcesPath, "cloudflared/mac/arm64/SHA256SUMS.txt")),
+  access(resolve(resourcesPath, "cloudflared/mac/arm64/VERSION.txt")),
+  access(resolve(resourcesPath, "cloudflared/licenses/cloudflared-Apache-2.0.txt")),
+  access(resolve(resourcesPath, "cloudflared/source-manifest.json")),
 ]);
 
 const plist = JSON.parse(run("plutil", ["-convert", "json", "-o", "-", plistPath]));
@@ -65,6 +84,10 @@ expectEqual(
   "Whisper model digest",
 );
 
+for (const name of ["Sunshine.app", "web-server", "streamer"]) {
+  run("codesign", ["--verify", "--strict", "--verbose=2", resolve(remoteRuntimePath, name)]);
+}
+
 const fuses = await getCurrentFuseWire(executablePath);
 const expectedFuses: Array<[FuseV1Options, number]> = [
   [FuseV1Options.RunAsNode, FUSE_DISABLED],
@@ -86,7 +109,7 @@ await verifyLaunch(executablePath);
 
 console.log(`Verified ${appPath}`);
 console.log(
-  `OpenBot ${String(packageJson.version)} · ARM64 · icon · licenses · ASAR integrity · hardened fuses · launch`,
+  `OpenBot ${String(packageJson.version)} · ARM64 · icon · GPL remote runtime · bundled cloudflared · ASAR integrity · hardened fuses · launch`,
 );
 
 function expectEqual(actual: unknown, expected: unknown, label: string): void {
@@ -95,8 +118,18 @@ function expectEqual(actual: unknown, expected: unknown, label: string): void {
   }
 }
 
-function run(command: string, args: string[]): string {
-  return execFileSync(command, args, { encoding: "utf8" }).trim();
+function run(command: string, args: string[], includeStderr = false): string {
+  if (includeStderr) {
+    const result = spawnSync(command, args, { encoding: "utf8", stdio: "pipe" });
+    if (result.status !== 0) {
+      throw new Error(`${command} failed: ${result.stderr.trim()}`);
+    }
+    return `${result.stdout}${result.stderr}`.trim();
+  }
+  return execFileSync(command, args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  }).trim();
 }
 
 async function verifyLaunch(executable: string): Promise<void> {
@@ -141,17 +174,22 @@ async function verifyLaunch(executable: string): Promise<void> {
 async function verifySecondInstanceExits(executable: string, userDataPath: string): Promise<void> {
   const second = spawn(executable, [`--user-data-dir=${userDataPath}`], {
     env: { ...process.env, OPENBOT_CODEX_PATH: join(userDataPath, "missing-codex") },
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  second.stderr.setEncoding("utf8");
+  second.stderr.on("data", (chunk: string) => {
+    stderr = `${stderr}${chunk}`.slice(-4_000);
   });
   const result = await Promise.race([
     new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
       second.once("exit", (code, signal) => resolveExit({ code, signal }));
     }),
-    new Promise<null>((resolveDelay) => setTimeout(() => resolveDelay(null), 3_000)),
+    new Promise<null>((resolveDelay) => setTimeout(() => resolveDelay(null), 10_000)),
   ]);
   if (!result) {
     second.kill("SIGKILL");
-    throw new Error("A second OpenBot instance did not exit.");
+    throw new Error(`A second OpenBot instance did not exit: ${stderr.trim()}`);
   }
   if (result.code !== 0 || result.signal) {
     throw new Error(

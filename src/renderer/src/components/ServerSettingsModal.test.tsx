@@ -1,0 +1,245 @@
+import type { HostStatus, ServerSummary, TeamPresenceMember } from "@openbot/contracts/ipc";
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { describe, expect, it, vi } from "vitest";
+import { ServerSettingsModal, type ServerSettingsModalProps } from "./ServerSettingsModal";
+
+const localServer: ServerSummary = {
+  id: "local",
+  name: "Local",
+  logoUrl: null,
+  kind: "local",
+  state: "online",
+  apiUrl: null,
+  remoteDesktopAvailable: false,
+  role: null,
+  active: true,
+};
+
+const remoteServer: ServerSummary = {
+  id: "remote-1",
+  name: "Studio Team",
+  logoUrl: null,
+  kind: "remote",
+  state: "online",
+  apiUrl: "https://studio.example.com",
+  remoteDesktopAvailable: true,
+  role: "admin",
+  active: false,
+};
+
+const unconfiguredHost: HostStatus = {
+  phase: "unconfigured",
+  configured: false,
+  enabledOnLaunch: false,
+  serverId: null,
+  serverName: null,
+  logoUrl: null,
+  apiUrl: null,
+  apiOnline: false,
+  remoteDesktopReady: false,
+  remoteDesktopUnattended: false,
+  remoteDesktopActiveSessions: 0,
+  remoteDesktopMaxSessions: 4,
+  message: null,
+};
+
+const members: TeamPresenceMember[] = [
+  {
+    id: "owner-1",
+    username: "owner@example.com",
+    email: "owner@example.com",
+    name: "Server Owner",
+    role: "owner",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    disabled: false,
+    online: true,
+    typingBotId: null,
+  },
+  {
+    id: "alice-1",
+    username: "alice",
+    email: "alice@example.com",
+    name: "Alice Chen",
+    role: "member",
+    createdAt: "2026-02-01T00:00:00.000Z",
+    disabled: false,
+    online: false,
+    typingBotId: null,
+  },
+];
+
+function props(overrides: Partial<ServerSettingsModalProps> = {}): ServerSettingsModalProps {
+  return {
+    open: true,
+    onOpenChange: vi.fn(),
+    platform: "darwin",
+    server: localServer,
+    hostStatus: unconfiguredHost,
+    members: [],
+    invites: [],
+    loading: false,
+    loadError: null,
+    onRetry: vi.fn(async () => undefined),
+    onSaveIdentity: vi.fn(async () => undefined),
+    onSetPublished: vi.fn(async () => undefined),
+    onCreateInvite: vi.fn(async (input) => ({
+      id: "invite-new",
+      role: input.role,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      usedAt: null,
+      inviteUrl: "https://studio.example.com/invite/new",
+      email: input.email ?? null,
+    })),
+    onUpdateMember: vi.fn(async () => undefined),
+    onRemoveMember: vi.fn(async () => undefined),
+    onRevokeInvite: vi.fn(async () => undefined),
+    ...overrides,
+  };
+}
+
+describe("ServerSettingsModal", () => {
+  it("saves the first local identity without publishing it", async () => {
+    const onSaveIdentity = vi.fn(async () => undefined);
+    const onSetPublished = vi.fn(async () => undefined);
+    render(() => <ServerSettingsModal {...props({ onSaveIdentity, onSetPublished })} />);
+
+    const name = screen.getByRole("textbox", { name: "Server name" });
+    expect(name).toHaveValue("");
+    expect(screen.getByRole("switch", { name: "Publish this server" })).toBeDisabled();
+
+    await fireEvent.input(name, { target: { value: "Draft Team" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(name).toHaveValue("");
+    await fireEvent.input(name, { target: { value: "Studio Team" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(onSaveIdentity).toHaveBeenCalledWith({ serverName: "Studio Team" }));
+    expect(onSetPublished).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed identity action and keeps the draft", async () => {
+    const onSaveIdentity = vi.fn(async () => {
+      throw new Error("The identity could not save.");
+    });
+    render(() => <ServerSettingsModal {...props({ onSaveIdentity })} />);
+
+    const name = screen.getByRole("textbox", { name: "Server name" });
+    await fireEvent.input(name, { target: { value: "Studio Team" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The identity could not save.");
+    expect(name).toHaveValue("Studio Team");
+  });
+
+  it("validates the server name without changing the field layout while typing", async () => {
+    const onSaveIdentity = vi.fn(async () => undefined);
+    render(() => <ServerSettingsModal {...props({ onSaveIdentity })} />);
+
+    const name = screen.getByRole("textbox", { name: "Server name" });
+    await fireEvent.input(name, { target: { value: "Tiny" } });
+    await waitFor(() => expect(name).toHaveValue("Tiny"));
+    expect(screen.queryByText("Enter at least 6 characters.")).not.toBeInTheDocument();
+
+    await fireEvent.blur(name);
+    const error = screen.getByText("Enter at least 6 characters.");
+    expect(error).toHaveClass("ui-field-error");
+    expect(error.parentElement).toHaveAttribute("data-invalid");
+    expect(name).toHaveAttribute("aria-invalid", "true");
+    expect(name).toHaveAttribute("aria-describedby", error.id);
+
+    await fireEvent.input(name, { target: { value: "Studio Team" } });
+    expect(screen.queryByText("Enter at least 6 characters.")).not.toBeInTheDocument();
+    expect(name).not.toHaveAttribute("aria-invalid");
+    await fireEvent.keyDown(name, { key: "Enter" });
+    await waitFor(() => expect(onSaveIdentity).toHaveBeenCalledWith({ serverName: "Studio Team" }));
+  });
+
+  it("keeps remote member settings read-only", async () => {
+    render(() => (
+      <ServerSettingsModal {...props({ server: { ...remoteServer, role: "member" }, hostStatus: null, members })} />
+    ));
+
+    expect(screen.queryByRole("textbox", { name: "Server name" })).not.toBeInTheDocument();
+    expect(screen.getByText("Studio Team", { selector: ".server-settings-readonly-value" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Members" }));
+    expect(screen.getByText("Alice Chen")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send invite" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Actions for Alice Chen" })).not.toBeInTheDocument();
+  });
+
+  it("lets a remote administrator invite, search, revoke, and pause access", async () => {
+    const onCreateInvite = vi.fn(async (input: { role: "admin" | "member"; email?: string }) => ({
+      id: "invite-new",
+      role: input.role,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      usedAt: null,
+      inviteUrl: "https://studio.example.com/invite/new",
+      email: input.email ?? null,
+    }));
+    const onUpdateMember = vi.fn(async () => undefined);
+    const onRevokeInvite = vi.fn(async () => undefined);
+    render(() => (
+      <ServerSettingsModal
+        {...props({
+          server: remoteServer,
+          hostStatus: null,
+          members,
+          invites: [
+            {
+              id: "invite-old",
+              role: "member",
+              expiresAt: "2099-01-01T00:00:00.000Z",
+              usedAt: null,
+              email: "pending@example.com",
+            },
+          ],
+          onCreateInvite,
+          onUpdateMember,
+          onRevokeInvite,
+        })}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("button", { name: "Members" }));
+    await fireEvent.input(screen.getByRole("textbox", { name: "Email address" }), {
+      target: { value: "new@example.com" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Send invite" }));
+    await waitFor(() => expect(onCreateInvite).toHaveBeenCalledWith({ role: "member", email: "new@example.com" }));
+
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search members" }), {
+      target: { value: "alice" },
+    });
+    expect(screen.getByText("Alice Chen")).toBeInTheDocument();
+    expect(screen.queryByText("Server Owner")).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    await waitFor(() => expect(onRevokeInvite).toHaveBeenCalledWith("invite-old"));
+    const memberActions = screen.getByRole("button", { name: "Actions for Alice Chen" });
+    await fireEvent.pointerDown(memberActions, { button: 0 });
+    await fireEvent.pointerUp(memberActions, { button: 0 });
+    await fireEvent.pointerUp(await screen.findByRole("menuitem", { name: "Pause access" }), { button: 0 });
+    await waitFor(() => expect(onUpdateMember).toHaveBeenCalledWith({ memberId: "alice-1", disabled: true }));
+  });
+
+  it("shows Remote Desktop service state without connection actions", async () => {
+    const { unmount } = render(() => <ServerSettingsModal {...props({ server: remoteServer, hostStatus: null })} />);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Remote desktop" }));
+    expect(screen.getByText("WebRTC control is available for all active members.")).toBeInTheDocument();
+    expect(screen.getByText("Service available")).toBeInTheDocument();
+    expect(screen.getByText("Start Remote Control from the monitor button in the server header.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
+
+    unmount();
+    render(() => (
+      <ServerSettingsModal
+        {...props({ server: { ...remoteServer, remoteDesktopAvailable: false }, hostStatus: null })}
+      />
+    ));
+    await fireEvent.click(screen.getByRole("button", { name: "Remote desktop" }));
+    expect(screen.getByText("Update required or remote control is unavailable.")).toBeInTheDocument();
+    expect(screen.getByText("Update required")).toBeInTheDocument();
+  });
+});

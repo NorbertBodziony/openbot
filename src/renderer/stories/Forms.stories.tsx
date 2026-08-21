@@ -55,14 +55,10 @@ export const ControlledTyping: Story = {
           Controlled text fields
         </Heading>
         <Field label="Agent name" htmlFor="controlled-agent-name">
-          <Input id="controlled-agent-name" value={name()} onInput={(event) => setName(event.currentTarget.value)} />
+          <Input id="controlled-agent-name" value={name()} onValueChange={setName} />
         </Field>
         <Field label="Description" htmlFor="controlled-agent-description">
-          <Textarea
-            id="controlled-agent-description"
-            value={description()}
-            onInput={(event) => setDescription(event.currentTarget.value)}
-          />
+          <Textarea id="controlled-agent-description" value={description()} onValueChange={setDescription} />
         </Field>
       </main>
     );

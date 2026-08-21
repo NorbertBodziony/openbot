@@ -1,7 +1,7 @@
 import { randomBytes, verify } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { readFile, rename, writeFile } from "node:fs/promises";
-import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import type {
   AccountUsage,
@@ -23,17 +23,23 @@ import type {
   DirectTypingRealtimeEvent,
   DraftAttachment,
   InvitePreview,
+  InviteSummary,
   JoinServerInput,
   LoginServerInput,
   MarkConversationReadInput,
   MarkDirectReadInput,
   QueuedMessageReceipt,
   QueueSnapshot,
+  RemoteDesktopCapabilities,
+  RemoteDesktopSession,
   SendDirectMessageInput,
   ServerSummary,
   SetTeamTypingInput,
+  TeamInviteSummary,
+  TeamMemberSummary,
   TeamPresenceSnapshot,
   TeamRole,
+  UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import {
   isAgentEvent,
@@ -63,12 +69,13 @@ interface StoredRemoteServer {
   publicKey?: string;
   username: string;
   encryptedToken: string;
-  vncHostname: string | null;
+  remoteDesktopAvailable: boolean;
+  logoVersion?: string | null;
   role: TeamRole;
 }
 
 interface StoredRemoteServers {
-  version: 1;
+  version: 2;
   activeServerId: string;
   servers: StoredRemoteServer[];
 }
@@ -91,21 +98,35 @@ interface CentralAccountSession {
   getEmail: () => string;
 }
 
+export interface DevelopmentRemoteServerConnection {
+  serverId: string;
+  serverName: string;
+  apiUrl: string;
+  fingerprint: string;
+  publicKey: string;
+  username: string;
+  sessionToken: string;
+}
+
 const REMOTE_REQUEST_TIMEOUT_MS = 15_000;
 
 type ResponseDecoder<T> = (value: unknown) => T;
 
-export interface RemoteDesktopAccess {
-  url: string;
-  protocols: string[];
-  password: string;
+class RemoteRequestError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "RemoteRequestError";
+    this.status = status;
+  }
 }
 
 export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #path: string;
   readonly #cipher: TokenCipher;
   readonly #centralAccount: CentralAccountSession;
-  #state: StoredRemoteServers = { version: 1, activeServerId: "local", servers: [] };
+  #state: StoredRemoteServers = { version: 2, activeServerId: "local", servers: [] };
   #states = new Map<string, ServerSummary["state"]>();
   #eventControllers = new Map<string, AbortController>();
   #eventSockets = new Map<string, WebSocket>();
@@ -121,7 +142,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async initialize(): Promise<void> {
     try {
       const parsed = JSON.parse(await readFile(this.#path, "utf8"));
-      if (isStoredRemoteServers(parsed)) this.#state = parsed;
+      const stored = readStoredRemoteServers(parsed);
+      if (stored) this.#state = stored;
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
@@ -136,7 +158,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         kind: "local",
         state: "online",
         apiUrl: null,
-        vncHostname: null,
+        remoteDesktopAvailable: false,
+        logoUrl: null,
         role: null,
         active: this.#state.activeServerId === "local",
       },
@@ -146,7 +169,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         kind: "remote" as const,
         state: this.#states.get(server.id) ?? "offline",
         apiUrl: server.apiUrl,
-        vncHostname: server.vncHostname,
+        remoteDesktopAvailable: server.remoteDesktopAvailable ?? false,
+        logoUrl: server.logoVersion ? remoteServerLogoUrl(server.id, server.logoVersion) : null,
         role: server.role,
         active: this.#state.activeServerId === server.id,
       })),
@@ -174,6 +198,29 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return this.list();
   }
 
+  async reorder(serverIds: string[]): Promise<ServerSummary[]> {
+    if (serverIds.length !== this.#state.servers.length) {
+      throw new Error("The server order is incomplete.");
+    }
+    const serversById = new Map(this.#state.servers.map((server) => [server.id, server]));
+    if (new Set(serverIds).size !== serverIds.length) {
+      throw new Error("The server order contains an unknown server.");
+    }
+    const reordered: StoredRemoteServer[] = [];
+    for (const serverId of serverIds) {
+      const server = serversById.get(serverId);
+      if (!server) throw new Error("The server order contains an unknown server.");
+      reordered.push(server);
+    }
+    if (serverIds.every((serverId, index) => this.#state.servers[index]?.id === serverId)) {
+      return this.list();
+    }
+    this.#state.servers = reordered;
+    await this.#persist();
+    this.#emitChanged();
+    return this.list();
+  }
+
   async join(input: JoinServerInput): Promise<ServerSummary> {
     const invite = parseInviteUrl(input.inviteUrl);
     const verifiedIdentity = await this.#verifyIdentity(invite.apiUrl, invite.serverId, invite.fingerprint);
@@ -193,13 +240,41 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       publicKey: verifiedIdentity.publicKey,
       username: this.#centralAccount.getEmail().trim().toLowerCase(),
       encryptedToken: this.#cipher.encrypt(result.sessionToken).toString("base64"),
-      vncHostname: null,
+      remoteDesktopAvailable: false,
+      logoVersion: verifiedIdentity.logoVersion,
       role: result.member.role,
     };
     this.#state.servers = [...this.#state.servers.filter((server) => server.id !== stored.id), stored];
     this.#state.activeServerId = stored.id;
     this.#states.set(stored.id, "online");
-    await this.#refreshVnc(stored);
+    await this.#refreshRemoteDesktop(stored);
+    await this.#persist();
+    this.#emitChanged();
+    void this.#connectEvents(stored.id);
+    return requiredServerSummary(this.list(), stored.id);
+  }
+
+  async connectDevelopmentServer(input: DevelopmentRemoteServerConnection): Promise<ServerSummary> {
+    const verifiedIdentity = await this.#verifyIdentity(input.apiUrl, input.serverId, input.fingerprint);
+    if (verifiedIdentity.publicKey !== input.publicKey || verifiedIdentity.serverName !== input.serverName) {
+      throw new Error("The local development server identity changed.");
+    }
+    const stored: StoredRemoteServer = {
+      id: input.serverId,
+      name: input.serverName,
+      apiUrl: input.apiUrl,
+      fingerprint: input.fingerprint,
+      publicKey: input.publicKey,
+      username: input.username,
+      encryptedToken: this.#cipher.encrypt(input.sessionToken).toString("base64"),
+      remoteDesktopAvailable: false,
+      logoVersion: verifiedIdentity.logoVersion,
+      role: "member",
+    };
+    this.#state.servers = [...this.#state.servers.filter((server) => server.id !== stored.id), stored];
+    this.#state.activeServerId = stored.id;
+    this.#states.set(stored.id, "online");
+    await this.#refreshRemoteDesktop(stored);
     await this.#persist();
     this.#emitChanged();
     void this.#connectEvents(stored.id);
@@ -226,7 +301,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#states.set(server.id, "connecting");
     this.#emitChanged();
     try {
-      await this.#verifyIdentity(server.apiUrl, server.id, server.fingerprint);
+      const identity = await this.#verifyIdentity(server.apiUrl, server.id, server.fingerprint);
       const accountTicket = await this.#centralAccount.createTeamAuthTicket(server.id);
       const result = await requestJson(server.apiUrl, "/v1/auth/account", decodeJoinResult, {
         method: "POST",
@@ -235,8 +310,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       server.username = this.#centralAccount.getEmail().trim().toLowerCase();
       server.role = result.member.role;
       server.encryptedToken = this.#cipher.encrypt(result.sessionToken).toString("base64");
+      server.name = identity.serverName;
+      server.logoVersion = identity.logoVersion;
       this.#states.set(server.id, "online");
-      await this.#refreshVnc(server);
+      await this.#refreshRemoteDesktop(server);
       await this.#persist();
       void this.#connectEvents(server.id);
     } catch (error) {
@@ -306,6 +383,57 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return { serverId, members: [], updatedAt: new Date().toISOString() };
   }
 
+  async getPresenceFor(serverId: string): Promise<TeamPresenceSnapshot> {
+    try {
+      const snapshot = await this.request("/v1/team/presence", {}, serverId, decodeTeamPresenceSnapshot);
+      this.#presence.set(serverId, snapshot);
+      return structuredClone(snapshot);
+    } catch (error) {
+      const cached = this.#presence.get(serverId);
+      if (cached) return structuredClone(cached);
+      throw error;
+    }
+  }
+
+  async refreshIdentity(serverId: string): Promise<ServerSummary> {
+    const server = this.#requireServer(serverId);
+    const identity = await this.#verifyIdentity(server.apiUrl, server.id, server.fingerprint);
+    server.name = identity.serverName;
+    server.logoVersion = identity.logoVersion;
+    await this.#persist();
+    this.#emitChanged();
+    return requiredServerSummary(this.list(), server.id);
+  }
+
+  listMembers(serverId: string): Promise<TeamMemberSummary[]> {
+    return this.request("/v1/team/members", {}, serverId, decodeTeamMembers);
+  }
+
+  updateMember(serverId: string, input: UpdateTeamMemberInput): Promise<TeamMemberSummary> {
+    return this.request(
+      `/v1/team/members/${encodeURIComponent(input.memberId)}`,
+      { method: "PATCH", body: { role: input.role, disabled: input.disabled } },
+      serverId,
+      decodeTeamMember,
+    );
+  }
+
+  removeMember(serverId: string, memberId: string): Promise<void> {
+    return this.request(`/v1/team/members/${encodeURIComponent(memberId)}`, { method: "DELETE" }, serverId, decodeVoid);
+  }
+
+  listInvites(serverId: string): Promise<TeamInviteSummary[]> {
+    return this.request("/v1/team/invites", {}, serverId, decodeTeamInvites);
+  }
+
+  revokeInvite(serverId: string, inviteId: string): Promise<void> {
+    return this.request(`/v1/team/invites/${encodeURIComponent(inviteId)}`, { method: "DELETE" }, serverId, decodeVoid);
+  }
+
+  createInvite(serverId: string, input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
+    return this.request("/v1/team/invites", { method: "POST", body: input }, serverId, decodeInviteSummary);
+  }
+
   setTyping(input: SetTeamTypingInput, serverId = this.#state.activeServerId): void {
     const socket = this.#eventSockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
@@ -353,31 +481,26 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     );
   }
 
-  async getRemoteDesktopAccess(serverId: string): Promise<RemoteDesktopAccess> {
-    const server = this.#requireServer(serverId);
-    const token = this.#token(server);
-    const access = await requestJson(server.apiUrl, "/v1/host/remote-desktop-access", decodeRemoteDesktopAccess, {
-      token,
-    });
-    if (!access.configured || !access.password) {
-      throw new Error("The host owner must configure Remote Desktop access.");
-    }
-    if (
-      access.password.length > INPUT_LIMITS.remoteDesktopPassword ||
-      [...access.password].some((character) => {
-        const code = character.codePointAt(0) ?? 0;
-        return code < 32 || code === 127;
-      })
-    ) {
-      throw new Error("The host returned invalid Remote Desktop credentials.");
-    }
-    const url = new URL("/v1/remote-desktop", server.apiUrl);
-    url.protocol = "wss:";
-    return {
-      url: url.toString(),
-      protocols: ["openbot-desktop", `openbot-token.${token}`],
-      password: access.password,
-    };
+  createRemoteDesktopSession(serverId: string): Promise<RemoteDesktopSession> {
+    return this.request(
+      "/v1/remote-screen/sessions",
+      { method: "POST", body: {} },
+      serverId,
+      decodeRemoteDesktopSession,
+    );
+  }
+
+  closeRemoteDesktopSession(serverId: string, sessionId: string): Promise<void> {
+    return this.request(
+      `/v1/remote-screen/sessions/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" },
+      serverId,
+      decodeVoid,
+    );
+  }
+
+  selectRemoteDesktopDisplay(serverId: string, displayId: string): Promise<void> {
+    return this.request("/v1/remote-screen/display", { method: "PUT", body: { displayId } }, serverId, decodeVoid);
   }
 
   async uploadAttachment(
@@ -443,6 +566,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     };
   }
 
+  async downloadServerLogo(serverId: string, version: string): Promise<{ bytes: Uint8Array; mimeType: string }> {
+    const server = this.#requireServer(serverId);
+    if (server.logoVersion !== version) throw new Error("Server logo version is not current.");
+    const url = new URL("/v1/team/logo", server.apiUrl);
+    url.searchParams.set("v", version);
+    const response = await remoteFetch(url, { headers: { Authorization: `Bearer ${this.#token(server)}` } });
+    if (!response.ok) throw new Error("Server logo download failed.");
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const mimeType = response.headers.get("content-type")?.split(";", 1)[0]?.trim() ?? "";
+    if (!isValidAvatarImage(mimeType, bytes)) throw new Error("Server logo response is invalid.");
+    return { bytes, mimeType };
+  }
+
   async downloadAttachment(
     attachmentId: string,
     serverId = this.#state.activeServerId,
@@ -476,7 +612,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     apiUrl: string,
     serverId: string,
     expectedFingerprint: string,
-  ): Promise<{ publicKey: string; serverName: string }> {
+  ): Promise<{ publicKey: string; serverName: string; logoVersion: string | null }> {
     const challenge = randomBytes(24).toString("base64url");
     const proof = await requestJson(
       apiUrl,
@@ -490,14 +626,27 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       fingerprint(proof.publicKey) === expectedFingerprint &&
       verify(null, Buffer.from(challenge), proof.publicKey, Buffer.from(proof.signature, "base64url"));
     if (!valid) throw new Error("The server identity could not be verified.");
-    return { publicKey: proof.publicKey, serverName: proof.serverName };
+    return { publicKey: proof.publicKey, serverName: proof.serverName, logoVersion: proof.logoVersion };
   }
 
-  async #refreshVnc(server: StoredRemoteServer): Promise<void> {
-    const remote = await requestJson(server.apiUrl, "/v1/host/remote-mac", decodeRemoteMac, {
-      token: this.#token(server),
-    });
-    server.vncHostname = remote.online ? remote.hostname : null;
+  async #refreshRemoteDesktop(server: StoredRemoteServer): Promise<void> {
+    try {
+      const capabilities = await requestJson(
+        server.apiUrl,
+        "/v1/remote-screen/capabilities",
+        decodeRemoteDesktopCapabilities,
+        {
+          token: this.#token(server),
+        },
+      );
+      server.remoteDesktopAvailable = capabilities.ready;
+    } catch (error) {
+      if (error instanceof RemoteRequestError && [404, 426, 503].includes(error.status)) {
+        server.remoteDesktopAvailable = false;
+        return;
+      }
+      throw error;
+    }
   }
 
   async #connectEvents(serverId: string): Promise<void> {
@@ -507,7 +656,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventControllers.set(serverId, controller);
     try {
       const eventsUrl = new URL("/v1/events", server.apiUrl);
-      eventsUrl.protocol = "wss:";
+      eventsUrl.protocol = eventsUrl.protocol === "https:" ? "wss:" : "ws:";
       const socket = new WebSocket(eventsUrl, ["openbot-events", `openbot-token.${this.#token(server)}`]);
       controller.signal.addEventListener("abort", () => socket.close(1000, "Client stopped"), {
         once: true,
@@ -527,12 +676,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           try {
             const event = JSON.parse(message.data);
             if (isTeamRealtimeEvent(event)) {
-              if (event.type === "team-presence") {
+              if (event.type === "team-identity") {
+                server.name = event.serverName;
+                server.logoVersion = event.logoVersion;
+                void this.#persist().then(() => this.#emitChanged());
+              } else if (event.type === "team-presence") {
                 this.#presence.set(serverId, event.snapshot);
                 this.emit("presence", serverId, structuredClone(event.snapshot));
               } else if (event.type === "team-direct-message") {
                 this.emit("directMessage", serverId, event);
-              } else {
+              } else if (event.type === "team-direct-typing") {
                 this.emit("directTyping", serverId, event);
               }
             } else if (isAgentEvent(event)) {
@@ -633,7 +786,7 @@ async function requestJson<T>(
       isDynamicRecord(value) && isString(value.error)
         ? value.error
         : `Remote server request failed (${response.status}).`;
-    throw new Error(message);
+    throw new RemoteRequestError(response.status, message);
   }
   return decoder(value);
 }
@@ -675,17 +828,6 @@ function decodeJoinResult(value: unknown): { member: { role: TeamRole }; session
     throw new Error("Invalid member role.");
   }
   return { member: { role }, sessionToken: requiredString(record, "sessionToken") };
-}
-
-function decodeRemoteDesktopAccess(value: unknown): {
-  configured: boolean;
-  password: string | null;
-} {
-  const record = decodeRecord(value, "Remote Desktop access");
-  return {
-    configured: requiredBoolean(record, "configured"),
-    password: nullableString(record, "password"),
-  };
 }
 
 function decodeDraftAttachment(value: unknown): DraftAttachment {
@@ -737,7 +879,7 @@ export function decodeBotSummary(value: unknown): BotSummary {
     updatedAt: nullableString(record, "updatedAt"),
     avatarSeed,
     avatarHue,
-    avatarUrl: nullableString(record, "avatarUrl"),
+    avatarUrl: record.avatarUrl === undefined ? null : nullableString(record, "avatarUrl"),
   };
 }
 
@@ -968,6 +1110,7 @@ function decodeIdentityProof(value: unknown): {
   fingerprint: string;
   challenge: string;
   signature: string;
+  logoVersion: string | null;
 } {
   const record = decodeRecord(value, "server identity");
   return {
@@ -977,7 +1120,60 @@ function decodeIdentityProof(value: unknown): {
     fingerprint: requiredString(record, "fingerprint"),
     challenge: requiredString(record, "challenge"),
     signature: requiredString(record, "signature"),
+    logoVersion: record.logoVersion === undefined ? null : nullableString(record, "logoVersion"),
   };
+}
+
+function decodeTeamPresenceSnapshot(value: unknown): TeamPresenceSnapshot {
+  const event = { type: "team-presence", snapshot: value };
+  if (!isTeamRealtimeEvent(event) || event.type !== "team-presence") {
+    throw new Error("Invalid team presence response.");
+  }
+  return event.snapshot;
+}
+
+function decodeTeamMember(value: unknown): TeamMemberSummary {
+  const record = decodeRecord(value, "team member");
+  const role = requiredString(record, "role");
+  if (role !== "owner" && role !== "admin" && role !== "member") throw new Error("Invalid team member role.");
+  return {
+    id: requiredString(record, "id"),
+    username: requiredString(record, "username"),
+    email: nullableString(record, "email"),
+    name: nullableString(record, "name"),
+    avatarUrl: nullableString(record, "avatarUrl"),
+    role,
+    createdAt: requiredString(record, "createdAt"),
+    disabled: requiredBoolean(record, "disabled"),
+  };
+}
+
+function decodeTeamMembers(value: unknown): TeamMemberSummary[] {
+  if (!Array.isArray(value)) throw new Error("Invalid team members response.");
+  return value.map(decodeTeamMember);
+}
+
+function decodeTeamInvite(value: unknown): TeamInviteSummary {
+  const record = decodeRecord(value, "team invitation");
+  const role = requiredString(record, "role");
+  if (role !== "admin" && role !== "member") throw new Error("Invalid invitation role.");
+  return {
+    id: requiredString(record, "id"),
+    role,
+    expiresAt: requiredString(record, "expiresAt"),
+    usedAt: nullableString(record, "usedAt"),
+    email: nullableString(record, "email"),
+  };
+}
+
+function decodeTeamInvites(value: unknown): TeamInviteSummary[] {
+  if (!Array.isArray(value)) throw new Error("Invalid team invitations response.");
+  return value.map(decodeTeamInvite);
+}
+
+function decodeInviteSummary(value: unknown): InviteSummary {
+  const record = decodeRecord(value, "invitation");
+  return { ...decodeTeamInvite(value), inviteUrl: requiredString(record, "inviteUrl") };
 }
 
 function decodeInvitePreview(value: unknown): Pick<InvitePreview, "role" | "expiresAt" | "emailBound"> {
@@ -991,12 +1187,85 @@ function decodeInvitePreview(value: unknown): Pick<InvitePreview, "role" | "expi
   };
 }
 
-function decodeRemoteMac(value: unknown): { hostname: string | null; online: boolean } {
-  const record = decodeRecord(value, "Remote Mac status");
+function decodeRemoteDesktopCapabilities(value: unknown): RemoteDesktopCapabilities {
+  const record = decodeRecord(value, "remote control capabilities");
+  const platform = requiredString(record, "platform");
+  if (!isOneOf(["darwin", "win32", "linux"] as const, platform)) throw new Error("Invalid remote platform.");
   return {
-    hostname: nullableString(record, "hostname"),
-    online: requiredBoolean(record, "online"),
+    ready: requiredBoolean(record, "ready"),
+    platform,
+    unattended: requiredBoolean(record, "unattended"),
+    runtime: requiredString(record, "runtime") === "sunshine-moonlight" ? "sunshine-moonlight" : invalidRuntime(),
+    protocolVersion: requiredNumber(record, "protocolVersion") === 2 ? 2 : invalidProtocolVersion(),
+    displays: decodeRemoteDesktopDisplays(record.displays),
+    selectedDisplayId: nullableString(record, "selectedDisplayId"),
+    activeSessions: requiredNumber(record, "activeSessions"),
+    maxSessions: requiredNumber(record, "maxSessions"),
   };
+}
+
+function invalidRuntime(): never {
+  throw new Error("Invalid remote desktop runtime.");
+}
+
+function invalidProtocolVersion(): never {
+  throw new Error("Remote desktop update required.");
+}
+
+function decodeRemoteDesktopSession(value: unknown): RemoteDesktopSession {
+  const record = decodeRecord(value, "remote control session");
+  const phase = requiredString(record, "phase");
+  const transport = requiredString(record, "transport");
+  const errorCode = nullableString(record, "errorCode");
+  if (!isOneOf(["starting_host", "connecting", "connected", "disconnecting", "error"] as const, phase)) {
+    throw new Error("Invalid remote control phase.");
+  }
+  if (!isOneOf(["unknown", "p2p", "relay"] as const, transport)) throw new Error("Invalid remote transport.");
+  if (
+    errorCode !== null &&
+    !isOneOf(
+      [
+        "host_unavailable",
+        "host_permissions_required",
+        "session_capacity_reached",
+        "session_expired",
+        "session_revoked",
+        "protocol_mismatch",
+        "connection_failed",
+      ] as const,
+      errorCode,
+    )
+  ) {
+    throw new Error("Invalid remote control error.");
+  }
+  return {
+    id: requiredString(record, "id"),
+    serverId: requiredString(record, "serverId"),
+    viewerUrl: requiredString(record, "viewerUrl"),
+    viewerGrant: requiredString(record, "viewerGrant"),
+    displays: decodeRemoteDesktopDisplays(record.displays),
+    selectedDisplayId: nullableString(record, "selectedDisplayId"),
+    phase,
+    transport,
+    errorCode,
+    message: nullableString(record, "message"),
+    createdAt: requiredString(record, "createdAt"),
+    grantExpiresAt: requiredString(record, "grantExpiresAt"),
+  };
+}
+
+function decodeRemoteDesktopDisplays(value: unknown): RemoteDesktopCapabilities["displays"] {
+  if (!Array.isArray(value)) throw new Error("Invalid remote display list.");
+  return value.map((item) => {
+    const display = decodeRecord(item, "remote display");
+    return {
+      id: requiredString(display, "id"),
+      label: requiredString(display, "label"),
+      width: requiredNumber(display, "width"),
+      height: requiredNumber(display, "height"),
+      primary: requiredBoolean(display, "primary"),
+    };
+  });
 }
 
 function responseError(value: unknown, fallback: string): string {
@@ -1010,26 +1279,46 @@ function requiredServerSummary(servers: ServerSummary[], serverId: string): Serv
   return server;
 }
 
-function isStoredRemoteServers(value: unknown): value is StoredRemoteServers {
-  if (!isDynamicRecord(value) || value.version !== 1 || !isString(value.activeServerId)) {
-    return false;
+function readStoredRemoteServers(value: unknown): StoredRemoteServers | null {
+  if (!isDynamicRecord(value) || !isString(value.activeServerId) || !Array.isArray(value.servers)) return null;
+  if (value.version !== 1 && value.version !== 2) return null;
+  const servers: StoredRemoteServer[] = [];
+  for (const serverValue of value.servers) {
+    const server = readStoredRemoteServer(serverValue);
+    if (!server) return null;
+    servers.push(server);
   }
-  return Array.isArray(value.servers) && value.servers.every(isStoredRemoteServer);
+  return { version: 2, activeServerId: value.activeServerId, servers };
 }
 
-function isStoredRemoteServer(value: unknown): value is StoredRemoteServer {
-  if (!isDynamicRecord(value)) return false;
-  return (
-    isString(value.id) &&
-    isString(value.name) &&
-    isString(value.apiUrl) &&
-    isString(value.fingerprint) &&
-    (value.publicKey === undefined || isString(value.publicKey)) &&
-    isString(value.username) &&
-    isString(value.encryptedToken) &&
-    (value.vncHostname === null || isString(value.vncHostname)) &&
-    isOneOf(["owner", "admin", "member"] as const, value.role)
-  );
+function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
+  if (
+    !isDynamicRecord(value) ||
+    !isString(value.id) ||
+    !isString(value.name) ||
+    !isString(value.apiUrl) ||
+    !isString(value.fingerprint) ||
+    !(value.publicKey === undefined || isString(value.publicKey)) ||
+    !isString(value.username) ||
+    !isString(value.encryptedToken) ||
+    !(value.remoteDesktopAvailable === undefined || isBoolean(value.remoteDesktopAvailable)) ||
+    !(value.logoVersion === undefined || value.logoVersion === null || isString(value.logoVersion)) ||
+    !isOneOf(["owner", "admin", "member"] as const, value.role)
+  ) {
+    return null;
+  }
+  return {
+    id: value.id,
+    name: value.name,
+    apiUrl: value.apiUrl,
+    fingerprint: value.fingerprint,
+    ...(value.publicKey === undefined ? {} : { publicKey: value.publicKey }),
+    username: value.username,
+    encryptedToken: value.encryptedToken,
+    remoteDesktopAvailable: value.remoteDesktopAvailable ?? false,
+    ...(value.logoVersion === undefined ? {} : { logoVersion: value.logoVersion }),
+    role: value.role,
+  };
 }
 
 function remoteFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
@@ -1061,5 +1350,11 @@ export function remoteAgentAvatarUrl(serverId: string, botId: string, sourceUrl:
   const source = new URL(sourceUrl);
   const target = new URL(`openbot-remote-avatar://${encodeURIComponent(serverId)}/${encodeURIComponent(botId)}`);
   target.search = source.search;
+  return target.toString();
+}
+
+export function remoteServerLogoUrl(serverId: string, version: string): string {
+  const target = new URL(`openbot-remote-server-logo://${encodeURIComponent(serverId)}/logo`);
+  target.searchParams.set("v", version);
   return target.toString();
 }

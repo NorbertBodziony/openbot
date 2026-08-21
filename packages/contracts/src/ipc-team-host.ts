@@ -1,3 +1,5 @@
+import type { AvatarImageInput } from "./ipc-conversation";
+
 export type ServerConnectionState = "online" | "connecting" | "offline" | "error";
 export type TeamRole = "owner" | "admin" | "member";
 
@@ -7,7 +9,8 @@ export interface ServerSummary {
   kind: "local" | "remote";
   state: ServerConnectionState;
   apiUrl: string | null;
-  vncHostname: string | null;
+  remoteDesktopAvailable: boolean;
+  logoUrl: string | null;
   role: TeamRole | null;
   active: boolean;
 }
@@ -29,6 +32,10 @@ export interface LoginServerInput {
   serverId: string;
 }
 
+export interface ReorderServersInput {
+  serverIds: string[];
+}
+
 export type HostPhase = "unconfigured" | "idle" | "starting" | "online" | "stopping" | "error";
 
 export interface HostStatus {
@@ -38,19 +45,23 @@ export interface HostStatus {
   serverId: string | null;
   serverName: string | null;
   apiUrl: string | null;
-  vncHostname: string | null;
+  logoUrl: string | null;
   apiOnline: boolean;
-  vncOnline: boolean;
-  remoteDesktopCredentialConfigured: boolean;
+  remoteDesktopReady: boolean;
+  remoteDesktopUnattended: boolean;
+  remoteDesktopActiveSessions: number;
+  remoteDesktopMaxSessions: number;
   message: string | null;
 }
 
 export interface ConfigureHostInput {
   serverName: string;
+  logo?: AvatarImageInput | null;
 }
 
-export interface ConfigureRemoteDesktopInput {
-  password: string;
+export interface UpdateHostIdentityInput {
+  serverName?: string;
+  logo?: AvatarImageInput | null;
 }
 
 export interface TeamMemberSummary {
@@ -135,6 +146,12 @@ export interface DirectTypingInput {
 
 export type TeamRealtimeEvent =
   | {
+      type: "team-identity";
+      serverId: string;
+      serverName: string;
+      logoVersion: string | null;
+    }
+  | {
       type: "team-presence";
       snapshot: TeamPresenceSnapshot;
     }
@@ -156,6 +173,13 @@ export type DirectTypingRealtimeEvent = Extract<TeamRealtimeEvent, { type: "team
 
 export function isTeamRealtimeEvent(value: unknown): value is TeamRealtimeEvent {
   if (!isDynamicRecord(value)) return false;
+  if (value.type === "team-identity") {
+    return (
+      isIdentifier(value.serverId) &&
+      isLimitedString(value.serverName, INPUT_LIMITS.serverName) &&
+      (value.logoVersion === null || isIdentifier(value.logoVersion))
+    );
+  }
   if (value.type === "team-presence") return isTeamPresenceSnapshot(value.snapshot);
   if (value.type === "team-direct-message") {
     if (!isDirectMessage(value.message) || !Array.isArray(value.memberIds)) return false;
@@ -284,39 +308,66 @@ export interface UpdateTeamMemberInput {
   disabled?: boolean;
 }
 
-export type RemoteMacPhase = "idle" | "starting_tunnel" | "checking_vnc" | "connected" | "disconnecting";
-
-export type RemoteMacErrorCode =
-  | "cloudflared_not_found"
-  | "local_port_unavailable"
-  | "tunnel_timeout"
-  | "tunnel_disconnected"
-  | "invalid_vnc_handshake"
-  | "desktop_bridge_unavailable"
-  | "desktop_access_not_configured"
-  | "desktop_access_denied";
-
-export interface RemoteMacSession {
+export interface RemoteDesktopDisplay {
   id: string;
-  serverId: string | null;
-  hostname: string;
-  localPort: number | null;
-  websocketUrl: string | null;
-  phase: RemoteMacPhase;
-  errorCode: RemoteMacErrorCode | null;
+  label: string;
+  width: number;
+  height: number;
+  primary: boolean;
+}
+
+export interface RemoteDesktopIceServer {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+export interface RemoteDesktopCapabilities {
+  ready: boolean;
+  platform: "darwin" | "win32" | "linux";
+  unattended: boolean;
+  runtime: "sunshine-moonlight";
+  protocolVersion: 2;
+  displays: RemoteDesktopDisplay[];
+  selectedDisplayId: string | null;
+  activeSessions: number;
+  maxSessions: number;
+}
+
+export type RemoteDesktopPhase = "starting_host" | "connecting" | "connected" | "disconnecting" | "error";
+export type RemoteDesktopTransport = "unknown" | "p2p" | "relay";
+
+export type RemoteDesktopErrorCode =
+  | "host_unavailable"
+  | "host_permissions_required"
+  | "session_capacity_reached"
+  | "session_expired"
+  | "session_revoked"
+  | "protocol_mismatch"
+  | "connection_failed";
+
+export interface RemoteDesktopSession {
+  id: string;
+  serverId: string;
+  viewerUrl: string;
+  viewerGrant: string;
+  displays: RemoteDesktopDisplay[];
+  selectedDisplayId: string | null;
+  phase: RemoteDesktopPhase;
+  transport: RemoteDesktopTransport;
+  errorCode: RemoteDesktopErrorCode | null;
   message: string | null;
   createdAt: string;
+  grantExpiresAt: string;
 }
 
-export interface RemoteMacConnectInput {
-  hostname: string;
-  serverId?: string | null;
+export interface RemoteDesktopConnectInput {
+  serverId: string;
 }
 
-export interface RemoteMacCredentials {
-  username: string;
-  password: string;
-  target: string;
+export interface RemoteDesktopSelectDisplayInput {
+  serverId: string;
+  displayId: string;
 }
 
 import { INPUT_LIMITS } from "./input-limits";

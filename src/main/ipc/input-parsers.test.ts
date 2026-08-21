@@ -27,8 +27,7 @@ import {
   parseJoinServer,
   parseLoginServer,
   parseMarkDirectRead,
-  parseRemoteDesktopConfig,
-  parseRemoteMacConnect,
+  parseReorderServers,
   parseUpdateTeamMember,
 } from "./server-inputs";
 import { requireString } from "./validation";
@@ -95,11 +94,9 @@ describe("server IPC input parsing", () => {
       inviteUrl: "https://openbot.run/invite",
     });
     expect(parseLoginServer({ serverId: "server-1" })).toEqual({ serverId: "server-1" });
-    expect(parseRemoteMacConnect({ hostname: "mac.example.com" })).toEqual({
-      hostname: "mac.example.com",
-      serverId: null,
+    expect(parseReorderServers({ serverIds: ["server-2", "server-1"] })).toEqual({
+      serverIds: ["server-2", "server-1"],
     });
-    expect(parseRemoteDesktopConfig({ password: "secret" })).toEqual({ password: "secret" });
     expect(parseMarkDirectRead({ memberId: "member-1", throughSequence: 42 })).toEqual({
       memberId: "member-1",
       throughSequence: 42,
@@ -126,9 +123,8 @@ describe("server IPC input parsing", () => {
     expect(() => parseHostConfig(null)).toThrowError("Host configuration is required.");
     expect(() => parseJoinServer(null)).toThrowError("Invitation details are required.");
     expect(() => parseLoginServer(null)).toThrowError("Login details are required.");
+    expect(() => parseReorderServers({ serverIds: ["server-1", "server-1"] })).toThrowError("Duplicate server ids.");
     expect(() => parseCreateTeamInvite({ role: "owner" })).toThrowError("Unknown team role.");
-    expect(() => parseRemoteMacConnect({ hostname: "mac", serverId: 1 })).toThrowError("Invalid serverId.");
-    expect(() => parseRemoteDesktopConfig(null)).toThrowError("Remote Desktop details are required.");
     expect(() => parseUpdateTeamMember({ memberId: "member-1", disabled: "no" })).toThrowError(
       "Invalid team member state.",
     );

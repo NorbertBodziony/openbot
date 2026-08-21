@@ -1,5 +1,5 @@
 import type { AgentProviderId, AgentProviderState } from "@openbot/contracts/ipc";
-import { createEffect, For, Show } from "solid-js";
+import { createEffect, createUniqueId, For, Show } from "solid-js";
 import { Badge, Input } from "./ui";
 
 export interface ProviderPickerOption {
@@ -25,6 +25,7 @@ interface ProviderPickerProps {
 
 export function ProviderPicker(props: ProviderPickerProps) {
   const inputs = new Map<AgentProviderId, HTMLInputElement>();
+  const pickerId = createUniqueId();
   let focused = false;
 
   createEffect(
@@ -61,8 +62,10 @@ export function ProviderPicker(props: ProviderPickerProps) {
         <For each={props.options}>
           {(option) => {
             const available = () => option.state === "available";
+            const inputId = `${pickerId}-${option.id}`;
             return (
               <label
+                for={inputId}
                 class={[
                   "provider-picker-option",
                   {
@@ -75,6 +78,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
                 title={option.message ?? undefined}
               >
                 <Input
+                  id={inputId}
                   ref={(element) => inputs.set(option.id, element)}
                   type="radio"
                   name={props.ariaLabel}

@@ -2,30 +2,22 @@
 
 import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { BotSummary, ConversationWithReadState, TeamPresenceSnapshot } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
-import { afterEach, describe, expect, it } from "vitest";
-import type * as Ws from "ws";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { TeamChatStore } from "../backend/team-chat-store";
 import { TeamApiServer } from "./team-api-server";
 import { TeamStore } from "./team-store";
 
 const roots: string[] = [];
-const tcpServers: ReturnType<typeof createTcpServer>[] = [];
 type TeamApiOptions = ConstructorParameters<typeof TeamApiServer>[0];
 type TestAgents = TeamApiOptions["agents"];
 type TestMailbox = TeamApiOptions["mailbox"];
 type TestBrowser = TeamApiOptions["browser"];
-const requireModule = createRequire(import.meta.url);
-const { WebSocket: NodeWebSocket }: typeof Ws = requireModule(
-  join(dirname(requireModule.resolve("ws/package.json")), "index.js"),
-);
 
 interface TestRealtimeEvent {
   type: string;
@@ -95,9 +87,6 @@ function createBrowser(): TestBrowser {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
-  await Promise.all(
-    tcpServers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
-  );
 });
 
 describe("TeamApiServer administration", () => {
@@ -124,16 +113,25 @@ describe("TeamApiServer administration", () => {
       agents,
       mailbox: createMailbox(),
       browser: createBrowser(),
-      getRemoteMac: () => ({ hostname: null, online: false }),
-      redeemCentralTicket: async (ticket, serverId) =>
-        ticket === "valid-team-ticket" && serverId === store.getIdentity()?.serverId
+      redeemCentralTicket: async (ticket, serverId) => {
+        if (serverId !== store.getIdentity()?.serverId) return null;
+        if (ticket === "valid-team-ticket") {
+          return {
+            id: "alice-account",
+            email: "alice@example.com",
+            name: "Alice",
+            avatarUrl: "https://api.openbot.run/v1/avatars/alice-account?v=image-1",
+          };
+        }
+        return ticket === "owner-team-ticket"
           ? {
-              id: "alice-account",
-              email: "alice@example.com",
-              name: "Alice",
-              avatarUrl: "https://api.openbot.run/v1/avatars/alice-account?v=image-1",
+              id: "owner-account",
+              email: "owner@example.com",
+              name: "Owner on another Mac",
+              avatarUrl: null,
             }
-          : null,
+          : null;
+      },
       onPresence: (snapshot) => presenceSnapshots.push(snapshot),
       chat,
     });
@@ -178,6 +176,25 @@ describe("TeamApiServer administration", () => {
         body: JSON.stringify({ inviteToken: invite.token }),
       });
       expect(usedPreview.status).toBe(400);
+
+      const ownerInvite = await store.createInvite("member");
+      const ownerResponse = await fetch(`http://127.0.0.1:${port}/v1/join/account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inviteToken: ownerInvite.token,
+          accountTicket: "owner-team-ticket",
+        }),
+      });
+      expect(ownerResponse.status).toBe(201);
+      const ownerConnection = await ownerResponse.json();
+      expect(ownerConnection.member).toMatchObject({
+        email: "owner@example.com",
+        name: "Owner on another Mac",
+        role: "owner",
+      });
+      expect(store.listMembers()).toHaveLength(2);
+      expect(store.authenticate(ownerConnection.sessionToken)?.email).toBe("owner@example.com");
 
       const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
         "openbot-events",
@@ -301,7 +318,17 @@ describe("TeamApiServer administration", () => {
       agents,
       mailbox: createMailbox(),
       browser: createBrowser(),
-      getRemoteMac: () => ({ hostname: null, online: false }),
+      createInvite: async (input) => {
+        const created = await store.createInvite(input.role, input.email);
+        return {
+          id: created.id,
+          role: created.role,
+          expiresAt: created.expiresAt,
+          usedAt: null,
+          inviteUrl: `https://openbot.run/join?token=${created.token}`,
+          email: created.email,
+        };
+      },
     });
     const port = await api.start();
     const base = `http://127.0.0.1:${port}`;
@@ -311,13 +338,15 @@ describe("TeamApiServer administration", () => {
         body: { username: "owner", password: "correct horse battery" },
       });
       const ownerToken = ownerLogin.sessionToken;
-      const invite = await jsonRequest<{ id: string; token: string }>(base, "/v1/team/invites", {
+      const invite = await jsonRequest<{ id: string; inviteUrl: string }>(base, "/v1/team/invites", {
         token: ownerToken,
         body: { role: "member" },
       });
+      const inviteToken = new URL(invite.inviteUrl).searchParams.get("token");
+      expect(inviteToken).not.toBeNull();
       const joined = await jsonRequest<{ member: { id: string }; sessionToken: string }>(base, "/v1/join", {
         body: {
-          inviteToken: invite.token,
+          inviteToken,
           username: "alice",
           password: "a secure team password",
         },
@@ -374,7 +403,6 @@ describe("TeamApiServer administration", () => {
       agents,
       mailbox: createMailbox(),
       browser: createBrowser(),
-      getRemoteMac: () => ({ hostname: null, online: false }),
     });
     const port = await api.start();
     const base = `http://127.0.0.1:${port}`;
@@ -467,7 +495,6 @@ describe("TeamApiServer administration", () => {
       agents,
       mailbox: createMailbox(),
       browser: createBrowser(),
-      getRemoteMac: () => ({ hostname: null, online: false }),
     });
     const port = await api.start();
     const base = `http://127.0.0.1:${port}`;
@@ -516,7 +543,6 @@ describe("TeamApiServer administration", () => {
       agents,
       mailbox: createMailbox(),
       browser: createBrowser(),
-      getRemoteMac: () => ({ hostname: null, online: false }),
     });
     const port = await api.start();
     const base = `http://127.0.0.1:${port}`;
@@ -545,28 +571,17 @@ describe("TeamApiServer administration", () => {
     }
   });
 
-  it("grants Remote Desktop through team membership and closes it after session revocation", async () => {
+  it("requires the WebRTC protocol for legacy Remote Desktop clients", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-desktop-"));
     roots.push(root);
     const store = new TeamStore(join(root, "team.json"));
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
-    const vnc = createTcpServer((socket) => {
-      socket.write("RFB 003.889\n");
-      socket.on("data", (chunk) => socket.write(Buffer.concat([Buffer.from("echo:"), chunk])));
-    });
-    tcpServers.push(vnc);
-    await new Promise<void>((resolve) => vnc.listen(0, "127.0.0.1", resolve));
-    const address = vnc.address();
-    if (!address || isString(address)) throw new Error("Missing VNC test port");
     const api = new TeamApiServer({
       store,
       agents: createAgents(),
       mailbox: createMailbox(),
       browser: createBrowser(),
-      getRemoteMac: () => ({ hostname: "desktop.test", online: true }),
-      getRemoteDesktopPassword: () => "deskpass",
-      remoteDesktopPort: address.port,
     });
     const port = await api.start();
     const base = `http://127.0.0.1:${port}`;
@@ -575,27 +590,11 @@ describe("TeamApiServer administration", () => {
       const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
         body: { username: "owner", password: "correct horse battery" },
       });
-      const access = await jsonRequest<{ configured: boolean; password: string }>(
-        base,
-        "/v1/host/remote-desktop-access",
-        { token: login.sessionToken },
-      );
-      expect(access).toEqual({ configured: true, password: "deskpass" });
-
-      const desktop = new NodeWebSocket(`ws://127.0.0.1:${port}/v1/remote-desktop`, [
-        "openbot-desktop",
-        `openbot-token.${login.sessionToken}`,
-      ]);
-      await expect(nextWebSocketMessage(desktop)).resolves.toEqual(Buffer.from("RFB 003.889\n"));
-      desktop.send(Buffer.from("hello"));
-      await expect(nextWebSocketMessage(desktop)).resolves.toEqual(Buffer.from("echo:hello"));
-
-      const ownerSession = store.listSessions().find((session) => session.username === "owner");
-      if (!ownerSession) throw new Error("Missing owner session");
-      await store.revokeSession(ownerSession.id);
-      const closed = new Promise<number>((resolve) => desktop.once("close", (code) => resolve(code)));
-      desktop.send(Buffer.from("after-revoke"));
-      await expect(closed).resolves.toBe(1008);
+      const legacy = await fetch(`${base}/v1/host/remote-desktop-access`, {
+        headers: { Authorization: `Bearer ${login.sessionToken}` },
+      });
+      expect(legacy.status).toBe(426);
+      await expect(legacy.json()).resolves.toEqual({ error: "Update required.", code: "protocol_mismatch" });
 
       const unauthorized = await fetch(`${base}/v1/host/remote-desktop-access`);
       expect(unauthorized.status).toBe(401);
@@ -603,16 +602,112 @@ describe("TeamApiServer administration", () => {
       await api.stop();
     }
   });
-});
 
-function nextWebSocketMessage(websocket: Ws.WebSocket): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    websocket.once("message", (data) => {
-      resolve(Buffer.isBuffer(data) ? data : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data));
+  it("allows an active member to create remote control and rejects an outsider", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-remote-screen-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const invite = await store.createInvite("member");
+    const joined = await store.acceptInvite(invite.token, "alice", "a secure team password");
+    const now = "2026-08-20T12:00:00.000Z";
+    const createSession = vi.fn(
+      async (input: { serverId: string; memberId: string; teamSessionId: string; teamSessionExpiresAt: string }) => ({
+        id: "remote-session-1",
+        serverId: input.serverId,
+        viewerUrl: "https://studio.example/v1/remote-screen/sessions/remote-session-1/viewer",
+        viewerGrant: "one-use-viewer-grant",
+        displays: [{ id: "primary", label: "Primary display", width: 1920, height: 1080, primary: true }],
+        selectedDisplayId: "primary",
+        phase: "connecting" as const,
+        transport: "unknown" as const,
+        errorCode: null,
+        message: "Waiting for the WebRTC client…",
+        createdAt: now,
+        grantExpiresAt: "2026-08-20T12:01:00.000Z",
+      }),
+    );
+    const remoteScreen: NonNullable<TeamApiOptions["remoteScreen"]> = {
+      handlesHttp: () => false,
+      handleHttp: unimplemented,
+      handlesUpgrade: () => false,
+      handleUpgrade: unimplemented,
+      stop: vi.fn(async () => undefined),
+      capabilities: () => ({
+        ready: true,
+        platform: "darwin" as const,
+        unattended: false,
+        runtime: "sunshine-moonlight" as const,
+        protocolVersion: 2 as const,
+        displays: [],
+        selectedDisplayId: null,
+        activeSessions: 0,
+        maxSessions: 4,
+      }),
+      createSession,
+      selectDisplay: vi.fn(async () => undefined),
+      closeMemberSession: vi.fn(async () => true),
+      revokeTeamSession: vi.fn(async () => undefined),
+      revokeMember: vi.fn(async () => undefined),
+    };
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents(),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+      remoteScreen,
     });
-    websocket.once("error", reject);
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const outsider = await fetch(`${base}/v1/remote-screen/sessions`, { method: "POST" });
+      expect(outsider.status).toBe(401);
+      expect(createSession).not.toHaveBeenCalled();
+
+      const response = await fetch(`${base}/v1/remote-screen/sessions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${joined.sessionToken}` },
+      });
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({
+        id: "remote-session-1",
+        viewerGrant: "one-use-viewer-grant",
+        phase: "connecting",
+      });
+      expect(createSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: store.getIdentity()?.serverId,
+          memberId: joined.member.id,
+          teamSessionId: expect.any(String),
+          teamSessionExpiresAt: joined.sessionExpiresAt,
+        }),
+      );
+
+      const owner = await store.login("owner", "correct horse battery");
+      const disabled = await fetch(`${base}/v1/team/members/${joined.member.id}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${owner.sessionToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ disabled: true }),
+      });
+      expect(disabled.status).toBe(200);
+      expect(remoteScreen.revokeMember).toHaveBeenCalledWith(joined.member.id);
+
+      const blocked = await fetch(`${base}/v1/remote-screen/sessions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${joined.sessionToken}` },
+      });
+      expect(blocked.status).toBe(401);
+      expect(createSession).toHaveBeenCalledOnce();
+    } finally {
+      await api.stop();
+    }
   });
-}
+});
 
 function nextJsonEvent(websocket: WebSocket): Promise<TestRealtimeEvent> {
   return new Promise((resolve, reject) => {

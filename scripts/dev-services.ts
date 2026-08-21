@@ -56,6 +56,8 @@ export function createDevelopmentServiceSpec(
       OPENBOT_APP_VARIANT: "dev",
       OPENBOT_DEV_PROFILE: isTestClient ? "test-client" : "app",
       OPENBOT_DEV_RENDERER_PORT: isTestClient ? "5174" : "5173",
+      OPENBOT_DEV_REMOTE_DEBUGGING_PORT: isTestClient ? "9334" : "9333",
+      OPENBOT_DEV_REMOTE_ROLE: isTestClient ? "client" : "host",
     },
   };
 }

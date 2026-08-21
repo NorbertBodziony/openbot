@@ -35,6 +35,7 @@
   --openbot-queue-action: var(--openbot-text-muted);
   --openbot-border: rgba(255, 255, 255, 0.08);
   --openbot-border-strong: rgba(255, 255, 255, 0.14);
+  --openbot-image-outline: rgba(255, 255, 255, 0.1);
   --openbot-border-focus: rgba(105, 96, 241, 0.72);
   --openbot-text-primary: #f2f2f2;
   --openbot-text-on-light: #141414;
@@ -120,7 +121,6 @@
   --text-muted: var(--openbot-text-muted);
   --accent: var(--openbot-accent);
   --danger: var(--openbot-danger);
-  --openbot-vnc-background: var(--openbot-bg-canvas);
   --openbot-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --openbot-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
   --openbot-text-nano: 7px;

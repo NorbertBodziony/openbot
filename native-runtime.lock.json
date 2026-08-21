@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "cloudflared": {
+    "repository": "https://github.com/cloudflare/cloudflared",
+    "version": "2026.5.2",
+    "license": "Apache-2.0",
+    "licenseSha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd",
+    "artifacts": {
+      "darwin-arm64": {
+        "asset": "cloudflared-darwin-arm64.tgz",
+        "assetSha256": "ba94054c9fd4297645093d59d51442e5e546d07bb0516120e694a13d5b216d38",
+        "binarySha256": "cd9f764abfd06757b4def10ee5ba3d862381ed9fc02d6c1f06086c23d88695c6",
+        "executable": "cloudflared",
+        "platformDirectory": "mac"
+      },
+      "win32-x64": {
+        "asset": "cloudflared-windows-amd64.exe",
+        "assetSha256": "20b9638f685333d623798e733effbad2487093f15ba592f6c7752360ff3b7ab7",
+        "binarySha256": "20b9638f685333d623798e733effbad2487093f15ba592f6c7752360ff3b7ab7",
+        "executable": "cloudflared.exe",
+        "platformDirectory": "win"
+      }
+    }
+  },
+  "remoteDesktop": {
+    "recipeVersion": 1,
+    "sunshine": {
+      "sourceMode": "openbot-fork",
+      "repository": "https://github.com/NorbertBodziony/Sunshine.git",
+      "version": "v2026.516.143833",
+      "commit": "cbef4bbb73f3ce327815c4da159a1e7b22d54997",
+      "upstream": {
+        "repository": "https://github.com/LizardByte/Sunshine.git",
+        "commit": "14ffa6fdaa53f7b51512be2b3d24f3939695403c"
+      },
+      "sourceArchive": "https://github.com/NorbertBodziony/Sunshine/archive/cbef4bbb73f3ce327815c4da159a1e7b22d54997.tar.gz",
+      "sourceSha256": "2a59b33479c7e4eda8cb1cf62cd8ccd950dd1b9df170e069c50851ddf102ebc8",
+      "license": "GPL-3.0",
+      "licenseSha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "patch": {
+        "path": "vendor/remote-desktop/patches/sunshine-v2026.516.143833-openbot.patch",
+        "sha256": "69c69779ec8dd46abaf1b6a46be0d04d0c9f557287da54faa2ca2379365d1717"
+      },
+      "overrides": [],
+      "submodules": {
+        "packaging/linux/flatpak/deps/flatpak-builder-tools": "dda10aa5949811589747e6e485da6ae2e86b5d2b",
+        "packaging/linux/flatpak/deps/shared-modules": "8c3f3cfa5a4af9a696ff0bfb3ed0eba404faaf5d",
+        "third-party/Simple-Web-Server": "546895a93a29062bb178367b46c7afb72da9881e",
+        "third-party/TPCircularBuffer": "cc520397504bb72bc6df79ff03eb72988a6dc50d",
+        "third-party/ViGEmClient": "8d71f6740ffff4671cdadbca255ce528e3cd3fef",
+        "third-party/build-deps": "fce763bb09c73b5952ccdcbc90efb8ba8f53a7de",
+        "third-party/doxyconfig": "e552f7c9f00cd0cf24764a37d0905935b3d2c188",
+        "third-party/glad": "73db193f853e2ee079bf3ca8a64aa2eaf6459043",
+        "third-party/googletest": "52eb8108c5bdec04579160ae17225d66034bd723",
+        "third-party/inputtino": "f4ce2b0df536ef309e9ff318f75b460f7097d7c1",
+        "third-party/libdisplaydevice": "fe7e6a81f65deae91594702e1a185f47229745b9",
+        "third-party/moonlight-common-c": "2600beaf13f18bfa43453609cf5e3b84a4227760",
+        "third-party/moonlight-common-c/enet": "c7353c059373f8d3fc83d451f8f1a477be3dc94e",
+        "third-party/moonlight-common-c/nanors/deps/simde": "595b743dcebc05756244a66dcd78e9d64c07b3b7",
+        "third-party/nanors": "19f07b513e924e471cadd141943c1ec4adc8d0e0",
+        "third-party/nv-codec-headers": "33a9ede8d9914299d9262539c576a15bd0a19621",
+        "third-party/nvapi": "9b181ea572f680327fe01a14a0f1f41c78034104",
+        "third-party/plasma-wayland-protocols": "4c015e90ae6c88f2ffa766e899387ef431eade49",
+        "third-party/tray": "563dee475f8878d252ab2b9938d3a014e776ed08",
+        "third-party/wayland-protocols": "88223018d1b578d0d8869866da66d9608e05f928",
+        "third-party/wlr-protocols": "bf4fc79abc359eea5a0edec0ac6d4a2b2955f82a"
+      }
+    },
+    "moonlightWeb": {
+      "sourceMode": "openbot-fork",
+      "repository": "https://github.com/NorbertBodziony/moonlight-web-stream.git",
+      "version": "v2.10.0",
+      "commit": "f1d20ab348978e39c80734a7302db2646e2231d7",
+      "upstream": {
+        "repository": "https://github.com/MrCreativ3001/moonlight-web-stream.git",
+        "commit": "cd9d03cbf9a42b394f7b72a733a2f39cb5f0edd8"
+      },
+      "sourceArchive": "https://github.com/NorbertBodziony/moonlight-web-stream/archive/f1d20ab348978e39c80734a7302db2646e2231d7.tar.gz",
+      "sourceSha256": "7b7ac01b7b7e995ec352415eca3338997882af3d7e49ede5b113ce207b1e28f1",
+      "license": "GPL-3.0",
+      "licenseSha256": "8b1ba204bb69a0ade2bfcf65ef294a920f6bb361b317dba43c7ef29d96332b9b",
+      "patch": {
+        "path": "vendor/remote-desktop/patches/moonlight-web-stream-v2.10.0-openbot.patch",
+        "sha256": "977e5974ba7281006de533575aef16535e3744fbbd1bbbafb559728785ce7057"
+      },
+      "overrides": [],
+      "submodules": {}
+    },
+    "releaseArtifacts": {},
+    "targets": {
+      "darwin-arm64": ["Sunshine.app/Contents/MacOS/Sunshine", "web-server", "streamer"],
+      "win32-x64": ["sunshine.exe", "web-server.exe", "streamer.exe"]
+    }
+  }
+}

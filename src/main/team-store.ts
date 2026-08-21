@@ -7,10 +7,13 @@ import {
   sign,
   timingSafeEqual,
 } from "node:crypto";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { avatarFileExtension, isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
+  AvatarImageInput,
   CentralAuthUser,
   TeamInviteSummary,
   TeamMemberSummary,
@@ -53,6 +56,10 @@ interface StoredTeam {
   enabledOnLaunch: boolean;
   publicKey: string;
   privateKey: string;
+  serverLogo?: {
+    version: string;
+    mimeType: AvatarImageInput["mimeType"];
+  };
   members: StoredMember[];
   invites: StoredInvite[];
   sessions: StoredSession[];
@@ -64,6 +71,7 @@ export interface TeamIdentity {
   fingerprint: string;
   publicKey: string;
   enabledOnLaunch: boolean;
+  logoVersion: string | null;
 }
 
 export interface CreatedInvite {
@@ -88,11 +96,13 @@ export interface AuthenticatedMember {
 
 export class TeamStore {
   readonly #path: string;
+  readonly #logoRoot: string;
   #state: StoredTeam | null = null;
   #writeChain = Promise.resolve();
 
   constructor(path: string) {
     this.#path = path;
+    this.#logoRoot = join(dirname(path), `${basename(path)}.assets`, "logo");
   }
 
   async initialize(): Promise<void> {
@@ -117,7 +127,12 @@ export class TeamStore {
       fingerprint: fingerprint(this.#state.publicKey),
       publicKey: this.#state.publicKey,
       enabledOnLaunch: this.#state.enabledOnLaunch,
+      logoVersion: this.#state.serverLogo?.version ?? null,
     };
+  }
+
+  getOwnerEmail(): string | null {
+    return this.#state?.members.find((member) => member.role === "owner")?.email ?? null;
   }
 
   assertOwnerAccount(user: CentralAuthUser): void {
@@ -176,7 +191,11 @@ export class TeamStore {
     return identity;
   }
 
-  async configureWithAccount(serverName: string, user: CentralAuthUser): Promise<TeamIdentity> {
+  async configureWithAccount(
+    serverName: string,
+    user: CentralAuthUser,
+    logo?: AvatarImageInput | null,
+  ): Promise<TeamIdentity> {
     if (this.#state) throw new Error("The team server is already configured.");
     validateServerName(serverName);
     const email = normalizeEmail(user.email);
@@ -184,6 +203,7 @@ export class TeamStore {
       publicKeyEncoding: { type: "spki", format: "pem" },
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
     });
+    const serverLogo = logo ? await this.#writeLogo(logo) : undefined;
     this.#state = {
       version: 1,
       serverId: randomUUID(),
@@ -191,6 +211,7 @@ export class TeamStore {
       enabledOnLaunch: false,
       publicKey,
       privateKey,
+      ...(serverLogo ? { serverLogo } : {}),
       members: [
         {
           id: randomUUID(),
@@ -206,10 +227,76 @@ export class TeamStore {
       invites: [],
       sessions: [],
     };
-    await this.#persist();
+    try {
+      await this.#persist();
+    } catch (error) {
+      this.#state = null;
+      if (serverLogo) await this.#removeLogo(serverLogo).catch(() => undefined);
+      throw error;
+    }
     const identity = this.getIdentity();
     if (!identity) throw new Error("The team identity could not be created.");
     return identity;
+  }
+
+  async updateIdentity(input: { serverName?: string; logo?: AvatarImageInput | null }): Promise<TeamIdentity> {
+    const state = this.#requireState();
+    if (input.serverName !== undefined) validateServerName(input.serverName);
+    if (input.serverName === undefined && input.logo === undefined) {
+      const identity = this.getIdentity();
+      if (!identity) throw new Error("This OpenBot has not been configured.");
+      return identity;
+    }
+
+    const previousName = state.serverName;
+    const previousLogo = state.serverLogo;
+    const nextLogo =
+      input.logo === undefined ? previousLogo : input.logo === null ? undefined : await this.#writeLogo(input.logo);
+    if (input.serverName !== undefined) state.serverName = input.serverName.trim();
+    state.serverLogo = nextLogo;
+    try {
+      await this.#persist();
+    } catch (error) {
+      state.serverName = previousName;
+      state.serverLogo = previousLogo;
+      if (nextLogo && nextLogo.version !== previousLogo?.version) {
+        await this.#removeLogo(nextLogo).catch(() => undefined);
+      }
+      throw error;
+    }
+    if (previousLogo && previousLogo.version !== nextLogo?.version) {
+      await this.#removeLogo(previousLogo).catch(() => undefined);
+    }
+    const identity = this.getIdentity();
+    if (!identity) throw new Error("The team identity could not be updated.");
+    return identity;
+  }
+
+  resolveLogo(): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
+    const logo = this.#state?.serverLogo;
+    if (!logo) return null;
+    return {
+      path: join(this.#logoRoot, `${logo.version}.${avatarFileExtension(logo.mimeType)}`),
+      mimeType: logo.mimeType,
+      version: logo.version,
+    };
+  }
+
+  async #writeLogo(image: AvatarImageInput): Promise<NonNullable<StoredTeam["serverLogo"]>> {
+    if (!isValidAvatarImage(image.mimeType, image.bytes)) {
+      throw new Error("Choose a valid PNG, JPEG, or WebP image up to 512 KB.");
+    }
+    const version = randomUUID();
+    const target = join(this.#logoRoot, `${version}.${avatarFileExtension(image.mimeType)}`);
+    const temporary = `${target}.tmp`;
+    await mkdir(this.#logoRoot, { recursive: true, mode: 0o700 });
+    await writeFile(temporary, image.bytes, { mode: 0o600 });
+    await rename(temporary, target);
+    return { version, mimeType: image.mimeType };
+  }
+
+  #removeLogo(logo: NonNullable<StoredTeam["serverLogo"]>): Promise<void> {
+    return rm(join(this.#logoRoot, `${logo.version}.${avatarFileExtension(logo.mimeType)}`), { force: true });
   }
 
   async setEnabledOnLaunch(enabled: boolean): Promise<void> {
@@ -285,16 +372,25 @@ export class TeamStore {
   async acceptInviteWithAccount(token: string, user: CentralAuthUser): Promise<AuthenticatedMember> {
     const state = this.#requireState();
     const email = normalizeEmail(user.email);
-    if (state.members.some((member) => member.email === email || member.username === email)) {
-      throw new Error("This email is already a member of the team.");
-    }
     const invite = this.#findUsableInvite(token);
     if (!invite) throw new Error("The invitation is invalid or expired.");
-    if (state.members.length >= INPUT_LIMITS.teamMembers) {
-      throw new Error(`A host can have up to ${INPUT_LIMITS.teamMembers} members.`);
-    }
     if (invite.email && invite.email !== email) {
       throw new Error("This invitation belongs to a different email address.");
+    }
+    const existingMember = state.members.find((member) => member.email === email || member.username === email);
+    if (existingMember) {
+      if (existingMember.disabled) throw new Error("This team member is disabled.");
+      existingMember.email = email;
+      existingMember.username = email;
+      existingMember.name = normalizeName(user.name);
+      existingMember.avatarUrl = normalizeAvatarUrl(user.avatarUrl);
+      invite.usedAt = new Date().toISOString();
+      const result = this.#createSession(existingMember);
+      await this.#persist();
+      return result;
+    }
+    if (state.members.length >= INPUT_LIMITS.teamMembers) {
+      throw new Error(`A host can have up to ${INPUT_LIMITS.teamMembers} members.`);
     }
     const member: StoredMember = {
       id: randomUUID(),
@@ -376,6 +472,12 @@ export class TeamStore {
   }
 
   authenticate(token: string): TeamMemberSummary | null {
+    return this.authenticateSession(token)?.member ?? null;
+  }
+
+  authenticateSession(
+    token: string,
+  ): { member: TeamMemberSummary; sessionId: string; sessionExpiresAt: string } | null {
     if (!this.#state || !token) return null;
     const tokenHash = hashToken(token);
     const session = this.#state.sessions.find(
@@ -383,7 +485,7 @@ export class TeamStore {
     );
     if (!session) return null;
     const member = this.#state.members.find((candidate) => candidate.id === session.memberId && !candidate.disabled);
-    return member ? publicMember(member) : null;
+    return member ? { member: publicMember(member), sessionId: session.id, sessionExpiresAt: session.expiresAt } : null;
   }
 
   async logout(token: string): Promise<void> {
@@ -620,6 +722,10 @@ function validatePassword(value: string): void {
 function isStoredTeam(value: unknown): value is StoredTeam {
   if (!isDynamicRecord(value)) return false;
   const record = value;
+  const logo = record.serverLogo;
+  const validLogo =
+    logo === undefined ||
+    (isDynamicRecord(logo) && isString(logo.version) && isString(logo.mimeType) && isAvatarMimeType(logo.mimeType));
   return (
     record.version === 1 &&
     isString(record.serverId) &&
@@ -628,6 +734,7 @@ function isStoredTeam(value: unknown): value is StoredTeam {
     isString(record.privateKey) &&
     Array.isArray(record.members) &&
     Array.isArray(record.invites) &&
-    Array.isArray(record.sessions)
+    Array.isArray(record.sessions) &&
+    validLogo
   );
 }

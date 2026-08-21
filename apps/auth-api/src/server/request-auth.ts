@@ -5,7 +5,7 @@ import { D1AuthRepository } from "./d1-auth-repository";
 import { D1TeamTunnelRepository } from "./d1-team-tunnel-repository";
 import { createEmailCodeDelivery, createTeamInviteEmailDelivery } from "./email-delivery";
 import { JsonBodyError } from "./json-body";
-import { TeamTunnelService } from "./team-tunnel-service";
+import { authenticateTeamHost, TeamTunnelService } from "./team-tunnel-service";
 import { requireWorkerBindings, type TeamInviteEmailDelivery } from "./types";
 
 export function requestAuthService(): AuthService {
@@ -47,6 +47,12 @@ export function requestTeamTunnelService(): TeamTunnelService | null {
     }),
     domain: bindings.CLOUDFLARE_TUNNEL_DOMAIN,
   });
+}
+
+export function requestTeamHostAuthenticator(): (serverId: string, token: string) => Promise<boolean> {
+  const bindings = requireWorkerBindings(env);
+  const repository = new D1TeamTunnelRepository(bindings.DB);
+  return (serverId, token) => authenticateTeamHost(repository, serverId, token);
 }
 
 export function requestSourceIp(request: Request): string {

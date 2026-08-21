@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
@@ -28,11 +28,13 @@ import {
   type OpenDialogOptions,
   protocol,
   safeStorage,
+  screen,
   session,
   shell,
   systemPreferences,
 } from "electron";
 import electronUpdater from "electron-updater";
+import { z } from "zod";
 import { AgentService } from "../backend/agent-service";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
@@ -43,6 +45,7 @@ import { AgentInitializationGate } from "./agent-initialization";
 import { notificationForAgentEvent } from "./agent-notifications";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
+import { resolveOpenBotCloudflaredExecutable } from "./cloudflared-artifact";
 import { developmentUserDataName, readDevelopmentProfile, shouldAutoStartHost } from "./development-profile";
 import { HostService } from "./host-service";
 import {
@@ -71,11 +74,11 @@ import {
   parseCreateTeamInvite,
   parseDirectTyping,
   parseHostConfig,
+  parseHostIdentity,
   parseJoinServer,
   parseLoginServer,
   parseMarkDirectRead,
-  parseRemoteDesktopConfig,
-  parseRemoteMacConnect,
+  parseReorderServers,
   parseSendDirectMessage,
   parseSetTeamTyping,
   parseUpdateTeamMember,
@@ -83,9 +86,11 @@ import {
 import { isObject, requireString } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
 import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
-import { RemoteDesktopCredentialStore } from "./remote-desktop-credential-store";
-import { RemoteMacManager } from "./remote-mac";
+import { RemoteDesktopManager } from "./remote-desktop-manager";
+import { resolveRemoteDesktopRuntime } from "./remote-desktop-runtime-artifact";
+import { loadOrCreateRemoteDesktopCredentials } from "./remote-desktop-secret-store";
 import {
+  type DevelopmentRemoteServerConnection,
   decodeAccountUsage,
   decodeAgentModelOptions,
   decodeAgentStatus,
@@ -105,9 +110,21 @@ import { isTrustedRendererUrl } from "./trusted-renderer";
 import { supportsInstalledUpdates, UpdateService } from "./update-service";
 import { VoiceTranscriptionService } from "./voice-transcription-service";
 
-if (!app.isPackaged) {
-  const profile = readDevelopmentProfile(process.env.OPENBOT_DEV_PROFILE);
-  app.setPath("userData", join(app.getPath("appData"), developmentUserDataName(profile)));
+const commandLineUserDataDirectory = app.commandLine.getSwitchValue("user-data-dir").trim();
+const developmentProfile = !app.isPackaged ? readDevelopmentProfile(process.env.OPENBOT_DEV_PROFILE) : null;
+const developmentRemoteRole =
+  !app.isPackaged &&
+  (process.env.OPENBOT_DEV_REMOTE_ROLE === "host" || process.env.OPENBOT_DEV_REMOTE_ROLE === "client")
+    ? process.env.OPENBOT_DEV_REMOTE_ROLE
+    : null;
+if (!app.isPackaged && /^\d{4,5}$/u.test(process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT ?? "")) {
+  app.commandLine.appendSwitch("remote-debugging-port", process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT);
+  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+}
+if (commandLineUserDataDirectory) {
+  app.setPath("userData", resolve(commandLineUserDataDirectory));
+} else if (!app.isPackaged) {
+  app.setPath("userData", join(app.getPath("appData"), developmentUserDataName(developmentProfile ?? "app")));
 }
 app.enableSandbox();
 if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
@@ -140,6 +157,14 @@ protocol.registerSchemesAsPrivileged([
     scheme: "openbot-remote-avatar",
     privileges: { standard: true, secure: true, supportFetchAPI: true },
   },
+  {
+    scheme: "openbot-server-logo",
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
+  {
+    scheme: "openbot-remote-server-logo",
+    privileges: { standard: true, secure: true, supportFetchAPI: true },
+  },
 ]);
 
 let mainWindow: BrowserWindow | null = null;
@@ -148,7 +173,7 @@ let agentService: AgentService | null = null;
 let mailboxStore: MailboxStore | null = null;
 let updateService: UpdateService | null = null;
 let hostService: HostService | null = null;
-let remoteMacManager: RemoteMacManager | null = null;
+let remoteDesktopManager: RemoteDesktopManager | null = null;
 let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
 let voiceTranscriptionService: VoiceTranscriptionService | null = null;
@@ -162,7 +187,8 @@ const BROWSER_STATE_FILE = "openbot-browser-state-v1.json";
 const TEAM_FILE = "openbot-team-server-v1.json";
 const REMOTE_SERVERS_FILE = "openbot-remote-servers-v1.json";
 const CENTRAL_AUTH_FILE = "openbot-central-auth-v1.bin";
-const REMOTE_DESKTOP_CREDENTIAL_FILE = "openbot-remote-desktop-credential-v1.json";
+const LEGACY_REMOTE_DESKTOP_CREDENTIAL_FILE = "openbot-remote-desktop-credential-v1.json";
+const REMOTE_DESKTOP_RUNTIME_SECRET_FILE = "openbot-remote-desktop-runtime-v1.json";
 
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "agent-setup": "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
@@ -173,19 +199,24 @@ const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
 function configureContentSecurityPolicy(): void {
   const developmentSources = app.isPackaged ? "" : " http://localhost:* ws://localhost:*";
   const developmentImageSources = app.isPackaged ? "" : " http://127.0.0.1:* http://localhost:*";
+  const developmentFrameSources = app.isPackaged ? "" : " http://127.0.0.1:* http://localhost:*";
   const policy = [
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: openbot-attachment: openbot-remote-attachment: openbot-avatar: openbot-remote-avatar: https:${developmentImageSources}`,
+    `img-src 'self' data: openbot-attachment: openbot-remote-attachment: openbot-avatar: openbot-remote-avatar: openbot-server-logo: openbot-remote-server-logo: https:${developmentImageSources}`,
     "font-src 'self' data:",
-    `connect-src 'self' ws://127.0.0.1:*${developmentSources}`,
+    `connect-src 'self' ws://127.0.0.1:* wss://*.openbot.run${developmentSources}`,
     "object-src 'none'",
-    "frame-src 'self' openbot-attachment: openbot-remote-attachment:",
+    `frame-src 'self' openbot-attachment: openbot-remote-attachment: https://*.openbot.run${developmentFrameSources}`,
     "base-uri 'none'",
   ].join("; ");
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    if (details.resourceType !== "mainFrame" || !isTrustedRendererUrl(details.url)) {
+      callback({ responseHeaders: details.responseHeaders });
+      return;
+    }
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -203,7 +234,7 @@ function registerIpcHandlers(
   setupFile: string,
   initializeAgent: () => Promise<void>,
   host: HostService,
-  remoteMac: RemoteMacManager,
+  remoteDesktop: RemoteDesktopManager,
   remoteServers: RemoteServerManager,
   centralAuth: CentralAuthManager,
   voice: VoiceTranscriptionService,
@@ -269,9 +300,16 @@ function registerIpcHandlers(
     exportDiagnostics({ service, browser, updater, parentWindow: mainWindow }),
   );
 
-  handleTrusted(IPC_CHANNELS.serversList, () => remoteServers.list());
+  handleTrusted(IPC_CHANNELS.serversList, () => withLocalHostSummary(remoteServers.list(), host.getStatus()));
   handleTrusted(IPC_CHANNELS.serversSelect, (serverId: unknown) =>
-    remoteServers.select(requireString(serverId, "serverId")),
+    remoteServers
+      .select(requireString(serverId, "serverId"))
+      .then((servers) => withLocalHostSummary(servers, host.getStatus())),
+  );
+  handleTrusted(IPC_CHANNELS.serversReorder, (input: unknown) =>
+    remoteServers
+      .reorder(parseReorderServers(input).serverIds)
+      .then((servers) => withLocalHostSummary(servers, host.getStatus())),
   );
   handleTrusted(IPC_CHANNELS.serversJoin, (input: unknown) => remoteServers.join(parseJoinServer(input)));
   handleTrusted(IPC_CHANNELS.serversPreviewInvite, (input: unknown) =>
@@ -289,6 +327,31 @@ function registerIpcHandlers(
   );
   handleTrusted(IPC_CHANNELS.serversGetPresence, () =>
     remoteServers.activeServerId === "local" ? host.getPresence() : remoteServers.getPresence(),
+  );
+  handleTrusted(IPC_CHANNELS.serversGetPresenceFor, (serverId: unknown) => {
+    const target = requireString(serverId, "serverId");
+    return target === "local" ? host.getPresence() : remoteServers.getPresenceFor(target);
+  });
+  handleTrusted(IPC_CHANNELS.serversRefreshIdentity, (serverId: unknown) =>
+    remoteServers.refreshIdentity(requireString(serverId, "serverId")),
+  );
+  handleTrusted(IPC_CHANNELS.serversListMembers, (serverId: unknown) =>
+    remoteServers.listMembers(requireString(serverId, "serverId")),
+  );
+  handleTrusted(IPC_CHANNELS.serversUpdateMember, (serverId: unknown, input: unknown) =>
+    remoteServers.updateMember(requireString(serverId, "serverId"), parseUpdateTeamMember(input)),
+  );
+  handleTrusted(IPC_CHANNELS.serversRemoveMember, (serverId: unknown, memberId: unknown) =>
+    remoteServers.removeMember(requireString(serverId, "serverId"), requireString(memberId, "memberId")),
+  );
+  handleTrusted(IPC_CHANNELS.serversListInvites, (serverId: unknown) =>
+    remoteServers.listInvites(requireString(serverId, "serverId")),
+  );
+  handleTrusted(IPC_CHANNELS.serversRevokeInvite, (serverId: unknown, inviteId: unknown) =>
+    remoteServers.revokeInvite(requireString(serverId, "serverId"), requireString(inviteId, "inviteId")),
+  );
+  handleTrusted(IPC_CHANNELS.serversCreateInvite, (serverId: unknown, input: unknown) =>
+    remoteServers.createInvite(requireString(serverId, "serverId"), parseCreateTeamInvite(input)),
   );
   handleTrusted(IPC_CHANNELS.serversSetTyping, (input: unknown) => {
     const parsed = parseSetTeamTyping(input);
@@ -323,9 +386,8 @@ function registerIpcHandlers(
   });
   handleTrusted(IPC_CHANNELS.hostGetStatus, () => host.getStatus());
   handleTrusted(IPC_CHANNELS.hostConfigure, (input: unknown) => host.configure(parseHostConfig(input)));
-  handleTrusted(IPC_CHANNELS.hostConfigureRemoteDesktop, (input: unknown) =>
-    host.configureRemoteDesktop(parseRemoteDesktopConfig(input)),
-  );
+  handleTrusted(IPC_CHANNELS.hostUpdateIdentity, (input: unknown) => host.updateIdentity(parseHostIdentity(input)));
+  handleTrusted(IPC_CHANNELS.hostGetPresence, () => host.getPresence());
   handleTrusted(IPC_CHANNELS.hostStart, () => host.start());
   handleTrusted(IPC_CHANNELS.hostStop, () => host.stop());
   handleTrusted(IPC_CHANNELS.hostListMembers, () => host.listMembers());
@@ -342,13 +404,20 @@ function registerIpcHandlers(
     host.revokeInvite(requireString(inviteId, "inviteId")),
   );
   handleTrusted(IPC_CHANNELS.hostCreateInvite, (input: unknown) => host.createInvite(parseCreateTeamInvite(input)));
-  handleTrusted(IPC_CHANNELS.remoteMacList, () => remoteMac.list());
-  handleTrusted(IPC_CHANNELS.remoteMacConnect, (input: unknown) => remoteMac.connect(parseRemoteMacConnect(input)));
-  handleTrusted(IPC_CHANNELS.remoteMacDisconnect, (sessionId: unknown) =>
-    remoteMac.disconnect(requireString(sessionId, "sessionId")),
-  );
-  handleTrusted(IPC_CHANNELS.remoteMacGetCredentials, (sessionId: unknown) =>
-    remoteMac.getCredentials(requireString(sessionId, "sessionId")),
+  handleTrusted(IPC_CHANNELS.remoteDesktopList, () => remoteDesktop.list());
+  handleTrusted(IPC_CHANNELS.remoteDesktopConnect, (input: unknown) => {
+    if (!isObject(input)) throw new Error("Remote control details are required.");
+    return remoteDesktop.connect({ serverId: requireString(input.serverId, "serverId") });
+  });
+  handleTrusted(IPC_CHANNELS.remoteDesktopSelectDisplay, (input: unknown) => {
+    if (!isObject(input)) throw new Error("Remote display details are required.");
+    return remoteDesktop.selectDisplay(
+      requireString(input.serverId, "serverId"),
+      requireString(input.displayId, "displayId"),
+    );
+  });
+  handleTrusted(IPC_CHANNELS.remoteDesktopDisconnect, (sessionId: unknown) =>
+    remoteDesktop.disconnect(requireString(sessionId, "sessionId")),
   );
 
   handleTrusted(IPC_CHANNELS.agentGetStatus, (input: unknown) => {
@@ -691,7 +760,7 @@ function createWindow(): BrowserWindow {
     minHeight: 640,
     show: false,
     backgroundColor: "#0b0d0e",
-    title: "OpenBot",
+    title: developmentProfile === "test-client" ? "OpenBot Local Client" : "OpenBot Local Host",
     icon: appIconPath,
     ...(process.platform === "darwin"
       ? { titleBarStyle: "hidden" as const, trafficLightPosition: { x: 8, y: 14 } }
@@ -706,7 +775,9 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  window.once("ready-to-show", () => window.show());
+  window.once("ready-to-show", () => {
+    if (developmentRemoteRole !== "host") window.show();
+  });
   window.on("close", (event) => {
     if (process.platform === "darwin" && !isQuitting) {
       event.preventDefault();
@@ -829,16 +900,41 @@ function forwardUpdateStatus(status: import("@openbot/contracts/ipc").UpdateStat
 function forwardHostStatus(status: import("@openbot/contracts/ipc").HostStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.hostEvent, status);
+  if (remoteServerManager) {
+    mainWindow.webContents.send(IPC_CHANNELS.serversEvent, withLocalHostSummary(remoteServerManager.list(), status));
+  }
 }
 
-function forwardRemoteMacSessions(sessions: import("@openbot/contracts/ipc").RemoteMacSession[]): void {
+function forwardRemoteDesktopSessions(sessions: import("@openbot/contracts/ipc").RemoteDesktopSession[]): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.remoteMacEvent, sessions);
+  mainWindow.webContents.send(IPC_CHANNELS.remoteDesktopEvent, sessions);
 }
 
 function forwardServers(servers: import("@openbot/contracts/ipc").ServerSummary[]): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.serversEvent, servers);
+  mainWindow.webContents.send(
+    IPC_CHANNELS.serversEvent,
+    hostService ? withLocalHostSummary(servers, hostService.getStatus()) : servers,
+  );
+}
+
+function withLocalHostSummary(
+  servers: import("@openbot/contracts/ipc").ServerSummary[],
+  status: import("@openbot/contracts/ipc").HostStatus,
+): import("@openbot/contracts/ipc").ServerSummary[] {
+  return servers.map((server) =>
+    server.id === "local"
+      ? {
+          ...server,
+          name: status.serverName ?? "Local",
+          logoUrl: status.logoUrl,
+          apiUrl: status.apiUrl,
+          remoteDesktopAvailable: status.remoteDesktopReady,
+          state: status.phase === "error" ? "error" : "online",
+          role: status.configured ? "owner" : null,
+        }
+      : server,
+  );
 }
 
 function forwardTeamPresence(serverId: string, snapshot: import("@openbot/contracts/ipc").TeamPresenceSnapshot): void {
@@ -864,9 +960,18 @@ function forwardDirectTyping(
 
 function forwardCentralAuth(state: CentralAuthState): void {
   if (state.status === "signed_in") {
-    void hostService?.syncSignedInAccount(state.user).catch((error) => {
-      console.error("Unable to synchronize the team account profile:", error);
-    });
+    const host = hostService;
+    if (host) {
+      void host
+        .syncSignedInAccount(state.user)
+        .then(async () => {
+          const status = host.getStatus();
+          if (shouldAutoStartHost(status)) await host.start();
+        })
+        .catch((error) => {
+          console.error("Unable to synchronize or republish this OpenBot:", error);
+        });
+    }
   }
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.authEvent, state);
@@ -925,7 +1030,7 @@ app.on("continue-activity", (event, type, _userInfo, details) => {
 });
 
 if (!hasSingleInstanceLock) {
-  app.quit();
+  app.exit(0);
 } else {
   app.on("second-instance", (_event, argv) => {
     const deepLink = findInviteUrl(argv);
@@ -950,6 +1055,7 @@ if (!hasSingleInstanceLock) {
           app.isPackaged ? "https://api.openbot.run" : "http://127.0.0.1:3100",
         ),
         storagePath: join(app.getPath("userData"), CENTRAL_AUTH_FILE),
+        canPersist: () => safeStorage.isEncryptionAvailable(),
         encrypt: (value) => {
           if (!safeStorage.isEncryptionAvailable()) {
             throw new Error("macOS secure storage is unavailable.");
@@ -959,7 +1065,7 @@ if (!hasSingleInstanceLock) {
         decrypt: (value) => safeStorage.decryptString(value),
       });
       centralAuthManager.on("changed", forwardCentralAuth);
-      void centralAuthManager.initialize();
+      const centralAuthInitialization = centralAuthManager.initialize();
       const store = new BotStore(app.getPath("userData"), homedir());
       await store.initialize();
       mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot, store.database);
@@ -981,20 +1087,28 @@ if (!hasSingleInstanceLock) {
       configureAttachmentProtocol(mailboxStore, service);
       const teamStore = new TeamStore(join(app.getPath("userData"), TEAM_FILE));
       await teamStore.initialize();
+      if (developmentRemoteRole) {
+        const email =
+          developmentRemoteRole === "host"
+            ? (teamStore.getOwnerEmail() ?? "openbot-dev-host@example.com")
+            : "openbot-dev-client@example.com";
+        const user = await ensureDevelopmentAccount(centralAuthManager, email);
+        if (developmentRemoteRole === "host" && !teamStore.configured) {
+          await teamStore.configureWithAccount("OpenBot Local Dev Host", user);
+        }
+        if (developmentRemoteRole === "client" && !setupState.completed) {
+          await writeSetupState(setupFile, "codex");
+        }
+      }
       const teamChatStore = new TeamChatStore(store.database);
-      const remoteDesktopCredentials = new RemoteDesktopCredentialStore(
-        join(app.getPath("userData"), REMOTE_DESKTOP_CREDENTIAL_FILE),
-        {
-          encrypt: (value) => {
-            if (!safeStorage.isEncryptionAvailable()) {
-              throw new Error("macOS secure storage is unavailable.");
-            }
-            return safeStorage.encryptString(value);
-          },
-          decrypt: (value) => safeStorage.decryptString(value),
-        },
-      );
-      await remoteDesktopCredentials.initialize();
+      const remoteDesktopRuntime = await resolveRemoteDesktopRuntime({
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        sourceRoot: resolve(__dirname, "../.."),
+        platform: process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux",
+        architecture: process.arch,
+        overrideRoot: process.env.OPENBOT_REMOTE_DESKTOP_RUNTIME_PATH,
+      });
       hostService = new HostService({
         store: teamStore,
         agents: service,
@@ -1002,6 +1116,10 @@ if (!hasSingleInstanceLock) {
         browser: browserHost,
         chat: teamChatStore,
         logDirectory: join(app.getPath("userData"), "logs", "remote"),
+        removeLegacyRemoteDesktopCredential: async () => {
+          const credentialPath = join(app.getPath("userData"), LEGACY_REMOTE_DESKTOP_CREDENTIAL_FILE);
+          await Promise.all([rm(credentialPath, { force: true }), rm(`${credentialPath}.tmp`, { force: true })]);
+        },
         getSignedInUser: () => {
           if (!centralAuthManager) throw new Error("The account service is not ready.");
           return centralAuthManager.getSignedInUser();
@@ -1014,8 +1132,43 @@ if (!hasSingleInstanceLock) {
           if (!centralAuthManager) throw new Error("The account service is not ready.");
           return centralAuthManager.sendTeamInviteEmail(input);
         },
-        getRemoteDesktopPassword: () => remoteDesktopCredentials.getPassword(),
-        setRemoteDesktopPassword: (password) => remoteDesktopCredentials.setPassword(password),
+        platform: process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux",
+        unattended: false,
+        resolveCloudflared: () =>
+          resolveOpenBotCloudflaredExecutable({
+            isPackaged: app.isPackaged,
+            resourcesPath: process.resourcesPath,
+            sourceRoot: resolve(__dirname, "../.."),
+            overridePath: process.env.OPENBOT_CLOUDFLARED_PATH,
+          }),
+        remoteDesktopRuntimePaths: remoteDesktopRuntime,
+        remoteDesktopStateDirectory: join(app.getPath("userData"), "remote-desktop-runtime"),
+        getRemoteDesktopRuntimeCredentials: () => {
+          if (!safeStorage.isEncryptionAvailable()) throw new Error("System secret storage is unavailable.");
+          return loadOrCreateRemoteDesktopCredentials(
+            join(app.getPath("userData"), REMOTE_DESKTOP_RUNTIME_SECRET_FILE),
+            {
+              encrypt: (value) => safeStorage.encryptString(value),
+              decrypt: (value) => safeStorage.decryptString(value),
+            },
+          );
+        },
+        getRemoteDesktopDisplays: () => {
+          const primaryId = screen.getPrimaryDisplay().id;
+          return screen.getAllDisplays().map((display, index) => ({
+            id: String(display.id),
+            label: display.label || `Display ${index + 1}`,
+            width: display.size.width,
+            height: display.size.height,
+            primary: display.id === primaryId,
+          }));
+        },
+        getRemoteDesktopIceServers: () => {
+          if (developmentRemoteRole === "host") return Promise.resolve([]);
+          const identity = teamStore.getIdentity();
+          if (!identity || !centralAuthManager) throw new Error("The account service is not ready.");
+          return centralAuthManager.getTeamHostIceServers(identity.serverId);
+        },
         provisionTeamTunnel: (input) => {
           if (!centralAuthManager) throw new Error("The account service is not ready.");
           return centralAuthManager.provisionTeamTunnel(input);
@@ -1048,15 +1201,17 @@ if (!hasSingleInstanceLock) {
         },
       );
       await remoteServerManager.initialize();
-      remoteMacManager = new RemoteMacManager({
-        logDirectory: join(app.getPath("userData"), "logs", "remote"),
-        resolveRemoteDesktop: (serverId) => {
-          if (!remoteServerManager) throw new Error("The remote server service is not ready.");
-          return remoteServerManager.getRemoteDesktopAccess(serverId);
-        },
-      });
+      if (developmentRemoteRole === "host") {
+        await rm(developmentRemoteConnectionPath(), { force: true });
+        await hostService.startDevelopmentLocal();
+        await writeDevelopmentRemoteConnection(await hostService.createDevelopmentConnection());
+      } else if (developmentRemoteRole === "client") {
+        await connectDevelopmentRemoteServer(remoteServerManager);
+      }
+      configureServerLogoProtocols(teamStore);
+      remoteDesktopManager = new RemoteDesktopManager(remoteServerManager);
       const host = hostService;
-      const remoteMac = remoteMacManager;
+      const remoteDesktop = remoteDesktopManager;
       const remoteServers = remoteServerManager;
       voiceTranscriptionService = new VoiceTranscriptionService(
         app.isPackaged ? join(process.resourcesPath, "whisper") : resolve(".openbot-build/whisper"),
@@ -1075,7 +1230,7 @@ if (!hasSingleInstanceLock) {
       host.on("presence", (snapshot) => forwardTeamPresence("local", snapshot));
       host.on("directMessage", (event) => forwardDirectMessage("local", event));
       host.on("directTyping", (event) => forwardDirectTyping("local", event));
-      remoteMac.on("changed", forwardRemoteMacSessions);
+      remoteDesktop.on("changed", forwardRemoteDesktopSessions);
       remoteServers.on("changed", forwardServers);
       remoteServers.on("agent", (serverId, event) => {
         forwardAgentEvent(serverId, event);
@@ -1094,7 +1249,7 @@ if (!hasSingleInstanceLock) {
         setupFile,
         () => agentInitialization.start(),
         host,
-        remoteMac,
+        remoteDesktop,
         remoteServers,
         centralAuthManager,
         voiceTranscriptionService,
@@ -1103,12 +1258,15 @@ if (!hasSingleInstanceLock) {
       await loadRenderer(mainWindow);
       const teamIdentity = teamStore.getIdentity();
       if (
+        !developmentRemoteRole &&
         shouldAutoStartHost({
           configured: Boolean(teamIdentity),
           enabledOnLaunch: teamIdentity?.enabledOnLaunch ?? false,
         })
       ) {
-        void host.start().catch((error) => console.error("Unable to republish this OpenBot:", error));
+        void centralAuthInitialization
+          .then(() => host.start())
+          .catch((error) => console.error("Unable to republish this OpenBot:", error));
       }
       void agentInitialization.start().catch((error) => {
         console.error("Unable to initialize the local agent backend:", error);
@@ -1132,6 +1290,59 @@ if (!hasSingleInstanceLock) {
       );
       app.quit();
     });
+}
+
+const DEVELOPMENT_REMOTE_CONNECTION_FILE = "openbot-dev-remote-connection-v1.json";
+const developmentRemoteServerConnectionSchema: z.ZodType<DevelopmentRemoteServerConnection> = z.object({
+  serverId: z.string().min(1),
+  serverName: z.string().min(1),
+  apiUrl: z.string().min(1),
+  fingerprint: z.string().min(1),
+  publicKey: z.string().min(1),
+  username: z.string().min(1),
+  sessionToken: z.string().min(1),
+});
+
+function developmentRemoteConnectionPath(): string {
+  return join(tmpdir(), DEVELOPMENT_REMOTE_CONNECTION_FILE);
+}
+
+async function ensureDevelopmentAccount(manager: CentralAuthManager, email: string) {
+  const initialized = await manager.initialize();
+  if (initialized.status === "signed_in" && initialized.user.email === email) return initialized.user;
+  if (initialized.status === "signed_in") await manager.logout();
+  const challenge = await manager.requestEmailCode(email);
+  if (challenge.status !== "code_sent" || !challenge.developmentCode) {
+    throw new Error("The local account API did not return a development sign-in code.");
+  }
+  const verified = await manager.verifyEmailCode(challenge.challengeId, challenge.developmentCode);
+  if (verified.status !== "signed_in") throw new Error("The local development account could not sign in.");
+  return verified.user;
+}
+
+async function writeDevelopmentRemoteConnection(connection: DevelopmentRemoteServerConnection): Promise<void> {
+  await writeFile(developmentRemoteConnectionPath(), `${JSON.stringify(connection)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+}
+
+async function connectDevelopmentRemoteServer(manager: RemoteServerManager): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  let lastError: unknown = new Error("The local development host did not start.");
+  while (Date.now() < deadline) {
+    try {
+      const connection = developmentRemoteServerConnectionSchema.parse(
+        JSON.parse(await readFile(developmentRemoteConnectionPath(), "utf8")),
+      );
+      await manager.connectDevelopmentServer(connection);
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+    }
+  }
+  throw lastError;
 }
 
 function readComputerUsePrerequisites(): {
@@ -1191,7 +1402,7 @@ async function prepareForShutdown(): Promise<void> {
   updateService?.stop();
   remoteServerManager?.stop();
   voiceTranscriptionService?.shutdown();
-  await (remoteMacManager?.stop() ?? Promise.resolve());
+  await (remoteDesktopManager?.stop() ?? Promise.resolve());
   await (hostService?.shutdown() ?? Promise.resolve());
   await (browserHost?.destroy() ?? Promise.resolve());
   await (agentService?.stop() ?? Promise.resolve());
@@ -1420,6 +1631,45 @@ function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService
       return new Response(Buffer.from(avatar.bytes), {
         headers: {
           "Content-Type": avatar.mimeType,
+          "Cache-Control": "private, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+}
+
+function configureServerLogoProtocols(teamStore: TeamStore): void {
+  session.defaultSession.protocol.handle("openbot-server-logo", async (request) => {
+    try {
+      const url = new URL(request.url);
+      const logo = teamStore.resolveLogo();
+      if (url.hostname !== "local" || !logo || logo.version !== url.searchParams.get("v")) {
+        return new Response("Not found", { status: 404 });
+      }
+      return new Response(await readFile(logo.path), {
+        headers: {
+          "Content-Type": logo.mimeType,
+          "Cache-Control": "private, max-age=31536000, immutable",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    } catch {
+      return new Response("Not found", { status: 404 });
+    }
+  });
+  session.defaultSession.protocol.handle("openbot-remote-server-logo", async (request) => {
+    try {
+      const url = new URL(request.url);
+      const serverId = decodeURIComponent(url.hostname);
+      const version = url.searchParams.get("v");
+      if (!remoteServerManager || !serverId || !version) return new Response("Not found", { status: 404 });
+      const logo = await remoteServerManager.downloadServerLogo(serverId, version);
+      return new Response(Buffer.from(logo.bytes), {
+        headers: {
+          "Content-Type": logo.mimeType,
           "Cache-Control": "private, max-age=31536000, immutable",
           "X-Content-Type-Options": "nosniff",
         },

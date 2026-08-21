@@ -12,7 +12,6 @@ import type {
   CentralAuthState,
   CentralAuthUser,
   ConfigureHostInput,
-  ConfigureRemoteDesktopInput,
   ConversationMessage,
   ConversationSnapshot,
   CreateTeamInviteInput,
@@ -30,8 +29,7 @@ import type {
   OpenBotDesktopApi,
   QueueDelivery,
   QueueSnapshot,
-  RemoteMacConnectInput,
-  RemoteMacSession,
+  RemoteDesktopSession,
   ReorderQueueInput,
   RespondToPromptInput,
   SendDirectMessageInput,
@@ -63,7 +61,7 @@ import {
   STORY_INVITES,
   STORY_MODELS,
   STORY_PRESENCE,
-  STORY_REMOTE_MAC_SESSION,
+  STORY_REMOTE_DESKTOP_SESSION,
   STORY_SERVERS,
   STORY_SESSIONS,
   STORY_SNAPSHOTS,
@@ -92,7 +90,7 @@ export interface MockOpenBotOptions {
   teamMembers?: TeamMemberSummary[];
   invites?: TeamInviteSummary[];
   sessions?: TeamSessionSummary[];
-  remoteMacSessions?: RemoteMacSession[];
+  remoteDesktopSessions?: RemoteDesktopSession[];
   updateStatus?: UpdateStatus;
 }
 
@@ -105,7 +103,7 @@ export interface MockOpenBotControls {
   emitDirectTyping: (event: DirectTypingRealtimeEvent) => void;
   emitInvite: (inviteUrl: string) => void;
   emitHostStatus: (status: HostStatus) => void;
-  emitRemoteMacSessions: (sessions: RemoteMacSession[]) => void;
+  emitRemoteDesktopSessions: (sessions: RemoteDesktopSession[]) => void;
   dispose: () => void;
 }
 
@@ -140,7 +138,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let teamMembers = clone(options.teamMembers ?? STORY_TEAM_MEMBERS);
   let invites = clone(options.invites ?? STORY_INVITES);
   let sessions = clone(options.sessions ?? STORY_SESSIONS);
-  let remoteMacSessions = clone(options.remoteMacSessions ?? [STORY_REMOTE_MAC_SESSION]);
+  let remoteDesktopSessions = clone(options.remoteDesktopSessions ?? [STORY_REMOTE_DESKTOP_SESSION]);
   let updateStatus = clone(options.updateStatus ?? STORY_UPDATE_STATUS);
   const usage = clone(STORY_USAGE);
   let botCounter = bots.length;
@@ -154,7 +152,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   const directTypingListeners = new Set<Listener<DirectTypingRealtimeEvent>>();
   const inviteListeners = new Set<Listener<string>>();
   const hostListeners = new Set<Listener<HostStatus>>();
-  const remoteMacListeners = new Set<Listener<RemoteMacSession[]>>();
+  const remoteDesktopListeners = new Set<Listener<RemoteDesktopSession[]>>();
   const updateListeners = new Set<Listener<UpdateStatus>>();
   const attachmentListeners = new Set<Listener<AttachmentImportEvent>>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -203,9 +201,9 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     emit(hostListeners, status);
   }
 
-  function emitRemoteMacSessions(sessionsValue: RemoteMacSession[]): void {
-    remoteMacSessions = clone(sessionsValue);
-    emit(remoteMacListeners, sessionsValue);
+  function emitRemoteDesktopSessions(sessionsValue: RemoteDesktopSession[]): void {
+    remoteDesktopSessions = clone(sessionsValue);
+    emit(remoteDesktopListeners, sessionsValue);
   }
 
   function getSnapshot(botId: string): ConversationSnapshot {
@@ -565,14 +563,26 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         emitAgentEvent({ type: "bots-changed", bots });
         return clone(servers);
       },
+      reorder: async ({ serverIds }) => {
+        const serversById = new Map(servers.map((server) => [server.id, server]));
+        servers = [
+          ...servers.filter((server) => server.kind === "local"),
+          ...serverIds.flatMap((serverId) => {
+            const server = serversById.get(serverId);
+            return server?.kind === "remote" ? [server] : [];
+          }),
+        ];
+        return clone(servers);
+      },
       join: async (input: JoinServerInput) => {
         const server: ServerSummary = {
           id: `server-${servers.length + 1}`,
           name: "Joined workspace",
+          logoUrl: null,
           kind: "remote",
           state: "online",
           apiUrl: input.inviteUrl,
-          vncHostname: null,
+          remoteDesktopAvailable: false,
           role: "member",
           active: false,
         };
@@ -597,6 +607,35 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         servers = servers.filter((server) => server.id !== serverId);
       },
       getPresence: async () => clone(presence),
+      getPresenceFor: async () => clone(presence),
+      refreshIdentity: async (serverId) => {
+        const server = servers.find((candidate) => candidate.id === serverId);
+        if (!server) throw new Error("Server not found");
+        return clone(server);
+      },
+      listMembers: async () => clone(teamMembers),
+      updateMember: async (_serverId, input: UpdateTeamMemberInput) => {
+        const member = teamMembers.find((candidate) => candidate.id === input.memberId);
+        if (!member) throw new Error("Member not found");
+        const updated = { ...member, ...input };
+        teamMembers = teamMembers.map((candidate) => (candidate.id === updated.id ? updated : candidate));
+        return clone(updated);
+      },
+      removeMember: async (_serverId, memberId) => {
+        teamMembers = teamMembers.filter((member) => member.id !== memberId);
+      },
+      listInvites: async () => clone(invites),
+      revokeInvite: async (_serverId, inviteId) => {
+        invites = invites.filter((invite) => invite.id !== inviteId);
+      },
+      createInvite: async (_serverId, input: CreateTeamInviteInput): Promise<InviteSummary> => ({
+        id: `invite-${invites.length + 1}`,
+        inviteUrl: "https://team.example.com/invite/story-invite",
+        expiresAt: "2026-09-19T10:00:00.000Z",
+        role: input.role,
+        usedAt: null,
+        email: input.email ?? null,
+      }),
       setTyping: async (_input: SetTeamTypingInput) => undefined,
       onPresence: (listener) => {
         presenceListeners.add(listener);
@@ -676,18 +715,22 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         emitHostStatus(hostStatus);
         return clone(hostStatus);
       },
-      configureRemoteDesktop: async (_input: ConfigureRemoteDesktopInput) => {
-        hostStatus = { ...hostStatus, remoteDesktopCredentialConfigured: true };
+      updateIdentity: async (input) => {
+        hostStatus = {
+          ...hostStatus,
+          ...(input.serverName === undefined ? {} : { serverName: input.serverName }),
+        };
         emitHostStatus(hostStatus);
         return clone(hostStatus);
       },
+      getPresence: async () => clone(presence),
       start: async () => {
-        hostStatus = { ...hostStatus, phase: "online", apiOnline: true, vncOnline: true };
+        hostStatus = { ...hostStatus, phase: "online", apiOnline: true, remoteDesktopReady: true };
         emitHostStatus(hostStatus);
         return clone(hostStatus);
       },
       stop: async () => {
-        hostStatus = { ...hostStatus, phase: "idle", apiOnline: false, vncOnline: false };
+        hostStatus = { ...hostStatus, phase: "idle", apiOnline: false, remoteDesktopReady: false };
         emitHostStatus(hostStatus);
         return clone(hostStatus);
       },
@@ -723,32 +766,32 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         return () => hostListeners.delete(listener);
       },
     },
-    remoteMac: {
-      list: async () => clone(remoteMacSessions),
-      connect: async (input: RemoteMacConnectInput) => {
-        const session: RemoteMacSession = {
-          id: `remote-mac-${remoteMacSessions.length + 1}`,
-          serverId: input.serverId ?? null,
-          hostname: input.hostname,
-          localPort: 5901,
-          websocketUrl: "wss://desktop.example.com/socket",
-          phase: "connected",
-          errorCode: null,
-          message: null,
+    remoteDesktop: {
+      list: async () => clone(remoteDesktopSessions),
+      connect: async (input) => {
+        const session: RemoteDesktopSession = {
+          ...clone(STORY_REMOTE_DESKTOP_SESSION),
+          id: `remote-desktop-${remoteDesktopSessions.length + 1}`,
+          serverId: input.serverId,
           createdAt: new Date().toISOString(),
         };
-        remoteMacSessions = [...remoteMacSessions, session];
-        emitRemoteMacSessions(remoteMacSessions);
+        remoteDesktopSessions = [...remoteDesktopSessions, session];
+        emitRemoteDesktopSessions(remoteDesktopSessions);
         return clone(session);
       },
-      disconnect: async (sessionId) => {
-        remoteMacSessions = remoteMacSessions.filter((session) => session.id !== sessionId);
-        emitRemoteMacSessions(remoteMacSessions);
+      selectDisplay: async (input) => {
+        remoteDesktopSessions = remoteDesktopSessions.map((session) =>
+          session.serverId === input.serverId ? { ...session, selectedDisplayId: input.displayId } : session,
+        );
+        emitRemoteDesktopSessions(remoteDesktopSessions);
       },
-      getCredentials: async (_sessionId) => null,
+      disconnect: async (sessionId) => {
+        remoteDesktopSessions = remoteDesktopSessions.filter((session) => session.id !== sessionId);
+        emitRemoteDesktopSessions(remoteDesktopSessions);
+      },
       onEvent: (listener) => {
-        remoteMacListeners.add(listener);
-        return () => remoteMacListeners.delete(listener);
+        remoteDesktopListeners.add(listener);
+        return () => remoteDesktopListeners.delete(listener);
       },
     },
   };
@@ -762,7 +805,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     emitDirectTyping,
     emitInvite,
     emitHostStatus,
-    emitRemoteMacSessions,
+    emitRemoteDesktopSessions,
     dispose: () => {
       for (const timer of timers) clearTimeout(timer);
       timers.clear();
@@ -773,7 +816,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       directTypingListeners.clear();
       inviteListeners.clear();
       hostListeners.clear();
-      remoteMacListeners.clear();
+      remoteDesktopListeners.clear();
       updateListeners.clear();
       attachmentListeners.clear();
       void appInfo;

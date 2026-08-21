@@ -27,7 +27,7 @@ export function ChatSearch(props: ChatSearchProps) {
         autocomplete="off"
         autocapitalize="none"
         spellcheck={false}
-        onInput={(event) => props.onQueryChange(event.currentTarget.value)}
+        onValueChange={props.onQueryChange}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault();

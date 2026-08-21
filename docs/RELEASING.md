@@ -3,8 +3,9 @@
 OpenBot updates are published through GitHub Releases and installed with `electron-updater`.
 macOS requires every auto-updatable build to be signed with a Developer ID Application certificate.
 The release workflow also notarizes and staples the application before publishing it. Windows x64
-builds use an unsigned NSIS installer for now. GitHub Actions builds both platforms; release packages
-are not built on a developer machine.
+application releases are temporarily paused and do not block macOS. A release also requires the pinned Sunshine and Moonlight Web
+runtime artifacts. GitHub Actions downloads those artifacts, checks SHA-256, and signs their native
+executables as part of the final OpenBot package. Release packages are not built on a developer machine.
 
 ## One-time GitHub setup
 
@@ -21,11 +22,42 @@ Create the `release` environment in `NorbertBodziony/openbot`, then add these en
 Do not use an Apple Development certificate. Direct distribution and native macOS updates require a
 Developer ID Application certificate. Never commit signing credentials to the repository.
 
-Windows does not need a signing secret in the current workflow. The workflow requires the generated
-installer to have the `NotSigned` Authenticode state. This makes an unexpected signing configuration
-fail before publication. Users can see an `Unknown publisher` or SmartScreen warning. Add Windows
-signing later with Azure Artifact Signing or a suitable Authenticode certificate, and then remove the
-explicit unsigned checks from `electron-builder.yml` and the release workflow.
+Windows signing credentials will be required before Windows application releases are enabled again.
+
+## Build the remote desktop runtime
+
+`native-runtime.lock.json` pins the OpenBot forks of Sunshine `v2026.516.143833` and Moonlight Web
+`v2.10.0` by full commit and source archive SHA-256. Each entry also records its exact upstream base
+commit and the reviewable OpenBot patch. Build on the target platform:
+
+```bash
+bun run build:remote-desktop-runtime
+bun run verify:remote-desktop-runtime
+```
+
+The command writes binaries, the static Moonlight viewer, GPL-3.0 licenses, corresponding-source
+metadata, and SHA-256 checksums under `build/remote-desktop-runtime/<platform>/<arch>`. Publish the
+exact corresponding source for both GPL components with every binary release. A release must stop if
+a binary, license, source manifest, checksum, platform signature, or notarization result is missing.
+
+Use this source build only to make or reproduce a runtime version. The
+`.github/workflows/remote-desktop-runtime.yml` workflow builds macOS ARM64 and Windows x64 when the
+recipe or a pinned input changes. It publishes an immutable GitHub prerelease named
+`remote-desktop-runtime-<input-digest>`. The prerelease contains both deterministic archives, SPDX
+SBOMs, build provenance, and `remote-desktop-runtime-manifest.json`. It is not an OpenBot application
+update and it must never contain `latest.yml`.
+
+After publication, the workflow opens a draft PR that adds the release tag and SHA-256 values to
+`native-runtime.lock.json`. Normal CI and application release jobs then use:
+
+```bash
+bun run install:remote-desktop-runtime
+bun run verify:remote-desktop-runtime
+```
+
+The installer accepts only the exact prerelease and assets in the lock file. It rejects a changed
+manifest, a changed archive, an unsafe archive path, and a mismatched source manifest. Do not replace
+assets in an existing runtime prerelease. Increase `recipeVersion` when the build process changes.
 
 ## Publish a version
 
@@ -65,12 +97,12 @@ direct `200` responses with the required security headers, MIME type, app ID, an
 The workflow:
 
 1. verifies the tag matches `package.json`;
-2. runs the complete offline repository check;
-3. builds signed and notarized ARM64 DMG and ZIP artifacts on a GitHub macOS runner;
-4. builds an unsigned Windows x64 NSIS installer on a GitHub Windows runner;
-5. verifies each unpacked application, update metadata, and the expected signing state;
-6. generates platform SPDX SBOMs and GitHub build-provenance attestations;
-7. publishes one non-draft GitHub Release only after both platform jobs pass.
+2. installs and verifies the pinned remote desktop runtime without CMake or Cargo;
+3. runs the complete offline repository check;
+4. builds signed and notarized ARM64 DMG and ZIP artifacts on a GitHub macOS runner;
+5. verifies the unpacked application, update metadata, runtime, licenses, checksums, and signatures;
+6. generates a macOS SPDX SBOM and GitHub build-provenance attestation;
+7. publishes one non-draft GitHub Release after the macOS job passes.
 
 Users can verify a downloaded artifact with
 `gh attestation verify <file> --repo NorbertBodziony/openbot`.
@@ -87,12 +119,11 @@ different binaries.
 Before creating the first tag or any later release:
 
 1. run `bun run release:preflight` and resolve every reported signing or repository gate;
-2. confirm the `release` environment contains all six secrets above;
+2. confirm the `release` environment contains all six macOS secrets above;
 3. confirm the production `/join` page and Apple association file pass the deployment checks in CI;
 4. run `bun install --frozen-lockfile` and `bun run check` from a clean clone;
 5. run `bun run package:verify` and launch the generated `dist/mac-arm64/OpenBot.app`;
-6. confirm that the Windows x64 job passes on `main`; it builds and launches the Windows package on
-   a GitHub-hosted Windows runner;
+6. confirm that the lock file contains both runtime artifacts and that their install checks pass;
 7. smoke-test sign-in/setup, chat streaming, queues, attachments, agent messaging, browser control,
    context compaction, and the update popover;
 8. confirm `CHANGELOG.md` describes the version and the working tree is clean;
@@ -100,9 +131,7 @@ Before creating the first tag or any later release:
 
 The unsigned local macOS package is a development artifact. It does not prove Gatekeeper,
 notarization, or auto-update readiness. Those are proven only by the signed release workflow's
-`codesign`, `spctl`, and `stapler` checks. The Windows package stays unsigned until Windows signing is
-configured. Its SHA-256 checksum and GitHub build attestation prove which GitHub workflow built the
-file, but they do not remove the Windows publisher warning.
+`codesign`, `spctl`, and `stapler` checks.
 
 After publishing `v0.1.0`, keep one installed copy and use the first signed patch (`v0.1.1`) as the
 end-to-end updater acceptance test: check, download, restart, and confirm the version changed without

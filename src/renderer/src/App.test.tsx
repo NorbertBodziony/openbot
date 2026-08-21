@@ -8,6 +8,7 @@ import type {
   DirectMessageRealtimeEvent,
   DirectTypingRealtimeEvent,
   QueueDelivery,
+  ServerSummary,
   TeamPresenceSnapshot,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
@@ -19,6 +20,7 @@ let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
 let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
 let emitUpdateStatus: ((status: UpdateStatus) => void) | undefined;
 let emitAuth: ((state: CentralAuthState) => void) | undefined;
+let emitServers: ((servers: ServerSummary[]) => void) | undefined;
 let emitPresence: ((snapshot: TeamPresenceSnapshot) => void) | undefined;
 let emitDirectMessage: ((event: DirectMessageRealtimeEvent) => void) | undefined;
 let emitDirectTyping: ((event: DirectTypingRealtimeEvent) => void) | undefined;
@@ -96,6 +98,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAttachmentImport = undefined;
     emitUpdateStatus = undefined;
     emitAuth = undefined;
+    emitServers = undefined;
     emitPresence = undefined;
     emitDirectMessage = undefined;
     emitDirectTyping = undefined;
@@ -340,10 +343,11 @@ describe("OpenBot connected desktop shell", () => {
             {
               id: "local",
               name: "Local",
+              logoUrl: null,
               kind: "local",
               state: "online",
               apiUrl: null,
-              vncHostname: null,
+              remoteDesktopAvailable: false,
               role: null,
               active: true,
             },
@@ -352,10 +356,11 @@ describe("OpenBot connected desktop shell", () => {
             {
               id: "local",
               name: "Local",
+              logoUrl: null,
               kind: "local",
               state: "online",
               apiUrl: null,
-              vncHostname: null,
+              remoteDesktopAvailable: false,
               role: null,
               active: true,
             },
@@ -373,6 +378,23 @@ describe("OpenBot connected desktop shell", () => {
           login: vi.fn().mockResolvedValue(undefined),
           remove: vi.fn().mockResolvedValue(undefined),
           getPresence: vi.fn().mockResolvedValue({ serverId: null, members: [], updatedAt: "" }),
+          getPresenceFor: vi.fn().mockResolvedValue({ serverId: null, members: [], updatedAt: "" }),
+          refreshIdentity: vi.fn().mockImplementation(async (serverId) => {
+            const server = (await window.openbot.servers.list()).find((item) => item.id === serverId);
+            if (!server) throw new Error("Server not found");
+            return server;
+          }),
+          listMembers: vi.fn().mockResolvedValue([]),
+          updateMember: vi.fn().mockResolvedValue(undefined),
+          removeMember: vi.fn().mockResolvedValue(undefined),
+          listInvites: vi.fn().mockResolvedValue([]),
+          revokeInvite: vi.fn().mockResolvedValue(undefined),
+          createInvite: vi.fn().mockResolvedValue({
+            inviteUrl: "https://team.example.com/invite/test",
+            expiresAt: "2026-08-21T10:00:00.000Z",
+            role: "member",
+            email: null,
+          }),
           setTyping: vi.fn().mockResolvedValue(undefined),
           onPresence: vi.fn((listener) => {
             emitPresence = listener;
@@ -409,7 +431,10 @@ describe("OpenBot connected desktop shell", () => {
             emitDirectTyping = listener;
             return () => undefined;
           }),
-          onEvent: vi.fn(() => () => undefined),
+          onEvent: vi.fn((listener) => {
+            emitServers = listener;
+            return () => undefined;
+          }),
           onInvite: vi.fn((listener) => {
             emitInvite = listener;
             return () => undefined;
@@ -422,15 +447,18 @@ describe("OpenBot connected desktop shell", () => {
             enabledOnLaunch: false,
             serverId: null,
             serverName: null,
+            logoUrl: null,
             apiUrl: null,
-            vncHostname: null,
             apiOnline: false,
-            vncOnline: false,
-            remoteDesktopCredentialConfigured: false,
+            remoteDesktopReady: false,
+            remoteDesktopUnattended: false,
+            remoteDesktopActiveSessions: 0,
+            remoteDesktopMaxSessions: 4,
             message: null,
           }),
           configure: vi.fn().mockResolvedValue(undefined),
-          configureRemoteDesktop: vi.fn().mockResolvedValue(undefined),
+          updateIdentity: vi.fn().mockResolvedValue(undefined),
+          getPresence: vi.fn().mockResolvedValue({ serverId: null, members: [], updatedAt: "" }),
           start: vi.fn().mockResolvedValue(undefined),
           stop: vi.fn().mockResolvedValue(undefined),
           listMembers: vi.fn().mockResolvedValue([]),
@@ -443,11 +471,11 @@ describe("OpenBot connected desktop shell", () => {
           createInvite: vi.fn().mockResolvedValue(undefined),
           onEvent: vi.fn(() => () => undefined),
         },
-        remoteMac: {
+        remoteDesktop: {
           list: vi.fn().mockResolvedValue([]),
           connect: vi.fn().mockResolvedValue(undefined),
+          selectDisplay: vi.fn().mockResolvedValue(undefined),
           disconnect: vi.fn().mockResolvedValue(undefined),
-          getCredentials: vi.fn().mockResolvedValue(null),
           onEvent: vi.fn(() => () => undefined),
         },
       },
@@ -528,50 +556,132 @@ describe("OpenBot connected desktop shell", () => {
 
     emitInvite?.(inviteUrl);
 
-    expect(await screen.findByRole("dialog", { name: "Join a team" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Studio Mac" })).toBeInTheDocument();
     await waitFor(() => expect(window.openbot.servers.previewInvite).toHaveBeenCalledWith({ inviteUrl }));
     expect(window.openbot.servers.join).not.toHaveBeenCalled();
   });
 
-  it("opens the shared remote desktop inside the active remote host", async () => {
+  it("opens, hides, resumes, and disconnects Remote Control from the header", async () => {
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
       {
         id: "remote-1",
         name: "Studio Mac",
+        logoUrl: null,
         kind: "remote",
         state: "online",
         apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
-        vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
+        remoteDesktopAvailable: true,
         role: "owner",
         active: true,
       },
     ]);
-    vi.mocked(window.openbot.remoteMac.connect).mockResolvedValueOnce({
+    vi.mocked(window.openbot.remoteDesktop.connect).mockResolvedValueOnce({
       id: "desktop-1",
       serverId: "remote-1",
-      hostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
-      localPort: 5901,
-      websocketUrl: null,
-      phase: "starting_tunnel",
+      viewerUrl: "https://studio-mac-k7m4q2pz-host.openbot.run/v1/remote-screen/sessions/desktop-1/viewer",
+      viewerGrant: "viewer-grant",
+      displays: [],
+      selectedDisplayId: null,
+      phase: "connecting",
+      transport: "unknown",
       errorCode: null,
-      message: "Starting the secure tunnel…",
+      message: "Connecting…",
       createdAt: "2026-08-18T12:00:00.000Z",
+      grantExpiresAt: "2026-08-18T12:01:00.000Z",
     });
 
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    await fireEvent.click(screen.getByRole("button", { name: "Open remote desktop" }));
+    expect(window.openbot.remoteDesktop.connect).not.toHaveBeenCalled();
+    expect(screen.queryByTitle("Sunshine remote desktop")).not.toBeInTheDocument();
+    const openButton = screen.getByRole("button", { name: "Open remote control" });
+    await fireEvent.click(openButton);
 
-    const remoteDesktop = screen.getByRole("complementary", { name: "Remote desktop" });
-    expect(remoteDesktop).toBeInTheDocument();
-    expect(screen.getByText("Shared by all agents on this host")).toBeInTheDocument();
+    const remoteDesktop = await screen.findByRole("main", { name: "Remote control" });
+    const appFrame = document.querySelector<HTMLElement>(".app-frame");
+    if (!appFrame) throw new Error("App frame is missing.");
+    expect(remoteDesktop).toHaveClass("remote-desktop-workspace-visible");
+    expect(appFrame.inert).toBe(true);
+    expect(appFrame).toHaveAttribute("aria-hidden", "true");
     expect(within(remoteDesktop).getByText("Studio Mac")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(window.openbot.remoteMac.connect).toHaveBeenCalledWith({
-        hostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
-        serverId: "remote-1",
-      }),
+    expect(within(remoteDesktop).getByText("Shared control")).toBeInTheDocument();
+    expect(within(remoteDesktop).queryByLabelText(/password/iu)).not.toBeInTheDocument();
+    expect(within(remoteDesktop).queryByText(/view.only/iu)).not.toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.remoteDesktop.connect).toHaveBeenCalledWith({ serverId: "remote-1" }));
+
+    const viewer = await screen.findByTitle("Sunshine remote desktop");
+    await fireEvent.click(within(remoteDesktop).getByRole("button", { name: "Back to OpenBot" }));
+    await waitFor(() => expect(appFrame.inert).toBe(false));
+    expect(window.openbot.remoteDesktop.disconnect).not.toHaveBeenCalled();
+    expect(screen.getByTitle("Sunshine remote desktop")).toBe(viewer);
+    const resumeButton = screen.getByRole("button", { name: "Resume remote control" });
+    await waitFor(() => expect(resumeButton).toHaveFocus());
+
+    await fireEvent.click(resumeButton);
+    expect(await screen.findByTitle("Sunshine remote desktop")).toBe(viewer);
+    expect(window.openbot.remoteDesktop.connect).toHaveBeenCalledTimes(1);
+    await fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    await waitFor(() => expect(window.openbot.remoteDesktop.disconnect).toHaveBeenCalledWith("desktop-1"));
+    await waitFor(() => expect(screen.queryByTitle("Sunshine remote desktop")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Open remote control" })).toBeInTheDocument();
+  });
+
+  it("disconnects a hidden Remote Control session when the server changes", async () => {
+    const servers = [
+      {
+        id: "remote-1",
+        name: "Studio Mac",
+        logoUrl: null,
+        kind: "remote" as const,
+        state: "online" as const,
+        apiUrl: "https://studio.example.com",
+        remoteDesktopAvailable: true,
+        role: "owner" as const,
+        active: true,
+      },
+      {
+        id: "remote-2",
+        name: "Office PC",
+        logoUrl: null,
+        kind: "remote" as const,
+        state: "online" as const,
+        apiUrl: "https://office.example.com",
+        remoteDesktopAvailable: true,
+        role: "member" as const,
+        active: false,
+      },
+    ];
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce(servers);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce(
+      servers.map((server) => ({ ...server, active: server.id === "remote-2" })),
     );
+    vi.mocked(window.openbot.remoteDesktop.connect).mockResolvedValueOnce({
+      id: "desktop-1",
+      serverId: "remote-1",
+      viewerUrl: "https://studio.example.com/v1/remote-screen/sessions/desktop-1/viewer",
+      viewerGrant: "viewer-grant",
+      displays: [],
+      selectedDisplayId: null,
+      phase: "connected",
+      transport: "p2p",
+      errorCode: null,
+      message: "Connected",
+      createdAt: "2026-08-18T12:00:00.000Z",
+      grantExpiresAt: "2026-08-18T12:01:00.000Z",
+    });
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "Open remote control" }));
+    const workspace = await screen.findByRole("main", { name: "Remote control" });
+    await fireEvent.click(within(workspace).getByRole("button", { name: "Back to OpenBot" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Office PC server" }));
+
+    await waitFor(() => expect(window.openbot.remoteDesktop.disconnect).toHaveBeenCalledWith("desktop-1"));
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-2"));
+    expect(screen.queryByTitle("Sunshine remote desktop")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open remote control" })).toBeInTheDocument();
+    expect(window.openbot.remoteDesktop.connect).toHaveBeenCalledTimes(1);
   });
 
   it("lets a user request an email code from the initial screen", async () => {
@@ -654,14 +764,14 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
 
     expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Join a team" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Join a server" })).not.toBeInTheDocument();
 
     emitAuth?.({
       status: "signed_in",
       user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
     });
 
-    expect(await screen.findByRole("dialog", { name: "Join a team" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Studio Mac" })).toBeInTheDocument();
     await waitFor(() => expect(window.openbot.servers.previewInvite).toHaveBeenCalledWith({ inviteUrl }));
   });
 
@@ -885,9 +995,13 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     const accountButton = await screen.findByRole("button", { name: "Open account menu" });
     expect(accountButton).toHaveTextContent("person@example.com");
+    expect(accountButton.closest(".account-dock")).toHaveClass("account-dock-with-server-rail");
+    expect(screen.getByRole("complementary", { name: "Bot navigation" })).not.toContainElement(accountButton);
 
     fireEvent.click(accountButton);
     await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(1));
+    const accountDialog = screen.getByRole("dialog", { name: "Account" });
+    expect(within(accountDialog).getAllByText("person@example.com")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Upload photo" })).toBeInTheDocument();
     expect(await screen.findByText("Weekly usage")).toBeInTheDocument();
     expect(screen.getByText("59%")).toBeInTheDocument();
@@ -920,7 +1034,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     const accountButton = await screen.findByRole("button", { name: "Open account menu" });
     await fireEvent.click(accountButton);
-    await fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
     await waitFor(() => expect(window.openbot.auth.updateAvatar).toHaveBeenCalledWith(null));
   });
 
@@ -1532,22 +1646,72 @@ describe("OpenBot connected desktop shell", () => {
     expect(within(picker).getByRole("option", { name: "Claude Opus 5, default" })).toBeDisabled();
   });
 
-  it("does not remount settings or discard an in-progress edit on bot list refresh", async () => {
+  it("does not remount agent text fields or discard in-progress edits on bot list refresh", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
     const name = screen.getByRole("textbox", { name: "Agent name" });
-    await fireEvent.focus(name);
-    await fireEvent.input(name, { target: { value: "Draft coordinator name" } });
-    emitAgentEvent?.({
-      type: "bots-changed",
-      bots: BOTS.map((bot) =>
-        bot.id === "chief" ? { ...bot, preview: "A new backend preview", notifications: !bot.notifications } : bot,
-      ),
-    });
+    name.focus();
+    let draft = "";
+    let refresh = 0;
+    for (const character of "Draft coordinator name") {
+      draft += character;
+      await fireEvent.input(name, { target: { value: draft } });
+      refresh += 1;
+      emitAgentEvent?.({
+        type: "bots-changed",
+        bots: BOTS.map((bot) =>
+          bot.id === "chief"
+            ? { ...bot, preview: `Backend refresh ${refresh}`, notifications: refresh % 2 === 0 }
+            : bot,
+        ),
+      });
+      expect(name).toHaveValue(draft);
+      expect(name).toHaveFocus();
+    }
 
     expect(screen.getByRole("textbox", { name: "Agent name" })).toBe(name);
     expect(name).toHaveValue("Draft coordinator name");
+
+    const title = screen.getByRole("textbox", { name: "Agent title" });
+    title.focus();
+    draft = "";
+    for (const character of "Research lead") {
+      draft += character;
+      await fireEvent.input(title, { target: { value: draft } });
+      refresh += 1;
+      emitAgentEvent?.({
+        type: "bots-changed",
+        bots: BOTS.map((bot) =>
+          bot.id === "chief"
+            ? { ...bot, preview: `Backend refresh ${refresh}`, notifications: refresh % 2 === 0 }
+            : bot,
+        ),
+      });
+      expect(title).toHaveValue(draft);
+      expect(title).toHaveFocus();
+    }
+    expect(screen.getByRole("textbox", { name: "Agent title" })).toBe(title);
+
+    const description = screen.getByRole("textbox", { name: "Agent description" });
+    description.focus();
+    draft = "";
+    for (const character of "Tracks every research request.") {
+      draft += character;
+      await fireEvent.input(description, { target: { value: draft } });
+      refresh += 1;
+      emitAgentEvent?.({
+        type: "bots-changed",
+        bots: BOTS.map((bot) =>
+          bot.id === "chief"
+            ? { ...bot, preview: `Backend refresh ${refresh}`, notifications: refresh % 2 === 0 }
+            : bot,
+        ),
+      });
+      expect(description).toHaveValue(draft);
+      expect(description).toHaveFocus();
+    }
+    expect(screen.getByRole("textbox", { name: "Agent description" })).toBe(description);
   });
 
   it("opens conversation search with the primary Find shortcut and restores focus on Escape", async () => {
@@ -3409,8 +3573,8 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("complementary", { name: "Servers" })).toBeInTheDocument();
     expect(screen.getByText("Local", { selector: ".sidebar-server-name" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Add remote server" }));
-    expect(screen.getByRole("dialog", { name: "Join a team" })).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Invitation link" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Join a server" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Invite link" })).toBeInTheDocument();
   });
 
   it("updates the sidebar header when a remote server is selected", async () => {
@@ -3418,20 +3582,22 @@ describe("OpenBot connected desktop shell", () => {
       {
         id: "local",
         name: "Local",
+        logoUrl: null,
         kind: "local",
         state: "online",
         apiUrl: null,
-        vncHostname: null,
+        remoteDesktopAvailable: false,
         role: null,
         active: true,
       },
       {
         id: "studio",
         name: "Design studio",
+        logoUrl: null,
         kind: "remote",
         state: "online",
         apiUrl: "https://studio.example.com",
-        vncHostname: "studio.example.com",
+        remoteDesktopAvailable: true,
         role: "owner",
         active: false,
       },
@@ -3448,7 +3614,55 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("Design studio", { selector: ".sidebar-server-name" })).toBeInTheDocument();
   });
 
-  it("opens publishing controls from the local server context menu", async () => {
+  it("opens settings for the clicked server without selecting it and restores focus", async () => {
+    const remote = {
+      id: "studio",
+      name: "Design studio",
+      logoUrl: null,
+      kind: "remote" as const,
+      state: "online" as const,
+      apiUrl: "https://studio.example.com",
+      remoteDesktopAvailable: true,
+      role: "admin" as const,
+      active: false,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
+      {
+        id: "local",
+        name: "Local",
+        logoUrl: null,
+        kind: "local",
+        state: "online",
+        apiUrl: null,
+        remoteDesktopAvailable: false,
+        role: null,
+        active: true,
+      },
+      remote,
+    ]);
+    vi.mocked(window.openbot.servers.refreshIdentity).mockResolvedValueOnce(remote);
+    vi.mocked(window.openbot.servers.getPresenceFor).mockResolvedValueOnce({
+      serverId: remote.id,
+      members: [],
+      updatedAt: "2026-08-20T10:00:00.000Z",
+    });
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const remoteButton = screen.getByRole("button", { name: "Design studio server" });
+    await fireEvent.contextMenu(remoteButton, { clientX: 32, clientY: 120 });
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Server settings" }), { button: 0 });
+
+    expect(await screen.findByRole("dialog", { name: "General" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Server name" })).not.toBeInTheDocument();
+    expect(screen.getByText("Design studio", { selector: ".server-settings-readonly-value" })).toBeInTheDocument();
+    expect(window.openbot.servers.select).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Close server settings" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(remoteButton).toHaveFocus());
+  });
+
+  it("opens settings from the local server context menu", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     expect(screen.queryByRole("button", { name: "Open publishing controls" })).not.toBeInTheDocument();
@@ -3456,33 +3670,91 @@ describe("OpenBot connected desktop shell", () => {
       clientX: 32,
       clientY: 80,
     });
-    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Publish this OpenBot" }), { button: 0 });
-    expect(screen.getByRole("dialog", { name: "Publish this OpenBot" })).toBeInTheDocument();
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Server settings" }), { button: 0 });
+    expect(screen.getByRole("dialog", { name: "General" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Server name" })).toBeInTheDocument();
   });
 
-  it("configures and publishes the local instance in one action", async () => {
+  it("keeps the local server name draft during server list updates", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.contextMenu(screen.getByRole("button", { name: "Local server" }), {
+      clientX: 32,
+      clientY: 80,
+    });
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Server settings" }), { button: 0 });
+
+    const name = screen.getByRole("textbox", { name: "Server name" });
+    name.focus();
+    let draft = "";
+    for (const character of "Design") {
+      draft += character;
+      await fireEvent.input(name, { target: { value: draft } });
+      emitServers?.([
+        {
+          id: "local",
+          name: "Local",
+          logoUrl: null,
+          kind: "local",
+          state: "online",
+          apiUrl: null,
+          remoteDesktopAvailable: false,
+          role: null,
+          active: true,
+        },
+      ]);
+      expect(name).toHaveValue(draft);
+      expect(name).toHaveFocus();
+    }
+
+    expect(screen.getByRole("textbox", { name: "Server name" })).toBe(name);
+    expect(name).toHaveValue("Design");
+  });
+
+  it("configures the local identity before publication", async () => {
     const configured = {
       phase: "idle" as const,
       configured: true,
       enabledOnLaunch: false,
       serverId: "server-1",
       serverName: "Design studio",
+      logoUrl: null,
       apiUrl: "https://design-studio-k7m4q2pz-host.openbot.run",
-      vncHostname: null,
       apiOnline: false,
-      vncOnline: false,
-      remoteDesktopCredentialConfigured: false,
+      remoteDesktopReady: false,
+      remoteDesktopUnattended: false,
+      remoteDesktopActiveSessions: 0,
+      remoteDesktopMaxSessions: 4,
       message: "Address reserved.",
     };
     vi.mocked(window.openbot.host.configure).mockResolvedValueOnce(configured);
-    vi.mocked(window.openbot.host.start).mockResolvedValueOnce({
-      ...configured,
-      phase: "online",
-      enabledOnLaunch: true,
-      apiOnline: true,
-      message: "This OpenBot is public. Only invited people can sign in.",
-    });
+    vi.mocked(window.openbot.servers.list)
+      .mockResolvedValueOnce([
+        {
+          id: "local",
+          name: "Local",
+          logoUrl: null,
+          kind: "local",
+          state: "online",
+          apiUrl: null,
+          remoteDesktopAvailable: false,
+          role: null,
+          active: true,
+        },
+      ])
+      .mockResolvedValue([
+        {
+          id: "local",
+          name: "Design studio",
+          logoUrl: null,
+          kind: "local",
+          state: "offline",
+          apiUrl: configured.apiUrl,
+          remoteDesktopAvailable: false,
+          role: "owner",
+          active: true,
+        },
+      ]);
     render(() => <App />);
 
     await screen.findByRole("heading", { name: "Chief" });
@@ -3490,15 +3762,15 @@ describe("OpenBot connected desktop shell", () => {
       clientX: 32,
       clientY: 80,
     });
-    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Publish this OpenBot" }), { button: 0 });
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Server settings" }), { button: 0 });
     await fireEvent.input(screen.getByRole("textbox", { name: "Server name" }), {
       target: { value: "Design studio" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Publish this OpenBot" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(window.openbot.host.configure).toHaveBeenCalledWith({ serverName: "Design studio" }));
-    expect(window.openbot.host.start).toHaveBeenCalledOnce();
-    expect(await screen.findByRole("button", { name: "Make private" })).toBeInTheDocument();
+    expect(window.openbot.host.start).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("switch", { name: "Publish this server" })).toBeEnabled());
   });
 
   it("shows publishing controls in the local server context menu on Windows", async () => {
@@ -3515,7 +3787,7 @@ describe("OpenBot connected desktop shell", () => {
       clientX: 32,
       clientY: 80,
     });
-    expect(screen.getByRole("menuitem", { name: "Publish this OpenBot" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Server settings" })).toBeInTheDocument();
   });
 
   it("shows and clears the unread boundary in an agent conversation", async () => {

@@ -30,6 +30,24 @@ await Promise.all([
   access(resolve(resourcesPath, "licenses/whisper.cpp-LICENSE")),
   access(whisperExecutablePath),
   access(whisperModelPath),
+  access(resolve(resourcesPath, "remote-desktop-runtime/licenses/Sunshine-GPL-3.0.txt")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/licenses/moonlight-web-stream-GPL-3.0.txt")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/source-manifest.json")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/DISTRIBUTION-SHA256SUMS.txt")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/sources/Sunshine-v2026.516.143833-source.tar.gz")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/sources/sunshine-v2026.516.143833-openbot.patch")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/sources/moonlight-web-stream-v2.10.0-openbot-source.tar.gz")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/sources/moonlight-web-stream-v2.10.0-openbot.patch")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/win32/x64/sunshine.exe")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/win32/x64/web-server.exe")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/win32/x64/streamer.exe")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/win32/x64/static/stream.html")),
+  access(resolve(resourcesPath, "remote-desktop-runtime/win32/x64/SHA256SUMS.txt")),
+  access(resolve(resourcesPath, "cloudflared/win/x64/cloudflared.exe")),
+  access(resolve(resourcesPath, "cloudflared/win/x64/SHA256SUMS.txt")),
+  access(resolve(resourcesPath, "cloudflared/win/x64/VERSION.txt")),
+  access(resolve(resourcesPath, "cloudflared/licenses/cloudflared-Apache-2.0.txt")),
+  access(resolve(resourcesPath, "cloudflared/source-manifest.json")),
 ]);
 
 expectEqual(
@@ -54,6 +72,11 @@ const machine = executable.readUInt16LE(peOffset + 4);
 if (machine !== 0x8664) {
   throw new Error(`Expected a Windows x64 executable, but its machine type is 0x${machine.toString(16)}.`);
 }
+
+for (const name of ["sunshine.exe", "web-server.exe", "streamer.exe"]) {
+  verifyAuthenticode(resolve(resourcesPath, "remote-desktop-runtime/win32/x64", name));
+}
+verifyAuthenticode(resolve(resourcesPath, "cloudflared/win/x64/cloudflared.exe"));
 
 const versionInfo = JSON.parse(
   run("powershell.exe", [
@@ -105,7 +128,7 @@ await verifyLaunch(executablePath);
 
 console.log(`Verified ${appPath}`);
 console.log(
-  `OpenBot ${packageJson.version} · Windows x64 · metadata · licenses · ASAR integrity · hardened fuses · launch`,
+  `OpenBot ${packageJson.version} · Windows x64 · metadata · GPL remote runtime · ASAR integrity · hardened fuses · launch`,
 );
 
 function expectEqual(actual: unknown, expected: unknown, label: string): void {
@@ -120,6 +143,16 @@ function run(command: string, args: string[]): string {
 
 function powerShellLiteral(value: string): string {
   return value.replaceAll("'", "''");
+}
+
+function verifyAuthenticode(path: string): void {
+  const status = run("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    `(Get-AuthenticodeSignature -LiteralPath '${powerShellLiteral(path)}').Status.ToString()`,
+  ]);
+  if (status !== "Valid") throw new Error(`The runtime signature is not valid for ${path}: ${status}`);
 }
 
 async function verifyLaunch(executable: string): Promise<void> {

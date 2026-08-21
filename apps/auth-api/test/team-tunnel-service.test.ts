@@ -2,6 +2,7 @@ import { isString } from "@openbot/contracts/runtime-values";
 import { describe, expect, it, vi } from "vitest";
 import { CloudflareTunnelProvider } from "../src/server/cloudflare-tunnel-provider";
 import {
+  authenticateTeamHost,
   TeamTunnelClaimConflict,
   type TeamTunnelProvider,
   type TeamTunnelRecord,
@@ -17,6 +18,7 @@ const user = { id: "user-1", email: "owner@example.com", name: null, avatarUrl: 
 class MemoryTeamTunnelRepository implements TeamTunnelRepository {
   record: TeamTunnelRecord | null = null;
   hostnameConflicts = 0;
+  machineTokenHash: string | null = null;
 
   async claim(input: Omit<TeamTunnelRecord, "tunnelId" | "status"> & { now: number }): Promise<TeamTunnelRecord> {
     if (this.hostnameConflicts > 0) {
@@ -37,12 +39,24 @@ class MemoryTeamTunnelRepository implements TeamTunnelRepository {
     this.record.status = "active";
   }
 
+  async setMachineTokenHash(serverId: string, tokenHash: string): Promise<void> {
+    if (this.record?.serverId !== serverId) throw new Error("Missing claim");
+    this.machineTokenHash = tokenHash;
+  }
+
+  async authenticateMachine(serverId: string, tokenHash: string): Promise<boolean> {
+    return this.record?.serverId === serverId && this.machineTokenHash === tokenHash;
+  }
+
   async find(serverId: string): Promise<TeamTunnelRecord | null> {
     return this.record?.serverId === serverId ? { ...this.record } : null;
   }
 
   async delete(serverId: string): Promise<void> {
-    if (this.record?.serverId === serverId) this.record = null;
+    if (this.record?.serverId === serverId) {
+      this.record = null;
+      this.machineTokenHash = null;
+    }
   }
 }
 
@@ -74,23 +88,21 @@ describe("TeamTunnelService", () => {
       serverId,
       serverName: "Studio Mac",
       apiPort: 43_123,
-      vncEnabled: true,
     });
     const second = await service.provision({ user, serverId, serverName: "Studio Mac" });
     expect(first).toMatchObject({
       tunnelId,
       tunnelName: "openbot-00000000000040008000000000000000",
       apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
-      vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
     });
     expect(second.tunnelId).toBe(tunnelId);
+    await expect(authenticateTeamHost(repository, serverId, second.machineToken)).resolves.toBe(true);
+    await expect(authenticateTeamHost(repository, serverId, "0".repeat(64))).resolves.toBe(false);
     expect(provider.createTunnel).toHaveBeenCalledTimes(1);
     expect(provider.configureTunnel).toHaveBeenNthCalledWith(1, {
       tunnelId,
       apiHostname: "studio-mac-k7m4q2pz-host.openbot.run",
-      vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
       apiPort: 43_123,
-      vncEnabled: true,
     });
   });
 
@@ -102,7 +114,6 @@ describe("TeamTunnelService", () => {
       tunnelId,
       tunnelName: "openbot-00000000000040008000000000000000",
       apiHostname: "studio-mac-k7m4q2pz-host.openbot.run",
-      vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
       status: "active",
     };
     const service = new TeamTunnelService({
@@ -142,7 +153,6 @@ describe("TeamTunnelService", () => {
 
     await expect(service.provision({ user, serverId, serverName: "Studio Mac" })).resolves.toMatchObject({
       apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
-      vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
     });
   });
 
@@ -169,14 +179,14 @@ describe("TeamTunnelService", () => {
     const service = new TeamTunnelService({ repository, provider, domain: "openbot.run" });
     await service.provision({ user, serverId, serverName: "Studio Mac" });
     await service.deprovision(user, serverId);
-    expect(provider.deleteDns).toHaveBeenCalledTimes(2);
+    expect(provider.deleteDns).toHaveBeenCalledTimes(1);
     expect(provider.deleteTunnel).toHaveBeenCalledWith(tunnelId);
     expect(repository.record).toBeNull();
   });
 });
 
 describe("CloudflareTunnelProvider", () => {
-  it("configures authenticated API ingress and closes raw VNC ingress", async () => {
+  it("configures the authenticated Team API ingress", async () => {
     const requests: Array<{ path: string; method: string; body: unknown; auth: string | null }> = [];
     const fetchMock = async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const url = new URL(input.toString());
@@ -204,9 +214,7 @@ describe("CloudflareTunnelProvider", () => {
     await provider.configureTunnel({
       tunnelId,
       apiHostname: "studio-mac-k7m4q2pz-host.openbot.run",
-      vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
       apiPort: 43_123,
-      vncEnabled: true,
     });
     await provider.ensureDns("studio-mac-k7m4q2pz-host.openbot.run", tunnelId);
     await expect(provider.getTunnelToken(tunnelId)).resolves.toHaveLength(80);
@@ -216,11 +224,6 @@ describe("CloudflareTunnelProvider", () => {
           {
             hostname: "studio-mac-k7m4q2pz-host.openbot.run",
             service: "http://127.0.0.1:43123",
-            originRequest: {},
-          },
-          {
-            hostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
-            service: "http_status:404",
             originRequest: {},
           },
           { service: "http_status:404" },

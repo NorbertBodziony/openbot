@@ -25,26 +25,28 @@ import type {
   HostStatus,
   InviteSummary,
   QueueSnapshot,
-  RemoteMacSession,
+  RemoteDesktopSession,
   ServerSummary,
   TeamInviteSummary,
-  TeamMemberSummary,
+  TeamPresenceMember,
   TeamPresenceSnapshot,
-  TeamSessionSummary,
   UpdateBotInput,
   UpdateStatus,
+  UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, createStore, flush, onSettled, Show } from "solid-js";
 import { playCompletionSoundForAgentEvent } from "./completion-sound";
+import { AccountDock } from "./components/AccountDock";
 import { AccountLogin } from "./components/AccountLogin";
 import { Conversation } from "./components/Conversation";
 import { DirectConversation } from "./components/DirectConversation";
 import { GlobalSearch } from "./components/GlobalSearch";
-import { HostPanel } from "./components/HostPanel";
 import { InitialSetup } from "./components/InitialSetup";
 import { JoinServerDialog } from "./components/JoinServerDialog";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./components/PanelResizer";
+import { RemoteDesktopWorkspace } from "./components/RemoteDesktopWorkspace";
 import { ServerRail } from "./components/ServerRail";
+import { ServerSettingsModal } from "./components/ServerSettingsModal";
 import { Sidebar, type SidebarAgentState } from "./components/Sidebar";
 import type { BotMessage, BotProfile } from "./data";
 
@@ -80,11 +82,13 @@ const FALLBACK_HOST_STATUS: HostStatus = {
   enabledOnLaunch: false,
   serverId: null,
   serverName: null,
+  logoUrl: null,
   apiUrl: null,
-  vncHostname: null,
   apiOnline: false,
-  vncOnline: false,
-  remoteDesktopCredentialConfigured: false,
+  remoteDesktopReady: false,
+  remoteDesktopUnattended: false,
+  remoteDesktopActiveSessions: 0,
+  remoteDesktopMaxSessions: 4,
   message: null,
 };
 
@@ -213,7 +217,8 @@ export function App() {
   const [servers, setServers] = createSignal<ServerSummary[]>([]);
   const [joinServerOpen, setJoinServerOpen] = createSignal(false);
   const [pendingInviteUrl, setPendingInviteUrl] = createSignal("");
-  const [hostOpen, setHostOpen] = createSignal(false);
+  const [serverSettingsTargetId, setServerSettingsTargetId] = createSignal<string | null>(null);
+  const [serverSettingsOpen, setServerSettingsOpen] = createSignal(false);
   const [globalSearchOpen, setGlobalSearchOpen] = createSignal(false);
   const [messageFocusRequest, setMessageFocusRequest] = createSignal<{
     botId: string;
@@ -221,9 +226,10 @@ export function App() {
     nonce: number;
   } | null>(null);
   const [hostStatus, setHostStatus] = createSignal<HostStatus>(FALLBACK_HOST_STATUS);
-  const [teamMembers, setTeamMembers] = createSignal<TeamMemberSummary[]>([]);
-  const [teamInvites, setTeamInvites] = createSignal<TeamInviteSummary[]>([]);
-  const [teamSessions, setTeamSessions] = createSignal<TeamSessionSummary[]>([]);
+  const [serverSettingsMembers, setServerSettingsMembers] = createSignal<TeamPresenceMember[]>([]);
+  const [serverSettingsInvites, setServerSettingsInvites] = createSignal<TeamInviteSummary[]>([]);
+  const [serverSettingsLoading, setServerSettingsLoading] = createSignal(false);
+  const [serverSettingsError, setServerSettingsError] = createSignal<string | null>(null);
   const [teamPresence, setTeamPresence] = createSignal<TeamPresenceSnapshot>(EMPTY_TEAM_PRESENCE);
   const [directThreads, setDirectThreads] = createSignal<DirectThreadSummary[]>([]);
   const [directConversations, setDirectConversations] = createSignal<Record<string, DirectConversationSnapshot>>({});
@@ -231,8 +237,12 @@ export function App() {
   const [directConversationLoading, setDirectConversationLoading] = createSignal(false);
   const [directConversationError, setDirectConversationError] = createSignal<string | null>(null);
   const [directTypingMemberIds, setDirectTypingMemberIds] = createSignal<Set<string>>(new Set());
-  const [remoteDesktopRequest, setRemoteDesktopRequest] = createSignal(0);
-  const [remoteMacSessions, setRemoteMacSessions] = createSignal<RemoteMacSession[]>([]);
+  const [remoteDesktopSessions, setRemoteDesktopSessions] = createSignal<RemoteDesktopSession[]>([]);
+  const [remoteDesktopWorkspaceServerId, setRemoteDesktopWorkspaceServerId] = createSignal<string | null>(null);
+  const [remoteDesktopWorkspaceVisible, setRemoteDesktopWorkspaceVisible] = createSignal(false);
+  const [remoteDesktopConnectingServerId, setRemoteDesktopConnectingServerId] = createSignal<string | null>(null);
+  const [remoteDesktopConnectionError, setRemoteDesktopConnectionError] = createSignal<string | null>(null);
+  const [remoteDesktopSessionEstablished, setRemoteDesktopSessionEstablished] = createSignal(false);
   const pendingConversationSnapshots = new Map<
     string,
     { snapshot: ConversationSnapshot; markNewMessagesRead: boolean }
@@ -242,6 +252,12 @@ export function App() {
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let conversationFrame: number | undefined;
   let directConversationRequest = 0;
+  let serverSettingsRequest = 0;
+  let serverSettingsRestoreTarget: HTMLElement | null = null;
+  let appFrameElement: HTMLDivElement | undefined;
+  let remoteDesktopRestoreTarget: HTMLElement | null = null;
+  let remoteDesktopConnectPromise: Promise<RemoteDesktopSession | undefined> | null = null;
+  let remoteDesktopConnectionRequest = 0;
   let authSuccessTimer: ReturnType<typeof setTimeout> | undefined;
 
   function applyCentralAuthState(state: CentralAuthState): void {
@@ -368,8 +384,8 @@ export function App() {
       receiveInvite(inviteUrl);
     });
     const unsubscribeHost = window.openbot.host.onEvent((status) => flush(() => setHostStatus(status)));
-    const unsubscribeRemoteMac = window.openbot.remoteMac.onEvent((sessions) =>
-      flush(() => setRemoteMacSessions(sessions)),
+    const unsubscribeRemoteDesktop = window.openbot.remoteDesktop.onEvent((sessions) =>
+      flush(() => setRemoteDesktopSessions(sessions)),
     );
     const handleGlobalSearchShortcut = (event: KeyboardEvent) => {
       if (
@@ -397,7 +413,7 @@ export function App() {
       unsubscribeDirectTyping();
       unsubscribeInvite();
       unsubscribeHost();
-      unsubscribeRemoteMac();
+      unsubscribeRemoteDesktop();
       window.removeEventListener("keydown", handleGlobalSearchShortcut);
       if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
       for (const timer of recentReplyTimers.values()) clearTimeout(timer);
@@ -484,9 +500,9 @@ export function App() {
       .getStatus()
       .then(setHostStatus)
       .catch(() => undefined);
-    void window.openbot.remoteMac
+    void window.openbot.remoteDesktop
       .list()
-      .then(setRemoteMacSessions)
+      .then(setRemoteDesktopSessions)
       .catch(() => undefined);
     return cleanup;
   });
@@ -1328,6 +1344,10 @@ export function App() {
   }
 
   async function selectServer(serverId: string): Promise<void> {
+    const previousServerId = servers().find((server) => server.active)?.id;
+    if (previousServerId && previousServerId !== serverId) {
+      await disconnectRemoteDesktopWorkspace(false);
+    }
     directConversationRequest += 1;
     const nextServers = await window.openbot.servers.select(serverId);
     setServers(nextServers);
@@ -1367,6 +1387,24 @@ export function App() {
     applyConversationReads(reads);
   }
 
+  async function reorderServers(serverIds: string[]): Promise<void> {
+    const previous = servers();
+    const serversById = new Map(previous.map((server) => [server.id, server]));
+    setServers([
+      ...previous.filter((server) => server.kind === "local"),
+      ...serverIds.flatMap((serverId) => {
+        const server = serversById.get(serverId);
+        return server?.kind === "remote" ? [server] : [];
+      }),
+    ]);
+    try {
+      setServers(await window.openbot.servers.reorder({ serverIds }));
+    } catch (error) {
+      setServers(previous);
+      throw error;
+    }
+  }
+
   function setTeamTyping(botId: string, typing: boolean): void {
     void window.openbot.servers.setTyping({ botId: typing ? botId : null, typing }).catch(() => {
       // Typing state is optional and must not interrupt message composition.
@@ -1391,107 +1429,293 @@ export function App() {
     await saveSetup(provider);
   }
 
-  async function refreshHostManagement(): Promise<void> {
-    if (!hostStatus().configured) {
-      setTeamMembers([]);
-      setTeamInvites([]);
-      setTeamSessions([]);
-      return;
-    }
+  async function refreshServerSettings(serverId = serverSettingsTargetId()): Promise<void> {
+    if (!serverId) return;
+    const request = ++serverSettingsRequest;
+    setServerSettingsLoading(true);
+    setServerSettingsError(null);
     try {
-      const [members, invites, sessions] = await Promise.all([
-        window.openbot.host.listMembers(),
-        window.openbot.host.listInvites(),
-        window.openbot.host.listSessions(),
+      let server = servers().find((item) => item.id === serverId);
+      if (!server) throw new Error("This server is not available.");
+      let identityError: string | null = null;
+      if (server.kind === "remote") {
+        try {
+          const refreshed = await window.openbot.servers.refreshIdentity(serverId);
+          setServers((current) => current.map((item) => (item.id === serverId ? refreshed : item)));
+          server = refreshed;
+        } catch (error) {
+          identityError = error instanceof Error ? error.message : "The server identity could not refresh.";
+        }
+      }
+      const canManage =
+        server.kind === "local" ? hostStatus().configured : server.role === "admin" || server.role === "owner";
+      const canUseNetwork = server.kind === "local" || server.state === "online";
+      const [presence, members, invites] = await Promise.all([
+        server.kind === "local" ? window.openbot.host.getPresence() : window.openbot.servers.getPresenceFor(serverId),
+        canManage && canUseNetwork
+          ? server.kind === "local"
+            ? window.openbot.host.listMembers()
+            : window.openbot.servers.listMembers(serverId)
+          : Promise.resolve(null),
+        canManage && canUseNetwork
+          ? server.kind === "local"
+            ? window.openbot.host.listInvites()
+            : window.openbot.servers.listInvites(serverId)
+          : Promise.resolve([]),
       ]);
-      setTeamMembers(members);
-      setTeamInvites(invites);
-      setTeamSessions(sessions);
-    } catch {
-      setTeamMembers([]);
-      setTeamInvites([]);
-      setTeamSessions([]);
+      if (request !== serverSettingsRequest || serverSettingsTargetId() !== serverId) return;
+      const presenceById = new Map(presence.members.map((member) => [member.id, member]));
+      setServerSettingsMembers(
+        (members ?? presence.members).map((member) => ({
+          ...member,
+          online: presenceById.get(member.id)?.online ?? false,
+          typingBotId: presenceById.get(member.id)?.typingBotId ?? null,
+        })),
+      );
+      setServerSettingsInvites(invites);
+      if (identityError) setServerSettingsError(identityError);
+    } catch (error) {
+      if (request === serverSettingsRequest && serverSettingsTargetId() === serverId) {
+        setServerSettingsError(error instanceof Error ? error.message : "The server settings could not load.");
+      }
+    } finally {
+      if (request === serverSettingsRequest) setServerSettingsLoading(false);
     }
   }
 
-  function openHostPanel(): void {
-    setHostOpen(true);
-    void refreshHostManagement();
+  function openServerSettings(serverId: string, trigger: HTMLElement | null): void {
+    serverSettingsRequest += 1;
+    serverSettingsRestoreTarget = trigger;
+    setServerSettingsTargetId(serverId);
+    setServerSettingsOpen(true);
+    setServerSettingsMembers([]);
+    setServerSettingsInvites([]);
+    setServerSettingsError(null);
+    void refreshServerSettings(serverId);
   }
 
-  async function configureAndPublishHost(input: { serverName: string }): Promise<void> {
-    const configured = await window.openbot.host.configure(input);
-    setHostStatus(configured);
-    const published = await window.openbot.host.start();
-    setHostStatus(published);
-    await refreshHostManagement();
-    if (published.phase !== "online") {
-      throw new Error(published.message ?? "This OpenBot could not be published.");
+  async function saveServerIdentity(input: { serverName: string; logo?: AvatarImageInput | null }): Promise<void> {
+    const server = serverSettingsTarget();
+    if (server?.kind !== "local") throw new Error("Only the local server identity can change here.");
+    const status = hostStatus().configured
+      ? await window.openbot.host.updateIdentity(input)
+      : await window.openbot.host.configure(input);
+    setHostStatus(status);
+    setServers(await window.openbot.servers.list());
+    await refreshServerSettings(server.id);
+  }
+
+  async function setServerPublished(published: boolean): Promise<void> {
+    const server = serverSettingsTarget();
+    if (server?.kind !== "local") throw new Error("Only the local server can change publication.");
+    const status = published ? await window.openbot.host.start() : await window.openbot.host.stop();
+    setHostStatus(status);
+    setServers(await window.openbot.servers.list());
+    await refreshServerSettings(server.id);
+    if (published && status.phase !== "online") {
+      throw new Error(status.message ?? "This server could not be published.");
     }
   }
 
-  async function startHost(): Promise<void> {
-    setHostStatus(await window.openbot.host.start());
-  }
-
-  async function configureRemoteDesktop(password: string): Promise<void> {
-    setHostStatus(await window.openbot.host.configureRemoteDesktop({ password }));
-  }
-
-  async function stopHost(): Promise<void> {
-    setHostStatus(await window.openbot.host.stop());
-  }
-
-  async function createHostInvite(input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
-    const invite = await window.openbot.host.createInvite(input);
-    await refreshHostManagement();
+  async function createServerInvite(input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
+    const server = serverSettingsTarget();
+    if (!server) throw new Error("This server is not available.");
+    const invite =
+      server.kind === "local"
+        ? await window.openbot.host.createInvite(input)
+        : await window.openbot.servers.createInvite(server.id, input);
+    await refreshServerSettings(server.id);
     return invite;
   }
 
-  async function updateHostMember(input: {
-    memberId: string;
-    role?: "admin" | "member";
-    disabled?: boolean;
-  }): Promise<void> {
-    await window.openbot.host.updateMember(input);
-    await refreshHostManagement();
+  async function updateServerMember(input: UpdateTeamMemberInput): Promise<void> {
+    const server = serverSettingsTarget();
+    if (!server) throw new Error("This server is not available.");
+    if (server.kind === "local") await window.openbot.host.updateMember(input);
+    else await window.openbot.servers.updateMember(server.id, input);
+    await refreshServerSettings(server.id);
   }
 
-  async function removeHostMember(memberId: string): Promise<void> {
-    await window.openbot.host.removeMember(memberId);
-    await refreshHostManagement();
+  async function removeServerMember(memberId: string): Promise<void> {
+    const server = serverSettingsTarget();
+    if (!server) throw new Error("This server is not available.");
+    if (server.kind === "local") await window.openbot.host.removeMember(memberId);
+    else await window.openbot.servers.removeMember(server.id, memberId);
+    await refreshServerSettings(server.id);
   }
 
-  async function revokeHostSession(sessionId: string): Promise<void> {
-    await window.openbot.host.revokeSession(sessionId);
-    await refreshHostManagement();
+  async function revokeServerInvite(inviteId: string): Promise<void> {
+    const server = serverSettingsTarget();
+    if (!server) throw new Error("This server is not available.");
+    if (server.kind === "local") await window.openbot.host.revokeInvite(inviteId);
+    else await window.openbot.servers.revokeInvite(server.id, inviteId);
+    await refreshServerSettings(server.id);
   }
 
-  async function revokeHostInvite(inviteId: string): Promise<void> {
-    await window.openbot.host.revokeInvite(inviteId);
-    await refreshHostManagement();
+  async function connectRemoteDesktop(serverId: string): Promise<RemoteDesktopSession> {
+    const session = await window.openbot.remoteDesktop.connect({ serverId });
+    setRemoteDesktopSessions((current) => [...current.filter((item) => item.id !== session.id), session]);
+    return session;
   }
 
-  async function connectRemoteMac(hostname: string, serverId: string | null): Promise<void> {
-    const session = await window.openbot.remoteMac.connect({
-      hostname,
-      serverId,
-    });
-    setRemoteMacSessions((current) => [...current.filter((item) => item.id !== session.id), session]);
+  async function disconnectRemoteDesktop(sessionId: string): Promise<void> {
+    await window.openbot.remoteDesktop.disconnect(sessionId);
+    setRemoteDesktopSessions((current) => current.filter((session) => session.id !== sessionId));
   }
 
-  async function disconnectRemoteMac(sessionId: string): Promise<void> {
-    await window.openbot.remoteMac.disconnect(sessionId);
+  async function selectRemoteDesktopDisplay(serverId: string, displayId: string): Promise<void> {
+    await window.openbot.remoteDesktop.selectDisplay({ serverId, displayId });
+    setRemoteDesktopSessions((current) =>
+      current.map((session) =>
+        session.serverId === serverId ? { ...session, selectedDisplayId: displayId } : session,
+      ),
+    );
+  }
+
+  function latestRemoteDesktopSession(serverId: string): RemoteDesktopSession | undefined {
+    return [...remoteDesktopSessions()]
+      .filter((session) => session.serverId === serverId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+  }
+
+  function restoreRemoteDesktopFocus(): void {
+    const target = remoteDesktopRestoreTarget;
+    remoteDesktopRestoreTarget = null;
+    if (target?.isConnected) requestAnimationFrame(() => target.focus());
+  }
+
+  function hideRemoteDesktopWorkspace(): void {
+    setRemoteDesktopWorkspaceVisible(false);
+    restoreRemoteDesktopFocus();
+  }
+
+  async function startRemoteDesktopConnection(
+    serverId: string,
+    request: number,
+  ): Promise<RemoteDesktopSession | undefined> {
+    try {
+      const session = await connectRemoteDesktop(serverId);
+      if (request !== remoteDesktopConnectionRequest || remoteDesktopWorkspaceServerId() !== serverId) {
+        await disconnectRemoteDesktop(session.id);
+        return undefined;
+      }
+      setRemoteDesktopSessionEstablished(true);
+      return session;
+    } catch (error) {
+      if (request === remoteDesktopConnectionRequest && remoteDesktopWorkspaceServerId() === serverId) {
+        setRemoteDesktopConnectionError(error instanceof Error ? error.message : "Could not start remote control.");
+      }
+      return undefined;
+    } finally {
+      if (request === remoteDesktopConnectionRequest) setRemoteDesktopConnectingServerId(null);
+    }
+  }
+
+  async function openRemoteDesktopWorkspace(serverId: string, trigger: HTMLElement): Promise<void> {
+    const server = servers().find((item) => item.id === serverId);
+    const existingSession = latestRemoteDesktopSession(serverId);
+    if (
+      server?.kind !== "remote" ||
+      (!existingSession && (server.state !== "online" || !server.remoteDesktopAvailable))
+    ) {
+      return;
+    }
+
+    remoteDesktopRestoreTarget = trigger;
+    setRemoteDesktopWorkspaceServerId(serverId);
+    setRemoteDesktopWorkspaceVisible(true);
+    setRemoteDesktopConnectionError(null);
+    if (existingSession) {
+      setRemoteDesktopSessionEstablished(true);
+      return;
+    }
+    if (remoteDesktopConnectPromise && remoteDesktopConnectingServerId() === serverId) {
+      await remoteDesktopConnectPromise;
+      return;
+    }
+
+    const request = ++remoteDesktopConnectionRequest;
+    setRemoteDesktopSessionEstablished(false);
+    setRemoteDesktopConnectingServerId(serverId);
+    const connection = startRemoteDesktopConnection(serverId, request);
+    remoteDesktopConnectPromise = connection;
+    await connection;
+    if (remoteDesktopConnectPromise === connection) remoteDesktopConnectPromise = null;
+  }
+
+  async function retryRemoteDesktopWorkspace(): Promise<void> {
+    const serverId = remoteDesktopWorkspaceServerId();
+    if (!serverId) return;
+    const existingSession = latestRemoteDesktopSession(serverId);
+    const request = ++remoteDesktopConnectionRequest;
+    setRemoteDesktopConnectionError(null);
+    setRemoteDesktopSessionEstablished(false);
+    setRemoteDesktopConnectingServerId(serverId);
+    if (existingSession) await disconnectRemoteDesktop(existingSession.id);
+    const connection = startRemoteDesktopConnection(serverId, request);
+    remoteDesktopConnectPromise = connection;
+    await connection;
+    if (remoteDesktopConnectPromise === connection) remoteDesktopConnectPromise = null;
+  }
+
+  async function disconnectRemoteDesktopWorkspace(restoreFocus = true): Promise<void> {
+    const serverId = remoteDesktopWorkspaceServerId();
+    if (!serverId) return;
+    ++remoteDesktopConnectionRequest;
+    setRemoteDesktopConnectionError(null);
+    setRemoteDesktopSessionEstablished(false);
+    const session = latestRemoteDesktopSession(serverId);
+    if (session) await disconnectRemoteDesktop(session.id);
+    else await remoteDesktopConnectPromise;
+    remoteDesktopConnectPromise = null;
+    setRemoteDesktopConnectingServerId(null);
+    setRemoteDesktopWorkspaceVisible(false);
+    setRemoteDesktopWorkspaceServerId(null);
+    if (restoreFocus) restoreRemoteDesktopFocus();
+    else remoteDesktopRestoreTarget = null;
   }
 
   const activeServer = createMemo(() => servers().find((server) => server.active));
-  const activeRemoteMacSession = createMemo(() => {
+  const serverSettingsTarget = createMemo(() => servers().find((server) => server.id === serverSettingsTargetId()));
+  const activeRemoteDesktopSession = createMemo(() => {
     const server = activeServer();
-    if (!server) return undefined;
-    return [...remoteMacSessions()]
-      .filter((session) => session.serverId === server.id)
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    return server ? latestRemoteDesktopSession(server.id) : undefined;
   });
+  const remoteDesktopWorkspaceServer = createMemo(() => {
+    const serverId = remoteDesktopWorkspaceServerId();
+    return serverId ? servers().find((server) => server.id === serverId) : undefined;
+  });
+  const remoteDesktopWorkspaceSession = createMemo(() => {
+    const serverId = remoteDesktopWorkspaceServerId();
+    return serverId ? latestRemoteDesktopSession(serverId) : undefined;
+  });
+
+  createEffect(
+    () => remoteDesktopWorkspaceVisible(),
+    (visible) => {
+      if (appFrameElement) appFrameElement.inert = visible;
+    },
+  );
+
+  createEffect(
+    () => {
+      const serverId = remoteDesktopWorkspaceServerId();
+      return {
+        serverId,
+        established: remoteDesktopSessionEstablished(),
+        sessionExists: serverId ? Boolean(latestRemoteDesktopSession(serverId)) : false,
+        connectingServerId: remoteDesktopConnectingServerId(),
+      };
+    },
+    ({ serverId, established, sessionExists, connectingServerId }) => {
+      if (serverId && established && !sessionExists && connectingServerId !== serverId) {
+        setRemoteDesktopSessionEstablished(false);
+        setRemoteDesktopWorkspaceVisible(false);
+        setRemoteDesktopWorkspaceServerId(null);
+        restoreRemoteDesktopFocus();
+      }
+    },
+  );
   const signedInAccount = createMemo(() => {
     const state = centralAuth();
     return state.status === "signed_in" ? state.user : null;
@@ -1534,6 +1758,7 @@ export function App() {
             }
           >
             <div
+              ref={(element) => (appFrameElement = element)}
               class={[
                 "app-frame",
                 {
@@ -1542,16 +1767,16 @@ export function App() {
                   "app-frame-platform-darwin": appInfo()?.platform === "darwin",
                 },
               ]}
+              aria-hidden={remoteDesktopWorkspaceVisible() ? "true" : undefined}
               style={`--left-panel-width: ${leftPanelCompact() ? LEFT_PANEL_COMPACT : leftPanelWidth()}px`}
             >
               <Show when={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}>
                 <ServerRail
-                  platform={appInfo()?.platform ?? "darwin"}
                   servers={servers()}
                   onSelect={(serverId) => void selectServer(serverId)}
+                  onReorder={(serverIds) => void reorderServers(serverIds)}
                   onAdd={() => setJoinServerOpen(true)}
-                  onOpenHost={openHostPanel}
-                  onOpenRemoteMac={() => setRemoteDesktopRequest((current) => current + 1)}
+                  onOpenSettings={openServerSettings}
                 />
               </Show>
               <Sidebar
@@ -1561,26 +1786,30 @@ export function App() {
                 people={directPeople()}
                 directThreads={directThreads()}
                 activeDirectMemberId={activeDirectMemberId()}
-                account={account()}
-                appInfo={appInfo()}
-                agentStatus={agentStatus()}
-                accountUsage={accountUsage()}
-                updateStatus={updateStatus()}
                 agentStates={sidebarAgentStates()}
                 onSelectBot={selectBot}
                 onSelectPerson={(memberId) => void selectDirectMember(memberId)}
                 onCreateBot={openAgentPicker}
                 onEditBot={editBot}
                 onDeleteBot={deleteBot}
+                compact={leftPanelCompact()}
+                onCollapse={() => setSidebarCollapsed(true)}
+                onExpand={expandSidebar}
+              />
+              <AccountDock
+                account={account()}
+                appInfo={appInfo()}
+                agentStatus={agentStatus()}
+                accountUsage={accountUsage()}
+                updateStatus={updateStatus()}
+                compact={leftPanelCompact()}
+                withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
                 onRefreshUsage={refreshAccountUsage}
                 onUpdateAction={runUpdateAction}
                 onUpdateAccountAvatar={updateAccountAvatar}
                 onLogout={logoutCentralAccount}
                 onOpenExternal={(destination) => window.openbot.openExternal(destination)}
                 onOpenPermissions={() => setPermissionsOpen(true)}
-                compact={leftPanelCompact()}
-                onCollapse={() => setSidebarCollapsed(true)}
-                onExpand={expandSidebar}
               />
               <PanelResizer
                 class="left-panel-resizer"
@@ -1638,8 +1867,8 @@ export function App() {
                   server={activeServer()}
                   presence={teamPresence()}
                   currentUserEmail={account().email}
-                  remoteMacSession={activeRemoteMacSession()}
-                  remoteDesktopRequest={remoteDesktopRequest()}
+                  remoteDesktopSessionActive={Boolean(activeRemoteDesktopSession())}
+                  remoteDesktopVisible={remoteDesktopWorkspaceVisible()}
                   prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
                   approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
                   activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
@@ -1667,8 +1896,7 @@ export function App() {
                   onResumeQueue={resumeQueue}
                   onActivateBrowserTab={activateBrowserTab}
                   onCloseBrowserTab={closeBrowserTab}
-                  onConnectRemoteMac={connectRemoteMac}
-                  onDisconnectRemoteMac={disconnectRemoteMac}
+                  onOpenRemoteDesktop={openRemoteDesktopWorkspace}
                   onOpenAgentSetup={() => window.openbot.openExternal("agent-setup")}
                   onStop={stopActiveTurn}
                 />
@@ -1704,26 +1932,28 @@ export function App() {
                   onJoin={joinServer}
                 />
               </Show>
-              <Show when={hostOpen()}>
-                <HostPanel
-                  platform={appInfo()?.platform ?? "darwin"}
-                  status={hostStatus()}
-                  members={teamMembers()}
-                  invites={teamInvites()}
-                  sessions={teamSessions()}
-                  presence={teamPresence()}
-                  accountEmail={account().email}
-                  onClose={() => setHostOpen(false)}
-                  onConfigure={configureAndPublishHost}
-                  onConfigureRemoteDesktop={configureRemoteDesktop}
-                  onStart={startHost}
-                  onStop={stopHost}
-                  onCreateInvite={createHostInvite}
-                  onUpdateMember={updateHostMember}
-                  onRemoveMember={removeHostMember}
-                  onRevokeSession={revokeHostSession}
-                  onRevokeInvite={revokeHostInvite}
-                />
+              <Show when={serverSettingsTarget()}>
+                {(server) => (
+                  <ServerSettingsModal
+                    open={serverSettingsOpen()}
+                    onOpenChange={setServerSettingsOpen}
+                    restoreFocusTarget={serverSettingsRestoreTarget}
+                    platform={appInfo()?.platform ?? "darwin"}
+                    server={server()}
+                    hostStatus={server().kind === "local" ? hostStatus() : null}
+                    members={serverSettingsMembers()}
+                    invites={serverSettingsInvites()}
+                    loading={serverSettingsLoading()}
+                    loadError={serverSettingsError()}
+                    onRetry={() => refreshServerSettings(server().id)}
+                    onSaveIdentity={saveServerIdentity}
+                    onSetPublished={setServerPublished}
+                    onCreateInvite={createServerInvite}
+                    onUpdateMember={updateServerMember}
+                    onRemoveMember={removeServerMember}
+                    onRevokeInvite={revokeServerInvite}
+                  />
+                )}
               </Show>
               <Show when={globalSearchOpen()}>
                 <GlobalSearch
@@ -1734,6 +1964,22 @@ export function App() {
                   onSelectBot={selectBot}
                   onSelectMessage={selectGlobalSearchMessage}
                 />
+              </Show>
+              <Show when={remoteDesktopWorkspaceServer()} keyed>
+                {(server) => (
+                  <RemoteDesktopWorkspace
+                    visible={remoteDesktopWorkspaceVisible()}
+                    platform={appInfo()?.platform ?? "darwin"}
+                    server={server}
+                    session={remoteDesktopWorkspaceSession()}
+                    connecting={remoteDesktopConnectingServerId() === server.id}
+                    connectionError={remoteDesktopConnectionError()}
+                    onHide={hideRemoteDesktopWorkspace}
+                    onDisconnect={() => disconnectRemoteDesktopWorkspace()}
+                    onRetry={retryRemoteDesktopWorkspace}
+                    onSelectDisplay={selectRemoteDesktopDisplay}
+                  />
+                )}
               </Show>
             </div>
           </Show>
