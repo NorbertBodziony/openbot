@@ -224,8 +224,10 @@ jobs:
         env:
           CMAKE_GENERATOR: Ninja
         run: |
-          export PATH="$(cygpath "$OPENBOT_BUN_DIR"):$(cygpath "$OPENBOT_CARGO_DIR"):$(cygpath "$OPENBOT_NODE_DIR"):$(cygpath "$OPENBOT_PERL_DIR"):$PATH"
-          perl -e 'die "Windows Perl is required\n" unless $^O eq "MSWin32";'
+          native_perl="$(cygpath "$OPENBOT_PERL_DIR")/perl.exe"
+          "$native_perl" -e 'die "Windows Perl is required\n" unless $^O eq "MSWin32";'
+          export OPENSSL_SRC_PERL="$(cygpath -w "$native_perl")"
+          export PATH="$PATH:$(cygpath "$OPENBOT_BUN_DIR"):$(cygpath "$OPENBOT_CARGO_DIR"):$(cygpath "$OPENBOT_NODE_DIR")"
           bun run build:remote-desktop-runtime
 
       - name: Verify runtime
