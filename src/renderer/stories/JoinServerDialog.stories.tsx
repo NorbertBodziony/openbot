@@ -71,8 +71,8 @@ export const ErrorState: Story = {
   },
   play: async ({ userEvent }) => {
     const body = within(document.body);
-    await userEvent.type(body.getByRole("textbox", { name: "Invitation link" }), "https://openbot.run/join?bad");
-    await userEvent.click(body.getByRole("button", { name: "Review invitation" }));
+    await userEvent.type(body.getByRole("textbox", { name: "Invite link" }), "https://openbot.run/join?bad");
+    await userEvent.click(body.getByRole("button", { name: "Review invite" }));
     await expect(body.getByRole("alert")).toHaveTextContent("The OpenBot invitation link is invalid.");
   },
 };

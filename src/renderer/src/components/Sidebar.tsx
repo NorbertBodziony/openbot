@@ -1,22 +1,11 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type {
-  AccountUsage,
-  AgentStatus,
-  AppInfo,
-  AvatarImageInput,
-  CentralAuthUser,
-  DirectThreadSummary,
-  ExternalDestination,
-  TeamPresenceMember,
-  UpdateStatus,
-} from "@openbot/contracts/ipc";
+import type { DirectThreadSummary, TeamPresenceMember } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js";
-import { normalizeAvatarFile } from "../avatar-image";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 import { TeamPersonAvatar, teamMemberName } from "./TeamPersonAvatar";
 import { TypingDots } from "./TypingDots";
-import { AlertDialog, Badge, Button, ContextMenu, Input, Popover } from "./ui";
+import { AlertDialog, Badge, Button, ContextMenu, Input } from "./ui";
 
 interface SidebarProps {
   serverName: string;
@@ -25,23 +14,12 @@ interface SidebarProps {
   people: TeamPresenceMember[];
   directThreads: DirectThreadSummary[];
   activeDirectMemberId: string | null;
-  account: CentralAuthUser;
-  appInfo: AppInfo | null;
-  agentStatus: AgentStatus;
-  accountUsage: AccountUsage | null;
-  updateStatus: UpdateStatus;
   agentStates: Record<string, SidebarAgentState>;
   onSelectBot: (botId: string) => void;
   onSelectPerson: (memberId: string) => void;
   onCreateBot: () => void;
   onEditBot: (botId: string) => void;
   onDeleteBot: (botId: string) => Promise<void>;
-  onRefreshUsage: () => Promise<AccountUsage>;
-  onUpdateAction: () => Promise<void>;
-  onUpdateAccountAvatar: (image: AvatarImageInput | null) => Promise<void>;
-  onLogout: () => Promise<void>;
-  onOpenExternal: (destination: ExternalDestination) => Promise<void>;
-  onOpenPermissions: () => void;
   compact: boolean;
   onCollapse: () => void;
   onExpand: () => void;
@@ -127,65 +105,6 @@ function DeleteIcon() {
   );
 }
 
-function UsageIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
-      <path d="M4.2 13.9a6.5 6.5 0 1 1 11.6 0" />
-      <path d="m10 10 3.1-2.3" />
-      <circle cx="10" cy="10" r="1" class="account-menu-icon-fill" />
-    </svg>
-  );
-}
-
-function FeedbackIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
-      <path d="M4 5.2h12v8.6H9l-3.5 2.4v-2.4H4V5.2Z" />
-      <path d="M7 8.2h6M7 10.8h4" />
-    </svg>
-  );
-}
-
-function MessageIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
-      <path d="M3.8 4.8h12.4v10.4H3.8V4.8Z" />
-      <path d="m4.5 5.6 5.5 4.2 5.5-4.2" />
-    </svg>
-  );
-}
-
-function UpdateIcon(props: { active: boolean }) {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      class={["account-menu-icon", { "account-menu-icon-spinning": props.active }]}
-    >
-      <path d="M15.4 6.8A6 6 0 1 0 16 10" />
-      <path d="M15.4 3.8v3h-3" />
-    </svg>
-  );
-}
-
-function PermissionsIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
-      <path d="M10 2.9 15.5 5v4.6c0 3.6-2.2 6.3-5.5 7.5-3.3-1.2-5.5-3.9-5.5-7.5V5L10 2.9Z" />
-      <path d="m7.6 9.9 1.5 1.5 3.3-3.4" />
-    </svg>
-  );
-}
-
-function LogoutIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
-      <path d="M8.2 4.2H5.5v11.6h2.7" />
-      <path d="M11.6 6.6 15 10l-3.4 3.4M7.8 10H15" />
-    </svg>
-  );
-}
-
 export function Sidebar(props: SidebarProps) {
   const [query, setQuery] = createSignal("");
   const [deleteTargetId, setDeleteTargetId] = createSignal<string | null>(null);
@@ -193,15 +112,8 @@ export function Sidebar(props: SidebarProps) {
   const [deleteError, setDeleteError] = createSignal<string | null>(null);
   const [fadeAtTop, setFadeAtTop] = createSignal(false);
   const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
-  const [accountMenuOpen, setAccountMenuOpen] = createSignal(false);
-  const [usageLoading, setUsageLoading] = createSignal(false);
-  const [accountError, setAccountError] = createSignal<string | null>(null);
-  const [avatarUploadBusy, setAvatarUploadBusy] = createSignal(false);
-  const [accountAvatarFailed, setAccountAvatarFailed] = createSignal(false);
-  const [loggingOut, setLoggingOut] = createSignal(false);
   let botList: HTMLElement | undefined;
   let searchInput: HTMLInputElement | undefined;
-  let accountAvatarInput: HTMLInputElement | undefined;
   const filteredBots = createMemo(() => {
     const normalizedQuery = query().trim().toLowerCase();
     return normalizedQuery
@@ -231,69 +143,7 @@ export function Sidebar(props: SidebarProps) {
         return teamMemberName(left).localeCompare(teamMemberName(right));
       });
   });
-  const accountName = createMemo(() => props.account.name?.trim() || props.account.email);
-  const accountInitials = createMemo(() => {
-    const localPart = accountName().split("@")[0] ?? "OpenBot";
-    const parts = localPart.split(/[._\-\s]+/).filter(Boolean);
-    return (parts.length > 1 ? `${parts[0]?.[0]}${parts[1]?.[0]}` : localPart.slice(0, 2)).toUpperCase();
-  });
-  createEffect(
-    () => props.account.avatarUrl,
-    () => {
-      setAccountAvatarFailed(false);
-    },
-  );
-  const weeklyUsage = createMemo(() => {
-    const limit =
-      props.accountUsage?.limits.find((candidate) => candidate.id === "codex") ?? props.accountUsage?.limits[0];
-    if (!limit) return null;
-    return (
-      [limit.primary, limit.secondary].find((window) => window?.windowDurationMins === 10_080) ??
-      limit.secondary ??
-      limit.primary
-    );
-  });
-  const weeklyUsageRemaining = createMemo(() => {
-    const usage = weeklyUsage();
-    return usage ? Math.max(0, Math.round(100 - usage.usedPercent)) : null;
-  });
   const deleteTarget = createMemo(() => props.bots.find((bot) => bot.id === deleteTargetId()));
-  const updateAvailable = createMemo(() =>
-    ["available", "downloading", "ready", "installing"].includes(props.updateStatus.phase),
-  );
-  const updateBusy = createMemo(() => ["checking", "downloading", "installing"].includes(props.updateStatus.phase));
-  const updateLabel = createMemo(() => {
-    switch (props.updateStatus.phase) {
-      case "checking":
-        return "Checking for updates…";
-      case "available":
-        return "Download update";
-      case "downloading":
-        return "Downloading update…";
-      case "ready":
-        return "Restart to update";
-      case "installing":
-        return "Restarting…";
-      case "up-to-date":
-        return "Check for updates";
-      case "error":
-        return "Check for updates";
-      default:
-        return "Check for updates";
-    }
-  });
-  const updateDetail = createMemo(() => {
-    const status = props.updateStatus;
-    if (status.phase === "downloading" && status.progress !== null) {
-      return `${Math.round(status.progress)}%`;
-    }
-    if (status.availableVersion) return `v${status.availableVersion}`;
-    if (status.phase === "up-to-date") return "Up to date";
-    return status.currentVersion ? `v${status.currentVersion}` : "";
-  });
-  const popoverError = createMemo(
-    () => accountError() ?? (props.updateStatus.phase === "error" ? props.updateStatus.message : null),
-  );
 
   function updateScrollFade() {
     if (!botList) return;
@@ -331,86 +181,6 @@ export function Sidebar(props: SidebarProps) {
     } finally {
       setDeleting(false);
     }
-  }
-
-  async function refreshUsage() {
-    if (usageLoading() || props.agentStatus.phase !== "ready") return;
-    setUsageLoading(true);
-    setAccountError(null);
-    try {
-      await props.onRefreshUsage();
-    } catch (error) {
-      setAccountError(error instanceof Error ? error.message : "Usage is unavailable.");
-    } finally {
-      setUsageLoading(false);
-    }
-  }
-
-  function openExternal(destination: ExternalDestination) {
-    setAccountError(null);
-    void props
-      .onOpenExternal(destination)
-      .then(() => setAccountMenuOpen(false))
-      .catch((error) => setAccountError(error instanceof Error ? error.message : "Could not open the link."));
-  }
-
-  function runUpdateAction() {
-    setAccountError(null);
-    void props
-      .onUpdateAction()
-      .catch((error) => setAccountError(error instanceof Error ? error.message : "Could not update OpenBot."));
-  }
-
-  async function logout(): Promise<void> {
-    if (loggingOut()) return;
-    setLoggingOut(true);
-    setAccountError(null);
-    try {
-      await props.onLogout();
-    } catch (error) {
-      setAccountError(error instanceof Error ? error.message : "Could not sign out.");
-      setLoggingOut(false);
-    }
-  }
-
-  async function updateAccountAvatar(image: AvatarImageInput | null): Promise<void> {
-    if (avatarUploadBusy()) return;
-    setAvatarUploadBusy(true);
-    setAccountError(null);
-    try {
-      await props.onUpdateAccountAvatar(image);
-    } catch (error) {
-      setAccountError(error instanceof Error ? error.message : "Could not update your avatar.");
-    } finally {
-      setAvatarUploadBusy(false);
-    }
-  }
-
-  async function uploadAccountAvatar(file: File | undefined): Promise<void> {
-    if (!file) return;
-    setAvatarUploadBusy(true);
-    setAccountError(null);
-    try {
-      await props.onUpdateAccountAvatar(await normalizeAvatarFile(file));
-    } catch (error) {
-      setAccountError(error instanceof Error ? error.message : "Could not update your avatar.");
-    } finally {
-      setAvatarUploadBusy(false);
-      if (accountAvatarInput) accountAvatarInput.value = "";
-    }
-  }
-
-  function accountAvatar(className: string) {
-    return (
-      <span class={className} aria-hidden="true">
-        <Show
-          when={props.account.avatarUrl && !accountAvatarFailed() ? props.account.avatarUrl : null}
-          fallback={accountInitials()}
-        >
-          {(avatarUrl) => <img src={avatarUrl()} alt="" onError={() => setAccountAvatarFailed(true)} />}
-        </Show>
-      </span>
-    );
   }
 
   function expandToSearch(): void {
@@ -461,7 +231,7 @@ export function Sidebar(props: SidebarProps) {
             ref={(element) => (searchInput = element)}
             type="search"
             value={query()}
-            onInput={(event) => setQuery(event.currentTarget.value)}
+            onValueChange={setQuery}
             placeholder="Search"
             aria-label="Search chats"
             tabindex={props.compact ? -1 : 0}
@@ -630,138 +400,6 @@ export function Sidebar(props: SidebarProps) {
           </Show>
         </Show>
       </nav>
-
-      <div class="sidebar-account">
-        <Popover.Root
-          open={accountMenuOpen()}
-          onOpenChange={(open) => {
-            setAccountMenuOpen(open);
-            if (open) {
-              setAccountError(null);
-              void refreshUsage();
-            }
-          }}
-          placement="top-start"
-          gutter={8}
-        >
-          <Popover.Trigger
-            as={Button}
-            type="button"
-            class="sidebar-footer"
-            aria-label="Open account menu"
-            aria-expanded={accountMenuOpen() ? "true" : "false"}
-          >
-            {accountAvatar("profile-dot")}
-            <span class="profile-copy">
-              <strong>{accountName()}</strong>
-              <Show when={props.appInfo}>
-                {(info) => (
-                  <span class="sr-only" data-testid="app-version">
-                    Version {info().version} · {info().platform}
-                  </span>
-                )}
-              </Show>
-            </span>
-            <Show when={updateAvailable()}>
-              <Badge class="sidebar-update-pill" tone="accent" shape="pill">
-                Update
-              </Badge>
-              <span class="sr-only">OpenBot update available</span>
-            </Show>
-          </Popover.Trigger>
-          <Popover.Portal>
-            <Popover.Content class="account-popover" aria-hidden={accountMenuOpen() ? undefined : "true"}>
-              <Popover.Title class="sr-only">Account</Popover.Title>
-              <div class="account-profile-card">
-                <Input
-                  ref={(element) => (accountAvatarInput = element)}
-                  class="sr-only"
-                  type="file"
-                  aria-label="Account profile photo"
-                  accept="image/png,image/jpeg,image/webp"
-                  onChange={(event) => void uploadAccountAvatar(event.currentTarget.files?.[0])}
-                />
-                {accountAvatar("account-profile-avatar")}
-                <div class="account-profile-copy">
-                  <strong>{accountName()}</strong>
-                  <span>{props.account.email}</span>
-                  <div class="account-profile-actions">
-                    <Button type="button" onClick={() => accountAvatarInput?.click()} disabled={avatarUploadBusy()}>
-                      {avatarUploadBusy() ? "Saving…" : props.account.avatarUrl ? "Replace photo" : "Upload photo"}
-                    </Button>
-                    <Show when={props.account.avatarUrl}>
-                      <Button
-                        type="button"
-                        class="account-profile-remove"
-                        onClick={() => void updateAccountAvatar(null)}
-                        disabled={avatarUploadBusy()}
-                      >
-                        Remove
-                      </Button>
-                    </Show>
-                  </div>
-                </div>
-              </div>
-              <div class="account-menu-separator" />
-              <Show when={props.updateStatus.phase !== "unsupported"}>
-                <Button
-                  type="button"
-                  class="account-menu-row account-update-row"
-                  onClick={runUpdateAction}
-                  disabled={updateBusy()}
-                >
-                  <UpdateIcon active={updateBusy()} />
-                  <span>{updateLabel()}</span>
-                  <small>{updateDetail()}</small>
-                </Button>
-                <div class="account-menu-separator" />
-              </Show>
-              <Button
-                type="button"
-                class="account-menu-row"
-                onClick={() => void refreshUsage()}
-                disabled={usageLoading() || props.agentStatus.phase !== "ready"}
-              >
-                <UsageIcon />
-                <span>{usageLoading() ? "Updating usage…" : "Weekly usage"}</span>
-                <small>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</small>
-              </Button>
-              <div class="account-menu-separator" />
-              <Button
-                type="button"
-                class="account-menu-row"
-                onClick={() => {
-                  setAccountMenuOpen(false);
-                  props.onOpenPermissions();
-                }}
-              >
-                <PermissionsIcon />
-                <span>Providers &amp; permissions</span>
-              </Button>
-              <div class="account-menu-separator" />
-              <Button type="button" class="account-menu-row" onClick={() => openExternal("feedback")}>
-                <FeedbackIcon />
-                <span>Send feedback</span>
-              </Button>
-              <Button type="button" class="account-menu-row" onClick={() => openExternal("message")}>
-                <MessageIcon />
-                <span>Message</span>
-              </Button>
-              <div class="account-menu-separator" />
-              <Button
-                type="button"
-                class="account-menu-row account-menu-danger"
-                onClick={() => void logout()}
-                disabled={loggingOut()}
-              >
-                <LogoutIcon />
-                <span>{loggingOut() ? "Signing out…" : "Sign out"}</span>
-              </Button>
-              <Show when={popoverError()}>{(message) => <p class="account-popover-error">{message()}</p>}</Show>
-            </Popover.Content>
-          </Popover.Portal>
-        </Popover.Root>
-      </div>
 
       <AlertDialog.Root
         open={Boolean(deleteTarget())}

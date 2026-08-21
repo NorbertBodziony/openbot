@@ -2,9 +2,15 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { AvatarImageInput, CentralAuthIssue, CentralAuthState, CentralAuthUser } from "@openbot/contracts/ipc";
+import type {
+  AvatarImageInput,
+  CentralAuthIssue,
+  CentralAuthState,
+  CentralAuthUser,
+  RemoteDesktopIceServer,
+} from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
-import { isOpenBotTeamApiHostname, isOpenBotTeamVncHostname } from "@openbot/contracts/validation";
+import { isOpenBotTeamApiHostname } from "@openbot/contracts/validation";
 
 interface CentralAuthEvents {
   changed: [state: CentralAuthState];
@@ -17,6 +23,7 @@ interface CentralAuthManagerOptions {
   storagePath: string;
   encrypt: (value: string) => Buffer;
   decrypt: (value: Buffer) => string;
+  canPersist?: () => boolean;
   fetch?: AuthFetcher;
   startupRetryWindowMs?: number;
   startupRequestTimeoutMs?: number;
@@ -39,20 +46,22 @@ export interface ProvisionedTeamTunnel {
   tunnelId: string;
   tunnelName: string;
   apiUrl: string;
-  vncHostname: string;
   token: string;
+  machineToken: string;
 }
 
 export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   readonly #options: Required<CentralAuthManagerOptions>;
   #state: CentralAuthState = { status: "loading" };
   #sessionToken: string | null = null;
+  readonly #teamHostTokens = new Map<string, string>();
   #initializationPromise: Promise<CentralAuthState> | null = null;
 
   constructor(options: CentralAuthManagerOptions) {
     super();
     this.#options = {
       ...options,
+      canPersist: options.canPersist ?? (() => true),
       fetch: options.fetch ?? fetch,
       startupRetryWindowMs: options.startupRetryWindowMs ?? STARTUP_RETRY_WINDOW_MS,
       startupRequestTimeoutMs: options.startupRequestTimeoutMs ?? STARTUP_REQUEST_TIMEOUT_MS,
@@ -127,7 +136,6 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     serverId: string;
     serverName: string;
     apiPort?: number | null;
-    vncEnabled?: boolean;
   }): Promise<ProvisionedTeamTunnel> {
     const result = await this.#authorizedRequest(
       "/v1/team-tunnels/provision",
@@ -143,12 +151,32 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(result.tunnelId) ||
       !/^openbot-[0-9a-f]{32}$/u.test(result.tunnelName) ||
       !isOpenBotHostUrl(result.apiUrl) ||
-      !isOpenBotTeamVncHostname(result.vncHostname) ||
-      result.token.length < 40
+      result.token.length < 40 ||
+      !/^[0-9a-f]{64}$/u.test(result.machineToken)
     ) {
       throw new Error("The account service returned invalid team tunnel details.");
     }
+    this.#teamHostTokens.set(input.serverId.toLowerCase(), result.machineToken);
+    await this.#writeStoredSession();
     return result;
+  }
+
+  async getTeamHostIceServers(serverId: string): Promise<RemoteDesktopIceServer[]> {
+    const machineToken = this.#teamHostTokens.get(serverId.toLowerCase());
+    if (!machineToken) throw new Error("The team host token is unavailable. Restart the host service.");
+    const result = await this.#request(
+      "/v1/team-hosts/ice-servers",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${machineToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ serverId }),
+      },
+      decodeIceServerResponse,
+    );
+    return result.iceServers;
   }
 
   initialize(): Promise<CentralAuthState> {
@@ -167,13 +195,17 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
 
   async #initialize(): Promise<CentralAuthState> {
     this.#setState({ status: "loading" });
-    try {
-      const encrypted = Buffer.from(await readFile(this.#options.storagePath, "utf8"), "base64");
-      this.#sessionToken = this.#options.decrypt(encrypted);
-    } catch (error) {
-      if (!isMissing(error)) {
-        await this.#clearStoredSession();
+    if (this.#options.canPersist()) {
+      try {
+        const encrypted = Buffer.from(await readFile(this.#options.storagePath, "utf8"), "base64");
+        this.#restoreStoredSession(this.#options.decrypt(encrypted));
+      } catch (error) {
+        if (!isMissing(error)) {
+          await this.#clearStoredSession();
+        }
       }
+    } else {
+      await rm(this.#options.storagePath, { force: true });
     }
     if (!this.#sessionToken) {
       await this.#startupRequest("/health/live", { method: "GET" }, decodeRecordHealth);
@@ -245,7 +277,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
         decodeSessionResponse,
       );
       this.#sessionToken = session.sessionToken;
-      await this.#writeStoredSession(session.sessionToken);
+      await this.#writeStoredSession();
       return this.#setState({
         status: "signed_in",
         user: this.#resolveUserAvatar(session.user),
@@ -369,22 +401,56 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     };
   }
 
-  async #writeStoredSession(token: string): Promise<void> {
-    const encrypted = this.#options.encrypt(token).toString("base64");
+  async #writeStoredSession(): Promise<void> {
+    if (!this.#sessionToken) return;
+    if (!this.#options.canPersist()) {
+      await rm(this.#options.storagePath, { force: true });
+      return;
+    }
     const temporaryPath = `${this.#options.storagePath}.${randomUUID()}.tmp`;
-    await mkdir(dirname(this.#options.storagePath), { recursive: true });
     try {
+      const value = JSON.stringify({
+        version: 2,
+        sessionToken: this.#sessionToken,
+        teamHostTokens: Object.fromEntries(this.#teamHostTokens),
+      });
+      const encrypted = this.#options.encrypt(value).toString("base64");
+      await mkdir(dirname(this.#options.storagePath), { recursive: true });
       await writeFile(temporaryPath, encrypted, { mode: 0o600 });
       await chmod(temporaryPath, 0o600);
       await rename(temporaryPath, this.#options.storagePath);
+    } catch {
+      await Promise.allSettled([rm(this.#options.storagePath, { force: true }), rm(temporaryPath, { force: true })]);
     } finally {
-      await rm(temporaryPath, { force: true });
+      await Promise.allSettled([rm(temporaryPath, { force: true })]);
     }
   }
 
   async #clearStoredSession(): Promise<void> {
     this.#sessionToken = null;
+    this.#teamHostTokens.clear();
     await rm(this.#options.storagePath, { force: true });
+  }
+
+  #restoreStoredSession(value: string): void {
+    if (!value.trimStart().startsWith("{")) {
+      this.#sessionToken = value;
+      this.#teamHostTokens.clear();
+      return;
+    }
+    const stored = JSON.parse(value);
+    if (!isDynamicRecord(stored) || stored.version !== 2 || !isString(stored.sessionToken)) {
+      throw new Error("Invalid protected account session.");
+    }
+    this.#sessionToken = stored.sessionToken;
+    this.#teamHostTokens.clear();
+    if (isDynamicRecord(stored.teamHostTokens)) {
+      for (const [serverId, token] of Object.entries(stored.teamHostTokens)) {
+        if (/^[0-9a-f-]{36}$/iu.test(serverId) && isString(token) && /^[0-9a-f]{64}$/u.test(token)) {
+          this.#teamHostTokens.set(serverId.toLowerCase(), token);
+        }
+      }
+    }
   }
 
   #setState(state: CentralAuthState): CentralAuthState {
@@ -534,8 +600,31 @@ function decodeProvisionedTeamTunnel(value: unknown): ProvisionedTeamTunnel {
     tunnelId: requiredString(record, "tunnelId"),
     tunnelName: requiredString(record, "tunnelName"),
     apiUrl: requiredString(record, "apiUrl"),
-    vncHostname: requiredString(record, "vncHostname"),
     token: requiredString(record, "token"),
+    machineToken: requiredString(record, "machineToken"),
+  };
+}
+
+function decodeIceServerResponse(value: unknown): { iceServers: RemoteDesktopIceServer[] } {
+  const record = decodeRecord(value, "ICE server response");
+  if (!Array.isArray(record.iceServers)) throw new Error("Invalid ICE server list.");
+  return { iceServers: record.iceServers.map(decodeIceServer) };
+}
+
+function decodeIceServer(value: unknown): RemoteDesktopIceServer {
+  const record = decodeRecord(value, "ICE server");
+  const urls = record.urls;
+  if (!(isString(urls) || (Array.isArray(urls) && urls.length > 0 && urls.every(isString)))) {
+    throw new Error("Invalid ICE server URLs.");
+  }
+  const username = record.username;
+  const credential = record.credential;
+  if (username !== undefined && !isString(username)) throw new Error("Invalid ICE server username.");
+  if (credential !== undefined && !isString(credential)) throw new Error("Invalid ICE server credential.");
+  return {
+    urls,
+    ...(username === undefined ? {} : { username }),
+    ...(credential === undefined ? {} : { credential }),
   };
 }
 

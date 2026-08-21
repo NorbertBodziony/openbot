@@ -4,7 +4,6 @@ import { createInviteUrl } from "@openbot/contracts/invite-links";
 import type {
   CentralAuthUser,
   ConfigureHostInput,
-  ConfigureRemoteDesktopInput,
   ConversationReadState,
   ConversationWithReadState,
   CreateTeamInviteInput,
@@ -19,12 +18,15 @@ import type {
   InviteSummary,
   MarkConversationReadInput,
   MarkDirectReadInput,
+  RemoteDesktopDisplay,
+  RemoteDesktopIceServer,
   SendDirectMessageInput,
   SetTeamTypingInput,
   TeamInviteSummary,
   TeamMemberSummary,
   TeamPresenceSnapshot,
   TeamSessionSummary,
+  UpdateHostIdentityInput,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import type { AgentService } from "../backend/agent-service";
@@ -32,9 +34,11 @@ import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
 import type { TeamChatStore } from "../backend/team-chat-store";
 import type { ProvisionedTeamTunnel } from "./central-auth-manager";
-import { appendDiagnosticLog, probeRfbHandshake, resolveCloudflaredExecutable, stopOwnedProcess } from "./remote-mac";
+import { appendDiagnosticLog, resolveCloudflaredExecutable, stopOwnedProcess } from "./host-tunnel-runtime";
+import type { RemoteDesktopRuntimePaths } from "./remote-desktop-runtime-artifact";
+import { RemoteScreenGateway } from "./remote-screen-gateway";
 import { TeamApiServer } from "./team-api-server";
-import type { TeamStore } from "./team-store";
+import type { AuthenticatedMember, TeamStore } from "./team-store";
 
 interface HostEvents {
   changed: [status: HostStatus];
@@ -54,6 +58,7 @@ interface HostServiceOptions {
   tunnelTimeoutMs?: number;
   publicReadyTimeoutMs?: number;
   logDirectory?: string;
+  removeLegacyRemoteDesktopCredential?: () => Promise<void>;
   getSignedInUser: () => CentralAuthUser;
   redeemCentralTicket: (ticket: string, serverId: string) => Promise<CentralAuthUser | null>;
   sendTeamInviteEmail: (input: {
@@ -62,13 +67,17 @@ interface HostServiceOptions {
     inviteUrl: string;
     role: "admin" | "member";
   }) => Promise<void>;
-  getRemoteDesktopPassword: () => string | null;
-  setRemoteDesktopPassword: (password: string) => Promise<void>;
+  remoteDesktopRuntimePaths?: RemoteDesktopRuntimePaths | null;
+  remoteDesktopStateDirectory?: string;
+  getRemoteDesktopRuntimeCredentials?: () => Promise<{ username: string; password: string }>;
+  getRemoteDesktopDisplays?: () => RemoteDesktopDisplay[];
+  getRemoteDesktopIceServers?: () => Promise<RemoteDesktopIceServer[]>;
+  platform?: "darwin" | "win32" | "linux";
+  unattended?: boolean;
   provisionTeamTunnel: (input: {
     serverId: string;
     serverName: string;
     apiPort?: number | null;
-    vncEnabled?: boolean;
   }) => Promise<ProvisionedTeamTunnel>;
 }
 
@@ -84,8 +93,10 @@ export class HostService extends EventEmitter<HostEvents> {
   readonly #options: Required<Pick<HostServiceOptions, "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs">> &
     Omit<HostServiceOptions, "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs">;
   readonly #api: TeamApiServer;
+  readonly #remoteScreen: RemoteScreenGateway;
   #tunnel: ChildProcess | null = null;
   #status: HostStatus;
+  #legacyCredentialRemoved = false;
 
   constructor(options: HostServiceOptions) {
     super();
@@ -102,33 +113,73 @@ export class HostService extends EventEmitter<HostEvents> {
       enabledOnLaunch: identity?.enabledOnLaunch ?? false,
       serverId: identity?.serverId ?? null,
       serverName: identity?.serverName ?? null,
+      logoUrl: identity?.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
       apiUrl: null,
-      vncHostname: null,
       apiOnline: false,
-      vncOnline: false,
-      remoteDesktopCredentialConfigured: options.getRemoteDesktopPassword() !== null,
+      remoteDesktopReady: false,
+      remoteDesktopUnattended: options.unattended ?? false,
+      remoteDesktopActiveSessions: 0,
+      remoteDesktopMaxSessions: 4,
       message: null,
     };
+    const logDirectory = options.logDirectory;
+    this.#remoteScreen = new RemoteScreenGateway({
+      platform: options.platform ?? normalizeRemoteDesktopPlatform(process.platform),
+      unattended: options.unattended ?? false,
+      runtimePaths: options.remoteDesktopRuntimePaths ?? null,
+      runtimeStateDirectory: options.remoteDesktopStateDirectory ?? ".openbot-remote-desktop",
+      getRuntimeCredentials:
+        options.getRemoteDesktopRuntimeCredentials ??
+        (async () => ({ username: "openbot", password: "development-runtime-not-for-release" })),
+      getDisplays: options.getRemoteDesktopDisplays,
+      getIceServers: options.getRemoteDesktopIceServers ?? (async () => [{ urls: "stun:stun.cloudflare.com:3478" }]),
+      ...(logDirectory
+        ? {
+            onDiagnostic: (source: "sunshine" | "moonlight", message: string) => {
+              void appendDiagnosticLog(logDirectory, `remote-screen-${source}`, message);
+            },
+          }
+        : {}),
+      audit: (event) => {
+        if (options.logDirectory) {
+          void appendDiagnosticLog(options.logDirectory, "remote-screen", `${JSON.stringify(event)}\n`);
+        }
+        if (
+          event.event === "started" &&
+          !this.#legacyCredentialRemoved &&
+          options.removeLegacyRemoteDesktopCredential
+        ) {
+          this.#legacyCredentialRemoved = true;
+          void options.removeLegacyRemoteDesktopCredential().catch(() => {
+            this.#legacyCredentialRemoved = false;
+          });
+        }
+      },
+    });
     this.#api = new TeamApiServer({
       store: options.store,
       agents: options.agents,
       mailbox: options.mailbox,
       browser: options.browser,
-      getRemoteMac: () => ({
-        hostname: this.#status.vncHostname,
-        online: this.#status.vncOnline,
-      }),
-      getRemoteDesktopPassword: options.getRemoteDesktopPassword,
+      remoteScreen: this.#remoteScreen,
       redeemCentralTicket: options.redeemCentralTicket,
       chat: options.chat,
       onPresence: (snapshot) => this.emit("presence", snapshot),
       onDirectMessage: (event) => this.emit("directMessage", event),
       onDirectTyping: (event) => this.emit("directTyping", event),
+      createInvite: (input) => this.createInvite(input),
     });
   }
 
   getStatus(): HostStatus {
-    return { ...this.#status };
+    const capabilities = this.#remoteScreen.capabilities();
+    return {
+      ...this.#status,
+      remoteDesktopReady: capabilities.ready,
+      remoteDesktopUnattended: capabilities.unattended,
+      remoteDesktopActiveSessions: capabilities.activeSessions,
+      remoteDesktopMaxSessions: capabilities.maxSessions,
+    };
   }
 
   async syncSignedInAccount(user: CentralAuthUser): Promise<void> {
@@ -137,16 +188,22 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async configure(input: ConfigureHostInput): Promise<HostStatus> {
-    const identity = await this.#options.store.configureWithAccount(input.serverName, this.#options.getSignedInUser());
+    const identity = await this.#options.store.configureWithAccount(
+      input.serverName,
+      this.#options.getSignedInUser(),
+      input.logo,
+    );
     this.#setStatus({
       phase: "idle",
       configured: true,
       serverId: identity.serverId,
       serverName: identity.serverName,
+      logoUrl: identity.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
       enabledOnLaunch: false,
       message: null,
     });
     this.#api.refreshPresence();
+    this.#api.refreshIdentity();
     try {
       const tunnel = await this.#options.provisionTeamTunnel({
         serverId: identity.serverId,
@@ -154,7 +211,6 @@ export class HostService extends EventEmitter<HostEvents> {
       });
       this.#setStatus({
         apiUrl: tunnel.apiUrl,
-        vncHostname: null,
         message: `Reserved ${new URL(tunnel.apiUrl).hostname}.`,
       });
     } catch (error) {
@@ -166,19 +222,15 @@ export class HostService extends EventEmitter<HostEvents> {
     return this.getStatus();
   }
 
-  async configureRemoteDesktop(input: ConfigureRemoteDesktopInput): Promise<HostStatus> {
-    const signedInUser = this.#options.getSignedInUser();
-    this.#options.store.assertOwnerAccount(signedInUser);
-    await this.syncSignedInAccount(signedInUser);
-    await this.#options.setRemoteDesktopPassword(input.password);
-    const vncOnline = this.#status.apiOnline ? await probeRfbHandshake(5900, 2_000) : false;
+  async updateIdentity(input: UpdateHostIdentityInput): Promise<HostStatus> {
+    this.#options.store.assertOwnerAccount(this.#options.getSignedInUser());
+    const identity = await this.#options.store.updateIdentity(input);
     this.#setStatus({
-      remoteDesktopCredentialConfigured: true,
-      vncOnline,
-      message: vncOnline
-        ? "Remote Desktop access is ready for all team members."
-        : "Password saved. Enable macOS Screen Sharing and use the same VNC password.",
+      serverName: identity.serverName,
+      logoUrl: identity.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
+      message: "Server identity updated.",
     });
+    this.#api.refreshIdentity();
     return this.getStatus();
   }
 
@@ -195,15 +247,13 @@ export class HostService extends EventEmitter<HostEvents> {
     if (!executable) {
       this.#setStatus({
         phase: "error",
-        message: "Install cloudflared with: brew install cloudflared",
+        message: "The bundled cloudflared executable is unavailable. Reinstall or update OpenBot.",
       });
       return this.getStatus();
     }
 
     try {
       const apiPort = await this.#api.start();
-      const screenSharingReady = await probeRfbHandshake(5900, 2_000);
-      const vncReady = screenSharingReady && this.#options.getRemoteDesktopPassword() !== null;
       this.#setStatus({ message: "Provisioning a stable openbot.run address…" });
       const identity = this.#options.store.getIdentity();
       if (!identity) throw new Error("Name this OpenBot before publishing it.");
@@ -211,7 +261,6 @@ export class HostService extends EventEmitter<HostEvents> {
         serverId: identity.serverId,
         serverName: identity.serverName,
         apiPort,
-        vncEnabled: false,
       });
       const tunnel = this.#spawnTunnel(executable, provisioned.token);
       this.#tunnel = tunnel;
@@ -220,7 +269,6 @@ export class HostService extends EventEmitter<HostEvents> {
       }
       this.#setStatus({
         apiUrl: provisioned.apiUrl,
-        vncHostname: provisioned.vncHostname,
         message: "Publishing this OpenBot through its secure address…",
       });
       if (!(await waitForPublicApi(provisioned.apiUrl, this.#options.publicReadyTimeoutMs))) {
@@ -228,12 +276,7 @@ export class HostService extends EventEmitter<HostEvents> {
       }
       this.#setStatus({
         apiOnline: true,
-        vncOnline: vncReady,
-        message: vncReady
-          ? "This OpenBot and Remote Desktop are publicly reachable."
-          : !screenSharingReady
-            ? "This OpenBot is public. Only invited people can sign in."
-            : "This OpenBot is public. Add the dedicated VNC password to enable Remote Desktop.",
+        message: "This OpenBot and WebRTC remote control are publicly reachable.",
       });
       await this.#options.store.setEnabledOnLaunch(true);
       this.#setStatus({ phase: "online", enabledOnLaunch: true });
@@ -242,17 +285,61 @@ export class HostService extends EventEmitter<HostEvents> {
       this.#setStatus({
         phase: "error",
         apiOnline: false,
-        vncOnline: false,
         apiUrl: null,
-        vncHostname: null,
         message: error instanceof Error ? error.message : "This OpenBot could not be published.",
       });
     }
     return this.getStatus();
   }
 
+  async startDevelopmentLocal(): Promise<HostStatus> {
+    if (!this.#options.store.configured) throw new Error("Name this OpenBot before starting local development.");
+    if (this.#status.phase === "online") return this.getStatus();
+    const apiPort = await this.#api.start();
+    this.#setStatus({
+      phase: "online",
+      apiUrl: `http://localhost:${apiPort}`,
+      apiOnline: true,
+      message: "Local development host is ready.",
+    });
+    return this.getStatus();
+  }
+
+  async createDevelopmentConnection(): Promise<{
+    serverId: string;
+    serverName: string;
+    apiUrl: string;
+    fingerprint: string;
+    publicKey: string;
+    username: string;
+    sessionToken: string;
+  }> {
+    const identity = this.#options.store.getIdentity();
+    if (!identity || !this.#status.apiUrl) throw new Error("The local development host is not ready.");
+    const username = "openbot-dev-client";
+    const password = "openbot-local-development-client";
+    let authenticated: AuthenticatedMember;
+    try {
+      authenticated = await this.#options.store.login(username, password);
+    } catch {
+      const invite = await this.#options.store.createInvite("member");
+      authenticated = await this.#options.store.acceptInvite(invite.token, username, password);
+    }
+    this.#api.refreshPresence();
+    return {
+      serverId: identity.serverId,
+      serverName: identity.serverName,
+      apiUrl: this.#status.apiUrl,
+      fingerprint: identity.fingerprint,
+      publicKey: identity.publicKey,
+      username,
+      sessionToken: authenticated.sessionToken,
+    };
+  }
+
   async stop(persistPreference = true): Promise<HostStatus> {
     if (this.#status.phase === "unconfigured") return this.getStatus();
+    if (persistPreference) this.#options.store.assertOwnerAccount(this.#options.getSignedInUser());
     this.#setStatus({ phase: "stopping", message: "Making this OpenBot private…" });
     await this.#stopRuntime();
     if (persistPreference) await this.#options.store.setEnabledOnLaunch(false);
@@ -260,9 +347,7 @@ export class HostService extends EventEmitter<HostEvents> {
       phase: "idle",
       enabledOnLaunch: persistPreference ? false : this.#status.enabledOnLaunch,
       apiUrl: null,
-      vncHostname: null,
       apiOnline: false,
-      vncOnline: false,
       message: "This OpenBot is private.",
     });
     return this.getStatus();
@@ -327,17 +412,20 @@ export class HostService extends EventEmitter<HostEvents> {
       ...(input.role ? { role: input.role } : {}),
       ...(input.disabled === undefined ? {} : { disabled: input.disabled }),
     });
+    if (member.disabled) await this.#remoteScreen.revokeMember(member.id);
     this.#api.refreshPresence();
     return member;
   }
 
   async removeMember(memberId: string): Promise<void> {
     await this.#options.store.removeMember(memberId);
+    await this.#remoteScreen.revokeMember(memberId);
     this.#api.refreshPresence();
   }
 
   async revokeSession(sessionId: string): Promise<void> {
     await this.#options.store.revokeSession(sessionId);
+    await this.#remoteScreen.revokeTeamSession(sessionId);
     this.#api.refreshPresence();
   }
 
@@ -396,7 +484,6 @@ export class HostService extends EventEmitter<HostEvents> {
       this.#setStatus({
         phase: "error",
         apiOnline: false,
-        vncOnline: false,
         message: "The named Cloudflare Tunnel stopped unexpectedly.",
       });
     });
@@ -448,6 +535,15 @@ export class HostService extends EventEmitter<HostEvents> {
       return null;
     }
   }
+}
+
+export function serverLogoUrl(version: string): string {
+  return `openbot-server-logo://local/logo?v=${encodeURIComponent(version)}`;
+}
+
+function normalizeRemoteDesktopPlatform(platform: NodeJS.Platform): "darwin" | "win32" | "linux" {
+  if (platform === "darwin" || platform === "win32") return platform;
+  return "linux";
 }
 
 export async function waitForPublicApi(apiUrl: string, timeoutMs: number): Promise<boolean> {

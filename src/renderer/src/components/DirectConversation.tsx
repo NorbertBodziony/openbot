@@ -271,7 +271,7 @@ export function DirectConversation(props: DirectConversationProps) {
             aria-label={`Message ${teamMemberName(props.member)}`}
             placeholder={`Message ${teamMemberName(props.member)}`}
             disabled={sending()}
-            onInput={(event) => updateText(event.currentTarget.value)}
+            onValueChange={updateText}
             onKeyDown={(event) => {
               if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
               event.preventDefault();

@@ -409,7 +409,7 @@ export function AccountLogin(props: AccountLoginProps) {
                         if (validationError) showEmailError(validationError);
                         else hideEmailError();
                       }}
-                      onInput={(event) => handleEmailInput(event.currentTarget.value)}
+                      onValueChange={handleEmailInput}
                     />
                     <p
                       id="account-email-error"

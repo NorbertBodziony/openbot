@@ -45,6 +45,14 @@ extraResources:
     to: whisper/bin
   - from: .openbot-build/whisper/model
     to: whisper/model
+  - from: build/remote-desktop-runtime
+    to: remote-desktop-runtime
+  - from: build/cloudflared/${os}/${arch}
+    to: cloudflared/${os}/${arch}
+  - from: build/cloudflared/licenses
+    to: cloudflared/licenses
+  - from: build/cloudflared/source-manifest.json
+    to: cloudflared/source-manifest.json
 directories:
   output: dist
 mac:
@@ -70,9 +78,6 @@ mac:
         - arm64
 win:
   icon: build/icon-production.ico
-  # Windows builds are intentionally unsigned until release signing is configured.
-  signExecutable: false
-  verifyUpdateCodeSignature: false
   target:
     - target: nsis
       arch:

@@ -19,6 +19,8 @@
   height: 100%;
   display: block;
   object-fit: cover;
+  outline: 1px solid var(--openbot-image-outline);
+  outline-offset: -1px;
 }
 
 .server-settings-panel {
@@ -96,11 +98,23 @@
 }
 
 .server-settings-logo-row,
-.server-settings-address-setting {
+.server-settings-address-setting,
+.server-settings-readonly-name {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--openbot-space-6);
+}
+
+.server-settings-readonly-value {
+  min-width: 220px;
+  max-width: 280px;
+  justify-self: end;
+  color: var(--openbot-text-primary);
+  font-weight: var(--openbot-weight-medium);
+  overflow-wrap: anywhere;
+  text-align: right;
+  user-select: text;
 }
 
 .server-settings-general-copy {
@@ -170,8 +184,12 @@
 }
 
 .server-settings-name-field .ui-field-error {
-  grid-column: 2;
-  grid-row: 3;
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.server-settings-name-field[data-invalid] .ui-field-description {
+  visibility: hidden;
 }
 
 .server-settings-publish-setting.ui-switch {
@@ -267,6 +285,64 @@
   border-radius: var(--openbot-radius-lg);
   background: var(--openbot-bg-surface);
   padding: var(--openbot-space-3) var(--openbot-space-4);
+}
+
+.server-settings-error {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  border-color: var(--openbot-danger-soft);
+}
+
+.server-settings-error > svg {
+  color: var(--openbot-danger);
+}
+
+.server-settings-error-toast {
+  position: absolute;
+  right: var(--openbot-space-6);
+  bottom: var(--openbot-space-6);
+  left: var(--openbot-space-6);
+  z-index: 3;
+  box-shadow: 0 12px 32px var(--openbot-shadow-dialog);
+}
+
+.server-settings-error-toast[data-with-save-bar] {
+  bottom: calc(60px + var(--openbot-space-3));
+}
+
+.server-settings-panel[data-tab="desktop"] {
+  width: 100%;
+}
+
+.server-settings-desktop-card.ui-card {
+  padding: var(--openbot-space-4);
+}
+
+.server-settings-desktop-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--openbot-space-4);
+}
+
+.server-settings-desktop-content > .server-settings-general-copy {
+  flex: 1 1 280px;
+}
+
+.server-settings-desktop-meta {
+  display: grid;
+  justify-items: end;
+  gap: var(--openbot-space-1);
+  max-width: 280px;
+  text-align: right;
+}
+
+.server-settings-desktop-content > .ui-input {
+  width: 100%;
+}
+
+.server-settings-desktop-status {
+  justify-self: start;
+  margin-top: var(--openbot-space-1);
 }
 
 .server-settings-notice > svg {
@@ -603,9 +679,17 @@
   }
 
   .server-settings-logo-row,
-  .server-settings-address-setting {
+  .server-settings-address-setting,
+  .server-settings-readonly-name {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--openbot-space-3);
+  }
+
+  .server-settings-readonly-value {
+    min-width: 0;
+    max-width: none;
+    justify-self: start;
+    text-align: left;
   }
 
   .server-settings-logo-control {
@@ -639,7 +723,7 @@
   }
 
   .server-settings-name-field .ui-field-error {
-    grid-row: 4;
+    grid-row: 2;
   }
 
   .server-settings-address-control {
@@ -650,12 +734,27 @@
     padding-inline: var(--openbot-space-4);
   }
 
+  .server-settings-error-toast {
+    right: var(--openbot-space-4);
+    left: var(--openbot-space-4);
+  }
+
   .server-settings-invite-composer {
     grid-template-columns: minmax(0, 1fr) 108px;
   }
 
   .server-settings-invite-composer > .ui-button {
     grid-column: 1 / -1;
+  }
+
+  .server-settings-desktop-content {
+    align-items: stretch;
+  }
+
+  .server-settings-desktop-meta {
+    justify-items: start;
+    max-width: none;
+    text-align: left;
   }
 }
 

@@ -370,8 +370,8 @@ export function InitialSetup(props: InitialSetupProps) {
                       rows="3"
                       maxlength={INPUT_LIMITS.inviteUrl}
                       value={inviteUrl()}
-                      onInput={(event) => {
-                        setInviteUrl(event.currentTarget.value);
+                      onValueChange={(value) => {
+                        setInviteUrl(value);
                         setInvitePreview(null);
                         setError("");
                       }}

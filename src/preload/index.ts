@@ -381,6 +381,7 @@ const openbotApi: OpenBotDesktopApi = {
   servers: {
     list: async () => rememberActiveServer(await ipcRenderer.invoke(IPC_CHANNELS.serversList)),
     select: async (serverId) => rememberActiveServer(await ipcRenderer.invoke(IPC_CHANNELS.serversSelect, serverId)),
+    reorder: async (input) => rememberActiveServer(await ipcRenderer.invoke(IPC_CHANNELS.serversReorder, input)),
     join: async (input) => {
       const server = await ipcRenderer.invoke(IPC_CHANNELS.serversJoin, input);
       selectedServerId = server.id;
@@ -395,6 +396,14 @@ const openbotApi: OpenBotDesktopApi = {
     },
     remove: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversRemove, serverId),
     getPresence: () => ipcRenderer.invoke(IPC_CHANNELS.serversGetPresence),
+    getPresenceFor: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversGetPresenceFor, serverId),
+    refreshIdentity: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversRefreshIdentity, serverId),
+    listMembers: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversListMembers, serverId),
+    updateMember: (serverId, input) => ipcRenderer.invoke(IPC_CHANNELS.serversUpdateMember, serverId, input),
+    removeMember: (serverId, memberId) => ipcRenderer.invoke(IPC_CHANNELS.serversRemoveMember, serverId, memberId),
+    listInvites: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversListInvites, serverId),
+    revokeInvite: (serverId, inviteId) => ipcRenderer.invoke(IPC_CHANNELS.serversRevokeInvite, serverId, inviteId),
+    createInvite: (serverId, input) => ipcRenderer.invoke(IPC_CHANNELS.serversCreateInvite, serverId, input),
     setTyping: (input) => ipcRenderer.invoke(IPC_CHANNELS.serversSetTyping, input),
     onPresence: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: ScopedTeamPresenceSnapshot) => {
@@ -437,7 +446,8 @@ const openbotApi: OpenBotDesktopApi = {
   host: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.hostGetStatus),
     configure: (input) => ipcRenderer.invoke(IPC_CHANNELS.hostConfigure, input),
-    configureRemoteDesktop: (input) => ipcRenderer.invoke(IPC_CHANNELS.hostConfigureRemoteDesktop, input),
+    updateIdentity: (input) => ipcRenderer.invoke(IPC_CHANNELS.hostUpdateIdentity, input),
+    getPresence: () => ipcRenderer.invoke(IPC_CHANNELS.hostGetPresence),
     start: () => ipcRenderer.invoke(IPC_CHANNELS.hostStart),
     stop: () => ipcRenderer.invoke(IPC_CHANNELS.hostStop),
     listMembers: () => ipcRenderer.invoke(IPC_CHANNELS.hostListMembers),
@@ -454,16 +464,16 @@ const openbotApi: OpenBotDesktopApi = {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.hostEvent, handler);
     },
   },
-  remoteMac: {
-    list: () => ipcRenderer.invoke(IPC_CHANNELS.remoteMacList),
-    connect: (input) => ipcRenderer.invoke(IPC_CHANNELS.remoteMacConnect, input),
-    disconnect: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.remoteMacDisconnect, sessionId),
-    getCredentials: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.remoteMacGetCredentials, sessionId),
+  remoteDesktop: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.remoteDesktopList),
+    connect: (input) => ipcRenderer.invoke(IPC_CHANNELS.remoteDesktopConnect, input),
+    selectDisplay: (input) => ipcRenderer.invoke(IPC_CHANNELS.remoteDesktopSelectDisplay, input),
+    disconnect: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.remoteDesktopDisconnect, sessionId),
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, sessions: Parameters<typeof listener>[0]) =>
         listener(sessions);
-      ipcRenderer.on(IPC_CHANNELS.remoteMacEvent, handler);
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.remoteMacEvent, handler);
+      ipcRenderer.on(IPC_CHANNELS.remoteDesktopEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.remoteDesktopEvent, handler);
     },
   },
 };

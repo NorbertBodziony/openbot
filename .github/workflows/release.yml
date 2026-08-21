@@ -126,6 +126,9 @@ jobs:
       - name: Run repository check
         run: bun run check
 
+      - name: Install and verify remote desktop runtime
+        run: bun run install:remote-desktop-runtime && bun run verify:remote-desktop-runtime
+
       - name: Install Developer ID provisioning profile
         shell: bash
         env:
@@ -158,6 +161,10 @@ jobs:
           app_path="dist/mac-arm64/OpenBot.app"
           test -d "$app_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
+          runtime_path="$app_path/Contents/Resources/remote-desktop-runtime/darwin/arm64"
+          codesign --verify --deep --strict --verbose=2 "$runtime_path/Sunshine.app"
+          codesign --verify --strict --verbose=2 "$runtime_path/web-server"
+          codesign --verify --strict --verbose=2 "$runtime_path/streamer"
           test -f "$app_path/Contents/embedded.provisionprofile"
           codesign -d --entitlements "$RUNNER_TEMP/openbot-entitlements.plist" "$app_path"
           plutil -extract com.apple.developer.associated-domains.0 raw \
@@ -225,16 +232,20 @@ jobs:
           retention-days: 7
 
   windows:
-    name: Build unsigned Windows x64 release
+    name: Build signed Windows x64 release
+    if: ${{ false }} # Windows desktop releases are paused; macOS releases must not wait for this job.
     needs: validate
     runs-on: windows-2025
     timeout-minutes: 35
+    environment: release
     permissions:
       attestations: write
       contents: read
       id-token: write
     env:
       RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+      CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
     steps:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -246,13 +257,24 @@ jobs:
         with:
           bun-version: 1.3.11
 
+      - name: Require Windows signing credentials
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:CSC_KEY_PASSWORD)) {
+            Write-Error "WINDOWS_CSC_LINK and WINDOWS_CSC_KEY_PASSWORD are required."
+          }
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
       - name: Run Windows checks
         run: bun run lint && bun run typecheck && bunx vitest run src/backend/cli.test.ts
 
-      - name: Build unsigned NSIS installer
+      - name: Install and verify remote desktop runtime
+        run: bun scripts/install-remote-desktop-runtime.ts win32 x64 && bun run verify:remote-desktop-runtime --windows
+
+      - name: Build signed NSIS installer
         run: bun run dist:win
 
       - name: Verify packaged application metadata and launch
@@ -266,9 +288,24 @@ jobs:
           if ($installers.Count -ne 1 -or -not (Test-Path dist/latest.yml)) {
             Write-Error "Expected one EXE installer and latest.yml."
           }
+          $applicationSignature = Get-AuthenticodeSignature -LiteralPath dist/win-unpacked/OpenBot.exe
+          if ($applicationSignature.Status -ne "Valid") {
+            Write-Error "The application signature is not valid: $($applicationSignature.Status)."
+          }
+          $runtimeExecutables = @(
+            "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/sunshine.exe",
+            "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/web-server.exe",
+            "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/streamer.exe"
+          )
+          foreach ($runtimeExecutable in $runtimeExecutables) {
+            $runtimeSignature = Get-AuthenticodeSignature -LiteralPath $runtimeExecutable
+            if ($runtimeSignature.Status -ne "Valid") {
+              Write-Error "The runtime signature is not valid for ${runtimeExecutable}: $($runtimeSignature.Status)."
+            }
+          }
           $signature = Get-AuthenticodeSignature -LiteralPath $installers[0].FullName
-          if ($signature.Status -ne "NotSigned") {
-            Write-Error "The unsigned release contract changed: $($signature.Status)."
+          if ($signature.Status -ne "Valid") {
+            Write-Error "The installer signature is not valid: $($signature.Status)."
           }
           Select-String -Path dist/latest.yml -SimpleMatch "version: $env:RELEASE_VERSION"
           Select-String -Path dist/latest.yml -SimpleMatch ".exe"
@@ -310,7 +347,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [validate, macos, windows]
+    needs: [validate, macos]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -325,24 +362,15 @@ jobs:
           name: release-macos
           path: release-assets/macos
 
-      - name: Download Windows release assets
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
-        with:
-          name: release-windows
-          path: release-assets/windows
-
-      - name: Generate combined checksums
+      - name: Generate release checksums
         shell: bash
-        run: |
-          cat release-assets/macos/SHA256SUMS-macos.txt \
-            release-assets/windows/SHA256SUMS-windows.txt \
-            > release-assets/SHA256SUMS.txt
+        run: cp release-assets/macos/SHA256SUMS-macos.txt release-assets/SHA256SUMS.txt
 
       - name: Publish GitHub Release
         shell: bash
         run: |
           shopt -s nullglob
-          artifacts=(release-assets/macos/* release-assets/windows/* release-assets/SHA256SUMS.txt)
+          artifacts=(release-assets/macos/* release-assets/SHA256SUMS.txt)
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${artifacts[@]}" --clobber --repo "$GITHUB_REPOSITORY"
             gh release edit "$RELEASE_TAG" --draft=false --latest --repo "$GITHUB_REPOSITORY"

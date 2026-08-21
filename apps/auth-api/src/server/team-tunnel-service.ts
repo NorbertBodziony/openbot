@@ -9,7 +9,6 @@ export interface TeamTunnelRecord {
   tunnelId: string | null;
   tunnelName: string;
   apiHostname: string;
-  vncHostname: string;
   status: "provisioning" | "active";
 }
 
@@ -17,6 +16,8 @@ export interface TeamTunnelRepository {
   claim(input: Omit<TeamTunnelRecord, "tunnelId" | "status"> & { now: number }): Promise<TeamTunnelRecord>;
   setTunnelId(serverId: string, tunnelId: string, now: number): Promise<void>;
   markActive(serverId: string, now: number): Promise<void>;
+  setMachineTokenHash(serverId: string, tokenHash: string, now: number): Promise<void>;
+  authenticateMachine(serverId: string, tokenHash: string): Promise<boolean>;
   find(serverId: string): Promise<TeamTunnelRecord | null>;
   delete(serverId: string): Promise<void>;
 }
@@ -24,13 +25,7 @@ export interface TeamTunnelRepository {
 export interface TeamTunnelProvider {
   findTunnelId(name: string): Promise<string | null>;
   createTunnel(name: string): Promise<string>;
-  configureTunnel(input: {
-    tunnelId: string;
-    apiHostname: string;
-    vncHostname: string;
-    apiPort: number | null;
-    vncEnabled: boolean;
-  }): Promise<void>;
+  configureTunnel(input: { tunnelId: string; apiHostname: string; apiPort: number | null }): Promise<void>;
   ensureDns(hostname: string, tunnelId: string): Promise<void>;
   getTunnelToken(tunnelId: string): Promise<string>;
   deleteDns(hostname: string): Promise<void>;
@@ -41,8 +36,8 @@ export interface ProvisionedTeamTunnel {
   tunnelId: string;
   tunnelName: string;
   apiUrl: string;
-  vncHostname: string;
   token: string;
+  machineToken: string;
 }
 
 interface TeamTunnelServiceOptions {
@@ -77,7 +72,6 @@ export class TeamTunnelService {
     serverId: string;
     serverName: string;
     apiPort?: number | null;
-    vncEnabled?: boolean;
   }): Promise<ProvisionedTeamTunnel> {
     validateServerId(input.serverId);
     const slug = validateServerName(input.serverName);
@@ -90,14 +84,13 @@ export class TeamTunnelService {
     const serverId = input.serverId.toLowerCase();
     let claimed: TeamTunnelRecord | null = null;
     for (let attempt = 0; attempt < MAX_HOSTNAME_ATTEMPTS; attempt += 1) {
-      const hostnames = buildTeamHostnames(slug, this.#randomSuffix(), this.#domain);
+      const apiHostname = buildTeamHostname(slug, this.#randomSuffix(), this.#domain);
       try {
         claimed = await this.#repository.claim({
           serverId,
           userId: input.user.id,
           tunnelName: `openbot-${compactId}`,
-          apiHostname: hostnames.apiHostname,
-          vncHostname: hostnames.vncHostname,
+          apiHostname,
           now,
         });
         break;
@@ -146,22 +139,19 @@ export class TeamTunnelService {
     await this.#provider.configureTunnel({
       tunnelId,
       apiHostname: claimed.apiHostname,
-      vncHostname: claimed.vncHostname,
       apiPort,
-      vncEnabled: input.vncEnabled ?? false,
     });
-    await Promise.all([
-      this.#provider.ensureDns(claimed.apiHostname, tunnelId),
-      this.#provider.ensureDns(claimed.vncHostname, tunnelId),
-    ]);
+    await this.#provider.ensureDns(claimed.apiHostname, tunnelId);
     const token = await this.#provider.getTunnelToken(tunnelId);
+    const machineToken = createMachineToken();
+    await this.#repository.setMachineTokenHash(claimed.serverId, await hashMachineToken(machineToken), now);
     await this.#repository.markActive(claimed.serverId, now);
     return {
       tunnelId,
       tunnelName: claimed.tunnelName,
       apiUrl: `https://${claimed.apiHostname}`,
-      vncHostname: claimed.vncHostname,
       token,
+      machineToken,
     };
   }
 
@@ -176,11 +166,31 @@ export class TeamTunnelService {
         "This team server belongs to a different OpenBot account.",
       );
     }
-    await Promise.all([this.#provider.deleteDns(record.apiHostname), this.#provider.deleteDns(record.vncHostname)]);
+    await this.#provider.deleteDns(record.apiHostname);
     const tunnelId = record.tunnelId ?? (await this.#provider.findTunnelId(record.tunnelName));
     if (tunnelId) await this.#provider.deleteTunnel(tunnelId);
     await this.#repository.delete(record.serverId);
   }
+}
+
+export async function authenticateTeamHost(
+  repository: TeamTunnelRepository,
+  serverId: string,
+  machineToken: string,
+): Promise<boolean> {
+  validateServerId(serverId);
+  if (!/^[0-9a-f]{64}$/u.test(machineToken)) return false;
+  return repository.authenticateMachine(serverId.toLowerCase(), await hashMachineToken(machineToken));
+}
+
+function createMachineToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+async function hashMachineToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
 export class TeamTunnelServiceError extends Error {
@@ -225,19 +235,11 @@ function validateServerName(value: string): string {
   return slug.slice(0, MAX_HOST_SLUG_LENGTH).replace(/-+$/gu, "");
 }
 
-function buildTeamHostnames(
-  slug: string,
-  suffix: string,
-  domain: string,
-): { apiHostname: string; vncHostname: string } {
+function buildTeamHostname(slug: string, suffix: string, domain: string): string {
   if (!/^[a-z2-7]{8}$/u.test(suffix)) {
     throw new Error("The generated team tunnel suffix is invalid.");
   }
-  const stem = `${slug}-${suffix}-host`;
-  return {
-    apiHostname: `${stem}.${domain}`,
-    vncHostname: `vnc-${stem}.${domain}`,
-  };
+  return `${slug}-${suffix}-host.${domain}`;
 }
 
 function createRandomHostSuffix(): string {

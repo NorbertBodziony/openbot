@@ -20,7 +20,6 @@ import type {
   MessageReaction,
   QueueDelivery,
   QueueSnapshot,
-  RemoteMacSession,
   ServerSummary,
   TeamPresenceSnapshot,
   UpdateBotInput,
@@ -72,13 +71,6 @@ import {
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./PanelResizer";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import {
-  REMOTE_DESKTOP_PANEL_DEFAULT,
-  REMOTE_DESKTOP_PANEL_MAX,
-  REMOTE_DESKTOP_PANEL_MIN,
-  REMOTE_DESKTOP_PANEL_STORAGE_KEY,
-  RemoteMacPanel,
-} from "./RemoteMacPanel";
-import {
   Button,
   Combobox,
   Dialog,
@@ -121,8 +113,8 @@ interface ConversationProps {
   server: ServerSummary | undefined;
   presence: TeamPresenceSnapshot;
   currentUserEmail: string;
-  remoteMacSession: RemoteMacSession | undefined;
-  remoteDesktopRequest: number;
+  remoteDesktopSessionActive: boolean;
+  remoteDesktopVisible: boolean;
   prompt: Extract<AgentEvent, { type: "prompt" }> | undefined;
   approval: Extract<AgentEvent, { type: "approval" }>["approval"] | undefined;
   onCloseAgentPicker: () => void;
@@ -152,8 +144,7 @@ interface ConversationProps {
   onResumeQueue: () => void;
   onActivateBrowserTab: (tabId: string) => void;
   onCloseBrowserTab: (tabId: string) => void | Promise<void>;
-  onConnectRemoteMac: (hostname: string, serverId: string | null) => Promise<void>;
-  onDisconnectRemoteMac: (sessionId: string) => Promise<void>;
+  onOpenRemoteDesktop: (serverId: string, trigger: HTMLElement) => Promise<void>;
   onOpenAgentSetup: () => Promise<void>;
   onStop: () => void;
 }
@@ -171,7 +162,7 @@ interface MediaPreview {
   error: string | null;
 }
 
-type RightPanelMode = "none" | "browser" | "desktop" | "settings";
+type RightPanelMode = "none" | "browser" | "settings";
 
 const EMPTY_DRAFT: ComposerDraft = {
   text: "",
@@ -225,9 +216,7 @@ export function Conversation(props: ConversationProps) {
   const [settingsName, setSettingsName] = createSignal("");
   const [settingsTitle, setSettingsTitle] = createSignal("");
   const [settingsDescription, setSettingsDescription] = createSignal("");
-  let settingsNameDirty = false;
-  let settingsTitleDirty = false;
-  let settingsDescriptionDirty = false;
+  const [settingsDirty, setSettingsDirty] = createSignal({ name: false, title: false, description: false });
   const [settingsNotifications, setSettingsNotifications] = createSignal(true);
   const [settingsModel, setSettingsModel] = createSignal<AgentModelId>("gpt-5.6-luna");
   const [settingsReasoning, setSettingsReasoning] = createSignal<AgentReasoningEffort>("medium");
@@ -273,14 +262,6 @@ export function Conversation(props: ConversationProps) {
   const [browserPanelWidth, setBrowserPanelWidth] = createSignal(
     readPanelWidth(BROWSER_PANEL_STORAGE_KEY, BROWSER_PANEL_DEFAULT, BROWSER_PANEL_MIN, BROWSER_PANEL_MAX),
   );
-  const [remoteDesktopPanelWidth, setRemoteDesktopPanelWidth] = createSignal(
-    readPanelWidth(
-      REMOTE_DESKTOP_PANEL_STORAGE_KEY,
-      REMOTE_DESKTOP_PANEL_DEFAULT,
-      REMOTE_DESKTOP_PANEL_MIN,
-      REMOTE_DESKTOP_PANEL_MAX,
-    ),
-  );
   const selectedModel = createMemo(() => props.modelOptions.find((option) => option.id === settingsModel()));
   const reasoningOptions = createMemo(() => selectedModel()?.supportedReasoningEfforts ?? ["medium" as const]);
   const onboardingActive = createMemo(() => {
@@ -318,7 +299,6 @@ export function Conversation(props: ConversationProps) {
     return botId ? (rightPanels()[botId] ?? "none") : "none";
   });
   const screenOpen = () => activeRightPanel() === "browser";
-  const remoteDesktopOpen = () => activeRightPanel() === "desktop";
   const settingsOpen = () => activeRightPanel() === "settings";
   const browserTabs = createMemo(() => {
     const bot = props.bot;
@@ -458,16 +438,12 @@ export function Conversation(props: ConversationProps) {
   let chatSearchReturnFocus: HTMLElement | undefined;
   let chatSearchFrame: number | undefined;
   let lastChatSearchQuery = "";
-  let settingsNameInput: HTMLInputElement | undefined;
-  let settingsTitleInput: HTMLInputElement | undefined;
-  let settingsDescriptionInput: HTMLTextAreaElement | undefined;
   let avatarPickerRoot: HTMLDivElement | undefined;
   let avatarFileInput: HTMLInputElement | undefined;
   let stickToLatest = true;
   let lastConversationBotId: string | undefined;
   let lastPanelBotId: string | undefined;
   let lastHandledSettingsRequestNonce: number | undefined;
-  let lastHandledRemoteDesktopRequest = 0;
   let lastHandledOnboardingRequestNonce: number | undefined;
   let lastHandledMessageFocusNonce: number | undefined;
   let lastSettingsSignature: string | undefined;
@@ -538,12 +514,11 @@ export function Conversation(props: ConversationProps) {
     if (!botId) return;
     const name = settingsName().trim() || "New agent";
     setSettingsName(name);
-    if (settingsNameInput) settingsNameInput.value = name;
-    setTimeout(() => {
-      void saveBotPatch({ name }, botId).then((saved) => {
-        if (saved && props.bot?.id === botId && settingsName() === name) settingsNameDirty = false;
-      });
-    }, 0);
+    void saveBotPatch({ name }, botId).then((saved) => {
+      if (saved && props.bot?.id === botId && settingsName() === name) {
+        setSettingsDirty((current) => ({ ...current, name: false }));
+      }
+    });
   }
 
   function saveSettingsTitle(): void {
@@ -551,25 +526,22 @@ export function Conversation(props: ConversationProps) {
     if (!botId) return;
     const role = settingsTitle().trim();
     setSettingsTitle(role);
-    if (settingsTitleInput) settingsTitleInput.value = role;
-    setTimeout(() => {
-      void saveBotPatch({ role }, botId).then((saved) => {
-        if (saved && props.bot?.id === botId && settingsTitle() === role) settingsTitleDirty = false;
-      });
-    }, 0);
+    void saveBotPatch({ role }, botId).then((saved) => {
+      if (saved && props.bot?.id === botId && settingsTitle() === role) {
+        setSettingsDirty((current) => ({ ...current, title: false }));
+      }
+    });
   }
 
   function saveSettingsDescription(): void {
     const botId = props.bot?.id;
     if (!botId) return;
     const description = settingsDescription();
-    setTimeout(() => {
-      void saveBotPatch({ description }, botId).then((saved) => {
-        if (saved && props.bot?.id === botId && settingsDescription() === description) {
-          settingsDescriptionDirty = false;
-        }
-      });
-    }, 0);
+    void saveBotPatch({ description }, botId).then((saved) => {
+      if (saved && props.bot?.id === botId && settingsDescription() === description) {
+        setSettingsDirty((current) => ({ ...current, description: false }));
+      }
+    });
   }
 
   async function setCustomAvatar(image: AvatarImageInput | null): Promise<boolean> {
@@ -1041,24 +1013,18 @@ export function Conversation(props: ConversationProps) {
     (bot) => {
       if (!bot || bot.signature === lastSettingsSignature) return;
       const botChanged = bot.id !== lastAvatarSettingsBotId;
+      const dirty = botChanged ? { name: false, title: false, description: false } : settingsDirty();
       lastSettingsSignature = bot.signature;
       lastAvatarSettingsBotId = bot.id;
-      if (botChanged) {
-        settingsNameDirty = false;
-        settingsTitleDirty = false;
-        settingsDescriptionDirty = false;
-      }
-      if (botChanged || !settingsNameDirty) {
+      if (botChanged) setSettingsDirty(dirty);
+      if (!dirty.name) {
         setSettingsName(bot.name);
-        if (settingsNameInput) settingsNameInput.value = bot.name;
       }
-      if (botChanged || !settingsTitleDirty) {
+      if (!dirty.title) {
         setSettingsTitle(bot.role);
-        if (settingsTitleInput) settingsTitleInput.value = bot.role;
       }
-      if (botChanged || !settingsDescriptionDirty) {
+      if (!dirty.description) {
         setSettingsDescription(bot.description);
-        if (settingsDescriptionInput) settingsDescriptionInput.value = bot.description;
       }
       setSettingsNotifications(bot.notifications);
       setSettingsModel(bot.model);
@@ -1114,15 +1080,6 @@ export function Conversation(props: ConversationProps) {
       if (!request || botId !== request.botId || request.nonce === lastHandledSettingsRequestNonce) return;
       lastHandledSettingsRequestNonce = request.nonce;
       setActiveRightPanel("settings", botId);
-    },
-  );
-
-  createEffect(
-    () => ({ request: props.remoteDesktopRequest, botId: props.bot?.id }),
-    ({ request, botId }) => {
-      if (!request || request === lastHandledRemoteDesktopRequest) return;
-      lastHandledRemoteDesktopRequest = request;
-      setActiveRightPanel("desktop", botId);
     },
   );
 
@@ -1622,10 +1579,9 @@ export function Conversation(props: ConversationProps) {
         {
           "conversation-drop-active": dropActive(),
           "browser-panel-active": screenOpen(),
-          "remote-desktop-panel-active": remoteDesktopOpen(),
         },
       ]}
-      style={`--settings-panel-width: ${settingsPanelWidth()}px; --browser-panel-width: ${browserPanelWidth()}px; --remote-desktop-panel-width: ${remoteDesktopPanelWidth()}px`}
+      style={`--settings-panel-width: ${settingsPanelWidth()}px; --browser-panel-width: ${browserPanelWidth()}px`}
       onDragEnter={(event) => {
         if (event.dataTransfer?.types.includes("Files")) setDropActive(true);
       }}
@@ -1685,19 +1641,29 @@ export function Conversation(props: ConversationProps) {
                     onChange={(model) => void selectAndConfirmModel(model)}
                   />
                 </Show>
-                <Show when={props.server?.kind === "remote"}>
-                  <Button
-                    type="button"
-                    class="header-panel-toggle remote-desktop-button"
-                    aria-label={remoteDesktopOpen() ? "Hide remote desktop" : "Open remote desktop"}
-                    aria-expanded={remoteDesktopOpen() ? "true" : "false"}
-                    onClick={() => setActiveRightPanel(remoteDesktopOpen() ? "none" : "desktop")}
-                  >
-                    <RemoteDesktopIcon />
-                    <Show when={props.server?.state === "online"}>
-                      <span class="remote-desktop-button-dot" aria-hidden="true" />
-                    </Show>
-                  </Button>
+                <Show when={props.server?.kind === "remote" ? props.server : undefined}>
+                  {(server) => {
+                    const enabled = () =>
+                      props.remoteDesktopSessionActive ||
+                      (server().state === "online" && server().remoteDesktopAvailable);
+                    const label = () =>
+                      props.remoteDesktopSessionActive ? "Resume remote control" : "Open remote control";
+                    return (
+                      <Button
+                        type="button"
+                        class="header-panel-toggle remote-desktop-button"
+                        aria-label={label()}
+                        aria-expanded={props.remoteDesktopVisible ? "true" : "false"}
+                        disabled={!enabled()}
+                        onClick={(event) => void props.onOpenRemoteDesktop(server().id, event.currentTarget)}
+                      >
+                        <RemoteDesktopIcon />
+                        <Show when={props.remoteDesktopSessionActive}>
+                          <span class="remote-desktop-button-dot" aria-hidden="true" />
+                        </Show>
+                      </Button>
+                    );
+                  }}
                 </Show>
                 <Button
                   type="button"
@@ -2536,7 +2502,7 @@ export function Conversation(props: ConversationProps) {
                   value={browserAddress()}
                   aria-label="Browser address"
                   maxlength={INPUT_LIMITS.browserUrl}
-                  onInput={(event) => setBrowserAddress(event.currentTarget.value)}
+                  onValueChange={setBrowserAddress}
                 />
               </form>
               <Button type="button" class="browser-toolbar-button" aria-label="Browser menu">
@@ -2553,20 +2519,6 @@ export function Conversation(props: ConversationProps) {
             </div>
           </Tabs.Content>
         </Tabs.Root>
-      </Show>
-
-      <Show when={remoteDesktopOpen()}>
-        <RemoteMacPanel
-          server={props.server}
-          session={props.remoteMacSession}
-          width={remoteDesktopPanelWidth()}
-          maxWidth={() => conversationPanel?.clientWidth || window.innerWidth}
-          onResize={setRemoteDesktopPanelWidth}
-          onResizeEnd={(value) => savePanelWidth(REMOTE_DESKTOP_PANEL_STORAGE_KEY, value)}
-          onClose={() => setActiveRightPanel("none")}
-          onConnect={props.onConnectRemoteMac}
-          onDisconnect={props.onDisconnectRemoteMac}
-        />
       </Show>
 
       <Show when={settingsOpen() && props.bot}>
@@ -2766,13 +2718,12 @@ export function Conversation(props: ConversationProps) {
             <label class="agent-settings-field">
               <span>Name</span>
               <Input
-                ref={(element) => (settingsNameInput = element)}
-                defaultValue={settingsName()}
+                value={settingsName()}
                 aria-label="Agent name"
                 maxlength={INPUT_LIMITS.agentName}
-                onInput={(event) => {
-                  setSettingsName(event.currentTarget.value);
-                  settingsNameDirty = true;
+                onValueChange={(value) => {
+                  setSettingsName(value);
+                  setSettingsDirty((current) => ({ ...current, name: true }));
                 }}
                 onBlur={saveSettingsName}
               />
@@ -2780,14 +2731,13 @@ export function Conversation(props: ConversationProps) {
             <label class="agent-settings-field">
               <span>Title</span>
               <Input
-                ref={(element) => (settingsTitleInput = element)}
-                defaultValue={settingsTitle()}
+                value={settingsTitle()}
                 aria-label="Agent title"
                 placeholder="Describe what your agent does"
                 maxlength={INPUT_LIMITS.agentTitle}
-                onInput={(event) => {
-                  setSettingsTitle(event.currentTarget.value);
-                  settingsTitleDirty = true;
+                onValueChange={(value) => {
+                  setSettingsTitle(value);
+                  setSettingsDirty((current) => ({ ...current, title: true }));
                 }}
                 onBlur={saveSettingsTitle}
               />
@@ -2795,15 +2745,14 @@ export function Conversation(props: ConversationProps) {
             <label class="agent-settings-field agent-settings-description">
               <span>Description</span>
               <Textarea
-                ref={(element) => (settingsDescriptionInput = element)}
                 rows="4"
-                defaultValue={settingsDescription()}
+                value={settingsDescription()}
                 aria-label="Agent description"
                 placeholder="What this agent is for"
                 maxlength={INPUT_LIMITS.agentDescription}
-                onInput={(event) => {
-                  setSettingsDescription(event.currentTarget.value);
-                  settingsDescriptionDirty = true;
+                onValueChange={(value) => {
+                  setSettingsDescription(value);
+                  setSettingsDirty((current) => ({ ...current, description: true }));
                 }}
                 onBlur={saveSettingsDescription}
               />

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   isOpenBotTeamApiHostname,
-  isOpenBotTeamVncHostname,
   isUuidV4,
   isValidHostname,
   normalizeEmailAddress,
@@ -39,7 +38,7 @@ describe("shared boundary validation", () => {
 
   it("accepts readable first-level team hosts", () => {
     expect(isOpenBotTeamApiHostname("studio-mac-k7m4q2pz-host.openbot.run")).toBe(true);
-    expect(isOpenBotTeamVncHostname("vnc-studio-mac-k7m4q2pz-host.openbot.run")).toBe(true);
+    expect(isOpenBotTeamApiHostname("vnc-studio-mac-k7m4q2pz-host.openbot.run")).toBe(false);
     expect(isOpenBotTeamApiHostname("Studio-mac-k7m4q2pz-host.openbot.run")).toBe(false);
     expect(isOpenBotTeamApiHostname("studio-mac-k7m4q2p-host.openbot.run")).toBe(false);
     expect(isOpenBotTeamApiHostname("studio-mac-k7m4q2pz.teams.openbot.run")).toBe(false);

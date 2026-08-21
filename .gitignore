@@ -26,3 +26,6 @@ storybook-static/
 index-*.css
 .openbot-browser-test/
 .openbot-build/
+/build/cloudflared/
+/build/remote-desktop-runtime/
+/build/remote-desktop-release/

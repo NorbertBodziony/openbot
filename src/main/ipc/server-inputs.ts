@@ -1,18 +1,19 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   ConfigureHostInput,
-  ConfigureRemoteDesktopInput,
   CreateTeamInviteInput,
   DirectTypingInput,
   JoinServerInput,
   LoginServerInput,
   MarkDirectReadInput,
-  RemoteMacConnectInput,
+  ReorderServersInput,
   SendDirectMessageInput,
   SetTeamTypingInput,
+  UpdateHostIdentityInput,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { parseAvatarImage } from "./avatar-inputs";
 import { isObject, requireString } from "./validation";
 
 export function parseHostConfig(value: unknown): ConfigureHostInput {
@@ -23,6 +24,23 @@ export function parseHostConfig(value: unknown): ConfigureHostInput {
   }
   return {
     serverName,
+    ...(value.logo === undefined ? {} : { logo: parseAvatarImage(value.logo) }),
+  };
+}
+
+export function parseHostIdentity(value: unknown): UpdateHostIdentityInput {
+  if (!isObject(value)) throw new Error("Host identity is required.");
+  if (value.serverName === undefined && value.logo === undefined) {
+    throw new Error("A host identity change is required.");
+  }
+  const serverName =
+    value.serverName === undefined ? undefined : requireString(value.serverName, "serverName", INPUT_LIMITS.serverName);
+  if (serverName !== undefined && serverName.trim().length < INPUT_LIMITS.serverNameMin) {
+    throw new Error(`Server name must contain at least ${INPUT_LIMITS.serverNameMin} characters.`);
+  }
+  return {
+    ...(serverName === undefined ? {} : { serverName }),
+    ...(value.logo === undefined ? {} : { logo: parseAvatarImage(value.logo) }),
   };
 }
 
@@ -40,6 +58,17 @@ export function parseLoginServer(value: unknown): LoginServerInput {
   };
 }
 
+export function parseReorderServers(value: unknown): ReorderServersInput {
+  if (!isObject(value) || !Array.isArray(value.serverIds)) {
+    throw new Error("Invalid server order.");
+  }
+  const serverIds = value.serverIds.map((serverId) => requireString(serverId, "serverId", INPUT_LIMITS.identifier));
+  if (new Set(serverIds).size !== serverIds.length) {
+    throw new Error("Duplicate server ids.");
+  }
+  return { serverIds };
+}
+
 export function parseCreateTeamInvite(value: unknown): CreateTeamInviteInput {
   if (!isObject(value)) throw new Error("Invitation details are required.");
   if (value.role !== "admin" && value.role !== "member") {
@@ -54,25 +83,6 @@ export function parseCreateTeamInvite(value: unknown): CreateTeamInviteInput {
   return {
     role: value.role,
     ...(value.email?.trim() ? { email: value.email.trim() } : {}),
-  };
-}
-
-export function parseRemoteMacConnect(value: unknown): RemoteMacConnectInput {
-  if (!isObject(value)) throw new Error("Remote Mac details are required.");
-  const serverId = value.serverId;
-  if (serverId !== undefined && serverId !== null && !isString(serverId)) {
-    throw new Error("Invalid serverId.");
-  }
-  return {
-    hostname: requireString(value.hostname, "hostname", INPUT_LIMITS.hostname),
-    serverId: serverId ?? null,
-  };
-}
-
-export function parseRemoteDesktopConfig(value: unknown): ConfigureRemoteDesktopInput {
-  if (!isObject(value)) throw new Error("Remote Desktop details are required.");
-  return {
-    password: requireString(value.password, "password", INPUT_LIMITS.remoteDesktopPassword),
   };
 }
 

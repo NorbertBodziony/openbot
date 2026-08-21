@@ -15,6 +15,7 @@ interface SettingsDialogShellProps {
   floatingContent?: JSX.Element;
   closeLabel?: string;
   onContentElement?: (element: HTMLElement) => void;
+  restoreFocusTarget?: HTMLElement | null;
 }
 
 function durationToMilliseconds(value: string, fallback: number): number {
@@ -25,7 +26,7 @@ function durationToMilliseconds(value: string, fallback: number): number {
 }
 
 function closeDuration(): number {
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return 0;
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return 0;
   return durationToMilliseconds(
     getComputedStyle(document.documentElement).getPropertyValue("--openbot-duration-fast"),
     120,
@@ -38,7 +39,7 @@ export function SettingsDialogShell(props: SettingsDialogShellProps) {
   const [canScrollUp, setCanScrollUp] = createSignal(false);
   const [canScrollDown, setCanScrollDown] = createSignal(false);
   let closeTimer: number | undefined;
-  let restoreTarget: HTMLElement | null = null;
+  let restoreTarget: HTMLElement | null = untrack(() => props.restoreFocusTarget ?? null);
   let restoreFrame: number | undefined;
   let modalElement: HTMLElement | undefined;
   let scrollElement: HTMLDivElement | undefined;
@@ -87,8 +88,10 @@ export function SettingsDialogShell(props: SettingsDialogShellProps) {
       const isRendered = untrack(rendered);
 
       if (open) {
+        const explicitTarget = props.restoreFocusTarget;
+        if (explicitTarget) restoreTarget = explicitTarget;
         if (!isRendered) {
-          restoreTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          restoreTarget ??= document.activeElement instanceof HTMLElement ? document.activeElement : null;
         }
         setRendered(true);
         setClosing(false);

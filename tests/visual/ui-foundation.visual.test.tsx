@@ -4,8 +4,8 @@ import { page } from "vitest/browser";
 import "../../src/renderer/src/styles.css";
 import "../../.storybook/preview.css";
 import { App } from "../../src/renderer/src/App";
-import { HostPanel } from "../../src/renderer/src/components/HostPanel";
 import { ProviderModelPicker } from "../../src/renderer/src/components/ProviderModelPicker";
+import { ServerSettingsModal } from "../../src/renderer/src/components/ServerSettingsModal";
 import {
   Badge,
   Button,
@@ -26,8 +26,8 @@ import {
   STORY_INVITES,
   STORY_MODELS,
   STORY_PRESENCE,
-  STORY_SESSIONS,
-  STORY_TEAM_MEMBERS,
+  STORY_REMOTE_DESKTOP_SESSION,
+  STORY_SERVERS,
 } from "../../src/renderer/stories/fixtures";
 import { createMockOpenBot } from "../../src/renderer/stories/mock-openbot";
 
@@ -127,19 +127,18 @@ test("representative application screens are visually stable", async () => {
 
 test("advanced panels and pickers are visually stable", async () => {
   render(() => (
-    <HostPanel
+    <ServerSettingsModal
+      open
+      onOpenChange={() => undefined}
       platform="darwin"
-      status={STORY_HOST_STATUS}
-      members={STORY_TEAM_MEMBERS}
+      server={STORY_SERVERS[0]}
+      hostStatus={STORY_HOST_STATUS}
+      members={STORY_PRESENCE.members}
       invites={STORY_INVITES}
-      sessions={STORY_SESSIONS}
-      presence={STORY_PRESENCE}
-      accountEmail="person@example.com"
-      onClose={() => undefined}
-      onConfigure={async () => undefined}
-      onConfigureRemoteDesktop={async () => undefined}
-      onStart={async () => undefined}
-      onStop={async () => undefined}
+      remoteDesktopSession={STORY_REMOTE_DESKTOP_SESSION}
+      onRetry={async () => undefined}
+      onSaveIdentity={async () => undefined}
+      onSetPublished={async () => undefined}
       onCreateInvite={async (input) => ({
         id: "visual-invite",
         role: input.role,
@@ -150,14 +149,15 @@ test("advanced panels and pickers are visually stable", async () => {
       })}
       onUpdateMember={async () => undefined}
       onRemoveMember={async () => undefined}
-      onRevokeSession={async () => undefined}
       onRevokeInvite={async () => undefined}
+      onConnectRemoteDesktop={async () => undefined}
+      onDisconnectRemoteDesktop={async () => undefined}
     />
   ));
 
-  const hostPanel = page.getByRole("dialog");
-  await expect.element(hostPanel).toBeVisible();
-  await expect(hostPanel).toMatchScreenshot("host-panel");
+  const serverSettings = page.getByRole("dialog");
+  await expect.element(serverSettings).toBeVisible();
+  await expect(serverSettings).toMatchScreenshot("server-settings-modal");
 
   cleanup();
   render(() => (

@@ -71,9 +71,9 @@ export function ChoiceCard(props: {
         aria-label="Custom answer"
         maxlength={INPUT_LIMITS.promptAnswerText}
         disabled={props.pending}
-        onInput={(event) => {
+        onValueChange={(value) => {
           setCustomSelected(true);
-          setAnswer(event.currentTarget.value);
+          setAnswer(value);
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter") void submit();
@@ -249,7 +249,7 @@ export function ApprovalCard(props: {
                         maxlength={INPUT_LIMITS.promptAnswerText}
                         disabled={submitting()}
                         onKeyDown={(event) => event.stopPropagation()}
-                        onInput={(event) => setAnswer(question(), event.currentTarget.value, true)}
+                        onValueChange={(value) => setAnswer(question(), value, true)}
                       />
                     </label>
                   </Show>

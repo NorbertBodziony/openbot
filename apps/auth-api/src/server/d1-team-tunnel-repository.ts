@@ -6,7 +6,6 @@ interface TeamTunnelRow {
   tunnel_id: string | null;
   tunnel_name: string;
   api_hostname: string;
-  vnc_hostname: string;
   status: "provisioning" | "active";
 }
 
@@ -17,14 +16,14 @@ export class D1TeamTunnelRepository implements TeamTunnelRepository {
     await this.database
       .prepare(
         `INSERT OR IGNORE INTO team_tunnels(
-          server_id, user_id, tunnel_name, api_hostname, vnc_hostname, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, 'provisioning', ?, ?)`,
+          server_id, user_id, tunnel_name, api_hostname, status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'provisioning', ?, ?)`,
       )
-      .bind(input.serverId, input.userId, input.tunnelName, input.apiHostname, input.vncHostname, input.now, input.now)
+      .bind(input.serverId, input.userId, input.tunnelName, input.apiHostname, input.now, input.now)
       .run();
     const row = await this.database
       .prepare(
-        `SELECT server_id, user_id, tunnel_id, tunnel_name, api_hostname, vnc_hostname, status
+        `SELECT server_id, user_id, tunnel_id, tunnel_name, api_hostname, status
          FROM team_tunnels
          WHERE server_id = ? OR user_id = ?
          ORDER BY CASE WHEN server_id = ? THEN 0 ELSE 1 END
@@ -34,13 +33,8 @@ export class D1TeamTunnelRepository implements TeamTunnelRepository {
       .first<TeamTunnelRow>();
     if (!row) {
       const hostnameConflict = await this.database
-        .prepare(
-          `SELECT server_id
-           FROM team_tunnels
-           WHERE api_hostname = ? OR vnc_hostname = ?
-           LIMIT 1`,
-        )
-        .bind(input.apiHostname, input.vncHostname)
+        .prepare("SELECT server_id FROM team_tunnels WHERE api_hostname = ? LIMIT 1")
+        .bind(input.apiHostname)
         .first<{ server_id: string }>();
       if (hostnameConflict) throw new TeamTunnelClaimConflict();
       throw new Error("The team tunnel claim could not be stored.");
@@ -64,10 +58,28 @@ export class D1TeamTunnelRepository implements TeamTunnelRepository {
     if (result.meta.changes !== 1) throw new Error("The team tunnel state could not be stored.");
   }
 
+  async setMachineTokenHash(serverId: string, tokenHash: string, now: number): Promise<void> {
+    const result = await this.database
+      .prepare("UPDATE team_tunnels SET machine_token_hash = ?, updated_at = ? WHERE server_id = ?")
+      .bind(tokenHash, now, serverId)
+      .run();
+    if (result.meta.changes !== 1) throw new Error("The team host token could not be stored.");
+  }
+
+  async authenticateMachine(serverId: string, tokenHash: string): Promise<boolean> {
+    const row = await this.database
+      .prepare(
+        "SELECT server_id FROM team_tunnels WHERE server_id = ? AND machine_token_hash = ? AND status = 'active'",
+      )
+      .bind(serverId, tokenHash)
+      .first<{ server_id: string }>();
+    return row?.server_id === serverId;
+  }
+
   async find(serverId: string): Promise<TeamTunnelRecord | null> {
     const row = await this.database
       .prepare(
-        `SELECT server_id, user_id, tunnel_id, tunnel_name, api_hostname, vnc_hostname, status
+        `SELECT server_id, user_id, tunnel_id, tunnel_name, api_hostname, status
          FROM team_tunnels WHERE server_id = ?`,
       )
       .bind(serverId)
@@ -87,7 +99,6 @@ function mapRow(row: TeamTunnelRow): TeamTunnelRecord {
     tunnelId: row.tunnel_id,
     tunnelName: row.tunnel_name,
     apiHostname: row.api_hostname,
-    vncHostname: row.vnc_hostname,
     status: row.status,
   };
 }

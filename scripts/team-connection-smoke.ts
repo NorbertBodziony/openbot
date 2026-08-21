@@ -10,7 +10,7 @@ import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contract
 import { OpenBotDatabase } from "../src/backend/openbot-database";
 import { TeamChatStore } from "../src/backend/team-chat-store";
 import { buildNamedTunnelArgs, waitForNamedTunnelConnection } from "../src/main/host-service";
-import { resolveCloudflaredExecutable, stopOwnedProcess } from "../src/main/remote-mac";
+import { resolveCloudflaredExecutable, stopOwnedProcess } from "../src/main/host-tunnel-runtime";
 import { RemoteServerManager } from "../src/main/remote-server-manager";
 import { TeamApiServer } from "../src/main/team-api-server";
 import { TeamStore } from "../src/main/team-store";
@@ -68,7 +68,6 @@ async function main(): Promise<void> {
       mailbox,
       browser,
       chat,
-      getRemoteMac: () => ({ hostname: null, online: false }),
       redeemCentralTicket: redeemDevelopmentTicket,
     });
     const port = await api.start();
@@ -334,7 +333,7 @@ async function provisionDevelopmentTunnel(
       Authorization: `Bearer ${sessionToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ serverId, serverName: "Smoke Host", apiPort, vncEnabled: false }),
+    body: JSON.stringify({ serverId, serverName: "Smoke Host", apiPort }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const value = await readJsonRecord(response);

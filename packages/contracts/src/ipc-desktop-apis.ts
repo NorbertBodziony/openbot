@@ -40,7 +40,6 @@ import type {
 } from "./ipc-conversation";
 import type {
   ConfigureHostInput,
-  ConfigureRemoteDesktopInput,
   CreateTeamInviteInput,
   DirectConversationReadState,
   DirectConversationSnapshot,
@@ -55,9 +54,10 @@ import type {
   JoinServerInput,
   LoginServerInput,
   MarkDirectReadInput,
-  RemoteMacConnectInput,
-  RemoteMacCredentials,
-  RemoteMacSession,
+  RemoteDesktopConnectInput,
+  RemoteDesktopSelectDisplayInput,
+  RemoteDesktopSession,
+  ReorderServersInput,
   SendDirectMessageInput,
   ServerSummary,
   SetTeamTypingInput,
@@ -65,6 +65,7 @@ import type {
   TeamMemberSummary,
   TeamPresenceSnapshot,
   TeamSessionSummary,
+  UpdateHostIdentityInput,
   UpdateTeamMemberInput,
 } from "./ipc-team-host";
 import type { VoiceTranscriptionInput, VoiceTranscriptionResult } from "./ipc-voice";
@@ -124,12 +125,21 @@ export interface MaintenanceDesktopApi {
 export interface ServersDesktopApi {
   list: () => Promise<ServerSummary[]>;
   select: (serverId: string) => Promise<ServerSummary[]>;
+  reorder: (input: ReorderServersInput) => Promise<ServerSummary[]>;
   join: (input: JoinServerInput) => Promise<ServerSummary>;
   previewInvite: (input: JoinServerInput) => Promise<InvitePreview>;
   takePendingInvite: () => Promise<string | null>;
   login: (input: LoginServerInput) => Promise<ServerSummary>;
   remove: (serverId: string) => Promise<void>;
   getPresence: () => Promise<TeamPresenceSnapshot>;
+  getPresenceFor: (serverId: string) => Promise<TeamPresenceSnapshot>;
+  refreshIdentity: (serverId: string) => Promise<ServerSummary>;
+  listMembers: (serverId: string) => Promise<TeamMemberSummary[]>;
+  updateMember: (serverId: string, input: UpdateTeamMemberInput) => Promise<TeamMemberSummary>;
+  removeMember: (serverId: string, memberId: string) => Promise<void>;
+  listInvites: (serverId: string) => Promise<TeamInviteSummary[]>;
+  revokeInvite: (serverId: string, inviteId: string) => Promise<void>;
+  createInvite: (serverId: string, input: CreateTeamInviteInput) => Promise<InviteSummary>;
   setTyping: (input: SetTeamTypingInput) => Promise<void>;
   onPresence: (listener: (snapshot: TeamPresenceSnapshot) => void) => () => void;
   listDirectThreads: () => Promise<DirectThreadSummary[]>;
@@ -146,7 +156,8 @@ export interface ServersDesktopApi {
 export interface HostDesktopApi {
   getStatus: () => Promise<HostStatus>;
   configure: (input: ConfigureHostInput) => Promise<HostStatus>;
-  configureRemoteDesktop: (input: ConfigureRemoteDesktopInput) => Promise<HostStatus>;
+  updateIdentity: (input: UpdateHostIdentityInput) => Promise<HostStatus>;
+  getPresence: () => Promise<TeamPresenceSnapshot>;
   start: () => Promise<HostStatus>;
   stop: () => Promise<HostStatus>;
   listMembers: () => Promise<TeamMemberSummary[]>;
@@ -160,12 +171,12 @@ export interface HostDesktopApi {
   onEvent: (listener: (status: HostStatus) => void) => () => void;
 }
 
-export interface RemoteMacDesktopApi {
-  list: () => Promise<RemoteMacSession[]>;
-  connect: (input: RemoteMacConnectInput) => Promise<RemoteMacSession>;
+export interface RemoteDesktopDesktopApi {
+  list: () => Promise<RemoteDesktopSession[]>;
+  connect: (input: RemoteDesktopConnectInput) => Promise<RemoteDesktopSession>;
+  selectDisplay: (input: RemoteDesktopSelectDisplayInput) => Promise<void>;
   disconnect: (sessionId: string) => Promise<void>;
-  getCredentials: (sessionId: string) => Promise<RemoteMacCredentials | null>;
-  onEvent: (listener: (sessions: RemoteMacSession[]) => void) => () => void;
+  onEvent: (listener: (sessions: RemoteDesktopSession[]) => void) => () => void;
 }
 
 export interface VoiceDesktopApi {
@@ -188,5 +199,5 @@ export interface OpenBotDesktopApi {
   maintenance: MaintenanceDesktopApi;
   servers: ServersDesktopApi;
   host: HostDesktopApi;
-  remoteMac: RemoteMacDesktopApi;
+  remoteDesktop: RemoteDesktopDesktopApi;
 }

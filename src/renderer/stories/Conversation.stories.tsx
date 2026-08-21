@@ -20,7 +20,7 @@ import {
   STORY_CONVERSATION_MESSAGES,
   STORY_MODELS,
   STORY_PRESENCE,
-  STORY_REMOTE_MAC_SESSION,
+  STORY_REMOTE_DESKTOP_SESSION,
   STORY_SERVERS,
 } from "./fixtures";
 import { createMockOpenBot } from "./mock-openbot";
@@ -468,8 +468,8 @@ const args: Parameters<typeof Conversation>[0] = {
   server: STORY_SERVERS[0],
   presence: STORY_PRESENCE,
   currentUserEmail: "person@example.com",
-  remoteMacSession: STORY_REMOTE_MAC_SESSION,
-  remoteDesktopRequest: 0,
+  remoteDesktopSessionActive: Boolean(STORY_REMOTE_DESKTOP_SESSION),
+  remoteDesktopVisible: false,
   prompt: undefined,
   approval: undefined,
   onCloseAgentPicker: fn(),
@@ -495,8 +495,7 @@ const args: Parameters<typeof Conversation>[0] = {
   onResumeQueue: fn(),
   onActivateBrowserTab: fn(),
   onCloseBrowserTab: fn(),
-  onConnectRemoteMac: async (_hostname: string, _serverId: string | null) => undefined,
-  onDisconnectRemoteMac: async (_sessionId: string) => undefined,
+  onOpenRemoteDesktop: async (_serverId: string, _trigger: HTMLElement) => undefined,
   onOpenAgentSetup: async () => undefined,
   onStop: fn(),
 };

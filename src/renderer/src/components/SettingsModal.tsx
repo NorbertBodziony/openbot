@@ -136,11 +136,7 @@ export function SettingsModal(props: SettingsModalProps) {
                   description="This name is visible in shared workspaces."
                   htmlFor="settings-profile-name"
                 >
-                  <Input
-                    id="settings-profile-name"
-                    value={profileName()}
-                    onInput={(event) => setProfileName(event.currentTarget.value)}
-                  />
+                  <Input id="settings-profile-name" value={profileName()} onValueChange={setProfileName} />
                 </Field>
                 <Switch
                   defaultChecked

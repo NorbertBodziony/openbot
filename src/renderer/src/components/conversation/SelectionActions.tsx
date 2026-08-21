@@ -455,7 +455,7 @@ export function SelectionActionsBar(props: {
                     aria-label="Describe edits"
                     placeholder="Describe edits"
                     maxlength={maximumInstructionLength()}
-                    onInput={(event) => updatePrompt(event.currentTarget.value)}
+                    onValueChange={updatePrompt}
                   />
                 </form>
               </div>

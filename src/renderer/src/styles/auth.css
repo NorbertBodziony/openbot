@@ -269,9 +269,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .t-input {
-    animation: none !important;
-    transform: none !important;
+  .t-input.is-shaking {
+    animation: none;
+    transform: none;
   }
 }
 
@@ -1338,17 +1338,14 @@ body,
   background: var(--openbot-bg-canvas);
 }
 
-.server-rail-tools,
 .panel-edge,
 .direct-conversation-header,
 .browser-panel-header,
 .browser-toolbar,
 .remote-desktop-header,
-.remote-desktop-footer,
-.remote-desktop-shared-note,
 .agent-settings-panel,
 .browser-panel,
-.remote-desktop-panel,
+.remote-desktop-workspace,
 .remote-admin-nav,
 .remote-admin-list > div,
 .remote-status-card,

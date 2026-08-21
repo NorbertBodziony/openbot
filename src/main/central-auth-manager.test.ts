@@ -49,8 +49,8 @@ describe("CentralAuthManager", () => {
           tunnelId: "11111111-1111-4111-8111-111111111111",
           tunnelName: "openbot-00000000000040008000000000000000",
           apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
-          vncHostname: "vnc-studio-mac-k7m4q2pz-host.openbot.run",
           token: "x".repeat(40),
+          machineToken: "a".repeat(64),
         });
       }
       return Response.json({
@@ -94,7 +94,6 @@ describe("CentralAuthManager", () => {
         serverId,
         serverName: "Studio Mac",
         apiPort: 43_123,
-        vncEnabled: true,
       }),
     ).resolves.toMatchObject({
       apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
@@ -117,7 +116,7 @@ describe("CentralAuthManager", () => {
     expect(requests[6]).toMatchObject({
       path: "/v1/team-tunnels/provision",
       authorization: "Bearer session-secret",
-      body: { serverId, serverName: "Studio Mac", apiPort: 43_123, vncEnabled: true },
+      body: { serverId, serverName: "Studio Mac", apiPort: 43_123 },
     });
 
     const restored = new CentralAuthManager(options);
@@ -126,6 +125,91 @@ describe("CentralAuthManager", () => {
       path: "/v1/me",
       authorization: "Bearer session-secret",
     });
+  });
+
+  it("keeps a verified session only in memory when secure persistence is unavailable", async () => {
+    const root = await createRoot();
+    const storagePath = join(root, "session.bin");
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(input.toString()).pathname;
+      if (path.endsWith("/start")) {
+        return Response.json({ challengeId: "challenge-1", expiresAt: 10_000 });
+      }
+      if (path.endsWith("/verify")) {
+        return Response.json({
+          sessionToken: "memory-session-secret",
+          user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
+        });
+      }
+      if (path === "/v1/team-auth/ticket") {
+        return Response.json({ ticket: "memory-ticket", expiresAt: 20_000 });
+      }
+      return Response.json({ service: "openbot-auth-api", status: "ok" });
+    });
+    const options = {
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath,
+      canPersist: () => false,
+      encrypt: vi.fn(() => {
+        throw new Error("Encryption must not run without secure storage.");
+      }),
+      decrypt: vi.fn(() => {
+        throw new Error("Decryption must not run without secure storage.");
+      }),
+      fetch: fetchMock,
+    };
+    const manager = new CentralAuthManager(options);
+    await manager.requestEmailCode("person@example.com");
+    await expect(manager.verifyEmailCode("challenge-1", "ABCD-EFGH")).resolves.toMatchObject({
+      status: "signed_in",
+    });
+    await expect(manager.createTeamAuthTicket("00000000-0000-4000-8000-000000000000")).resolves.toBe("memory-ticket");
+    await expect(readFile(storagePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(options.encrypt).not.toHaveBeenCalled();
+    expect(options.decrypt).not.toHaveBeenCalled();
+
+    const restarted = new CentralAuthManager(options);
+    await expect(restarted.initialize()).resolves.toMatchObject({ status: "signed_out" });
+  });
+
+  it("keeps a verified session in memory when secure persistence fails", async () => {
+    const root = await createRoot();
+    const storagePath = join(root, "session.bin");
+    await writeFile(storagePath, "stale-session");
+    const encrypt = vi.fn(() => {
+      throw new Error("The keychain denied access.");
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const path = new URL(input.toString()).pathname;
+      if (path.endsWith("/start")) {
+        return Response.json({ challengeId: "challenge-1", expiresAt: 10_000 });
+      }
+      if (path.endsWith("/verify")) {
+        return Response.json({
+          sessionToken: "memory-session-secret",
+          user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
+        });
+      }
+      if (path === "/v1/team-auth/ticket") {
+        return Response.json({ ticket: "memory-ticket", expiresAt: 20_000 });
+      }
+      return Response.json({ service: "openbot-auth-api", status: "ok" });
+    });
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath,
+      encrypt,
+      decrypt: (value) => value.toString(),
+      fetch: fetchMock,
+    });
+
+    await manager.requestEmailCode("person@example.com");
+    await expect(manager.verifyEmailCode("challenge-1", "ABCD-EFGH")).resolves.toMatchObject({
+      status: "signed_in",
+    });
+    await expect(manager.createTeamAuthTicket("00000000-0000-4000-8000-000000000000")).resolves.toBe("memory-ticket");
+    await expect(readFile(storagePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(encrypt).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the challenge visible after an incorrect code", async () => {

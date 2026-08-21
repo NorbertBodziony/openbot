@@ -23,6 +23,7 @@ import { Route as V1AvatarsUserIdRouteImport } from './routes/v1/avatars/$userId
 import { Route as V1MeAvatarRouteImport } from './routes/v1/me/avatar'
 import { Route as V1TeamAuthRedeemRouteImport } from './routes/v1/team-auth/redeem'
 import { Route as V1TeamAuthTicketRouteImport } from './routes/v1/team-auth/ticket'
+import { Route as V1TeamHostsIceServersRouteImport } from './routes/v1/team-hosts/ice-servers'
 import { Route as V1TeamInvitationsEmailRouteImport } from './routes/v1/team-invitations/email'
 import { Route as V1TeamTunnelsProvisionRouteImport } from './routes/v1/team-tunnels/provision'
 import { Route as V1AuthEmailStartRouteImport } from './routes/v1/auth/email/start'
@@ -99,6 +100,11 @@ const V1TeamAuthTicketRoute = V1TeamAuthTicketRouteImport.update({
   path: '/v1/team-auth/ticket',
   getParentRoute: () => rootRouteImport,
 } as any)
+const V1TeamHostsIceServersRoute = V1TeamHostsIceServersRouteImport.update({
+  id: '/v1/team-hosts/ice-servers',
+  path: '/v1/team-hosts/ice-servers',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const V1TeamInvitationsEmailRoute = V1TeamInvitationsEmailRouteImport.update({
   id: '/v1/team-invitations/email',
   path: '/v1/team-invitations/email',
@@ -135,6 +141,7 @@ export interface FileRoutesByFullPath {
   '/v1/me/avatar': typeof V1MeAvatarRoute
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
   '/v1/team-auth/ticket': typeof V1TeamAuthTicketRoute
+  '/v1/team-hosts/ice-servers': typeof V1TeamHostsIceServersRoute
   '/v1/team-invitations/email': typeof V1TeamInvitationsEmailRoute
   '/v1/team-tunnels/provision': typeof V1TeamTunnelsProvisionRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
@@ -155,6 +162,7 @@ export interface FileRoutesByTo {
   '/v1/me/avatar': typeof V1MeAvatarRoute
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
   '/v1/team-auth/ticket': typeof V1TeamAuthTicketRoute
+  '/v1/team-hosts/ice-servers': typeof V1TeamHostsIceServersRoute
   '/v1/team-invitations/email': typeof V1TeamInvitationsEmailRoute
   '/v1/team-tunnels/provision': typeof V1TeamTunnelsProvisionRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
@@ -176,6 +184,7 @@ export interface FileRoutesById {
   '/v1/me/avatar': typeof V1MeAvatarRoute
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
   '/v1/team-auth/ticket': typeof V1TeamAuthTicketRoute
+  '/v1/team-hosts/ice-servers': typeof V1TeamHostsIceServersRoute
   '/v1/team-invitations/email': typeof V1TeamInvitationsEmailRoute
   '/v1/team-tunnels/provision': typeof V1TeamTunnelsProvisionRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
@@ -198,6 +207,7 @@ export interface FileRouteTypes {
     | '/v1/me/avatar'
     | '/v1/team-auth/redeem'
     | '/v1/team-auth/ticket'
+    | '/v1/team-hosts/ice-servers'
     | '/v1/team-invitations/email'
     | '/v1/team-tunnels/provision'
     | '/v1/auth/email/start'
@@ -218,6 +228,7 @@ export interface FileRouteTypes {
     | '/v1/me/avatar'
     | '/v1/team-auth/redeem'
     | '/v1/team-auth/ticket'
+    | '/v1/team-hosts/ice-servers'
     | '/v1/team-invitations/email'
     | '/v1/team-tunnels/provision'
     | '/v1/auth/email/start'
@@ -238,6 +249,7 @@ export interface FileRouteTypes {
     | '/v1/me/avatar'
     | '/v1/team-auth/redeem'
     | '/v1/team-auth/ticket'
+    | '/v1/team-hosts/ice-servers'
     | '/v1/team-invitations/email'
     | '/v1/team-tunnels/provision'
     | '/v1/auth/email/start'
@@ -258,6 +270,7 @@ export interface RootRouteChildren {
   V1AvatarsUserIdRoute: typeof V1AvatarsUserIdRoute
   V1TeamAuthRedeemRoute: typeof V1TeamAuthRedeemRoute
   V1TeamAuthTicketRoute: typeof V1TeamAuthTicketRoute
+  V1TeamHostsIceServersRoute: typeof V1TeamHostsIceServersRoute
   V1TeamInvitationsEmailRoute: typeof V1TeamInvitationsEmailRoute
   V1TeamTunnelsProvisionRoute: typeof V1TeamTunnelsProvisionRoute
   V1AuthEmailStartRoute: typeof V1AuthEmailStartRoute
@@ -364,6 +377,13 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1TeamAuthTicketRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/v1/team-hosts/ice-servers': {
+      id: '/v1/team-hosts/ice-servers'
+      path: '/v1/team-hosts/ice-servers'
+      fullPath: '/v1/team-hosts/ice-servers'
+      preLoaderRoute: typeof V1TeamHostsIceServersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/v1/team-invitations/email': {
       id: '/v1/team-invitations/email'
       path: '/v1/team-invitations/email'
@@ -420,6 +440,7 @@ const rootRouteChildren: RootRouteChildren = {
   V1AvatarsUserIdRoute: V1AvatarsUserIdRoute,
   V1TeamAuthRedeemRoute: V1TeamAuthRedeemRoute,
   V1TeamAuthTicketRoute: V1TeamAuthTicketRoute,
+  V1TeamHostsIceServersRoute: V1TeamHostsIceServersRoute,
   V1TeamInvitationsEmailRoute: V1TeamInvitationsEmailRoute,
   V1TeamTunnelsProvisionRoute: V1TeamTunnelsProvisionRoute,
   V1AuthEmailStartRoute: V1AuthEmailStartRoute,

@@ -24,10 +24,10 @@ describe("JoinServerDialog", () => {
     const onClose = vi.fn();
     render(() => <JoinServerDialog {...defaultProps} onClose={onClose} />);
 
-    expect(screen.getByRole("dialog", { name: "Join a team" })).toBeInTheDocument();
-    const inviteField = screen.getByRole("textbox", { name: "Invitation link" });
+    expect(screen.getByRole("dialog", { name: "Join a server" })).toBeInTheDocument();
+    const inviteField = screen.getByRole("textbox", { name: "Invite link" });
     await waitFor(() => expect(inviteField).toHaveFocus());
-    expect(screen.getByRole("button", { name: "Review invitation" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Review invite" })).toBeDisabled();
 
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onClose).toHaveBeenCalledOnce();
@@ -46,12 +46,18 @@ describe("JoinServerDialog", () => {
 
     await waitFor(() => expect(defaultProps.onPreview).toHaveBeenCalledWith({ inviteUrl }));
     expect(await screen.findByText("Studio host")).toBeInTheDocument();
-    expect(screen.getByText("person@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Studio host" })).toBeInTheDocument();
+    expect(screen.getByText("SH")).toBeInTheDocument();
+    expect(screen.queryByText("Member access")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Expires/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Joining as/)).not.toBeInTheDocument();
+    expect(screen.queryByText("person@example.com")).not.toBeInTheDocument();
+    expect(screen.queryByText("This invite is restricted to this account.")).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "Connect to host" }));
     await waitFor(() => expect(onJoin).toHaveBeenCalledWith({ inviteUrl }));
     expect(screen.getByRole("button", { name: "Connecting…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Use another" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Use another invite" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
 
     resolveJoin?.();
@@ -73,11 +79,11 @@ describe("JoinServerDialog", () => {
     ));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("The OpenBot invitation link is invalid.");
-    const inviteField = screen.getByRole("textbox", { name: "Invitation link" });
+    const inviteField = screen.getByRole("textbox", { name: "Invite link" });
     await fireEvent.input(inviteField, { target: { value: "https://openbot.run/join?invite=good" } });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Review invitation" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Review invite" }));
     expect(await screen.findByText("Studio host")).toBeInTheDocument();
     expect(onJoin).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "Connect to host" }));
