@@ -3,7 +3,7 @@ import { onSettled } from "solid-js";
 const LANDING_PREVIEW_READY_MESSAGE = "openbot:landing-preview-ready";
 const LANDING_PREVIEW_START_MESSAGE = "openbot:landing-preview-start";
 const LANDING_PREVIEW_URL = "/app-preview";
-const LANDING_PREVIEW_LOAD_DELAY_MS = 200;
+const LANDING_PREVIEW_LOAD_DELAY_MS = 2000;
 const LANDING_PREVIEW_REVEAL_FALLBACK_MS = 400;
 
 function readDuration(name: string, fallback: number): number {

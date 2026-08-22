@@ -25,7 +25,7 @@ describe("LandingAppPreview", () => {
     expect(frame).not.toHaveAttribute("src");
     expect(preview).toHaveAttribute("data-preview-state", "idle");
 
-    vi.advanceTimersByTime(199);
+    vi.advanceTimersByTime(1999);
     expect(frame).not.toHaveAttribute("src");
     vi.advanceTimersByTime(1);
     expect(frame).toHaveAttribute("src", "/app-preview");
@@ -66,7 +66,7 @@ describe("LandingAppPreview", () => {
     const frame = view.container.querySelector("iframe");
     const preview = view.container.querySelector(".landing-preview");
     if (!frame?.contentWindow || !preview) throw new Error("Expected the landing preview");
-    vi.advanceTimersByTime(200);
+    vi.advanceTimersByTime(2000);
     if (!frame.contentWindow) throw new Error("Expected the loaded preview window");
     const postMessage = vi.spyOn(frame.contentWindow, "postMessage");
 
@@ -111,7 +111,7 @@ describe("LandingAppPreview", () => {
     const frame = view.container.querySelector("iframe");
     const preview = view.container.querySelector(".landing-preview");
     if (!frame?.contentWindow || !preview) throw new Error("Expected the landing preview");
-    vi.advanceTimersByTime(200);
+    vi.advanceTimersByTime(2000);
     if (!frame.contentWindow) throw new Error("Expected the loaded preview window");
     const postMessage = vi.spyOn(frame.contentWindow, "postMessage");
     window.dispatchEvent(
@@ -131,7 +131,7 @@ describe("LandingAppPreview", () => {
     const view = render(() => <LandingAppPreview />);
     const frame = view.container.querySelector("iframe");
     if (!frame?.contentWindow) throw new Error("Expected the landing iframe");
-    vi.advanceTimersByTime(200);
+    vi.advanceTimersByTime(2000);
     if (!frame.contentWindow) throw new Error("Expected the loaded preview window");
     const postMessage = vi.spyOn(frame.contentWindow, "postMessage");
     window.dispatchEvent(
@@ -153,7 +153,7 @@ describe("LandingAppPreview", () => {
     if (!frame) throw new Error("Expected the landing iframe");
     view.unmount();
 
-    vi.advanceTimersByTime(200);
+    vi.advanceTimersByTime(2000);
 
     expect(frame).not.toHaveAttribute("src");
   });
