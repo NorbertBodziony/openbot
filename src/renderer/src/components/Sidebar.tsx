@@ -17,6 +17,7 @@ interface SidebarProps {
   agentStates: Record<string, SidebarAgentState>;
   onSelectBot: (botId: string) => void;
   onSelectPerson: (memberId: string) => void;
+  onPreloadDirectConversation?: () => void;
   onCreateBot: () => void;
   onEditBot: (botId: string) => void;
   onDeleteBot: (botId: string) => Promise<void>;
@@ -273,7 +274,12 @@ export function Sidebar(props: SidebarProps) {
           }
         >
           <Show when={filteredPeople().length > 0}>
-            <section class="sidebar-chat-group" aria-labelledby="sidebar-people-heading">
+            <section
+              class="sidebar-chat-group"
+              aria-labelledby="sidebar-people-heading"
+              onFocusIn={() => props.onPreloadDirectConversation?.()}
+              onPointerEnter={() => props.onPreloadDirectConversation?.()}
+            >
               <header>
                 <h2 id="sidebar-people-heading">People</h2>
               </header>
@@ -291,7 +297,10 @@ export function Sidebar(props: SidebarProps) {
                       ]}
                       aria-label={`${teamMemberName(member)}. ${thread()?.lastMessage.text ?? (member.online ? "Online now" : "Offline")}`}
                       aria-pressed={props.activeDirectMemberId === member.id ? "true" : "false"}
-                      onClick={() => props.onSelectPerson(member.id)}
+                      onClick={() => {
+                        props.onPreloadDirectConversation?.();
+                        props.onSelectPerson(member.id);
+                      }}
                     >
                       <span class="bot-row-avatar">
                         <TeamPersonAvatar member={member} />

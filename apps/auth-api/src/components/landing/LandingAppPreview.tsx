@@ -3,12 +3,22 @@ import { onSettled } from "solid-js";
 const LANDING_PREVIEW_READY_MESSAGE = "openbot:landing-preview-ready";
 const LANDING_PREVIEW_START_MESSAGE = "openbot:landing-preview-start";
 const LANDING_PREVIEW_URL = "/app-preview";
-const LANDING_PREVIEW_LOAD_DELAY_MS = 2500;
-const LANDING_PREVIEW_REVEAL_FALLBACK_MS = 400;
+const LANDING_PREVIEW_LOAD_DELAY_MS = 150;
+const LANDING_PREVIEW_REVEAL_FALLBACK_MS = 240;
+
+const LANDING_PREVIEW_MARKS = {
+  ready: "openbot:landing-preview:ready",
+  shown: "openbot:landing-preview:shown",
+  src: "openbot:landing-preview:src",
+} as const;
 
 function readDuration(name: string, fallback: number): number {
   const value = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
   return Number.isFinite(value) ? value : fallback;
+}
+
+function markPreviewTiming(name: (typeof LANDING_PREVIEW_MARKS)[keyof typeof LANDING_PREVIEW_MARKS]): void {
+  window.performance.mark?.(name);
 }
 
 export function LandingAppPreview() {
@@ -27,6 +37,8 @@ export function LandingAppPreview() {
     let loading = false;
     let ready = false;
     let started = false;
+    let firstPaintFrame: number | undefined;
+    let stablePaintFrame: number | undefined;
     let loadTimer: ReturnType<typeof setTimeout> | undefined;
     let startTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -37,12 +49,14 @@ export function LandingAppPreview() {
       started = true;
       preview.dataset.previewState = "shown";
       loadingPlaceholder.setAttribute("aria-hidden", "true");
+      markPreviewTiming(LANDING_PREVIEW_MARKS.shown);
       previewWindow.postMessage({ type: LANDING_PREVIEW_START_MESSAGE }, origin);
     };
     const reveal = () => {
       if (ready) return;
       ready = true;
       preview.dataset.previewState = "ready";
+      markPreviewTiming(LANDING_PREVIEW_MARKS.ready);
       preview.classList.add("is-revealed");
       const delay = reducedMotion ? 0 : readDuration("--reveal-dur", LANDING_PREVIEW_REVEAL_FALLBACK_MS);
       if (delay === 0) start();
@@ -52,6 +66,7 @@ export function LandingAppPreview() {
       if (loading) return;
       loading = true;
       preview.dataset.previewState = "loading";
+      markPreviewTiming(LANDING_PREVIEW_MARKS.src);
       previewFrame.setAttribute("src", LANDING_PREVIEW_URL);
     };
     const handleMessage = (event: MessageEvent) => {
@@ -61,9 +76,15 @@ export function LandingAppPreview() {
     };
 
     window.addEventListener("message", handleMessage);
-    loadTimer = setTimeout(load, LANDING_PREVIEW_LOAD_DELAY_MS);
+    firstPaintFrame = window.requestAnimationFrame(() => {
+      stablePaintFrame = window.requestAnimationFrame(() => {
+        loadTimer = setTimeout(load, LANDING_PREVIEW_LOAD_DELAY_MS);
+      });
+    });
 
     return () => {
+      if (firstPaintFrame !== undefined) window.cancelAnimationFrame(firstPaintFrame);
+      if (stablePaintFrame !== undefined) window.cancelAnimationFrame(stablePaintFrame);
       if (loadTimer) clearTimeout(loadTimer);
       if (startTimer) clearTimeout(startTimer);
       window.removeEventListener("message", handleMessage);
@@ -96,7 +117,6 @@ export function LandingAppPreview() {
         <iframe
           ref={iframe}
           title="Interactive OpenBot application preview"
-          loading="lazy"
           sandbox="allow-forms allow-same-origin allow-scripts"
         />
       </div>

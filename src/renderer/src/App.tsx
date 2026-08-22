@@ -38,23 +38,40 @@ import type {
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import { isClaudeModel } from "@openbot/contracts/ipc";
-import { createEffect, createMemo, createSignal, createStore, flush, onSettled, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, createStore, flush, Loading, lazy, onSettled, Show } from "solid-js";
 import { desktopAnalytics } from "./analytics";
 import { playCompletionSoundForAgentEvent } from "./completion-sound";
 import { AccountDock } from "./components/AccountDock";
-import { AccountLogin } from "./components/AccountLogin";
 import { Conversation } from "./components/Conversation";
-import { DirectConversation } from "./components/DirectConversation";
-import { GlobalSearch } from "./components/GlobalSearch";
-import { InitialSetup } from "./components/InitialSetup";
-import { JoinServerDialog } from "./components/JoinServerDialog";
-import { OnboardingFlow } from "./components/OnboardingFlow";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./components/PanelResizer";
-import { RemoteDesktopWorkspace } from "./components/RemoteDesktopWorkspace";
 import { ServerRail } from "./components/ServerRail";
-import { ServerSettingsModal } from "./components/ServerSettingsModal";
 import { Sidebar, type SidebarAgentState } from "./components/Sidebar";
 import type { BotMessage, BotProfile } from "./data";
+
+const AccountLogin = lazy(() =>
+  import("./components/AccountLogin").then((module) => ({ default: module.AccountLogin })),
+);
+const DirectConversation = lazy(() =>
+  import("./components/DirectConversation").then((module) => ({ default: module.DirectConversation })),
+);
+const GlobalSearch = lazy(() =>
+  import("./components/GlobalSearch").then((module) => ({ default: module.GlobalSearch })),
+);
+const InitialSetup = lazy(() =>
+  import("./components/InitialSetup").then((module) => ({ default: module.InitialSetup })),
+);
+const JoinServerDialog = lazy(() =>
+  import("./components/JoinServerDialog").then((module) => ({ default: module.JoinServerDialog })),
+);
+const OnboardingFlow = lazy(() =>
+  import("./components/OnboardingFlow").then((module) => ({ default: module.OnboardingFlow })),
+);
+const RemoteDesktopWorkspace = lazy(() =>
+  import("./components/RemoteDesktopWorkspace").then((module) => ({ default: module.RemoteDesktopWorkspace })),
+);
+const ServerSettingsModal = lazy(() =>
+  import("./components/ServerSettingsModal").then((module) => ({ default: module.ServerSettingsModal })),
+);
 
 const FALLBACK_STATUS: AgentStatus = {
   phase: "starting",
@@ -2217,14 +2234,16 @@ export function App() {
       <Show
         when={visibleSignedInAccount()}
         fallback={
-          <AccountLogin
-            variant={appInfo()?.variant ?? "production"}
-            state={centralAuth()}
-            onRetry={retryCentralAccount}
-            onRequestEmailCode={requestEmailCode}
-            onVerifyEmailCode={verifyEmailCode}
-            onReset={logoutCentralAccount}
-          />
+          <Loading fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}>
+            <AccountLogin
+              variant={appInfo()?.variant ?? "production"}
+              state={centralAuth()}
+              onRetry={retryCentralAccount}
+              onRequestEmailCode={requestEmailCode}
+              onVerifyEmailCode={verifyEmailCode}
+              onReset={logoutCentralAccount}
+            />
+          </Loading>
         }
       >
         {(account) => (
@@ -2234,25 +2253,29 @@ export function App() {
               <Show
                 when={pendingInviteUrl().trim()}
                 fallback={
-                  <OnboardingFlow
+                  <Loading fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}>
+                    <OnboardingFlow
+                      state={setupState() ?? { completed: false, preferredProvider: null }}
+                      agentStatus={agentStatus()}
+                      platform={appInfo()?.platform ?? "darwin"}
+                      onSave={saveSetup}
+                    />
+                  </Loading>
+                }
+              >
+                <Loading fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}>
+                  <InitialSetup
                     state={setupState() ?? { completed: false, preferredProvider: null }}
                     agentStatus={agentStatus()}
                     platform={appInfo()?.platform ?? "darwin"}
+                    accountEmail={account().email}
+                    inviteUrl={pendingInviteUrl()}
                     onSave={saveSetup}
+                    onPreviewInvite={previewInvite}
+                    onJoinRemote={joinRemoteDuringSetup}
+                    onLogout={logoutCentralAccount}
                   />
-                }
-              >
-                <InitialSetup
-                  state={setupState() ?? { completed: false, preferredProvider: null }}
-                  agentStatus={agentStatus()}
-                  platform={appInfo()?.platform ?? "darwin"}
-                  accountEmail={account().email}
-                  inviteUrl={pendingInviteUrl()}
-                  onSave={saveSetup}
-                  onPreviewInvite={previewInvite}
-                  onJoinRemote={joinRemoteDuringSetup}
-                  onLogout={logoutCentralAccount}
-                />
+                </Loading>
               </Show>
             }
           >
@@ -2288,6 +2311,7 @@ export function App() {
                 agentStates={sidebarAgentStates()}
                 onSelectBot={selectBot}
                 onSelectPerson={(memberId) => void selectDirectMember(memberId)}
+                onPreloadDirectConversation={() => void DirectConversation.preload()}
                 onCreateBot={openAgentPicker}
                 onEditBot={editBot}
                 onDeleteBot={deleteBot}
@@ -2334,22 +2358,32 @@ export function App() {
               />
               <Show when={activeDirectMember()} keyed>
                 {(member) => (
-                  <DirectConversation
-                    member={member}
-                    currentMemberId={currentTeamMember()?.id ?? ""}
-                    snapshot={directConversations()[member.id]}
-                    loading={directConversationLoading()}
-                    loadError={directConversationError()}
-                    hasOlder={directConversationPages()[member.id]?.hasOlder ?? false}
-                    loadingOlder={directOlderLoading()[member.id] === true}
-                    olderError={directOlderErrors()[member.id] ?? null}
-                    typing={directTypingMemberIds().has(member.id)}
-                    onSend={sendDirectMessage}
-                    onMarkRead={() => markDirectMessagesRead(member.id)}
-                    onLoadOlder={() => void loadOlderDirectMessages(member.id)}
-                    onOpenMessage={(messageId) => openDirectMessage(member.id, messageId)}
-                    onTypingChange={setDirectTyping}
-                  />
+                  <Loading
+                    fallback={
+                      <main class="direct-conversation" aria-label="Loading direct conversation">
+                        <div class="direct-conversation-state" role="status">
+                          Loading messages…
+                        </div>
+                      </main>
+                    }
+                  >
+                    <DirectConversation
+                      member={member}
+                      currentMemberId={currentTeamMember()?.id ?? ""}
+                      snapshot={directConversations()[member.id]}
+                      loading={directConversationLoading()}
+                      loadError={directConversationError()}
+                      hasOlder={directConversationPages()[member.id]?.hasOlder ?? false}
+                      loadingOlder={directOlderLoading()[member.id] === true}
+                      olderError={directOlderErrors()[member.id] ?? null}
+                      typing={directTypingMemberIds().has(member.id)}
+                      onSend={sendDirectMessage}
+                      onMarkRead={() => markDirectMessagesRead(member.id)}
+                      onLoadOlder={() => void loadOlderDirectMessages(member.id)}
+                      onOpenMessage={(messageId) => openDirectMessage(member.id, messageId)}
+                      onTypingChange={setDirectTyping}
+                    />
+                  </Loading>
                 )}
               </Show>
               <Show when={!activeDirectMember()}>
@@ -2422,83 +2456,93 @@ export function App() {
                 />
               </Show>
               <Show when={permissionsOpen()}>
-                <InitialSetup
-                  reviewing
-                  state={
-                    setupState() ?? {
-                      completed: true,
-                      preferredProvider: "codex",
+                <Loading>
+                  <InitialSetup
+                    reviewing
+                    state={
+                      setupState() ?? {
+                        completed: true,
+                        preferredProvider: "codex",
+                      }
                     }
-                  }
-                  agentStatus={agentStatus()}
-                  platform={appInfo()?.platform ?? "darwin"}
-                  accountEmail={account().email}
-                  onSave={saveSetup}
-                  onPreviewInvite={previewInvite}
-                  onJoinRemote={joinRemoteDuringSetup}
-                  onLogout={logoutCentralAccount}
-                  onClose={() => setPermissionsOpen(false)}
-                />
+                    agentStatus={agentStatus()}
+                    platform={appInfo()?.platform ?? "darwin"}
+                    accountEmail={account().email}
+                    onSave={saveSetup}
+                    onPreviewInvite={previewInvite}
+                    onJoinRemote={joinRemoteDuringSetup}
+                    onLogout={logoutCentralAccount}
+                    onClose={() => setPermissionsOpen(false)}
+                  />
+                </Loading>
               </Show>
               <Show when={joinServerOpen()}>
-                <JoinServerDialog
-                  inviteUrl={pendingInviteUrl()}
-                  accountEmail={account().email}
-                  onClose={() => {
-                    setJoinServerOpen(false);
-                    setPendingInviteUrl("");
-                  }}
-                  onPreview={previewInvite}
-                  onJoin={joinServer}
-                />
+                <Loading>
+                  <JoinServerDialog
+                    inviteUrl={pendingInviteUrl()}
+                    accountEmail={account().email}
+                    onClose={() => {
+                      setJoinServerOpen(false);
+                      setPendingInviteUrl("");
+                    }}
+                    onPreview={previewInvite}
+                    onJoin={joinServer}
+                  />
+                </Loading>
               </Show>
               <Show when={serverSettingsTarget()}>
                 {(server) => (
-                  <ServerSettingsModal
-                    open={serverSettingsOpen()}
-                    onOpenChange={setServerSettingsOpen}
-                    restoreFocusTarget={serverSettingsRestoreTarget}
-                    platform={appInfo()?.platform ?? "darwin"}
-                    server={server()}
-                    hostStatus={server().kind === "local" ? hostStatus() : null}
-                    members={serverSettingsMembers()}
-                    invites={serverSettingsInvites()}
-                    loading={serverSettingsLoading()}
-                    loadError={serverSettingsError()}
-                    onRetry={() => refreshServerSettings(server().id)}
-                    onSaveIdentity={saveServerIdentity}
-                    onSetPublished={setServerPublished}
-                    onCreateInvite={createServerInvite}
-                    onUpdateMember={updateServerMember}
-                    onRemoveMember={removeServerMember}
-                    onRevokeInvite={revokeServerInvite}
-                  />
+                  <Loading>
+                    <ServerSettingsModal
+                      open={serverSettingsOpen()}
+                      onOpenChange={setServerSettingsOpen}
+                      restoreFocusTarget={serverSettingsRestoreTarget}
+                      platform={appInfo()?.platform ?? "darwin"}
+                      server={server()}
+                      hostStatus={server().kind === "local" ? hostStatus() : null}
+                      members={serverSettingsMembers()}
+                      invites={serverSettingsInvites()}
+                      loading={serverSettingsLoading()}
+                      loadError={serverSettingsError()}
+                      onRetry={() => refreshServerSettings(server().id)}
+                      onSaveIdentity={saveServerIdentity}
+                      onSetPublished={setServerPublished}
+                      onCreateInvite={createServerInvite}
+                      onUpdateMember={updateServerMember}
+                      onRemoveMember={removeServerMember}
+                      onRevokeInvite={revokeServerInvite}
+                    />
+                  </Loading>
                 )}
               </Show>
               <Show when={globalSearchOpen()}>
-                <GlobalSearch
-                  open={true}
-                  bots={botList()}
-                  onSearchMessages={searchGlobalMessages}
-                  onOpenChange={setGlobalSearchVisibility}
-                  onSelectBot={selectBot}
-                  onSelectMessage={selectGlobalSearchMessage}
-                />
+                <Loading>
+                  <GlobalSearch
+                    open={true}
+                    bots={botList()}
+                    onSearchMessages={searchGlobalMessages}
+                    onOpenChange={setGlobalSearchVisibility}
+                    onSelectBot={selectBot}
+                    onSelectMessage={selectGlobalSearchMessage}
+                  />
+                </Loading>
               </Show>
               <Show when={remoteDesktopWorkspaceServer()} keyed>
                 {(server) => (
-                  <RemoteDesktopWorkspace
-                    visible={remoteDesktopWorkspaceVisible()}
-                    platform={appInfo()?.platform ?? "darwin"}
-                    server={server}
-                    session={remoteDesktopWorkspaceSession()}
-                    connecting={remoteDesktopConnectingServerId() === server.id}
-                    connectionError={remoteDesktopConnectionError()}
-                    onHide={hideRemoteDesktopWorkspace}
-                    onDisconnect={() => disconnectRemoteDesktopWorkspace()}
-                    onRetry={retryRemoteDesktopWorkspace}
-                    onSelectDisplay={selectRemoteDesktopDisplay}
-                  />
+                  <Loading>
+                    <RemoteDesktopWorkspace
+                      visible={remoteDesktopWorkspaceVisible()}
+                      platform={appInfo()?.platform ?? "darwin"}
+                      server={server}
+                      session={remoteDesktopWorkspaceSession()}
+                      connecting={remoteDesktopConnectingServerId() === server.id}
+                      connectionError={remoteDesktopConnectionError()}
+                      onHide={hideRemoteDesktopWorkspace}
+                      onDisconnect={() => disconnectRemoteDesktopWorkspace()}
+                      onRetry={retryRemoteDesktopWorkspace}
+                      onSelectDisplay={selectRemoteDesktopDisplay}
+                    />
+                  </Loading>
                 )}
               </Show>
             </div>

@@ -52,7 +52,7 @@ describe("landing page", () => {
     expect(markup).not.toContain("Live demo");
     expect(markup).not.toContain('src="/app-preview"');
     expect(markup).toContain('title="Interactive OpenBot application preview"');
-    expect(markup).toContain('loading="lazy"');
+    expect(markup).not.toContain('loading="lazy"');
     expect(markup).toContain('sandbox="allow-forms allow-same-origin allow-scripts"');
     expect(markup).not.toContain("landing-product-demo");
     expect(markup).not.toContain("data-demo-agent");
