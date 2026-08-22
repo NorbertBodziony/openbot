@@ -39,14 +39,24 @@ export function OpenBotPlayground(props: OpenBotPlaygroundProps) {
     if (!landingController || window.parent === window) return;
     const parent = window.parent;
     const origin = window.location.origin;
+    let firstPaintFrame: number | undefined;
+    let stablePaintFrame: number | undefined;
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== origin || event.source !== parent) return;
       if (event.data?.type !== LANDING_PREVIEW_START_MESSAGE) return;
       landingController.activate();
     };
     window.addEventListener("message", handleMessage);
-    parent.postMessage({ type: LANDING_PREVIEW_READY_MESSAGE }, origin);
-    return () => window.removeEventListener("message", handleMessage);
+    firstPaintFrame = window.requestAnimationFrame(() => {
+      stablePaintFrame = window.requestAnimationFrame(() => {
+        parent.postMessage({ type: LANDING_PREVIEW_READY_MESSAGE }, origin);
+      });
+    });
+    return () => {
+      if (firstPaintFrame !== undefined) window.cancelAnimationFrame(firstPaintFrame);
+      if (stablePaintFrame !== undefined) window.cancelAnimationFrame(stablePaintFrame);
+      window.removeEventListener("message", handleMessage);
+    };
   });
 
   onCleanup(() => {

@@ -2,55 +2,70 @@ import { onSettled } from "solid-js";
 
 const LANDING_PREVIEW_READY_MESSAGE = "openbot:landing-preview-ready";
 const LANDING_PREVIEW_START_MESSAGE = "openbot:landing-preview-start";
+const LANDING_PREVIEW_URL = "/app-preview";
+const LANDING_PREVIEW_LOAD_DELAY_MS = 200;
+const LANDING_PREVIEW_REVEAL_FALLBACK_MS = 400;
+
+function readDuration(name: string, fallback: number): number {
+  const value = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+  return Number.isFinite(value) ? value : fallback;
+}
 
 export function LandingAppPreview() {
   let root: HTMLElement | undefined;
   let iframe: HTMLIFrameElement | undefined;
+  let placeholder: HTMLDivElement | undefined;
 
   onSettled(() => {
     const preview = root;
-    const previewWindow = iframe?.contentWindow;
-    if (!preview || !previewWindow) return;
+    const loadingPlaceholder = placeholder;
+    const previewFrame = iframe;
+    if (!preview || !loadingPlaceholder || !previewFrame) return;
 
     const origin = window.location.origin;
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    let loading = false;
     let ready = false;
-    let visible = false;
     let started = false;
-    let observer: IntersectionObserver | undefined;
+    let loadTimer: ReturnType<typeof setTimeout> | undefined;
+    let startTimer: ReturnType<typeof setTimeout> | undefined;
 
-    const startWhenReady = () => {
-      if (!ready || !visible || started) return;
+    const start = () => {
+      if (!ready || started) return;
+      const previewWindow = previewFrame.contentWindow;
+      if (!previewWindow) return;
       started = true;
+      preview.dataset.previewState = "shown";
+      loadingPlaceholder.setAttribute("aria-hidden", "true");
       previewWindow.postMessage({ type: LANDING_PREVIEW_START_MESSAGE }, origin);
-      observer?.disconnect();
+    };
+    const reveal = () => {
+      if (ready) return;
+      ready = true;
+      preview.dataset.previewState = "ready";
+      preview.classList.add("is-revealed");
+      const delay = reducedMotion ? 0 : readDuration("--reveal-dur", LANDING_PREVIEW_REVEAL_FALLBACK_MS);
+      if (delay === 0) start();
+      else startTimer = setTimeout(start, delay);
+    };
+    const load = () => {
+      if (loading) return;
+      loading = true;
+      preview.dataset.previewState = "loading";
+      previewFrame.setAttribute("src", LANDING_PREVIEW_URL);
     };
     const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== origin || event.source !== previewWindow) return;
+      if (event.origin !== origin || event.source !== previewFrame.contentWindow) return;
       if (event.data?.type !== LANDING_PREVIEW_READY_MESSAGE) return;
-      ready = true;
-      startWhenReady();
+      reveal();
     };
 
     window.addEventListener("message", handleMessage);
-    const IntersectionObserverConstructor = window.IntersectionObserver;
-    if (!IntersectionObserverConstructor) {
-      visible = true;
-      startWhenReady();
-    } else {
-      observer = new IntersectionObserverConstructor(
-        (entries) => {
-          if (entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= 0.4)) {
-            visible = true;
-            startWhenReady();
-          }
-        },
-        { threshold: [0.4] },
-      );
-      observer.observe(preview);
-    }
+    loadTimer = setTimeout(load, LANDING_PREVIEW_LOAD_DELAY_MS);
 
     return () => {
-      observer?.disconnect();
+      if (loadTimer) clearTimeout(loadTimer);
+      if (startTimer) clearTimeout(startTimer);
       window.removeEventListener("message", handleMessage);
     };
   });
@@ -58,9 +73,10 @@ export function LandingAppPreview() {
   return (
     <section
       ref={root}
-      class="landing-preview landing-app-preview"
+      class="landing-preview landing-app-preview t-skel"
       aria-labelledby="app-preview-title"
       data-enter="preview"
+      data-preview-state="idle"
     >
       <h2 id="app-preview-title" class="landing-visually-hidden">
         Interactive OpenBot application preview
@@ -70,10 +86,15 @@ export function LandingAppPreview() {
         <i />
         <i />
       </span>
-      <div class="landing-preview-stage">
+      <div
+        ref={placeholder}
+        class="landing-preview-placeholder t-skel-skeleton"
+        role="status"
+        aria-label="Loading OpenBot preview"
+      />
+      <div class="landing-preview-stage t-skel-content">
         <iframe
           ref={iframe}
-          src="/app-preview"
           title="Interactive OpenBot application preview"
           loading="lazy"
           sandbox="allow-forms allow-same-origin allow-scripts"

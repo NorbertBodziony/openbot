@@ -10,7 +10,16 @@ import { LandingFooter } from "./LandingFooter";
 import { LandingGlow } from "./LandingGlow";
 
 export function LandingPage() {
-  onSettled(() => landingAnalytics.start(document, window.location.hostname));
+  let hero: HTMLDivElement | undefined;
+
+  onSettled(() => {
+    landingAnalytics.start(document, window.location.hostname);
+    if (!hero) return;
+    hero.classList.remove("is-hiding");
+    hero.classList.remove("is-shown");
+    void hero.offsetHeight;
+    hero.classList.add("is-shown");
+  });
 
   return (
     <div class="landing-page">
@@ -53,8 +62,8 @@ export function LandingPage() {
       <main>
         <section class="landing-hero" aria-labelledby="landing-title">
           <div class="landing-hero-grid" data-slot="hero-grid" aria-hidden="true" />
-          <div class="landing-hero-copy" data-enter="hero">
-            <p class="landing-availability">
+          <div ref={hero} class="landing-hero-copy t-stagger">
+            <p class="landing-availability t-stagger-line t-stagger-line--1">
               <span class="landing-availability-new">NEW</span>
               <span class="landing-availability-copy">Available on</span>
               <span class="landing-availability-platform">
@@ -70,13 +79,13 @@ export function LandingPage() {
               </span>
             </p>
 
-            <h1 id="landing-title" class="landing-title">
+            <h1 id="landing-title" class="landing-title t-stagger-line t-stagger-line--2">
               <span>Meet</span>
               <AppLogo variant="production" animation="blink" interactive class="landing-hero-logo" />
               <span>OpenBot</span>
             </h1>
 
-            <p class="landing-description">
+            <p class="landing-description t-stagger-line t-stagger-line--3">
               Persistent AI teammates for real work. Run{" "}
               <span class="landing-provider">
                 <ProviderLogo provider="codex" class="landing-provider-logo" />
@@ -90,7 +99,7 @@ export function LandingPage() {
               side by side, each with its own workspace, queue, and context.
             </p>
 
-            <div class="landing-actions">
+            <div class="landing-actions t-stagger-line t-stagger-line--4">
               <HeroDownloadSelector />
               <Button
                 href={OPENBOT_LINKS.contact}

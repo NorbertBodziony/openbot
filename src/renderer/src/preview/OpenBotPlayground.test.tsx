@@ -1,9 +1,14 @@
 import { render } from "@solidjs/testing-library";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMockOpenBot, type MockOpenBotOptions } from "./mock-openbot";
 import { OpenBotPlayground } from "./OpenBotPlayground";
 
 describe("OpenBotPlayground", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
   it("installs the mock desktop API and restores the previous API on cleanup", () => {
     const previousMock = createMockOpenBot();
     const activeMock = createMockOpenBot();
@@ -72,6 +77,17 @@ describe("OpenBotPlayground", () => {
   });
 
   it("reports ready and accepts a same-origin start message only from its parent", () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+      const frame = nextFrame;
+      nextFrame += 1;
+      frames.set(frame, callback);
+      return frame;
+    });
+    const cancelAnimationFrame = vi.fn((frame: number) => frames.delete(frame));
+    vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
+    vi.stubGlobal("cancelAnimationFrame", cancelAnimationFrame);
     const parentFrame = document.createElement("iframe");
     document.body.append(parentFrame);
     const parentWindow = parentFrame.contentWindow;
@@ -92,6 +108,10 @@ describe("OpenBotPlayground", () => {
       />
     ));
 
+    expect(postMessage).not.toHaveBeenCalled();
+    frames.get(1)?.(0);
+    expect(postMessage).not.toHaveBeenCalled();
+    frames.get(2)?.(16);
     expect(postMessage).toHaveBeenCalledWith({ type: "openbot:landing-preview-ready" }, window.location.origin);
     window.dispatchEvent(
       new MessageEvent("message", {
@@ -112,6 +132,8 @@ describe("OpenBotPlayground", () => {
     expect(updateConversation).toHaveBeenCalled();
 
     view.unmount();
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
+    expect(cancelAnimationFrame).toHaveBeenCalledWith(2);
     parentFrame.remove();
     if (previousParent) Object.defineProperty(window, "parent", previousParent);
   });

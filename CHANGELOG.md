@@ -19,6 +19,7 @@ All notable changes to OpenBot will be documented here. The project follows
 - Rework chat rendering and virtualization for smoother streaming, stable bottom following, and large histories.
 - Show one stable animated agent avatar and status label for each active response, including reduced-motion support.
 - Improve the development landing preview, conversation stories, and seeded demo content.
+- Add a staged hero entrance and a skeleton-to-preview reveal on the public landing page.
 - Extend local and remote team chat contracts for message history, search, reactions, files, and read state.
 
 ### Fixed

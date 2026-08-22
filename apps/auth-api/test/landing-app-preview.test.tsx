@@ -2,38 +2,35 @@ import { render } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LandingAppPreview } from "../src/components/landing/LandingAppPreview";
 
-class IntersectionObserverMock {
-  static instances: IntersectionObserverMock[] = [];
-  callback: (entries: Array<{ isIntersecting: boolean; intersectionRatio: number }>) => void;
-  disconnect = vi.fn();
-  observe = vi.fn();
-
-  constructor(callback: (entries: Array<{ isIntersecting: boolean; intersectionRatio: number }>) => void) {
-    this.callback = callback;
-    IntersectionObserverMock.instances.push(this);
-  }
-
-  intersect(intersectionRatio: number): void {
-    this.callback([{ isIntersecting: intersectionRatio > 0, intersectionRatio }]);
-  }
-}
-
 describe("LandingAppPreview", () => {
   beforeEach(() => {
-    IntersectionObserverMock.instances = [];
-    vi.stubGlobal("IntersectionObserver", IntersectionObserverMock);
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({ matches: false })),
+    );
+    vi.useFakeTimers();
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it("starts once only after the iframe is ready and 40% visible", () => {
+  it("loads after a short delay, reveals when ready, and starts after the reveal", () => {
     const view = render(() => <LandingAppPreview />);
     const frame = view.container.querySelector("iframe");
-    const observer = IntersectionObserverMock.instances[0];
-    if (!frame?.contentWindow || !observer) throw new Error("Expected the landing iframe and observer");
+    const preview = view.container.querySelector(".landing-preview");
+    if (!frame?.contentWindow || !preview) throw new Error("Expected the landing preview");
+    expect(frame).not.toHaveAttribute("src");
+    expect(preview).toHaveAttribute("data-preview-state", "idle");
+
+    vi.advanceTimersByTime(199);
+    expect(frame).not.toHaveAttribute("src");
+    vi.advanceTimersByTime(1);
+    expect(frame).toHaveAttribute("src", "/app-preview");
+    expect(preview).toHaveAttribute("data-preview-state", "loading");
+    if (!frame.contentWindow) throw new Error("Expected the loaded preview window");
     const postMessage = vi.spyOn(frame.contentWindow, "postMessage");
 
     window.dispatchEvent(
@@ -43,24 +40,35 @@ describe("LandingAppPreview", () => {
         data: { type: "openbot:landing-preview-ready" },
       }),
     );
-    observer.intersect(0.39);
+    expect(preview).toHaveClass("is-revealed");
+    expect(preview).toHaveAttribute("data-preview-state", "ready");
     expect(postMessage).not.toHaveBeenCalled();
 
-    observer.intersect(0.4);
+    vi.advanceTimersByTime(399);
+    expect(postMessage).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
     expect(postMessage).toHaveBeenCalledOnce();
     expect(postMessage).toHaveBeenCalledWith({ type: "openbot:landing-preview-start" }, window.location.origin);
-    observer.intersect(1);
+    expect(preview).toHaveAttribute("data-preview-state", "shown");
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        source: frame.contentWindow,
+        data: { type: "openbot:landing-preview-ready" },
+      }),
+    );
     expect(postMessage).toHaveBeenCalledOnce();
   });
 
-  it("waits for a valid same-origin ready message and cleans up", () => {
+  it("waits for a valid same-origin ready message", () => {
     const removeEventListener = vi.spyOn(window, "removeEventListener");
     const view = render(() => <LandingAppPreview />);
     const frame = view.container.querySelector("iframe");
-    const observer = IntersectionObserverMock.instances[0];
-    if (!frame?.contentWindow || !observer) throw new Error("Expected the landing iframe and observer");
+    const preview = view.container.querySelector(".landing-preview");
+    if (!frame?.contentWindow || !preview) throw new Error("Expected the landing preview");
+    vi.advanceTimersByTime(200);
+    if (!frame.contentWindow) throw new Error("Expected the loaded preview window");
     const postMessage = vi.spyOn(frame.contentWindow, "postMessage");
-    observer.intersect(0.8);
 
     window.dispatchEvent(
       new MessageEvent("message", {
@@ -76,6 +84,7 @@ describe("LandingAppPreview", () => {
         data: { type: "openbot:landing-preview-ready" },
       }),
     );
+    expect(preview).not.toHaveClass("is-revealed");
     expect(postMessage).not.toHaveBeenCalled();
 
     window.dispatchEvent(
@@ -85,10 +94,67 @@ describe("LandingAppPreview", () => {
         data: { type: "openbot:landing-preview-ready" },
       }),
     );
+    expect(preview).toHaveClass("is-revealed");
+    vi.advanceTimersByTime(400);
     expect(postMessage).toHaveBeenCalledOnce();
 
     view.unmount();
-    expect(observer.disconnect).toHaveBeenCalled();
     expect(removeEventListener).toHaveBeenCalledWith("message", expect.any(Function));
+  });
+
+  it("starts without a reveal delay for reduced motion", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({ matches: true })),
+    );
+    const view = render(() => <LandingAppPreview />);
+    const frame = view.container.querySelector("iframe");
+    const preview = view.container.querySelector(".landing-preview");
+    if (!frame?.contentWindow || !preview) throw new Error("Expected the landing preview");
+    vi.advanceTimersByTime(200);
+    if (!frame.contentWindow) throw new Error("Expected the loaded preview window");
+    const postMessage = vi.spyOn(frame.contentWindow, "postMessage");
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        source: frame.contentWindow,
+        data: { type: "openbot:landing-preview-ready" },
+      }),
+    );
+
+    expect(preview).toHaveClass("is-revealed");
+    expect(preview).toHaveAttribute("data-preview-state", "shown");
+    expect(postMessage).toHaveBeenCalledOnce();
+  });
+
+  it("clears a pending start when the preview unmounts", () => {
+    const view = render(() => <LandingAppPreview />);
+    const frame = view.container.querySelector("iframe");
+    if (!frame?.contentWindow) throw new Error("Expected the landing iframe");
+    vi.advanceTimersByTime(200);
+    if (!frame.contentWindow) throw new Error("Expected the loaded preview window");
+    const postMessage = vi.spyOn(frame.contentWindow, "postMessage");
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        source: frame.contentWindow,
+        data: { type: "openbot:landing-preview-ready" },
+      }),
+    );
+    view.unmount();
+    vi.advanceTimersByTime(400);
+
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not load after unmounting during the delay", () => {
+    const view = render(() => <LandingAppPreview />);
+    const frame = view.container.querySelector("iframe");
+    if (!frame) throw new Error("Expected the landing iframe");
+    view.unmount();
+
+    vi.advanceTimersByTime(200);
+
+    expect(frame).not.toHaveAttribute("src");
   });
 });

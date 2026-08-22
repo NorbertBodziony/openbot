@@ -18,6 +18,15 @@ describe("landing page", () => {
     expect(markup).toContain('data-platform="macos"');
     expect(markup).toContain('data-platform="windows"');
     expect(markup).toContain('data-slot="hero-grid"');
+    expect(markup).toContain('class="landing-hero-copy t-stagger"');
+    expect(markup).toContain("t-stagger-line--1");
+    expect(markup).toContain("t-stagger-line--2");
+    expect(markup).toContain("t-stagger-line--3");
+    expect(markup).toContain("t-stagger-line--4");
+    expect(markup.indexOf("t-stagger-line--1")).toBeLessThan(markup.indexOf("t-stagger-line--2"));
+    expect(markup.indexOf("t-stagger-line--2")).toBeLessThan(markup.indexOf("t-stagger-line--3"));
+    expect(markup.indexOf("t-stagger-line--3")).toBeLessThan(markup.indexOf("t-stagger-line--4"));
+    expect(markup).not.toContain('data-enter="hero"');
     expect(markup).toContain('aria-hidden="true"');
     expect(markup).not.toContain("Open source · macOS and Windows");
     expect(markup).not.toContain("Interactive demo coming soon");
@@ -36,9 +45,12 @@ describe("landing page", () => {
 
     expect(markup).toContain("landing-preview-window-controls");
     expect(markup).toContain("landing-preview-stage");
+    expect(markup).toContain("landing-preview-placeholder");
+    expect(markup).toContain('data-preview-state="idle"');
+    expect(markup).toContain('aria-label="Loading OpenBot preview"');
     expect(markup).not.toContain("OpenBot workspace");
     expect(markup).not.toContain("Live demo");
-    expect(markup).toContain('src="/app-preview"');
+    expect(markup).not.toContain('src="/app-preview"');
     expect(markup).toContain('title="Interactive OpenBot application preview"');
     expect(markup).toContain('loading="lazy"');
     expect(markup).toContain('sandbox="allow-forms allow-same-origin allow-scripts"');
