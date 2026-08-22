@@ -99,30 +99,3 @@ export function SelectItem(props: SelectItemProps): JSX.Element {
     </SelectPrimitive.Item>
   );
 }
-
-export type SelectGroupProps = PolymorphicProps<"div", SelectPrimitive.SelectSectionProps<"div">> &
-  Pick<ComponentProps<"div">, "class">;
-
-export function SelectGroup(props: SelectGroupProps): JSX.Element {
-  const others = omit(props, "class");
-  return <SelectPrimitive.Section class={cx("ui-select-group", props.class)} data-slot="select-group" {...others} />;
-}
-
-export type SelectLabelProps = PolymorphicProps<"span", SelectPrimitive.SelectLabelProps<"span">> &
-  Pick<ComponentProps<"span">, "class">;
-
-export function SelectLabel(props: SelectLabelProps): JSX.Element {
-  const others = omit(props, "class");
-  return <SelectPrimitive.Label class={cx("ui-select-label", props.class)} data-slot="select-label" {...others} />;
-}
-
-export type SelectSeparatorProps = ComponentProps<"hr">;
-
-export function SelectSeparator(props: SelectSeparatorProps): JSX.Element {
-  const others = omit(props, "class");
-  return <hr class={cx("ui-select-separator", props.class)} data-slot="select-separator" {...others} />;
-}
-
-export function SelectHiddenSelect(props: SelectPrimitive.SelectHiddenSelectProps): JSX.Element {
-  return <SelectPrimitive.HiddenSelect {...props} />;
-}

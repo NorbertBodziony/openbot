@@ -19,7 +19,7 @@ import type {
   TeamSessionSummary,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
-import type { BotMessage, BotProfile } from "../data";
+import type { BotProfile } from "../data";
 
 export const STORY_NOW = "2026-08-19T10:00:00.000Z";
 
@@ -478,21 +478,3 @@ export const STORY_APP_INFO = {
   platform: "darwin" as const,
   variant: "production" as const,
 };
-
-export function toConversationMessage(message: BotMessage): ConversationMessage {
-  return {
-    id: message.id,
-    turnId: message.turnId,
-    author: message.author === "you" ? "user" : "assistant",
-    source: message.author === "you" ? "user" : "assistant",
-    text: message.body,
-    createdAt: STORY_NOW,
-    status: message.streaming ? "streaming" : "completed",
-    itemType: message.itemType,
-    senderBotId: message.senderBotId,
-    replyToMessageId: message.replyToMessageId,
-    attachments: message.attachments,
-    exchange: message.exchange,
-    reaction: message.reaction,
-  };
-}

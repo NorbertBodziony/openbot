@@ -5,6 +5,19 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-08-22
+
+### Changed
+
+- Split team IPC registration, renderer message projection, voice status helpers, and workspace path handling into focused modules.
+- Remove unused dependencies, renderer exports, preview helpers, and an inactive visual test suite while keeping active Storybook coverage.
+
+### Fixed
+
+- Hide unexpected Team API failures from remote clients while preserving controlled validation errors.
+- Bound unauthenticated sign-in rate-limit state and reject oversized WebSocket event frames before application parsing.
+- Make team and remote-server state writes atomic, isolated, and able to recover after a failed write.
+
 ## [0.1.19] - 2026-08-22
 
 ### Changed

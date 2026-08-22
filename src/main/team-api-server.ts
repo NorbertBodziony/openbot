@@ -38,10 +38,15 @@ import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
 import type { TeamChatStore } from "../backend/team-chat-store";
 import { RemoteScreenError, type RemoteScreenGateway } from "./remote-screen-gateway";
-import type { TeamStore } from "./team-store";
+import { type TeamStore, TeamStoreError } from "./team-store";
 
 const JSON_LIMIT = 1024 * 1024;
+const EVENT_PAYLOAD_LIMIT = 1_024;
 const TYPING_TIMEOUT_MS = 5_000;
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1_000;
+const RATE_LIMIT_SWEEP_MS = 60_000;
+const RATE_LIMIT_ATTEMPTS = 5;
+const RATE_LIMIT_CAPACITY = 10_000;
 const requireModule = createRequire(import.meta.url);
 const webSockets: typeof Ws = requireModule(join(dirname(requireModule.resolve("ws/package.json")), "index.js"));
 
@@ -111,6 +116,8 @@ interface TeamApiOptions {
   onDirectMessage?: (event: DirectMessageRealtimeEvent) => void;
   onDirectTyping?: (event: DirectTypingRealtimeEvent) => void;
   createInvite?: (input: CreateTeamInviteInput) => Promise<InviteSummary>;
+  rateLimitCapacity?: number;
+  now?: () => number;
 }
 
 interface EventClientState {
@@ -133,16 +140,22 @@ export class TeamApiServer {
   readonly #eventClients = new Map<Ws.WebSocket, EventClientState>();
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
+    maxPayload: EVENT_PAYLOAD_LIMIT,
     handleProtocols: (protocols) => (protocols.has("openbot-events") ? "openbot-events" : false),
   });
+  readonly #rateLimitCapacity: number;
+  readonly #now: () => number;
   #server: Server | null = null;
   #port: number | null = null;
   #heartbeat: ReturnType<typeof setInterval> | null = null;
   #agentListener: ((event: AgentEvent) => void) | null = null;
   #localTypingBotId: string | null = null;
+  #nextRateLimitSweepAt = 0;
 
   constructor(options: TeamApiOptions) {
     this.#options = options;
+    this.#rateLimitCapacity = options.rateLimitCapacity ?? RATE_LIMIT_CAPACITY;
+    this.#now = options.now ?? Date.now;
   }
 
   get port(): number | null {
@@ -898,23 +911,41 @@ export class TeamApiServer {
 
       return this.#json(response, 404, { error: "Route not found." });
     } catch (error) {
-      const status = error instanceof HttpError || error instanceof RemoteScreenError ? error.status : 400;
-      const message = error instanceof Error ? error.message : "Request failed.";
+      const expected =
+        error instanceof HttpError || error instanceof RemoteScreenError || error instanceof TeamStoreError;
+      const status =
+        error instanceof HttpError || error instanceof RemoteScreenError ? error.status : expected ? 400 : 500;
+      const message = expected ? error.message : "Request failed.";
       const code = error instanceof RemoteScreenError ? error.code : undefined;
+      if (!expected) console.error("Team API request failed:", error);
       return this.#json(response, status, { error: message, ...(code ? { code } : {}) });
     }
   }
 
   #checkRate(request: import("node:http").IncomingMessage, username: string): void {
     const key = `${request.socket.remoteAddress ?? "local"}:${username.toLowerCase()}`;
+    const now = this.#now();
+    this.#pruneRateLimits(now, this.#rateLimits.size >= this.#rateLimitCapacity);
     const current = this.#rateLimits.get(key);
-    const now = Date.now();
     if (!current || current.resetAt <= now) {
-      this.#rateLimits.set(key, { attempts: 1, resetAt: now + 15 * 60 * 1_000 });
+      if (!current && this.#rateLimits.size >= this.#rateLimitCapacity) {
+        throw new HttpError(429, "Too many sign-in attempts. Try again later.");
+      }
+      this.#rateLimits.set(key, { attempts: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
       return;
     }
     current.attempts += 1;
-    if (current.attempts > 5) throw new HttpError(429, "Too many sign-in attempts. Try again later.");
+    if (current.attempts > RATE_LIMIT_ATTEMPTS) {
+      throw new HttpError(429, "Too many sign-in attempts. Try again later.");
+    }
+  }
+
+  #pruneRateLimits(now: number, force: boolean): void {
+    if (!force && now < this.#nextRateLimitSweepAt) return;
+    for (const [key, entry] of this.#rateLimits) {
+      if (entry.resetAt <= now) this.#rateLimits.delete(key);
+    }
+    this.#nextRateLimitSweepAt = now + RATE_LIMIT_SWEEP_MS;
   }
 
   #broadcastAgentEvent(event: AgentEvent): void {
@@ -934,6 +965,10 @@ export class TeamApiServer {
       directTypingTimer: null,
     };
     this.#eventClients.set(client, connection);
+    client.on("error", () => {
+      // Protocol errors, including maxPayload violations, also close the socket.
+      // Consume the emitted error so malformed input cannot become an uncaught exception.
+    });
     client.on("message", (data, isBinary) => {
       if (isBinary) {
         client.close(1003, "Text events are required");
@@ -945,7 +980,7 @@ export class TeamApiServer {
           : Array.isArray(data)
             ? Buffer.concat(data).toString("utf8")
             : Buffer.from(data).toString("utf8");
-        if (text.length > 1_024) throw new Error("Event payload is too large.");
+        if (text.length > EVENT_PAYLOAD_LIMIT) throw new Error("Event payload is too large.");
         const event = JSON.parse(text);
         if (!isDynamicRecord(event)) {
           throw new Error("Unsupported team event.");

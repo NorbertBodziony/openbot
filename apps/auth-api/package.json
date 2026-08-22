@@ -26,7 +26,6 @@
     "@openbot/brand": "workspace:*",
     "@openbot/contracts": "workspace:*",
     "@openpanel/web": "1.4.1",
-    "@solidjs/signals": "2.0.0-rc.0",
     "@solidjs/web": "2.0.0-rc.0",
     "@tanstack/solid-router": "2.0.0-rc.0",
     "@tanstack/solid-start": "2.0.0-rc.0",

@@ -93,6 +93,122 @@ afterEach(async () => {
 });
 
 describe("TeamApiServer administration", () => {
+  it("does not expose unexpected internal errors", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-errors-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const internalError = Object.assign(new Error("EACCES: /Users/private/openbot.db"), { code: "EACCES" });
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents({
+        listBots: () => {
+          throw internalError;
+        },
+      }),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      const response = await fetch(`${base}/v1/agents`, {
+        headers: { Authorization: `Bearer ${login.sessionToken}` },
+      });
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toEqual({ error: "Request failed." });
+      expect(errorLog).toHaveBeenCalledWith("Team API request failed:", internalError);
+
+      const invalidLogin = await fetch(`${base}/v1/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: "owner", password: "wrong password value" }),
+      });
+      expect(invalidLogin.status).toBe(400);
+      await expect(invalidLogin.json()).resolves.toEqual({ error: "The username or password is incorrect." });
+    } finally {
+      await api.stop();
+      errorLog.mockRestore();
+    }
+  });
+
+  it("bounds and expires unauthenticated rate-limit entries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-rate-limit-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    let now = Date.parse("2026-08-22T12:00:00.000Z");
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents(),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+      rateLimitCapacity: 2,
+      now: () => now,
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+    const login = (username: string) =>
+      fetch(`${base}/v1/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password: "wrong password value" }),
+      });
+
+    try {
+      expect((await login("alice")).status).toBe(400);
+      expect((await login("bob")).status).toBe(400);
+      expect((await login("carol")).status).toBe(429);
+
+      now += 15 * 60 * 1_000 + 1;
+      expect((await login("dave")).status).toBe(400);
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("rejects WebSocket event frames larger than one KiB", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-websocket-limit-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const login = await store.login("owner", "correct horse battery");
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents(),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
+      "openbot-events",
+      `openbot-token.${login.sessionToken}`,
+    ]);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.addEventListener("open", () => resolve(), { once: true });
+        socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
+      });
+      const closed = new Promise<number>((resolve) => {
+        socket.addEventListener("close", (event) => resolve(event.code), { once: true });
+      });
+      socket.send("x".repeat(1_025));
+      await expect(closed).resolves.toBe(1009);
+    } finally {
+      socket.close();
+      await api.stop();
+    }
+  });
+
   it("joins an email-bound invitation with a verified OpenBot account", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-account-"));
     roots.push(root);

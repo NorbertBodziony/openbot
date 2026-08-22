@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -39,6 +39,21 @@ describe("TeamStore", () => {
     const raw = await readFile(path, "utf8");
     expect(raw).not.toContain("correct horse battery");
     expect(raw).not.toContain(login.sessionToken);
+  });
+
+  it("recovers the persistence queue after a write failure", async () => {
+    const { store, path } = await createStore();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const root = path.slice(0, -"/team.json".length);
+    const unavailableRoot = `${root}-unavailable`;
+
+    await rename(root, unavailableRoot);
+    await expect(store.setEnabledOnLaunch(true)).rejects.toThrow();
+    await rename(unavailableRoot, root);
+
+    await expect(store.setEnabledOnLaunch(false)).resolves.toBeUndefined();
+    const persisted = JSON.parse(await readFile(path, "utf8"));
+    expect(persisted.enabledOnLaunch).toBe(false);
   });
 
   it("stores, restores, replaces, and removes a validated server logo", async () => {

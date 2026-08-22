@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
@@ -59,6 +59,57 @@ describe("remote server links", () => {
 });
 
 describe("remote server order", () => {
+  it("recovers the persistence queue after a write failure", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-server-persistence-"));
+    const unavailableDirectory = `${directory}-unavailable`;
+    const statePath = join(directory, "servers.json");
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        version: 2,
+        activeServerId: "server-1",
+        servers: [
+          {
+            id: "server-1",
+            name: "Remote",
+            apiUrl: "https://server-1.trycloudflare.com/",
+            fingerprint: "fingerprint",
+            username: "person@example.com",
+            encryptedToken: "token",
+            remoteDesktopAvailable: false,
+            role: "member",
+          },
+        ],
+      }),
+    );
+    const manager = new RemoteServerManager(
+      statePath,
+      {
+        encrypt: (value) => Buffer.from(value),
+        decrypt: (value) => value.toString(),
+      },
+      {
+        createTeamAuthTicket: async () => "ticket",
+        getEmail: () => "person@example.com",
+      },
+    );
+
+    try {
+      await manager.initialize();
+      await rename(directory, unavailableDirectory);
+      await expect(manager.select("server-1")).rejects.toThrow();
+      await rename(unavailableDirectory, directory);
+
+      await expect(manager.select("local")).resolves.toBeDefined();
+      const persisted = JSON.parse(await readFile(statePath, "utf8"));
+      expect(persisted.activeServerId).toBe("local");
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+      await rm(unavailableDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the local server first and persists the remote server order", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-server-order-"));
     const statePath = join(directory, "servers.json");

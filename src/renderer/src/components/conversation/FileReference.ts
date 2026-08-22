@@ -102,17 +102,7 @@ export function messageFileReferences(body: string, attachments: AttachmentSumma
   return references.sort((left, right) => left.start - right.start || left.end - right.end);
 }
 
-export function referencedAttachmentIds(body: string, attachments: AttachmentSummary[] = []): Set<string> {
-  return new Set(
-    messageFileReferences(body, attachments)
-      .filter((reference): reference is Extract<MessageFileReference, { kind: "attachment" }> => {
-        return reference.kind === "attachment";
-      })
-      .map((reference) => reference.attachment.id),
-  );
-}
-
-export function isSharedFilePath(value: string): boolean {
+function isSharedFilePath(value: string): boolean {
   const normalized = value.replaceAll("\\", "/");
   const segments = normalized.split("/").filter(Boolean);
   if (segments[0] === "Shared" && segments.length > 1) return true;

@@ -1,6 +1,6 @@
-import { randomBytes, verify } from "node:crypto";
+import { randomBytes, randomUUID, verify } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import type {
@@ -138,6 +138,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #eventControllers = new Map<string, AbortController>();
   #eventSockets = new Map<string, WebSocket>();
   #presence = new Map<string, TeamPresenceSnapshot>();
+  #writeChain = Promise.resolve();
 
   constructor(path: string, cipher: TokenCipher, centralAccount: CentralAccountSession) {
     super();
@@ -828,12 +829,21 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async #persist(): Promise<void> {
-    const temporary = `${this.#path}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(this.#state)}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
+    const snapshot = structuredClone(this.#state);
+    const operation = this.#writeChain.then(async () => {
+      const temporary = `${this.#path}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(temporary, `${JSON.stringify(snapshot)}\n`, {
+          encoding: "utf8",
+          mode: 0o600,
+        });
+        await rename(temporary, this.#path);
+      } finally {
+        await rm(temporary, { force: true });
+      }
     });
-    await rename(temporary, this.#path);
+    this.#writeChain = operation.catch(() => undefined);
+    await operation;
   }
 
   #emitChanged(): void {

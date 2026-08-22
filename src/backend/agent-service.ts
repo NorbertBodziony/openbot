@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute, join, relative } from "node:path";
+import { basename } from "node:path";
 import { expandAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { ATTACHMENT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
@@ -81,6 +81,7 @@ import {
   type ResponseDecoder,
   type ThreadItem,
 } from "./protocol";
+import { isWithin, sharedPathFromInput, workspacePathFromInput } from "./workspace-paths";
 
 interface AgentServiceEvents {
   event: [event: AgentEvent];
@@ -2763,36 +2764,6 @@ function providerForModel(model: BotSummary["model"]): AgentProvider {
 
 function providerForBot(bot: BotSummary): AgentProvider {
   return providerForModel(bot.model);
-}
-
-function sharedPathFromInput(sharedRoot: string, inputPath: string): string {
-  const normalized = inputPath.replaceAll("\\", "/");
-  for (const prefix of ["~/OpenBot/Shared/", "OpenBot/Shared/", "Shared/"]) {
-    if (normalized.startsWith(prefix)) return join(sharedRoot, normalized.slice(prefix.length));
-  }
-  return isAbsolute(inputPath) ? inputPath : join(sharedRoot, normalized);
-}
-
-function workspacePathFromInput(workspaceRoot: string, botId: string, inputPath: string): string {
-  const decoded = decodePath(inputPath.trim());
-  const normalized = decoded.replaceAll("\\", "/");
-  for (const prefix of [`~/OpenBot/Bots/${botId}/`, `OpenBot/Bots/${botId}/`]) {
-    if (normalized.startsWith(prefix)) return join(workspaceRoot, normalized.slice(prefix.length));
-  }
-  return isAbsolute(decoded) ? decoded : join(workspaceRoot, normalized);
-}
-
-function decodePath(value: string): string {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-function isWithin(root: string, candidate: string): boolean {
-  const relativePath = relative(root, candidate);
-  return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
 }
 
 function providerLabel(provider: AgentProvider): "Claude" | "Codex" {

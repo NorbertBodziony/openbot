@@ -65,15 +65,6 @@ export function LinkIcon() {
   );
 }
 
-export function FileIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="file-icon fill-none stroke-current">
-      <path d="M5 2.5h6l4 4V17.5H5z" stroke-width="1.2" stroke-linejoin="round" />
-      <path d="M11 2.5v4h4M7.5 11h5M7.5 14h5" stroke-width="1.2" stroke-linecap="round" />
-    </svg>
-  );
-}
-
 export function ReactionIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20">
@@ -106,19 +97,6 @@ export function QueueIcon() {
     <svg aria-hidden="true" viewBox="0 0 20 20">
       <path d="M4.5 4.5v8.25a2 2 0 0 0 2 2h8.75" />
       <path d="m12.25 11.75 3 3-3 3" />
-    </svg>
-  );
-}
-
-export function DragHandleIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 12 20">
-      <circle cx="3.5" cy="5" r="1" />
-      <circle cx="8.5" cy="5" r="1" />
-      <circle cx="3.5" cy="10" r="1" />
-      <circle cx="8.5" cy="10" r="1" />
-      <circle cx="3.5" cy="15" r="1" />
-      <circle cx="8.5" cy="15" r="1" />
     </svg>
   );
 }
