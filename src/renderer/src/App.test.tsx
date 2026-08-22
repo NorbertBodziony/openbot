@@ -15,6 +15,10 @@ import type {
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { desktopAnalytics } from "./analytics";
+import { triggerResize } from "./setupTests";
+
+const trackAnalytics = vi.spyOn(desktopAnalytics, "track").mockImplementation(() => undefined);
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
 let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
@@ -103,6 +107,7 @@ describe("OpenBot connected desktop shell", () => {
     emitDirectMessage = undefined;
     emitDirectTyping = undefined;
     emitInvite = undefined;
+    trackAnalytics.mockClear();
     window.localStorage.clear();
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
     Object.defineProperty(navigator, "mediaDevices", {
@@ -243,6 +248,7 @@ describe("OpenBot connected desktop shell", () => {
             ...BOTS[0],
             id: "bot-new",
             name: "New agent",
+            title: "",
             avatarSeed: "bot-new",
             avatarHue: null,
           }),
@@ -263,6 +269,17 @@ describe("OpenBot connected desktop shell", () => {
             messages: [],
             readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
           })),
+          readConversationPage: vi.fn().mockImplementation(async (input) => {
+            const snapshot = await window.openbot.agent.readConversation(input.botId);
+            const messages = snapshot.messages.slice(-Math.min(input.limit ?? 50, 100));
+            return {
+              ...snapshot,
+              messages,
+              references: {},
+              pageInfo: { hasOlder: snapshot.messages.length > messages.length, olderCursor: null },
+            };
+          }),
+          searchConversationMessages: vi.fn().mockResolvedValue({ results: [], total: 0, nextCursor: null }),
           listConversationReads: vi.fn().mockResolvedValue({}),
           markConversationRead: vi.fn().mockImplementation(async (input) => ({
             unreadCount: 0,
@@ -277,6 +294,7 @@ describe("OpenBot connected desktop shell", () => {
           discardDraftAttachment: vi.fn().mockResolvedValue(undefined),
           openAttachment: vi.fn().mockResolvedValue(undefined),
           openSharedFile: vi.fn().mockResolvedValue(undefined),
+          openWorkspaceFile: vi.fn().mockResolvedValue(undefined),
           sendMessage: vi.fn().mockResolvedValue({
             messageId: "message-1",
             deliveries: [{ id: "delivery-1", recipientBotId: "chief", status: "queued", position: 1 }],
@@ -408,6 +426,15 @@ describe("OpenBot connected desktop shell", () => {
             revision: 0,
             readState: { unreadCount: 0, firstUnreadMessageId: null, throughSequence: 0 },
           })),
+          readDirectConversationPage: vi.fn().mockImplementation(async (input) => {
+            const snapshot = await window.openbot.servers.readDirectConversation(input.memberId);
+            const messages = snapshot.messages.slice(-Math.min(input.limit ?? 50, 100));
+            return {
+              ...snapshot,
+              messages,
+              pageInfo: { hasOlder: snapshot.messages.length > messages.length, olderCursor: null },
+            };
+          }),
           sendDirectMessage: vi.fn().mockImplementation(async (input) => ({
             id: input.clientMessageId,
             threadId: `thread-${input.memberId}`,
@@ -701,6 +728,8 @@ describe("OpenBot connected desktop shell", () => {
       target: { value: "ABCD-EFGH" },
     });
     expect(window.openbot.auth.verifyEmailCode).toHaveBeenCalledWith("challenge-1", "ABCD-EFGH");
+    expect(trackAnalytics).toHaveBeenCalledWith("account_sign_in_started", { result: "code_sent" });
+    expect(trackAnalytics).toHaveBeenCalledWith("account_sign_in_completed", { result: "succeeded" });
     expect(await screen.findByText("Verified. Opening OpenBot…")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Where will OpenBot run?" })).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Meet OpenBot" })).toBeInTheDocument();
@@ -1047,6 +1076,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     await waitFor(() => expect(window.openbot.auth.logout).toHaveBeenCalledOnce());
+    expect(trackAnalytics).toHaveBeenCalledWith("account_signed_out", {});
     expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
     expect(window.openbot.agent.deleteBot).not.toHaveBeenCalled();
   });
@@ -1266,6 +1296,9 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("option", { name: "Create new agent" }));
 
     expect(await screen.findByRole("heading", { name: "New agent" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "New agent. No messages yet" }).querySelector(".bot-role-badge"),
+    ).toBeNull();
     expect(screen.queryByRole("complementary", { name: "Agent settings" })).not.toBeInTheDocument();
     expect(
       await screen.findByRole("radiogroup", { name: "What do you want me helping with most?" }),
@@ -1436,6 +1469,14 @@ describe("OpenBot connected desktop shell", () => {
       status: "completed",
     });
     await waitFor(() => expect(trigger).toBeEnabled());
+    expect(trackAnalytics).toHaveBeenCalledWith(
+      "turn_started",
+      expect.objectContaining({ provider: "codex", model: "gpt-5.6-luna" }),
+    );
+    expect(trackAnalytics).toHaveBeenCalledWith(
+      "turn_completed",
+      expect.objectContaining({ provider: "codex", status: "completed", duration_ms: expect.any(Number) }),
+    );
   });
 
   it("supports picker keyboard navigation and outside dismissal", async () => {
@@ -1736,6 +1777,23 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("opens global search with Command K and navigates to bot and message results", async () => {
+    vi.mocked(window.openbot.agent.searchConversationMessages).mockResolvedValue({
+      results: [
+        {
+          botId: "sales-outbound",
+          message: {
+            id: "sales-search-result",
+            author: "assistant",
+            source: "assistant",
+            text: "Quarterly launch notes are ready for review.",
+            createdAt: "2026-08-20T09:30:00.000Z",
+            status: "completed",
+          },
+        },
+      ],
+      total: 1,
+      nextCursor: null,
+    });
     vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) => ({
       botId,
       threadId: null,
@@ -1771,6 +1829,15 @@ describe("OpenBot connected desktop shell", () => {
     const messageResult = await screen.findByRole("option", { name: /Quarterly launch notes/ });
     await fireEvent.click(messageResult);
     await screen.findByRole("heading", { name: "Sales Outbound" });
+    expect(window.openbot.agent.searchConversationMessages).toHaveBeenCalledWith({
+      query: "quarterly",
+      limit: 100,
+    });
+    expect(window.openbot.agent.readConversationPage).toHaveBeenCalledWith({
+      botId: "sales-outbound",
+      anchor: { type: "around", messageId: "sales-search-result" },
+      limit: 50,
+    });
 
     await fireEvent.keyDown(window, { key: "k", metaKey: true });
     await fireEvent.click(screen.getByRole("tab", { name: "Bots" }));
@@ -2107,6 +2174,16 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() => expect(composer).toHaveTextContent(""));
+    expect(trackAnalytics).toHaveBeenCalledWith("message_sent", {
+      provider: "codex",
+      model: "gpt-5.6-luna",
+      reasoning_effort: "medium",
+      server_kind: "local",
+      channel: "agent",
+      attachment_count: 0,
+      is_reply: false,
+      delivery_count: 1,
+    });
   });
 
   it("keeps the composer compact until the draft becomes multiline", async () => {
@@ -2298,8 +2375,9 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByText("Bob history")).toBeInTheDocument();
   });
 
-  it("shows the first queued message and closes onboarding when the send event arrives", async () => {
+  it("keeps a queued message out of chat until work starts", async () => {
     vi.mocked(window.openbot.agent.sendMessage).mockImplementationOnce(async (input) => {
+      const delivery = queuedDelivery("delivery-visible", input.text, 1);
       emitAgentEvent?.({
         type: "conversation",
         snapshot: {
@@ -2309,19 +2387,23 @@ describe("OpenBot connected desktop shell", () => {
           revision: 1,
           messages: [
             {
-              id: "delivery-visible",
+              id: delivery.id,
               author: "user",
               text: input.text,
-              createdAt: "2026-08-14T12:00:00.000Z",
+              createdAt: delivery.createdAt,
               status: "completed",
-              delivery: { id: "delivery-visible", status: "queued", position: 1 },
+              delivery: { id: delivery.id, status: "queued", position: 1 },
             },
           ],
         },
       });
+      emitAgentEvent?.({
+        type: "queue-changed",
+        snapshot: { botId: input.botId, deliveries: [delivery] },
+      });
       return {
-        messageId: "message-visible",
-        deliveries: [{ id: "delivery-visible", recipientBotId: input.botId, status: "queued", position: 1 }],
+        messageId: delivery.messageId,
+        deliveries: [{ id: delivery.id, recipientBotId: input.botId, status: "queued", position: 1 }],
       };
     });
 
@@ -2332,13 +2414,51 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.input(composer);
     await fireEvent.keyDown(composer, { key: "Enter" });
 
-    expect(await screen.findByText("Show this message", { selector: ".message-copy" })).toBeInTheDocument();
+    expect(await screen.findByText("Show this message", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    expect(screen.queryByText("Show this message", { selector: ".message-copy" })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(screen.queryByText("Choose a model to get started.")).not.toBeInTheDocument();
       expect(
         screen.queryByRole("radiogroup", { name: "What do you want me helping with most?" }),
       ).not.toBeInTheDocument();
     });
+
+    const started = queuedDelivery("delivery-visible", "Show this message", null, { status: "starting" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 2,
+        messages: [
+          {
+            id: started.id,
+            author: "user",
+            text: started.text,
+            createdAt: started.createdAt,
+            status: "completed",
+            delivery: { id: started.id, status: "starting", position: null },
+          },
+        ],
+      },
+    });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [started] },
+    });
+
+    expect(await screen.findByText("Show this message", { selector: ".message-copy" })).toBeInTheDocument();
+    const departingQueueRow = screen
+      .getByText("Show this message", { selector: ".agent-queue-message" })
+      .closest(".agent-queue-item");
+    await waitFor(() => expect(departingQueueRow).toHaveClass("agent-queue-item-removing"));
+    expect(departingQueueRow).toHaveAttribute("aria-hidden", "true");
+    expect(document.querySelector(".agent-queue-slot")).toHaveAttribute("data-open", "true");
+    await waitFor(() =>
+      expect(screen.queryByText("Show this message", { selector: ".agent-queue-message" })).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(document.querySelector(".agent-queue-slot")).toHaveAttribute("data-open", "false"));
   });
 
   it("replies to a message through the composer and keeps the reference in the queued input", async () => {
@@ -2479,7 +2599,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("Ready to ship."));
   });
 
-  it("shows agent activity without replaying existing message entrances", async () => {
+  it("keeps agent activity at the conversation bottom without replaying existing message entrances", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     const createdAt = "2026-08-12T10:00:00.000Z";
@@ -2493,11 +2613,12 @@ describe("OpenBot connected desktop shell", () => {
         messages: [
           {
             id: "delivery-live",
+            turnId: "turn-live",
             author: "user",
             text: "Do the work",
             createdAt,
             status: "completed",
-            delivery: { id: "delivery-live", status: "queued", position: 1 },
+            delivery: { id: "delivery-live", status: "starting", position: null },
           },
         ],
       },
@@ -2508,14 +2629,56 @@ describe("OpenBot connected desktop shell", () => {
     const sidebarAvatar = document.querySelector(".agent-row .bot-avatar");
     expect(sidebarAvatar).toHaveClass("bot-avatar-motion-idle");
 
+    const liveDelivery = queuedDelivery("delivery-live", "Do the work", null, { status: "starting" });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [liveDelivery] },
+    });
+
     emitAgentEvent?.({
       type: "turn-started",
       botId: "chief",
       threadId: "thread-chief",
       turnId: "turn-live",
     });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        deliveries: [{ ...liveDelivery, status: "running", turnId: "turn-live" }],
+      },
+    });
     const workingIndicator = await screen.findByRole("status", { name: "Chief is working" });
+    const firstAnimation = workingIndicator
+      .querySelector(".agent-activity-avatar")
+      ?.getAttribute("data-animation-state");
+    const firstLabel = workingIndicator.querySelector(".agent-activity-label")?.textContent;
+    const virtualChatList = document.querySelector(".virtual-chat-list");
+    expect(virtualChatList?.nextElementSibling).toBe(workingIndicator.parentElement);
+    expect(firstAnimation).toBeTruthy();
+    expect(firstLabel).toBeTruthy();
     expect(sidebarAvatar).toHaveClass("bot-avatar-motion-working");
+
+    const scrollElement = document.querySelector<HTMLElement>(".conversation-scroll");
+    const activitySlot = workingIndicator.parentElement;
+    if (!scrollElement || !activitySlot) throw new Error("Conversation scroll elements are missing.");
+    let scrollHeight = 900;
+    Object.defineProperties(scrollElement, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+    });
+    scrollElement.scrollTop = 400;
+    scrollHeight = 940;
+    triggerResize(activitySlot);
+    expect(scrollElement.scrollTop).toBe(940);
+
+    scrollElement.scrollTop = 100;
+    await fireEvent.scroll(scrollElement);
+    scrollHeight = 1_000;
+    triggerResize(activitySlot);
+    expect(scrollElement.scrollTop).toBe(100);
+    scrollElement.scrollTop = 500;
+    await fireEvent.scroll(scrollElement);
 
     emitAgentEvent?.({
       type: "conversation",
@@ -2527,6 +2690,7 @@ describe("OpenBot connected desktop shell", () => {
         messages: [
           {
             id: "delivery-live",
+            turnId: "turn-live",
             author: "user",
             text: "Do the work",
             createdAt,
@@ -2538,6 +2702,11 @@ describe("OpenBot connected desktop shell", () => {
     });
     expect(screen.getByText("Do the work").closest(".message-entry")).toBe(firstMessageEntry);
     expect(screen.getByText("Do the work").closest(".user-bubble")).not.toHaveTextContent("Working");
+    expect(workingIndicator.querySelector(".agent-activity-avatar")).toHaveAttribute(
+      "data-animation-state",
+      firstAnimation,
+    );
+    expect(workingIndicator.querySelector(".agent-activity-label")).toHaveTextContent(firstLabel ?? "");
 
     emitAgentEvent?.({
       type: "conversation",
@@ -2549,6 +2718,7 @@ describe("OpenBot connected desktop shell", () => {
         messages: [
           {
             id: "delivery-live",
+            turnId: "turn-live",
             author: "user",
             text: "Do the work",
             createdAt,
@@ -2557,6 +2727,7 @@ describe("OpenBot connected desktop shell", () => {
           },
           {
             id: "assistant-live",
+            turnId: "turn-live",
             author: "assistant",
             text: "I am on it",
             createdAt: "2026-08-12T10:00:01.000Z",
@@ -2566,11 +2737,16 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
     const streamingAnswer = await screen.findByText("I am on it");
+    const streamingMessageEntry = streamingAnswer.closest(".message-entry");
     const streamingBubble = streamingAnswer.closest(".bot-bubble");
-    expect(streamingAnswer.closest(".message-entry")).toHaveClass("message-entry-animated");
+    expect(streamingMessageEntry).toHaveClass("message-entry-animated");
     expect(streamingBubble).toHaveClass("bot-bubble-streaming");
     expect(screen.queryByText("Typing…")).not.toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Chief is working" })).toBe(workingIndicator);
+    expect(virtualChatList?.nextElementSibling).toBe(workingIndicator.parentElement);
+    expect(streamingMessageEntry?.compareDocumentPosition(workingIndicator) ?? 0).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
 
     emitAgentEvent?.({
       type: "conversation-delta",
@@ -2582,14 +2758,15 @@ describe("OpenBot connected desktop shell", () => {
       createdAt: "2026-08-12T10:00:01.000Z",
       revision: 4,
     });
+    expect(screen.queryByText("I am on it now")).not.toBeInTheDocument();
     const updatedStreamingAnswer = await screen.findByText("I am on it now");
     expect(updatedStreamingAnswer.closest(".bot-bubble")).toBe(streamingBubble);
     expect(screen.getByText("Do the work").closest(".message-entry")).toBe(firstMessageEntry);
     expect(screen.getByRole("status", { name: "Chief is working" })).toBe(workingIndicator);
 
     for (const [revision, text] of [
-      [5, "I am on it now, first buffered delta"],
-      [6, "I am on it now, final buffered delta"],
+      [5, "I am on it now.\n\nFirst buffered line"],
+      [6, "I am on it now.\n\nFinal buffered line"],
     ] as const) {
       emitAgentEvent?.({
         type: "conversation",
@@ -2601,6 +2778,7 @@ describe("OpenBot connected desktop shell", () => {
           messages: [
             {
               id: "delivery-live",
+              turnId: "turn-live",
               author: "user",
               text: "Do the work",
               createdAt,
@@ -2609,6 +2787,7 @@ describe("OpenBot connected desktop shell", () => {
             },
             {
               id: "assistant-live",
+              turnId: "turn-live",
               author: "assistant",
               text,
               createdAt: "2026-08-12T10:00:01.000Z",
@@ -2618,9 +2797,9 @@ describe("OpenBot connected desktop shell", () => {
         },
       });
     }
-    const bufferedAnswer = await screen.findByText("I am on it now, final buffered delta");
+    const bufferedAnswer = await screen.findByText("Final buffered line");
     expect(bufferedAnswer.closest(".bot-bubble")).toBe(streamingBubble);
-    expect(screen.queryByText("I am on it now, first buffered delta")).not.toBeInTheDocument();
+    expect(screen.queryByText("First buffered line")).not.toBeInTheDocument();
 
     emitAgentEvent?.({
       type: "turn-completed",
@@ -2629,9 +2808,138 @@ describe("OpenBot connected desktop shell", () => {
       turnId: "turn-live",
       status: "completed",
     });
+    expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "active");
+    await new Promise((resolve) => window.setTimeout(resolve, 160));
+    expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "active");
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: "turn-live",
+        revision: 7,
+        messages: [
+          {
+            id: "delivery-live",
+            turnId: "turn-live",
+            author: "user",
+            text: "Do the work",
+            createdAt,
+            status: "completed",
+          },
+          {
+            id: "assistant-live",
+            turnId: "turn-live",
+            author: "assistant",
+            text: "I am on it now.\n\nFinal buffered line",
+            createdAt: "2026-08-12T10:00:01.000Z",
+            status: "completed",
+          },
+        ],
+      },
+    });
+    await waitFor(() => expect(streamingBubble).not.toHaveClass("bot-bubble-streaming"));
+    expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "active");
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "exiting"),
+    );
     await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
     expect(sidebarAvatar).toHaveClass("bot-avatar-motion-idle");
     expect(document.querySelector(".agent-activity-entry")).toBeNull();
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: "turn-next",
+        revision: 8,
+        messages: [
+          {
+            id: "delivery-live",
+            author: "user",
+            text: "Do the work",
+            createdAt,
+            status: "completed",
+          },
+          {
+            id: "assistant-live",
+            author: "assistant",
+            text: "I am on it now.\n\nFinal buffered line",
+            createdAt: "2026-08-12T10:00:01.000Z",
+            status: "completed",
+          },
+          {
+            id: "delivery-next",
+            turnId: "turn-next",
+            author: "user",
+            text: "Do the next thing",
+            createdAt: "2026-08-12T10:00:02.000Z",
+            status: "completed",
+          },
+        ],
+      },
+    });
+    const nextIndicator = await screen.findByRole("status", { name: "Chief is working" });
+    expect(nextIndicator.querySelector(".agent-activity-avatar")).not.toHaveAttribute(
+      "data-animation-state",
+      firstAnimation,
+    );
+    expect(nextIndicator.querySelector(".agent-activity-label")).not.toHaveTextContent(firstLabel ?? "");
+
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-next",
+      status: "failed",
+    });
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
+  });
+
+  it("does not flash agent activity when a turn completes before the entrance delay", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const delivery = queuedDelivery("delivery-fast", "Quick answer", null, {
+      status: "running",
+      turnId: "turn-fast",
+    });
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: "turn-fast",
+        revision: 1,
+        messages: [
+          {
+            id: delivery.id,
+            turnId: "turn-fast",
+            author: "user",
+            text: delivery.text,
+            createdAt: delivery.createdAt,
+            status: "completed",
+            delivery: { id: delivery.id, status: "running", position: null },
+          },
+        ],
+      },
+    });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [delivery] },
+    });
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-fast",
+      status: "completed",
+    });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 180));
+    expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument();
   });
 
   it("replaces a live image-generation placeholder with the completed image", async () => {
@@ -2675,7 +2983,7 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     expect(await screen.findByRole("img", { name: "Generating image" })).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "Chief is working" })).toBeInTheDocument();
 
     emitAgentEvent?.({
       type: "conversation",
@@ -2713,8 +3021,17 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Preview generated image" })).toBeInTheDocument());
-    expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
     expect(screen.queryByText("Generating image")).not.toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId,
+      status: "completed",
+    });
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
 
     await fireEvent.click(screen.getByRole("button", { name: "Download generated image" }));
     expect(window.openbot.agent.openAttachment).toHaveBeenCalledWith({
@@ -2932,12 +3249,13 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("button", { name: "Resume queue" })).not.toBeInTheDocument();
   });
 
-  it("keeps the first idle delivery in the foreground and shows later deliveries in Queue", async () => {
+  it("keeps queued deliveries in Queue until work starts", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     const first = queuedDelivery("delivery-foreground", "Start this work", 1);
     const second = queuedDelivery("delivery-waiting-1", "Run this second", 2);
     const third = queuedDelivery("delivery-waiting-2", "Run this third", 3);
+    const fourth = queuedDelivery("delivery-waiting-3", "Run this fourth", 4);
 
     emitAgentEvent?.({
       type: "conversation",
@@ -2963,17 +3281,22 @@ describe("OpenBot connected desktop shell", () => {
       snapshot: { botId: "chief", deliveries: [first] },
     });
 
-    expect(await screen.findByText("Start this work", { selector: ".message-copy" })).toBeInTheDocument();
-    expect(document.querySelector(".agent-queue-panel")).toBeNull();
+    expect(await screen.findByText("Start this work", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    const queuePanel = document.querySelector<HTMLElement>(".agent-queue-panel");
+    expect(queuePanel).not.toBeNull();
+    expect(queuePanel?.closest(".composer-wrap")).toBeInTheDocument();
+    expect(screen.queryByText("Start this work", { selector: ".message-copy" })).not.toBeInTheDocument();
 
     emitAgentEvent?.({
       type: "queue-changed",
-      snapshot: { botId: "chief", deliveries: [first, second, third] },
+      snapshot: { botId: "chief", deliveries: [first, second, third, fourth] },
     });
     await waitFor(() =>
       expect(Array.from(document.querySelectorAll(".agent-queue-message"), (element) => element.textContent)).toEqual([
+        "Start this work",
         "Run this second",
         "Run this third",
+        "Run this fourth",
       ]),
     );
 
@@ -2983,9 +3306,56 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.reorderQueue).toHaveBeenCalledWith({
         botId: "chief",
-        deliveryIds: [first.id, third.id, second.id],
+        deliveryIds: [second.id, first.id, third.id, fourth.id],
       }),
     );
+
+    const firstStarting = { ...first, status: "starting" as const, position: null, turnId: "turn-queue" };
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [firstStarting, second, third, fourth] },
+    });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: "turn-queue",
+        revision: 2,
+        messages: [
+          {
+            id: first.id,
+            turnId: "turn-queue",
+            author: "user",
+            text: first.text,
+            createdAt: first.createdAt,
+            status: "completed",
+            delivery: { id: first.id, status: "starting", position: null },
+          },
+        ],
+      },
+    });
+
+    const activeMessage = await screen.findByText("Start this work", { selector: ".message-copy" });
+    const activity = await screen.findByRole("status", { name: "Chief is working" });
+    const activitySlot = activeMessage.closest(".virtual-chat-list")?.nextElementSibling;
+    expect(activitySlot).toHaveClass("agent-activity-slot");
+    expect(activitySlot).toContainElement(activity);
+    expect(screen.getByText("Run this second", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    expect(screen.getByText("Run this third", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    expect(screen.getByText("Run this fourth", { selector: ".agent-queue-message" })).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [firstStarting] },
+    });
+    const queueSlot = document.querySelector<HTMLElement>(".agent-queue-slot");
+    await waitFor(() => expect(document.querySelectorAll(".agent-queue-item-removing")).toHaveLength(3));
+    expect(queueSlot).toHaveAttribute("data-open", "true");
+    expect(queueSlot).toContainElement(document.querySelector(".agent-queue-panel"));
+    await waitFor(() => expect(document.querySelector(".agent-queue-panel")).not.toBeInTheDocument());
+    expect(queueSlot).toHaveAttribute("data-open", "false");
+    expect(queueSlot).toHaveAttribute("aria-hidden", "true");
   });
 
   it("smokes two composer submissions through the live Queue projection", async () => {
@@ -3035,7 +3405,10 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.keyDown(composer, { key: "Enter" });
     await waitFor(() => expect(window.openbot.agent.sendMessage).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(composer).toHaveTextContent(""));
-    expect(document.querySelector(".agent-queue-panel")).toBeNull();
+    expect(
+      await screen.findByText("First live smoke message", { selector: ".agent-queue-message" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("First live smoke message", { selector: ".message-copy" })).not.toBeInTheDocument();
 
     composer.textContent = "Second live smoke message";
     await fireEvent.input(composer);
@@ -3044,9 +3417,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(
       await screen.findByText("Second live smoke message", { selector: ".agent-queue-message" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByText("First live smoke message", { selector: ".agent-queue-message" }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByText("First live smoke message", { selector: ".agent-queue-message" })).toBeInTheDocument();
   });
 
   it("keeps foreground starts out of Queue and promotes the next delivery after completion", async () => {
@@ -3107,6 +3478,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     await waitFor(() =>
       expect(Array.from(document.querySelectorAll(".agent-queue-message"), (element) => element.textContent)).toEqual([
+        "Next work",
         "Later work",
       ]),
     );

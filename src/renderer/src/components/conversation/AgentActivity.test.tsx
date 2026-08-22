@@ -1,7 +1,7 @@
 import { render, screen } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
 import type { BotProfile } from "../../data";
-import { AgentActivityIndicator } from "./AgentActivity";
+import { AgentActivityIndicator, type AgentActivityPresentation, nextAgentActivityPresentation } from "./AgentActivity";
 
 const bot: BotProfile = {
   id: "chief",
@@ -20,28 +20,24 @@ const bot: BotProfile = {
 };
 
 describe("AgentActivityIndicator", () => {
-  it("shows only an animated Bloub while working", () => {
+  it("shows the selected animated Bloub and stable label while working", () => {
+    const presentation: AgentActivityPresentation = { animation: "orbit", label: "Working on it…" };
     const view = render(() => (
-      <AgentActivityIndicator bot={{ ...bot, avatarUrl: "mock-avatar://chief" }} state="Working" />
+      <AgentActivityIndicator bot={{ ...bot, avatarUrl: "mock-avatar://chief" }} presentation={presentation} />
     ));
 
     expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
-    expect(
-      view.container.querySelector(".agent-activity-avatar.bot-avatar-motion-always.bot-avatar-bloub > svg"),
-    ).not.toBeNull();
+    expect(screen.getByText("Working on it…")).toBeInTheDocument();
+    expect(view.container.querySelector('[data-animation-state="orbit"].agent-activity-avatar > svg')).not.toBeNull();
     expect(view.container.querySelector(".agent-activity-avatar img")).toBeNull();
     expect(view.container.querySelector(".agent-activity-bubble")).toBeNull();
   });
 
-  it("keeps the avatar for queued work", () => {
-    const view = render(() => <AgentActivityIndicator bot={bot} state="Queued" />);
+  it("does not repeat the previous animation or label", () => {
+    const previous: AgentActivityPresentation = { animation: "thinking", label: "Working on it…" };
+    const next = nextAgentActivityPresentation(previous, () => 0);
 
-    expect(view.container.querySelector(".agent-activity-avatar")).toBeInTheDocument();
-  });
-
-  it("renders no activity bubble when idle", () => {
-    const view = render(() => <AgentActivityIndicator bot={bot} state={null} />);
-
-    expect(view.container.querySelector(".agent-activity-entry")).toBeNull();
+    expect(next.animation).not.toBe(previous.animation);
+    expect(next.label).not.toBe(previous.label);
   });
 });

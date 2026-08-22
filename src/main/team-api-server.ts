@@ -7,7 +7,10 @@ import { ATTACHMENT_LIMITS, AVATAR_IMAGE_LIMITS, INPUT_LIMITS } from "@openbot/c
 import {
   type AgentEvent,
   type CentralAuthUser,
+  type ConversationPageAnchor,
   type CreateTeamInviteInput,
+  type DirectConversationPage,
+  type DirectConversationPageAnchor,
   type DirectConversationSnapshot,
   type DirectMessage,
   type DirectMessageRealtimeEvent,
@@ -55,10 +58,13 @@ type TeamApiAgentMethods = Pick<
   | "setAvatar"
   | "resolveAvatar"
   | "readConversationFor"
+  | "readConversationPageFor"
+  | "searchConversationMessages"
   | "markConversationRead"
   | "prepareImportedAttachments"
   | "discardDraftAttachment"
   | "resolveSharedFile"
+  | "resolveWorkspaceFile"
   | "sendMessage"
   | "listQueue"
   | "setMessageReaction"
@@ -280,6 +286,16 @@ export class TeamApiServer {
     return this.#requireChat().readConversation(memberId, otherMemberId);
   }
 
+  readDirectConversationPage(
+    memberId: string,
+    otherMemberId: string,
+    anchor: DirectConversationPageAnchor,
+    limit: number,
+  ): DirectConversationPage {
+    this.#requireDirectRecipient(memberId, otherMemberId);
+    return this.#requireChat().readConversationPage(memberId, otherMemberId, anchor, limit);
+  }
+
   sendDirectMessage(
     senderMemberId: string,
     input: { memberId: string; text: string; clientMessageId: string },
@@ -481,6 +497,22 @@ export class TeamApiServer {
       if (method === "GET" && url.pathname === "/v1/direct/threads") {
         return this.#json(response, 200, this.listDirectThreads(member.id));
       }
+      if (method === "GET" && url.pathname === "/v1/messages/search") {
+        const query = url.searchParams.get("q") ?? "";
+        if (!query.trim() || query.length > INPUT_LIMITS.messageText) {
+          throw new HttpError(400, "A valid search query is required.");
+        }
+        return this.#json(
+          response,
+          200,
+          this.#options.agents.searchConversationMessages(
+            query,
+            url.searchParams.get("botId") ?? undefined,
+            url.searchParams.get("cursor") ?? undefined,
+            pageLimit(url),
+          ),
+        );
+      }
       if (method === "POST" && url.pathname === "/v1/direct/messages") {
         const body = await readJson(request);
         return this.#json(
@@ -493,7 +525,7 @@ export class TeamApiServer {
           }),
         );
       }
-      const directConversationMatch = url.pathname.match(/^\/v1\/direct\/conversations\/([^/]+)(?:\/(read))?$/);
+      const directConversationMatch = url.pathname.match(/^\/v1\/direct\/conversations\/([^/]+)(?:\/(read|page))?$/);
       if (method === "GET" && directConversationMatch && !directConversationMatch[2]) {
         return this.#json(
           response,
@@ -511,6 +543,18 @@ export class TeamApiServer {
           response,
           200,
           this.markDirectRead(member.id, pathIdentifier(directConversationMatch[1], "memberId"), throughSequence),
+        );
+      }
+      if (method === "GET" && directConversationMatch?.[2] === "page") {
+        return this.#json(
+          response,
+          200,
+          this.readDirectConversationPage(
+            member.id,
+            pathIdentifier(directConversationMatch[1], "memberId"),
+            pageAnchor(url),
+            pageLimit(url),
+          ),
         );
       }
       if (method === "GET" && url.pathname === "/v1/browser/tabs") {
@@ -597,6 +641,29 @@ export class TeamApiServer {
           "Content-Type": "application/octet-stream",
           "Content-Length": String(bytes.length),
           "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(sharedFile.name)}`,
+          "X-Content-Type-Options": "nosniff",
+        });
+        response.end(bytes);
+        return;
+      }
+      if (method === "GET" && url.pathname === "/v1/workspace-files") {
+        const botId = url.searchParams.get("botId");
+        const workspacePath = url.searchParams.get("path");
+        if (!botId || botId.length > INPUT_LIMITS.identifier) {
+          throw new HttpError(400, "A valid agent id is required.");
+        }
+        if (!workspacePath || workspacePath.length > INPUT_LIMITS.path) {
+          throw new HttpError(400, "A valid workspace file path is required.");
+        }
+        const workspaceFile = await this.#options.agents.resolveWorkspaceFile(botId, workspacePath);
+        if (workspaceFile.size > ATTACHMENT_LIMITS.fileBytes) {
+          throw new HttpError(413, "The workspace file exceeds the 100 MB limit.");
+        }
+        const bytes = await readFile(workspaceFile.path);
+        response.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": String(bytes.length),
+          "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(workspaceFile.name)}`,
           "X-Content-Type-Options": "nosniff",
         });
         response.end(bytes);
@@ -729,6 +796,13 @@ export class TeamApiServer {
         }
         if (method === "GET" && action === "conversation") {
           return this.#json(response, 200, await this.#options.agents.readConversationFor(botId, member.id));
+        }
+        if (method === "GET" && action === "conversation-page") {
+          return this.#json(
+            response,
+            200,
+            await this.#options.agents.readConversationPageFor(botId, member.id, pageAnchor(url), pageLimit(url)),
+          );
         }
         if (method === "POST" && action === "conversation/read") {
           const body = await readJson(request);
@@ -1265,4 +1339,23 @@ async function readBinary(request: import("node:http").IncomingMessage, limit: n
     chunks.push(bytes);
   }
   return new Uint8Array(Buffer.concat(chunks));
+}
+
+function pageAnchor(url: URL): ConversationPageAnchor {
+  const before = url.searchParams.get("before");
+  const around = url.searchParams.get("around");
+  if (before && around) throw new HttpError(400, "Choose one conversation page anchor.");
+  if (before) return { type: "before", cursor: before };
+  if (around) return { type: "around", messageId: around };
+  return { type: "latest" };
+}
+
+function pageLimit(url: URL): number {
+  const raw = url.searchParams.get("limit");
+  if (raw === null) return 50;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 100) {
+    throw new HttpError(400, "The conversation page limit must be between 1 and 100.");
+  }
+  return value;
 }

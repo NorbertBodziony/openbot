@@ -13,9 +13,12 @@ import {
   type MarkConversationReadInput,
   type OpenAttachmentInput,
   type OpenSharedFileInput,
+  type OpenWorkspaceFileInput,
+  type ReadConversationPageInput,
   type ReorderQueueInput,
   type RespondToApprovalInput,
   type RespondToPromptInput,
+  type SearchConversationMessagesInput,
   type SendMessageInput,
   type SetAgentAvatarInput,
   type SetMessageReactionInput,
@@ -33,6 +36,47 @@ export function parseAgentRequest(value: unknown): AgentIpcRequest {
     serverId: requireString(value.serverId, "serverId"),
     payload: value.payload,
   };
+}
+
+export function parseReadConversationPage(value: unknown): ReadConversationPageInput {
+  if (!isObject(value)) throw new Error("Invalid conversation page request.");
+  return {
+    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    anchor: parsePageAnchor(value.anchor),
+    limit: parsePageLimit(value.limit),
+  };
+}
+
+export function parseSearchConversationMessages(value: unknown): SearchConversationMessagesInput {
+  if (!isObject(value)) throw new Error("Invalid conversation search request.");
+  const query = requireString(value.query, "query", INPUT_LIMITS.messageText);
+  if (!query.trim()) throw new Error("A search query is required.");
+  const limit = parsePageLimit(value.limit ?? 100);
+  return {
+    query,
+    ...(value.botId === undefined ? {} : { botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier) }),
+    ...(value.cursor === undefined ? {} : { cursor: requireString(value.cursor, "cursor", 2048) }),
+    limit,
+  };
+}
+
+function parsePageAnchor(value: unknown): ReadConversationPageInput["anchor"] {
+  if (value === undefined) return { type: "latest" };
+  if (!isObject(value) || !isString(value.type)) throw new Error("Invalid conversation page anchor.");
+  if (value.type === "latest") return { type: "latest" };
+  if (value.type === "before") return { type: "before", cursor: requireString(value.cursor, "cursor", 2048) };
+  if (value.type === "around") {
+    return { type: "around", messageId: requireString(value.messageId, "messageId", INPUT_LIMITS.identifier) };
+  }
+  throw new Error("Invalid conversation page anchor.");
+}
+
+function parsePageLimit(value: unknown): number {
+  if (value === undefined) return 50;
+  if (!isNumber(value) || !Number.isInteger(value) || value < 1 || value > 100) {
+    throw new Error("The conversation page limit must be between 1 and 100.");
+  }
+  return value;
 }
 
 export function parseSendMessage(value: unknown): SendMessageInput {
@@ -185,6 +229,14 @@ export function parseOpenAttachment(value: unknown): OpenAttachmentInput {
 export function parseOpenSharedFile(value: unknown): OpenSharedFileInput {
   if (!isObject(value)) throw new Error("Invalid shared file request.");
   return { path: requireString(value.path, "path", INPUT_LIMITS.path) };
+}
+
+export function parseOpenWorkspaceFile(value: unknown): OpenWorkspaceFileInput {
+  if (!isObject(value)) throw new Error("Invalid workspace file request.");
+  return {
+    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    path: requireString(value.path, "path", INPUT_LIMITS.path),
+  };
 }
 
 export function parseCancelQueuedMessage(value: unknown): CancelQueuedMessageInput {

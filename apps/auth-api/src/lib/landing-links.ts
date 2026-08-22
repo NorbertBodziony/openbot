@@ -11,6 +11,7 @@ export const OPENBOT_LINKS = {
   releases: "https://github.com/NorbertBodziony/openbot/releases",
   repository: "https://github.com/NorbertBodziony/openbot",
   license: "https://github.com/NorbertBodziony/openbot/blob/main/LICENSE",
+  privacy: "https://github.com/NorbertBodziony/openbot/blob/main/PRIVACY.md",
   documentation: "https://github.com/NorbertBodziony/openbot#readme",
   troubleshooting: "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
   architecture: "https://github.com/NorbertBodziony/openbot#architecture",
@@ -27,6 +28,7 @@ export const FOOTER_COLUMNS = [
       { label: "Releases", href: OPENBOT_LINKS.releases, external: true },
       { label: "Source code", href: OPENBOT_LINKS.repository, external: true },
       { label: "License", href: OPENBOT_LINKS.license, external: true },
+      { label: "Privacy", href: OPENBOT_LINKS.privacy, external: true },
     ],
   },
   {

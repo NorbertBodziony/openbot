@@ -15,8 +15,11 @@ import type {
   BrowserTab,
   CentralAuthState,
   ConversationMessage,
+  ConversationPage,
+  ConversationPageInfo,
   ConversationReadState,
   ConversationSnapshot,
+  DirectConversationPage,
   DirectConversationSnapshot,
   DirectMessage,
   DirectMessageRealtimeEvent,
@@ -34,7 +37,9 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
+import { isClaudeModel } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, createStore, flush, onSettled, Show } from "solid-js";
+import { desktopAnalytics } from "./analytics";
 import { playCompletionSoundForAgentEvent } from "./completion-sound";
 import { AccountDock } from "./components/AccountDock";
 import { AccountLogin } from "./components/AccountLogin";
@@ -146,6 +151,19 @@ function updateStored(store: StoredValue, value: StoredValue): void {
   storeSetters.get(store)?.(value);
 }
 
+function coarseFailureCode(value: string | undefined): string {
+  const normalized = value
+    ?.trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/gu, "_")
+    .slice(0, 64);
+  return normalized || "unknown";
+}
+
+function normalizedTurnStatus(value: string): string {
+  return ["completed", "failed", "interrupted", "cancelled"].includes(value) ? value : "other";
+}
+
 const ONBOARDING_PROFILES: Record<string, { title: string; description: string; firstMessage: string }> = {
   "Work & projects": {
     title: "Work & projects",
@@ -175,6 +193,13 @@ export function App() {
   const [uiErrors, setUiErrors] = createSignal<Record<string, BotMessage[]>>({});
   const [conversationLoaded, setConversationLoaded] = createSignal<Record<string, boolean>>({});
   const [conversationRevisions, setConversationRevisions] = createSignal<Record<string, number>>({});
+  const [conversationPages, setConversationPages] = createSignal<Record<string, ConversationPageInfo>>({});
+  const [conversationWindowModes, setConversationWindowModes] = createSignal<Record<string, "latest" | "around">>({});
+  const [conversationReferences, setConversationReferences] = createSignal<Record<string, Record<string, BotMessage>>>(
+    {},
+  );
+  const [conversationOlderLoading, setConversationOlderLoading] = createSignal<Record<string, boolean>>({});
+  const [conversationOlderErrors, setConversationOlderErrors] = createSignal<Record<string, string | null>>({});
   const [activeTurns, setActiveTurns] = createSignal<Record<string, string | null>>({});
   const [unreadReplies, setUnreadReplies] = createSignal<Record<string, number>>({});
   const [conversationReads, setConversationReads] = createSignal<Record<string, ConversationReadState>>({});
@@ -237,6 +262,11 @@ export function App() {
   const [activeDirectMemberId, setActiveDirectMemberId] = createSignal<string | null>(null);
   const [directConversationLoading, setDirectConversationLoading] = createSignal(false);
   const [directConversationError, setDirectConversationError] = createSignal<string | null>(null);
+  const [directConversationPages, setDirectConversationPages] = createSignal<
+    Record<string, DirectConversationPage["pageInfo"]>
+  >({});
+  const [directOlderLoading, setDirectOlderLoading] = createSignal<Record<string, boolean>>({});
+  const [directOlderErrors, setDirectOlderErrors] = createSignal<Record<string, string | null>>({});
   const [directTypingMemberIds, setDirectTypingMemberIds] = createSignal<Set<string>>(new Set());
   const [remoteDesktopSessions, setRemoteDesktopSessions] = createSignal<RemoteDesktopSession[]>([]);
   const [remoteDesktopWorkspaceServerId, setRemoteDesktopWorkspaceServerId] = createSignal<string | null>(null);
@@ -251,6 +281,9 @@ export function App() {
   const agentChatsToMarkRead = new Set<string>();
   const autoReadAgentMessageIds = new Map<string, string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const conversationPageRequests = new Map<string, number>();
+  const turnStartedAt = new Map<string, number>();
+  const completedTurnByBot = new Map<string, string>();
   let conversationFrame: number | undefined;
   let directConversationRequest = 0;
   let serverSettingsRequest = 0;
@@ -260,6 +293,42 @@ export function App() {
   let remoteDesktopConnectPromise: Promise<RemoteDesktopSession | undefined> | null = null;
   let remoteDesktopConnectionRequest = 0;
   let authSuccessTimer: ReturnType<typeof setTimeout> | undefined;
+  let analyticsOpened = false;
+  let analyticsUserId: string | null = null;
+  let appInfoLoadedFromHost = false;
+
+  function analyticsAgentProperties(botId: string) {
+    const bot = botList().find((candidate) => candidate.id === botId);
+    if (!bot) return null;
+    const server = servers().find((candidate) => candidate.active);
+    return {
+      provider: isClaudeModel(bot.model) ? ("claude" as const) : ("codex" as const),
+      model: bot.model,
+      reasoning_effort: bot.reasoningEffort,
+      server_kind: server?.kind ?? ("unknown" as const),
+    };
+  }
+
+  createEffect(
+    () => ({ info: appInfo(), setup: setupState(), auth: centralAuth() }),
+    ({ info, setup, auth }) => {
+      if (!appInfoLoadedFromHost || !info || !setup || auth.status === "loading") return;
+      if (!desktopAnalytics.configure(info)) return;
+      if (auth.status === "signed_in" && analyticsUserId !== auth.user.id) {
+        desktopAnalytics.identify(auth.user);
+        analyticsUserId = auth.user.id;
+      } else if (auth.status === "signed_out" && analyticsUserId) {
+        desktopAnalytics.clear();
+        analyticsUserId = null;
+      }
+      if (analyticsOpened) return;
+      analyticsOpened = true;
+      desktopAnalytics.track("desktop_app_opened", {
+        setup_completed: setup.completed,
+        signed_in: auth.status === "signed_in",
+      });
+    },
+  );
 
   function applyCentralAuthState(state: CentralAuthState): void {
     const completedCodeChallenge = centralAuth().status === "code_sent" && state.status === "signed_in";
@@ -419,6 +488,8 @@ export function App() {
       if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
       for (const timer of recentReplyTimers.values()) clearTimeout(timer);
       recentReplyTimers.clear();
+      turnStartedAt.clear();
+      completedTurnByBot.clear();
       if (authSuccessTimer !== undefined) clearTimeout(authSuccessTimer);
     };
     void window.openbot.update
@@ -449,7 +520,10 @@ export function App() {
     void Promise.all([
       window.openbot
         .getAppInfo()
-        .then(setAppInfo)
+        .then((info) => {
+          appInfoLoadedFromHost = true;
+          setAppInfo(info);
+        })
         .catch(() =>
           setAppInfo({
             name: "OpenBot",
@@ -526,13 +600,18 @@ export function App() {
     ({ botId }) => {
       if (!botId) return;
       const markReadOnOpen = agentChatsToMarkRead.delete(botId);
-      void Promise.all([window.openbot.agent.readConversation(botId), window.openbot.agent.listQueue(botId)])
-        .then(([snapshot, queue]) => {
+      const pageRequest = (conversationPageRequests.get(botId) ?? 0) + 1;
+      conversationPageRequests.set(botId, pageRequest);
+      void Promise.all([
+        window.openbot.agent.readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 }),
+        window.openbot.agent.listQueue(botId),
+      ])
+        .then(([page, queue]) => {
+          if (conversationPageRequests.get(botId) !== pageRequest) return;
           setQueues((current) => ({ ...current, [botId]: queue }));
-          if (snapshot.readState) applyConversationReadState(botId, snapshot.readState);
-          scheduleConversation(snapshot);
-          if (markReadOnOpen && (snapshot.readState?.unreadCount ?? 0) > 0) {
-            void markAgentMessagesRead(botId, snapshot.messages.at(-1)?.id ?? null).catch((error) =>
+          applyConversationPage(page, true, "latest");
+          if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
+            void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null).catch((error) =>
               appendUiError(botId, error, "Read state failed"),
             );
           }
@@ -578,6 +657,12 @@ export function App() {
         setBrowserControlState(event.state);
         return;
       case "turn-started":
+        turnStartedAt.set(event.turnId, performance.now());
+        completedTurnByBot.delete(event.botId);
+        {
+          const properties = analyticsAgentProperties(event.botId);
+          if (properties) desktopAnalytics.track("turn_started", properties);
+        }
         clearRecentReply(event.botId);
         setActiveTurns((current) => ({
           ...current,
@@ -585,7 +670,35 @@ export function App() {
         }));
         return;
       case "turn-completed":
+        completedTurnByBot.set(event.botId, event.turnId);
+        {
+          const properties = analyticsAgentProperties(event.botId);
+          const startedAt = turnStartedAt.get(event.turnId);
+          turnStartedAt.delete(event.turnId);
+          if (properties) {
+            desktopAnalytics.track("turn_completed", {
+              ...properties,
+              status: normalizedTurnStatus(event.status),
+              ...(startedAt === undefined
+                ? {}
+                : { duration_ms: Math.max(0, Math.round(performance.now() - startedAt)) }),
+            });
+          }
+        }
         setActiveTurns((current) => ({ ...current, [event.botId]: null }));
+        setQueues((current) => {
+          const snapshot = current[event.botId];
+          if (!snapshot) return current;
+          const deliveries = snapshot.deliveries.filter(
+            (delivery) =>
+              !(
+                (delivery.status === "starting" || delivery.status === "running") &&
+                (delivery.turnId === null || delivery.turnId === event.turnId)
+              ),
+          );
+          if (deliveries.length === snapshot.deliveries.length) return current;
+          return { ...current, [event.botId]: { ...snapshot, deliveries } };
+        });
         setPendingPrompts((current) => ({ ...current, [event.botId]: undefined }));
         setPendingApprovals((current) => ({ ...current, [event.botId]: undefined }));
         if (event.status === "completed") {
@@ -594,15 +707,28 @@ export function App() {
         }
         return;
       case "prompt":
+        desktopAnalytics.track("agent_input_requested", {
+          kind: "prompt",
+          prompt_count: event.questions.length,
+          has_secret_prompt: event.questions.some((question) => question.isSecret),
+        });
         setPendingPrompts((current) => ({ ...current, [event.botId]: event }));
         return;
       case "approval":
+        desktopAnalytics.track("agent_input_requested", {
+          kind: "approval",
+          approval_kind: event.approval.kind,
+        });
         setPendingApprovals((current) => ({
           ...current,
           [event.approval.botId]: event.approval,
         }));
         return;
       case "error":
+        desktopAnalytics.track("operation_failed", {
+          area: "agent",
+          failure_code: coarseFailureCode(event.code),
+        });
         if (event.botId) appendUiError(event.botId, event.message, "Error");
     }
   }
@@ -718,7 +844,7 @@ export function App() {
   function applyConversation(snapshot: ConversationSnapshot, markNewMessagesRead = false) {
     const botId = snapshot.botId;
     if (snapshot.revision < (conversationRevisions()[botId] ?? -1)) return;
-    const initialLoad = conversationLoaded()[botId] !== true;
+    const initialLoad = conversationLoaded()[botId] !== true || (liveMessages()[botId]?.length ?? 0) === 0;
     setConversationRevisions((current) => ({
       ...current,
       [botId]: snapshot.revision,
@@ -726,7 +852,24 @@ export function App() {
     setLiveMessages((current) => {
       const previous = current[botId] ?? [];
       const previousById = new Map(previous.map((message) => [message.id, message]));
-      const mappedMessages = retainThinkingMessages(previous, toBotMessages(snapshot.messages));
+      const allMappedMessages = toBotMessages(snapshot.messages);
+      const pageInfo = conversationPages()[botId];
+      const windowMode = conversationWindowModes()[botId] ?? "latest";
+      const mappedMessages = retainThinkingMessages(
+        previous,
+        pageInfo?.hasOlder
+          ? (() => {
+              const loadedIds = new Set(previous.map((message) => message.id));
+              if (windowMode === "around") {
+                return allMappedMessages.filter((message) => loadedIds.has(message.id));
+              }
+              const lastLoadedIndex = [...allMappedMessages]
+                .map((message) => message.id)
+                .reduce((last, id, index) => (loadedIds.has(id) ? index : last), -1);
+              return allMappedMessages.filter((message, index) => loadedIds.has(message.id) || index > lastLoadedIndex);
+            })()
+          : allMappedMessages,
+      );
       const next = mappedMessages.map((mapped) => {
         const existing = previousById.get(mapped.id);
         if (!existing) return createStoredMessage({ ...mapped, animate: !initialLoad });
@@ -741,7 +884,7 @@ export function App() {
     setConversationLoaded((current) => ({ ...current, [botId]: true }));
     setActiveTurns((current) => ({
       ...current,
-      [botId]: snapshot.activeTurnId,
+      [botId]: completedTurnByBot.get(botId) === snapshot.activeTurnId ? null : snapshot.activeTurnId,
     }));
     const readState = conversationReads()[botId];
     const latestIncomingMessage = markNewMessagesRead
@@ -753,6 +896,70 @@ export function App() {
       autoMarkAgentMessageRead(botId, latestIncomingMessage.id);
     } else if (readState) {
       applyConversationReadState(botId, readStateForMessages(readState, snapshot.messages));
+    }
+  }
+
+  function applyConversationPage(page: ConversationPage, replace: boolean, windowMode?: "latest" | "around"): void {
+    if (page.revision < (conversationRevisions()[page.botId] ?? -1)) return;
+    const mapped = toBotMessages(page.messages);
+    setLiveMessages((current) => {
+      const currentMessages = current[page.botId] ?? [];
+      const currentById = new Map(currentMessages.map((message) => [message.id, message]));
+      const pageMessages = mapped.map((message) => {
+        const stored = currentById.get(message.id);
+        if (!stored) return createStoredMessage({ ...message, animate: false });
+        if (!botMessagesEqual(stored, message)) updateStored(stored, { ...message, animate: stored.animate });
+        return stored;
+      });
+      const existing = replace ? [] : currentMessages;
+      const ids = new Set(mapped.map((message) => message.id));
+      return {
+        ...current,
+        [page.botId]: replace ? pageMessages : [...pageMessages, ...existing.filter((message) => !ids.has(message.id))],
+      };
+    });
+    setConversationReferences((current) => ({
+      ...current,
+      [page.botId]: {
+        ...(replace ? {} : current[page.botId]),
+        ...Object.fromEntries(Object.entries(page.references).map(([id, message]) => [id, toBotMessage(message)])),
+      },
+    }));
+    setConversationPages((current) => ({ ...current, [page.botId]: page.pageInfo }));
+    if (windowMode) setConversationWindowModes((current) => ({ ...current, [page.botId]: windowMode }));
+    setConversationRevisions((current) => ({ ...current, [page.botId]: page.revision }));
+    setConversationLoaded((current) => ({ ...current, [page.botId]: true }));
+    setActiveTurns((current) => ({
+      ...current,
+      [page.botId]: completedTurnByBot.get(page.botId) === page.activeTurnId ? null : page.activeTurnId,
+    }));
+    if (page.readState) applyConversationReadState(page.botId, page.readState);
+  }
+
+  async function loadOlderAgentMessages(botId = activeBot()?.id): Promise<void> {
+    if (!botId || conversationOlderLoading()[botId]) return;
+    const pageInfo = conversationPages()[botId];
+    if (!pageInfo?.hasOlder || !pageInfo.olderCursor) return;
+    const cursor = pageInfo.olderCursor;
+    const requestVersion = conversationPageRequests.get(botId) ?? 0;
+    setConversationOlderLoading((current) => ({ ...current, [botId]: true }));
+    setConversationOlderErrors((current) => ({ ...current, [botId]: null }));
+    try {
+      const page = await window.openbot.agent.readConversationPage({
+        botId,
+        anchor: { type: "before", cursor },
+        limit: 50,
+      });
+      if (conversationPageRequests.get(botId) !== requestVersion) return;
+      if (conversationPages()[botId]?.olderCursor !== cursor) return;
+      applyConversationPage(page, false);
+    } catch (error) {
+      setConversationOlderErrors((current) => ({
+        ...current,
+        [botId]: error instanceof Error ? error.message : "Older messages could not load.",
+      }));
+    } finally {
+      setConversationOlderLoading((current) => ({ ...current, [botId]: false }));
     }
   }
 
@@ -769,6 +976,8 @@ export function App() {
       setActiveDirectMemberId(null);
       setActiveBotId(newAgent.id);
       setOnboardingRequest({ botId: newAgent.id, nonce: Date.now() });
+      const properties = analyticsAgentProperties(newAgent.id);
+      if (properties) desktopAnalytics.track("agent_created", properties);
     } catch (error) {
       setAgentPickerOpen(false);
       if (activeBotId()) appendUiError(activeBotId(), error, "Create failed");
@@ -788,6 +997,8 @@ export function App() {
   }
 
   function selectBot(botId: string) {
+    const previousBotId = activeBotId();
+    if (previousBotId && previousBotId !== botId) pruneInactiveAgentHistory(previousBotId);
     setAgentPickerOpen(false);
     const directMemberId = activeDirectMemberId();
     if (directMemberId) {
@@ -801,20 +1012,41 @@ export function App() {
 
   function setGlobalSearchVisibility(open: boolean): void {
     setGlobalSearchOpen(open);
-    if (open) void loadGlobalSearchConversations();
   }
 
-  async function loadGlobalSearchConversations(): Promise<void> {
-    const missingBots = botList().filter((bot) => conversationLoaded()[bot.id] !== true);
-    const snapshots = await Promise.allSettled(missingBots.map((bot) => window.openbot.agent.readConversation(bot.id)));
-    for (const result of snapshots) {
-      if (result.status === "fulfilled") scheduleConversation(result.value);
-    }
+  async function searchGlobalMessages(query: string): Promise<Array<{ botId: string; message: BotMessage }>> {
+    const page = await window.openbot.agent.searchConversationMessages({ query, limit: 100 });
+    desktopAnalytics.track("search_used", { scope: "global", result_count: page.total });
+    return page.results.map((result) => ({ botId: result.botId, message: toBotMessage(result.message) }));
+  }
+
+  async function searchAgentMessages(botId: string, query: string): Promise<{ messageIds: string[]; total: number }> {
+    const page = await window.openbot.agent.searchConversationMessages({ query, botId, limit: 100 });
+    desktopAnalytics.track("search_used", { scope: "agent", result_count: page.total });
+    return { messageIds: page.results.map((result) => result.message.id), total: page.total };
   }
 
   function selectGlobalSearchMessage(botId: string, messageId: string): void {
     selectBot(botId);
-    setMessageFocusRequest({ botId, messageId, nonce: Date.now() });
+    void openAgentMessage(botId, messageId);
+  }
+
+  async function openAgentMessage(botId: string, messageId: string): Promise<void> {
+    await Promise.resolve();
+    const request = (conversationPageRequests.get(botId) ?? 0) + 1;
+    conversationPageRequests.set(botId, request);
+    try {
+      const page = await window.openbot.agent.readConversationPage({
+        botId,
+        anchor: { type: "around", messageId },
+        limit: 50,
+      });
+      if (conversationPageRequests.get(botId) !== request) return;
+      applyConversationPage(page, true, "around");
+      setMessageFocusRequest({ botId, messageId, nonce: Date.now() });
+    } catch (error) {
+      appendUiError(botId, error, "Message load failed");
+    }
   }
 
   async function refreshDirectThreads(): Promise<void> {
@@ -831,10 +1063,13 @@ export function App() {
 
   async function selectDirectMember(memberId: string): Promise<void> {
     if (!currentTeamMember() || !directPeople().some((member) => member.id === memberId)) return;
+    const previousBotId = activeBotId();
+    if (previousBotId) pruneInactiveAgentHistory(previousBotId);
     setAgentPickerOpen(false);
     setSettingsRequest(null);
     const previousMemberId = activeDirectMemberId();
     if (previousMemberId && previousMemberId !== memberId) {
+      pruneInactiveDirectHistory(previousMemberId);
       void window.openbot.servers.setDirectTyping({ memberId: previousMemberId, typing: false }).catch(() => undefined);
     }
     setActiveDirectMemberId(memberId);
@@ -842,18 +1077,128 @@ export function App() {
     setDirectConversationError(null);
     const request = ++directConversationRequest;
     try {
-      const snapshot = await window.openbot.servers.readDirectConversation(memberId);
+      const snapshot = await window.openbot.servers.readDirectConversationPage({
+        memberId,
+        anchor: { type: "latest" },
+        limit: 50,
+      });
       if (request !== directConversationRequest) return;
       setDirectConversations((current) => ({
         ...current,
         [memberId]: snapshot,
       }));
+      setDirectConversationPages((current) => ({ ...current, [memberId]: snapshot.pageInfo }));
     } catch (error) {
       if (request !== directConversationRequest) return;
       setDirectConversationError(error instanceof Error ? error.message : "The messages could not load.");
     } finally {
       if (request === directConversationRequest) setDirectConversationLoading(false);
     }
+  }
+
+  async function loadOlderDirectMessages(memberId = activeDirectMemberId()): Promise<void> {
+    if (!memberId || directOlderLoading()[memberId]) return;
+    const pageInfo = directConversationPages()[memberId];
+    if (!pageInfo?.hasOlder || !pageInfo.olderCursor) return;
+    const cursor = pageInfo.olderCursor;
+    const request = directConversationRequest;
+    setDirectOlderLoading((current) => ({ ...current, [memberId]: true }));
+    setDirectOlderErrors((current) => ({ ...current, [memberId]: null }));
+    try {
+      const page = await window.openbot.servers.readDirectConversationPage({
+        memberId,
+        anchor: { type: "before", cursor },
+        limit: 50,
+      });
+      if (request !== directConversationRequest || activeDirectMemberId() !== memberId) return;
+      if (directConversationPages()[memberId]?.olderCursor !== cursor) return;
+      setDirectConversations((current) => {
+        const existing = current[memberId];
+        if (!existing) return current;
+        const ids = new Set(page.messages.map((message) => message.id));
+        return {
+          ...current,
+          [memberId]: {
+            ...existing,
+            messages: [...page.messages, ...existing.messages.filter((message) => !ids.has(message.id))],
+            revision: Math.max(existing.revision, page.revision),
+            readState: page.readState ?? existing.readState,
+          },
+        };
+      });
+      setDirectConversationPages((current) => ({ ...current, [memberId]: page.pageInfo }));
+    } catch (error) {
+      setDirectOlderErrors((current) => ({
+        ...current,
+        [memberId]: error instanceof Error ? error.message : "Older messages could not load.",
+      }));
+    } finally {
+      setDirectOlderLoading((current) => ({ ...current, [memberId]: false }));
+    }
+  }
+
+  async function openDirectMessage(memberId: string, messageId: string): Promise<void> {
+    const request = ++directConversationRequest;
+    try {
+      const page = await window.openbot.servers.readDirectConversationPage({
+        memberId,
+        anchor: { type: "around", messageId },
+        limit: 50,
+      });
+      if (request !== directConversationRequest || activeDirectMemberId() !== memberId) return;
+      setDirectConversations((current) => ({ ...current, [memberId]: page }));
+      setDirectConversationPages((current) => ({ ...current, [memberId]: page.pageInfo }));
+    } catch (error) {
+      if (request !== directConversationRequest || activeDirectMemberId() !== memberId) return;
+      setDirectOlderErrors((current) => ({
+        ...current,
+        [memberId]: error instanceof Error ? error.message : "The unread message could not load.",
+      }));
+    }
+  }
+
+  function pruneInactiveAgentHistory(botId: string): void {
+    const messages = liveMessages()[botId];
+    if (!messages || messages.length <= 50) return;
+    setLiveMessages((current) => {
+      const currentMessages = current[botId];
+      if (!currentMessages || currentMessages.length <= 50) return current;
+      return { ...current, [botId]: currentMessages.slice(-50) };
+    });
+    setConversationReferences((current) => ({ ...current, [botId]: {} }));
+    setConversationPages((current) => ({
+      ...current,
+      [botId]: { hasOlder: true, olderCursor: null },
+    }));
+  }
+
+  function pruneInactiveDirectHistory(memberId: string): void {
+    const snapshot = directConversations()[memberId];
+    if (!snapshot || snapshot.messages.length <= 50) return;
+    setDirectConversations((current) => {
+      const conversation = current[memberId];
+      if (!conversation || conversation.messages.length <= 50) return current;
+      return {
+        ...current,
+        [memberId]: { ...conversation, messages: conversation.messages.slice(-50) },
+      };
+    });
+    setDirectConversationPages((current) => ({
+      ...current,
+      [memberId]: { hasOlder: true, olderCursor: null },
+    }));
+  }
+
+  async function loadLatestAgentMessages(botId: string): Promise<void> {
+    const request = (conversationPageRequests.get(botId) ?? 0) + 1;
+    conversationPageRequests.set(botId, request);
+    const page = await window.openbot.agent.readConversationPage({
+      botId,
+      anchor: { type: "latest" },
+      limit: 50,
+    });
+    if (conversationPageRequests.get(botId) !== request) return;
+    applyConversationPage(page, true, "latest");
   }
 
   async function sendDirectMessage(
@@ -875,6 +1220,13 @@ export function App() {
       readError = error instanceof Error ? error.message : "Could not mark messages as read.";
     }
     await refreshDirectThreads();
+    desktopAnalytics.track("message_sent", {
+      channel: "direct",
+      attachment_count: 0,
+      is_reply: false,
+      delivery_count: 1,
+      server_kind: servers().find((server) => server.active)?.kind ?? "unknown",
+    });
     return { message, ...(readError ? { readError } : {}) };
   }
 
@@ -994,11 +1346,20 @@ export function App() {
   }
 
   function activateBrowserTab(tabId: string) {
-    void window.openbot.browser.activate(tabId);
+    void window.openbot.browser
+      .activate(tabId)
+      .then(() => desktopAnalytics.track("browser_action", { action: "activate", result: "succeeded" }))
+      .catch(() => desktopAnalytics.track("browser_action", { action: "activate", result: "failed" }));
   }
 
   async function closeBrowserTab(tabId: string) {
-    await window.openbot.browser.close(tabId);
+    try {
+      await window.openbot.browser.close(tabId);
+      desktopAnalytics.track("browser_action", { action: "close", result: "succeeded" });
+    } catch (error) {
+      desktopAnalytics.track("browser_action", { action: "close", result: "failed" });
+      throw error;
+    }
   }
 
   async function updateBot(botId: string, updates: Omit<UpdateBotInput, "botId">) {
@@ -1015,6 +1376,7 @@ export function App() {
         if (existing) updateStored(existing, next);
         return current;
       });
+      desktopAnalytics.track("agent_updated", { changed_fields: Object.keys(updates) });
     } catch (error) {
       appendUiError(botId, error, "Settings failed");
       throw error;
@@ -1031,6 +1393,7 @@ export function App() {
         updateStored(existing, next);
         return current;
       });
+      desktopAnalytics.track("agent_updated", { changed_fields: ["avatar"] });
     } catch (error) {
       appendUiError(botId, error, "Avatar update failed");
       throw error;
@@ -1062,6 +1425,7 @@ export function App() {
       const replyTimer = recentReplyTimers.get(botId);
       if (replyTimer) clearTimeout(replyTimer);
       recentReplyTimers.delete(botId);
+      desktopAnalytics.track("agent_deleted", {});
     } catch (error) {
       appendUiError(botId, error, "Delete failed");
       throw error;
@@ -1097,6 +1461,14 @@ export function App() {
       } catch (error) {
         appendUiError(botId, error, "Read state failed");
       }
+      const properties = analyticsAgentProperties(botId);
+      desktopAnalytics.track("message_sent", {
+        ...(properties ?? {}),
+        channel: "agent",
+        attachment_count: attachmentDraftIds.length,
+        is_reply: replyToMessageId !== null,
+        delivery_count: receipt.deliveries.length,
+      });
       return true;
     } catch (error) {
       appendUiError(botId, error, "Send failed");
@@ -1157,6 +1529,7 @@ export function App() {
         answers,
       });
       setPendingPrompts((current) => ({ ...current, [bot.id]: undefined }));
+      desktopAnalytics.track("agent_input_resolved", { kind: "prompt", decision: "answered" });
       return true;
     } catch (error) {
       appendUiError(bot.id, error, "Answer failed");
@@ -1174,6 +1547,7 @@ export function App() {
         decision,
       });
       setPendingApprovals((current) => ({ ...current, [bot.id]: undefined }));
+      desktopAnalytics.track("agent_input_resolved", { kind: "approval", decision });
       return true;
     } catch (error) {
       appendUiError(bot.id, error, "Approval failed");
@@ -1186,7 +1560,11 @@ export function App() {
     if (!bot) return;
     void window.openbot.agent
       .cancelQueuedMessage({ botId: bot.id, deliveryId })
-      .catch((error) => appendUiError(bot.id, error, "Cancel failed"));
+      .then(() => desktopAnalytics.track("queue_action", { action: "cancel", result: "succeeded" }))
+      .catch((error) => {
+        desktopAnalytics.track("queue_action", { action: "cancel", result: "failed" });
+        appendUiError(bot.id, error, "Cancel failed");
+      });
   }
 
   function steerQueuedMessage(deliveryId: string) {
@@ -1195,7 +1573,11 @@ export function App() {
     if (!bot || !turnId) return;
     void window.openbot.agent
       .steerQueuedMessage({ botId: bot.id, deliveryId, expectedTurnId: turnId })
-      .catch((error) => appendUiError(bot.id, error, "Steer failed"));
+      .then(() => desktopAnalytics.track("queue_action", { action: "steer", result: "succeeded" }))
+      .catch((error) => {
+        desktopAnalytics.track("queue_action", { action: "steer", result: "failed" });
+        appendUiError(bot.id, error, "Steer failed");
+      });
   }
 
   async function updateQueuedMessage(
@@ -1214,8 +1596,10 @@ export function App() {
         keepAttachmentIds,
         attachmentDraftIds,
       });
+      desktopAnalytics.track("queue_action", { action: "edit", result: "succeeded" });
       return true;
     } catch (error) {
+      desktopAnalytics.track("queue_action", { action: "edit", result: "failed" });
       appendUiError(bot.id, error, "Edit failed");
       return false;
     }
@@ -1226,7 +1610,11 @@ export function App() {
     if (!bot) return;
     void window.openbot.agent
       .reorderQueue({ botId: bot.id, deliveryIds })
-      .catch((error) => appendUiError(bot.id, error, "Reorder failed"));
+      .then(() => desktopAnalytics.track("queue_action", { action: "reorder", result: "succeeded" }))
+      .catch((error) => {
+        desktopAnalytics.track("queue_action", { action: "reorder", result: "failed" });
+        appendUiError(bot.id, error, "Reorder failed");
+      });
   }
 
   function stopActiveTurn() {
@@ -1235,7 +1623,11 @@ export function App() {
     if (!bot || !turnId) return;
     void window.openbot.agent
       .interrupt({ botId: bot.id, turnId })
-      .catch((error) => appendUiError(bot.id, error, "Stop failed"));
+      .then(() => desktopAnalytics.track("queue_action", { action: "interrupt", result: "succeeded" }))
+      .catch((error) => {
+        desktopAnalytics.track("queue_action", { action: "interrupt", result: "failed" });
+        appendUiError(bot.id, error, "Stop failed");
+      });
   }
 
   async function refreshAccountUsage(): Promise<AccountUsage> {
@@ -1298,15 +1690,24 @@ export function App() {
   }
 
   async function saveSetup(preferredProvider: AgentProviderId): Promise<void> {
+    const wasCompleted = setupState()?.completed === true;
     const state = await window.openbot.saveSetup({ preferredProvider });
     flush(() => {
       setSetupState(state);
       setPermissionsOpen(false);
     });
+    if (!wasCompleted && state.completed) {
+      desktopAnalytics.track("onboarding_completed", { preferred_provider: preferredProvider });
+    }
   }
 
   async function requestEmailCode(email: string): Promise<void> {
-    applyCentralAuthState(await window.openbot.auth.requestEmailCode(email));
+    const state = await window.openbot.auth.requestEmailCode(email);
+    desktopAnalytics.track("account_sign_in_started", {
+      result: state.status === "code_sent" ? "code_sent" : "failed",
+      ...(state.status === "error" ? { failure_code: coarseFailureCode(state.issue.code) } : {}),
+    });
+    applyCentralAuthState(state);
   }
 
   async function retryCentralAccount(): Promise<void> {
@@ -1315,11 +1716,20 @@ export function App() {
   }
 
   async function verifyEmailCode(challengeId: string, code: string): Promise<void> {
-    applyCentralAuthState(await window.openbot.auth.verifyEmailCode(challengeId, code));
+    const state = await window.openbot.auth.verifyEmailCode(challengeId, code);
+    desktopAnalytics.track("account_sign_in_completed", {
+      result: state.status === "signed_in" ? "succeeded" : "failed",
+      ...("issue" in state ? { failure_code: coarseFailureCode(state.issue?.code) } : {}),
+    });
+    applyCentralAuthState(state);
   }
 
   async function logoutCentralAccount(): Promise<void> {
-    applyCentralAuthState(await window.openbot.auth.logout());
+    const state = await window.openbot.auth.logout();
+    desktopAnalytics.track("account_signed_out", {});
+    desktopAnalytics.clear();
+    analyticsUserId = null;
+    applyCentralAuthState(state);
   }
 
   async function updateAccountAvatar(image: AvatarImageInput | null): Promise<void> {
@@ -1329,11 +1739,20 @@ export function App() {
   async function runUpdateAction(): Promise<void> {
     const phase = updateStatus().phase;
     if (phase === "ready") {
+      desktopAnalytics.track("update_action", { action: "install", result: "succeeded", phase: "installing" });
       await window.openbot.update.install();
       return;
     }
-    const status = phase === "available" ? await window.openbot.update.download() : await window.openbot.update.check();
-    setUpdateStatus(status);
+    const action = phase === "available" ? ("download" as const) : ("check" as const);
+    try {
+      const status =
+        action === "download" ? await window.openbot.update.download() : await window.openbot.update.check();
+      setUpdateStatus(status);
+      desktopAnalytics.track("update_action", { action, result: "succeeded", phase: status.phase });
+    } catch (error) {
+      desktopAnalytics.track("update_action", { action, result: "failed" });
+      throw error;
+    }
   }
 
   async function selectServer(serverId: string): Promise<void> {
@@ -1358,6 +1777,7 @@ export function App() {
     setConversationLoaded({});
     setConversationRevisions({});
     setConversationReads({});
+    setConversationWindowModes({});
     setUnreadReplies({});
     setQueues({});
     setTeamPresence(EMPTY_TEAM_PRESENCE);
@@ -1378,6 +1798,11 @@ export function App() {
     setTeamPresence(presence);
     applyStoredBots(storedBots);
     applyConversationReads(reads);
+    desktopAnalytics.track("team_action", {
+      action: "server_selected",
+      result: "succeeded",
+      server_kind: nextServers.find((server) => server.active)?.kind ?? "unknown",
+    });
   }
 
   async function reorderServers(serverIds: string[]): Promise<void> {
@@ -1405,12 +1830,18 @@ export function App() {
   }
 
   async function joinServer(input: { inviteUrl: string }): Promise<void> {
-    await window.openbot.servers.join(input);
-    setPendingInviteUrl("");
-    setJoinServerOpen(false);
-    await selectServer(
-      window.openbot ? ((await window.openbot.servers.list()).find((item) => item.active)?.id ?? "local") : "local",
-    );
+    try {
+      await window.openbot.servers.join(input);
+      setPendingInviteUrl("");
+      setJoinServerOpen(false);
+      await selectServer(
+        window.openbot ? ((await window.openbot.servers.list()).find((item) => item.active)?.id ?? "local") : "local",
+      );
+      desktopAnalytics.track("team_action", { action: "server_joined", result: "succeeded" });
+    } catch (error) {
+      desktopAnalytics.track("team_action", { action: "server_joined", result: "failed" });
+      throw error;
+    }
   }
 
   async function previewInvite(input: { inviteUrl: string }) {
@@ -1496,6 +1927,11 @@ export function App() {
     setHostStatus(status);
     setServers(await window.openbot.servers.list());
     await refreshServerSettings(server.id);
+    desktopAnalytics.track("team_action", {
+      action: "identity_saved",
+      result: "succeeded",
+      server_kind: "local",
+    });
   }
 
   async function setServerPublished(published: boolean): Promise<void> {
@@ -1506,8 +1942,18 @@ export function App() {
     setServers(await window.openbot.servers.list());
     await refreshServerSettings(server.id);
     if (published && status.phase !== "online") {
+      desktopAnalytics.track("team_action", {
+        action: "published",
+        result: "failed",
+        server_kind: "local",
+      });
       throw new Error(status.message ?? "This server could not be published.");
     }
+    desktopAnalytics.track("team_action", {
+      action: published ? "published" : "unpublished",
+      result: "succeeded",
+      server_kind: "local",
+    });
   }
 
   async function createServerInvite(input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
@@ -1518,6 +1964,13 @@ export function App() {
         ? await window.openbot.host.createInvite(input)
         : await window.openbot.servers.createInvite(server.id, input);
     await refreshServerSettings(server.id);
+    desktopAnalytics.track("team_action", {
+      action: "invite_created",
+      result: "succeeded",
+      server_kind: server.kind,
+      role: input.role,
+      email_bound: Boolean(input.email),
+    });
     return invite;
   }
 
@@ -1527,6 +1980,11 @@ export function App() {
     if (server.kind === "local") await window.openbot.host.updateMember(input);
     else await window.openbot.servers.updateMember(server.id, input);
     await refreshServerSettings(server.id);
+    desktopAnalytics.track("team_action", {
+      action: "member_updated",
+      result: "succeeded",
+      server_kind: server.kind,
+    });
   }
 
   async function removeServerMember(memberId: string): Promise<void> {
@@ -1535,6 +1993,11 @@ export function App() {
     if (server.kind === "local") await window.openbot.host.removeMember(memberId);
     else await window.openbot.servers.removeMember(server.id, memberId);
     await refreshServerSettings(server.id);
+    desktopAnalytics.track("team_action", {
+      action: "member_removed",
+      result: "succeeded",
+      server_kind: server.kind,
+    });
   }
 
   async function revokeServerInvite(inviteId: string): Promise<void> {
@@ -1543,26 +2006,57 @@ export function App() {
     if (server.kind === "local") await window.openbot.host.revokeInvite(inviteId);
     else await window.openbot.servers.revokeInvite(server.id, inviteId);
     await refreshServerSettings(server.id);
+    desktopAnalytics.track("team_action", {
+      action: "invite_revoked",
+      result: "succeeded",
+      server_kind: server.kind,
+    });
   }
 
   async function connectRemoteDesktop(serverId: string): Promise<RemoteDesktopSession> {
-    const session = await window.openbot.remoteDesktop.connect({ serverId });
-    setRemoteDesktopSessions((current) => [...current.filter((item) => item.id !== session.id), session]);
-    return session;
+    try {
+      const session = await window.openbot.remoteDesktop.connect({ serverId });
+      setRemoteDesktopSessions((current) => [...current.filter((item) => item.id !== session.id), session]);
+      desktopAnalytics.track("remote_desktop_action", {
+        action: "connect",
+        result: "succeeded",
+        transport: session.transport,
+      });
+      return session;
+    } catch (error) {
+      desktopAnalytics.track("remote_desktop_action", {
+        action: "connect",
+        result: "failed",
+        failure_code: "connection_failed",
+      });
+      throw error;
+    }
   }
 
   async function disconnectRemoteDesktop(sessionId: string): Promise<void> {
-    await window.openbot.remoteDesktop.disconnect(sessionId);
-    setRemoteDesktopSessions((current) => current.filter((session) => session.id !== sessionId));
+    try {
+      await window.openbot.remoteDesktop.disconnect(sessionId);
+      setRemoteDesktopSessions((current) => current.filter((session) => session.id !== sessionId));
+      desktopAnalytics.track("remote_desktop_action", { action: "disconnect", result: "succeeded" });
+    } catch (error) {
+      desktopAnalytics.track("remote_desktop_action", { action: "disconnect", result: "failed" });
+      throw error;
+    }
   }
 
   async function selectRemoteDesktopDisplay(serverId: string, displayId: string): Promise<void> {
-    await window.openbot.remoteDesktop.selectDisplay({ serverId, displayId });
-    setRemoteDesktopSessions((current) =>
-      current.map((session) =>
-        session.serverId === serverId ? { ...session, selectedDisplayId: displayId } : session,
-      ),
-    );
+    try {
+      await window.openbot.remoteDesktop.selectDisplay({ serverId, displayId });
+      setRemoteDesktopSessions((current) =>
+        current.map((session) =>
+          session.serverId === serverId ? { ...session, selectedDisplayId: displayId } : session,
+        ),
+      );
+      desktopAnalytics.track("remote_desktop_action", { action: "select_display", result: "succeeded" });
+    } catch (error) {
+      desktopAnalytics.track("remote_desktop_action", { action: "select_display", result: "failed" });
+      throw error;
+    }
   }
 
   function latestRemoteDesktopSession(serverId: string): RemoteDesktopSession | undefined {
@@ -1846,9 +2340,14 @@ export function App() {
                     snapshot={directConversations()[member.id]}
                     loading={directConversationLoading()}
                     loadError={directConversationError()}
+                    hasOlder={directConversationPages()[member.id]?.hasOlder ?? false}
+                    loadingOlder={directOlderLoading()[member.id] === true}
+                    olderError={directOlderErrors()[member.id] ?? null}
                     typing={directTypingMemberIds().has(member.id)}
                     onSend={sendDirectMessage}
                     onMarkRead={() => markDirectMessagesRead(member.id)}
+                    onLoadOlder={() => void loadOlderDirectMessages(member.id)}
+                    onOpenMessage={(messageId) => openDirectMessage(member.id, messageId)}
                     onTypingChange={setDirectTyping}
                   />
                 )}
@@ -1860,11 +2359,16 @@ export function App() {
                   bots={botList()}
                   modelOptions={modelOptions()}
                   messages={activeMessages()}
+                  messageReferences={activeBot() ? (conversationReferences()[activeBot()?.id ?? ""] ?? {}) : {}}
                   unreadCount={activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.unreadCount ?? 0) : 0}
                   firstUnreadMessageId={
                     activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.firstUnreadMessageId ?? null) : null
                   }
                   loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
+                  hasOlder={activeBot() ? (conversationPages()[activeBot()?.id ?? ""]?.hasOlder ?? false) : false}
+                  discontinuous={activeBot() ? conversationWindowModes()[activeBot()?.id ?? ""] === "around" : false}
+                  loadingOlder={activeBot() ? conversationOlderLoading()[activeBot()?.id ?? ""] === true : false}
+                  olderError={activeBot() ? (conversationOlderErrors()[activeBot()?.id ?? ""] ?? null) : null}
                   queue={activeQueue()}
                   browserTabs={browserTabs()}
                   activeBrowserTabId={activeBrowserTabId()}
@@ -1890,6 +2394,18 @@ export function App() {
                   onSetAgentAvatar={setAgentAvatar}
                   onSendMessage={sendMessage}
                   onMarkRead={() => markAgentMessagesRead()}
+                  onLoadOlder={() => void loadOlderAgentMessages()}
+                  onLoadLatest={() =>
+                    activeBot() ? loadLatestAgentMessages(activeBot()?.id ?? "") : Promise.resolve()
+                  }
+                  onSearchMessages={(query) =>
+                    activeBot()
+                      ? searchAgentMessages(activeBot()?.id ?? "", query)
+                      : Promise.resolve({ messageIds: [], total: 0 })
+                  }
+                  onOpenSearchMessage={(messageId) =>
+                    activeBot() ? openAgentMessage(activeBot()?.id ?? "", messageId) : Promise.resolve()
+                  }
                   onTypingChange={setTeamTyping}
                   onCompleteOnboarding={completeOnboarding}
                   onAnswerPrompt={answerPrompt}
@@ -1963,7 +2479,7 @@ export function App() {
                 <GlobalSearch
                   open={true}
                   bots={botList()}
-                  messagesByBot={liveMessages()}
+                  onSearchMessages={searchGlobalMessages}
                   onOpenChange={setGlobalSearchVisibility}
                   onSelectBot={selectBot}
                   onSelectMessage={selectGlobalSearchMessage}
@@ -2046,6 +2562,7 @@ function toBotMessages(messages: ConversationMessage[]): BotMessage[] {
   const result: BotMessage[] = [];
   const thinkingByTurn = new Map<string, BotMessage>();
   for (const message of messages) {
+    if (message.delivery?.status === "queued" || message.delivery?.status === "cancelled") continue;
     if (message.author !== "assistant" || message.itemType !== "commentary") {
       result.push(toBotMessage(message));
       continue;

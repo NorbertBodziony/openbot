@@ -1,4 +1,4 @@
-import { type Block, BloubBot, defaultCycle, makeBlock } from "@norbert_bodziony/bloub";
+import { type Block, BloubBot, defaultCycle, makeBlock, POSES, type StateId } from "@norbert_bodziony/bloub";
 import type { BotAvatarHue } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, onSettled, Show } from "solid-js";
 import { type AvatarMotion, bloubAvatarProfile } from "../bloub-avatar";
@@ -9,7 +9,7 @@ const SIDEBAR_MOTION_HOLD_FACTOR = 1.25;
 const IDLE_CYCLE: Block[] = [slowerBlock("idle")];
 const WORKING_CYCLE: Block[] = [slowerBlock("orbit")];
 
-function slowerBlock(state: "idle" | "orbit"): Block {
+function slowerBlock(state: StateId): Block {
   const block = makeBlock(state);
   return { ...block, duration: block.duration * SIDEBAR_MOTION_HOLD_FACTOR };
 }
@@ -22,6 +22,7 @@ interface AgentAvatarProps {
   motion?: AvatarMotion;
   cycleOffset?: number;
   animationOffset?: number;
+  animationState?: StateId;
   class?: string;
   style?: Record<string, string>;
 }
@@ -49,6 +50,7 @@ export function AgentAvatar(props: AgentAvatarProps) {
           motion={motion()}
           cycleOffset={props.cycleOffset}
           animationOffset={props.animationOffset}
+          animationState={props.animationState}
           class={className()}
           style={props.style}
         />
@@ -67,16 +69,20 @@ function GeneratedAvatar(props: {
   motion: AvatarMotion;
   cycleOffset?: number;
   animationOffset?: number;
+  animationState?: StateId;
   class: string;
   style?: Record<string, string>;
 }) {
   let element: HTMLSpanElement | undefined;
   const [interacting, setInteracting] = createSignal(false);
   const [reducedMotion, setReducedMotion] = createSignal(prefersReducedMotion());
+  const frozenAt = props.animationState ? POSES[props.animationState] : 0;
   const profile = createMemo(() => bloubAvatarProfile(props.seed, props.hue));
   const cycle = createMemo(() => offsetCycle(DEFAULT_CYCLE, props.cycleOffset ?? 0));
-  const animated = () => !reducedMotion() && (props.motion !== "hover" || interacting());
+  const animated = () =>
+    !reducedMotion() && (Boolean(props.animationState) || props.motion !== "hover" || interacting());
   const motionCycle = () => {
+    if (props.animationState) return [slowerBlock(props.animationState)];
     if (props.motion === "idle") return IDLE_CYCLE;
     if (props.motion === "working") return WORKING_CYCLE;
     return cycle();
@@ -125,7 +131,13 @@ function GeneratedAvatar(props: {
   );
 
   return (
-    <span ref={element} class={`${props.class} bot-avatar-bloub`} style={props.style} aria-hidden="true">
+    <span
+      ref={element}
+      class={`${props.class} bot-avatar-bloub`}
+      style={props.style}
+      data-animation-state={props.animationState}
+      aria-hidden="true"
+    >
       <Show
         when={animated()}
         fallback={
@@ -134,7 +146,7 @@ function GeneratedAvatar(props: {
             shape={profile().shape}
             color={profile().color}
             expression={profile().expression}
-            frozenAt={0}
+            frozenAt={frozenAt}
             ariaLabel=""
             class="bloub-avatar-svg"
           />

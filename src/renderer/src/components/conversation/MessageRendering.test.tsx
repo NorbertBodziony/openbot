@@ -1,9 +1,11 @@
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
-import { fireEvent, render, screen } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { avatarHeadColor } from "../../bloub-avatar";
 import type { BotMessage, BotProfile } from "../../data";
+import { triggerResize } from "../../setupTests";
 import { ImageGeneration } from "./ImageGeneration";
 import { ExchangeSystemRow, MessageBody } from "./MessageRendering";
 
@@ -176,7 +178,7 @@ describe("MessageBody", () => {
         message={{
           id: "message-plain-file",
           author: "bot",
-          body: "Here is raport.csv.",
+          body: "Here is **raport.csv**.",
           time: "10:00",
           attachments: [attachment],
         }}
@@ -203,9 +205,9 @@ describe("MessageBody", () => {
           body: [
             "Model comparison:",
             "",
-            "| Model | Context | $/1M in |",
+            "| **Model** | Context | $/1M in |",
             "| --- | --- | ---: |",
-            "| gpt-4o | 128k | $5.00 |",
+            "| **gpt-4o** | 128k | $5.00 |",
             "| claude-3.5 | 200k | $3.00 |",
           ].join("\n"),
           time: "10:00",
@@ -222,7 +224,183 @@ describe("MessageBody", () => {
     expect(screen.getByRole("table")).toBeInTheDocument();
     expect(screen.getAllByRole("columnheader")).toHaveLength(3);
     expect(screen.getAllByRole("cell")).toHaveLength(6);
+    expect(screen.getByText("Model").tagName).toBe("STRONG");
+    expect(screen.getByText("gpt-4o").tagName).toBe("STRONG");
     expect(screen.queryByText("| --- | --- | ---: |")).toBeNull();
+  });
+
+  it("renders common Markdown in an agent response as semantic chat content", () => {
+    const onOpenLink = vi.fn();
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-markdown",
+          author: "bot",
+          body: [
+            "## Recommendation",
+            "",
+            "Use **Kobalte** with *Solid UI* and ~~remove the fallback~~.",
+            "Read the source [1].",
+            "",
+            "- Accessible controls",
+            "  - Keyboard support",
+            "- [x] Tested",
+            "",
+            "1. Install `@kobalte/core`.",
+            "2. Read [the guide](https://kobalte.dev/docs/core/overview/introduction).",
+            "",
+            "> Keep the public API small.",
+            "",
+            "---",
+            "",
+            "<script>alert('unsafe')</script>",
+          ].join("\n"),
+          time: "10:00",
+          citations: [
+            {
+              number: 1,
+              label: "Kobalte introduction",
+              url: "https://kobalte.dev/docs/core/overview/introduction",
+              host: "kobalte.dev",
+            },
+          ],
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={onOpenLink}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByRole("heading", { level: 2, name: "Recommendation" })).toBeInTheDocument();
+    expect(screen.getByText("Kobalte").tagName).toBe("STRONG");
+    expect(screen.getByText("Solid UI").tagName).toBe("EM");
+    expect(screen.getByText("remove the fallback").tagName).toBe("DEL");
+    expect(screen.getByText("@kobalte/core").tagName).toBe("CODE");
+    expect(screen.getAllByRole("list")).toHaveLength(3);
+    expect(screen.getByRole("checkbox", { name: "Tested" })).toBeChecked();
+    expect(screen.getByRole("link", { name: "Open citation 1: Kobalte introduction" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open source 1: Kobalte introduction" })).toBeInTheDocument();
+    expect(screen.getByText("Keep the public API small.").closest("blockquote")).toBeInTheDocument();
+    expect(container.querySelector("hr")).toBeInTheDocument();
+    expect(container.querySelector("script")).toBeNull();
+    expect(screen.getByText("<script>alert('unsafe')</script>")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "the guide" }));
+    expect(onOpenLink).toHaveBeenCalledWith("https://kobalte.dev/docs/core/overview/introduction");
+  });
+
+  it("renders absolute agent workspace Markdown paths as file controls", async () => {
+    const onOpenWorkspaceFile = vi.fn();
+    const pagePath = "/Users/arozycka23/OpenBot/Bots/bot-7b62fdf2/app/page.tsx";
+    const cssPath = "/Users/arozycka23/OpenBot/Bots/bot-7b62fdf2/app/globals.css";
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-workspace-paths",
+          author: "bot",
+          body: `Pliki:\n\n- [page.tsx](${pagePath})\n- [globals.css](${cssPath})`,
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    const pageLink = screen.getByRole("button", { name: "Open workspace file page.tsx" });
+    const cssLink = screen.getByRole("button", { name: "Open workspace file globals.css" });
+    expect(pageLink).toHaveTextContent("page.tsx");
+    expect(cssLink).toHaveTextContent("globals.css");
+    expect(screen.queryByText(pagePath)).toBeNull();
+    expect(screen.queryByText(cssPath)).toBeNull();
+    await fireEvent.click(pageLink);
+    await fireEvent.click(cssLink);
+    expect(onOpenWorkspaceFile).toHaveBeenNthCalledWith(1, pagePath);
+    expect(onOpenWorkspaceFile).toHaveBeenNthCalledWith(2, cssPath);
+  });
+
+  it("normalizes an angle-wrapped relative workspace link with spaces", async () => {
+    const onOpenWorkspaceFile = vi.fn();
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-relative-workspace-path",
+          author: "bot",
+          body: "Gotowe: [otwórz tablicę Lutra w HTML](< lutra-brand-board.html >)",
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    const fileLink = screen.getByRole("button", { name: "Open workspace file lutra-brand-board.html" });
+    expect(fileLink).toHaveTextContent("otwórz tablicę Lutra w HTML");
+    expect(screen.queryByText(/lutra-brand-board\.html/u)).toBeNull();
+    expect(screen.queryByText(/\(<|>\)/u)).toBeNull();
+    await fireEvent.click(fileLink);
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith("lutra-brand-board.html");
+  });
+
+  it("reveals streaming Markdown updates gradually in the same message", async () => {
+    const [body, setBody] = createSignal("## Plan\n\nUse **Kobal");
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-markdown",
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByRole("heading", { level: 2, name: "Plan" })).toBeInTheDocument();
+    expect(screen.getByText("Use **Kobal")).toBeInTheDocument();
+    const messageContent = container.querySelector<HTMLElement>(".message-content-blocks");
+    const messageResize = container.querySelector<HTMLElement>(".message-content-resize");
+    if (!messageContent || !messageResize) throw new Error("Streaming resize elements are missing.");
+    let contentHeight = 40;
+    vi.spyOn(messageContent, "getBoundingClientRect").mockImplementation(() =>
+      DOMRect.fromRect({ height: contentHeight, width: 640, x: 0, y: 0 }),
+    );
+    const animate = vi.fn().mockReturnValue({ cancel: vi.fn(), finished: Promise.resolve() });
+    Object.defineProperty(messageResize, "animate", { configurable: true, value: animate });
+    triggerResize(messageContent);
+
+    setBody("## Plan\n\nUse **Kobalte**.\n\n- Parse Markdown\n- Resize the row");
+    setStreaming(false);
+    contentHeight = 80;
+    triggerResize(messageContent);
+
+    expect(animate).toHaveBeenCalledWith([{ height: "40px" }, { height: "80px" }], {
+      duration: 240,
+      easing: "cubic-bezier(0.23, 1, 0.32, 1)",
+    });
+
+    expect(screen.queryByText("Kobalte")).toBeNull();
+    expect(messageContent).not.toHaveTextContent("Resize the row");
+    await waitFor(() => expect(screen.getByText("Kobalte").tagName).toBe("STRONG"));
+    expect(messageContent).not.toHaveTextContent("Resize the row");
+    await waitFor(() => expect(screen.getByText("Resize the row")).toBeInTheDocument());
+    expect(screen.getByText("Parse Markdown")).toBeInTheDocument();
+    expect(screen.queryByText("Use **Kobal")).toBeNull();
+    expect(container.querySelector(".message-content-blocks")).toBe(messageContent);
   });
 
   it("keeps Markdown tables in user messages as plain text", () => {
@@ -287,7 +465,7 @@ describe("MessageBody", () => {
             "",
             "| Feature | Personal | Enterprise |",
             "| --- | --- | --- |",
-            "| Unlimited projects | ✓ | ✓ |",
+            "| **Unlimited projects** | ✓ | ✓ |",
             "| Priority support | — | ✓ |",
           ].join("\n"),
           time: "10:00",
@@ -302,6 +480,7 @@ describe("MessageBody", () => {
 
     expect(screen.getByText("Plan comparison:")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Comparison table" })).toBeInTheDocument();
+    expect(screen.getByText("Unlimited projects").tagName).toBe("STRONG");
     expect(screen.queryByText("| --- | --- | --- |")).toBeNull();
   });
 });

@@ -2,8 +2,16 @@ import { randomUUID } from "node:crypto";
 import { chmod, copyFile, mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { AgentProviderId, BotSummary, ConversationMessage, ConversationSnapshot } from "@openbot/contracts/ipc";
-import { isClaudeModel, isImageGenerationInfo } from "@openbot/contracts/ipc";
+import type {
+  AgentProviderId,
+  BotSummary,
+  ConversationMessage,
+  ConversationPage,
+  ConversationPageAnchor,
+  ConversationSearchPage,
+  ConversationSnapshot,
+} from "@openbot/contracts/ipc";
+import { isClaudeModel, isConversationMessage } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { migrateOpenBotDatabase } from "./openbot-database-schema";
 
@@ -311,6 +319,245 @@ export class OpenBotDatabase {
       revision: thread?.last_event_sequence ?? 0,
       messages: rows.map((row) => JSON.parse(requiredStringColumn(row, "message_json"))),
     };
+  }
+
+  readConversationPage(
+    botId: string,
+    threadId: string | null,
+    anchor: ConversationPageAnchor = { type: "latest" },
+    requestedLimit = 50,
+  ): ConversationPage {
+    if (!threadId) {
+      return {
+        botId,
+        threadId: null,
+        activeTurnId: null,
+        revision: 0,
+        messages: [],
+        references: {},
+        pageInfo: { hasOlder: false, olderCursor: null },
+      };
+    }
+    const limit = pageLimit(requestedLimit);
+    const thread = decodeConversationThreadRow(
+      this.connection
+        .prepare(
+          `SELECT active_turn_id, last_event_sequence
+           FROM projection_threads WHERE thread_id = ? AND agent_id = ?`,
+        )
+        .get(threadId, botId),
+    );
+    const rows = this.#conversationPageRows(threadId, anchor, limit);
+    const messages = rows.map((row) => decodeConversationMessageJson(requiredStringColumn(row, "message_json")));
+    const messageIds = new Set(messages.map((message) => message.id));
+    const referenceIdSet = new Set<string>();
+    for (const message of messages) {
+      const referenceId = message.replyToMessageId;
+      if (referenceId && !messageIds.has(referenceId)) referenceIdSet.add(referenceId);
+    }
+    const referenceIds = [...referenceIdSet];
+    const references: Record<string, ConversationMessage> = {};
+    if (referenceIds.length > 0) {
+      const placeholders = referenceIds.map(() => "?").join(", ");
+      const referenceRows = databaseRows(
+        this.connection
+          .prepare(
+            `SELECT message_id, message_json FROM projection_thread_messages
+             WHERE thread_id = ? AND message_id IN (${placeholders})`,
+          )
+          .all(threadId, ...referenceIds),
+      );
+      for (const row of referenceRows) {
+        references[requiredStringColumn(row, "message_id")] = decodeConversationMessageJson(
+          requiredStringColumn(row, "message_json"),
+        );
+      }
+    }
+    const first = rows[0];
+    const hasOlder = first ? this.#hasConversationRowsBefore(threadId, conversationRowCursor(first)) : false;
+    return {
+      botId,
+      threadId,
+      activeTurnId: thread?.active_turn_id ?? null,
+      revision: thread?.last_event_sequence ?? 0,
+      messages,
+      references,
+      pageInfo: {
+        hasOlder,
+        olderCursor: hasOlder && first ? encodePageCursor(conversationRowCursor(first)) : null,
+      },
+    };
+  }
+
+  searchConversationMessages(
+    query: string,
+    botId?: string,
+    cursor?: string,
+    requestedLimit = 100,
+  ): ConversationSearchPage {
+    const normalized = query.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+    if (!normalized) return { results: [], total: 0, nextCursor: null };
+    const limit = pageLimit(requestedLimit);
+    const offset = cursor ? decodeSearchCursor(cursor) : 0;
+    const pattern = `%${escapeLike(normalized)}%`;
+    const filter = botId ? "AND thread.agent_id = ?" : "";
+    const parameters = botId ? [pattern, botId] : [pattern];
+    const countRow = databaseRow(
+      this.connection
+        .prepare(
+          `SELECT COUNT(*) AS count
+           FROM projection_thread_messages message
+           JOIN projection_threads thread ON thread.thread_id = message.thread_id
+           WHERE LOWER(json_extract(message.message_json, '$.text')) LIKE ? ESCAPE '\\'
+             AND COALESCE(json_extract(message.message_json, '$.delivery.status'), '') NOT IN ('queued', 'cancelled')
+             ${filter}`,
+        )
+        .get(...parameters),
+    );
+    const total = countRow ? requiredNumberColumn(countRow, "count") : 0;
+    const rows = databaseRows(
+      this.connection
+        .prepare(
+          `SELECT thread.agent_id, message.message_json
+           FROM projection_thread_messages message
+           JOIN projection_threads thread ON thread.thread_id = message.thread_id
+           WHERE LOWER(json_extract(message.message_json, '$.text')) LIKE ? ESCAPE '\\'
+             AND COALESCE(json_extract(message.message_json, '$.delivery.status'), '') NOT IN ('queued', 'cancelled')
+             ${filter}
+           ORDER BY message.created_at DESC, message.ordinal DESC, message.message_id DESC
+           LIMIT ? OFFSET ?`,
+        )
+        .all(...parameters, limit, offset),
+    );
+    const results = rows.map((row) => ({
+      botId: requiredStringColumn(row, "agent_id"),
+      message: decodeConversationMessageJson(requiredStringColumn(row, "message_json")),
+    }));
+    const nextOffset = offset + results.length;
+    return {
+      results,
+      total,
+      nextCursor: nextOffset < total ? encodeSearchCursor(nextOffset) : null,
+    };
+  }
+
+  #conversationPageRows(threadId: string, anchor: ConversationPageAnchor, limit: number): DynamicRecord[] {
+    const columns = "created_at, ordinal, message_id, message_json";
+    if (anchor.type === "latest") {
+      return databaseRows(
+        this.connection
+          .prepare(
+            `SELECT ${columns} FROM projection_thread_messages
+             WHERE thread_id = ?
+             ORDER BY created_at DESC, ordinal DESC, message_id DESC LIMIT ?`,
+          )
+          .all(threadId, limit),
+      ).reverse();
+    }
+    if (anchor.type === "before") {
+      const cursor = decodeConversationCursor(anchor.cursor);
+      return databaseRows(
+        this.connection
+          .prepare(
+            `SELECT ${columns} FROM projection_thread_messages
+             WHERE thread_id = ? AND (
+               created_at < ? OR
+               (created_at = ? AND ordinal < ?) OR
+               (created_at = ? AND ordinal = ? AND message_id < ?)
+             )
+             ORDER BY created_at DESC, ordinal DESC, message_id DESC LIMIT ?`,
+          )
+          .all(
+            threadId,
+            cursor.createdAt,
+            cursor.createdAt,
+            cursor.ordinal,
+            cursor.createdAt,
+            cursor.ordinal,
+            cursor.messageId,
+            limit,
+          ),
+      ).reverse();
+    }
+    const anchorRow = databaseRow(
+      this.connection
+        .prepare(
+          `SELECT created_at, ordinal, message_id FROM projection_thread_messages
+           WHERE thread_id = ? AND message_id = ?`,
+        )
+        .get(threadId, anchor.messageId),
+    );
+    if (!anchorRow) return [];
+    const cursor = conversationRowCursor(anchorRow);
+    const olderLimit = Math.floor(limit / 2);
+    const older = databaseRows(
+      this.connection
+        .prepare(
+          `SELECT ${columns} FROM projection_thread_messages
+           WHERE thread_id = ? AND (
+             created_at < ? OR
+             (created_at = ? AND ordinal < ?) OR
+             (created_at = ? AND ordinal = ? AND message_id <= ?)
+           )
+           ORDER BY created_at DESC, ordinal DESC, message_id DESC LIMIT ?`,
+        )
+        .all(
+          threadId,
+          cursor.createdAt,
+          cursor.createdAt,
+          cursor.ordinal,
+          cursor.createdAt,
+          cursor.ordinal,
+          cursor.messageId,
+          olderLimit + 1,
+        ),
+    ).reverse();
+    const newer = databaseRows(
+      this.connection
+        .prepare(
+          `SELECT ${columns} FROM projection_thread_messages
+           WHERE thread_id = ? AND (
+             created_at > ? OR
+             (created_at = ? AND ordinal > ?) OR
+             (created_at = ? AND ordinal = ? AND message_id > ?)
+           )
+           ORDER BY created_at, ordinal, message_id LIMIT ?`,
+        )
+        .all(
+          threadId,
+          cursor.createdAt,
+          cursor.createdAt,
+          cursor.ordinal,
+          cursor.createdAt,
+          cursor.ordinal,
+          cursor.messageId,
+          limit - older.length,
+        ),
+    );
+    return [...older, ...newer];
+  }
+
+  #hasConversationRowsBefore(threadId: string, cursor: ConversationPageCursor): boolean {
+    return Boolean(
+      this.connection
+        .prepare(
+          `SELECT 1 FROM projection_thread_messages
+           WHERE thread_id = ? AND (
+             created_at < ? OR
+             (created_at = ? AND ordinal < ?) OR
+             (created_at = ? AND ordinal = ? AND message_id < ?)
+           ) LIMIT 1`,
+        )
+        .get(
+          threadId,
+          cursor.createdAt,
+          cursor.createdAt,
+          cursor.ordinal,
+          cursor.createdAt,
+          cursor.ordinal,
+          cursor.messageId,
+        ),
+    );
   }
 
   persistConversation(
@@ -1101,6 +1348,81 @@ function toProviderSession(row: SessionRow): ProviderSession {
   };
 }
 
+interface ConversationPageCursor {
+  version: 1;
+  createdAt: string;
+  ordinal: number;
+  messageId: string;
+}
+
+function pageLimit(value: number): number {
+  if (!Number.isInteger(value) || value < 1) throw new Error("The conversation page limit is invalid.");
+  return Math.min(value, 100);
+}
+
+function conversationRowCursor(row: DynamicRecord): ConversationPageCursor {
+  return {
+    version: 1,
+    createdAt: requiredStringColumn(row, "created_at"),
+    ordinal: requiredNumberColumn(row, "ordinal"),
+    messageId: requiredStringColumn(row, "message_id"),
+  };
+}
+
+function encodePageCursor(cursor: ConversationPageCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeConversationCursor(value: string): ConversationPageCursor {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (
+      !isDynamicRecord(parsed) ||
+      parsed.version !== 1 ||
+      !isString(parsed.createdAt) ||
+      !isNumber(parsed.ordinal) ||
+      !Number.isInteger(parsed.ordinal) ||
+      !isString(parsed.messageId)
+    ) {
+      throw new Error("invalid cursor");
+    }
+    return {
+      version: 1,
+      createdAt: parsed.createdAt,
+      ordinal: parsed.ordinal,
+      messageId: parsed.messageId,
+    };
+  } catch {
+    throw new Error("The conversation page cursor is invalid.");
+  }
+}
+
+function encodeSearchCursor(offset: number): string {
+  return Buffer.from(JSON.stringify({ version: 1, offset }), "utf8").toString("base64url");
+}
+
+function decodeSearchCursor(value: string): number {
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+    if (
+      !isDynamicRecord(parsed) ||
+      parsed.version !== 1 ||
+      !isNumber(parsed.offset) ||
+      !Number.isSafeInteger(parsed.offset) ||
+      parsed.offset < 0
+    ) {
+      throw new Error("invalid cursor");
+    }
+    return parsed.offset;
+  } catch {
+    throw new Error("The conversation search cursor is invalid.");
+  }
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
 function databaseRow(value: unknown): DynamicRecord | null {
   return isDynamicRecord(value) ? value : null;
 }
@@ -1234,27 +1556,10 @@ function parseMailboxMetadata(value: string): { idempotency?: Record<string, str
   return { idempotency: values };
 }
 
-function isConversationMessage(value: unknown): value is ConversationMessage {
-  if (!isDynamicRecord(value)) return false;
-  const author = value.author;
-  const status = value.status;
-  return (
-    isString(value.id) &&
-    isString(value.text) &&
-    isString(value.createdAt) &&
-    (author === "user" || author === "assistant" || author === "agent" || author === "system") &&
-    (status === "streaming" || status === "completed" || status === "failed" || status === "interrupted") &&
-    (value.turnId === undefined || isString(value.turnId)) &&
-    (value.itemType === undefined || isString(value.itemType)) &&
-    (value.source === undefined ||
-      value.source === "user" ||
-      value.source === "assistant" ||
-      value.source === "agent" ||
-      value.source === "system") &&
-    (value.senderBotId === undefined || isString(value.senderBotId)) &&
-    (value.replyToMessageId === undefined || value.replyToMessageId === null || isString(value.replyToMessageId)) &&
-    (value.imageGeneration === undefined || isImageGenerationInfo(value.imageGeneration))
-  );
+function decodeConversationMessageJson(value: string): ConversationMessage {
+  const parsed = JSON.parse(value);
+  if (!isConversationMessage(parsed)) throw new Error("Invalid conversation message.");
+  return parsed;
 }
 
 function errorCode(value: unknown): string | null {

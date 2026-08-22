@@ -106,7 +106,7 @@ describe("remote server order", () => {
     }
   });
 
-  it("downloads shared files with an authenticated request", async () => {
+  it("downloads shared and workspace files with authenticated requests", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-shared-download-"));
     const statePath = join(directory, "servers.json");
     const serverId = "remote-shared";
@@ -133,13 +133,18 @@ describe("remote server order", () => {
     const bytes = new TextEncoder().encode("name,value\nOpenBot,1\n");
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
-      expect(url.pathname).toBe("/v1/shared-files");
-      expect(url.searchParams.get("path")).toBe("~/OpenBot/Shared/report.csv");
       expect(init?.headers).toEqual({ Authorization: "Bearer session-token" });
+      if (url.pathname === "/v1/shared-files") {
+        expect(url.searchParams.get("path")).toBe("~/OpenBot/Shared/report.csv");
+      } else {
+        expect(url.pathname).toBe("/v1/workspace-files");
+        expect(url.searchParams.get("botId")).toBe("chief");
+        expect(url.searchParams.get("path")).toBe("app/page.tsx");
+      }
       return new Response(bytes, {
         status: 200,
         headers: {
-          "Content-Disposition": "attachment; filename*=UTF-8''report.csv",
+          "Content-Disposition": `attachment; filename*=UTF-8''${url.pathname.includes("workspace") ? "page.tsx" : "report.csv"}`,
         },
       });
     });
@@ -163,7 +168,11 @@ describe("remote server order", () => {
         bytes,
         name: "report.csv",
       });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await expect(manager.downloadWorkspaceFile("chief", "app/page.tsx", serverId)).resolves.toEqual({
+        bytes,
+        name: "page.tsx",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
       manager.stop();
     } finally {
       await rm(directory, { recursive: true, force: true });

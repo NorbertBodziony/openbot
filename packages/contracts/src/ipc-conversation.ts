@@ -213,6 +213,11 @@ export interface OpenSharedFileInput {
   path: string;
 }
 
+export interface OpenWorkspaceFileInput {
+  botId: string;
+  path: string;
+}
+
 export type QueueDeliveryStatus =
   | "queued"
   | "starting"
@@ -260,6 +265,29 @@ export interface ConversationMessage {
   reaction?: MessageReaction | null;
 }
 
+export function isConversationMessage(value: unknown): value is ConversationMessage {
+  if (!isDynamicRecord(value)) return false;
+  const author = value.author;
+  const status = value.status;
+  return (
+    isString(value.id) &&
+    isString(value.text) &&
+    isString(value.createdAt) &&
+    (author === "user" || author === "assistant" || author === "agent" || author === "system") &&
+    (status === "streaming" || status === "completed" || status === "failed" || status === "interrupted") &&
+    (value.turnId === undefined || isString(value.turnId)) &&
+    (value.itemType === undefined || isString(value.itemType)) &&
+    (value.source === undefined ||
+      value.source === "user" ||
+      value.source === "assistant" ||
+      value.source === "agent" ||
+      value.source === "system") &&
+    (value.senderBotId === undefined || isString(value.senderBotId)) &&
+    (value.replyToMessageId === undefined || value.replyToMessageId === null || isString(value.replyToMessageId)) &&
+    (value.imageGeneration === undefined || isImageGenerationInfo(value.imageGeneration))
+  );
+}
+
 export const MESSAGE_REACTIONS = ["👍", "👎", "❤️", "😂", "🎉", "😮"] as const;
 export const MORE_MESSAGE_REACTIONS = ["🔥", "👏", "🙏", "🤔", "👀", "✅", "🚀", "💯"] as const;
 export const ALL_MESSAGE_REACTIONS = [...MESSAGE_REACTIONS, ...MORE_MESSAGE_REACTIONS] as const;
@@ -294,6 +322,51 @@ export interface ConversationReadState {
 
 export interface ConversationWithReadState extends ConversationSnapshot {
   readState?: ConversationReadState;
+}
+
+export type ConversationPageAnchor =
+  | { type: "latest" }
+  | { type: "before"; cursor: string }
+  | { type: "around"; messageId: string };
+
+export interface ConversationPageInfo {
+  hasOlder: boolean;
+  olderCursor: string | null;
+}
+
+export interface ReadConversationPageInput {
+  botId: string;
+  anchor?: ConversationPageAnchor;
+  limit?: number;
+}
+
+export interface ConversationPage {
+  botId: string;
+  threadId: string | null;
+  activeTurnId: string | null;
+  revision: number;
+  messages: ConversationMessage[];
+  references: Record<string, ConversationMessage>;
+  pageInfo: ConversationPageInfo;
+  readState?: ConversationReadState;
+}
+
+export interface SearchConversationMessagesInput {
+  query: string;
+  botId?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface ConversationSearchResult {
+  botId: string;
+  message: ConversationMessage;
+}
+
+export interface ConversationSearchPage {
+  results: ConversationSearchResult[];
+  total: number;
+  nextCursor: string | null;
 }
 
 export interface MarkConversationReadInput {

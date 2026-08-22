@@ -24,7 +24,7 @@ describe("TeamPersonAvatar", () => {
     expect(view.container.querySelector(".person-avatar")).toHaveClass("online");
   });
 
-  it("uses a version 2 Blobatar when the image cannot load", async () => {
+  it("uses an agent avatar when the account image cannot load", async () => {
     const view = render(() => <TeamPersonAvatar member={member} />);
 
     const image = view.container.querySelector("img");
@@ -32,6 +32,13 @@ describe("TeamPersonAvatar", () => {
     await fireEvent.error(image);
 
     expect(view.container.querySelector("img")).toBeNull();
-    expect(view.container.querySelector(".person-avatar-generated > svg")).not.toBeNull();
+    expect(view.container.querySelector(".person-avatar-generated.bot-avatar-bloub > svg")).not.toBeNull();
+  });
+
+  it("uses an agent avatar when the member has no account image", () => {
+    const view = render(() => <TeamPersonAvatar member={{ ...member, avatarUrl: null }} />);
+
+    expect(view.container.querySelector("img")).toBeNull();
+    expect(view.container.querySelector(".person-avatar-generated.bot-avatar-bloub > svg")).not.toBeNull();
   });
 });

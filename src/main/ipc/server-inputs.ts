@@ -6,6 +6,7 @@ import type {
   JoinServerInput,
   LoginServerInput,
   MarkDirectReadInput,
+  ReadDirectConversationPageInput,
   ReorderServersInput,
   SendDirectMessageInput,
   SetTeamTypingInput,
@@ -15,6 +16,34 @@ import type {
 import { isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { parseAvatarImage } from "./avatar-inputs";
 import { isObject, requireString } from "./validation";
+
+export function parseReadDirectConversationPage(value: unknown): ReadDirectConversationPageInput {
+  if (!isObject(value)) throw new Error("Invalid direct-message page request.");
+  const anchor = value.anchor;
+  let parsedAnchor: ReadDirectConversationPageInput["anchor"] = { type: "latest" };
+  if (anchor !== undefined) {
+    if (!isObject(anchor) || !isString(anchor.type)) throw new Error("Invalid direct-message page anchor.");
+    if (anchor.type === "before") {
+      parsedAnchor = { type: "before", cursor: requireString(anchor.cursor, "cursor", 2048) };
+    } else if (anchor.type === "around") {
+      parsedAnchor = {
+        type: "around",
+        messageId: requireString(anchor.messageId, "messageId", INPUT_LIMITS.identifier),
+      };
+    } else if (anchor.type !== "latest") {
+      throw new Error("Invalid direct-message page anchor.");
+    }
+  }
+  const limit = value.limit ?? 50;
+  if (!isNumber(limit) || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new Error("The direct-message page limit must be between 1 and 100.");
+  }
+  return {
+    memberId: requireString(value.memberId, "memberId", INPUT_LIMITS.identifier),
+    anchor: parsedAnchor,
+    limit,
+  };
+}
 
 export function parseHostConfig(value: unknown): ConfigureHostInput {
   if (!isObject(value)) throw new Error("Host configuration is required.");

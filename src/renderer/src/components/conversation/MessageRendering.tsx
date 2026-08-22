@@ -1,18 +1,124 @@
 import type { AttachmentSummary, MessageReaction } from "@openbot/contracts/ipc";
 import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "@openbot/contracts/ipc";
-import { createMemo, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { avatarHeadColor } from "../../bloub-avatar";
 import type { BotMessage, BotProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button, DropdownMenu } from "../ui";
 import { AttachmentCards } from "./AttachmentCards";
+import { CodeBlock } from "./CodeBlock";
 import { ComparisonTable } from "./ComparisonTable";
 import { CheckIcon, CopyIcon, MoreIcon, PlusIcon, ReactionIcon, ReplyIcon } from "./ConversationIcons";
+import { createSmoothHeightResize } from "./createSmoothHeightResize";
 import { DataTable, type MessageContentBlock, messageContentBlocks } from "./DataTable";
 import { messageFileReferences } from "./FileReference";
 import { ImageGeneration } from "./ImageGeneration";
+import { MarkdownInlineText, MarkdownMessageText } from "./MarkdownMessageText";
 import { RichMessageText } from "./RichMessageText";
 import { parseSelectionInstruction } from "./SelectionActions";
+
+const STREAMING_TEXT_INTERVAL_MS = 42;
+const STREAMING_TEXT_BASE_CHUNK_SIZE = 4;
+
+function nextStreamingText(current: string, target: string): string {
+  if (!target.startsWith(current)) return target;
+  const remaining = Array.from(target.slice(current.length));
+  if (remaining.length === 0) return current;
+  const chunkSize =
+    remaining.length > 96
+      ? STREAMING_TEXT_BASE_CHUNK_SIZE * 3
+      : remaining.length > 48
+        ? STREAMING_TEXT_BASE_CHUNK_SIZE * 2
+        : STREAMING_TEXT_BASE_CHUNK_SIZE;
+  return current + remaining.slice(0, chunkSize).join("");
+}
+
+function prefersReducedStreamingMotion(): boolean {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+}
+
+function createStreamingBody(message: () => BotMessage) {
+  const initialMessage = untrack(message);
+  const animateInitialText =
+    initialMessage.author === "bot" &&
+    initialMessage.streaming === true &&
+    initialMessage.animate === true &&
+    !prefersReducedStreamingMotion();
+  let targetBody = initialMessage.body;
+  let targetStreaming = initialMessage.author === "bot" && initialMessage.streaming === true;
+  const [body, setBody] = createSignal(animateInitialText ? "" : initialMessage.body);
+  const [smoothHeight, setSmoothHeight] = createSignal(targetStreaming);
+  let smoothingActive = targetStreaming;
+  let revealTimer: number | undefined;
+  let smoothHeightTimer: number | undefined;
+
+  const clearRevealTimer = () => {
+    if (revealTimer === undefined) return;
+    window.clearTimeout(revealTimer);
+    revealTimer = undefined;
+  };
+  const keepHeightSmoothingActive = () => {
+    if (smoothHeightTimer !== undefined) window.clearTimeout(smoothHeightTimer);
+    smoothHeightTimer = undefined;
+    setSmoothHeight(true);
+  };
+  const settleHeightSmoothing = () => {
+    if (smoothHeightTimer !== undefined) window.clearTimeout(smoothHeightTimer);
+    smoothHeightTimer = window.setTimeout(() => {
+      smoothHeightTimer = undefined;
+      setSmoothHeight(false);
+    }, STREAMING_TEXT_INTERVAL_MS * 2);
+  };
+  const scheduleReveal = () => {
+    if (revealTimer !== undefined) return;
+    revealTimer = window.setTimeout(() => {
+      revealTimer = undefined;
+      const current = untrack(body);
+      const next = nextStreamingText(current, targetBody);
+      setBody(next);
+      if (next !== targetBody) {
+        scheduleReveal();
+      } else if (!targetStreaming) {
+        smoothingActive = false;
+        settleHeightSmoothing();
+      }
+    }, STREAMING_TEXT_INTERVAL_MS);
+  };
+
+  createEffect(
+    () => ({
+      body: message().body,
+      streaming: message().author === "bot" && message().streaming === true,
+    }),
+    ({ body: nextBody, streaming }) => {
+      targetBody = nextBody;
+      targetStreaming = streaming;
+      if (streaming) {
+        smoothingActive = true;
+        keepHeightSmoothingActive();
+      }
+      const current = untrack(body);
+      if (prefersReducedStreamingMotion() || !nextBody.startsWith(current) || (!streaming && !smoothingActive)) {
+        clearRevealTimer();
+        setBody(nextBody);
+        smoothingActive = false;
+        settleHeightSmoothing();
+        return;
+      }
+      if (current !== nextBody) {
+        scheduleReveal();
+      } else if (!streaming) {
+        smoothingActive = false;
+        settleHeightSmoothing();
+      }
+    },
+  );
+  onCleanup(() => {
+    clearRevealTimer();
+    if (smoothHeightTimer !== undefined) window.clearTimeout(smoothHeightTimer);
+  });
+  return { body, smoothHeight };
+}
 
 function ExchangeAgentAvatar(props: { bot: BotProfile | undefined }) {
   return <AgentAvatar bot={props.bot} class="exchange-agent-avatar" />;
@@ -142,8 +248,11 @@ export function MessageBody(props: {
   onPreview: (attachment: AttachmentSummary) => void;
   onAttachmentAction: (attachment: AttachmentSummary, action: "open" | "reveal" | "download") => void;
   onOpenSharedFile?: (path: string) => void;
+  onOpenWorkspaceFile?: (path: string) => void;
   onDownload?: (attachment: AttachmentSummary) => void;
 }) {
+  const streamingBody = createStreamingBody(() => props.message);
+  const streamedBody = streamingBody.body;
   const selectionInstruction = createMemo(() =>
     props.message.author === "you" && props.message.replyToMessageId
       ? parseSelectionInstruction(props.message.body)
@@ -162,7 +271,7 @@ export function MessageBody(props: {
   });
   const contentBlocks = createMemo<MessageContentBlock[]>(() =>
     props.message.author === "bot"
-      ? messageContentBlocks(props.message.body, props.message.streaming === true)
+      ? messageContentBlocks(streamedBody(), props.message.streaming === true)
       : [{ type: "text", text: selectionInstruction()?.instruction ?? props.message.body }],
   );
   const lastTextBlockIndex = createMemo(() => {
@@ -172,6 +281,28 @@ export function MessageBody(props: {
     }
     return -1;
   });
+  let messageContentResize: HTMLDivElement | undefined;
+  let messageContent: HTMLDivElement | undefined;
+  createSmoothHeightResize({
+    container: () => messageContentResize,
+    content: () => messageContent,
+    enabled: () => props.message.author === "bot" && streamingBody.smoothHeight(),
+  });
+  const renderMarkdownInline = (body: string) => (
+    <MarkdownInlineText
+      body={body}
+      bots={props.bots}
+      attachments={props.message.attachments}
+      citations={props.message.citations}
+      onSelectAgent={props.onSelectAgent}
+      onOpenLink={props.onOpenLink}
+      onOpenAttachment={(attachment) =>
+        attachment.previewKind === "none" ? props.onAttachmentAction(attachment, "open") : props.onPreview(attachment)
+      }
+      onOpenSharedFile={props.onOpenSharedFile}
+      onOpenWorkspaceFile={props.onOpenWorkspaceFile}
+    />
+  );
 
   return (
     <>
@@ -183,43 +314,76 @@ export function MessageBody(props: {
           </div>
         )}
       </Show>
-      <Show when={props.message.body}>
-        <div class="message-content-blocks">
-          <For each={contentBlocks()}>
-            {(block, index) => {
-              if (block.type === "comparison-table") return <ComparisonTable table={block} />;
-              if (block.type === "table") return <DataTable table={block} />;
-              return (
-                <p
-                  class="message-copy"
-                  data-selection-message-id={
-                    props.message.author === "bot" && props.message.streaming !== true ? props.message.id : undefined
-                  }
-                >
-                  <RichMessageText
-                    body={block.text}
-                    bots={props.bots}
-                    attachments={props.message.attachments}
-                    citations={props.message.citations}
-                    onSelectAgent={props.onSelectAgent}
-                    onOpenLink={props.onOpenLink}
-                    onOpenAttachment={(attachment) =>
-                      attachment.previewKind === "none"
-                        ? props.onAttachmentAction(attachment, "open")
-                        : props.onPreview(attachment)
-                    }
-                    onOpenSharedFile={props.onOpenSharedFile}
-                    showCitationFooter={index() === lastTextBlockIndex()}
-                  />
-                </p>
-              );
-            }}
-          </For>
-          <Show when={selectionInstruction()}>
-            {(selection) => <blockquote class="message-selection-quote">{selection().quote}</blockquote>}
+      <div class="message-content-resize" ref={(element) => (messageContentResize = element)}>
+        <div class="message-content-blocks" ref={(element) => (messageContent = element)}>
+          <Show when={props.message.author === "bot" ? streamedBody() : props.message.body}>
+            <For each={contentBlocks()}>
+              {(block, index) => {
+                if (block.type === "comparison-table") {
+                  return <ComparisonTable table={block} renderCell={renderMarkdownInline} />;
+                }
+                if (block.type === "table") return <DataTable table={block} renderCell={renderMarkdownInline} />;
+                if (block.type === "code") {
+                  return (
+                    <CodeBlock
+                      block={block}
+                      streaming={props.message.streaming === true && index() === contentBlocks().length - 1}
+                    />
+                  );
+                }
+                if (props.message.author === "bot") {
+                  return (
+                    <div
+                      class="message-copy message-markdown"
+                      data-selection-message-id={props.message.streaming !== true ? props.message.id : undefined}
+                    >
+                      <MarkdownMessageText
+                        body={block.text}
+                        bots={props.bots}
+                        attachments={props.message.attachments}
+                        citations={props.message.citations}
+                        onSelectAgent={props.onSelectAgent}
+                        onOpenLink={props.onOpenLink}
+                        onOpenAttachment={(attachment) =>
+                          attachment.previewKind === "none"
+                            ? props.onAttachmentAction(attachment, "open")
+                            : props.onPreview(attachment)
+                        }
+                        onOpenSharedFile={props.onOpenSharedFile}
+                        onOpenWorkspaceFile={props.onOpenWorkspaceFile}
+                        showCitationFooter={index() === lastTextBlockIndex()}
+                        streaming={props.message.streaming === true}
+                      />
+                    </div>
+                  );
+                }
+                return (
+                  <p class="message-copy">
+                    <RichMessageText
+                      body={block.text}
+                      bots={props.bots}
+                      attachments={props.message.attachments}
+                      citations={props.message.citations}
+                      onSelectAgent={props.onSelectAgent}
+                      onOpenLink={props.onOpenLink}
+                      onOpenAttachment={(attachment) =>
+                        attachment.previewKind === "none"
+                          ? props.onAttachmentAction(attachment, "open")
+                          : props.onPreview(attachment)
+                      }
+                      onOpenSharedFile={props.onOpenSharedFile}
+                      onOpenWorkspaceFile={props.onOpenWorkspaceFile}
+                    />
+                  </p>
+                );
+              }}
+            </For>
+            <Show when={selectionInstruction()}>
+              {(selection) => <blockquote class="message-selection-quote">{selection().quote}</blockquote>}
+            </Show>
           </Show>
         </div>
-      </Show>
+      </div>
       <Show when={props.message.imageGeneration}>
         {(imageGeneration) => (
           <ImageGeneration
@@ -298,7 +462,7 @@ export function MessageActions(props: {
             aria-hidden={props.pickerOpen ? undefined : "true"}
           >
             <div class="reaction-picker-row">
-              <DropdownMenu.RadioGroup value={props.message.reaction ?? ""}>
+              <DropdownMenu.RadioGroup class="reaction-picker-options" value={props.message.reaction ?? ""}>
                 <For each={MESSAGE_REACTIONS}>
                   {(emoji) => (
                     <DropdownMenu.RadioItem
@@ -322,7 +486,7 @@ export function MessageActions(props: {
             </div>
             <Show when={props.expandedEmoji}>
               <div class="reaction-picker-row reaction-picker-more">
-                <DropdownMenu.RadioGroup value={props.message.reaction ?? ""}>
+                <DropdownMenu.RadioGroup class="reaction-picker-options" value={props.message.reaction ?? ""}>
                   <For each={MORE_MESSAGE_REACTIONS}>
                     {(emoji) => (
                       <DropdownMenu.RadioItem

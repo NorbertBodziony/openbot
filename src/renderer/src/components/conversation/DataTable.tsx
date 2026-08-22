@@ -1,3 +1,4 @@
+import type { JSX } from "@solidjs/web";
 import { For } from "solid-js";
 
 export type DataTableAlignment = "left" | "center" | "right";
@@ -20,9 +21,16 @@ export interface MessageTextBlock {
   text: string;
 }
 
-export type MessageContentBlock = ComparisonTableBlock | DataTableBlock | MessageTextBlock;
+export interface MessageCodeBlock {
+  type: "code";
+  code: string;
+  language: string;
+  filename?: string;
+}
 
-export function DataTable(props: { table: DataTableBlock }) {
+export type MessageContentBlock = ComparisonTableBlock | DataTableBlock | MessageCodeBlock | MessageTextBlock;
+
+export function DataTable(props: { table: DataTableBlock; renderCell?: (text: string) => JSX.Element }) {
   return (
     <section class="message-data-table-scroll" aria-label="Data table" tabindex="0">
       <table class="message-data-table" style={`--message-data-table-columns: ${props.table.headers.length}`}>
@@ -31,7 +39,7 @@ export function DataTable(props: { table: DataTableBlock }) {
             <For each={props.table.headers}>
               {(header, index) => (
                 <th scope="col" data-align={props.table.alignments[index()]}>
-                  <span class="message-data-table-cell-text">{header}</span>
+                  <span class="message-data-table-cell-text">{props.renderCell?.(header) ?? header}</span>
                 </th>
               )}
             </For>
@@ -44,7 +52,7 @@ export function DataTable(props: { table: DataTableBlock }) {
                 <For each={row}>
                   {(cell, index) => (
                     <td data-align={props.table.alignments[index()]}>
-                      <span class="message-data-table-cell-text">{cell}</span>
+                      <span class="message-data-table-cell-text">{props.renderCell?.(cell) ?? cell}</span>
                     </td>
                   )}
                 </For>
@@ -61,7 +69,7 @@ export function messageContentBlocks(body: string, streaming = false): MessageCo
   const lines = body.split("\n");
   const blocks: MessageContentBlock[] = [];
   let textLines: string[] = [];
-  let foundTable = false;
+  let foundStructuredBlock = false;
 
   const flushText = () => {
     while (textLines[0] === "") textLines.shift();
@@ -71,6 +79,15 @@ export function messageContentBlocks(body: string, streaming = false): MessageCo
   };
 
   for (let index = 0; index < lines.length; ) {
+    const code = parseCodeAt(lines, index, streaming);
+    if (code) {
+      flushText();
+      blocks.push(code.block);
+      foundStructuredBlock = true;
+      index = code.nextIndex;
+      continue;
+    }
+
     const table = parseTableAt(lines, index, streaming && !body.endsWith("\n"));
     if (!table) {
       textLines.push(lines[index] ?? "");
@@ -80,12 +97,49 @@ export function messageContentBlocks(body: string, streaming = false): MessageCo
 
     flushText();
     blocks.push(table.block);
-    foundTable = true;
+    foundStructuredBlock = true;
     index = table.nextIndex;
   }
 
   flushText();
-  return foundTable ? blocks : [{ type: "text", text: body }];
+  return foundStructuredBlock ? blocks : [{ type: "text", text: body }];
+}
+
+function parseCodeAt(
+  lines: string[],
+  startIndex: number,
+  streaming: boolean,
+): { block: MessageCodeBlock; nextIndex: number } | null {
+  const opening = /^(?: {0,3})(`{3,})([^`]*)$/u.exec(lines[startIndex] ?? "");
+  if (!opening) return null;
+
+  const fenceLength = opening[1]?.length ?? 3;
+  const closingPattern = new RegExp(`^(?: {0,3})\`{${fenceLength},}\\s*$`, "u");
+  let closingIndex = startIndex + 1;
+  while (closingIndex < lines.length && !closingPattern.test(lines[closingIndex] ?? "")) closingIndex += 1;
+
+  const hasClosingFence = closingIndex < lines.length;
+  if (!hasClosingFence && !streaming) return null;
+
+  const { language, filename } = parseCodeInfo(opening[2] ?? "");
+  return {
+    block: {
+      type: "code",
+      code: lines.slice(startIndex + 1, hasClosingFence ? closingIndex : lines.length).join("\n"),
+      language,
+      ...(filename ? { filename } : {}),
+    },
+    nextIndex: hasClosingFence ? closingIndex + 1 : lines.length,
+  };
+}
+
+function parseCodeInfo(info: string): { language: string; filename?: string } {
+  const [language = "", ...filenameParts] = info.trim().split(/\s+/u).filter(Boolean);
+  const filename = filenameParts.join(" ");
+  return {
+    language,
+    ...(filename ? { filename } : {}),
+  };
 }
 
 function parseTableAt(

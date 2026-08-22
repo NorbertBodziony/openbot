@@ -1,9 +1,10 @@
 import type { QueueDelivery } from "@openbot/contracts/ipc";
-import { createEffect, createMemo, createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, createUniqueId, For, onCleanup, Show, untrack } from "solid-js";
 import { Button } from "../ui";
 import { AnchoredTooltip } from "./AnchoredTooltip";
 import { fileBadge } from "./AttachmentCards";
 import { EditIcon, QueueIcon, SteerIcon, TrashIcon } from "./ConversationIcons";
+import { createSmoothHeightResize } from "./createSmoothHeightResize";
 
 interface QueuePanelProps {
   deliveries: QueueDelivery[];
@@ -31,27 +32,31 @@ export function QueuePanel(props: QueuePanelProps) {
   const actionTooltipId = `queue-action-tooltip-${createUniqueId()}`;
   const [actionTooltip, setActionTooltip] = createSignal<{ anchor: HTMLElement; content: string } | null>(null);
   let queueList: HTMLDivElement | undefined;
+  let queueResizeContainer: HTMLDivElement | undefined;
   let dragSlots: DragSlot[] = [];
   let dragStartScrollTop = 0;
   let lastDragClientY = 0;
   let autoScrollVelocity = 0;
   let autoScrollFrame: number | null = null;
   let editingExitTimer: ReturnType<typeof setTimeout> | undefined;
-  let knownVisibleIds: Set<string> | null = null;
+  const externalRemovalTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const animationTimers = new Set<ReturnType<typeof setTimeout>>();
 
-  const visibleDeliveries = createMemo(() =>
+  const sourceDeliveries = createMemo(() =>
     props.deliveries
-      .filter(
-        (delivery) =>
-          delivery.id !== hiddenEditingId() && (delivery.status === "queued" || delivery.status === "starting"),
-      )
+      .filter((delivery) => delivery.status === "queued" || delivery.status === "starting")
       .sort((left, right) => {
         const leftPosition = left.position ?? Number.MAX_SAFE_INTEGER;
         const rightPosition = right.position ?? Number.MAX_SAFE_INTEGER;
         return leftPosition - rightPosition || left.createdAt.localeCompare(right.createdAt);
       }),
   );
+  const initialSourceDeliveries = untrack(sourceDeliveries);
+  const [renderedDeliveries, setRenderedDeliveries] = createSignal<QueueDelivery[]>(initialSourceDeliveries);
+  const visibleDeliveries = createMemo(() =>
+    renderedDeliveries().filter((delivery) => delivery.id !== hiddenEditingId()),
+  );
+  let knownSourceIds = new Set(initialSourceDeliveries.map((delivery) => delivery.id));
 
   const queueIds = createMemo(() =>
     visibleDeliveries()
@@ -65,8 +70,21 @@ export function QueuePanel(props: QueuePanelProps) {
       if (editingExitTimer) clearTimeout(editingExitTimer);
       editingExitTimer = undefined;
       if (!editingId) {
+        const restoredId = untrack(hiddenEditingId);
         setEditingExitId(null);
         setHiddenEditingId(null);
+        if (restoredId) {
+          setEnteringIds((current) => new Set([...current, restoredId]));
+          scheduleAnimationCleanup(
+            () =>
+              setEnteringIds((current) => {
+                const remaining = new Set(current);
+                remaining.delete(restoredId);
+                return remaining;
+              }),
+            200,
+          );
+        }
         return;
       }
 
@@ -87,39 +105,87 @@ export function QueuePanel(props: QueuePanelProps) {
   );
 
   createEffect(
-    () => visibleDeliveries().map((delivery) => delivery.id),
-    (ids) => {
-      const currentIds = new Set(ids);
-      if (knownVisibleIds === null) {
-        knownVisibleIds = currentIds;
-        return;
+    () => sourceDeliveries(),
+    (deliveries) => {
+      const current = untrack(renderedDeliveries);
+      const nextIds = new Set(deliveries.map((delivery) => delivery.id));
+      const restoredIds = new Set([...nextIds].filter((id) => externalRemovalTimers.has(id)));
+      const addedIds = deliveries
+        .filter((delivery) => !knownSourceIds.has(delivery.id) && !restoredIds.has(delivery.id))
+        .map((delivery) => delivery.id);
+      knownSourceIds = nextIds;
+
+      for (const id of nextIds) {
+        const timer = externalRemovalTimers.get(id);
+        if (!timer) continue;
+        clearTimeout(timer);
+        externalRemovalTimers.delete(id);
+        setRemovingIds((ids) => {
+          const next = new Set(ids);
+          next.delete(id);
+          return next;
+        });
       }
 
-      const addedIds = [...currentIds].filter((id) => !knownVisibleIds?.has(id));
-      knownVisibleIds = currentIds;
-      setRemovingIds((current) => {
-        const remaining = new Set([...current].filter((id) => currentIds.has(id)));
-        return remaining.size === current.size ? current : remaining;
-      });
-      if (addedIds.length === 0) return;
+      const retainedExits: Array<{ delivery: QueueDelivery; index: number }> = [];
+      for (const [index, delivery] of current.entries()) {
+        if (nextIds.has(delivery.id)) continue;
+        if (untrack(removingIds).has(delivery.id) && !externalRemovalTimers.has(delivery.id)) {
+          setRemovingIds((ids) => {
+            const next = new Set(ids);
+            next.delete(delivery.id);
+            return next;
+          });
+          continue;
+        }
+        if (reducedMotion()) continue;
+        retainedExits.push({ delivery, index });
+        if (externalRemovalTimers.has(delivery.id)) continue;
+        setRemovingIds((ids) => new Set([...ids, delivery.id]));
+        const timer = setTimeout(() => {
+          externalRemovalTimers.delete(delivery.id);
+          setRenderedDeliveries((items) => items.filter((item) => item.id !== delivery.id));
+          setRemovingIds((ids) => {
+            const next = new Set(ids);
+            next.delete(delivery.id);
+            return next;
+          });
+        }, 200);
+        externalRemovalTimers.set(delivery.id, timer);
+      }
 
-      setEnteringIds((current) => new Set([...current, ...addedIds]));
-      scheduleAnimationCleanup(
-        () =>
-          setEnteringIds((current) => {
-            const remaining = new Set(current);
-            for (const id of addedIds) remaining.delete(id);
-            return remaining;
-          }),
-        200,
-      );
+      const nextRendered = [...deliveries];
+      for (const { delivery, index } of retainedExits) {
+        nextRendered.splice(Math.min(index, nextRendered.length), 0, delivery);
+      }
+      setRenderedDeliveries(nextRendered);
+
+      if (addedIds.length > 0) {
+        setEnteringIds((current) => new Set([...current, ...addedIds]));
+        scheduleAnimationCleanup(
+          () =>
+            setEnteringIds((current) => {
+              const remaining = new Set(current);
+              for (const id of addedIds) remaining.delete(id);
+              return remaining;
+            }),
+          200,
+        );
+      }
     },
   );
 
   onCleanup(() => {
     stopAutoScroll();
     if (editingExitTimer) clearTimeout(editingExitTimer);
+    for (const timer of externalRemovalTimers.values()) clearTimeout(timer);
     for (const timer of animationTimers) clearTimeout(timer);
+  });
+
+  createSmoothHeightResize({
+    container: () => queueResizeContainer,
+    content: () => queueList,
+    skip: () => Boolean(queueList?.querySelector(".agent-queue-item-removing")),
   });
 
   function scheduleAnimationCleanup(callback: () => void, delay: number) {
@@ -270,7 +336,7 @@ export function QueuePanel(props: QueuePanelProps) {
   function requestCancel(deliveryId: string) {
     if (removingIds().has(deliveryId)) return;
     setRemovingIds((current) => new Set([...current, deliveryId]));
-    scheduleAnimationCleanup(() => props.onCancel(deliveryId), reducedMotion() ? 0 : 160);
+    scheduleAnimationCleanup(() => props.onCancel(deliveryId), reducedMotion() ? 0 : 200);
   }
 
   function messagePreview(delivery: QueueDelivery): string {
@@ -315,142 +381,148 @@ export function QueuePanel(props: QueuePanelProps) {
           stopAutoScroll();
         }}
       >
-        <div class="agent-queue-panel-list" ref={(element) => (queueList = element)}>
-          <For each={visibleDeliveries()}>
-            {(delivery) => {
-              const firstAttachment = delivery.attachments[0];
-              return (
-                <fieldset
-                  class={[
-                    "agent-queue-item",
-                    {
-                      "agent-queue-item-dragging": draggedId() === delivery.id,
-                      "agent-queue-item-drag-over": dragOverId() === delivery.id,
-                      "agent-queue-item-entering": enteringIds().has(delivery.id),
-                      "agent-queue-item-removing": removingIds().has(delivery.id) || editingExitId() === delivery.id,
-                      "agent-queue-item-steering": delivery.status === "starting",
-                      "agent-queue-item-has-attachment": Boolean(firstAttachment),
-                    },
-                  ]}
-                  style={{ "--queue-drag-step": dragStep(delivery.id) }}
-                  data-queue-delivery-id={delivery.id}
-                  draggable={delivery.status === "queued" ? "true" : "false"}
-                  onDragStart={(event) => {
-                    if (delivery.status !== "queued") return;
-                    if (event.target instanceof Element && event.target.closest(".agent-queue-actions")) {
-                      event.preventDefault();
-                      return;
-                    }
-                    event.dataTransfer?.setData("text/plain", delivery.id);
-                    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-                    measureDragSlots();
-                    setDragPreview(event);
-                    setDraggedId(delivery.id);
-                    setDragOverId(delivery.id);
-                  }}
-                  onDragEnd={() => {
-                    setDraggedId(null);
-                    setDragOverId(null);
-                    stopAutoScroll();
-                  }}
-                  onKeyDown={(event) => {
-                    if (delivery.status !== "queued" || !event.altKey) return;
-                    if (event.key === "ArrowUp") {
-                      event.preventDefault();
-                      moveDelivery(delivery.id, -1);
-                    } else if (event.key === "ArrowDown") {
-                      event.preventDefault();
-                      moveDelivery(delivery.id, 1);
-                    }
-                  }}
-                  tabindex={delivery.status === "queued" ? 0 : -1}
-                  aria-label={`Queued message ${delivery.position ?? ""}: ${messagePreview(delivery)}`}
-                >
-                  <span class="agent-queue-icon" aria-hidden="true">
-                    <QueueIcon />
-                  </span>
-                  <Show when={firstAttachment}>
-                    {(attachment) => (
-                      <span class="agent-queue-attachment" aria-hidden="true">
-                        <Show
-                          when={attachment().previewKind === "image" && attachment().previewUrl}
-                          fallback={<span>{fileBadge(attachment())}</span>}
-                        >
-                          <img src={attachment().previewUrl ?? ""} alt="" />
-                        </Show>
-                      </span>
-                    )}
-                  </Show>
-                  <span class="agent-queue-message" title={messagePreview(delivery)}>
-                    {messagePreview(delivery)}
-                  </span>
-                  <div class="agent-queue-actions">
-                    <Button
-                      type="button"
-                      class="agent-queue-steer"
-                      disabled={!props.canSteer || delivery.status !== "queued"}
-                      aria-describedby={actionTooltipId}
-                      aria-label={`Steer queued message ${delivery.position ?? ""}`}
-                      onPointerEnter={(event) => openActionTooltip(event.currentTarget, "Steer message")}
-                      onMouseEnter={(event) => openActionTooltip(event.currentTarget, "Steer message")}
-                      onPointerLeave={(event) => closeActionTooltip(event.currentTarget)}
-                      onMouseLeave={(event) => closeActionTooltip(event.currentTarget)}
-                      onFocus={(event) => openActionTooltip(event.currentTarget, "Steer message")}
-                      onBlur={(event) => closeActionTooltip(event.currentTarget)}
-                      onKeyDown={closeActionTooltipOnEscape}
-                      onClick={() => {
-                        setActionTooltip(null);
-                        props.onSteer(delivery.id);
-                      }}
-                    >
-                      <SteerIcon />
-                      <span>{delivery.status === "starting" ? "Steering" : "Steer"}</span>
-                    </Button>
-                    <Button
-                      type="button"
-                      class="agent-queue-icon-button agent-queue-delete"
-                      disabled={delivery.status !== "queued"}
-                      aria-describedby={actionTooltipId}
-                      aria-label={`Delete queued message ${delivery.position ?? ""}`}
-                      onPointerEnter={(event) => openActionTooltip(event.currentTarget, "Delete message")}
-                      onMouseEnter={(event) => openActionTooltip(event.currentTarget, "Delete message")}
-                      onPointerLeave={(event) => closeActionTooltip(event.currentTarget)}
-                      onMouseLeave={(event) => closeActionTooltip(event.currentTarget)}
-                      onFocus={(event) => openActionTooltip(event.currentTarget, "Delete message")}
-                      onBlur={(event) => closeActionTooltip(event.currentTarget)}
-                      onKeyDown={closeActionTooltipOnEscape}
-                      onClick={() => {
-                        setActionTooltip(null);
-                        requestCancel(delivery.id);
-                      }}
-                    >
-                      <TrashIcon />
-                    </Button>
-                    <Button
-                      type="button"
-                      class="agent-queue-icon-button agent-queue-edit"
-                      disabled={delivery.status !== "queued"}
-                      aria-describedby={actionTooltipId}
-                      aria-label={`Edit queued message ${delivery.position ?? ""}`}
-                      onPointerEnter={(event) => openActionTooltip(event.currentTarget, "Edit message")}
-                      onMouseEnter={(event) => openActionTooltip(event.currentTarget, "Edit message")}
-                      onPointerLeave={(event) => closeActionTooltip(event.currentTarget)}
-                      onMouseLeave={(event) => closeActionTooltip(event.currentTarget)}
-                      onFocus={(event) => openActionTooltip(event.currentTarget, "Edit message")}
-                      onBlur={(event) => closeActionTooltip(event.currentTarget)}
-                      onKeyDown={closeActionTooltipOnEscape}
-                      onClick={() => {
-                        setActionTooltip(null);
-                        props.onEdit(delivery);
-                      }}
-                    >
-                      <EditIcon />
-                    </Button>
-                  </div>
-                </fieldset>
-              );
-            }}
-          </For>
+        <div class="agent-queue-panel-resize" ref={(element) => (queueResizeContainer = element)}>
+          <div class="agent-queue-panel-list" ref={(element) => (queueList = element)}>
+            <For each={visibleDeliveries()}>
+              {(delivery) => {
+                const firstAttachment = delivery.attachments[0];
+                const removing = () => removingIds().has(delivery.id) || editingExitId() === delivery.id;
+                return (
+                  <fieldset
+                    class={[
+                      "agent-queue-item",
+                      {
+                        "agent-queue-item-dragging": draggedId() === delivery.id,
+                        "agent-queue-item-drag-over": dragOverId() === delivery.id,
+                        "agent-queue-item-entering": enteringIds().has(delivery.id),
+                        "agent-queue-item-removing": removing(),
+                        "agent-queue-item-steering": delivery.status === "starting",
+                        "agent-queue-item-has-attachment": Boolean(firstAttachment),
+                      },
+                    ]}
+                    style={{ "--queue-drag-step": dragStep(delivery.id) }}
+                    data-queue-delivery-id={delivery.id}
+                    draggable={delivery.status === "queued" && !removing() ? "true" : "false"}
+                    disabled={removing()}
+                    aria-hidden={removing() ? "true" : undefined}
+                    inert={removing() ? true : undefined}
+                    onDragStart={(event) => {
+                      if (delivery.status !== "queued") return;
+                      if (event.target instanceof Element && event.target.closest(".agent-queue-actions")) {
+                        event.preventDefault();
+                        return;
+                      }
+                      event.dataTransfer?.setData("text/plain", delivery.id);
+                      if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+                      measureDragSlots();
+                      setDragPreview(event);
+                      setDraggedId(delivery.id);
+                      setDragOverId(delivery.id);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedId(null);
+                      setDragOverId(null);
+                      stopAutoScroll();
+                    }}
+                    onKeyDown={(event) => {
+                      if (delivery.status !== "queued" || !event.altKey) return;
+                      if (event.key === "ArrowUp") {
+                        event.preventDefault();
+                        moveDelivery(delivery.id, -1);
+                      } else if (event.key === "ArrowDown") {
+                        event.preventDefault();
+                        moveDelivery(delivery.id, 1);
+                      }
+                    }}
+                    tabindex={delivery.status === "queued" && !removing() ? 0 : -1}
+                    aria-label={`Queued message ${delivery.position ?? ""}: ${messagePreview(delivery)}`}
+                  >
+                    <span class="agent-queue-icon" aria-hidden="true">
+                      <QueueIcon />
+                    </span>
+                    <Show when={firstAttachment}>
+                      {(attachment) => (
+                        <span class="agent-queue-attachment" aria-hidden="true">
+                          <Show
+                            when={attachment().previewKind === "image" && attachment().previewUrl}
+                            fallback={<span>{fileBadge(attachment())}</span>}
+                          >
+                            <img src={attachment().previewUrl ?? ""} alt="" />
+                          </Show>
+                        </span>
+                      )}
+                    </Show>
+                    <span class="agent-queue-message" title={messagePreview(delivery)}>
+                      {messagePreview(delivery)}
+                    </span>
+                    <div class="agent-queue-actions">
+                      <Button
+                        type="button"
+                        class="agent-queue-steer"
+                        disabled={!props.canSteer || delivery.status !== "queued"}
+                        aria-describedby={actionTooltipId}
+                        aria-label={`Steer queued message ${delivery.position ?? ""}`}
+                        onPointerEnter={(event) => openActionTooltip(event.currentTarget, "Steer message")}
+                        onMouseEnter={(event) => openActionTooltip(event.currentTarget, "Steer message")}
+                        onPointerLeave={(event) => closeActionTooltip(event.currentTarget)}
+                        onMouseLeave={(event) => closeActionTooltip(event.currentTarget)}
+                        onFocus={(event) => openActionTooltip(event.currentTarget, "Steer message")}
+                        onBlur={(event) => closeActionTooltip(event.currentTarget)}
+                        onKeyDown={closeActionTooltipOnEscape}
+                        onClick={() => {
+                          setActionTooltip(null);
+                          props.onSteer(delivery.id);
+                        }}
+                      >
+                        <SteerIcon />
+                        <span>{delivery.status === "starting" ? "Steering" : "Steer"}</span>
+                      </Button>
+                      <Button
+                        type="button"
+                        class="agent-queue-icon-button agent-queue-delete"
+                        disabled={delivery.status !== "queued"}
+                        aria-describedby={actionTooltipId}
+                        aria-label={`Delete queued message ${delivery.position ?? ""}`}
+                        onPointerEnter={(event) => openActionTooltip(event.currentTarget, "Delete message")}
+                        onMouseEnter={(event) => openActionTooltip(event.currentTarget, "Delete message")}
+                        onPointerLeave={(event) => closeActionTooltip(event.currentTarget)}
+                        onMouseLeave={(event) => closeActionTooltip(event.currentTarget)}
+                        onFocus={(event) => openActionTooltip(event.currentTarget, "Delete message")}
+                        onBlur={(event) => closeActionTooltip(event.currentTarget)}
+                        onKeyDown={closeActionTooltipOnEscape}
+                        onClick={() => {
+                          setActionTooltip(null);
+                          requestCancel(delivery.id);
+                        }}
+                      >
+                        <TrashIcon />
+                      </Button>
+                      <Button
+                        type="button"
+                        class="agent-queue-icon-button agent-queue-edit"
+                        disabled={delivery.status !== "queued"}
+                        aria-describedby={actionTooltipId}
+                        aria-label={`Edit queued message ${delivery.position ?? ""}`}
+                        onPointerEnter={(event) => openActionTooltip(event.currentTarget, "Edit message")}
+                        onMouseEnter={(event) => openActionTooltip(event.currentTarget, "Edit message")}
+                        onPointerLeave={(event) => closeActionTooltip(event.currentTarget)}
+                        onMouseLeave={(event) => closeActionTooltip(event.currentTarget)}
+                        onFocus={(event) => openActionTooltip(event.currentTarget, "Edit message")}
+                        onBlur={(event) => closeActionTooltip(event.currentTarget)}
+                        onKeyDown={closeActionTooltipOnEscape}
+                        onClick={() => {
+                          setActionTooltip(null);
+                          props.onEdit(delivery);
+                        }}
+                      >
+                        <EditIcon />
+                      </Button>
+                    </div>
+                  </fieldset>
+                );
+              }}
+            </For>
+          </div>
         </div>
         <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">
           {announcement()}

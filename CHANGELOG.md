@@ -5,6 +5,29 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.18] - 2026-08-22
+
+### Added
+
+- Add paginated conversation loading, global message search, direct-conversation history, and persisted read state.
+- Add Markdown rendering with code blocks, tables, task lists, links, images, and attachment references.
+- Add privacy-safe desktop and landing-page analytics with test coverage.
+- Add a central Content Security Policy for the Electron renderer.
+
+### Changed
+
+- Rework chat rendering and virtualization for smoother streaming, stable bottom following, and large histories.
+- Show one stable animated agent avatar and status label for each active response, including reduced-motion support.
+- Improve the development landing preview, conversation stories, and seeded demo content.
+- Extend local and remote team chat contracts for message history, search, reactions, files, and read state.
+
+### Fixed
+
+- Keep queued messages in their panel until work starts and display each user message before its matching response.
+- Animate queue entry removal and panel resizing without abrupt chat movement.
+- Keep the activity avatar visible until response streaming ends, then close it with a soft transition.
+- Smooth message height changes and preserve bottom scroll while streamed content grows.
+
 ## [0.1.17] - 2026-08-22
 
 ### Fixed

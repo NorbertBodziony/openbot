@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { BotMessage, BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 import { Combobox, Dialog, Input, Kbd, Search, Tabs } from "./ui";
@@ -10,7 +10,7 @@ type GlobalSearchResult = { kind: "bot"; bot: BotProfile } | { kind: "message"; 
 interface GlobalSearchProps {
   open: boolean;
   bots: BotProfile[];
-  messagesByBot: Record<string, BotMessage[]>;
+  onSearchMessages?: (query: string) => Promise<Array<{ botId: string; message: BotMessage }>>;
   onOpenChange: (open: boolean) => void;
   onSelectBot: (botId: string) => void;
   onSelectMessage: (botId: string, messageId: string) => void;
@@ -54,17 +54,12 @@ function resultDescription(result: GlobalSearchResult): string {
 export function GlobalSearch(props: GlobalSearchProps) {
   const [tab, setTab] = createSignal<SearchTab>("all");
   const [query, setQuery] = createSignal("");
+  const [messageResults, setMessageResults] = createSignal<GlobalSearchResult[]>([]);
   let input: HTMLInputElement | undefined;
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  let searchRequest = 0;
 
   const botResults = createMemo<GlobalSearchResult[]>(() => props.bots.map((bot) => ({ kind: "bot", bot })));
-  const messageResults = createMemo<GlobalSearchResult[]>(() =>
-    props.bots.flatMap((bot) =>
-      [...(props.messagesByBot[bot.id] ?? [])]
-        .reverse()
-        .filter((message) => message.kind !== "thinking" && messagePreview(message).length > 0)
-        .map((message) => ({ kind: "message" as const, bot, message })),
-    ),
-  );
   const results = createMemo(() => {
     const value = normalized(query());
     const category = tab();
@@ -89,6 +84,42 @@ export function GlobalSearch(props: GlobalSearchProps) {
       requestAnimationFrame(() => input?.focus());
     },
   );
+
+  createEffect(
+    () => ({ open: props.open, query: query(), tab: tab() }),
+    ({ open, query, tab }) => {
+      if (searchTimer) clearTimeout(searchTimer);
+      const request = ++searchRequest;
+      const value = normalized(query);
+      if (!open || !value || tab === "bots") {
+        setMessageResults([]);
+        return;
+      }
+      const searchMessages = props.onSearchMessages;
+      if (!searchMessages) return;
+      searchTimer = setTimeout(() => {
+        void searchMessages(value)
+          .then((items) => {
+            if (request !== searchRequest) return;
+            setMessageResults(
+              items.flatMap(({ botId, message }) => {
+                const bot = props.bots.find((candidate) => candidate.id === botId);
+                return bot && message.kind !== "thinking" && messagePreview(message)
+                  ? [{ kind: "message" as const, bot, message }]
+                  : [];
+              }),
+            );
+          })
+          .catch(() => {
+            if (request === searchRequest) setMessageResults([]);
+          });
+      }, 150);
+    },
+  );
+
+  onCleanup(() => {
+    if (searchTimer) clearTimeout(searchTimer);
+  });
 
   function activate(result: GlobalSearchResult | null | undefined): void {
     if (!result) return;

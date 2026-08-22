@@ -74,6 +74,40 @@ describe.sequential("AgentService", () => {
     await expect(service.resolveSharedFile(link)).rejects.toThrow("inside the shared directory");
   });
 
+  it("resolves only regular files inside the selected agent workspace", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    const bot = await store.createBot();
+    const appDirectory = join(bot.workspacePath, "app");
+    const page = join(appDirectory, "page.tsx");
+    const spaced = join(bot.workspacePath, "lutra brand board.html");
+    const outside = join(root, "outside.html");
+    const link = join(appDirectory, "outside-link.html");
+    await mkdir(appDirectory, { recursive: true });
+    await writeFile(page, "export default function Page() {}\n");
+    await writeFile(spaced, "<!doctype html>\n");
+    await writeFile(outside, "secret\n");
+    await symlink(outside, link);
+
+    await expect(service.resolveWorkspaceFile(bot.id, "app/page.tsx")).resolves.toMatchObject({
+      path: await realpath(page),
+      name: "page.tsx",
+    });
+    await expect(service.resolveWorkspaceFile(bot.id, page)).resolves.toMatchObject({
+      path: await realpath(page),
+      name: "page.tsx",
+    });
+    await expect(service.resolveWorkspaceFile(bot.id, "lutra%20brand%20board.html")).resolves.toMatchObject({
+      path: await realpath(spaced),
+      name: "lutra brand board.html",
+    });
+    await expect(service.resolveWorkspaceFile(bot.id, outside)).rejects.toThrow("inside the agent workspace");
+    await expect(service.resolveWorkspaceFile(bot.id, link)).rejects.toThrow("inside the agent workspace");
+    await expect(service.resolveWorkspaceFile("missing", page)).rejects.toThrow("Unknown bot");
+  });
+
   it("does not surface the skills context-budget notice as an agent error", async () => {
     process.env.OPENBOT_FAKE_WARNING = "Skill descriptions were shortened to fit the skills context budget.";
     const { store, mailbox } = stores();
@@ -554,6 +588,39 @@ describe.sequential("AgentService", () => {
     const deliveries = service.listQueue("chief").deliveries;
     expect(deliveries.map((delivery) => delivery.text)).toEqual(["Start immediately", "Wait behind the first message"]);
     expect((await protocolMessages()).filter((message) => message.method === "turn/start")).toHaveLength(1);
+  });
+
+  it("keeps each completed response after the queued message that started its turn", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+
+    await service.sendMessage({ botId: "chief", text: "Question 1" });
+    await service.sendMessage({ botId: "chief", text: "Question 2" });
+    await service.sendMessage({ botId: "chief", text: "Question 3" });
+    await service.sendMessage({ botId: "chief", text: "Question 4" });
+
+    await waitFor(() => {
+      const deliveries = service?.listQueue("chief").deliveries ?? [];
+      return deliveries.length === 4 && deliveries.every((delivery) => delivery.status === "completed");
+    });
+
+    const conversation = await service.readConversation("chief");
+    const turnMessages = conversation.messages.filter(
+      (message) => message.author === "user" || message.author === "assistant",
+    );
+    expect(turnMessages).toHaveLength(8);
+    for (let index = 0; index < turnMessages.length; index += 2) {
+      expect(turnMessages[index]?.author).toBe("user");
+      expect(turnMessages[index + 1]?.author).toBe("assistant");
+      expect(turnMessages[index + 1]?.turnId).toBe(turnMessages[index]?.turnId);
+    }
+    expect(clients.get("codex")?.requests.filter((request) => request.method === "turn/start")).toHaveLength(4);
   });
 
   it("queues FIFO instead of steering and continues draining after an interrupt", async () => {

@@ -2,6 +2,7 @@ import type { AttachmentSummary, QueueDelivery } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
+import { triggerResize } from "../../setupTests";
 import { QueuePanel } from "./QueuePanel";
 
 const imageAttachment: AttachmentSummary = {
@@ -78,15 +79,15 @@ describe("QueuePanel", () => {
 
   it("keeps steer, cancel, and edit actions connected", async () => {
     const props = callbacks();
-    render(() => <QueuePanel deliveries={[delivery(1)]} canSteer {...props} />);
+    render(() => <QueuePanel deliveries={[delivery(1), delivery(2), delivery(3)]} canSteer {...props} />);
 
     await fireEvent.click(screen.getByRole("button", { name: "Steer queued message 1" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Delete queued message 1" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Edit queued message 1" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Edit queued message 2" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete queued message 3" }));
 
     expect(props.onSteer).toHaveBeenCalledWith("delivery-1");
-    await waitFor(() => expect(props.onCancel).toHaveBeenCalledWith("delivery-1"));
-    await waitFor(() => expect(props.onEdit).toHaveBeenCalledWith(expect.objectContaining({ id: "delivery-1" })));
+    await waitFor(() => expect(props.onCancel).toHaveBeenCalledWith("delivery-3"));
+    await waitFor(() => expect(props.onEdit).toHaveBeenCalledWith(expect.objectContaining({ id: "delivery-2" })));
     expect(screen.queryByRole("button", { name: "Resume queue" })).not.toBeInTheDocument();
   });
 
@@ -237,6 +238,49 @@ describe("QueuePanel", () => {
       "agent-queue-item-removing",
     );
     await waitFor(() => expect(props.onCancel).toHaveBeenCalledWith("delivery-1"));
+  });
+
+  it("smoothly resizes the panel when the queue height changes", async () => {
+    const props = callbacks();
+    const [deliveries, setDeliveries] = createSignal([delivery(1), delivery(2)]);
+    const view = render(() => <QueuePanel deliveries={deliveries()} canSteer {...props} />);
+    const list = view.container.querySelector<HTMLElement>(".agent-queue-panel-list");
+    const resizeContainer = view.container.querySelector<HTMLElement>(".agent-queue-panel-resize");
+    if (!list || !resizeContainer) throw new Error("Queue resize elements are missing.");
+
+    let height = 67;
+    vi.spyOn(list, "getBoundingClientRect").mockImplementation(() =>
+      DOMRect.fromRect({ height, width: 600, x: 0, y: 0 }),
+    );
+    const cancel = vi.fn();
+    const animate = vi.fn().mockReturnValue({ cancel, finished: Promise.resolve() });
+    Object.defineProperty(resizeContainer, "animate", { configurable: true, value: animate });
+
+    triggerResize(list);
+    setDeliveries([delivery(1), delivery(2), delivery(3)]);
+    height = 96;
+    triggerResize(list);
+
+    expect(animate).toHaveBeenCalledWith([{ height: "67px" }, { height: "96px" }], {
+      duration: 240,
+      easing: "cubic-bezier(0.23, 1, 0.32, 1)",
+    });
+  });
+
+  it("keeps a removed queue entry mounted until its exit transition finishes", async () => {
+    const props = callbacks();
+    const [deliveries, setDeliveries] = createSignal([delivery(1), delivery(2)]);
+    const view = render(() => <QueuePanel deliveries={deliveries()} canSteer {...props} />);
+
+    setDeliveries([delivery(2)]);
+
+    const departingRow = view.container.querySelector<HTMLElement>('[data-queue-delivery-id="delivery-1"]');
+    await waitFor(() => expect(departingRow).toHaveClass("agent-queue-item-removing"));
+    expect(departingRow).toHaveAttribute("aria-hidden", "true");
+    expect(departingRow).toBeDisabled();
+    expect(departingRow).toHaveAttribute("draggable", "false");
+    await waitFor(() => expect(departingRow).not.toBeInTheDocument());
+    expect(screen.getByText("Queued task 2")).toBeInTheDocument();
   });
 
   it("animates an edited row out and restores it at the same position", async () => {

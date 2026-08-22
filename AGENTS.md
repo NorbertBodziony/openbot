@@ -11,4 +11,5 @@
 - Use packaged apps only when the user explicitly requests release or package verification.
 - For a populated integrated UI, stop the dev app, run `bun run dev:seed`, then run `bun run dev`. Use `bun run dev:seed --dry-run` to inspect the seed without changing local state.
 - Before adding or changing UI code, search for reusable components, hooks, styles, and utilities. Prefer reuse, composition, or a small extension; add new code only when the existing code does not fit or would reduce clarity.
+- Use `lucide-solid` for renderer UI icons. Reuse a suitable Lucide icon before you add an inline SVG or a local icon component. Add a custom icon only when Lucide has no suitable icon, and document the exception next to the custom icon.
 - Treat the `:root` properties in `src/renderer/src/styles.css` as the renderer color palette. Use the closest semantic `--openbot-*` token, including opacity variants, instead of ad-hoc color literals. Add a token there only for a new semantic role. Keep existing compatibility aliases when used, and isolate fixed integration, generated asset, SVG, or platform colors at their boundaries.

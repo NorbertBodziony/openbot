@@ -263,9 +263,22 @@ export const FileReferenceTypes: Story = {
     if (!typeScriptReference) throw new Error("The TypeScript file reference is missing");
     const typeScriptBadge = typeScriptReference.querySelector<HTMLElement>(".attachment-reference-visual");
     if (!typeScriptBadge) throw new Error("The TypeScript badge is missing");
+    const htmlBadge = references[2]?.querySelector<HTMLElement>(".attachment-reference-visual");
+    const cssBadge = references[3]?.querySelector<HTMLElement>(".attachment-reference-visual");
+    if (!htmlBadge || !cssBadge) throw new Error("The long file type badges are missing");
     await expect(typeScriptReference.getBoundingClientRect().height).toBe(22);
     await expect(typeScriptBadge.getBoundingClientRect().width).toBe(16);
     await expect(typeScriptBadge.getBoundingClientRect().height).toBe(16);
+    await expect(cssBadge.getBoundingClientRect().width).toBe(20);
+    await expect(htmlBadge.getBoundingClientRect().width).toBe(24);
+    await expect(
+      Array.from(root.querySelectorAll<HTMLElement>(".attachment-reference-visual[data-badge-length]")).every(
+        (badge) => {
+          const label = badge.querySelector<HTMLElement>("span");
+          return label !== null && label.getBoundingClientRect().width <= badge.getBoundingClientRect().width;
+        },
+      ),
+    ).toBe(true);
     await expect(getComputedStyle(typeScriptReference).gap).toBe("4px");
     await expect(getComputedStyle(typeScriptReference).padding).toBe("1px 6px 1px 3px");
     typeScriptReference.focus();

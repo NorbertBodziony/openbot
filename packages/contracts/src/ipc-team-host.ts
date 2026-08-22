@@ -122,6 +122,29 @@ export interface DirectConversationSnapshot {
   readState?: DirectConversationReadState;
 }
 
+export type DirectConversationPageAnchor =
+  | { type: "latest" }
+  | { type: "before"; cursor: string }
+  | { type: "around"; messageId: string };
+
+export interface ReadDirectConversationPageInput {
+  memberId: string;
+  anchor?: DirectConversationPageAnchor;
+  limit?: number;
+}
+
+export interface DirectConversationPage {
+  threadId: string;
+  otherMemberId: string;
+  messages: DirectMessage[];
+  revision: number;
+  pageInfo: {
+    hasOlder: boolean;
+    olderCursor: string | null;
+  };
+  readState?: DirectConversationReadState;
+}
+
 export interface DirectConversationReadState {
   unreadCount: number;
   firstUnreadMessageId: string | null;

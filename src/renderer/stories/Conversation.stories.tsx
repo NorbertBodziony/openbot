@@ -175,6 +175,179 @@ const dataTableMessages: RendererBotMessage[] = [
   },
 ];
 
+const codeBlockMessages: RendererBotMessage[] = [
+  {
+    id: "code-block-user",
+    author: "you",
+    body: "Show me the launch check command.",
+    time: "10:02",
+    kind: "text",
+  },
+  {
+    id: "code-block-agent",
+    author: "bot",
+    body: [
+      "Run this from the repository root:",
+      "",
+      "```bash",
+      "bun run check",
+      "bun run test",
+      "bun run build",
+      "```",
+    ].join("\n"),
+    time: "10:03",
+    kind: "text",
+  },
+  {
+    id: "code-block-follow-up",
+    author: "bot",
+    body: "The checks should complete before release.",
+    time: "10:04",
+    kind: "text",
+  },
+];
+
+const markdownMessages: RendererBotMessage[] = [
+  {
+    id: "markdown-user",
+    author: "you",
+    body: "Which component library should we use for Solid JS?",
+    time: "10:02",
+    kind: "text",
+  },
+  {
+    id: "markdown-agent",
+    author: "bot",
+    body: [
+      "## Recommendation",
+      "",
+      "The best fit is **Kobalte**. Use *Solid UI* when you need ready-made components.",
+      "",
+      "### Why",
+      "",
+      "- Mature and actively maintained",
+      "- Strong accessibility support",
+      "  - Keyboard navigation",
+      "  - Focus management",
+      "- [x] Works with our design system",
+      "- [ ] Add the remaining primitives",
+      "",
+      "1. Install `@kobalte/core`.",
+      "2. Replace ~~custom controls~~ with shared primitives.",
+      "",
+      "> Keep the public UI API small and stable.",
+      "",
+      "Read [the Kobalte guide](https://kobalte.dev/docs/core/overview/introduction).",
+    ].join("\n"),
+    time: "10:03",
+    kind: "text",
+  },
+  {
+    id: "markdown-follow-up",
+    author: "bot",
+    body: "I can prepare the migration checklist next.",
+    time: "10:04",
+    kind: "text",
+  },
+];
+
+const streamingMarkdownChunks = [
+  "## Live response\n\nI am checking the",
+  "## Live response\n\nI am checking the **Markdown renderer**.",
+  [
+    "## Live response",
+    "",
+    "I am checking the **Markdown renderer**.",
+    "",
+    "- Parse emphasis",
+    "- Resize the message row",
+  ].join("\n"),
+  [
+    "## Live response",
+    "",
+    "I am checking the **Markdown renderer**.",
+    "",
+    "- Parse emphasis",
+    "- Resize the message row",
+    "",
+    "```ts",
+    "const ready = true;",
+  ].join("\n"),
+  [
+    "## Live response",
+    "",
+    "I am checking the **Markdown renderer**.",
+    "",
+    "- Parse emphasis",
+    "- Resize the message row",
+    "",
+    "```ts",
+    "const ready = true;",
+    "```",
+    "",
+    "The streamed response is complete.",
+  ].join("\n"),
+] as const;
+
+function streamingMarkdownMessages(chunkIndex: number): RendererBotMessage[] {
+  return [
+    {
+      id: "streaming-markdown-user",
+      author: "you",
+      body: "Check Markdown while the model response streams.",
+      time: "10:02",
+      kind: "text",
+    },
+    {
+      id: "streaming-markdown-agent",
+      author: "bot",
+      body: streamingMarkdownChunks[chunkIndex],
+      time: "10:03",
+      kind: "text",
+      streaming: chunkIndex < streamingMarkdownChunks.length - 1,
+    },
+    {
+      id: "streaming-markdown-follow-up",
+      author: "bot",
+      body: "This message must stay below the growing response.",
+      time: "10:04",
+      kind: "text",
+    },
+  ];
+}
+
+function StreamingMarkdownConversation(props: { args: Parameters<typeof Conversation>[0] }) {
+  const [chunkIndex, setChunkIndex] = createSignal(0);
+  const stableMessages = streamingMarkdownMessages(0);
+  const streamingMessage = stableMessages[1];
+  if (streamingMessage) {
+    Object.defineProperties(streamingMessage, {
+      body: { configurable: true, enumerable: true, get: () => streamingMarkdownChunks[chunkIndex()] },
+      streaming: {
+        configurable: true,
+        enumerable: true,
+        get: () => chunkIndex() < streamingMarkdownChunks.length - 1,
+      },
+    });
+  }
+  let interval: number | undefined;
+  const start = window.setTimeout(() => {
+    interval = window.setInterval(() => {
+      setChunkIndex((current) => {
+        if (current < streamingMarkdownChunks.length - 1) return current + 1;
+        if (interval) window.clearInterval(interval);
+        return current;
+      });
+    }, 180);
+  }, 450);
+  onCleanup(() => {
+    window.clearTimeout(start);
+    if (interval) window.clearInterval(interval);
+  });
+
+  return <MockedConversation args={{ ...props.args, activeTurnId: "streaming-markdown" }} messages={stableMessages} />;
+}
+
 const comparisonTableMessages: RendererBotMessage[] = [
   {
     id: "comparison-table-user",
@@ -333,7 +506,7 @@ const referenceQueue: QueueSnapshot = {
   })),
 };
 
-function MockedConversation(props: { args: Parameters<typeof Conversation>[0] }) {
+function MockedConversation(props: { args: Parameters<typeof Conversation>[0]; messages?: RendererBotMessage[] }) {
   const previousApi = window.openbot;
   const mock = createMockOpenBot();
   const [unreadCount, setUnreadCount] = createSignal(0);
@@ -354,6 +527,7 @@ function MockedConversation(props: { args: Parameters<typeof Conversation>[0] })
     <div class="conversation-story-frame">
       <Conversation
         {...props.args}
+        messages={props.messages ?? props.args.messages}
         unreadCount={unreadCount()}
         firstUnreadMessageId={firstUnreadMessageId()}
         onMarkRead={async () => {
@@ -589,6 +763,81 @@ export const DataTableInChat: Story = {
     await expect(canvas.getByText("Compare the available models by context window and input price.")).toBeVisible();
     await expect(canvas.getByRole("table")).toBeVisible();
     await expect(canvas.getAllByRole("columnheader")).toHaveLength(3);
+  },
+};
+
+export const CodeBlockInChat: Story = {
+  name: "Code block in chat",
+  args: {
+    messages: codeBlockMessages,
+  },
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getByRole("region", { name: "Shell code block" })).toBeVisible();
+    const codeRow = canvasElement.querySelector<HTMLElement>(".virtual-chat-row:has(.message-code-block)");
+    const followUp = canvas
+      .getByText("The checks should complete before release.")
+      .closest<HTMLElement>(".virtual-chat-row");
+    if (!codeRow || !followUp) throw new Error("Code block chat rows are missing.");
+    await waitFor(() =>
+      expect(followUp.getBoundingClientRect().top).toBeGreaterThanOrEqual(codeRow.getBoundingClientRect().bottom),
+    );
+  },
+};
+
+export const MarkdownInChat: Story = {
+  name: "Markdown in chat",
+  args: {
+    messages: markdownMessages,
+  },
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getByRole("heading", { level: 2, name: "Recommendation" })).toBeVisible();
+    await expect(canvas.getByText("Kobalte").tagName).toBe("STRONG");
+    await expect(canvas.getByRole("checkbox", { name: "Works with our design system" })).toBeChecked();
+    await expect(canvas.queryByText("## Recommendation")).not.toBeInTheDocument();
+    const markdownRow = canvasElement.querySelector<HTMLElement>(".virtual-chat-row:has(.message-markdown)");
+    const followUp = canvas
+      .getByText("I can prepare the migration checklist next.")
+      .closest<HTMLElement>(".virtual-chat-row");
+    if (!markdownRow || !followUp) throw new Error("Markdown chat rows are missing.");
+    await waitFor(() =>
+      expect(followUp.getBoundingClientRect().top).toBeGreaterThanOrEqual(markdownRow.getBoundingClientRect().bottom),
+    );
+  },
+};
+
+export const StreamingMarkdownInChat: Story = {
+  name: "Streaming Markdown in chat",
+  args: {
+    messages: streamingMarkdownMessages(0),
+    activeTurnId: "streaming-markdown",
+  },
+  render: (storyArgs) => <StreamingMarkdownConversation args={storyArgs} />,
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.getByRole("heading", { level: 2, name: "Live response" })).toBeVisible();
+    const streamingRow = canvasElement.querySelector<HTMLElement>(
+      '.virtual-chat-row:has([data-chat-search-message="streaming-markdown-agent"])',
+    );
+    if (!streamingRow) throw new Error("The streaming Markdown row is missing.");
+    const initialHeight = streamingRow.getBoundingClientRect().height;
+
+    await expect(
+      canvas.findByText("The streamed response is complete.", {}, { timeout: 2_000 }),
+    ).resolves.toBeVisible();
+    await expect(canvas.getByText("Markdown renderer").tagName).toBe("STRONG");
+    await expect(canvas.getByRole("region", { name: "TypeScript code block" })).toBeVisible();
+
+    const updatedRow = canvasElement.querySelector<HTMLElement>(
+      '.virtual-chat-row:has([data-chat-search-message="streaming-markdown-agent"])',
+    );
+    const followUp = canvas
+      .getByText("This message must stay below the growing response.")
+      .closest<HTMLElement>(".virtual-chat-row");
+    if (!updatedRow || !followUp) throw new Error("The streamed chat rows are missing.");
+    expect(updatedRow).toBe(streamingRow);
+    await waitFor(() => expect(updatedRow.getBoundingClientRect().height).toBeGreaterThan(initialHeight));
+    await waitFor(() =>
+      expect(followUp.getBoundingClientRect().top).toBeGreaterThanOrEqual(updatedRow.getBoundingClientRect().bottom),
+    );
   },
 };
 

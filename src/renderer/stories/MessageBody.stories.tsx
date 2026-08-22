@@ -77,6 +77,145 @@ export const AttachmentOnly: Story = {
   },
 };
 
+export const Markdown: Story = {
+  args: {
+    message: {
+      ...message,
+      id: "message-markdown",
+      body: [
+        "## Recommendation",
+        "",
+        "Use **Kobalte** with *Solid UI* and `@kobalte/core`.",
+        "",
+        "- Accessible controls",
+        "  - Keyboard support",
+        "- [x] Tested",
+        "",
+        "> Keep the public API small.",
+      ].join("\n"),
+      status: undefined,
+      attachments: [],
+    },
+  },
+  render: (storyArgs) => (
+    <div class="bot-bubble" style={{ width: "460px", "max-width": "calc(100vw - 32px)" }}>
+      <MessageBody {...storyArgs} />
+    </div>
+  ),
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole("heading", { level: 2, name: "Recommendation" })).toBeInTheDocument();
+    await expect(canvas.getByText("Kobalte").tagName).toBe("STRONG");
+    await expect(canvas.getByRole("checkbox", { name: "Tested" })).toBeChecked();
+  },
+};
+
+export const WorkspaceFileLinks: Story = {
+  args: {
+    message: {
+      ...message,
+      id: "message-workspace-file-links",
+      body: [
+        "Pliki:",
+        "",
+        "- [page.tsx](/Users/test/OpenBot/Bots/builder/app/page.tsx)",
+        "- [globals.css](/Users/test/OpenBot/Bots/builder/app/globals.css)",
+        "",
+        "Gotowe: [otwórz tablicę Lutra w HTML](< lutra-brand-board.html >)",
+      ].join("\n"),
+      status: undefined,
+      attachments: [],
+    },
+    onOpenWorkspaceFile: fn(),
+  },
+  render: (storyArgs) => (
+    <div class="bot-bubble" style={{ width: "620px", "max-width": "calc(100vw - 32px)" }}>
+      <MessageBody {...storyArgs} />
+    </div>
+  ),
+  play: async ({ args: storyArgs, canvas }) => {
+    const pageLink = canvas.getByRole("button", { name: "Open workspace file page.tsx" });
+    const cssLink = canvas.getByRole("button", { name: "Open workspace file globals.css" });
+    const htmlLink = canvas.getByRole("button", { name: "Open workspace file lutra-brand-board.html" });
+    await expect(pageLink).toHaveTextContent("page.tsx");
+    await expect(cssLink).toHaveTextContent("globals.css");
+    await expect(htmlLink).toHaveTextContent("otwórz tablicę Lutra w HTML");
+    await expect(canvas.queryByText(/\/Users\/test\/OpenBot/u)).not.toBeInTheDocument();
+    await expect(canvas.queryByText(/\(<|>\)/u)).not.toBeInTheDocument();
+    pageLink.click();
+    htmlLink.click();
+    await expect(storyArgs.onOpenWorkspaceFile).toHaveBeenNthCalledWith(
+      1,
+      "/Users/test/OpenBot/Bots/builder/app/page.tsx",
+    );
+    await expect(storyArgs.onOpenWorkspaceFile).toHaveBeenNthCalledWith(2, "lutra-brand-board.html");
+  },
+};
+
+export const CodeBlock: Story = {
+  args: {
+    message: {
+      ...message,
+      id: "message-code-block",
+      body: [
+        "The helper is ready:",
+        "",
+        "```ts churn.ts",
+        "export async function churnBatch() {",
+        '  const flavor = await getFlavor("pistachio");',
+        "  const base = await dairy.fetch({ flavor });",
+        '  await freezer.store(base, { temp: "-14C" });',
+        "  return base.gallons;",
+        "}",
+        "```",
+      ].join("\n"),
+      status: undefined,
+      attachments: [],
+    },
+  },
+  render: (storyArgs) => (
+    <div class="bot-bubble" style={{ width: "460px", "max-width": "calc(100vw - 32px)" }}>
+      <MessageBody {...storyArgs} />
+    </div>
+  ),
+  play: async ({ canvas }) => {
+    await expect(canvas.getByText("The helper is ready:")).toBeInTheDocument();
+    await expect(canvas.getByRole("region", { name: "TypeScript code block" })).toBeInTheDocument();
+    await expect(canvas.getByText("churn.ts")).toBeInTheDocument();
+    const copyButton = canvas.getByRole("button", { name: "Copy code" });
+    await expect(copyButton.querySelectorAll("svg")).toHaveLength(2);
+    await expect(copyButton.querySelector('.message-code-copy-icons > span[data-visible="true"]')).toBeInTheDocument();
+    await expect(canvas.queryByText("```ts churn.ts")).not.toBeInTheDocument();
+  },
+};
+
+export const StreamingCodeBlock: Story = {
+  args: {
+    message: {
+      ...message,
+      id: "message-streaming-code-block",
+      body: [
+        "```tsx AgentCard.tsx",
+        "export function AgentCard(props: { name: string }) {",
+        "  return <strong>{props.name}</strong>;",
+      ].join("\n"),
+      streaming: true,
+      status: undefined,
+      attachments: [],
+    },
+  },
+  render: (storyArgs) => (
+    <div class="bot-bubble" style={{ width: "460px", "max-width": "calc(100vw - 32px)" }}>
+      <MessageBody {...storyArgs} />
+    </div>
+  ),
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole("region", { name: "TypeScript code block" })).toBeInTheDocument();
+    await expect(canvas.getByText("AgentCard.tsx")).toBeInTheDocument();
+    const region = canvas.getByRole("region", { name: "TypeScript code block" });
+    await expect(region.querySelector(".message-code-caret")).toBeInTheDocument();
+  },
+};
+
 export const DataTable: Story = {
   args: {
     message: {

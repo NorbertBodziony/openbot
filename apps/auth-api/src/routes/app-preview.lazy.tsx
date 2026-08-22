@@ -15,12 +15,12 @@ export function AppPreviewPage() {
   });
 
   return (
-    <div id="root" class="openbot-playground-root">
+    <div id="root" class="openbot-playground-root" data-preview-variant="landing">
       <Show
         when={mounted()}
         fallback={<div class="openbot-playground-loading" role="status" aria-label="Loading OpenBot preview" />}
       >
-        <OpenBotPlayground options={{ browserControlState: { sessions: [] } }} />
+        <OpenBotPlayground variant="landing" />
       </Show>
     </div>
   );

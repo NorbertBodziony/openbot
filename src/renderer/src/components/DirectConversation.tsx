@@ -1,6 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { DirectConversationSnapshot, DirectMessage, TeamPresenceMember } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
+import { createChatVirtualizer } from "./conversation/createChatVirtualizer";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import {
   scrollToUnreadBoundary,
@@ -18,9 +19,14 @@ interface DirectConversationProps {
   snapshot: DirectConversationSnapshot | undefined;
   loading: boolean;
   loadError: string | null;
+  hasOlder?: boolean;
+  loadingOlder?: boolean;
+  olderError?: string | null;
   typing: boolean;
   onSend: (text: string, clientMessageId: string) => Promise<{ message: DirectMessage; readError?: string }>;
   onMarkRead: () => Promise<void>;
+  onLoadOlder?: () => void;
+  onOpenMessage?: (messageId: string) => Promise<void>;
   onTypingChange: (typing: boolean) => void;
 }
 
@@ -32,12 +38,31 @@ export function DirectConversation(props: DirectConversationProps) {
   const [showScrollToLatest, setShowScrollToLatest] = createSignal(false);
   const [unreadDividerVisible, setUnreadDividerVisible] = createSignal(false);
   let messageList: HTMLDivElement | undefined;
+  let virtualRoot: HTMLDivElement | undefined;
   let unreadMessagesDivider: HTMLDivElement | undefined;
   let unreadVisibilityFrame: number | undefined;
   let currentUnreadCount = 0;
   let typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
   let stickToLatest = true;
   let lastThreadId: string | undefined;
+  const messageVirtualizer = createChatVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: () => props.snapshot?.messages.length ?? 0,
+    getScrollElement: () => messageList ?? null,
+    estimateSize: () => 56,
+    getItemKey: (index) => props.snapshot?.messages[index]?.id ?? index,
+    scrollMargin: () => virtualRoot?.offsetTop ?? 0,
+    onChange: (instance) => {
+      const first = instance.getVirtualItems()[0];
+      if (first && first.index <= 5 && props.hasOlder && !props.loadingOlder) props.onLoadOlder?.();
+    },
+  });
+  const unreadBannerReady = (): boolean => {
+    const unreadMessageId = props.snapshot?.readState?.firstUnreadMessageId;
+    if (!unreadMessageId) return true;
+    const unreadIndex = props.snapshot?.messages.findIndex((message) => message.id === unreadMessageId) ?? -1;
+    if (unreadIndex < 0) return true;
+    return messageVirtualizer.getVirtualItems().some((item) => item.index === unreadIndex);
+  };
 
   createEffect(
     () => ({
@@ -139,19 +164,24 @@ export function DirectConversation(props: DirectConversationProps) {
     }
   }
 
-  function jumpToUnreadMessages(): void {
-    if (!messageList || !unreadMessagesDivider) return;
+  async function jumpToUnreadMessages(): Promise<void> {
+    if (!messageList) return;
+    const firstUnreadMessageId = props.snapshot?.readState?.firstUnreadMessageId;
+    if (!unreadMessagesDivider && firstUnreadMessageId && props.onOpenMessage) {
+      await props.onOpenMessage(firstUnreadMessageId);
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+    if (!unreadMessagesDivider) return;
     const divider = unreadMessagesDivider;
     const firstUnreadMessage = divider.nextElementSibling instanceof HTMLElement ? divider.nextElementSibling : divider;
     scrollToUnreadBoundary(messageList, firstUnreadMessage);
-    void markUnreadMessages().then(() => {
-      requestAnimationFrame(() => {
-        if (!messageList) return;
-        const settledBoundary = divider.isConnected ? divider : firstUnreadMessage;
-        if (settledBoundary.isConnected) {
-          scrollToUnreadBoundary(messageList, settledBoundary);
-        }
-      });
+    await markUnreadMessages();
+    requestAnimationFrame(() => {
+      if (!messageList) return;
+      const settledBoundary = divider.isConnected ? divider : firstUnreadMessage;
+      if (settledBoundary.isConnected) {
+        scrollToUnreadBoundary(messageList, settledBoundary);
+      }
     });
   }
 
@@ -179,7 +209,7 @@ export function DirectConversation(props: DirectConversationProps) {
         </span>
       </header>
 
-      <Show when={(props.snapshot?.readState?.unreadCount ?? 0) > 0 && !unreadDividerVisible()}>
+      <Show when={(props.snapshot?.readState?.unreadCount ?? 0) > 0 && !unreadDividerVisible() && unreadBannerReady()}>
         <UnreadMessagesBanner
           count={props.snapshot?.readState?.unreadCount ?? 0}
           busy={markingRead()}
@@ -222,34 +252,57 @@ export function DirectConversation(props: DirectConversationProps) {
                 </div>
               }
             >
-              <For each={props.snapshot?.messages ?? []}>
-                {(message, index) => {
-                  const own = () => message.senderMemberId === props.currentMemberId;
-                  const previous = () => props.snapshot?.messages[index() - 1];
-                  const grouped = () => previous()?.senderMemberId === message.senderMemberId;
-                  return (
-                    <>
-                      <Show when={message.id === props.snapshot?.readState?.firstUnreadMessageId}>
-                        <UnreadMessagesDivider
-                          elementRef={(element) => {
-                            unreadMessagesDivider = element;
-                            scheduleUnreadDividerVisibilityUpdate();
-                          }}
-                        />
-                      </Show>
-                      <article
-                        class={["direct-message", { own: own(), grouped: grouped() }]}
-                        aria-label={`${own() ? "You" : teamMemberName(props.member)} at ${messageTime(message.createdAt)}`}
+              <Show when={props.loadingOlder || props.olderError}>
+                <div class="conversation-history-status" role={props.olderError ? "alert" : "status"}>
+                  <Show when={props.olderError} fallback="Loading older messages…">
+                    <span>{props.olderError}</span>
+                    <Button type="button" variant="ghost" size="xs" onClick={() => props.onLoadOlder?.()}>
+                      Retry
+                    </Button>
+                  </Show>
+                </div>
+              </Show>
+              <div
+                ref={(element) => (virtualRoot = element)}
+                class="virtual-chat-list"
+                style={{ height: `${messageVirtualizer.getTotalSize()}px` }}
+              >
+                <For each={messageVirtualizer.getVirtualItems()}>
+                  {(virtualRow) => {
+                    const message = props.snapshot?.messages[virtualRow.index];
+                    if (!message) return null;
+                    const own = () => message.senderMemberId === props.currentMemberId;
+                    const previous = () => props.snapshot?.messages[virtualRow.index - 1];
+                    const grouped = () => previous()?.senderMemberId === message.senderMemberId;
+                    return (
+                      <div
+                        data-index={virtualRow.index}
+                        ref={messageVirtualizer.measureElement}
+                        class="virtual-chat-row"
+                        style={{ transform: `translateY(${virtualRow.start - messageVirtualizer.scrollMargin()}px)` }}
                       >
-                        <div>
-                          <p>{message.text}</p>
-                          <time datetime={message.createdAt}>{messageTime(message.createdAt)}</time>
-                        </div>
-                      </article>
-                    </>
-                  );
-                }}
-              </For>
+                        <Show when={message.id === props.snapshot?.readState?.firstUnreadMessageId}>
+                          <UnreadMessagesDivider
+                            elementRef={(element) => {
+                              unreadMessagesDivider = element;
+                              scheduleUnreadDividerVisibilityUpdate();
+                            }}
+                          />
+                        </Show>
+                        <article
+                          class={["direct-message", { own: own(), grouped: grouped() }]}
+                          aria-label={`${own() ? "You" : teamMemberName(props.member)} at ${messageTime(message.createdAt)}`}
+                        >
+                          <div>
+                            <p>{message.text}</p>
+                            <time datetime={message.createdAt}>{messageTime(message.createdAt)}</time>
+                          </div>
+                        </article>
+                      </div>
+                    );
+                  }}
+                </For>
+              </div>
             </Show>
           </Show>
         </Show>

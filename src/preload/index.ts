@@ -5,12 +5,16 @@ import {
   type AgentStatus,
   type AttachmentImportEvent,
   type BotSummary,
+  type ConversationMessage,
+  type ConversationPage,
   type ConversationReadState,
+  type ConversationSearchPage,
   type ConversationWithReadState,
   type DraftAttachment,
   type ImportAttachmentsInput,
   IPC_CHANNELS,
   isAgentModel,
+  isConversationMessage,
   isReasoningEffort,
   type OpenBotDesktopApi,
   type QueuedMessageReceipt,
@@ -185,6 +189,57 @@ function decodeConversation(value: unknown): ConversationWithReadState {
   return value;
 }
 
+function decodeConversationPage(value: unknown): ConversationPage {
+  if (!isDynamicRecord(value) || !isString(value.botId) || !Array.isArray(value.messages)) {
+    throw new Error("Invalid conversation page response.");
+  }
+  const pageInfo = record(value.pageInfo, "conversation page info");
+  return {
+    botId: value.botId,
+    threadId: requiredNullableString(value, "threadId"),
+    activeTurnId: requiredNullableString(value, "activeTurnId"),
+    revision: requiredNumber(value, "revision"),
+    messages: decodeConversationMessages(value.messages),
+    references: decodeConversationReferences(value.references),
+    pageInfo: {
+      hasOlder: requiredBoolean(pageInfo, "hasOlder"),
+      olderCursor: requiredNullableString(pageInfo, "olderCursor"),
+    },
+    ...(value.readState === undefined ? {} : { readState: decodeReadState(value.readState) }),
+  };
+}
+
+function decodeConversationSearchPage(value: unknown): ConversationSearchPage {
+  const item = record(value, "conversation search page");
+  if (!Array.isArray(item.results)) throw new Error("Invalid conversation search results.");
+  return {
+    results: item.results.map((value) => {
+      const result = record(value, "conversation search result");
+      if (!isConversationMessage(result.message)) throw new Error("Invalid conversation search message.");
+      return { botId: requiredString(result, "botId"), message: result.message };
+    }),
+    total: requiredNumber(item, "total"),
+    nextCursor: requiredNullableString(item, "nextCursor"),
+  };
+}
+
+function decodeConversationMessages(value: unknown): ConversationMessage[] {
+  if (!Array.isArray(value) || !value.every(isConversationMessage)) {
+    throw new Error("Invalid conversation messages.");
+  }
+  return value;
+}
+
+function decodeConversationReferences(value: unknown): Record<string, ConversationMessage> {
+  const references = record(value, "conversation references");
+  const decoded: Record<string, ConversationMessage> = {};
+  for (const [messageId, message] of Object.entries(references)) {
+    if (!isConversationMessage(message)) throw new Error("Invalid conversation reference.");
+    decoded[messageId] = message;
+  }
+  return decoded;
+}
+
 function isConversationWithReadState(value: unknown): value is ConversationWithReadState {
   return (
     isDynamicRecord(value) &&
@@ -262,6 +317,17 @@ function requiredNumber(value: DynamicRecord, field: string): number {
   return value[field];
 }
 
+function requiredString(value: DynamicRecord, field: string): string {
+  const fieldValue = value[field];
+  if (!isString(fieldValue)) throw new Error(`Invalid ${field}.`);
+  return fieldValue;
+}
+
+function requiredBoolean(value: DynamicRecord, field: string): boolean {
+  if (!isBoolean(value[field])) throw new Error(`Invalid ${field}.`);
+  return value[field];
+}
+
 function requiredNullableString(value: DynamicRecord, field: string): string | null {
   const item = value[field];
   if (item !== null && !isString(item)) throw new Error(`Invalid ${field}.`);
@@ -326,6 +392,9 @@ const openbotApi: OpenBotDesktopApi = {
     setAvatar: (input) => invokeAgent(IPC_CHANNELS.agentSetAvatar, input, decodeBot),
     deleteBot: (botId) => invokeAgent(IPC_CHANNELS.agentDeleteBot, botId, decodeVoid),
     readConversation: (botId) => invokeAgent(IPC_CHANNELS.agentReadConversation, botId, decodeConversation),
+    readConversationPage: (input) => invokeAgent(IPC_CHANNELS.agentReadConversationPage, input, decodeConversationPage),
+    searchConversationMessages: (input) =>
+      invokeAgent(IPC_CHANNELS.agentSearchConversationMessages, input, decodeConversationSearchPage),
     listConversationReads: () => invokeAgent(IPC_CHANNELS.agentListConversationReads, null, decodeReadStates),
     markConversationRead: (input) => invokeAgent(IPC_CHANNELS.agentMarkConversationRead, input, decodeReadState),
     chooseAttachments: (input) => invokeAgent(IPC_CHANNELS.agentChooseAttachments, input, decodeAttachments),
@@ -337,6 +406,7 @@ const openbotApi: OpenBotDesktopApi = {
       invokeAgent(IPC_CHANNELS.agentDiscardDraftAttachment, attachmentId, decodeVoid),
     openAttachment: (input) => invokeAgent(IPC_CHANNELS.agentOpenAttachment, input, decodeVoid),
     openSharedFile: (input) => invokeAgent(IPC_CHANNELS.agentOpenSharedFile, input, decodeVoid),
+    openWorkspaceFile: (input) => invokeAgent(IPC_CHANNELS.agentOpenWorkspaceFile, input, decodeVoid),
     sendMessage: (input) => invokeAgent(IPC_CHANNELS.agentSendMessage, input, decodeReceipt),
     setMessageReaction: (input) => invokeAgent(IPC_CHANNELS.agentSetMessageReaction, input, decodeVoid),
     listQueue: (botId) => invokeAgent(IPC_CHANNELS.agentListQueue, botId, decodeQueue),
@@ -414,6 +484,7 @@ const openbotApi: OpenBotDesktopApi = {
     },
     listDirectThreads: () => ipcRenderer.invoke(IPC_CHANNELS.serversListDirectThreads),
     readDirectConversation: (memberId) => ipcRenderer.invoke(IPC_CHANNELS.serversReadDirectConversation, memberId),
+    readDirectConversationPage: (input) => ipcRenderer.invoke(IPC_CHANNELS.serversReadDirectConversationPage, input),
     sendDirectMessage: (input) => ipcRenderer.invoke(IPC_CHANNELS.serversSendDirectMessage, input),
     markDirectRead: (input) => ipcRenderer.invoke(IPC_CHANNELS.serversMarkDirectRead, input),
     setDirectTyping: (input) => ipcRenderer.invoke(IPC_CHANNELS.serversSetDirectTyping, input),

@@ -1,5 +1,6 @@
 export * from "./badge";
 export * from "./button";
+export * from "./checkbox";
 export * from "./complex";
 export * from "./form";
 export * from "./icons";

@@ -87,6 +87,8 @@ const SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS thread_messages_order
     ON projection_thread_messages(thread_id, created_at, ordinal);
+  CREATE INDEX IF NOT EXISTS thread_messages_page_order
+    ON projection_thread_messages(thread_id, created_at, ordinal, message_id);
   CREATE TABLE IF NOT EXISTS projection_thread_reads (
     thread_id TEXT NOT NULL REFERENCES projection_threads(thread_id) ON DELETE CASCADE,
     member_id TEXT NOT NULL,

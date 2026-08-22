@@ -52,10 +52,13 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     setAvatar: unimplemented,
     resolveAvatar: unimplemented,
     readConversationFor: unimplemented,
+    readConversationPageFor: unimplemented,
+    searchConversationMessages: unimplemented,
     markConversationRead: unimplemented,
     prepareImportedAttachments: unimplemented,
     discardDraftAttachment: unimplemented,
     resolveSharedFile: unimplemented,
+    resolveWorkspaceFile: unimplemented,
     sendMessage: unimplemented,
     listQueue: unimplemented,
     setMessageReaction: unimplemented,
@@ -449,6 +452,11 @@ describe("TeamApiServer administration", () => {
         name: path.includes("large") ? "large.csv" : "report.csv",
         size: path.includes("large") ? ATTACHMENT_LIMITS.fileBytes + 1 : 21,
       }),
+      resolveWorkspaceFile: async (botId, path) => ({
+        path: filePath,
+        name: `${botId}-${path.split("/").at(-1)}`,
+        size: 21,
+      }),
     });
     const api = new TeamApiServer({
       store,
@@ -483,6 +491,19 @@ describe("TeamApiServer administration", () => {
 
       const unauthorized = await fetch(`${base}/v1/shared-files?path=Shared/report.csv`);
       expect(unauthorized.status).toBe(401);
+
+      const workspaceResponse = await fetch(
+        `${base}/v1/workspace-files?botId=chief&path=${encodeURIComponent("app/page.tsx")}`,
+        {
+          headers: { Authorization: `Bearer ${login.sessionToken}` },
+        },
+      );
+      expect(workspaceResponse.status).toBe(200);
+      expect(workspaceResponse.headers.get("content-disposition")).toContain("chief-page.tsx");
+      expect(await workspaceResponse.text()).toBe("name,value\nOpenBot,1\n");
+
+      const unauthorizedWorkspace = await fetch(`${base}/v1/workspace-files?botId=chief&path=app/page.tsx`);
+      expect(unauthorizedWorkspace.status).toBe(401);
     } finally {
       await api.stop();
     }

@@ -47,6 +47,7 @@ import { notificationForAgentEvent } from "./agent-notifications";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
 import { resolveOpenBotCloudflaredExecutable } from "./cloudflared-artifact";
+import { buildContentSecurityPolicy } from "./content-security-policy";
 import { developmentUserDataName, readDevelopmentProfile, shouldAutoStartHost } from "./development-profile";
 import { HostService } from "./host-service";
 import {
@@ -60,8 +61,11 @@ import {
   parseMessageReaction,
   parseOpenAttachment,
   parseOpenSharedFile,
+  parseOpenWorkspaceFile,
   parsePromptResponse,
+  parseReadConversationPage,
   parseReorderQueue,
+  parseSearchConversationMessages,
   parseSendMessage,
   parseSetAgentAvatar,
   parseSteerQueuedMessage,
@@ -79,6 +83,7 @@ import {
   parseJoinServer,
   parseLoginServer,
   parseMarkDirectRead,
+  parseReadDirectConversationPage,
   parseReorderServers,
   parseSendDirectMessage,
   parseSetTeamTyping,
@@ -198,20 +203,7 @@ const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
 };
 
 function configureContentSecurityPolicy(): void {
-  const developmentSources = app.isPackaged ? "" : " http://localhost:* ws://localhost:*";
-  const developmentImageSources = app.isPackaged ? "" : " http://127.0.0.1:* http://localhost:*";
-  const developmentFrameSources = app.isPackaged ? "" : " http://127.0.0.1:* http://localhost:*";
-  const policy = [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: openbot-attachment: openbot-remote-attachment: openbot-avatar: openbot-remote-avatar: openbot-server-logo: openbot-remote-server-logo: https:${developmentImageSources}`,
-    "font-src 'self' data:",
-    `connect-src 'self' ws://127.0.0.1:* wss://*.openbot.run${developmentSources}`,
-    "object-src 'none'",
-    `frame-src 'self' openbot-attachment: openbot-remote-attachment: https://*.openbot.run${developmentFrameSources}`,
-    "base-uri 'none'",
-  ].join("; ");
+  const policy = buildContentSecurityPolicy(app.isPackaged);
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     if (details.resourceType !== "mainFrame" || !isTrustedRendererUrl(details.url)) {
@@ -368,6 +360,12 @@ function registerIpcHandlers(
       ? host.readDirectConversation(parsedMemberId)
       : remoteServers.readDirectConversation(parsedMemberId);
   });
+  handleTrusted(IPC_CHANNELS.serversReadDirectConversationPage, (input: unknown) => {
+    const parsed = parseReadDirectConversationPage(input);
+    return remoteServers.activeServerId === "local"
+      ? host.readDirectConversationPage(parsed.memberId, parsed.anchor, parsed.limit)
+      : remoteServers.readDirectConversationPage(parsed.memberId, parsed.anchor, parsed.limit);
+  });
   handleTrusted(IPC_CHANNELS.serversSendDirectMessage, (input: unknown) => {
     const parsed = parseSendDirectMessage(input);
     return remoteServers.activeServerId === "local"
@@ -469,6 +467,26 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.agentReadConversation, (input: unknown) => {
     const scoped = parseAgentRequest(input);
     return routeReadConversation(host, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
+  });
+  handleTrusted(IPC_CHANNELS.agentReadConversationPage, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseReadConversationPage(scoped.payload);
+    return scoped.serverId === "local"
+      ? host.readAgentConversationPage(parsed.botId, parsed.anchor, parsed.limit)
+      : remoteServers.readAgentConversationPage(parsed.botId, parsed.anchor, parsed.limit, scoped.serverId);
+  });
+  handleTrusted(IPC_CHANNELS.agentSearchConversationMessages, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseSearchConversationMessages(scoped.payload);
+    return scoped.serverId === "local"
+      ? host.searchAgentConversationMessages(parsed.query, parsed.botId, parsed.cursor, parsed.limit)
+      : remoteServers.searchAgentConversationMessages(
+          parsed.query,
+          parsed.botId,
+          parsed.cursor,
+          parsed.limit,
+          scoped.serverId,
+        );
   });
   handleTrusted(IPC_CHANNELS.agentListConversationReads, (input: unknown) => {
     const { serverId } = parseAgentRequest(input);
@@ -613,6 +631,25 @@ function registerIpcHandlers(
     }
     const sharedFile = await service.resolveSharedFile(parsed.path);
     const openError = await shell.openPath(sharedFile.path);
+    if (openError) throw new Error(openError);
+  });
+  handleTrusted(IPC_CHANNELS.agentOpenWorkspaceFile, async (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseOpenWorkspaceFile(scoped.payload);
+    if (scoped.serverId !== "local") {
+      const downloaded = await remoteServers.downloadWorkspaceFile(parsed.botId, parsed.path, scoped.serverId);
+      const cacheRoot = join(app.getPath("userData"), "remote-workspace-files");
+      await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
+      const cacheKey = createHash("sha256").update(`${scoped.serverId}:${parsed.botId}:${parsed.path}`).digest("hex");
+      const target = join(cacheRoot, `${cacheKey}-${basename(downloaded.name)}`);
+      await writeFile(target, downloaded.bytes, { mode: 0o600 });
+      await chmod(target, 0o600);
+      const openError = await shell.openPath(target);
+      if (openError) throw new Error(openError);
+      return;
+    }
+    const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
+    const openError = await shell.openPath(workspaceFile.path);
     if (openError) throw new Error(openError);
   });
   handleTrusted(IPC_CHANNELS.agentListQueue, (input: unknown) => {

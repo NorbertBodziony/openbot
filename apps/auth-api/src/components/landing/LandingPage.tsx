@@ -1,4 +1,6 @@
 import { AppLogo, PlatformLogo, ProviderLogo } from "@openbot/brand";
+import { onSettled } from "solid-js";
+import { landingAnalytics } from "../../lib/analytics";
 import { EXTERNAL_LINK_REL, OPENBOT_LINKS } from "../../lib/landing-links";
 import { Button } from "../ui/button";
 import { DownloadSection } from "./DownloadSection";
@@ -8,6 +10,8 @@ import { LandingFooter } from "./LandingFooter";
 import { LandingGlow } from "./LandingGlow";
 
 export function LandingPage() {
+  onSettled(() => landingAnalytics.start(document, window.location.hostname));
+
   return (
     <div class="landing-page">
       <header class="landing-header" data-enter="header">

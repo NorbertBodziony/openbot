@@ -12,6 +12,7 @@ import {
   parseMessageReaction,
   parseOpenAttachment,
   parseOpenSharedFile,
+  parseOpenWorkspaceFile,
   parsePromptResponse,
   parseReorderQueue,
   parseSendMessage,
@@ -191,6 +192,10 @@ describe("agent IPC input parsing", () => {
     expect(parseOpenSharedFile({ path: "~/OpenBot/Shared/report.csv" })).toEqual({
       path: "~/OpenBot/Shared/report.csv",
     });
+    expect(parseOpenWorkspaceFile({ botId: "bot-1", path: "app/page.tsx" })).toEqual({
+      botId: "bot-1",
+      path: "app/page.tsx",
+    });
     expect(parseCancelQueuedMessage({ botId: "bot-1", deliveryId: "delivery-1" })).toEqual({
       botId: "bot-1",
       deliveryId: "delivery-1",
@@ -245,6 +250,7 @@ describe("agent IPC input parsing", () => {
       "Invalid attachment action.",
     );
     expect(() => parseOpenSharedFile({ path: "" })).toThrowError("path is required.");
+    expect(() => parseOpenWorkspaceFile({ botId: "bot-1", path: "" })).toThrowError("path is required.");
     expect(() => parseCancelQueuedMessage(null)).toThrowError("Invalid queue cancellation request.");
     expect(() => parseSteerQueuedMessage(null)).toThrowError("Invalid queued steer request.");
     expect(() =>

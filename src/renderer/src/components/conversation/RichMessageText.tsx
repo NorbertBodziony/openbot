@@ -1,4 +1,5 @@
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
+import type { JSX } from "@solidjs/web";
 import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js";
 import type { BotProfile, MessageCitation } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
@@ -8,7 +9,7 @@ import { AttachmentReferenceVisual, attachmentReferenceTone } from "./Attachment
 import { LinkIcon } from "./ConversationIcons";
 import { messageFileReferences } from "./FileReference";
 
-export function RichMessageText(props: {
+export interface RichMessageTextProps {
   body: string;
   bots: BotProfile[];
   attachments?: AttachmentSummary[];
@@ -17,8 +18,11 @@ export function RichMessageText(props: {
   onOpenLink: (url: string) => void;
   onOpenAttachment?: (attachment: AttachmentSummary) => void;
   onOpenSharedFile?: (path: string) => void;
+  onOpenWorkspaceFile?: (path: string) => void;
   showCitationFooter?: boolean;
-}) {
+}
+
+export function RichMessageText(props: RichMessageTextProps) {
   const citationsByNumber = createMemo(
     () => new Map((props.citations ?? []).map((citation) => [citation.number, citation])),
   );
@@ -91,28 +95,9 @@ export function RichMessageText(props: {
           }
           if (part.url) {
             return (
-              <a
-                class="message-link"
-                href={part.url}
-                title={part.url}
-                onClick={(event) => {
-                  event.preventDefault();
-                  props.onOpenLink(part.url ?? "");
-                }}
-              >
-                <span class="message-link-icon" aria-hidden="true">
-                  <LinkIcon />
-                  <img
-                    src={faviconUrl(part.url)}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                    referrerpolicy="no-referrer"
-                    onError={(event) => event.currentTarget.remove()}
-                  />
-                </span>
+              <MessageLink url={part.url} onOpenLink={props.onOpenLink}>
                 {part.text}
-              </a>
+              </MessageLink>
             );
           }
           if (part.bot) {
@@ -195,6 +180,38 @@ export function RichMessageText(props: {
         )}
       </Show>
     </>
+  );
+}
+
+export function MessageLink(props: {
+  url: string;
+  title?: string | null;
+  children: JSX.Element;
+  onOpenLink: (url: string) => void;
+}) {
+  return (
+    <a
+      class="message-link"
+      href={props.url}
+      title={props.title ?? props.url}
+      onClick={(event) => {
+        event.preventDefault();
+        props.onOpenLink(props.url);
+      }}
+    >
+      <span class="message-link-icon" aria-hidden="true">
+        <LinkIcon />
+        <img
+          src={faviconUrl(props.url)}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerpolicy="no-referrer"
+          onError={(event) => event.currentTarget.remove()}
+        />
+      </span>
+      {props.children}
+    </a>
   );
 }
 
@@ -300,7 +317,7 @@ function linkedMessageParts(body: string): RichMessagePart[] {
   return parts.length > 0 ? parts : [{ text: body }];
 }
 
-function safeBrowserUrl(value: string): string | null {
+export function safeBrowserUrl(value: string): string | null {
   try {
     const url = new URL(value);
     return url.protocol === "http:" || url.protocol === "https:" ? url.toString() : null;

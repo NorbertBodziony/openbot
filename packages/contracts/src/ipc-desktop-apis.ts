@@ -19,18 +19,23 @@ import type {
   BotSummary,
   CancelQueuedMessageInput,
   ChooseAttachmentsInput,
+  ConversationPage,
   ConversationReadState,
+  ConversationSearchPage,
   ConversationWithReadState,
   DraftAttachment,
   InterruptTurnInput,
   MarkConversationReadInput,
   OpenAttachmentInput,
   OpenSharedFileInput,
+  OpenWorkspaceFileInput,
   QueuedMessageReceipt,
   QueueSnapshot,
+  ReadConversationPageInput,
   ReorderQueueInput,
   RespondToApprovalInput,
   RespondToPromptInput,
+  SearchConversationMessagesInput,
   SendMessageInput,
   SetAgentAvatarInput,
   SetMessageReactionInput,
@@ -41,6 +46,7 @@ import type {
 import type {
   ConfigureHostInput,
   CreateTeamInviteInput,
+  DirectConversationPage,
   DirectConversationReadState,
   DirectConversationSnapshot,
   DirectMessage,
@@ -54,6 +60,7 @@ import type {
   JoinServerInput,
   LoginServerInput,
   MarkDirectReadInput,
+  ReadDirectConversationPageInput,
   RemoteDesktopConnectInput,
   RemoteDesktopSelectDisplayInput,
   RemoteDesktopSession,
@@ -80,6 +87,8 @@ export interface AgentDesktopApi {
   setAvatar: (input: SetAgentAvatarInput) => Promise<BotSummary>;
   deleteBot: (botId: string) => Promise<void>;
   readConversation: (botId: string) => Promise<ConversationWithReadState>;
+  readConversationPage: (input: ReadConversationPageInput) => Promise<ConversationPage>;
+  searchConversationMessages: (input: SearchConversationMessagesInput) => Promise<ConversationSearchPage>;
   listConversationReads: () => Promise<Record<string, ConversationReadState>>;
   markConversationRead: (input: MarkConversationReadInput) => Promise<ConversationReadState>;
   chooseAttachments: (input: ChooseAttachmentsInput) => Promise<DraftAttachment[]>;
@@ -87,6 +96,7 @@ export interface AgentDesktopApi {
   discardDraftAttachment: (attachmentId: string) => Promise<void>;
   openAttachment: (input: OpenAttachmentInput) => Promise<void>;
   openSharedFile: (input: OpenSharedFileInput) => Promise<void>;
+  openWorkspaceFile: (input: OpenWorkspaceFileInput) => Promise<void>;
   sendMessage: (input: SendMessageInput) => Promise<QueuedMessageReceipt>;
   setMessageReaction: (input: SetMessageReactionInput) => Promise<void>;
   listQueue: (botId: string) => Promise<QueueSnapshot>;
@@ -144,6 +154,7 @@ export interface ServersDesktopApi {
   onPresence: (listener: (snapshot: TeamPresenceSnapshot) => void) => () => void;
   listDirectThreads: () => Promise<DirectThreadSummary[]>;
   readDirectConversation: (memberId: string) => Promise<DirectConversationSnapshot>;
+  readDirectConversationPage: (input: ReadDirectConversationPageInput) => Promise<DirectConversationPage>;
   sendDirectMessage: (input: SendDirectMessageInput) => Promise<DirectMessage>;
   markDirectRead: (input: MarkDirectReadInput) => Promise<DirectConversationReadState>;
   setDirectTyping: (input: DirectTypingInput) => Promise<void>;

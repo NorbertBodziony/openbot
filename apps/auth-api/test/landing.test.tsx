@@ -34,6 +34,10 @@ describe("landing page", () => {
   it("embeds the real OpenBot application preview during SSR", () => {
     const markup = renderToString(() => <LandingPage />);
 
+    expect(markup).toContain("landing-preview-window-controls");
+    expect(markup).toContain("landing-preview-stage");
+    expect(markup).not.toContain("OpenBot workspace");
+    expect(markup).not.toContain("Live demo");
     expect(markup).toContain('src="/app-preview"');
     expect(markup).toContain('title="Interactive OpenBot application preview"');
     expect(markup).toContain('loading="lazy"');
@@ -47,6 +51,7 @@ describe("landing page", () => {
     const markup = renderToString(() => <AppPreviewPage />);
 
     expect(markup).toContain('id="root"');
+    expect(markup).toContain('data-preview-variant="landing"');
     expect(markup).toContain('aria-label="Loading OpenBot preview"');
     expect(markup).not.toContain('aria-label="Bot navigation"');
   });
@@ -101,8 +106,8 @@ describe("landing page", () => {
     expect(markup.match(new RegExp(`href=\\"${OPENBOT_LINKS.download}\\"`, "g"))).toHaveLength(4);
     expect(markup.match(new RegExp(`href=\\"${OPENBOT_LINKS.contact}\\"`, "g"))).toHaveLength(3);
     for (const href of Object.values(OPENBOT_LINKS)) expect(markup).toContain(`href="${href}"`);
-    expect(markup.match(/target="_blank"/g)).toHaveLength(14);
-    expect(markup.match(/rel="noopener noreferrer"/g)).toHaveLength(14);
+    expect(markup.match(/target="_blank"/g)).toHaveLength(15);
+    expect(markup.match(/rel="noopener noreferrer"/g)).toHaveLength(15);
     expect(markup).not.toMatch(/href="#download"[^>]+target=/);
   });
 

@@ -1,7 +1,8 @@
+import type { JSX } from "@solidjs/web";
 import { For } from "solid-js";
 import type { ComparisonTableBlock } from "./DataTable";
 
-export function ComparisonTable(props: { table: ComparisonTableBlock }) {
+export function ComparisonTable(props: { table: ComparisonTableBlock; renderCell?: (text: string) => JSX.Element }) {
   return (
     <section
       class="message-data-table-scroll message-comparison-table-scroll"
@@ -17,7 +18,7 @@ export function ComparisonTable(props: { table: ComparisonTableBlock }) {
             <For each={props.table.headers}>
               {(header) => (
                 <th scope="col">
-                  <span class="message-data-table-cell-text">{header}</span>
+                  <span class="message-data-table-cell-text">{props.renderCell?.(header) ?? header}</span>
                 </th>
               )}
             </For>
@@ -39,7 +40,7 @@ export function ComparisonTable(props: { table: ComparisonTableBlock }) {
                               : "message-comparison-table-no"
                         }
                       >
-                        {cell}
+                        {index() === 0 ? (props.renderCell?.(cell) ?? cell) : cell}
                       </span>
                     </td>
                   )}

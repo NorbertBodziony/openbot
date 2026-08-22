@@ -137,7 +137,7 @@ export class BotStore {
     if (this.#state.bots.length >= INPUT_LIMITS.agents) {
       throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
     }
-    const record = this.#createRecord(`bot-${randomUUID()}`, "New agent", "New teammate");
+    const record = this.#createRecord(`bot-${randomUUID()}`, "New agent", "");
     this.#state.bots.unshift(record);
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
     this.#persist("agent.created");

@@ -51,12 +51,18 @@ export const AgentTiles: Story = {
     const tile = canvas.getByRole("button", { name: /Chief, Chief of staff/ });
     const avatar = tile.querySelector<HTMLElement>(".bot-row-avatar");
     const title = tile.querySelector<HTMLElement>(".bot-row-title strong");
+    const badge = tile.querySelector<HTMLElement>(".bot-role-badge");
     const preview = tile.querySelector<HTMLElement>(".bot-row-preview");
     const time = tile.querySelector<HTMLElement>(".bot-row-time");
-    if (!avatar || !title || !preview || !time) throw new Error("Agent tile anatomy is incomplete.");
+    if (!avatar || !title || !badge || !preview || !time) throw new Error("Agent tile anatomy is incomplete.");
     await expect(tile.getBoundingClientRect().height).toBe(54);
     await expect(avatar.getBoundingClientRect().width).toBe(36);
     await expect(getComputedStyle(title).fontSize).toBe("14px");
+    const titleRect = title.getBoundingClientRect();
+    const badgeRect = badge.getBoundingClientRect();
+    await expect(Math.abs(titleRect.top + titleRect.height / 2 - (badgeRect.top + badgeRect.height / 2))).toBeLessThan(
+      1,
+    );
     await expect(getComputedStyle(preview).fontSize).toBe("13px");
     await expect(getComputedStyle(time).fontSize).toBe("12px");
   },

@@ -12,8 +12,14 @@ import type {
   BotSummary,
   BrowserControlState,
   BrowserTab,
+  ConversationMessage,
+  ConversationPage,
+  ConversationPageAnchor,
   ConversationReadState,
+  ConversationSearchPage,
   ConversationWithReadState,
+  DirectConversationPage,
+  DirectConversationPageAnchor,
   DirectConversationReadState,
   DirectConversationSnapshot,
   DirectMessage,
@@ -46,6 +52,7 @@ import {
   isAgentModel,
   isAvatarHue,
   isAvatarSeed,
+  isConversationMessage,
   isReasoningEffort,
   isTeamRealtimeEvent,
 } from "@openbot/contracts/ipc";
@@ -365,6 +372,33 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     );
   }
 
+  readAgentConversationPage(
+    botId: string,
+    anchor: ConversationPageAnchor = { type: "latest" },
+    limit = 50,
+    serverId = this.#state.activeServerId,
+  ): Promise<ConversationPage> {
+    return this.request(
+      `/v1/agents/${encodeURIComponent(botId)}/conversation-page${pageQuery(anchor, limit)}`,
+      {},
+      serverId,
+      decodeConversationPage,
+    );
+  }
+
+  searchAgentConversationMessages(
+    query: string,
+    botId?: string,
+    cursor?: string,
+    limit = 100,
+    serverId = this.#state.activeServerId,
+  ): Promise<ConversationSearchPage> {
+    const parameters = new URLSearchParams({ q: query, limit: String(limit) });
+    if (botId) parameters.set("botId", botId);
+    if (cursor) parameters.set("cursor", cursor);
+    return this.request(`/v1/messages/search?${parameters.toString()}`, {}, serverId, decodeConversationSearchPage);
+  }
+
   markAgentConversationRead(
     input: MarkConversationReadInput,
     serverId = this.#state.activeServerId,
@@ -450,6 +484,20 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       {},
       serverId,
       decodeDirectConversationSnapshot,
+    );
+  }
+
+  readDirectConversationPage(
+    memberId: string,
+    anchor: DirectConversationPageAnchor = { type: "latest" },
+    limit = 50,
+    serverId = this.#state.activeServerId,
+  ): Promise<DirectConversationPage> {
+    return this.request(
+      `/v1/direct/conversations/${encodeURIComponent(memberId)}/page${pageQuery(anchor, limit)}`,
+      {},
+      serverId,
+      decodeDirectConversationPage,
     );
   }
 
@@ -621,6 +669,29 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return {
       bytes: new Uint8Array(await response.arrayBuffer()),
       name: encodedName ? decodeURIComponent(encodedName) : "shared-file",
+    };
+  }
+
+  async downloadWorkspaceFile(
+    botId: string,
+    workspacePath: string,
+    serverId = this.#state.activeServerId,
+  ): Promise<{ bytes: Uint8Array; name: string }> {
+    const server = this.#requireServer(serverId);
+    const url = new URL("/v1/workspace-files", server.apiUrl);
+    url.searchParams.set("botId", botId);
+    url.searchParams.set("path", workspacePath);
+    const response = await remoteFetch(url, {
+      headers: { Authorization: `Bearer ${this.#token(server)}` },
+    });
+    if (!response.ok) {
+      throw new Error(responseError(await response.json(), "Workspace file download failed."));
+    }
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      name: encodedName ? decodeURIComponent(encodedName) : "workspace-file",
     };
   }
 
@@ -1068,6 +1139,19 @@ function decodeDirectConversationSnapshot(value: unknown): DirectConversationSna
   };
 }
 
+function decodeDirectConversationPage(value: unknown): DirectConversationPage {
+  const record = decodeRecord(value, "direct conversation page");
+  const readState = record.readState;
+  return {
+    threadId: requiredString(record, "threadId"),
+    otherMemberId: requiredString(record, "otherMemberId"),
+    messages: decodeDirectMessages(record.messages),
+    revision: requiredNumber(record, "revision"),
+    pageInfo: decodePageInfo(record.pageInfo),
+    ...(readState === undefined ? {} : { readState: decodeDirectConversationReadState(readState) }),
+  };
+}
+
 function decodeDirectMessages(value: unknown): DirectMessage[] {
   if (!Array.isArray(value)) throw new Error("Invalid direct-message list.");
   return value.map(decodeDirectMessage);
@@ -1120,6 +1204,72 @@ function decodeConversationWithReadState(value: unknown): ConversationWithReadSt
     ...event.snapshot,
     readState: decodeConversationReadState(record.readState),
   };
+}
+
+function decodeConversationPage(value: unknown): ConversationPage {
+  const record = decodeRecord(value, "agent conversation page");
+  return {
+    botId: requiredString(record, "botId"),
+    threadId: nullableString(record, "threadId"),
+    activeTurnId: nullableString(record, "activeTurnId"),
+    revision: requiredNumber(record, "revision"),
+    messages: decodeConversationMessages(record.messages),
+    references: decodeConversationReferences(record.references),
+    pageInfo: decodePageInfo(record.pageInfo),
+    ...(record.readState === undefined ? {} : { readState: decodeConversationReadState(record.readState) }),
+  };
+}
+
+function decodeConversationSearchPage(value: unknown): ConversationSearchPage {
+  const record = decodeRecord(value, "conversation search page");
+  if (!Array.isArray(record.results)) throw new Error("Invalid conversation search results.");
+  return {
+    results: record.results.map((value) => {
+      const result = decodeRecord(value, "conversation search result");
+      return {
+        botId: requiredString(result, "botId"),
+        message: decodeConversationMessage(result.message, "conversation search message"),
+      };
+    }),
+    total: requiredNumber(record, "total"),
+    nextCursor: nullableString(record, "nextCursor"),
+  };
+}
+
+function decodeConversationMessages(value: unknown): ConversationMessage[] {
+  if (!Array.isArray(value) || !value.every(isConversationMessage)) {
+    throw new Error("Invalid conversation page messages.");
+  }
+  return value;
+}
+
+function decodeConversationReferences(value: unknown): Record<string, ConversationMessage> {
+  const references = decodeRecord(value, "conversation references");
+  const decoded: Record<string, ConversationMessage> = {};
+  for (const [messageId, message] of Object.entries(references)) {
+    decoded[messageId] = decodeConversationMessage(message, "conversation reference");
+  }
+  return decoded;
+}
+
+function decodeConversationMessage(value: unknown, label: string): ConversationMessage {
+  if (!isConversationMessage(value)) throw new Error(`Invalid ${label}.`);
+  return value;
+}
+
+function decodePageInfo(value: unknown): { hasOlder: boolean; olderCursor: string | null } {
+  const record = decodeRecord(value, "conversation page info");
+  return {
+    hasOlder: requiredBoolean(record, "hasOlder"),
+    olderCursor: nullableString(record, "olderCursor"),
+  };
+}
+
+function pageQuery(anchor: ConversationPageAnchor | DirectConversationPageAnchor, limit: number): string {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (anchor.type === "before") query.set("before", anchor.cursor);
+  if (anchor.type === "around") query.set("around", anchor.messageId);
+  return `?${query.toString()}`;
 }
 
 function decodeIdentityProof(value: unknown): {

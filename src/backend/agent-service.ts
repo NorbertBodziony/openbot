@@ -23,7 +23,10 @@ import type {
   BrowserControlState,
   BrowserTab,
   ConversationMessage,
+  ConversationPage,
+  ConversationPageAnchor,
   ConversationReadState,
+  ConversationSearchPage,
   ConversationSnapshot,
   ConversationWithReadState,
   DraftAttachment,
@@ -365,6 +368,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return { path: resolvedPath, name: basename(resolvedPath), size: metadata.size };
   }
 
+  async resolveWorkspaceFile(botId: string, inputPath: string): Promise<ResolvedSharedFile> {
+    const bot = this.#store.list().find((candidate) => candidate.id === botId);
+    if (!bot) throw new Error(`Unknown bot: ${botId}`);
+    const workspaceRoot = await realpath(bot.workspacePath);
+    const candidatePath = workspacePathFromInput(bot.workspacePath, bot.id, inputPath);
+    const resolvedPath = await realpath(candidatePath);
+    if (!isWithin(workspaceRoot, resolvedPath)) {
+      throw new Error("Workspace file must be inside the agent workspace.");
+    }
+    const metadata = await stat(resolvedPath);
+    if (!metadata.isFile()) throw new Error("Workspace path is not a file.");
+    return { path: resolvedPath, name: basename(resolvedPath), size: metadata.size };
+  }
+
   async deleteBot(botId: string): Promise<void> {
     const bot = this.#store.list().find((candidate) => candidate.id === botId);
     if (!bot) throw new Error(`Unknown bot: ${botId}`);
@@ -484,6 +501,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ...snapshot,
       readState: this.#conversationReads.readState(memberId, snapshot),
     };
+  }
+
+  async readConversationPageFor(
+    botId: string,
+    memberId: string,
+    anchor: ConversationPageAnchor = { type: "latest" },
+    limit = 50,
+  ): Promise<ConversationPage> {
+    const bot = await this.#store.getOrCreate(botId);
+    const page = this.#store.database.readConversationPage(botId, bot.threadId, anchor, limit);
+    return {
+      ...page,
+      readState: this.#conversationReads.readStateForThread(memberId, bot.threadId),
+    };
+  }
+
+  searchConversationMessages(query: string, botId?: string, cursor?: string, limit = 100): ConversationSearchPage {
+    return this.#store.database.searchConversationMessages(query, botId, cursor, limit);
   }
 
   listConversationReads(memberId: string): Record<string, ConversationReadState> {
@@ -2736,6 +2771,23 @@ function sharedPathFromInput(sharedRoot: string, inputPath: string): string {
     if (normalized.startsWith(prefix)) return join(sharedRoot, normalized.slice(prefix.length));
   }
   return isAbsolute(inputPath) ? inputPath : join(sharedRoot, normalized);
+}
+
+function workspacePathFromInput(workspaceRoot: string, botId: string, inputPath: string): string {
+  const decoded = decodePath(inputPath.trim());
+  const normalized = decoded.replaceAll("\\", "/");
+  for (const prefix of [`~/OpenBot/Bots/${botId}/`, `OpenBot/Bots/${botId}/`]) {
+    if (normalized.startsWith(prefix)) return join(workspaceRoot, normalized.slice(prefix.length));
+  }
+  return isAbsolute(decoded) ? decoded : join(workspaceRoot, normalized);
+}
+
+function decodePath(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 function isWithin(root: string, candidate: string): boolean {

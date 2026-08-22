@@ -1,17 +1,30 @@
 import type { BotSummary, ConversationReadState, ConversationSnapshot } from "@openbot/contracts/ipc";
-import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { OpenBotDatabase } from "./openbot-database";
 
 export class ConversationReadStore {
   constructor(readonly database: OpenBotDatabase) {}
 
   listStates(memberId: string, bots: BotSummary[]): Record<string, ConversationReadState> {
-    return Object.fromEntries(
-      bots.map((bot) => {
-        const snapshot = this.database.readConversation(bot.id, bot.threadId);
-        return [bot.id, this.readState(memberId, snapshot)];
-      }),
-    );
+    return Object.fromEntries(bots.map((bot) => [bot.id, this.readStateForThread(memberId, bot.threadId)]));
+  }
+
+  readStateForThread(memberId: string, threadId: string | null): ConversationReadState {
+    if (!threadId) return emptyReadState();
+    const stored = this.#storedCursor(threadId, memberId);
+    if (stored === undefined) {
+      const baseline = this.#migrationCursor(threadId);
+      const initialCursor =
+        baseline && !this.#messageExists(threadId, baseline) ? this.#latestMessageId(threadId) : baseline;
+      this.#saveCursor(threadId, memberId, initialCursor, "initialized");
+      return this.#stateFromDatabase(threadId, initialCursor);
+    }
+    if (stored !== null && !this.#messageExists(threadId, stored)) {
+      const latestMessageId = this.#latestMessageId(threadId);
+      this.#saveCursor(threadId, memberId, latestMessageId, "initialized");
+      return this.#stateFromDatabase(threadId, latestMessageId);
+    }
+    return this.#stateFromDatabase(threadId, stored);
   }
 
   adoptMemberState(sourceMemberId: string, targetMemberId: string): void {
@@ -83,6 +96,79 @@ export class ConversationReadStore {
     const value = row.through_message_id;
     if (value === null || isString(value)) return value;
     throw new Error("The stored conversation read cursor is malformed.");
+  }
+
+  #messageExists(threadId: string, messageId: string): boolean {
+    return Boolean(
+      this.database.connection
+        .prepare(
+          `SELECT 1 FROM projection_thread_messages
+           WHERE thread_id = ? AND message_id = ? LIMIT 1`,
+        )
+        .get(threadId, messageId),
+    );
+  }
+
+  #latestMessageId(threadId: string): string | null {
+    const row = this.database.connection
+      .prepare(
+        `SELECT message_id FROM projection_thread_messages
+         WHERE thread_id = ?
+         ORDER BY created_at DESC, ordinal DESC, message_id DESC
+         LIMIT 1`,
+      )
+      .get(threadId);
+    if (row === undefined) return null;
+    if (!isDynamicRecord(row) || !isString(row.message_id)) {
+      throw new Error("The latest conversation message is malformed.");
+    }
+    return row.message_id;
+  }
+
+  #stateFromDatabase(threadId: string, throughMessageId: string | null): ConversationReadState {
+    const boundary = throughMessageId
+      ? this.database.connection
+          .prepare(
+            `SELECT created_at, ordinal, message_id FROM projection_thread_messages
+             WHERE thread_id = ? AND message_id = ?`,
+          )
+          .get(threadId, throughMessageId)
+      : undefined;
+    if (
+      boundary !== undefined &&
+      (!isDynamicRecord(boundary) || !isString(boundary.created_at) || !isNumber(boundary.ordinal))
+    ) {
+      throw new Error("The conversation read boundary is malformed.");
+    }
+    const afterBoundary = boundary ? `AND (created_at, ordinal, message_id) > (?, ?, ?)` : "";
+    const parameters = boundary ? [threadId, boundary.created_at, boundary.ordinal, throughMessageId] : [threadId];
+    const unreadFilter = `author != 'user' AND COALESCE(item_type, '') != 'commentary'`;
+    const countRow = this.database.connection
+      .prepare(
+        `SELECT COUNT(*) AS unread_count FROM projection_thread_messages
+         WHERE thread_id = ? ${afterBoundary} AND ${unreadFilter}`,
+      )
+      .get(...parameters);
+    const firstRow = this.database.connection
+      .prepare(
+        `SELECT message_id FROM projection_thread_messages
+         WHERE thread_id = ? ${afterBoundary} AND ${unreadFilter}
+         ORDER BY created_at, ordinal, message_id LIMIT 1`,
+      )
+      .get(...parameters);
+    if (!isDynamicRecord(countRow) || !isNumber(countRow.unread_count)) {
+      throw new Error("The conversation unread count is malformed.");
+    }
+    if (firstRow !== undefined && (!isDynamicRecord(firstRow) || !isString(firstRow.message_id))) {
+      throw new Error("The first unread conversation message is malformed.");
+    }
+    const firstUnreadMessageId =
+      firstRow !== undefined && isDynamicRecord(firstRow) && isString(firstRow.message_id) ? firstRow.message_id : null;
+    return {
+      unreadCount: countRow.unread_count,
+      firstUnreadMessageId,
+      throughMessageId,
+    };
   }
 
   #migrationCursor(threadId: string): string | null {

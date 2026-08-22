@@ -55,6 +55,29 @@ describe("AgentAvatar", () => {
     expect(requestAnimationFrame).toHaveBeenCalled();
   });
 
+  it("uses one explicit animation state", () => {
+    const requestAnimationFrame = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    window.matchMedia = reducedMotion(false);
+
+    const view = render(() => <AgentAvatar seed="chief" hue={215} animationState="comet" />);
+
+    expect(view.container.querySelector('[data-animation-state="comet"] > svg')).not.toBeNull();
+    expect(requestAnimationFrame).toHaveBeenCalled();
+  });
+
+  it("shows a static frame for an explicit state when reduced motion is enabled", () => {
+    const requestAnimationFrame = vi.fn(() => 1);
+    vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
+    window.matchMedia = reducedMotion(true);
+
+    const view = render(() => <AgentAvatar seed="chief" hue={215} animationState="wide" />);
+
+    expect(view.container.querySelector('[data-animation-state="wide"] > svg')).not.toBeNull();
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
+  });
+
   it("falls back to Bloub when a custom image fails", async () => {
     const view = render(() => <AgentAvatar seed="chief" hue={215} url="mock-avatar://missing" />);
     const image = view.container.querySelector("img");

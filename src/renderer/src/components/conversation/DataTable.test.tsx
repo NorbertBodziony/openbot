@@ -81,6 +81,40 @@ describe("messageContentBlocks", () => {
     ]);
     expect(messageContentBlocks(body, false)).toEqual([{ type: "text", text: body }]);
   });
+
+  it("parses fenced code with a language and filename", () => {
+    expect(
+      messageContentBlocks(
+        ["Use this helper:", "", "```ts churn.ts", 'export const flavor = "pistachio";', "```", "", "Done."].join("\n"),
+      ),
+    ).toEqual([
+      { type: "text", text: "Use this helper:" },
+      {
+        type: "code",
+        code: 'export const flavor = "pistachio";',
+        language: "ts",
+        filename: "churn.ts",
+      },
+      { type: "text", text: "Done." },
+    ]);
+  });
+
+  it("keeps table syntax inside a code fence as code", () => {
+    expect(messageContentBlocks("```md\n| A | B |\n| --- | --- |\n| 1 | 2 |\n```")).toEqual([
+      {
+        type: "code",
+        code: "| A | B |\n| --- | --- |\n| 1 | 2 |",
+        language: "md",
+      },
+    ]);
+  });
+
+  it("renders an unfinished code fence only while the response streams", () => {
+    const body = "```js\nconst answer = 4";
+
+    expect(messageContentBlocks(body, true)).toEqual([{ type: "code", code: "const answer = 4", language: "js" }]);
+    expect(messageContentBlocks(body, false)).toEqual([{ type: "text", text: body }]);
+  });
 });
 
 describe("DataTable", () => {

@@ -283,6 +283,53 @@
   color: var(--openbot-danger);
 }
 
+:where(.ui-checkbox) {
+  position: relative;
+  display: inline-flex;
+  width: var(--openbot-icon-md);
+  height: var(--openbot-icon-md);
+  flex: 0 0 auto;
+}
+
+.ui-checkbox-input {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+}
+
+.ui-checkbox-visual {
+  display: inline-flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: var(--openbot-radius-xs);
+  background: var(--openbot-bg-control);
+  color: transparent;
+}
+
+.ui-checkbox-input:checked + .ui-checkbox-visual {
+  border-color: var(--openbot-accent);
+  background: var(--openbot-accent);
+  color: var(--openbot-text-primary);
+}
+
+.ui-checkbox-input:focus-visible + .ui-checkbox-visual {
+  outline: 2px solid var(--openbot-border-focus);
+  outline-offset: 2px;
+}
+
+.ui-checkbox-visual svg {
+  width: var(--openbot-icon-xs);
+  height: var(--openbot-icon-xs);
+  stroke-width: 2.5;
+}
+
 .ui-badge-dot {
   width: 6px;
   height: 6px;

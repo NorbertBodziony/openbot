@@ -119,16 +119,44 @@ export function mergeConversationSnapshots(
 }
 
 export function sortConversationMessages(messages: ConversationMessage[]): void {
+  const originalIndexes = new Map(messages.map((message, index) => [message, index]));
+  const groupKeys = new Map<ConversationMessage, string>();
+  const groups = new Map<string, { startedAt: number; firstIndex: number }>();
+
+  for (const [index, message] of messages.entries()) {
+    const groupKey = message.turnId ? `turn:${message.turnId}` : `message:${index}`;
+    const createdAt = messageTime(message);
+    const group = groups.get(groupKey);
+    groupKeys.set(message, groupKey);
+    if (group) {
+      group.startedAt = Math.min(group.startedAt, createdAt);
+      group.firstIndex = Math.min(group.firstIndex, index);
+    } else {
+      groups.set(groupKey, { startedAt: createdAt, firstIndex: index });
+    }
+  }
+
   messages.sort((left, right) => {
+    const leftGroup = groups.get(groupKeys.get(left) ?? "");
+    const rightGroup = groups.get(groupKeys.get(right) ?? "");
+    if (leftGroup && rightGroup && leftGroup !== rightGroup) {
+      if (leftGroup.startedAt !== rightGroup.startedAt) return leftGroup.startedAt - rightGroup.startedAt;
+      if (leftGroup.firstIndex !== rightGroup.firstIndex) return leftGroup.firstIndex - rightGroup.firstIndex;
+    }
+
     if (left.turnId && left.turnId === right.turnId) {
       const rankDifference = turnMessageRank(left) - turnMessageRank(right);
       if (rankDifference !== 0) return rankDifference;
     }
-    const leftTime = Date.parse(left.createdAt);
-    const rightTime = Date.parse(right.createdAt);
-    if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) return 0;
-    return leftTime - rightTime;
+    const timeDifference = messageTime(left) - messageTime(right);
+    if (timeDifference !== 0) return timeDifference;
+    return (originalIndexes.get(left) ?? 0) - (originalIndexes.get(right) ?? 0);
   });
+}
+
+function messageTime(message: ConversationMessage): number {
+  const timestamp = Date.parse(message.createdAt);
+  return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
 }
 
 function turnMessageRank(message: ConversationMessage): 0 | 1 | 2 | 3 {

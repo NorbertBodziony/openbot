@@ -13,3 +13,79 @@
   height: 100%;
   background: var(--openbot-bg-canvas);
 }
+
+.openbot-playground-root .unread-messages-banner {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .openbot-playground-root .app-frame,
+  .openbot-playground-root .app-frame-with-server-rail {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 68px minmax(0, 1fr);
+  }
+
+  .openbot-playground-root .server-rail,
+  .openbot-playground-root .account-dock,
+  .openbot-playground-root .left-panel-resizer,
+  .openbot-playground-root .sidebar-topbar,
+  .openbot-playground-root .sidebar-search-wrap,
+  .openbot-playground-root .sidebar-chat-group[aria-labelledby="sidebar-people-heading"] {
+    display: none;
+  }
+
+  .openbot-playground-root .sidebar {
+    grid-column: 1;
+    grid-row: 1;
+    flex-direction: row;
+    border-right: 0;
+    border-bottom: 1px solid var(--openbot-border);
+  }
+
+  .openbot-playground-root .bot-list,
+  .openbot-playground-root .sidebar-compact .bot-list {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    align-items: center;
+    justify-content: center;
+    gap: var(--openbot-space-1-5);
+    padding: var(--openbot-space-2) var(--openbot-space-3);
+  }
+
+  .openbot-playground-root .sidebar-chat-group[aria-labelledby="sidebar-agents-heading"],
+  .openbot-playground-root .sidebar-chat-group[aria-label="Agents"] {
+    display: flex;
+    align-items: center;
+    gap: var(--openbot-space-1-5);
+    margin: 0;
+  }
+
+  .openbot-playground-root .sidebar-chat-group[aria-labelledby="sidebar-agents-heading"] > header,
+  .openbot-playground-root .sidebar-chat-group[aria-label="Agents"] > header {
+    display: none;
+  }
+
+  .openbot-playground-root .agent-row,
+  .openbot-playground-root .sidebar-compact .agent-row {
+    width: 48px;
+    height: 48px;
+    flex: 0 0 48px;
+    margin: 0;
+    padding: 6px;
+  }
+
+  .openbot-playground-root .sidebar-compact .bot-row-avatar {
+    transform: none;
+  }
+
+  .openbot-playground-root .bot-row-copy {
+    display: none;
+  }
+
+  .openbot-playground-root .conversation-panel,
+  .openbot-playground-root .app-frame-with-server-rail .conversation-panel {
+    grid-column: 1;
+    grid-row: 2;
+  }
+}

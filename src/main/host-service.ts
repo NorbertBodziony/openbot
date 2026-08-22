@@ -4,9 +4,14 @@ import { createInviteUrl } from "@openbot/contracts/invite-links";
 import type {
   CentralAuthUser,
   ConfigureHostInput,
+  ConversationPage,
+  ConversationPageAnchor,
   ConversationReadState,
+  ConversationSearchPage,
   ConversationWithReadState,
   CreateTeamInviteInput,
+  DirectConversationPage,
+  DirectConversationPageAnchor,
   DirectConversationReadState,
   DirectConversationSnapshot,
   DirectMessage,
@@ -369,6 +374,18 @@ export class HostService extends EventEmitter<HostEvents> {
     return this.#options.agents.readConversationFor(botId, this.#currentAgentReaderId());
   }
 
+  readAgentConversationPage(
+    botId: string,
+    anchor: ConversationPageAnchor = { type: "latest" },
+    limit = 50,
+  ): Promise<ConversationPage> {
+    return this.#options.agents.readConversationPageFor(botId, this.#currentAgentReaderId(), anchor, limit);
+  }
+
+  searchAgentConversationMessages(query: string, botId?: string, cursor?: string, limit = 100): ConversationSearchPage {
+    return this.#options.agents.searchConversationMessages(query, botId, cursor, limit);
+  }
+
   listAgentConversationReads(): Record<string, ConversationReadState> {
     return this.#options.agents.listConversationReads(this.#currentAgentReaderId());
   }
@@ -385,6 +402,14 @@ export class HostService extends EventEmitter<HostEvents> {
 
   readDirectConversation(memberId: string): DirectConversationSnapshot {
     return this.#api.readDirectConversation(this.#currentMemberId(), memberId);
+  }
+
+  readDirectConversationPage(
+    memberId: string,
+    anchor: DirectConversationPageAnchor = { type: "latest" },
+    limit = 50,
+  ): DirectConversationPage {
+    return this.#api.readDirectConversationPage(this.#currentMemberId(), memberId, anchor, limit);
   }
 
   sendDirectMessage(input: SendDirectMessageInput): DirectMessage {

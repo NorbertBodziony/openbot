@@ -28,6 +28,7 @@ import type {
   OpenAttachmentInput,
   OpenBotDesktopApi,
   OpenSharedFileInput,
+  OpenWorkspaceFileInput,
   QueueDelivery,
   QueueSnapshot,
   RemoteDesktopSession,
@@ -77,7 +78,7 @@ export interface MockOpenBotOptions {
   authState?: CentralAuthState;
   setupState?: AppSetupState;
   agentStatus?: AgentStatus;
-  bots?: typeof STORY_BOT_SUMMARIES;
+  bots?: BotSummary[];
   models?: AgentModelOption[];
   snapshots?: Record<string, ConversationSnapshot>;
   browserTabs?: BrowserTab[];
@@ -97,6 +98,19 @@ export interface MockOpenBotOptions {
 export interface MockOpenBotControls {
   api: OpenBotDesktopApi;
   emitAgentEvent: (event: AgentEvent) => void;
+  onLatestConversationOpened: (listener: (botId: string) => void) => () => void;
+  onLatestDirectConversationOpened: (listener: (memberId: string) => void) => () => void;
+  readConversationSnapshot: (botId: string) => ConversationSnapshot;
+  updateConversationSnapshot: (botId: string, update: (snapshot: ConversationSnapshot) => void) => ConversationSnapshot;
+  readDirectConversationSnapshot: (memberId: string) => DirectConversationSnapshot;
+  updateDirectConversationSnapshot: (
+    memberId: string,
+    update: (snapshot: DirectConversationSnapshot) => void,
+  ) => DirectConversationSnapshot;
+  emitConversationDelta: (
+    event: Omit<Extract<AgentEvent, { type: "conversation-delta" }>, "type" | "revision">,
+  ) => void;
+  setQueueSnapshot: (botId: string, deliveries: QueueDelivery[]) => QueueSnapshot;
   emitAuthState: (state: CentralAuthState) => void;
   emitPresence: (snapshot: TeamPresenceSnapshot) => void;
   emitDirectMessage: (event: DirectMessageRealtimeEvent) => void;
@@ -155,6 +169,8 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   const remoteDesktopListeners = new Set<Listener<RemoteDesktopSession[]>>();
   const updateListeners = new Set<Listener<UpdateStatus>>();
   const attachmentListeners = new Set<Listener<AttachmentImportEvent>>();
+  const latestConversationListeners = new Set<Listener<string>>();
+  const latestDirectConversationListeners = new Set<Listener<string>>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
   const emit = <T>(listeners: Set<Listener<T>>, value: T) => {
@@ -192,6 +208,32 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     emit(directTypingListeners, event);
   }
 
+  function getDirectSnapshot(memberId: string): DirectConversationSnapshot {
+    return (
+      directSnapshots[memberId] ?? {
+        threadId: `direct-${memberId}`,
+        otherMemberId: memberId,
+        messages: [],
+        revision: 0,
+      }
+    );
+  }
+
+  function readDirectConversationSnapshot(memberId: string): DirectConversationSnapshot {
+    return clone(getDirectSnapshot(memberId));
+  }
+
+  function updateDirectConversationSnapshot(
+    memberId: string,
+    update: (snapshot: DirectConversationSnapshot) => void,
+  ): DirectConversationSnapshot {
+    const snapshot = getDirectSnapshot(memberId);
+    update(snapshot);
+    snapshot.revision += 1;
+    directSnapshots[memberId] = snapshot;
+    return readDirectConversationSnapshot(memberId);
+  }
+
   function emitInvite(inviteUrl: string): void {
     emit(inviteListeners, inviteUrl);
   }
@@ -224,6 +266,34 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     snapshot.revision += 1;
     snapshots[botId] = snapshot;
     emitAgentEvent({ type: "conversation", snapshot });
+  }
+
+  function readConversationSnapshot(botId: string): ConversationSnapshot {
+    return clone(getSnapshot(botId));
+  }
+
+  function updateConversationSnapshot(
+    botId: string,
+    update: (snapshot: ConversationSnapshot) => void,
+  ): ConversationSnapshot {
+    updateSnapshot(botId, update);
+    return readConversationSnapshot(botId);
+  }
+
+  function emitConversationDelta(
+    event: Omit<Extract<AgentEvent, { type: "conversation-delta" }>, "type" | "revision">,
+  ): void {
+    const snapshot = getSnapshot(event.botId);
+    snapshot.revision += 1;
+    snapshots[event.botId] = snapshot;
+    emitAgentEvent({ ...event, type: "conversation-delta", revision: snapshot.revision });
+  }
+
+  function setQueueSnapshot(botId: string, deliveries: QueueDelivery[]): QueueSnapshot {
+    const snapshot = { botId, deliveries: clone(deliveries) };
+    queues.set(botId, snapshot);
+    emitAgentEvent({ type: "queue-changed", snapshot });
+    return clone(snapshot);
   }
 
   function createBotSummary(input: Partial<BotSummary> = {}): BotSummary {
@@ -344,6 +414,29 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         ...clone(getSnapshot(botId)),
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
       }),
+      readConversationPage: async (input) => {
+        if (!input.anchor || input.anchor.type === "latest") {
+          emit(latestConversationListeners, input.botId);
+        }
+        const snapshot = clone(getSnapshot(input.botId));
+        const messages = snapshot.messages.slice(-Math.min(input.limit ?? 50, 100));
+        return {
+          ...snapshot,
+          messages,
+          references: {},
+          pageInfo: { hasOlder: snapshot.messages.length > messages.length, olderCursor: null },
+          readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+        };
+      },
+      searchConversationMessages: async (input) => {
+        const query = input.query.trim().toLocaleLowerCase();
+        const results = bots.flatMap((bot) =>
+          getSnapshot(bot.id)
+            .messages.filter((message) => message.text.toLocaleLowerCase().includes(query))
+            .map((message) => ({ botId: bot.id, message: clone(message) })),
+        );
+        return { results: results.slice(0, input.limit ?? 100), total: results.length, nextCursor: null };
+      },
       listConversationReads: async () => ({}),
       markConversationRead: async (input) => ({
         unreadCount: 0,
@@ -358,6 +451,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       discardDraftAttachment: async () => undefined,
       openAttachment: async (_input: OpenAttachmentInput) => undefined,
       openSharedFile: async (_input: OpenSharedFileInput) => undefined,
+      openWorkspaceFile: async (_input: OpenWorkspaceFileInput) => undefined,
       sendMessage: async (input: SendMessageInput) => {
         const messageId = `mock-message-${messageCounter++}`;
         const deliveryId = `mock-delivery-${messageCounter++}`;
@@ -645,6 +739,25 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
             revision: 0,
           },
         ),
+      readDirectConversationPage: async (input) => {
+        if (!input.anchor || input.anchor.type === "latest") {
+          emit(latestDirectConversationListeners, input.memberId);
+        }
+        const snapshot = clone(
+          directSnapshots[input.memberId] ?? {
+            threadId: `direct-${input.memberId}`,
+            otherMemberId: input.memberId,
+            messages: [],
+            revision: 0,
+          },
+        );
+        const messages = snapshot.messages.slice(-Math.min(input.limit ?? 50, 100));
+        return {
+          ...snapshot,
+          messages,
+          pageInfo: { hasOlder: snapshot.messages.length > messages.length, olderCursor: null },
+        };
+      },
       sendDirectMessage: async (input: SendDirectMessageInput) => {
         const message: DirectMessage = {
           id: input.clientMessageId,
@@ -793,6 +906,20 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   return {
     api,
     emitAgentEvent,
+    onLatestConversationOpened: (listener) => {
+      latestConversationListeners.add(listener);
+      return () => latestConversationListeners.delete(listener);
+    },
+    onLatestDirectConversationOpened: (listener) => {
+      latestDirectConversationListeners.add(listener);
+      return () => latestDirectConversationListeners.delete(listener);
+    },
+    readConversationSnapshot,
+    updateConversationSnapshot,
+    readDirectConversationSnapshot,
+    updateDirectConversationSnapshot,
+    emitConversationDelta,
+    setQueueSnapshot,
     emitAuthState,
     emitPresence,
     emitDirectMessage,
@@ -813,6 +940,8 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       remoteDesktopListeners.clear();
       updateListeners.clear();
       attachmentListeners.clear();
+      latestConversationListeners.clear();
+      latestDirectConversationListeners.clear();
       void appInfo;
     },
   };

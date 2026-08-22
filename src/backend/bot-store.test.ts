@@ -176,6 +176,8 @@ describe("BotStore", () => {
     expect(first.id).not.toBe(second.id);
     expect(first.name).toBe("New agent");
     expect(second.name).toBe("New agent");
+    expect(first.title).toBe("");
+    expect(second.title).toBe("");
     expect(
       store
         .list()
