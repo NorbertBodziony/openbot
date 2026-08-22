@@ -1143,7 +1143,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(stored.closest(".message-entry")).not.toHaveClass("message-entry-animated");
   });
 
-  it("renders message links and opens them in the embedded browser", async () => {
+  it("renders message links and opens them in the external browser", async () => {
     vi.mocked(window.openbot.agent.readConversation).mockResolvedValueOnce({
       botId: "chief",
       threadId: "thread-chief",
@@ -3336,7 +3336,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("This approval is no longer active.")).toBeInTheDocument();
   });
 
-  it("renders persistent outgoing and incoming agent exchanges", async () => {
+  it("opens the recipient chat from a persistent agent exchange", async () => {
     vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) => ({
       botId,
       threadId: "thread-1",
@@ -3375,12 +3375,9 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     expect(await screen.findByText("Messaged")).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Open exchange with Sales Outbound" }));
-    expect(await screen.findByRole("dialog", { name: "Messages with Sales Outbound" })).toBeInTheDocument();
-    expect(screen.getByText("Prepare report")).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Close message history" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open chat with Sales Outbound" }));
+    expect(await screen.findByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Messages with Sales Outbound" })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Chief" })).toBeInTheDocument();
   });
 
   it("shows an incoming agent marker without duplicating raw collaborator input", async () => {
@@ -3429,7 +3426,7 @@ describe("OpenBot connected desktop shell", () => {
     }));
 
     render(() => <App />);
-    expect(await screen.findByRole("button", { name: "Open exchange with Sales Outbound" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open chat with Sales Outbound" })).toBeInTheDocument();
     expect(screen.queryByText("RAW_COLLABORATOR_RESULT")).not.toBeInTheDocument();
     expect(screen.getByText("Sales Outbound reports that the pipeline is ready.")).toBeInTheDocument();
   });

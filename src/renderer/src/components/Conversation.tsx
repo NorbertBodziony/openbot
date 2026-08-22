@@ -34,7 +34,6 @@ import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
 import { ApprovalCard, ChoiceCard } from "./ConversationPrompts";
 import { AgentActivityIndicator, ThinkingDisclosure } from "./conversation/AgentActivity";
-import { AgentExchangeHistoryModal } from "./conversation/AgentExchangeHistoryModal";
 import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
 import { attachmentReferenceTone } from "./conversation/AttachmentReference";
 import { ChatSearch } from "./conversation/ChatSearch";
@@ -239,7 +238,6 @@ export function Conversation(props: ConversationProps) {
   });
   const [browserAddress, setBrowserAddress] = createSignal("https://www.google.com");
   const [mediaPreview, setMediaPreview] = createSignal<MediaPreview | null>(null);
-  const [exchangeHistoryAgentId, setExchangeHistoryAgentId] = createSignal<string | null>(null);
   const [openReactionMessageId, setOpenReactionMessageId] = createSignal<string | null>(null);
   const [openMoreMessageId, setOpenMoreMessageId] = createSignal<string | null>(null);
   const [expandedEmojiMessageId, setExpandedEmojiMessageId] = createSignal<string | null>(null);
@@ -295,7 +293,6 @@ export function Conversation(props: ConversationProps) {
     { kind: "create" },
     ...props.bots.map((bot) => ({ kind: "bot" as const, bot })),
   ]);
-  const exchangeHistoryAgent = createMemo(() => props.bots.find((bot) => bot.id === exchangeHistoryAgentId()));
   const activeRightPanel = createMemo<RightPanelMode>(() => {
     if (props.agentPickerOpen) return "none";
     const botId = props.bot?.id;
@@ -320,12 +317,6 @@ export function Conversation(props: ConversationProps) {
       const browserWasClosed = open && previousBrowserTabCount > 0 && count === 0;
       previousBrowserTabCount = count;
       if (browserWasClosed) hideBrowserPanel();
-    },
-  );
-  createEffect(
-    () => props.bot?.id,
-    () => {
-      setExchangeHistoryAgentId(null);
     },
   );
   const activeBrowserControl = createMemo(() => {
@@ -1505,11 +1496,11 @@ export function Conversation(props: ConversationProps) {
     }
   }
 
-  async function openMessageLink(url: string) {
+  async function openExternalMessageUrl(url: string) {
     try {
       await window.openbot.openUrl(url);
     } catch {
-      setComposerError("Could not open the link.");
+      setComposerError("Could not open the link in the external browser.");
     }
   }
 
@@ -1937,7 +1928,7 @@ export function Conversation(props: ConversationProps) {
                                   )}
                                   bots={props.bots}
                                   onSelectAgent={props.onSelectAgent}
-                                  onOpenLink={(url) => void openMessageLink(url)}
+                                  onOpenLink={(url) => void openExternalMessageUrl(url)}
                                   onPreview={(attachment) => void previewAttachment(attachment)}
                                   onAttachmentAction={attachmentAction}
                                   onOpenSharedFile={openSharedFile}
@@ -1997,11 +1988,7 @@ export function Conversation(props: ConversationProps) {
                         data-chat-search-message={message.id}
                         class={["exchange-message-entry", { "exchange-message-entry-animated": animateEntrance }]}
                       >
-                        <ExchangeSystemRow
-                          message={message}
-                          bots={props.bots}
-                          onOpenAgentHistory={setExchangeHistoryAgentId}
-                        />
+                        <ExchangeSystemRow message={message} bots={props.bots} onSelectAgent={props.onSelectAgent} />
                         <Show when={exchange().direction === "incoming" && (message.attachments?.length ?? 0) > 0}>
                           <div class="exchange-agent-attachments">
                             <AttachmentCards
@@ -2306,20 +2293,6 @@ export function Conversation(props: ConversationProps) {
           </div>
         </div>
       </Show>
-
-      <AgentExchangeHistoryModal
-        open={Boolean(exchangeHistoryAgent())}
-        currentBot={props.bot}
-        agent={exchangeHistoryAgent()}
-        bots={props.bots}
-        messages={props.messages}
-        onOpenChange={(open) => !open && setExchangeHistoryAgentId(null)}
-        onSelectAgent={props.onSelectAgent}
-        onOpenLink={(url) => void openMessageLink(url)}
-        onPreview={(attachment) => void previewAttachment(attachment)}
-        onAttachmentAction={attachmentAction}
-        onOpenSharedFile={openSharedFile}
-      />
 
       <Dialog.Root open={Boolean(mediaPreview())} onOpenChange={(open) => !open && setMediaPreview(null)}>
         <Show when={mediaPreview()}>

@@ -59,6 +59,7 @@ describe("RichMessageText tooltips", () => {
   });
 
   it("associates a citation tooltip with its trigger and closes it with Escape", async () => {
+    const onOpenLink = vi.fn();
     render(() => (
       <RichMessageText
         body="Read the source [1]."
@@ -72,7 +73,7 @@ describe("RichMessageText tooltips", () => {
           },
         ]}
         onSelectAgent={vi.fn()}
-        onOpenLink={vi.fn()}
+        onOpenLink={onOpenLink}
       />
     ));
 
@@ -86,6 +87,13 @@ describe("RichMessageText tooltips", () => {
 
     await fireEvent.keyDown(citation, { key: "Escape" });
     expect(screen.queryByRole("tooltip")).toBeNull();
+
+    await fireEvent.click(citation);
+    expect(onOpenLink).toHaveBeenLastCalledWith("https://arxiv.org/abs/1706.03762");
+
+    await fireEvent.click(screen.getByRole("link", { name: "Open source 1: Attention Is All You Need" }));
+    expect(onOpenLink).toHaveBeenCalledTimes(2);
+    expect(onOpenLink).toHaveBeenLastCalledWith("https://arxiv.org/abs/1706.03762");
   });
 
   it("keeps a truncated file name visible after a touch tap while opening the file", async () => {

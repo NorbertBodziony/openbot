@@ -56,6 +56,7 @@ describe("development state seed", () => {
     const summaries = bots.list();
     expect(summaries).toHaveLength(4);
     expect(summaries.every((bot) => bot.threadId !== null)).toBe(true);
+    expect(summaries.every((bot) => bot.model === "gpt-5.6-luna" && bot.reasoningEffort === "low")).toBe(true);
 
     const persistedMessages = summaries.flatMap((bot) => bots.database.readConversation(bot.id, bot.threadId).messages);
     expect(persistedMessages.some((message) => message.status === "failed")).toBe(true);

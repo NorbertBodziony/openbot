@@ -35,7 +35,7 @@ function exchangeAgentsStyle(bots: Array<BotProfile | undefined>): string | unde
 export function ExchangeSystemRow(props: {
   message: BotMessage;
   bots: BotProfile[];
-  onOpenAgentHistory: (botId: string) => void;
+  onSelectAgent: (botId: string) => void;
 }) {
   const exchange = () => props.message.exchange;
   const recipients = () => exchange()?.recipientBotIds ?? [];
@@ -60,10 +60,10 @@ export function ExchangeSystemRow(props: {
               type="button"
               class="exchange-agent-trigger exchange-agent-trigger-incoming"
               style={exchangeAgentStyle(sender())}
-              aria-label={`Open exchange with ${sender()?.name ?? exchange()?.senderBotId ?? "agent"}`}
+              aria-label={`Open chat with ${sender()?.name ?? exchange()?.senderBotId ?? "agent"}`}
               onClick={() => {
                 const senderId = exchange()?.senderBotId;
-                if (senderId) props.onOpenAgentHistory(senderId);
+                if (senderId) props.onSelectAgent(senderId);
               }}
             >
               <ExchangeAgentAvatar bot={sender()} />
@@ -99,7 +99,7 @@ export function ExchangeSystemRow(props: {
                       return (
                         <DropdownMenu.Item
                           class="exchange-agent-menu-item"
-                          onSelect={() => props.onOpenAgentHistory(recipientId)}
+                          onSelect={() => props.onSelectAgent(recipientId)}
                         >
                           <ExchangeAgentAvatar bot={recipient()} />
                           <span>{recipient()?.name ?? recipientId}</span>
@@ -116,11 +116,11 @@ export function ExchangeSystemRow(props: {
             type="button"
             class="exchange-agent-trigger exchange-agent-trigger-single"
             style={exchangeAgentStyle(singleRecipient())}
-            aria-label={`Open exchange with ${singleRecipient()?.name ?? recipients()[0] ?? "agent"}`}
+            aria-label={`Open chat with ${singleRecipient()?.name ?? recipients()[0] ?? "agent"}`}
             title={singleRecipient()?.name ?? recipients()[0] ?? "Agent"}
             onClick={() => {
               const recipientId = recipients()[0];
-              if (recipientId) props.onOpenAgentHistory(recipientId);
+              if (recipientId) props.onSelectAgent(recipientId);
             }}
           >
             <ExchangeAgentAvatar bot={singleRecipient()} />

@@ -5,6 +5,18 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.16] - 2026-08-22
+
+### Changed
+
+- Open an agent chat directly from incoming and outgoing exchange markers instead of showing a separate exchange history dialog.
+- Use Luna with low reasoning effort for every deterministic development seed agent.
+
+### Fixed
+
+- Run development-state reset tests in the Node environment so CI and signed release builds can load `node:sqlite`.
+- Keep message links, inline citations, and source references routed to the system browser, with a clear error when opening fails.
+
 ## [0.1.15] - 2026-08-22
 
 ### Added

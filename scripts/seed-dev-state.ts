@@ -20,6 +20,8 @@ const TEAM_FILE = "openbot-team-server-v1.json";
 const SETUP_FILE = "openbot-setup-v2.json";
 const SEED_VERSION = 1;
 const SEEDED_AT = "2026-08-21T10:00:00.000Z";
+const SEED_AGENT_MODEL = "gpt-5.6-luna";
+const SEED_AGENT_REASONING_EFFORT = "low";
 const GENERATED_DIRECTORY_PATTERN =
   /^generated\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const SHOWCASE_IMAGE_PATH = resolve(process.cwd(), "src", "renderer", "src", "assets", "openbot-logo-dev.png");
@@ -73,8 +75,8 @@ const AGENTS = [
     name: "Chief",
     title: "Chief of staff",
     description: "Coordinates priorities, decisions, and handoffs across the team.",
-    model: "gpt-5.6-luna",
-    reasoningEffort: "medium",
+    model: SEED_AGENT_MODEL,
+    reasoningEffort: SEED_AGENT_REASONING_EFFORT,
     avatarHue: 245,
     preview: "The launch plan is ready with owners, evidence, and next actions.",
   },
@@ -83,8 +85,8 @@ const AGENTS = [
     name: "Research",
     title: "Research partner",
     description: "Finds reliable sources and turns them into concise briefs.",
-    model: "claude-sonnet-5",
-    reasoningEffort: "high",
+    model: SEED_AGENT_MODEL,
+    reasoningEffort: SEED_AGENT_REASONING_EFFORT,
     avatarHue: 185,
     preview: "The source review and evidence map are complete.",
   },
@@ -93,8 +95,8 @@ const AGENTS = [
     name: "Builder",
     title: "Product engineer",
     description: "Builds product changes and records clear technical decisions.",
-    model: "gpt-5.6-terra",
-    reasoningEffort: "high",
+    model: SEED_AGENT_MODEL,
+    reasoningEffort: SEED_AGENT_REASONING_EFFORT,
     avatarHue: 30,
     preview: "The implementation checklist includes tests and rollback steps.",
   },
@@ -103,8 +105,8 @@ const AGENTS = [
     name: "Launch",
     title: "Go-to-market lead",
     description: "Prepares launch assets, messaging, and release checklists.",
-    model: "gpt-5.6-sol",
-    reasoningEffort: "high",
+    model: SEED_AGENT_MODEL,
+    reasoningEffort: SEED_AGENT_REASONING_EFFORT,
     avatarHue: 320,
     preview: "The launch brief is ready for final review.",
   },
