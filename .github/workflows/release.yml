@@ -81,7 +81,7 @@ jobs:
     name: Build signed macOS ARM64 release
     needs: validate
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 90
     environment: release
     permissions:
       attestations: write
