@@ -5,6 +5,19 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-08-22
+
+### Changed
+
+- Load the interactive landing preview from server markup and retry its ready handshake until playback starts.
+- Cache the verified Whisper model in application CI and release workflows.
+
+### Fixed
+
+- Exit a second desktop app process immediately when another OpenBot instance already holds the profile lock.
+- Keep the agent activity avatar visible for 500 ms after streaming ends and preserve its layout space when it exits.
+- Show the message queue only while a delivery is starting or running, so the first message does not flash in Queue.
+
 ## [0.1.18] - 2026-08-22
 
 ### Added

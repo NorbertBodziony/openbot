@@ -2431,6 +2431,10 @@
   animation: message-in var(--openbot-duration-normal) cubic-bezier(0.23, 1, 0.32, 1) forwards;
 }
 
+.agent-activity-slot[data-reserved="true"] {
+  min-height: 44px;
+}
+
 .agent-activity-entry {
   width: 100%;
   display: grid;

@@ -185,6 +185,7 @@
   --openbot-duration-normal: 160ms;
   --openbot-duration-slow: 200ms;
   --openbot-duration-overlay: 240ms;
+  --openbot-agent-activity-exit-delay: 500ms;
   --openbot-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --openbot-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --openbot-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);

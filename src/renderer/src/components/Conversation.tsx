@@ -127,7 +127,7 @@ function agentActivityShowDelay(): number {
 }
 
 function agentActivityExitDelay(): number {
-  return rendererDuration("--openbot-duration-fast", 120);
+  return rendererDuration("--openbot-agent-activity-exit-delay", 500);
 }
 
 function followConversationBottom(element: HTMLDivElement): void {
@@ -419,6 +419,7 @@ export function Conversation(props: ConversationProps) {
     return matching.length > 0 ? matching : deliveries;
   });
   const [renderedAgentActivity, setRenderedAgentActivity] = createSignal<RenderedAgentActivity | null>(null);
+  const [agentActivitySpaceReserved, setAgentActivitySpaceReserved] = createSignal(false);
   const streamingAgentMessage = createMemo(() => {
     for (let index = props.messages.length - 1; index >= 0; index -= 1) {
       const message = props.messages[index];
@@ -481,13 +482,17 @@ export function Conversation(props: ConversationProps) {
         const nextActivity = { activityId, bot, phase: "active" as const, presentation };
         const current = untrack(renderedAgentActivity);
         if (current?.bot?.id === bot?.id) {
+          setAgentActivitySpaceReserved(true);
           setRenderedAgentActivity(nextActivity);
           return;
         }
         const showDelay = agentActivityShowDelay();
         agentActivityShowTimer = window.setTimeout(() => {
           agentActivityShowTimer = undefined;
-          if (untrack(activeActivityId) === activityId) setRenderedAgentActivity(nextActivity);
+          if (untrack(activeActivityId) === activityId) {
+            setAgentActivitySpaceReserved(true);
+            setRenderedAgentActivity(nextActivity);
+          }
         }, showDelay);
         return;
       }
@@ -536,9 +541,12 @@ export function Conversation(props: ConversationProps) {
   const presentedQueueDeliveries = createMemo(() => {
     const snapshot = props.queue;
     if (!snapshot) return [];
-    const queued = orderedQueuedDeliveries();
     const activeTurnId = props.activeTurnId;
+    if (activeDeliveries().length === 0) return [];
     const renderedMessageIds = new Set(props.messages.map((message) => message.id));
+    const queued = orderedQueuedDeliveries().filter(
+      (delivery) => (!activeTurnId || delivery.turnId !== activeTurnId) && !renderedMessageIds.has(delivery.id),
+    );
     const steering = snapshot.deliveries.filter(
       (delivery) =>
         delivery.status === "starting" &&
@@ -1201,6 +1209,7 @@ export function Conversation(props: ConversationProps) {
         if (lastConversationBotId !== undefined) closeChatSearch(false);
         lastConversationBotId = botId;
         stickToLatest = true;
+        setAgentActivitySpaceReserved(false);
         setEditingDeliveryId(null);
         setEditingDraftBackup(null);
       }
@@ -2366,6 +2375,7 @@ export function Conversation(props: ConversationProps) {
           </div>
           <div
             class="agent-activity-slot"
+            data-reserved={agentActivitySpaceReserved() ? "true" : "false"}
             ref={(element) => {
               agentActivitySlot = element;
               scrollResizeObserver?.observe(element);

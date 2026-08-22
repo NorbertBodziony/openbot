@@ -1072,7 +1072,8 @@ app.on("continue-activity", (event, type, _userInfo, details) => {
 });
 
 if (!hasSingleInstanceLock) {
-  app.exit(0);
+  // No application services exist yet, so the secondary process can exit without shutdown work.
+  process.exit(0);
 } else {
   app.on("second-instance", (_event, argv) => {
     const deepLink = findInviteUrl(argv);

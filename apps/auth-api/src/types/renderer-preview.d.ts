@@ -7,3 +7,9 @@ declare module "@openbot/renderer-preview" {
 
   export function OpenBotPlayground(props: OpenBotPlaygroundProps): JSX.Element;
 }
+
+declare module "@openbot/landing-preview" {
+  import type { JSX } from "@solidjs/web";
+
+  export function LandingPreviewApp(): JSX.Element;
+}

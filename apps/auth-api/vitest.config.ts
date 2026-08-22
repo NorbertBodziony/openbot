@@ -1,10 +1,15 @@
 import solidPlugin from "@solidjs/vite-plugin";
 import { defineConfig } from "vitest/config";
-import { rendererPreviewAlias } from "./renderer-preview-alias";
+import { landingPreviewAlias, rendererPreviewAlias } from "./renderer-preview-alias";
 
 export default defineConfig({
   plugins: [solidPlugin({ ssr: true })],
-  resolve: { alias: { "@openbot/renderer-preview": rendererPreviewAlias } },
+  resolve: {
+    alias: {
+      "@openbot/landing-preview": landingPreviewAlias,
+      "@openbot/renderer-preview": rendererPreviewAlias,
+    },
+  },
   test: {
     environment: "node",
     include: ["test/**/*.test.ts", "test/**/*.test.tsx"],

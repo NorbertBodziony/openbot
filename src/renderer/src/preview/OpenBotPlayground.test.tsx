@@ -5,6 +5,7 @@ import { OpenBotPlayground } from "./OpenBotPlayground";
 
 describe("OpenBotPlayground", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -77,6 +78,7 @@ describe("OpenBotPlayground", () => {
   });
 
   it("reports ready and accepts a same-origin start message only from its parent", () => {
+    vi.useFakeTimers();
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 1;
     const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
@@ -113,6 +115,8 @@ describe("OpenBotPlayground", () => {
     expect(postMessage).not.toHaveBeenCalled();
     frames.get(2)?.(16);
     expect(postMessage).toHaveBeenCalledWith({ type: "openbot:landing-preview-ready" }, window.location.origin);
+    vi.advanceTimersByTime(250);
+    expect(postMessage).toHaveBeenCalledTimes(2);
     window.dispatchEvent(
       new MessageEvent("message", {
         origin: "https://invalid.example",
@@ -130,6 +134,8 @@ describe("OpenBotPlayground", () => {
       }),
     );
     expect(updateConversation).toHaveBeenCalled();
+    vi.advanceTimersByTime(250);
+    expect(postMessage).toHaveBeenCalledTimes(2);
 
     view.unmount();
     expect(cancelAnimationFrame).toHaveBeenCalledWith(1);

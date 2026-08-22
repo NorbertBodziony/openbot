@@ -64,8 +64,9 @@ describe("landing page", () => {
 
     expect(markup).toContain('id="root"');
     expect(markup).toContain('data-preview-variant="landing"');
-    expect(markup).toContain('aria-label="Loading OpenBot preview"');
-    expect(markup).not.toContain('aria-label="Bot navigation"');
+    expect(markup).toContain('data-testid="landing-preview-app"');
+    expect(markup).toContain('aria-label="OpenBot team navigation"');
+    expect(markup).toContain("Chief");
   });
 
   it("renders the download section and exact platform details", () => {

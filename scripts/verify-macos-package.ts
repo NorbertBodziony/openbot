@@ -134,7 +134,7 @@ function run(command: string, args: string[], includeStderr = false): string {
 
 async function verifyLaunch(executable: string): Promise<void> {
   const userDataPath = await mkdtemp(join(tmpdir(), "openbot-package-smoke-"));
-  const child = spawn(executable, [`--user-data-dir=${userDataPath}`], {
+  const child = spawn(executable, [`--user-data-dir=${userDataPath}`, "--use-mock-keychain"], {
     env: { ...process.env, OPENBOT_CODEX_PATH: join(userDataPath, "missing-codex") },
     stdio: ["ignore", "ignore", "pipe"],
   });
@@ -153,7 +153,7 @@ async function verifyLaunch(executable: string): Promise<void> {
           );
         });
       }),
-      new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 3_000)),
+      new Promise<void>((resolveDelay) => setTimeout(resolveDelay, 15_000)),
     ]);
     await verifySecondInstanceExits(executable, userDataPath);
   } finally {
@@ -172,7 +172,7 @@ async function verifyLaunch(executable: string): Promise<void> {
 }
 
 async function verifySecondInstanceExits(executable: string, userDataPath: string): Promise<void> {
-  const second = spawn(executable, [`--user-data-dir=${userDataPath}`], {
+  const second = spawn(executable, [`--user-data-dir=${userDataPath}`, "--use-mock-keychain"], {
     env: { ...process.env, OPENBOT_CODEX_PATH: join(userDataPath, "missing-codex") },
     stdio: ["ignore", "ignore", "pipe"],
   });

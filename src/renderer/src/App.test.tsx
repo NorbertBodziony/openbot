@@ -2414,7 +2414,9 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.input(composer);
     await fireEvent.keyDown(composer, { key: "Enter" });
 
-    expect(await screen.findByText("Show this message", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.agent.sendMessage).toHaveBeenCalledOnce());
+    expect(screen.queryByText("Show this message", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+    expect(document.querySelector(".agent-queue-panel")).toBeNull();
     expect(screen.queryByText("Show this message", { selector: ".message-copy" })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(screen.queryByText("Choose a model to get started.")).not.toBeInTheDocument();
@@ -2449,16 +2451,8 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     expect(await screen.findByText("Show this message", { selector: ".message-copy" })).toBeInTheDocument();
-    const departingQueueRow = screen
-      .getByText("Show this message", { selector: ".agent-queue-message" })
-      .closest(".agent-queue-item");
-    await waitFor(() => expect(departingQueueRow).toHaveClass("agent-queue-item-removing"));
-    expect(departingQueueRow).toHaveAttribute("aria-hidden", "true");
-    expect(document.querySelector(".agent-queue-slot")).toHaveAttribute("data-open", "true");
-    await waitFor(() =>
-      expect(screen.queryByText("Show this message", { selector: ".agent-queue-message" })).not.toBeInTheDocument(),
-    );
-    await waitFor(() => expect(document.querySelector(".agent-queue-slot")).toHaveAttribute("data-open", "false"));
+    expect(screen.queryByText("Show this message", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+    expect(document.querySelector(".agent-queue-slot")).toHaveAttribute("data-open", "false");
   });
 
   it("replies to a message through the composer and keeps the reference in the queued input", async () => {
@@ -2841,12 +2835,15 @@ describe("OpenBot connected desktop shell", () => {
     });
     await waitFor(() => expect(streamingBubble).not.toHaveClass("bot-bubble-streaming"));
     expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "active");
+    await new Promise((resolve) => window.setTimeout(resolve, 420));
+    expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "active");
     await waitFor(() =>
       expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "exiting"),
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
     expect(sidebarAvatar).toHaveClass("bot-avatar-motion-idle");
     expect(document.querySelector(".agent-activity-entry")).toBeNull();
+    expect(activitySlot).toHaveAttribute("data-reserved", "true");
 
     emitAgentEvent?.({
       type: "conversation",
@@ -3249,7 +3246,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("button", { name: "Resume queue" })).not.toBeInTheDocument();
   });
 
-  it("keeps queued deliveries in Queue until work starts", async () => {
+  it("keeps the first delivery out of Queue until work starts", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     const first = queuedDelivery("delivery-foreground", "Start this work", 1);
@@ -3281,34 +3278,15 @@ describe("OpenBot connected desktop shell", () => {
       snapshot: { botId: "chief", deliveries: [first] },
     });
 
-    expect(await screen.findByText("Start this work", { selector: ".agent-queue-message" })).toBeInTheDocument();
-    const queuePanel = document.querySelector<HTMLElement>(".agent-queue-panel");
-    expect(queuePanel).not.toBeNull();
-    expect(queuePanel?.closest(".composer-wrap")).toBeInTheDocument();
+    expect(screen.queryByText("Start this work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+    expect(document.querySelector(".agent-queue-panel")).toBeNull();
     expect(screen.queryByText("Start this work", { selector: ".message-copy" })).not.toBeInTheDocument();
 
     emitAgentEvent?.({
       type: "queue-changed",
       snapshot: { botId: "chief", deliveries: [first, second, third, fourth] },
     });
-    await waitFor(() =>
-      expect(Array.from(document.querySelectorAll(".agent-queue-message"), (element) => element.textContent)).toEqual([
-        "Start this work",
-        "Run this second",
-        "Run this third",
-        "Run this fourth",
-      ]),
-    );
-
-    const firstWaitingRow = document.querySelector<HTMLFieldSetElement>(".agent-queue-item");
-    if (!firstWaitingRow) throw new Error("The first waiting queue row is missing.");
-    await fireEvent.keyDown(firstWaitingRow, { key: "ArrowDown", altKey: true });
-    await waitFor(() =>
-      expect(window.openbot.agent.reorderQueue).toHaveBeenCalledWith({
-        botId: "chief",
-        deliveryIds: [second.id, first.id, third.id, fourth.id],
-      }),
-    );
+    expect(document.querySelector(".agent-queue-panel")).toBeNull();
 
     const firstStarting = { ...first, status: "starting" as const, position: null, turnId: "turn-queue" };
     emitAgentEvent?.({
@@ -3344,6 +3322,17 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByText("Run this second", { selector: ".agent-queue-message" })).toBeInTheDocument();
     expect(screen.getByText("Run this third", { selector: ".agent-queue-message" })).toBeInTheDocument();
     expect(screen.getByText("Run this fourth", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    expect(screen.queryByText("Start this work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+
+    const firstWaitingRow = document.querySelector<HTMLFieldSetElement>(".agent-queue-item");
+    if (!firstWaitingRow) throw new Error("The first waiting queue row is missing.");
+    await fireEvent.keyDown(firstWaitingRow, { key: "ArrowDown", altKey: true });
+    await waitFor(() =>
+      expect(window.openbot.agent.reorderQueue).toHaveBeenCalledWith({
+        botId: "chief",
+        deliveryIds: [third.id, second.id, fourth.id],
+      }),
+    );
 
     emitAgentEvent?.({
       type: "queue-changed",
@@ -3406,9 +3395,18 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.agent.sendMessage).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(composer).toHaveTextContent(""));
     expect(
-      await screen.findByText("First live smoke message", { selector: ".agent-queue-message" }),
-    ).toBeInTheDocument();
+      screen.queryByText("First live smoke message", { selector: ".agent-queue-message" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("First live smoke message", { selector: ".message-copy" })).not.toBeInTheDocument();
+
+    const firstDelivery = deliveries[0];
+    if (!firstDelivery) throw new Error("The first smoke delivery is missing.");
+    deliveries[0] = { ...firstDelivery, status: "running", position: null, turnId: "turn-smoke" };
+    emitAgentEvent?.({ type: "turn-started", botId: "chief", threadId: "thread-chief", turnId: "turn-smoke" });
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [...deliveries] },
+    });
 
     composer.textContent = "Second live smoke message";
     await fireEvent.input(composer);
@@ -3417,10 +3415,12 @@ describe("OpenBot connected desktop shell", () => {
     expect(
       await screen.findByText("Second live smoke message", { selector: ".agent-queue-message" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("First live smoke message", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    expect(
+      screen.queryByText("First live smoke message", { selector: ".agent-queue-message" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("keeps foreground starts out of Queue and promotes the next delivery after completion", async () => {
+  it("keeps foreground starts out of Queue and hides waiting work between turns", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     const firstStarting = queuedDelivery("delivery-starting", "Current work", null, { status: "starting" });
@@ -3476,12 +3476,15 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-    await waitFor(() =>
-      expect(Array.from(document.querySelectorAll(".agent-queue-message"), (element) => element.textContent)).toEqual([
-        "Next work",
-        "Later work",
-      ]),
-    );
+    await waitFor(() => expect(document.querySelector(".agent-queue-panel")).not.toBeInTheDocument());
+
+    const secondStarting = { ...second, status: "starting" as const, position: null, turnId: "turn-next" };
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: { botId: "chief", deliveries: [secondStarting, third] },
+    });
+    expect(await screen.findByText("Later work", { selector: ".agent-queue-message" })).toBeInTheDocument();
+    expect(screen.queryByText("Next work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
   });
 
   it("persists the onboarding focus before queuing the first user message", async () => {
