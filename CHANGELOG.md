@@ -5,6 +5,27 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-08-22
+
+### Added
+
+- Add conversational bot profile updates for `name`, `title`, and `description`, plus profile-based agent discovery and message routing.
+- Add a guided first-run onboarding flow and deterministic development seed data for integrated UI testing.
+- Add managed transfer manifests, shared-file references, ownership metadata, and integrity checks for message and generated attachments.
+- Add the shared Kobalte Select component with Storybook coverage and use it for reasoning controls.
+
+### Changed
+
+- Replace bot profile `role` with `title` in storage, local and remote Team APIs, renderer search, and agent instructions. Team permission roles stay unchanged.
+- Start the Auth API with the development app and select available local ports when defaults are busy.
+- Compact stored conversation and mailbox event history during the schema version 4 upgrade.
+- Simplify queued message handling by removing the paused queue state and resume action.
+
+### Fixed
+
+- Validate copied attachment size and SHA-256 data, and remove bot-owned generated files when an agent is deleted.
+- Improve agent settings controls, reasoning selection, profile editing, and file reference rendering.
+
 ## [0.1.14] - 2026-08-22
 
 ### Added

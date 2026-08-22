@@ -16,6 +16,7 @@ interface AgentExchangeHistoryModalProps {
   onOpenLink: (url: string) => void;
   onPreview: (attachment: AttachmentSummary) => void;
   onAttachmentAction: (attachment: AttachmentSummary, action: "open" | "reveal" | "download") => void;
+  onOpenSharedFile?: (path: string) => void;
 }
 
 export function directAgentExchangeHistory(
@@ -111,6 +112,7 @@ export function AgentExchangeHistoryModal(props: AgentExchangeHistoryModalProps)
                       onOpenLink={props.onOpenLink}
                       onPreview={props.onPreview}
                       onAttachmentAction={props.onAttachmentAction}
+                      onOpenSharedFile={props.onOpenSharedFile}
                       onDownload={(attachment) => props.onAttachmentAction(attachment, "download")}
                     />
                   </div>

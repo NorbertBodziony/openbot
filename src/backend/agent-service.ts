@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { realpath, stat } from "node:fs/promises";
+import { basename, isAbsolute, join, relative } from "node:path";
 import { expandAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { ATTACHMENT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
@@ -79,6 +81,12 @@ import {
 
 interface AgentServiceEvents {
   event: [event: AgentEvent];
+}
+
+export interface ResolvedSharedFile {
+  path: string;
+  name: string;
+  size: number;
 }
 
 interface AgentBrowserHost {
@@ -311,7 +319,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const profileChanged =
       input.name !== undefined ||
-      input.role !== undefined ||
+      input.title !== undefined ||
       input.description !== undefined ||
       input.model !== undefined ||
       input.reasoningEffort !== undefined;
@@ -343,6 +351,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   resolveAvatar(botId: string): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
     return this.#store.resolveAvatar(botId);
+  }
+
+  async resolveSharedFile(inputPath: string): Promise<ResolvedSharedFile> {
+    const sharedRoot = await realpath(this.#store.sharedRoot);
+    const candidatePath = sharedPathFromInput(this.#store.sharedRoot, inputPath);
+    const resolvedPath = await realpath(candidatePath);
+    if (!isWithin(sharedRoot, resolvedPath)) {
+      throw new Error("Shared file must be inside the shared directory.");
+    }
+    const metadata = await stat(resolvedPath);
+    if (!metadata.isFile()) throw new Error("Shared path is not a file.");
+    return { path: resolvedPath, name: basename(resolvedPath), size: metadata.size };
   }
 
   async deleteBot(botId: string): Promise<void> {
@@ -561,13 +581,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  async setQueuePaused(botId: string, paused: boolean): Promise<void> {
-    await this.#store.getOrCreate(botId);
-    await this.#mailbox.setPaused(botId, paused);
-    this.#emitQueue(botId);
-    if (!paused) this.#scheduleDrain(botId);
-  }
-
   async sendMessage(input: SendMessageInput): Promise<QueuedMessageReceipt> {
     const bot = await this.#store.getOrCreate(input.botId);
     await this.ensureProvider(providerForBot(bot));
@@ -615,8 +628,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const session = this.#store.activeProviderSession(botId);
     if (!session) return;
     this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
-    await this.#mailbox.setPaused(botId, true);
-    this.#emitQueue(botId);
     await client.request("turn/interrupt", { threadId: session.externalSessionId, turnId }, decodeRecordResponse);
   }
 
@@ -630,7 +641,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const session = bot ? this.#store.activeProviderSession(bot.id) : null;
       if (!client || !session) continue;
       this.#interruptImageGenerations(botId, session.externalSessionId, snapshot.activeTurnId);
-      requests.push(this.#mailbox.setPaused(botId, true).then(() => this.#emitQueue(botId)));
       requests.push(
         client
           .request(
@@ -1029,7 +1039,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return {
           id: bot.id,
           name: bot.name,
-          role: bot.role,
+          title: bot.title,
+          description: bot.description,
           status: this.#snapshots.get(bot.id)?.activeTurnId
             ? "working"
             : queue.deliveries.some((delivery) => delivery.status === "queued")
@@ -1040,6 +1051,38 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return {
         success: true,
         contentItems: [{ type: "inputText", text: JSON.stringify({ agents }) }],
+      };
+    }
+
+    if (params.tool === "update_profile") {
+      const args = params.arguments;
+      if (!isRecord(args)) throw new Error("update_profile arguments are required.");
+      const botId = args.botId;
+      if (!isString(botId) || !botId.trim()) throw new Error("botId is required.");
+      const profileFields = ["name", "title", "description"] as const;
+      if (!profileFields.some((field) => args[field] !== undefined)) {
+        throw new Error("At least one profile field is required.");
+      }
+      const input: UpdateBotInput = { botId };
+      for (const field of profileFields) {
+        const value = args[field];
+        if (value !== undefined && !isString(value)) throw new Error(`${field} must be a string.`);
+        if (value !== undefined) input[field] = value;
+      }
+      const updated = await this.updateBot(input);
+      return {
+        success: true,
+        contentItems: [
+          {
+            type: "inputText",
+            text: JSON.stringify({
+              id: updated.id,
+              name: updated.name,
+              title: updated.title,
+              description: updated.description,
+            }),
+          },
+        ],
       };
     }
 
@@ -1142,6 +1185,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     try {
       await this.#mailbox.markStarting(delivery.id);
       this.#emitQueue(delivery.recipientBotId);
+      await this.#mailbox.verifyDeliveryAttachments(delivery.id);
       const bot = await this.#store.getOrCreate(delivery.recipientBotId);
       await this.ensureProvider(providerForBot(bot));
       const client = this.#requireReadyClient(providerForBot(bot));
@@ -1399,6 +1443,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const current = this.#store.database.readConversation(bot.id, bot.threadId);
         const merged = mergeConversationSnapshots(current, imported);
         this.#syncMailboxMessages(merged);
+        if (conversationContentSignature(merged) === conversationContentSignature(current)) {
+          const live = this.#snapshots.get(bot.id);
+          if (!live?.activeTurnId) this.#snapshots.set(bot.id, current);
+          continue;
+        }
         const persisted = this.#store.database.persistConversation(merged, "provider-history.backfilled", {
           provider: session.provider,
           externalSessionId: session.externalSessionId,
@@ -1901,6 +1950,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           attachment = await this.#mailbox.storeGeneratedAttachment({
             sourcePath: savedPath,
             name: generatedImageName(savedPath),
+            ownerBotId: botId,
+            ownerThreadId: threadId,
           });
         } catch (error) {
           if (!result) throw error;
@@ -1908,6 +1959,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             bytes: decodeGeneratedImage(result),
             name: "generated-image.png",
             mimeType: "image/png",
+            ownerBotId: botId,
+            ownerThreadId: threadId,
           });
         }
       } else if (result) {
@@ -1915,6 +1968,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           bytes: decodeGeneratedImage(result),
           name: "generated-image.png",
           mimeType: "image/png",
+          ownerBotId: botId,
+          ownerThreadId: threadId,
         });
       } else {
         throw new Error("Image generation did not return an image.");
@@ -2303,11 +2358,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     },
   ): void {
     sortConversationMessages(snapshot.messages);
-    const signature = JSON.stringify({
-      threadId: snapshot.threadId,
-      activeTurnId: snapshot.activeTurnId,
-      messages: snapshot.messages,
-    });
+    const signature = conversationContentSignature(snapshot);
     if (this.#lastConversationSignatures.get(snapshot.botId) === signature) return;
     this.#lastConversationSignatures.set(snapshot.botId, signature);
     if (snapshot.threadId) {
@@ -2329,6 +2380,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #emit(event: AgentEvent): void {
     this.emit("event", event);
   }
+}
+
+function conversationContentSignature(snapshot: ConversationSnapshot): string {
+  return JSON.stringify({
+    botId: snapshot.botId,
+    threadId: snapshot.threadId,
+    activeTurnId: snapshot.activeTurnId,
+    messages: snapshot.messages,
+  });
 }
 
 function deliveryInput(
@@ -2428,8 +2488,24 @@ const OPENBOT_DYNAMIC_TOOLS = {
     {
       type: "function",
       name: "list_agents",
-      description: "List OpenBot agents that can receive local messages.",
+      description: "List local OpenBot agents with their name, title, description, and current status.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      type: "function",
+      name: "update_profile",
+      description: "Update the name, title, and/or description of a local OpenBot agent.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          botId: { type: "string", minLength: 1 },
+          name: { type: "string", maxLength: 80 },
+          title: { type: "string", maxLength: 120 },
+          description: { type: "string", maxLength: 2_000 },
+        },
+        required: ["botId"],
+        additionalProperties: false,
+      },
     },
     {
       type: "function",
@@ -2501,8 +2577,9 @@ const OPENBOT_DYNAMIC_TOOLS = {
 function developerInstructions(bot: BotSummary, sharedRoot: string): string {
   const profile = JSON.stringify(
     {
+      id: bot.id,
       name: bot.name,
-      title: bot.role.trim() || "General assistant",
+      title: bot.title.trim() || "General assistant",
       description: bot.description.trim() || "No additional description configured.",
     },
     null,
@@ -2513,12 +2590,15 @@ function developerInstructions(bot: BotSummary, sharedRoot: string): string {
     "<agent_profile>",
     profile,
     "</agent_profile>",
+    "Be pragmatic and direct. Give the shortest answer that is complete and useful. Do not add filler, generic introductions, repeated conclusions, unnecessary headings, or performative commentary. Add detail only when it is necessary or the user asks for it.",
     "The profile title and description are your standing remit. Use them to understand your responsibilities, prioritize work, choose relevant expertise, and decide when to delegate to another OpenBot teammate. Keep following this profile across turns unless the user explicitly gives a more specific instruction for the current task.",
     `Your own working directory is ${bot.workspacePath}.`,
     `The shared directory available to every OpenBot agent is ${sharedRoot}.`,
     "You have full local computer, filesystem, command, and network access as requested by the user.",
     `For every browser task, use ${OPENBOT_BROWSER_NAMESPACE} directly. It is OpenBot's private embedded browser and is available through its dynamic tools. Never use browser:control-in-app-browser, browser-use, Chrome, or another browser plugin inside OpenBot; those tools target a different host and can report a false unavailable state. Use the installed Computer Use plugin only for macOS GUI tasks outside the browser.`,
     "Use openbot.list_agents to discover other persistent OpenBot teammates.",
+    "When routing work, call openbot.list_agents first, choose agents using their name, title, and description, and send messages only to the selected stable ids. Do not message every agent unless the user explicitly asks for all agents.",
+    "Use openbot.update_profile with the target bot id to change a local agent's name, title, or description. The target id is required and may refer to any local agent.",
     "Use openbot.send_message to send asynchronous messages or local files to one or more teammates. Always set replyToMessageId when answering a teammate. Replies are never forwarded automatically.",
     "When you need clarification or the user asks you to ask a question, use openbot.ask_user with 1–3 short questions instead of writing the question as a normal assistant message. Use options for choices and wait for the tool result before continuing. Claude should use AskUserQuestion for the same purpose.",
     "OpenBot renders GitHub-flavored Markdown tables in your final responses. Use a table when structured data or a comparison is clearer than prose; include a header row, a separator row with at least three dashes per column, and at least one data row. For a feature-by-option comparison, use at least three columns and put exactly ✓ or — in every option cell; OpenBot will render that Markdown as a comparison table. Example: | Feature | Personal | Enterprise | followed by | --- | --- | --- | and rows such as | Priority support | — | ✓ |.",
@@ -2648,6 +2728,19 @@ function providerForModel(model: BotSummary["model"]): AgentProvider {
 
 function providerForBot(bot: BotSummary): AgentProvider {
   return providerForModel(bot.model);
+}
+
+function sharedPathFromInput(sharedRoot: string, inputPath: string): string {
+  const normalized = inputPath.replaceAll("\\", "/");
+  for (const prefix of ["~/OpenBot/Shared/", "OpenBot/Shared/", "Shared/"]) {
+    if (normalized.startsWith(prefix)) return join(sharedRoot, normalized.slice(prefix.length));
+  }
+  return isAbsolute(inputPath) ? inputPath : join(sharedRoot, normalized);
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  const relativePath = relative(root, candidate);
+  return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
 }
 
 function providerLabel(provider: AgentProvider): "Claude" | "Codex" {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { developmentStatePaths, resetDevelopmentState, resolveDevelopmentAppDataRoot } from "./reset-dev-state";
+import { DEVELOPMENT_SEED_MANIFEST_FILE } from "./seed-dev-state";
 
 const temporaryDirectories: string[] = [];
 
@@ -53,6 +54,34 @@ describe("reset dev state", () => {
     const appDataRoot = await makeTemporaryDirectory();
 
     await expect(resetDevelopmentState(appDataRoot)).resolves.toEqual([]);
+  });
+
+  it("removes seed-owned transfers but keeps other shared files", async () => {
+    const root = await makeTemporaryDirectory();
+    const appDataRoot = join(root, "app-data");
+    const homeDirectory = join(root, "home");
+    const [appPath] = developmentStatePaths(appDataRoot);
+    const generatedRoot = join(homeDirectory, "OpenBot", "Shared", "Transfers", "generated");
+    const seedDirectory = join(generatedRoot, "de305d54-75b4-431b-adb2-eb6b9e546014");
+    const sharedFile = join(homeDirectory, "OpenBot", "Shared", "keep.txt");
+    await Promise.all([mkdir(seedDirectory, { recursive: true }), mkdir(appPath, { recursive: true })]);
+    await Promise.all([
+      writeFile(join(seedDirectory, "seed.txt"), "seed"),
+      writeFile(sharedFile, "keep"),
+      writeFile(
+        join(appPath, DEVELOPMENT_SEED_MANIFEST_FILE),
+        JSON.stringify({
+          version: 1,
+          createdAt: "2026-08-21T10:00:00.000Z",
+          transferDirectories: ["generated/de305d54-75b4-431b-adb2-eb6b9e546014"],
+        }),
+      ),
+    ]);
+
+    await resetDevelopmentState(appDataRoot, homeDirectory);
+
+    await expect(stat(seedDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(sharedFile)).resolves.toBeDefined();
   });
 
   it("rejects a filesystem root", () => {

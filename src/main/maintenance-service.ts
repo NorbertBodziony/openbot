@@ -100,7 +100,6 @@ export async function exportDiagnostics(
     const queue = context.service.listQueue(bot.id);
     return {
       botId: bot.id,
-      paused: queue.paused,
       deliveries: Object.fromEntries(
         ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"].map((deliveryStatus) => [
           deliveryStatus,
@@ -173,7 +172,7 @@ function toBackupBot(bot: BotSummary): Omit<BotSummary, "workspacePath"> {
   return {
     id: bot.id,
     name: bot.name,
-    role: bot.role,
+    title: bot.title,
     description: bot.description,
     notifications: bot.notifications,
     model: bot.model,

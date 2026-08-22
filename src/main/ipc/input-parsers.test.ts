@@ -11,10 +11,10 @@ import {
   parseMarkConversationRead,
   parseMessageReaction,
   parseOpenAttachment,
+  parseOpenSharedFile,
   parsePromptResponse,
   parseReorderQueue,
   parseSendMessage,
-  parseSetQueuePaused,
   parseSteerQueuedMessage,
   parseUpdateBot,
   parseUpdateQueuedMessage,
@@ -162,9 +162,10 @@ describe("agent IPC input parsing", () => {
   });
 
   it("parses bot, attachment, queue, and prompt values", () => {
-    expect(parseUpdateBot({ botId: "bot-1", name: "Ada", notifications: true })).toEqual({
+    expect(parseUpdateBot({ botId: "bot-1", name: "Ada", title: "Coordinator", notifications: true })).toEqual({
       botId: "bot-1",
       name: "Ada",
+      title: "Coordinator",
       notifications: true,
     });
     const bytes = new Uint8Array([1, 2, 3]);
@@ -187,13 +188,12 @@ describe("agent IPC input parsing", () => {
       attachmentId: "attachment-1",
       action: "download",
     });
+    expect(parseOpenSharedFile({ path: "~/OpenBot/Shared/report.csv" })).toEqual({
+      path: "~/OpenBot/Shared/report.csv",
+    });
     expect(parseCancelQueuedMessage({ botId: "bot-1", deliveryId: "delivery-1" })).toEqual({
       botId: "bot-1",
       deliveryId: "delivery-1",
-    });
-    expect(parseSetQueuePaused({ botId: "bot-1", paused: true })).toEqual({
-      botId: "bot-1",
-      paused: true,
     });
     expect(
       parseSteerQueuedMessage({
@@ -232,6 +232,7 @@ describe("agent IPC input parsing", () => {
   });
 
   it("keeps agent input error messages", () => {
+    expect(() => parseUpdateBot({ botId: "bot-1", role: "Coordinator" })).toThrowError("Invalid role.");
     expect(() => parseAgentRequest(null)).toThrowError("Invalid agent request.");
     expect(() => parseSendMessage({ botId: "bot-1", text: " " })).toThrowError("A message or attachment is required.");
     expect(() => parseMessageReaction({ botId: "bot-1", messageId: "message-1", emoji: "invalid" })).toThrowError(
@@ -243,8 +244,8 @@ describe("agent IPC input parsing", () => {
     expect(() => parseOpenAttachment({ attachmentId: "attachment-1", action: "delete" })).toThrowError(
       "Invalid attachment action.",
     );
+    expect(() => parseOpenSharedFile({ path: "" })).toThrowError("path is required.");
     expect(() => parseCancelQueuedMessage(null)).toThrowError("Invalid queue cancellation request.");
-    expect(() => parseSetQueuePaused({ botId: "bot-1", paused: "yes" })).toThrowError("Invalid queue pause request.");
     expect(() => parseSteerQueuedMessage(null)).toThrowError("Invalid queued steer request.");
     expect(() =>
       parseUpdateQueuedMessage({

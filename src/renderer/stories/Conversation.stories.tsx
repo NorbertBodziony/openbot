@@ -333,7 +333,6 @@ const promptChatMessages: RendererBotMessage[] = [
 
 const queue: QueueSnapshot = {
   botId: "chief",
-  paused: false,
   deliveries: [
     {
       id: "queued-1",
@@ -492,7 +491,6 @@ const args: Parameters<typeof Conversation>[0] = {
     _attachmentDraftIds: string[],
   ) => true,
   onReorderQueue: fn(),
-  onResumeQueue: fn(),
   onActivateBrowserTab: fn(),
   onCloseBrowserTab: fn(),
   onOpenRemoteDesktop: async (_serverId: string, _trigger: HTMLElement) => undefined,
@@ -889,8 +887,8 @@ export const SevenQueuedMessagesInteractions: Story = {
   },
 };
 
-export const PausedQueue: Story = {
-  args: { queue: { ...queueWithItems(3), paused: true } },
+export const QueueWithItems: Story = {
+  args: { queue: queueWithItems(3) },
 };
 
 export const EditingQueuedMessage: Story = {

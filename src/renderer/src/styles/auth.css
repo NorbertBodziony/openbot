@@ -845,7 +845,7 @@
 .provider-picker-option {
   min-height: 44px;
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
+  grid-template-columns: 16px 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
@@ -884,6 +884,24 @@
   height: 14px;
   margin: 0;
   accent-color: var(--openbot-text-primary);
+}
+
+.provider-picker-logo {
+  width: 18px;
+  height: 18px;
+  overflow: visible;
+}
+
+.provider-picker-logo[data-provider="codex"] {
+  fill: var(--openbot-provider-codex);
+}
+
+.provider-picker-logo[data-provider="claude"] {
+  fill: var(--openbot-provider-claude);
+}
+
+.provider-picker-option-unavailable .provider-picker-logo {
+  opacity: 0.44;
 }
 
 .provider-picker-identity {

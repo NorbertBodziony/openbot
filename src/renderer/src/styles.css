@@ -4,6 +4,7 @@
 @import "./styles/action-menu.css";
 @import "./styles/base.css";
 @import "./styles/auth.css";
+@import "./styles/onboarding.css";
 @import "./styles/app-shell.css";
 @import "./styles/center-morph-modal.css";
 @import "./styles/join-server-dialog.css";
@@ -40,6 +41,10 @@
   --openbot-text-primary: #f2f2f2;
   --openbot-text-on-light: #141414;
   --openbot-surface-light: #f0f0f0;
+  --openbot-onboarding-desktop-mist: #dbe9ff;
+  --openbot-onboarding-desktop-blue: #7eb4f2;
+  --openbot-onboarding-desktop-indigo: #6f7de8;
+  --openbot-onboarding-window: #f3f5f8;
   --openbot-text-secondary: rgba(255, 255, 255, 0.72);
   --openbot-text-muted: rgba(255, 255, 255, 0.48);
   --openbot-text-dim: rgba(255, 255, 255, 0.32);
@@ -52,6 +57,8 @@
   --openbot-accent-text: #a49fff;
   --openbot-accent-soft: rgba(105, 96, 241, 0.16);
   --openbot-accent-strong: rgba(105, 96, 241, 0.34);
+  --openbot-provider-codex: var(--openbot-text-primary);
+  --openbot-provider-claude: #d97757;
   --openbot-logo-production: #d6adf2;
   --openbot-logo-eye: #040007;
   --openbot-logo-dev: var(--openbot-warning);

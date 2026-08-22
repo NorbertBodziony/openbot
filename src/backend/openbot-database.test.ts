@@ -1,8 +1,10 @@
 // @vitest-environment node
 
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { BotSummary, ConversationSnapshot } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
@@ -161,6 +163,195 @@ describe("OpenBotDatabase", () => {
     });
     restored.close();
   });
+
+  it("keeps one full conversation snapshot and a small idempotency receipt", async () => {
+    const database = await createDatabase();
+    const bot = testBot();
+    database.replaceAgents("agents-import", [bot], "agents.imported");
+    const snapshot = conversationSnapshot(bot, "x".repeat(40_000));
+
+    const first = database.persistConversation(snapshot, "response.delta-flushed", {}, "stable-conversation");
+    expect(database.persistConversation(snapshot, "response.delta-flushed", {}, "stable-conversation")).toEqual(first);
+    for (let index = 0; index < 100; index += 1) {
+      database.persistConversation(snapshot, "response.delta-flushed");
+    }
+
+    expect(snapshotEventCount(database, bot.threadId)).toBe(1);
+    expect(
+      database.connection
+        .prepare(
+          `SELECT COUNT(*) AS count, SUM(LENGTH(result_json)) AS bytes
+           FROM orchestration_command_receipts WHERE command_id LIKE 'conversation:%'`,
+        )
+        .get(),
+    ).toMatchObject({ count: 1, bytes: expect.any(Number) });
+    const receipt = database.connection
+      .prepare(
+        `SELECT result_json FROM orchestration_command_receipts
+         WHERE command_id LIKE 'conversation:%' LIMIT 1`,
+      )
+      .get();
+    expect(receipt).toMatchObject({ result_json: expect.stringMatching(/^\{"revision":\d+\}$/) });
+    database.close();
+  });
+
+  it("rebuilds provider turn links, summaries, and attachment projections from compact history", async () => {
+    const database = await createDatabase();
+    const bot = testBot();
+    database.replaceAgents("agents-import", [bot], "agents.imported");
+    if (!bot.threadId) throw new Error("The test bot has no thread.");
+    const session = database.bindProviderSession({
+      threadId: bot.threadId,
+      provider: "codex",
+      externalSessionId: "provider-thread-1",
+      model: bot.model,
+      effort: bot.reasoningEffort,
+    });
+    const running = conversationSnapshot(bot, "Working");
+    running.activeTurnId = "turn-1";
+    running.messages[0] = {
+      ...running.messages[0],
+      turnId: "turn-1",
+      status: "streaming",
+      attachments: [
+        {
+          id: "attachment-1",
+          name: "report.csv",
+          size: 12,
+          kind: "file",
+          mimeType: "text/csv",
+          previewKind: "text",
+          previewUrl: null,
+        },
+      ],
+    };
+    database.persistConversation(running, "response.delta-flushed");
+    const completed = structuredClone(running);
+    completed.activeTurnId = null;
+    completed.messages[0].status = "completed";
+    database.persistConversation(completed, "turn.completed", { turnId: "turn-1", status: "completed" });
+    database.saveThreadSummary(bot.threadId, completed.messages[0].id, "Saved context", 3);
+
+    expect(snapshotEventCount(database, bot.threadId)).toBe(1);
+    database.rebuildThreadProjection(bot.threadId);
+
+    expect(
+      database.connection.prepare("SELECT provider_session_id FROM projection_turns WHERE turn_id = 'turn-1'").get(),
+    ).toMatchObject({ provider_session_id: session.id });
+    expect(
+      database.connection
+        .prepare("SELECT name FROM projection_attachments WHERE attachment_id = ?")
+        .get(`${bot.threadId}:assistant-1:attachment-1`),
+    ).toMatchObject({ name: "report.csv" });
+    expect(
+      database.connection
+        .prepare("SELECT payload_json FROM projection_thread_activities WHERE activity_type = 'turn.completed'")
+        .get(),
+    ).toEqual({ payload_json: '{"turnId":"turn-1","status":"completed"}' });
+    expect(database.latestThreadSummary(bot.threadId)).toMatchObject({ text: "Saved context" });
+    database.close();
+  });
+
+  it("keeps only the latest full mailbox state", async () => {
+    const database = await createDatabase();
+    const state = {
+      messages: [],
+      deliveries: [],
+      drafts: [],
+      generatedAttachments: [],
+      pausedBotIds: [],
+      idempotency: {},
+      reactions: [],
+    };
+    database.replaceMailboxState("mailbox:first", state, "mailbox.updated");
+    database.replaceMailboxState(
+      "mailbox:second",
+      { ...state, idempotency: { request: "message-1" } },
+      "mailbox.updated",
+    );
+
+    expect(
+      database.connection
+        .prepare(
+          `SELECT COUNT(*) AS count FROM orchestration_events
+           WHERE aggregate_type = 'mailbox' AND aggregate_id = 'mailbox'`,
+        )
+        .get(),
+    ).toMatchObject({ count: 1 });
+    expect(
+      database.connection
+        .prepare("SELECT command_id FROM orchestration_command_receipts WHERE command_id LIKE 'mailbox:%'")
+        .all(),
+    ).toEqual([{ command_id: "mailbox:second" }]);
+    database.close();
+  });
+
+  it("migrates version 3 history, preserves the current chat, and reclaims disk space", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-v3-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    const bot = testBot();
+    database.replaceAgents("agents-import", [bot], "agents.imported");
+    const snapshot = conversationSnapshot(bot, "x".repeat(40_000));
+    database.persistConversation(snapshot, "conversation.snapshot-updated");
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    legacy.exec("PRAGMA journal_mode = WAL");
+    legacy.prepare("DELETE FROM schema_migrations WHERE version = 4").run();
+    legacy
+      .prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)")
+      .run("2026-08-20T10:00:00.000Z");
+    const insertEvent = legacy.prepare(`
+      INSERT INTO orchestration_events (
+        event_id, command_id, aggregate_type, aggregate_id, event_type, occurred_at, payload_json
+      ) VALUES (?, ?, 'thread', ?, 'provider-history.backfilled', ?, ?)
+    `);
+    const insertReceipt = legacy.prepare(`
+      INSERT INTO orchestration_command_receipts (
+        command_id, accepted_at, first_sequence, last_sequence, result_json
+      ) VALUES (?, ?, ?, ?, ?)
+    `);
+    for (let index = 0; index < 100; index += 1) {
+      const commandId = `legacy-conversation-${index}`;
+      const result = insertEvent.run(
+        randomUUID(),
+        commandId,
+        bot.threadId,
+        "2026-08-20T10:00:00.000Z",
+        JSON.stringify({ detail: {}, snapshot }),
+      );
+      const sequence = Number(result.lastInsertRowid);
+      insertReceipt.run(
+        commandId,
+        "2026-08-20T10:00:00.000Z",
+        sequence,
+        sequence,
+        JSON.stringify({ ...snapshot, revision: sequence }),
+      );
+    }
+    legacy.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    legacy.close();
+    const sizeBefore = (await stat(database.path)).size;
+
+    const migrated = new OpenBotDatabase(root);
+    await migrated.initialize();
+    const sizeAfter = (await stat(database.path)).size;
+    expect(sizeAfter).toBeLessThan(sizeBefore / 2);
+    expect(snapshotEventCount(migrated, bot.threadId)).toBe(1);
+    expect(migrated.readConversation(bot.id, bot.threadId).messages[0]?.text).toHaveLength(40_000);
+    expect(migrated.connection.prepare("PRAGMA integrity_check").get()).toMatchObject({ integrity_check: "ok" });
+    expect(migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 4").get()).toEqual({
+      applied: 1,
+    });
+    migrated.close();
+
+    const reopened = new OpenBotDatabase(root);
+    await reopened.initialize();
+    expect(snapshotEventCount(reopened, bot.threadId)).toBe(1);
+    reopened.close();
+  });
 });
 
 async function createDatabase(): Promise<OpenBotDatabase> {
@@ -175,7 +366,7 @@ function testBot(): BotSummary {
   return {
     id: "chief",
     name: "Chief",
-    role: "Coordinator",
+    title: "Coordinator",
     description: "",
     notifications: true,
     model: "gpt-5.6-luna",
@@ -194,4 +385,36 @@ function eventCount(database: OpenBotDatabase): number {
   const row = database.connection.prepare("SELECT COUNT(*) AS count FROM orchestration_events").get();
   if (!isDynamicRecord(row) || !isNumber(row.count)) throw new Error("Invalid event count row.");
   return row.count;
+}
+
+function snapshotEventCount(database: OpenBotDatabase, threadId: string | null): number {
+  if (!threadId) throw new Error("The test bot has no thread.");
+  const row = database.connection
+    .prepare(
+      `SELECT COUNT(*) AS count FROM orchestration_events
+       WHERE aggregate_type = 'thread' AND aggregate_id = ?
+         AND json_type(payload_json, '$.snapshot') = 'object'`,
+    )
+    .get(threadId);
+  if (!isDynamicRecord(row) || !isNumber(row.count)) throw new Error("Invalid snapshot count row.");
+  return row.count;
+}
+
+function conversationSnapshot(bot: BotSummary, text: string): ConversationSnapshot {
+  return {
+    botId: bot.id,
+    threadId: bot.threadId,
+    activeTurnId: null,
+    revision: 0,
+    messages: [
+      {
+        id: "assistant-1",
+        turnId: "turn-1",
+        author: "assistant",
+        text,
+        createdAt: "2026-08-20T10:00:00.000Z",
+        status: "completed",
+      },
+    ],
+  };
 }

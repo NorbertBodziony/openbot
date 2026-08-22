@@ -24,10 +24,16 @@ import { isRecord } from "./protocol";
 const MAX_ATTACHMENTS = INPUT_LIMITS.attachments;
 const MAX_FILE_BYTES = ATTACHMENT_LIMITS.fileBytes;
 const MAX_TOTAL_BYTES = ATTACHMENT_LIMITS.totalBytes;
+const TRANSFER_MANIFEST_FILE = ".openbot-transfer.json";
 
 interface StoredAttachment extends AttachmentSummary {
   path: string;
   sha256: string;
+}
+
+interface StoredGeneratedAttachment extends StoredAttachment {
+  ownerBotId?: string;
+  ownerThreadId?: string | null;
 }
 
 interface StoredDraft extends StoredAttachment {
@@ -59,7 +65,7 @@ interface StoredState {
   messages: StoredMessage[];
   deliveries: StoredDelivery[];
   drafts: StoredDraft[];
-  generatedAttachments: StoredAttachment[];
+  generatedAttachments: StoredGeneratedAttachment[];
   pausedBotIds: string[];
   idempotency: Record<string, string>;
   reactions: StoredReaction[];
@@ -80,6 +86,29 @@ interface EnqueueInput {
   draftIds?: string[];
   sourcePaths?: string[];
   idempotencyKey?: string;
+}
+
+interface TransferManifest {
+  version: 1;
+  kind: "message-transfer" | "generated-attachment";
+  transferId?: string;
+  messageId?: string;
+  generatedAttachmentId?: string;
+  sender?: StoredMessage["sender"];
+  recipientBotIds?: string[];
+  ownerBotId?: string;
+  ownerThreadId?: string | null;
+  createdAt: string;
+  attachments: Array<{
+    id: string;
+    name: string;
+    relativePath: string;
+    size: number;
+    kind: AttachmentKind;
+    mimeType: string;
+    previewKind: AttachmentPreviewKind;
+    sha256: string;
+  }>;
 }
 
 export interface DeliveryContext {
@@ -170,23 +199,31 @@ export class MailboxStore {
     try {
       for (const sourcePath of paths) {
         const source = await inspectSource(sourcePath);
-        total += source.size;
-        if (total > MAX_TOTAL_BYTES) throw new Error("Attachments exceed the 250 MB total limit.");
         const id = randomUUID();
         const targetDirectory = join(this.#draftsRoot, id);
         const name = sanitizeName(source.path);
         const targetPath = join(targetDirectory, name);
         await mkdir(targetDirectory, { recursive: true, mode: 0o700 });
         await copyFile(source.path, targetPath);
+        const copied = await stat(targetPath);
+        if (copied.size > MAX_FILE_BYTES) {
+          await rm(targetDirectory, { recursive: true, force: true });
+          throw new Error(`${name} exceeds the 100 MB limit.`);
+        }
+        total += copied.size;
+        if (total > MAX_TOTAL_BYTES) {
+          await rm(targetDirectory, { recursive: true, force: true });
+          throw new Error("Attachments exceed the 250 MB total limit.");
+        }
         const metadata = attachmentMetadata(name);
         prepared.push({
           id,
           name,
-          size: source.size,
+          size: copied.size,
           ...metadata,
           previewUrl: attachmentPreviewUrl(id),
           path: targetPath,
-          sha256: await sha256(source.path),
+          sha256: await sha256(targetPath),
           createdAt: new Date().toISOString(),
         });
       }
@@ -274,9 +311,16 @@ export class MailboxStore {
       throw new Error(`Attach at most ${MAX_ATTACHMENTS} files.`);
     }
 
-    const messageId = randomUUID();
-    const attachments = await this.#commitAttachments(messageId, sourcePaths);
     const createdAt = new Date().toISOString();
+    const messageId = randomUUID();
+    const attachments = await this.#commitAttachments(
+      messageId,
+      input.sender,
+      recipients,
+      messageId,
+      createdAt,
+      sourcePaths,
+    );
     const committedByDraftId = new Map(drafts.map((draft, index) => [draft.id, attachments[index]] as const));
     const message: StoredMessage = {
       id: messageId,
@@ -329,7 +373,6 @@ export class MailboxStore {
     const positions = this.#queuedPositions();
     return {
       botId,
-      paused: this.#state.pausedBotIds.includes(botId),
       deliveries: this.#state.deliveries
         .filter((delivery) => delivery.recipientBotId === botId)
         .map((delivery) => this.#publicDelivery(delivery, positions)),
@@ -483,7 +526,6 @@ export class MailboxStore {
   }
 
   nextQueued(botId: string): DeliveryContext | null {
-    if (this.#state.pausedBotIds.includes(botId)) return null;
     if (
       this.#state.deliveries.some(
         (delivery) =>
@@ -529,13 +571,22 @@ export class MailboxStore {
   async deleteBotData(botId: string): Promise<void> {
     const previous = structuredClone(this.#state);
     const removedMessageIds = new Set<string>();
+    const removedGenerated = this.#state.generatedAttachments.filter((attachment) => attachment.ownerBotId === botId);
+    const removedTransferRoots = new Set<string>();
     this.#state.deliveries = this.#state.deliveries.filter((delivery) => delivery.recipientBotId !== botId);
     const remainingMessageIds = new Set(this.#state.deliveries.map((delivery) => delivery.messageId));
     this.#state.messages = this.#state.messages.filter((message) => {
       const keep = remainingMessageIds.has(message.id);
       if (!keep) removedMessageIds.add(message.id);
+      if (!keep) {
+        for (const attachment of message.attachments) {
+          const transferRoot = transferRootForPath(this.#transfersRoot, attachment.path);
+          if (transferRoot) removedTransferRoots.add(transferRoot);
+        }
+      }
       return keep;
     });
+    for (const messageId of removedMessageIds) removedTransferRoots.add(join(this.#transfersRoot, messageId));
     this.#state.pausedBotIds = this.#state.pausedBotIds.filter((id) => id !== botId);
     this.#state.reactions = this.#state.reactions.filter(
       (reaction) => reaction.botId !== botId && !removedMessageIds.has(reaction.messageId),
@@ -543,11 +594,19 @@ export class MailboxStore {
     this.#state.idempotency = Object.fromEntries(
       Object.entries(this.#state.idempotency).filter(([, messageId]) => !removedMessageIds.has(messageId)),
     );
+    this.#state.generatedAttachments = this.#state.generatedAttachments.filter(
+      (attachment) => attachment.ownerBotId !== botId,
+    );
     try {
       await this.#persist(
         "mailbox.agent-data-deleted",
         `mailbox:hard-delete:${randomUUID()}`,
-        [...removedMessageIds].map((messageId) => join(this.#transfersRoot, messageId)),
+        [
+          ...removedTransferRoots,
+          ...removedGenerated
+            .map((attachment) => generatedRootForPath(this.#transfersRoot, attachment.path))
+            .filter((path): path is string => path !== null),
+        ],
         true,
       );
     } catch (error) {
@@ -663,7 +722,16 @@ export class MailboxStore {
     try {
       const keptAttachments = message.attachments.filter((attachment) => keepIds.has(attachment.id));
       const committedDrafts = draftAttachmentPaths.length
-        ? await this.#commitAttachments(`${message.id}-edit-${randomUUID()}`, draftAttachmentPaths)
+        ? await this.#commitAttachments(
+            `${message.id}-edit-${randomUUID()}`,
+            message.sender,
+            this.#state.deliveries
+              .filter((candidate) => candidate.messageId === message.id)
+              .map((candidate) => candidate.recipientBotId),
+            message.id,
+            new Date().toISOString(),
+            draftAttachmentPaths,
+          )
         : [];
       const replacementAttachments = [...keptAttachments, ...committedDrafts];
       const replacementByReferenceId = new Map([
@@ -734,14 +802,6 @@ export class MailboxStore {
     });
   }
 
-  async setPaused(botId: string, paused: boolean): Promise<void> {
-    const current = new Set(this.#state.pausedBotIds);
-    if (paused) current.add(botId);
-    else current.delete(botId);
-    this.#state.pausedBotIds = [...current];
-    await this.#persist("queue.pause-updated");
-  }
-
   unresolvedDeliveries(): DeliveryContext[] {
     return this.#state.deliveries
       .filter((delivery) => delivery.status === "starting" || delivery.status === "running")
@@ -767,11 +827,23 @@ export class MailboxStore {
     return null;
   }
 
+  async verifyDeliveryAttachments(deliveryId: string): Promise<void> {
+    const delivery = this.#state.deliveries.find((candidate) => candidate.id === deliveryId);
+    if (!delivery) throw new Error(`Unknown delivery: ${deliveryId}`);
+    const message = this.#requireMessage(delivery.messageId);
+    for (const attachment of message.attachments) {
+      const resolved = await resolveManagedAttachment(this.#transfersRoot, attachment);
+      if (!resolved) throw new Error(`Managed attachment is missing or has changed: ${attachment.name}`);
+    }
+  }
+
   async storeGeneratedAttachment(input: {
     sourcePath?: string;
     bytes?: Uint8Array;
     name?: string;
     mimeType?: string;
+    ownerBotId?: string;
+    ownerThreadId?: string | null;
   }): Promise<AttachmentSummary> {
     if ((input.sourcePath === undefined) === (input.bytes === undefined)) {
       throw new Error("Provide exactly one generated image source.");
@@ -792,16 +864,32 @@ export class MailboxStore {
       if (source) await copyFile(source.path, targetPath);
       else if (bytes) await writeFile(targetPath, bytes, { mode: 0o600 });
       else throw new Error("Generated image bytes are missing.");
+      const stored = await stat(targetPath);
+      if (stored.size > MAX_FILE_BYTES) throw new Error("Generated image exceeds the 100 MB limit.");
       const attachment: StoredAttachment = {
         id,
         name,
-        size,
+        size: stored.size,
         ...metadata,
         previewUrl: attachmentPreviewUrl(id),
         path: targetPath,
         sha256: await sha256(targetPath),
       };
-      this.#state.generatedAttachments.push(attachment);
+      const generatedAttachment: StoredGeneratedAttachment = {
+        ...attachment,
+        ...(input.ownerBotId ? { ownerBotId: input.ownerBotId } : {}),
+        ...(input.ownerThreadId !== undefined ? { ownerThreadId: input.ownerThreadId } : {}),
+      };
+      await writeTransferManifest(generatedRoot, {
+        version: 1,
+        kind: "generated-attachment",
+        generatedAttachmentId: id,
+        ...(input.ownerBotId ? { ownerBotId: input.ownerBotId } : {}),
+        ...(input.ownerThreadId !== undefined ? { ownerThreadId: input.ownerThreadId } : {}),
+        createdAt: new Date().toISOString(),
+        attachments: [manifestAttachment(generatedAttachment, name)],
+      });
+      this.#state.generatedAttachments.push(generatedAttachment);
       try {
         await this.#persist("attachment.generated");
       } catch (error) {
@@ -909,33 +997,53 @@ export class MailboxStore {
     };
   }
 
-  async #commitAttachments(messageId: string, sourcePaths: string[]): Promise<StoredAttachment[]> {
+  async #commitAttachments(
+    transferId: string,
+    sender: StoredMessage["sender"],
+    recipientBotIds: string[],
+    messageId: string,
+    createdAt: string,
+    sourcePaths: string[],
+  ): Promise<StoredAttachment[]> {
     if (sourcePaths.length === 0) return [];
     const inspected = await Promise.all(sourcePaths.map(inspectSource));
-    const total = inspected.reduce((sum, source) => sum + source.size, 0);
-    if (total > MAX_TOTAL_BYTES) throw new Error("Attachments exceed the 250 MB total limit.");
-
-    const temporaryRoot = join(this.#transfersRoot, `.tmp-${messageId}`);
-    const finalRoot = join(this.#transfersRoot, messageId);
+    const temporaryRoot = join(this.#transfersRoot, `.tmp-${transferId}`);
+    const finalRoot = join(this.#transfersRoot, transferId);
     await mkdir(temporaryRoot, { recursive: true, mode: 0o700 });
     const usedNames = new Set<string>();
     try {
       const attachments: StoredAttachment[] = [];
+      let total = 0;
       for (const source of inspected) {
         const name = uniqueName(sanitizeName(source.path), usedNames);
         const id = randomUUID();
-        await copyFile(source.path, join(temporaryRoot, name));
+        const targetPath = join(temporaryRoot, name);
+        await copyFile(source.path, targetPath);
+        const copied = await stat(targetPath);
+        if (copied.size > MAX_FILE_BYTES) throw new Error(`${name} exceeds the 100 MB limit.`);
+        total += copied.size;
+        if (total > MAX_TOTAL_BYTES) throw new Error("Attachments exceed the 250 MB total limit.");
         const metadata = attachmentMetadata(name);
         attachments.push({
           id,
           name,
-          size: source.size,
+          size: copied.size,
           ...metadata,
           previewUrl: attachmentPreviewUrl(id),
           path: join(finalRoot, name),
-          sha256: await sha256(source.path),
+          sha256: await sha256(targetPath),
         });
       }
+      await writeTransferManifest(temporaryRoot, {
+        version: 1,
+        kind: "message-transfer",
+        transferId,
+        messageId,
+        sender,
+        recipientBotIds,
+        createdAt,
+        attachments: attachments.map((attachment) => manifestAttachment(attachment, attachment.name)),
+      });
       await rename(temporaryRoot, finalRoot);
       return attachments;
     } catch (error) {
@@ -999,11 +1107,36 @@ async function resolveManagedAttachment(
   try {
     const [canonicalRoot, canonicalPath] = await Promise.all([realpath(root), realpath(attachment.path)]);
     if (!isWithin(canonicalRoot, canonicalPath)) return null;
-    if (!(await stat(canonicalPath)).isFile()) return null;
+    const metadata = await stat(canonicalPath);
+    if (!metadata.isFile() || metadata.size !== attachment.size) return null;
+    if ((await sha256(canonicalPath)) !== attachment.sha256) return null;
     return { path: canonicalPath, mimeType: attachment.mimeType };
   } catch {
     return null;
   }
+}
+
+async function writeTransferManifest(directory: string, manifest: TransferManifest): Promise<void> {
+  await writeFile(join(directory, TRANSFER_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+}
+
+function manifestAttachment(
+  attachment: StoredAttachment,
+  relativePath: string,
+): TransferManifest["attachments"][number] {
+  return {
+    id: attachment.id,
+    name: attachment.name,
+    relativePath,
+    size: attachment.size,
+    kind: attachment.kind,
+    mimeType: attachment.mimeType,
+    previewKind: attachment.previewKind,
+    sha256: attachment.sha256,
+  };
 }
 
 async function inspectSource(sourcePath: string): Promise<{ path: string; size: number }> {
@@ -1138,7 +1271,7 @@ function isStoredState(value: unknown): value is StoredState {
     Array.isArray(value.drafts) &&
     value.drafts.every(isStoredDraft) &&
     (value.generatedAttachments === undefined ||
-      (Array.isArray(value.generatedAttachments) && value.generatedAttachments.every(isStoredAttachment))) &&
+      (Array.isArray(value.generatedAttachments) && value.generatedAttachments.every(isStoredGeneratedAttachment))) &&
     Array.isArray(value.pausedBotIds) &&
     value.pausedBotIds.every((item) => isString(item)) &&
     isRecord(value.idempotency) &&
@@ -1163,6 +1296,15 @@ function isStoredAttachment(value: unknown): value is StoredAttachment {
     (isString(value.previewUrl) || value.previewUrl === undefined) &&
     isString(value.path) &&
     isString(value.sha256)
+  );
+}
+
+function isStoredGeneratedAttachment(value: unknown): value is StoredGeneratedAttachment {
+  if (!isRecord(value)) return false;
+  if (!isStoredAttachment(value)) return false;
+  return (
+    (value.ownerBotId === undefined || isString(value.ownerBotId)) &&
+    (value.ownerThreadId === undefined || value.ownerThreadId === null || isString(value.ownerThreadId))
   );
 }
 
@@ -1217,4 +1359,19 @@ function isStoredReaction(value: unknown): value is StoredReaction {
 function isWithin(root: string, path: string): boolean {
   const candidate = relative(root, path);
   return candidate !== "" && !candidate.startsWith("..") && !isAbsolute(candidate);
+}
+
+function transferRootForPath(root: string, path: string): string | null {
+  const candidate = relative(root, path);
+  if (!candidate || candidate.startsWith("..") || isAbsolute(candidate)) return null;
+  const segment = candidate.split(/[\\/]/u)[0];
+  return segment && !segment.startsWith(".") ? join(root, segment) : null;
+}
+
+function generatedRootForPath(root: string, path: string): string | null {
+  const candidate = relative(root, path);
+  if (!candidate || candidate.startsWith("..") || isAbsolute(candidate)) return null;
+  const segments = candidate.split(/[\\/]/u);
+  if (segments[0] !== "generated" || !segments[1] || segments[1].startsWith(".")) return null;
+  return join(root, "generated", segments[1]);
 }

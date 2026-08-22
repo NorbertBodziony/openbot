@@ -1,4 +1,3 @@
-import { attachmentReferences } from "@openbot/contracts/attachment-references";
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js";
 import type { BotProfile, MessageCitation } from "../../data";
@@ -7,6 +6,7 @@ import { Button } from "../ui";
 import { AnchoredTooltip } from "./AnchoredTooltip";
 import { AttachmentReferenceVisual, attachmentReferenceTone } from "./AttachmentReference";
 import { LinkIcon } from "./ConversationIcons";
+import { messageFileReferences } from "./FileReference";
 
 export function RichMessageText(props: {
   body: string;
@@ -16,6 +16,7 @@ export function RichMessageText(props: {
   onSelectAgent: (botId: string) => void;
   onOpenLink: (url: string) => void;
   onOpenAttachment?: (attachment: AttachmentSummary) => void;
+  onOpenSharedFile?: (path: string) => void;
   showCitationFooter?: boolean;
 }) {
   const citationsByNumber = createMemo(
@@ -59,29 +60,32 @@ export function RichMessageText(props: {
       <For each={parts()}>
         {(part) => {
           const attachment = part.attachment;
-          if (attachment) {
+          const sharedPath = part.sharedPath;
+          if (attachment || sharedPath) {
+            const name = attachment?.name ?? part.text;
             return (
               <Button
                 type="button"
                 class="message-file-reference"
-                data-file-tone={attachmentReferenceTone(attachment.name)}
-                aria-label={`Open attached file ${attachment.name}`}
+                data-file-tone={attachmentReferenceTone(name)}
+                aria-label={`${attachment ? "Open attached file" : "Open shared file"} ${name}`}
                 aria-describedby={tooltipId}
-                onPointerEnter={(event) => openTooltip(event.currentTarget, attachment.name, true)}
-                onMouseEnter={(event) => openTooltip(event.currentTarget, attachment.name, true)}
+                onPointerEnter={(event) => openTooltip(event.currentTarget, name, true)}
+                onMouseEnter={(event) => openTooltip(event.currentTarget, name, true)}
                 onPointerLeave={(event) => closeTooltip(event.currentTarget)}
                 onMouseLeave={(event) => closeTooltip(event.currentTarget)}
-                onFocus={(event) => openTooltip(event.currentTarget, attachment.name, true)}
+                onFocus={(event) => openTooltip(event.currentTarget, name, true)}
                 onBlur={(event) => closeTooltip(event.currentTarget)}
                 onKeyDown={closeTooltipOnEscape}
                 onClick={(event) => {
                   if (!usesTouchLayout()) setTooltip(null);
-                  else openTooltip(event.currentTarget, attachment.name, true);
-                  props.onOpenAttachment?.(attachment);
+                  else openTooltip(event.currentTarget, name, true);
+                  if (attachment) props.onOpenAttachment?.(attachment);
+                  else if (sharedPath) props.onOpenSharedFile?.(sharedPath);
                 }}
               >
-                <AttachmentReferenceVisual name={attachment.name} />
-                <span class="inline-file-reference-name">{attachment.name}</span>
+                <AttachmentReferenceVisual name={name} />
+                <span class="inline-file-reference-name">{name}</span>
               </Button>
             );
           }
@@ -203,6 +207,7 @@ interface RichMessagePart {
   bot?: BotProfile;
   citation?: MessageCitation;
   attachment?: AttachmentSummary;
+  sharedPath?: string;
   url?: string;
 }
 
@@ -214,7 +219,7 @@ function richMessageParts(
 ): RichMessagePart[] {
   const parts: RichMessagePart[] = [];
   for (const referencedPart of referencedMessageParts(body, attachmentsById)) {
-    if (referencedPart.attachment) {
+    if (referencedPart.attachment || referencedPart.sharedPath) {
       parts.push(referencedPart);
       continue;
     }
@@ -235,14 +240,17 @@ function richMessageParts(
 }
 
 function referencedMessageParts(body: string, attachmentsById: Map<string, AttachmentSummary>): RichMessagePart[] {
-  const references = attachmentReferences(body);
+  const references = messageFileReferences(body, [...attachmentsById.values()]);
   if (references.length === 0) return [{ text: body }];
   const parts: RichMessagePart[] = [];
   let cursor = 0;
   for (const reference of references) {
     if (reference.start > cursor) parts.push({ text: body.slice(cursor, reference.start) });
-    const attachment = attachmentsById.get(reference.attachmentId);
-    parts.push(attachment ? { text: reference.name, attachment } : { text: reference.name });
+    if (reference.kind === "attachment") {
+      parts.push({ text: reference.name, attachment: reference.attachment });
+    } else {
+      parts.push({ text: reference.name, sharedPath: reference.path });
+    }
     cursor = reference.end;
   }
   if (cursor < body.length) parts.push({ text: body.slice(cursor) });

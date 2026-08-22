@@ -7,7 +7,7 @@ import * as ListboxPrimitive from "@kobalte/core/listbox";
 import type { PolymorphicProps } from "@kobalte/core/polymorphic";
 import * as PopoverPrimitive from "@kobalte/core/popover";
 import * as RadioGroupPrimitive from "@kobalte/core/radio-group";
-import * as SelectPrimitive from "@kobalte/core/select";
+import * as KobalteSelect from "@kobalte/core/select";
 import * as TabsPrimitive from "@kobalte/core/tabs";
 import * as TooltipPrimitive from "@kobalte/core/tooltip";
 import type { ValidComponent } from "@solidjs/web";
@@ -44,9 +44,9 @@ function focusRestoreHandler(upstream: () => OpenChangeHandler | undefined): Ope
 }
 
 function SelectRootAdapter<Option, OptGroup = never, T extends ValidComponent = "div">(
-  props: PolymorphicProps<T, SelectPrimitive.SelectRootProps<Option, OptGroup, T>>,
+  props: PolymorphicProps<T, KobalteSelect.SelectRootProps<Option, OptGroup, T>>,
 ) {
-  return SelectPrimitive.Root<Option, OptGroup, T>(props);
+  return KobalteSelect.Root<Option, OptGroup, T>(props);
 }
 
 function ComboboxRootAdapter<Option, OptGroup = never, T extends ValidComponent = "div">(
@@ -229,36 +229,36 @@ export const RadioGroup: RadioGroupApi = {
   ItemDescription: (props) => <RadioGroupPrimitive.ItemDescription {...props} />,
 };
 
-interface SelectApi {
-  Root: typeof SelectPrimitive.Root;
-  Label: typeof SelectPrimitive.Label;
-  Description: typeof SelectPrimitive.Description;
-  ErrorMessage: typeof SelectPrimitive.ErrorMessage;
-  Trigger: typeof SelectPrimitive.Trigger;
-  Value: typeof SelectPrimitive.Value;
-  HiddenSelect: typeof SelectPrimitive.HiddenSelect;
-  Portal: typeof SelectPrimitive.Portal;
-  Content: typeof SelectPrimitive.Content;
-  Listbox: typeof SelectPrimitive.Listbox;
-  Item: typeof SelectPrimitive.Item;
-  ItemLabel: typeof SelectPrimitive.ItemLabel;
-  ItemIndicator: typeof SelectPrimitive.ItemIndicator;
+interface SelectPrimitiveApi {
+  Root: typeof KobalteSelect.Root;
+  Label: typeof KobalteSelect.Label;
+  Description: typeof KobalteSelect.Description;
+  ErrorMessage: typeof KobalteSelect.ErrorMessage;
+  Trigger: typeof KobalteSelect.Trigger;
+  Value: typeof KobalteSelect.Value;
+  HiddenSelect: typeof KobalteSelect.HiddenSelect;
+  Portal: typeof KobalteSelect.Portal;
+  Content: typeof KobalteSelect.Content;
+  Listbox: typeof KobalteSelect.Listbox;
+  Item: typeof KobalteSelect.Item;
+  ItemLabel: typeof KobalteSelect.ItemLabel;
+  ItemIndicator: typeof KobalteSelect.ItemIndicator;
 }
 
-export const Select: SelectApi = {
+export const SelectPrimitive: SelectPrimitiveApi = {
   Root: SelectRootAdapter,
-  Label: (props) => <SelectPrimitive.Label {...props} />,
-  Description: (props) => <SelectPrimitive.Description {...props} />,
-  ErrorMessage: (props) => <SelectPrimitive.ErrorMessage {...props} />,
-  Trigger: (props) => <SelectPrimitive.Trigger {...props} />,
-  Value: (props) => <SelectPrimitive.Value {...props} />,
-  HiddenSelect: (props) => <SelectPrimitive.HiddenSelect {...props} />,
-  Portal: (props) => <SelectPrimitive.Portal {...props} />,
-  Content: (props) => <SelectPrimitive.Content {...props} />,
-  Listbox: (props) => <SelectPrimitive.Listbox {...props} />,
-  Item: (props) => <SelectPrimitive.Item {...props} />,
-  ItemLabel: (props) => <SelectPrimitive.ItemLabel {...props} />,
-  ItemIndicator: (props) => <SelectPrimitive.ItemIndicator {...props} />,
+  Label: (props) => <KobalteSelect.Label {...props} />,
+  Description: (props) => <KobalteSelect.Description {...props} />,
+  ErrorMessage: (props) => <KobalteSelect.ErrorMessage {...props} />,
+  Trigger: (props) => <KobalteSelect.Trigger {...props} />,
+  Value: (props) => <KobalteSelect.Value {...props} />,
+  HiddenSelect: (props) => <KobalteSelect.HiddenSelect {...props} />,
+  Portal: (props) => <KobalteSelect.Portal {...props} />,
+  Content: (props) => <KobalteSelect.Content {...props} />,
+  Listbox: (props) => <KobalteSelect.Listbox {...props} />,
+  Item: (props) => <KobalteSelect.Item {...props} />,
+  ItemLabel: (props) => <KobalteSelect.ItemLabel {...props} />,
+  ItemIndicator: (props) => <KobalteSelect.ItemIndicator {...props} />,
 };
 
 interface ComboboxApi {

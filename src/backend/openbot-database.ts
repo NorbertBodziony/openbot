@@ -320,14 +320,16 @@ export class OpenBotDatabase {
     commandId = `conversation:${eventType}:${randomUUID()}`,
   ): ConversationSnapshot {
     if (!snapshot.threadId) return structuredClone(snapshot);
-    return this.dispatch(
+    const threadId = snapshot.threadId;
+    const recovery = conversationRecoveryState(this.connection, threadId, snapshot.activeTurnId);
+    const result = this.dispatch(
       commandId,
       [
         {
           aggregateType: "thread",
-          aggregateId: snapshot.threadId,
+          aggregateId: threadId,
           eventType,
-          payload: { detail: payload, snapshot },
+          payload: { detail: payload, snapshot, recovery },
         },
       ],
       (db, sequences) => {
@@ -424,9 +426,11 @@ export class OpenBotDatabase {
              WHERE thread_id = ? AND turn_id = ?`,
           ).run(status, new Date().toISOString(), sequence, snapshot.threadId, payload.turnId);
         }
-        return { ...snapshot, revision: sequence };
+        pruneConversationSnapshots(db, threadId, sequence);
+        return { revision: sequence };
       },
     );
+    return { ...structuredClone(snapshot), revision: result.revision };
   }
 
   activeProviderSession(threadId: string, provider: AgentProviderId): ProviderSession | null {
@@ -671,6 +675,9 @@ export class OpenBotDatabase {
       if (snapshot) {
         latest = snapshot;
         latestSequence = event.sequence;
+        for (const [turnId, sessionId] of turnProviderSessionIdsValue(record?.recovery)) {
+          turnSessions.set(turnId, sessionId);
+        }
         if (snapshot.activeTurnId && !turnSessions.has(snapshot.activeTurnId)) {
           const activeSession = [...sessions.values()].find((session) => session.state === "active");
           turnSessions.set(snapshot.activeTurnId, activeSession?.id ?? null);
@@ -729,6 +736,20 @@ export class OpenBotDatabase {
           JSON.stringify(message),
           latestSequence,
         );
+        for (const attachment of message.attachments ?? []) {
+          db.prepare(`
+            INSERT INTO projection_attachments
+              (attachment_id, owner_kind, owner_id, name, path, metadata_json, created_at, last_event_sequence)
+            VALUES (?, 'thread-message', ?, ?, '', ?, ?, ?)
+          `).run(
+            `${threadId}:${message.id}:${attachment.id}`,
+            `${threadId}:${message.id}`,
+            attachment.name,
+            JSON.stringify(attachment),
+            message.createdAt,
+            latestSequence,
+          );
+        }
       });
       const messagesByTurn = new Map<string, ConversationMessage[]>();
       for (const message of latest.messages) {
@@ -785,11 +806,16 @@ export class OpenBotDatabase {
         ) VALUES (?, ?, NULL, ?, ?, ?, ?)
       `);
       for (const event of events) {
+        const eventPayload = JSON.parse(event.payload_json);
+        const eventRecord = objectValue(eventPayload);
+        const activityPayload = conversationSnapshotValue(objectValue(eventRecord?.snapshot))
+          ? (eventRecord?.detail ?? {})
+          : eventPayload;
         activityInsert.run(
           randomUUID(),
           threadId,
           event.event_type,
-          event.payload_json,
+          JSON.stringify(activityPayload),
           event.occurred_at,
           event.sequence,
         );
@@ -811,7 +837,7 @@ export class OpenBotDatabase {
     state: MailboxProjectionState,
     eventType: string,
     fileDeletions: string[] = [],
-    rebaseHistory = false,
+    _rebaseHistory = false,
   ): void {
     this.dispatch(
       commandId,
@@ -825,18 +851,11 @@ export class OpenBotDatabase {
       ],
       (db, sequences) => {
         const sequence = sequences[0] ?? 0;
-        if (rebaseHistory) {
-          db.prepare(
-            `DELETE FROM orchestration_command_receipts WHERE command_id IN (
-               SELECT DISTINCT command_id FROM orchestration_events
-               WHERE aggregate_type = 'mailbox' AND aggregate_id = 'mailbox' AND sequence < ?
-             )`,
-          ).run(sequence);
-          db.prepare(
-            `DELETE FROM orchestration_events
-             WHERE aggregate_type = 'mailbox' AND aggregate_id = 'mailbox' AND sequence < ?`,
-          ).run(sequence);
-        }
+        db.prepare(
+          `DELETE FROM orchestration_events
+           WHERE aggregate_type = 'mailbox' AND aggregate_id = 'mailbox' AND sequence < ?`,
+        ).run(sequence);
+        deleteOrphanReceipts(db);
         const value = state;
         db.exec("DELETE FROM projection_deliveries");
         db.exec("DELETE FROM projection_mailbox_messages");
@@ -1318,6 +1337,69 @@ function conversationSnapshotValue(value: DynamicRecord | null): ConversationSna
     revision: value.revision,
     messages,
   };
+}
+
+function conversationRecoveryState(
+  db: DatabaseSync,
+  threadId: string,
+  activeTurnId: string | null,
+): { turnProviderSessionIds: Record<string, string | null> } {
+  const turnProviderSessionIds: Record<string, string | null> = {};
+  for (const row of databaseRows(
+    db.prepare("SELECT turn_id, provider_session_id FROM projection_turns WHERE thread_id = ?").all(threadId),
+  )) {
+    const turnId = requiredStringColumn(row, "turn_id");
+    turnProviderSessionIds[turnId] = optionalStringColumn(row, "provider_session_id");
+  }
+  if (activeTurnId && !(activeTurnId in turnProviderSessionIds)) {
+    const activeSession = databaseRow(
+      db
+        .prepare(
+          `SELECT id FROM projection_provider_sessions
+           WHERE thread_id = ? AND state = 'active'
+           ORDER BY created_at DESC, last_event_sequence DESC LIMIT 1`,
+        )
+        .get(threadId),
+    );
+    turnProviderSessionIds[activeTurnId] = activeSession ? requiredStringColumn(activeSession, "id") : null;
+  }
+  return { turnProviderSessionIds };
+}
+
+function turnProviderSessionIdsValue(value: unknown): Array<[string, string | null]> {
+  const recovery = objectValue(value);
+  const turnProviderSessionIds = objectValue(recovery?.turnProviderSessionIds);
+  if (!turnProviderSessionIds) return [];
+  const result: Array<[string, string | null]> = [];
+  for (const [turnId, sessionId] of Object.entries(turnProviderSessionIds)) {
+    if (sessionId === null || isString(sessionId)) result.push([turnId, sessionId]);
+  }
+  return result;
+}
+
+function pruneConversationSnapshots(db: DatabaseSync, threadId: string, retainedSequence: number): void {
+  db.prepare(
+    `DELETE FROM projection_thread_activities
+     WHERE thread_id = ? AND last_event_sequence IN (
+       SELECT sequence FROM orchestration_events
+       WHERE aggregate_type = 'thread' AND aggregate_id = ? AND sequence < ?
+         AND json_type(payload_json, '$.snapshot') = 'object'
+     )`,
+  ).run(threadId, threadId, retainedSequence);
+  db.prepare(
+    `DELETE FROM orchestration_events
+     WHERE aggregate_type = 'thread' AND aggregate_id = ? AND sequence < ?
+       AND json_type(payload_json, '$.snapshot') = 'object'`,
+  ).run(threadId, retainedSequence);
+  deleteOrphanReceipts(db);
+}
+
+function deleteOrphanReceipts(db: DatabaseSync): void {
+  db.exec(`DELETE FROM orchestration_command_receipts
+    WHERE NOT EXISTS (
+      SELECT 1 FROM orchestration_events
+      WHERE orchestration_events.command_id = orchestration_command_receipts.command_id
+    )`);
 }
 
 export function providerForStoredModel(model: BotSummary["model"]): AgentProviderId {

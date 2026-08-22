@@ -96,6 +96,9 @@ export class BotStore {
     await this.#database.initialize();
     const persisted = this.#database.listAgents();
     if (persisted.length > 0 || this.#database.hasAggregateEvents("agents", "agents")) {
+      if (!persisted.every(isStoredBot)) {
+        throw new Error("Stored agent profiles use the old role field; update the data before starting OpenBot.");
+      }
       this.#state = {
         version: 2,
         examplesInitialized: true,
@@ -146,8 +149,8 @@ export class BotStore {
     if (input.name !== undefined) {
       bot.name = requiredText(input.name, "Agent name", INPUT_LIMITS.agentName);
     }
-    if (input.role !== undefined) {
-      bot.role = limitedText(input.role, "Agent title", INPUT_LIMITS.agentTitle);
+    if (input.title !== undefined) {
+      bot.title = limitedText(input.title, "Agent title", INPUT_LIMITS.agentTitle);
     }
     if (input.description !== undefined) {
       bot.description = limitedText(input.description, "Agent description", INPUT_LIMITS.agentDescription);
@@ -233,11 +236,14 @@ export class BotStore {
     const bot = this.#requireBot(id);
     this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== id);
     this.#database.hardDeleteAgent(`agents:hard-delete:${randomUUID()}`, id, bot.threadId, this.#state.bots);
-    await rm(join(this.#avatarsRoot, id), { recursive: true, force: true });
+    await Promise.all([
+      rm(join(this.#avatarsRoot, id), { recursive: true, force: true }),
+      rm(join(this.#botsRoot, id), { recursive: true, force: true }),
+    ]);
     return { ...bot };
   }
 
-  async getOrCreate(id: string, name?: string, role?: string): Promise<BotSummary> {
+  async getOrCreate(id: string, name?: string, title?: string): Promise<BotSummary> {
     validateBotId(id);
     const existing = this.#state.bots.find((bot) => bot.id === id);
     if (existing) {
@@ -245,7 +251,7 @@ export class BotStore {
       return { ...existing };
     }
 
-    const record = this.#createRecord(id, name ?? titleFromId(id), role ?? "Local teammate");
+    const record = this.#createRecord(id, name ?? titleFromId(id), title ?? "Local teammate");
     this.#state.bots.push(record);
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
     this.#persist("agent.created");
@@ -292,6 +298,9 @@ export class BotStore {
       if (!isRecord(parsed) || !isBoolean(parsed.examplesInitialized) || !Array.isArray(parsed.bots)) {
         throw new Error("Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.");
       }
+      if (parsed.bots.some((bot) => isRecord(bot) && "role" in bot)) {
+        throw new Error("Stored agent profiles use the old role field; update the data before starting OpenBot.");
+      }
 
       let bots: StoredBot[];
       if (parsed.version === 1 && parsed.bots.every(isLegacyStoredBot)) {
@@ -317,12 +326,12 @@ export class BotStore {
     this.#database.replaceAgents(`agents:${eventType}:${randomUUID()}`, this.#state.bots, eventType);
   }
 
-  #createRecord(id: string, name: string, role: string, description = ""): StoredBot {
+  #createRecord(id: string, name: string, title: string, description = ""): StoredBot {
     validateBotId(id);
     return {
       id,
       name,
-      role,
+      title,
       description,
       notifications: true,
       model: DEFAULT_AGENT_MODEL,
@@ -380,7 +389,7 @@ function isStoredBotBase(value: unknown): value is StoredBotBase {
     isString(value.id) &&
     isValidBotId(value.id) &&
     isString(value.name) &&
-    isString(value.role) &&
+    isString(value.title) &&
     isString(value.description) &&
     isBoolean(value.notifications) &&
     isAgentModel(value.model) &&
@@ -413,7 +422,7 @@ function migrateLegacyBot(bot: LegacyStoredBot): StoredBot {
   return {
     id: bot.id,
     name: bot.name,
-    role: bot.role,
+    title: bot.title,
     description: bot.description,
     notifications: bot.notifications,
     model: bot.model,

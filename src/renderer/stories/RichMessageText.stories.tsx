@@ -169,6 +169,25 @@ export const InlineFileReferences: Story = {
   },
 };
 
+export const PlainFileReferences: Story = {
+  args: {
+    body: `Here is ${STORY_ATTACHMENTS[0].name}. You can also review ~/OpenBot/Shared/brief.pdf.`,
+    attachments: [STORY_ATTACHMENTS[0]],
+    onOpenAttachment: fn(),
+    onOpenSharedFile: fn(),
+  },
+  play: async ({ args: storyArgs, canvas, userEvent }) => {
+    const attached = canvas.getByRole("button", {
+      name: `Open attached file ${STORY_ATTACHMENTS[0].name}`,
+    });
+    const shared = canvas.getByRole("button", { name: "Open shared file brief.pdf" });
+    await expect(attached).toBeInTheDocument();
+    await expect(shared).toBeInTheDocument();
+    await userEvent.click(shared);
+    await expect(storyArgs.onOpenSharedFile).toHaveBeenCalledWith("~/OpenBot/Shared/brief.pdf");
+  },
+};
+
 export const LongFileReference: Story = {
   args: {
     body: `Review ${serializeAttachmentReference(longAttachment.name, longAttachment.id)} before continuing.`,

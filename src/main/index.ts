@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -58,11 +59,11 @@ import {
   parseMarkConversationRead,
   parseMessageReaction,
   parseOpenAttachment,
+  parseOpenSharedFile,
   parsePromptResponse,
   parseReorderQueue,
   parseSendMessage,
   parseSetAgentAvatar,
-  parseSetQueuePaused,
   parseSteerQueuedMessage,
   parseUpdateBot,
   parseUpdateQueuedMessage,
@@ -595,6 +596,25 @@ function registerIpcHandlers(
     const error = await shell.openPath(attachment.path);
     if (error) throw new Error(error);
   });
+  handleTrusted(IPC_CHANNELS.agentOpenSharedFile, async (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseOpenSharedFile(scoped.payload);
+    if (scoped.serverId !== "local") {
+      const downloaded = await remoteServers.downloadSharedFile(parsed.path, scoped.serverId);
+      const cacheRoot = join(app.getPath("userData"), "remote-shared-files");
+      await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
+      const cacheKey = createHash("sha256").update(`${scoped.serverId}:${parsed.path}`).digest("hex");
+      const target = join(cacheRoot, `${cacheKey}-${basename(downloaded.name)}`);
+      await writeFile(target, downloaded.bytes, { mode: 0o600 });
+      await chmod(target, 0o600);
+      const openError = await shell.openPath(target);
+      if (openError) throw new Error(openError);
+      return;
+    }
+    const sharedFile = await service.resolveSharedFile(parsed.path);
+    const openError = await shell.openPath(sharedFile.path);
+    if (openError) throw new Error(openError);
+  });
   handleTrusted(IPC_CHANNELS.agentListQueue, (input: unknown) => {
     const scoped = parseAgentRequest(input);
     return routeListQueue(service, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
@@ -609,21 +629,6 @@ function registerIpcHandlers(
           {
             method: "POST",
             body: { deliveryId: parsed.deliveryId },
-          },
-          scoped.serverId,
-          decodeVoid,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentSetQueuePaused, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
-    const parsed = parseSetQueuePaused(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.setQueuePaused(parsed.botId, parsed.paused)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/pause`,
-          {
-            method: "POST",
-            body: { paused: parsed.paused },
           },
           scoped.serverId,
           decodeVoid,

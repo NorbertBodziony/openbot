@@ -105,6 +105,70 @@ describe("remote server order", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("downloads shared files with an authenticated request", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-shared-download-"));
+    const statePath = join(directory, "servers.json");
+    const serverId = "remote-shared";
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        version: 2,
+        activeServerId: serverId,
+        servers: [
+          {
+            id: serverId,
+            name: "Remote",
+            apiUrl: "https://remote-shared.trycloudflare.com/",
+            fingerprint: "fingerprint",
+            username: "person@example.com",
+            encryptedToken: Buffer.from("session-token").toString("base64"),
+            remoteDesktopAvailable: false,
+            role: "member",
+          },
+        ],
+      }),
+    );
+
+    const bytes = new TextEncoder().encode("name,value\nOpenBot,1\n");
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      expect(url.pathname).toBe("/v1/shared-files");
+      expect(url.searchParams.get("path")).toBe("~/OpenBot/Shared/report.csv");
+      expect(init?.headers).toEqual({ Authorization: "Bearer session-token" });
+      return new Response(bytes, {
+        status: 200,
+        headers: {
+          "Content-Disposition": "attachment; filename*=UTF-8''report.csv",
+        },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const manager = new RemoteServerManager(
+        statePath,
+        {
+          encrypt: (value) => Buffer.from(value),
+          decrypt: (value) => value.toString(),
+        },
+        {
+          createTeamAuthTicket: async () => "ticket",
+          getEmail: () => "person@example.com",
+        },
+      );
+      await manager.initialize();
+
+      await expect(manager.downloadSharedFile("~/OpenBot/Shared/report.csv", serverId)).resolves.toEqual({
+        bytes,
+        name: "report.csv",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      manager.stop();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("remote control capability discovery", () => {

@@ -43,6 +43,7 @@ import { DirectConversation } from "./components/DirectConversation";
 import { GlobalSearch } from "./components/GlobalSearch";
 import { InitialSetup } from "./components/InitialSetup";
 import { JoinServerDialog } from "./components/JoinServerDialog";
+import { OnboardingFlow } from "./components/OnboardingFlow";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./components/PanelResizer";
 import { RemoteDesktopWorkspace } from "./components/RemoteDesktopWorkspace";
 import { ServerRail } from "./components/ServerRail";
@@ -145,21 +146,21 @@ function updateStored(store: StoredValue, value: StoredValue): void {
   storeSetters.get(store)?.(value);
 }
 
-const ONBOARDING_PROFILES: Record<string, { role: string; description: string; firstMessage: string }> = {
+const ONBOARDING_PROFILES: Record<string, { title: string; description: string; firstMessage: string }> = {
   "Work & projects": {
-    role: "Work & projects",
+    title: "Work & projects",
     description:
       "Helps plan, organize, and execute ongoing work and projects while keeping priorities, next steps, and deliverables clear.",
     firstMessage: "Focus on my work and projects. Help me plan, organize, and execute them proactively.",
   },
   "Research & writing": {
-    role: "Research & writing",
+    title: "Research & writing",
     description: "Researches topics, synthesizes reliable sources, and helps draft, edit, and refine clear writing.",
     firstMessage:
       "Focus on research and writing. Help me investigate topics and turn the findings into clear, useful writing.",
   },
   "Sales & outreach": {
-    role: "Sales & outreach",
+    title: "Sales & outreach",
     description: "Supports prospect research, sales preparation, personalized outreach, and organized follow-up work.",
     firstMessage:
       "Focus on sales and outreach. Help me research prospects, prepare personalized outreach, and manage follow-ups.",
@@ -1129,13 +1130,13 @@ export function App() {
     if (!bot || !topic) return false;
     const predefined = ONBOARDING_PROFILES[topic];
     const profile = predefined ?? {
-      role: topic.length <= 60 ? topic : "Custom focus",
+      title: topic.length <= 60 ? topic : "Custom focus",
       description: `Primary focus: ${topic.slice(0, 1_900)}.`,
       firstMessage: `My main focus for you is: ${topic}. Treat this as your ongoing specialty.`,
     };
     try {
       await updateBot(bot.id, {
-        role: profile.role,
+        title: profile.title,
         description: profile.description,
         model,
         reasoningEffort,
@@ -1226,14 +1227,6 @@ export function App() {
     void window.openbot.agent
       .reorderQueue({ botId: bot.id, deliveryIds })
       .catch((error) => appendUiError(bot.id, error, "Reorder failed"));
-  }
-
-  function resumeQueue() {
-    const bot = activeBot();
-    if (!bot) return;
-    void window.openbot.agent
-      .setQueuePaused({ botId: bot.id, paused: false })
-      .catch((error) => appendUiError(bot.id, error, "Resume failed"));
   }
 
   function stopActiveTurn() {
@@ -1744,17 +1737,29 @@ export function App() {
           <Show
             when={setupState()?.completed}
             fallback={
-              <InitialSetup
-                state={setupState() ?? { completed: false, preferredProvider: null }}
-                agentStatus={agentStatus()}
-                platform={appInfo()?.platform ?? "darwin"}
-                accountEmail={account().email}
-                inviteUrl={pendingInviteUrl()}
-                onSave={saveSetup}
-                onPreviewInvite={previewInvite}
-                onJoinRemote={joinRemoteDuringSetup}
-                onLogout={logoutCentralAccount}
-              />
+              <Show
+                when={pendingInviteUrl().trim()}
+                fallback={
+                  <OnboardingFlow
+                    state={setupState() ?? { completed: false, preferredProvider: null }}
+                    agentStatus={agentStatus()}
+                    platform={appInfo()?.platform ?? "darwin"}
+                    onSave={saveSetup}
+                  />
+                }
+              >
+                <InitialSetup
+                  state={setupState() ?? { completed: false, preferredProvider: null }}
+                  agentStatus={agentStatus()}
+                  platform={appInfo()?.platform ?? "darwin"}
+                  accountEmail={account().email}
+                  inviteUrl={pendingInviteUrl()}
+                  onSave={saveSetup}
+                  onPreviewInvite={previewInvite}
+                  onJoinRemote={joinRemoteDuringSetup}
+                  onLogout={logoutCentralAccount}
+                />
+              </Show>
             }
           >
             <div
@@ -1893,7 +1898,6 @@ export function App() {
                   onSteerQueuedMessage={steerQueuedMessage}
                   onUpdateQueuedMessage={updateQueuedMessage}
                   onReorderQueue={reorderQueue}
-                  onResumeQueue={resumeQueue}
                   onActivateBrowserTab={activateBrowserTab}
                   onCloseBrowserTab={closeBrowserTab}
                   onOpenRemoteDesktop={openRemoteDesktopWorkspace}
@@ -1993,7 +1997,7 @@ function toBotProfile(stored: BotSummary): BotProfile {
   return {
     id: stored.id,
     name: stored.name,
-    role: stored.role,
+    title: stored.title,
     description: stored.description,
     notifications: stored.notifications,
     model: stored.model,
@@ -2098,7 +2102,7 @@ function botProfilesEqual(left: BotProfile, right: BotProfile): boolean {
   return (
     left.id === right.id &&
     left.name === right.name &&
-    left.role === right.role &&
+    left.title === right.title &&
     left.description === right.description &&
     left.notifications === right.notifications &&
     left.model === right.model &&

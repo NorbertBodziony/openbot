@@ -8,13 +8,11 @@ import { EditIcon, QueueIcon, SteerIcon, TrashIcon } from "./ConversationIcons";
 interface QueuePanelProps {
   deliveries: QueueDelivery[];
   editingDeliveryId?: string | null;
-  paused: boolean;
   canSteer: boolean;
   onSteer: (deliveryId: string) => void;
   onCancel: (deliveryId: string) => void;
   onEdit: (delivery: QueueDelivery) => void;
   onReorder: (deliveryIds: string[]) => void;
-  onResume: () => void;
 }
 
 interface DragSlot {
@@ -454,14 +452,6 @@ export function QueuePanel(props: QueuePanelProps) {
             }}
           </For>
         </div>
-        <Show when={props.paused}>
-          <div class="agent-queue-panel-footer">
-            <span>Queue paused</span>
-            <Button type="button" onClick={props.onResume}>
-              Resume queue
-            </Button>
-          </div>
-        </Show>
         <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">
           {announcement()}
         </div>

@@ -16,7 +16,7 @@ import {
   Pencil,
   Popover,
   RadioGroup,
-  Select,
+  SelectPrimitive,
   Tabs,
   Tooltip,
   Trash2,
@@ -321,24 +321,24 @@ export const Pickers: Story = {
         Pickers
       </Heading>
       <div class="foundation-story-stack">
-        <Select.Root<string>
+        <SelectPrimitive.Root<string>
           options={pickerOptions}
           placeholder="Choose a model"
           itemComponent={(props) => (
-            <Select.Item class="foundation-listbox-item" item={props.item}>
-              <Select.ItemLabel>{props.item.rawValue}</Select.ItemLabel>
-            </Select.Item>
+            <SelectPrimitive.Item class="foundation-listbox-item" item={props.item}>
+              <SelectPrimitive.ItemLabel>{props.item.rawValue}</SelectPrimitive.ItemLabel>
+            </SelectPrimitive.Item>
           )}
         >
-          <Select.Trigger class="ui-input foundation-picker-trigger" aria-label="Model">
-            <Select.Value<string>>{(state) => state.selectedOption()}</Select.Value>
-          </Select.Trigger>
-          <Select.Portal>
-            <Select.Content class="foundation-picker-content">
-              <Select.Listbox class="foundation-listbox" />
-            </Select.Content>
-          </Select.Portal>
-        </Select.Root>
+          <SelectPrimitive.Trigger class="ui-input foundation-picker-trigger" aria-label="Model">
+            <SelectPrimitive.Value<string>>{(state) => state.selectedOption()}</SelectPrimitive.Value>
+          </SelectPrimitive.Trigger>
+          <SelectPrimitive.Portal>
+            <SelectPrimitive.Content class="foundation-picker-content">
+              <SelectPrimitive.Listbox class="foundation-listbox" />
+            </SelectPrimitive.Content>
+          </SelectPrimitive.Portal>
+        </SelectPrimitive.Root>
 
         <Combobox.Root<string>
           options={pickerOptions}

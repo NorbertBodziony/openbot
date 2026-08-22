@@ -87,6 +87,43 @@ describe("MailboxStore", () => {
     const second = store.getDelivery(receipt.deliveries[1].id);
     expect(first?.delivery.attachments[0]?.id).toBe(second?.delivery.attachments[0]?.id);
     await expect(access(first?.managedAttachments[0]?.path ?? "missing")).resolves.toBeUndefined();
+
+    const manifest = JSON.parse(
+      await readFile(join(root, "Shared", "Transfers", receipt.messageId, ".openbot-transfer.json"), "utf8"),
+    );
+    expect(manifest).toMatchObject({
+      version: 1,
+      kind: "message-transfer",
+      messageId: receipt.messageId,
+      sender: { kind: "user" },
+      recipientBotIds: ["chief", "sales-outbound"],
+      attachments: [
+        {
+          name: "report.csv",
+          relativePath: "report.csv",
+          size: 22,
+          sha256: expect.any(String),
+        },
+      ],
+    });
+  });
+
+  it("rejects managed attachments after their contents change", async () => {
+    const source = join(root, "mutable.txt");
+    await writeFile(source, "original");
+    const [draft] = await store.prepareAttachments([source]);
+    const receipt = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Review",
+      draftIds: [draft.id],
+    });
+    const attachment = store.getDelivery(receipt.deliveries[0].id)?.managedAttachments[0];
+    await writeFile(attachment?.path ?? "missing", "changed");
+
+    await expect(store.verifyDeliveryAttachments(receipt.deliveries[0].id)).rejects.toThrow("has changed");
+    await expect(store.resolveAttachment(attachment?.id ?? "")).resolves.toBeNull();
+    await expect(store.listExportAttachments()).resolves.toEqual([]);
   });
 
   it("remaps inline references from draft IDs to committed attachment IDs", async () => {
@@ -132,7 +169,7 @@ describe("MailboxStore", () => {
     );
   });
 
-  it("persists cancellation, pause state, and idempotent agent sends", async () => {
+  it("persists cancellation and idempotent agent sends", async () => {
     const first = await store.enqueue({
       sender: { kind: "bot", botId: "chief" },
       recipientBotIds: ["sales-outbound"],
@@ -148,11 +185,9 @@ describe("MailboxStore", () => {
     expect(duplicate).toEqual(first);
 
     await store.cancel("sales-outbound", first.deliveries[0].id);
-    await store.setPaused("sales-outbound", true);
     const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
     await restored.initialize();
     expect(restored.listQueue("sales-outbound")).toMatchObject({
-      paused: true,
       deliveries: [{ status: "cancelled" }],
     });
   });
@@ -329,6 +364,21 @@ describe("MailboxStore", () => {
     const resolved = await restored.resolveAttachment(attachment.id);
     expect(resolved?.mimeType).toBe("image/png");
     await expect(readFile(resolved?.path ?? "")).resolves.toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  });
+
+  it("deletes generated attachments owned by a deleted bot", async () => {
+    const attachment = await store.storeGeneratedAttachment({
+      bytes: new Uint8Array([1, 2, 3]),
+      name: "generated.bin",
+      ownerBotId: "chief",
+      ownerThreadId: "thread-chief",
+    });
+
+    await expect(store.resolveAttachment(attachment.id)).resolves.toBeTruthy();
+    await store.deleteBotData("chief");
+
+    await expect(store.resolveAttachment(attachment.id)).resolves.toBeNull();
+    await expect(store.listExportAttachments()).resolves.toEqual([]);
   });
 
   it("cleans unrecoverable attachment drafts when a new app session starts", async () => {

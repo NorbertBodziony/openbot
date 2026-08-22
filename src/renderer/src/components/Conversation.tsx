@@ -80,9 +80,13 @@ import {
   Input,
   LoaderCircle,
   Mic,
-  NativeSelect,
   Popover,
   Puzzle,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Switch,
   Tabs,
   Textarea,
@@ -141,7 +145,6 @@ interface ConversationProps {
     attachmentDraftIds: string[],
   ) => Promise<boolean>;
   onReorderQueue: (deliveryIds: string[]) => void;
-  onResumeQueue: () => void;
   onActivateBrowserTab: (tabId: string) => void;
   onCloseBrowserTab: (tabId: string) => void | Promise<void>;
   onOpenRemoteDesktop: (serverId: string, trigger: HTMLElement) => Promise<void>;
@@ -366,7 +369,7 @@ export function Conversation(props: ConversationProps) {
     ) {
       return "Working";
     }
-    if (!props.queue?.paused && props.queue?.deliveries.some((delivery) => delivery.status === "queued")) {
+    if (props.queue?.deliveries.some((delivery) => delivery.status === "queued")) {
       return "Queued";
     }
     return null;
@@ -400,7 +403,6 @@ export function Conversation(props: ConversationProps) {
     const snapshot = props.queue;
     if (!snapshot) return [];
     const queued = orderedQueuedDeliveries();
-    if (snapshot.paused) return queued;
 
     const activeTurnId = props.activeTurnId;
     const steering = snapshot.deliveries.filter(
@@ -416,7 +418,7 @@ export function Conversation(props: ConversationProps) {
     const waiting = hasForegroundDelivery ? queued : queued.slice(1);
     return [...waiting, ...steering];
   });
-  const queueBarVisible = createMemo(() => Boolean(props.queue?.paused) || presentedQueueDeliveries().length > 0);
+  const queueBarVisible = createMemo(() => presentedQueueDeliveries().length > 0);
   const seenMessageIds = new Set<string>();
   const [fadeAtTop, setFadeAtTop] = createSignal(false);
   const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
@@ -524,10 +526,10 @@ export function Conversation(props: ConversationProps) {
   function saveSettingsTitle(): void {
     const botId = props.bot?.id;
     if (!botId) return;
-    const role = settingsTitle().trim();
-    setSettingsTitle(role);
-    void saveBotPatch({ role }, botId).then((saved) => {
-      if (saved && props.bot?.id === botId && settingsTitle() === role) {
+    const title = settingsTitle().trim();
+    setSettingsTitle(title);
+    void saveBotPatch({ title }, botId).then((saved) => {
+      if (saved && props.bot?.id === botId && settingsTitle() === title) {
         setSettingsDirty((current) => ({ ...current, title: false }));
       }
     });
@@ -992,7 +994,7 @@ export function Conversation(props: ConversationProps) {
         signature: [
           bot.id,
           bot.name,
-          bot.role,
+          bot.title,
           bot.description,
           String(bot.notifications),
           bot.model,
@@ -1001,7 +1003,7 @@ export function Conversation(props: ConversationProps) {
           String(bot.avatarHue),
         ].join("\u0000"),
         name: bot.name,
-        role: bot.role,
+        title: bot.title,
         description: bot.description,
         notifications: bot.notifications,
         model: bot.model,
@@ -1021,7 +1023,7 @@ export function Conversation(props: ConversationProps) {
         setSettingsName(bot.name);
       }
       if (!dirty.title) {
-        setSettingsTitle(bot.role);
+        setSettingsTitle(bot.title);
       }
       if (!dirty.description) {
         setSettingsDescription(bot.description);
@@ -1569,6 +1571,12 @@ export function Conversation(props: ConversationProps) {
       .catch((error) => setComposerError(error instanceof Error ? error.message : String(error)));
   }
 
+  function openSharedFile(path: string) {
+    void window.openbot.agent
+      .openSharedFile({ path })
+      .catch((error) => setComposerError(error instanceof Error ? error.message : String(error)));
+  }
+
   return (
     <main
       ref={(element) => (conversationPanel = element)}
@@ -1705,11 +1713,15 @@ export function Conversation(props: ConversationProps) {
               shouldFocusWrap={true}
               defaultFilter={(option, inputValue) =>
                 option.kind === "create" ||
-                `${option.bot.name} ${option.bot.role}`.toLocaleLowerCase().includes(inputValue.toLocaleLowerCase())
+                `${option.bot.name} ${option.bot.title} ${option.bot.description}`
+                  .toLocaleLowerCase()
+                  .includes(inputValue.toLocaleLowerCase())
               }
               optionValue={(option) => (option.kind === "create" ? "create" : option.bot.id)}
               optionTextValue={(option) =>
-                option.kind === "create" ? "Create new agent" : `${option.bot.name} ${option.bot.role}`
+                option.kind === "create"
+                  ? "Create new agent"
+                  : `${option.bot.name} ${option.bot.title} ${option.bot.description}`
               }
               optionLabel={(option) => (option.kind === "create" ? "Create new agent" : option.bot.name)}
               optionDisabled={(option) => option.kind === "create" && props.creatingAgent}
@@ -1928,6 +1940,7 @@ export function Conversation(props: ConversationProps) {
                                   onOpenLink={(url) => void openMessageLink(url)}
                                   onPreview={(attachment) => void previewAttachment(attachment)}
                                   onAttachmentAction={attachmentAction}
+                                  onOpenSharedFile={openSharedFile}
                                   onDownload={(attachment) => attachmentAction(attachment, "download")}
                                 />
                               </div>
@@ -2089,13 +2102,11 @@ export function Conversation(props: ConversationProps) {
             <QueuePanel
               deliveries={presentedQueueDeliveries()}
               editingDeliveryId={editingDeliveryId()}
-              paused={Boolean(props.queue?.paused)}
               canSteer={Boolean(props.activeTurnId)}
               onSteer={props.onSteerQueuedMessage}
               onCancel={props.onCancelQueuedMessage}
               onEdit={editQueuedMessage}
               onReorder={reorderPresentedQueue}
-              onResume={props.onResumeQueue}
             />
           </Show>
           <div
@@ -2307,6 +2318,7 @@ export function Conversation(props: ConversationProps) {
         onOpenLink={(url) => void openMessageLink(url)}
         onPreview={(attachment) => void previewAttachment(attachment)}
         onAttachmentAction={attachmentAction}
+        onOpenSharedFile={openSharedFile}
       />
 
       <Dialog.Root open={Boolean(mediaPreview())} onOpenChange={(open) => !open && setMediaPreview(null)}>
@@ -2778,27 +2790,33 @@ export function Conversation(props: ConversationProps) {
                     }
                     onChange={(model) => void selectAndConfirmModel(model)}
                   />
-                  <Show when={selectedModel()} keyed>
-                    {(model) => <p class="agent-settings-model-description">{model.description}</p>}
-                  </Show>
                 </div>
-                <label class="agent-settings-model-row agent-settings-thinking-row">
+                <div class="agent-settings-model-row agent-settings-thinking-row">
                   <span>Reasoning</span>
-                  <NativeSelect
+                  <Select<AgentReasoningEffort>
+                    class="agent-settings-reasoning-control"
+                    options={reasoningOptions()}
                     value={settingsReasoning()}
-                    aria-label="Agent reasoning level"
-                    onChange={(event) => {
-                      const reasoningEffort = reasoningOptions().find((effort) => effort === event.currentTarget.value);
+                    onChange={(reasoningEffort) => {
                       if (!reasoningEffort) return;
                       setSettingsReasoning(reasoningEffort);
                       saveBotPatch({ reasoningEffort });
                     }}
+                    itemComponent={(item) => (
+                      <SelectItem item={item.item}>{reasoningLabel(item.item.rawValue)}</SelectItem>
+                    )}
                   >
-                    <For each={reasoningOptions()}>
-                      {(effort) => <option value={effort}>{reasoningLabel(effort)}</option>}
-                    </For>
-                  </NativeSelect>
-                </label>
+                    <SelectTrigger size="sm" class="agent-settings-reasoning-select" aria-label="Agent reasoning level">
+                      <SelectValue<AgentReasoningEffort>>
+                        {(state) => {
+                          const effort = state.selectedOption();
+                          return effort ? reasoningLabel(effort) : "Select reasoning";
+                        }}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent />
+                  </Select>
+                </div>
               </div>
             </section>
             <Show when={settingsSaveError()}>

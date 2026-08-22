@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,6 +17,16 @@ export interface DevelopmentServiceSpec {
 
 const scriptsRoot = dirname(fileURLToPath(import.meta.url));
 export const projectRoot = dirname(scriptsRoot);
+
+const DEFAULT_API_PORT = 3_100;
+const DEFAULT_RENDERER_PORTS = {
+  app: 5_173,
+  "test-client": 5_174,
+} as const;
+const DEFAULT_REMOTE_DEBUGGING_PORTS = {
+  app: 9_333,
+  "test-client": 9_334,
+} as const;
 
 export function servicesForTarget(target: DevelopmentTarget): DevelopmentService[] {
   if (target === "all") return ["api", "app"];
@@ -55,8 +66,12 @@ export function createDevelopmentServiceSpec(
       ...environment,
       OPENBOT_APP_VARIANT: "dev",
       OPENBOT_DEV_PROFILE: isTestClient ? "test-client" : "app",
-      OPENBOT_DEV_RENDERER_PORT: isTestClient ? "5174" : "5173",
-      OPENBOT_DEV_REMOTE_DEBUGGING_PORT: isTestClient ? "9334" : "9333",
+      OPENBOT_DEV_RENDERER_PORT:
+        environment.OPENBOT_DEV_RENDERER_PORT ??
+        String(isTestClient ? DEFAULT_RENDERER_PORTS["test-client"] : DEFAULT_RENDERER_PORTS.app),
+      OPENBOT_DEV_REMOTE_DEBUGGING_PORT:
+        environment.OPENBOT_DEV_REMOTE_DEBUGGING_PORT ??
+        String(isTestClient ? DEFAULT_REMOTE_DEBUGGING_PORTS["test-client"] : DEFAULT_REMOTE_DEBUGGING_PORTS.app),
       OPENBOT_DEV_REMOTE_ROLE: isTestClient ? "client" : "host",
     },
   };
@@ -77,7 +92,55 @@ export function parseDevelopmentTarget(args: string[]): {
 
 async function main(): Promise<void> {
   const { target, dryRun } = parseDevelopmentTarget(process.argv.slice(2));
-  const specs = servicesForTarget(target).map((service) => createDevelopmentServiceSpec(service));
+  const services = servicesForTarget(target);
+  const sharedEnvironment = { ...process.env };
+  const reservedPorts = new Set<number>();
+
+  if (services.includes("api")) {
+    const apiPort = await findAvailablePort(
+      readPort(sharedEnvironment.OPENBOT_API_PORT) ?? DEFAULT_API_PORT,
+      reservedPorts,
+    );
+    reservedPorts.add(apiPort);
+    sharedEnvironment.OPENBOT_API_PORT = String(apiPort);
+    if (!sharedEnvironment.OPENBOT_AUTH_API_URL) {
+      sharedEnvironment.OPENBOT_AUTH_API_URL = `http://127.0.0.1:${apiPort}`;
+    }
+    if (apiPort !== DEFAULT_API_PORT) {
+      console.log(`API port ${DEFAULT_API_PORT} is busy. Using ${apiPort}.`);
+    }
+  }
+
+  const specs: DevelopmentServiceSpec[] = [];
+  for (const service of services) {
+    const environment = { ...sharedEnvironment };
+    if (service === "app" || service === "test-client") {
+      const defaultPort = DEFAULT_RENDERER_PORTS[service];
+      const rendererPort = await findAvailablePort(
+        readPort(environment.OPENBOT_DEV_RENDERER_PORT) ?? defaultPort,
+        reservedPorts,
+      );
+      reservedPorts.add(rendererPort);
+      environment.OPENBOT_DEV_RENDERER_PORT = String(rendererPort);
+      if (rendererPort !== defaultPort) {
+        console.log(`Renderer port ${defaultPort} is busy. Using ${rendererPort} for ${service}.`);
+      }
+
+      const defaultRemoteDebuggingPort = DEFAULT_REMOTE_DEBUGGING_PORTS[service];
+      const remoteDebuggingPort = await findAvailablePort(
+        readPort(environment.OPENBOT_DEV_REMOTE_DEBUGGING_PORT) ?? defaultRemoteDebuggingPort,
+        reservedPorts,
+      );
+      reservedPorts.add(remoteDebuggingPort);
+      environment.OPENBOT_DEV_REMOTE_DEBUGGING_PORT = String(remoteDebuggingPort);
+      if (remoteDebuggingPort !== defaultRemoteDebuggingPort) {
+        console.log(
+          `Electron debug port ${defaultRemoteDebuggingPort} is busy. Using ${remoteDebuggingPort} for ${service}.`,
+        );
+      }
+    }
+    specs.push(createDevelopmentServiceSpec(service, environment));
+  }
   validateServiceSpecs(specs);
 
   if (dryRun) {
@@ -132,6 +195,43 @@ async function main(): Promise<void> {
       });
     });
   }
+}
+
+async function findAvailablePort(preferredPort: number, reservedPorts: Set<number>): Promise<number> {
+  for (let port = preferredPort; port <= 65_535; port += 1) {
+    if (reservedPorts.has(port)) continue;
+    if (await isPortAvailable(port)) return port;
+  }
+  throw new Error("No available development port was found.");
+}
+
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolvePort, reject) => {
+    const server = createServer();
+    const finish = (available: boolean) => {
+      server.removeAllListeners();
+      resolvePort(available);
+    };
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE") {
+        finish(false);
+        return;
+      }
+      reject(error);
+    });
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => finish(true));
+    });
+  });
+}
+
+function readPort(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1_024 || port > 65_535) {
+    throw new Error("Development ports must be integers from 1024 to 65535.");
+  }
+  return port;
 }
 
 function validateServiceSpecs(specs: DevelopmentServiceSpec[]): void {

@@ -12,13 +12,13 @@ import {
   isReasoningEffort,
   type MarkConversationReadInput,
   type OpenAttachmentInput,
+  type OpenSharedFileInput,
   type ReorderQueueInput,
   type RespondToApprovalInput,
   type RespondToPromptInput,
   type SendMessageInput,
   type SetAgentAvatarInput,
   type SetMessageReactionInput,
-  type SetQueuePausedInput,
   type SteerQueuedMessageInput,
   type UpdateBotInput,
   type UpdateQueuedMessageInput,
@@ -90,13 +90,14 @@ export function parseMarkConversationRead(value: unknown): MarkConversationReadI
 
 export function parseUpdateBot(value: unknown): UpdateBotInput {
   if (!isObject(value)) throw new Error("Invalid bot update request.");
+  if (value.role !== undefined) throw new Error("Invalid role.");
   const result: UpdateBotInput = { botId: requireString(value.botId, "botId") };
   const limits = {
     name: INPUT_LIMITS.agentName,
-    role: INPUT_LIMITS.agentTitle,
+    title: INPUT_LIMITS.agentTitle,
     description: INPUT_LIMITS.agentDescription,
   } as const;
-  for (const field of ["name", "role", "description"] as const) {
+  for (const field of ["name", "title", "description"] as const) {
     if (value[field] !== undefined && !isString(value[field])) {
       throw new Error(`Invalid ${field}.`);
     }
@@ -181,19 +182,17 @@ export function parseOpenAttachment(value: unknown): OpenAttachmentInput {
   };
 }
 
+export function parseOpenSharedFile(value: unknown): OpenSharedFileInput {
+  if (!isObject(value)) throw new Error("Invalid shared file request.");
+  return { path: requireString(value.path, "path", INPUT_LIMITS.path) };
+}
+
 export function parseCancelQueuedMessage(value: unknown): CancelQueuedMessageInput {
   if (!isObject(value)) throw new Error("Invalid queue cancellation request.");
   return {
     botId: requireString(value.botId, "botId"),
     deliveryId: requireString(value.deliveryId, "deliveryId"),
   };
-}
-
-export function parseSetQueuePaused(value: unknown): SetQueuePausedInput {
-  if (!isObject(value) || !isBoolean(value.paused)) {
-    throw new Error("Invalid queue pause request.");
-  }
-  return { botId: requireString(value.botId, "botId"), paused: value.paused };
 }
 
 export function parseSteerQueuedMessage(value: unknown): SteerQueuedMessageInput {

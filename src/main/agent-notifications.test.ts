@@ -8,7 +8,7 @@ const bot = {
   id: "chief",
   name: "Chief",
   notifications: true,
-  role: "Lead",
+  title: "Lead",
   description: "",
   model: "gpt-5.6-luna",
   reasoningEffort: "medium",

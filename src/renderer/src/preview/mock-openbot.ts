@@ -27,6 +27,7 @@ import type {
   MacPermissionsState,
   OpenAttachmentInput,
   OpenBotDesktopApi,
+  OpenSharedFileInput,
   QueueDelivery,
   QueueSnapshot,
   RemoteDesktopSession,
@@ -37,7 +38,6 @@ import type {
   ServerSummary,
   SetAgentAvatarInput,
   SetMessageReactionInput,
-  SetQueuePausedInput,
   SetTeamTypingInput,
   SteerQueuedMessageInput,
   TeamInviteSummary,
@@ -167,7 +167,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     }, delay);
     timers.add(timer);
   };
-  const emptyQueue = (botId: string): QueueSnapshot => ({ botId, paused: false, deliveries: [] });
+  const emptyQueue = (botId: string): QueueSnapshot => ({ botId, deliveries: [] });
   const queues = new Map<string, QueueSnapshot>(bots.map((bot) => [bot.id, emptyQueue(bot.id)]));
 
   function emitAgentEvent(event: AgentEvent): void {
@@ -232,7 +232,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     return {
       id,
       name: input.name ?? "New agent",
-      role: input.role ?? "Generalist agent",
+      title: input.title ?? "Generalist agent",
       description: input.description ?? "A new agent ready to help with focused work.",
       notifications: input.notifications ?? true,
       model: input.model ?? "gpt-5.6-luna",
@@ -357,6 +357,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       },
       discardDraftAttachment: async () => undefined,
       openAttachment: async (_input: OpenAttachmentInput) => undefined,
+      openSharedFile: async (_input: OpenSharedFileInput) => undefined,
       sendMessage: async (input: SendMessageInput) => {
         const messageId = `mock-message-${messageCounter++}`;
         const deliveryId = `mock-delivery-${messageCounter++}`;
@@ -390,7 +391,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           snapshot.activeTurnId = turnId;
           snapshot.messages = [...snapshot.messages, userMessage];
         });
-        queues.set(input.botId, { botId: input.botId, paused: false, deliveries: [delivery] });
+        queues.set(input.botId, { botId: input.botId, deliveries: [delivery] });
         emitAgentEvent({
           type: "queue-changed",
           snapshot: queues.get(input.botId) ?? emptyQueue(input.botId),
@@ -418,7 +419,6 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           });
           queues.set(input.botId, {
             botId: input.botId,
-            paused: false,
             deliveries: [{ ...delivery, status: "completed" }],
           });
           emitAgentEvent({
@@ -479,12 +479,6 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           const delivery = byId.get(deliveryId);
           return delivery ? [{ ...delivery, position: index + 1 }] : [];
         });
-        queues.set(input.botId, queue);
-        emitAgentEvent({ type: "queue-changed", snapshot: queue });
-      },
-      setQueuePaused: async (input: SetQueuePausedInput) => {
-        const queue = queues.get(input.botId) ?? emptyQueue(input.botId);
-        queue.paused = input.paused;
         queues.set(input.botId, queue);
         emitAgentEvent({ type: "queue-changed", snapshot: queue });
       },

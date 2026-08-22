@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
@@ -39,6 +39,7 @@ afterEach(async () => {
   delete process.env.OPENBOT_FAKE_CODEX_LOG;
   delete process.env.OPENBOT_FAKE_AGENT_TOOL;
   delete process.env.OPENBOT_FAKE_AGENT_TOOL_PATHS;
+  delete process.env.OPENBOT_FAKE_AGENT_TOOL_CALLS;
   delete process.env.OPENBOT_FAKE_THREAD_READ_DELAY;
   delete process.env.OPENBOT_FAKE_AUTO_COMPLETE;
   delete process.env.OPENBOT_FAKE_CONTEXT_USAGE;
@@ -50,6 +51,29 @@ afterEach(async () => {
 });
 
 describe.sequential("AgentService", () => {
+  it("resolves only regular files inside the shared directory", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    const nested = join(store.sharedRoot, "nested");
+    const sharedFile = join(nested, "report.csv");
+    const outside = join(root, "outside.csv");
+    const link = join(nested, "outside-link.csv");
+    await mkdir(nested, { recursive: true });
+    await writeFile(sharedFile, "value\n");
+    await writeFile(outside, "secret\n");
+    await symlink(outside, link);
+
+    await expect(service.resolveSharedFile("~/OpenBot/Shared/nested/report.csv")).resolves.toMatchObject({
+      path: await realpath(sharedFile),
+      name: "report.csv",
+      size: 6,
+    });
+    await expect(service.resolveSharedFile(outside)).rejects.toThrow("inside the shared directory");
+    await expect(service.resolveSharedFile(link)).rejects.toThrow("inside the shared directory");
+  });
+
   it("does not surface the skills context-budget notice as an agent error", async () => {
     process.env.OPENBOT_FAKE_WARNING = "Skill descriptions were shortened to fit the skills context budget.";
     const { store, mailbox } = stores();
@@ -151,7 +175,11 @@ describe.sequential("AgentService", () => {
           expect.objectContaining({
             type: "namespace",
             name: "openbot",
-            tools: expect.arrayContaining([expect.objectContaining({ name: "ask_user" })]),
+            tools: expect.arrayContaining([
+              expect.objectContaining({ name: "ask_user" }),
+              expect.objectContaining({ name: "list_agents" }),
+              expect.objectContaining({ name: "update_profile" }),
+            ]),
           }),
         ]),
       );
@@ -486,7 +514,7 @@ describe.sequential("AgentService", () => {
     await store.getOrCreate("chief");
     await service.updateBot({
       botId: "chief",
-      role: "Research & writing",
+      title: "Research & writing",
       description: "Researches topics and turns findings into clear writing.",
     });
 
@@ -500,6 +528,9 @@ describe.sequential("AgentService", () => {
     const instructions = getString(start?.params, "developerInstructions") ?? "";
     expect(instructions).toContain('"title": "Research & writing"');
     expect(instructions).toContain('"description": "Researches topics and turns findings into clear writing."');
+    expect(instructions).toContain("Be pragmatic and direct");
+    expect(instructions).toContain("Give the shortest answer that is complete and useful");
+    expect(instructions).toContain("Do not add filler");
     expect(instructions).toContain("openbot.ask_user");
     expect(instructions).toContain("GitHub-flavored Markdown tables");
     expect(instructions).toContain("at least three dashes per column");
@@ -525,7 +556,7 @@ describe.sequential("AgentService", () => {
     expect((await protocolMessages()).filter((message) => message.method === "turn/start")).toHaveLength(1);
   });
 
-  it("queues FIFO instead of steering and pause/resume controls draining", async () => {
+  it("queues FIFO instead of steering and continues draining after an interrupt", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
     const events: AgentEvent[] = [];
@@ -538,17 +569,13 @@ describe.sequential("AgentService", () => {
     if (active?.type !== "turn-started") throw new Error("Turn did not start.");
     await service.sendMessage({ botId: "chief", text: "Run after the first task" });
 
-    let queue = service.listQueue("chief");
+    const queue = service.listQueue("chief");
     expect(queue.deliveries.map((item) => item.status)).toEqual(["running", "queued"]);
     expect((await protocolMessages()).some((message) => message.method === "turn/steer")).toBe(false);
 
     await service.interrupt("chief", active.turnId);
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
-    queue = service.listQueue("chief");
-    expect(queue.paused).toBe(true);
-    expect(queue.deliveries[1]?.status).toBe("queued");
 
-    await service.setQueuePaused("chief", false);
     await waitFor(async () => (await protocolMessages()).filter((item) => item.method === "turn/start").length === 2);
     expect(service.listQueue("chief").deliveries[1]?.status).toBe("running");
 
@@ -1054,11 +1081,75 @@ describe.sequential("AgentService", () => {
     );
   });
 
+  it("lists complete local profiles and updates a selected agent profile", async () => {
+    process.env.OPENBOT_FAKE_AGENT_TOOL_CALLS = JSON.stringify([
+      { tool: "list_agents", arguments: {} },
+      {
+        tool: "update_profile",
+        arguments: {
+          botId: "design",
+          name: "Design Studio",
+          title: "Product design",
+          description: "Owns product interface and visual design.",
+        },
+      },
+    ]);
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("design", "Designer", "Design");
+    await service.sendMessage({ botId: "chief", text: "Update the design teammate." });
+
+    await waitFor(async () => {
+      const messages = await protocolMessages();
+      return messages.some((message) => message.id === "agent-tool-configured-1" && message.result);
+    });
+
+    expect(await store.getOrCreate("design")).toMatchObject({
+      name: "Design Studio",
+      title: "Product design",
+      description: "Owns product interface and visual design.",
+    });
+    const listResponse = (await protocolMessages()).find((message) => message.id === "agent-tool-configured-0");
+    expect(JSON.stringify(listResponse?.result)).toContain('\\"title\\":\\"Design\\"');
+    expect(JSON.stringify(listResponse?.result)).toContain('\\"description\\":\\"\\"');
+  });
+
+  it("sends a teammate request only to the selected profile match", async () => {
+    process.env.OPENBOT_FAKE_AGENT_TOOL_CALLS = JSON.stringify([
+      { tool: "list_agents", arguments: {} },
+      {
+        tool: "send_message",
+        arguments: {
+          recipientBotIds: ["design"],
+          text: "Please review the interface proposal.",
+        },
+      },
+    ]);
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("design", "Design Studio", "Product design");
+    await store.updateBot({
+      botId: "design",
+      description: "Owns product interface and visual design.",
+    });
+    await store.getOrCreate("research", "Research", "Research partner");
+    await service.sendMessage({ botId: "chief", text: "Ask the design bot." });
+
+    await waitFor(() => service?.listQueue("design").deliveries.length === 1);
+    expect(service.listQueue("research").deliveries).toHaveLength(0);
+    expect(service.listQueue("design").deliveries[0]?.sender).toEqual({ kind: "bot", botId: "chief" });
+  });
+
   it("reliably relays a completed teammate result back through a reply chain without loops", async () => {
     process.env.OPENBOT_FAKE_AUTO_COMPLETE = "AUTO_WEATHER_RESULT";
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
-    await service.initialize();
+    await store.initialize();
+    await mailbox.initialize();
+    await store.getOrCreate("chief");
+    await store.getOrCreate("sales-outbound");
 
     const rootMessage = await mailbox.enqueue({
       sender: { kind: "bot", botId: "chief" },
@@ -1078,7 +1169,7 @@ describe.sequential("AgentService", () => {
       replyToMessageId: clarification.messageId,
     });
 
-    await service.setQueuePaused("sales-outbound", false);
+    await service.initialize();
     await waitFor(() =>
       service
         ?.listQueue("chief")
@@ -1117,8 +1208,6 @@ describe.sequential("AgentService", () => {
     if (!firstTurnId) throw new Error("First turn did not start.");
     await service.interrupt("chief", firstTurnId);
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
-    await service.setQueuePaused("chief", false);
-
     await service.sendMessage({ botId: "chief", text: "New live turn" });
     await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "running");
 
@@ -1173,6 +1262,38 @@ describe.sequential("AgentService", () => {
       ]),
     });
     expect((await store.getOrCreate("chief")).threadId).toBe(threadId);
+  });
+
+  it("does not persist unchanged provider history after repeated restarts", async () => {
+    const clients: FakeAgentClient[] = [];
+    const { store, mailbox } = stores();
+    const createService = () =>
+      new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+        const client = new FakeAgentClient(provider);
+        clients.push(client);
+        return client;
+      });
+    service = createService();
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Remember this" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
+    const before = await service.readConversation("chief");
+    await service.stop();
+
+    for (let restart = 0; restart < 2; restart += 1) {
+      service = createService();
+      await service.initialize();
+      const client = clients.at(-1);
+      await waitFor(() => client?.requests.some((request) => request.method === "thread/read"));
+      await service.stop();
+    }
+
+    expect(
+      store.database.connection
+        .prepare("SELECT COUNT(*) AS count FROM orchestration_events WHERE event_type = 'provider-history.backfilled'")
+        .get(),
+    ).toMatchObject({ count: 0 });
+    expect((await store.database.readConversation("chief", before.threadId)).revision).toBe(before.revision);
   });
 
   it("unarchives a stored Codex thread and resumes the queued delivery", async () => {
@@ -1498,6 +1619,21 @@ process.stdin.on("data", (chunk) => {
         write({ method: "item/agentMessage/delta", params: { threadId: message.params.threadId, turnId, itemId: "message-" + turnId, delta: "Streaming" } });
         if (process.env.OPENBOT_FAKE_AGENT_TOOL === "1" && turnCounter === 1) {
           setTimeout(() => write({ id: "agent-tool-1", method: "item/tool/call", params: { threadId: message.params.threadId, turnId, callId: "call-1", namespace: "openbot", tool: "send_message", arguments: { recipientBotIds: ["sales-outbound", "inbox-manager"], text: "Please prepare your reports.", paths: JSON.parse(process.env.OPENBOT_FAKE_AGENT_TOOL_PATHS || "[]") } } }), 30);
+        }
+        if (process.env.OPENBOT_FAKE_AGENT_TOOL_CALLS && turnCounter === 1) {
+          const calls = JSON.parse(process.env.OPENBOT_FAKE_AGENT_TOOL_CALLS);
+          calls.forEach((call, index) => setTimeout(() => write({
+            id: "agent-tool-configured-" + index,
+            method: "item/tool/call",
+            params: {
+              threadId: message.params.threadId,
+              turnId,
+              callId: "configured-call-" + index,
+              namespace: "openbot",
+              tool: call.tool,
+              arguments: call.arguments,
+            },
+          }), 30 + index * 30));
         }
         if (process.env.OPENBOT_FAKE_AUTO_COMPLETE) {
           setTimeout(() => {

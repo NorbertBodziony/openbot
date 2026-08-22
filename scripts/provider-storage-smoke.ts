@@ -45,7 +45,7 @@ async function runProvider(
   const bot: BotSummary = {
     id: botId,
     name: `${provider} smoke`,
-    role: "Storage verification",
+    title: "Storage verification",
     description: "",
     notifications: false,
     model,

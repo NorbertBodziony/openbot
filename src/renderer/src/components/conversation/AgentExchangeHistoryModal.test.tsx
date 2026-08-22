@@ -7,7 +7,7 @@ import { AgentExchangeHistoryModal, directAgentExchangeHistory } from "./AgentEx
 const currentBot: BotProfile = {
   id: "chief",
   name: "Chief",
-  role: "Chief of staff",
+  title: "Chief of staff",
   description: "",
   notifications: true,
   model: "gpt-5.6-luna",
@@ -24,7 +24,7 @@ const selectedAgent: BotProfile = {
   ...currentBot,
   id: "research",
   name: "Research",
-  role: "Researcher",
+  title: "Researcher",
   avatarSeed: "research",
   avatarHue: 185,
 };

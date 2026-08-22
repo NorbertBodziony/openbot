@@ -33,6 +33,21 @@ describe("development service runner", () => {
     expect(testClient.args).toContain("out-dev-test-client");
   });
 
+  it("keeps selected development ports in the child environment", () => {
+    const api = createDevelopmentServiceSpec("api", { OPENBOT_API_PORT: "3110" });
+    const app = createDevelopmentServiceSpec("app", {
+      OPENBOT_API_PORT: "3110",
+      OPENBOT_AUTH_API_URL: "http://127.0.0.1:3110",
+      OPENBOT_DEV_RENDERER_PORT: "5180",
+      OPENBOT_DEV_REMOTE_DEBUGGING_PORT: "9340",
+    });
+
+    expect(api.env.OPENBOT_API_PORT).toBe("3110");
+    expect(app.env.OPENBOT_AUTH_API_URL).toBe("http://127.0.0.1:3110");
+    expect(app.env.OPENBOT_DEV_RENDERER_PORT).toBe("5180");
+    expect(app.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT).toBe("9340");
+  });
+
   it("rejects unknown targets and options", () => {
     expect(() => parseDevelopmentTarget(["other"])).toThrow("Unknown development target");
     expect(() => parseDevelopmentTarget(["all", "--watch"])).toThrow("Unknown option");

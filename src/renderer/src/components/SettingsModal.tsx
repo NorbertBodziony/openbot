@@ -11,7 +11,7 @@ import {
   Heading,
   Input,
   Palette,
-  Select,
+  SelectPrimitive,
   Settings,
   SlidersHorizontal,
   Switch,
@@ -183,7 +183,7 @@ export function SettingsModal(props: SettingsModalProps) {
                     Choose where links from conversations open.
                   </Text>
                 </div>
-                <Select.Root<string>
+                <SelectPrimitive.Root<string>
                   options={linkTargetOptions}
                   value={linkTarget()}
                   onChange={(value) => value && setLinkTarget(value)}
@@ -191,25 +191,25 @@ export function SettingsModal(props: SettingsModalProps) {
                   gutter={4}
                   sameWidth
                   itemComponent={(selectProps) => (
-                    <Select.Item class="settings-modal-select-item" item={selectProps.item}>
-                      <Select.ItemLabel>{selectProps.item.rawValue}</Select.ItemLabel>
-                      <Select.ItemIndicator class="settings-modal-select-indicator">
+                    <SelectPrimitive.Item class="settings-modal-select-item" item={selectProps.item}>
+                      <SelectPrimitive.ItemLabel>{selectProps.item.rawValue}</SelectPrimitive.ItemLabel>
+                      <SelectPrimitive.ItemIndicator class="settings-modal-select-indicator">
                         <Check aria-hidden="true" />
-                      </Select.ItemIndicator>
-                    </Select.Item>
+                      </SelectPrimitive.ItemIndicator>
+                    </SelectPrimitive.Item>
                   )}
                 >
-                  <Select.Trigger class="settings-modal-select-trigger" aria-label="Open external links in">
-                    <Select.Value<string>>{(state) => state.selectedOption()}</Select.Value>
+                  <SelectPrimitive.Trigger class="settings-modal-select-trigger" aria-label="Open external links in">
+                    <SelectPrimitive.Value<string>>{(state) => state.selectedOption()}</SelectPrimitive.Value>
                     <ChevronDown aria-hidden="true" />
-                  </Select.Trigger>
-                  <Select.HiddenSelect />
-                  <Select.Portal mount={modalElement}>
-                    <Select.Content class="settings-modal-select-content">
-                      <Select.Listbox class="settings-modal-select-listbox" />
-                    </Select.Content>
-                  </Select.Portal>
-                </Select.Root>
+                  </SelectPrimitive.Trigger>
+                  <SelectPrimitive.HiddenSelect />
+                  <SelectPrimitive.Portal mount={modalElement}>
+                    <SelectPrimitive.Content class="settings-modal-select-content">
+                      <SelectPrimitive.Listbox class="settings-modal-select-listbox" />
+                    </SelectPrimitive.Content>
+                  </SelectPrimitive.Portal>
+                </SelectPrimitive.Root>
               </div>
             </Card>
           </section>

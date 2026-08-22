@@ -70,7 +70,9 @@ export function ComposerEditor(props: ComposerEditorProps) {
   const matchingBots = createMemo(() => {
     const query = mention()?.query.trim().toLocaleLowerCase() ?? "";
     return props.bots.filter(
-      (bot) => bot.id !== props.botId && (!query || `${bot.name} ${bot.role}`.toLocaleLowerCase().includes(query)),
+      (bot) =>
+        bot.id !== props.botId &&
+        (!query || `${bot.name} ${bot.title} ${bot.description}`.toLocaleLowerCase().includes(query)),
     );
   });
   const matchingAttachments = createMemo(() => {
@@ -622,7 +624,7 @@ function renderEditorValue(
         bot ?? {
           id,
           name,
-          role: "Agent",
+          title: "Agent",
           description: "",
           notifications: true,
           model: "gpt-5.6-luna",

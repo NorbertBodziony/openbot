@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "dotenvx run -f .env.dev -fk ../../.env.keys -- vite dev --port 3100",
+    "dev": "dotenvx run -f .env.dev -fk ../../.env.keys -- vite dev",
     "start": "bun run build && bun run preview",
     "build": "vite build",
     "preview": "dotenvx run -f .env.production -fk ../../.env.keys -- vite preview --port 3100",

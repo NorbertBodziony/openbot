@@ -117,7 +117,9 @@ export function Sidebar(props: SidebarProps) {
   const filteredBots = createMemo(() => {
     const normalizedQuery = query().trim().toLowerCase();
     return normalizedQuery
-      ? props.bots.filter((bot) => `${bot.name} ${bot.role} ${bot.preview}`.toLowerCase().includes(normalizedQuery))
+      ? props.bots.filter((bot) =>
+          `${bot.name} ${bot.title} ${bot.description} ${bot.preview}`.toLowerCase().includes(normalizedQuery),
+        )
       : props.bots;
   });
   const directThreadByMember = createMemo(
@@ -330,7 +332,7 @@ export function Sidebar(props: SidebarProps) {
               </Show>
               <For each={filteredBots()}>
                 {(bot) => {
-                  const role = () => bot.role.trim();
+                  const title = () => bot.title.trim();
                   const working = () => props.agentStates[bot.id]?.kind === "working";
                   return (
                     <ContextMenu.Root modal={false}>
@@ -338,7 +340,7 @@ export function Sidebar(props: SidebarProps) {
                         as={Button}
                         type="button"
                         class={["bot-row agent-row", { "bot-row-active": props.activeBotId === bot.id }]}
-                        aria-label={`${bot.name}${role() ? `, ${role()}` : ""}. ${bot.preview}`}
+                        aria-label={`${bot.name}${title() ? `, ${title()}` : ""}. ${bot.preview}`}
                         aria-pressed={props.activeBotId === bot.id ? "true" : "false"}
                         onClick={() => props.onSelectBot(bot.id)}
                       >
@@ -352,7 +354,7 @@ export function Sidebar(props: SidebarProps) {
                           <span class="bot-row-heading">
                             <span class="bot-row-title">
                               <strong>{bot.name}</strong>
-                              <Show when={role()}>
+                              <Show when={title()}>
                                 {(label) => (
                                   <Badge class="bot-role-badge" size="sm" title={label()}>
                                     {label()}

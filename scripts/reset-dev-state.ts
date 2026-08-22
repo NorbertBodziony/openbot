@@ -1,31 +1,15 @@
 import { lstat, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, parse, resolve } from "node:path";
+import { dirname, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type DevelopmentProfile, developmentUserDataName } from "../src/main/development-profile";
+import { resolveDevelopmentAppDataRoot } from "./development-state-paths";
+import { cleanupSeedOwnedTransfers } from "./seed-dev-state";
+
+export { resolveDevelopmentAppDataRoot } from "./development-state-paths";
 
 const developmentProfiles = ["app", "test-client"] as const satisfies readonly DevelopmentProfile[];
 const legacyDevelopmentStateNames = ["OpenBot Dev Host"] as const;
-
-export function resolveDevelopmentAppDataRoot(
-  platform: NodeJS.Platform = process.platform,
-  environment: NodeJS.ProcessEnv = process.env,
-  homeDirectory = homedir(),
-): string {
-  if (platform === "darwin") {
-    return join(homeDirectory, "Library", "Application Support");
-  }
-
-  if (platform === "win32") {
-    const appData = environment.APPDATA?.trim();
-    if (!appData) {
-      throw new Error("APPDATA is not set. OpenBot dev state was not changed.");
-    }
-    return appData;
-  }
-
-  return environment.XDG_CONFIG_HOME?.trim() || join(homeDirectory, ".config");
-}
 
 export function developmentStatePaths(appDataRoot: string): string[] {
   const safeRoot = resolve(appDataRoot);
@@ -45,7 +29,7 @@ export function developmentStatePaths(appDataRoot: string): string[] {
   });
 }
 
-export async function resetDevelopmentState(appDataRoot: string): Promise<string[]> {
+export async function resetDevelopmentState(appDataRoot: string, homeDirectory = homedir()): Promise<string[]> {
   const deletedPaths: string[] = [];
 
   for (const statePath of developmentStatePaths(appDataRoot)) {
@@ -58,6 +42,7 @@ export async function resetDevelopmentState(appDataRoot: string): Promise<string
       throw error;
     }
 
+    await cleanupSeedOwnedTransfers(statePath, homeDirectory);
     await rm(statePath, { force: true, maxRetries: 3, recursive: true, retryDelay: 100 });
     deletedPaths.push(statePath);
   }
@@ -78,6 +63,7 @@ async function main(): Promise<void> {
     }
   }
 
+  console.log("Seed-owned transfer files were removed. Other shared files were not changed.");
   console.log("Agent workspaces, ~/.codex, and ~/.claude were not changed.");
 }
 

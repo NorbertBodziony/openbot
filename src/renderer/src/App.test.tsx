@@ -30,7 +30,7 @@ const BOTS: BotSummary[] = [
   {
     id: "chief",
     name: "Chief",
-    role: "Chief of staff",
+    title: "Chief of staff",
     description: "Coordinates work",
     notifications: true,
     model: "gpt-5.6-luna",
@@ -46,7 +46,7 @@ const BOTS: BotSummary[] = [
   {
     id: "sales-outbound",
     name: "Sales Outbound",
-    role: "Outbound specialist",
+    title: "Outbound specialist",
     description: "",
     notifications: true,
     model: "gpt-5.6-luna",
@@ -276,17 +276,17 @@ describe("OpenBot connected desktop shell", () => {
           }),
           discardDraftAttachment: vi.fn().mockResolvedValue(undefined),
           openAttachment: vi.fn().mockResolvedValue(undefined),
+          openSharedFile: vi.fn().mockResolvedValue(undefined),
           sendMessage: vi.fn().mockResolvedValue({
             messageId: "message-1",
             deliveries: [{ id: "delivery-1", recipientBotId: "chief", status: "queued", position: 1 }],
           }),
           setMessageReaction: vi.fn().mockResolvedValue(undefined),
-          listQueue: vi.fn().mockImplementation(async (botId) => ({ botId, paused: false, deliveries: [] })),
+          listQueue: vi.fn().mockImplementation(async (botId) => ({ botId, deliveries: [] })),
           cancelQueuedMessage: vi.fn().mockResolvedValue(undefined),
           steerQueuedMessage: vi.fn().mockResolvedValue(undefined),
           updateQueuedMessage: vi.fn().mockResolvedValue(undefined),
           reorderQueue: vi.fn().mockResolvedValue(undefined),
-          setQueuePaused: vi.fn().mockResolvedValue(undefined),
           interrupt: vi.fn().mockResolvedValue(undefined),
           respondToPrompt: vi.fn().mockResolvedValue(undefined),
           respondToApproval: vi.fn().mockResolvedValue(undefined),
@@ -482,46 +482,43 @@ describe("OpenBot connected desktop shell", () => {
     });
   });
 
-  it("requires a provider choice before starting agents", async () => {
+  it("shows the first-run onboarding before starting agents", async () => {
     vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
       completed: false,
       preferredProvider: null,
     });
     render(() => <App />);
 
-    expect(await screen.findByRole("dialog", { name: "Where will OpenBot run?" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Meet OpenBot" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Where will OpenBot run?" })).not.toBeInTheDocument();
     expect(screen.queryByText("Verified. Opening OpenBot…")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("button", { name: /Use this computer/ }));
 
     const providers = screen.getByRole("radiogroup", { name: "Default provider" });
     const codex = within(providers).getByRole("radio", { name: /Codex.*Available/ });
     expect(codex).toHaveFocus();
     await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Available/ }));
-    await fireEvent.click(screen.getByRole("button", { name: "Continue with Claude" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open OpenBot" }));
     expect(window.openbot.saveSetup).toHaveBeenCalledWith({ preferredProvider: "claude" });
     expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
   });
 
   it("connects to a remote host after account sign-in", async () => {
+    const inviteUrl = "https://openbot.run/join?invite=test";
     vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
       completed: false,
       preferredProvider: null,
     });
+    vi.mocked(window.openbot.servers.takePendingInvite).mockResolvedValueOnce(inviteUrl);
     render(() => <App />);
 
-    await fireEvent.click(await screen.findByRole("button", { name: /Connect to a host/ }));
-    expect(screen.getByRole("dialog", { name: "Connect to a host" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Connect to a host" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Email" })).not.toBeInTheDocument();
 
-    const inviteUrl = "https://openbot.run/join?invite=test";
-    await fireEvent.input(screen.getByRole("textbox", { name: "Host invitation" }), {
-      target: { value: inviteUrl },
-    });
     expect(screen.getAllByText(/person@example.com/).length).toBeGreaterThan(0);
-    await fireEvent.click(screen.getByRole("button", { name: "Review invitation" }));
     expect(await screen.findByText("Studio Mac")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Connect to host" }));
 
@@ -705,8 +702,8 @@ describe("OpenBot connected desktop shell", () => {
     });
     expect(window.openbot.auth.verifyEmailCode).toHaveBeenCalledWith("challenge-1", "ABCD-EFGH");
     expect(await screen.findByText("Verified. Opening OpenBot…")).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Where will OpenBot run?" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("dialog", { name: "Where will OpenBot run?" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Where will OpenBot run?" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Meet OpenBot" })).toBeInTheDocument();
   });
 
   it("shows a soft loader until the account API becomes available", async () => {
@@ -806,7 +803,6 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    await fireEvent.click(await screen.findByRole("button", { name: /Use this computer/ }));
     const providers = await screen.findByRole("radiogroup", { name: "Default provider" });
     const codex = within(providers).getByRole("radio", { name: /Codex.*Checking/ });
     const claude = within(providers).getByRole("radio", { name: /Claude.*Checking/ });
@@ -817,7 +813,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(claude);
     expect(claude).toBeChecked();
-    expect(screen.getByRole("button", { name: "Continue with Claude" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
 
     emitAgentEvent?.({
       type: "status",
@@ -852,7 +848,9 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     expect(claude).toBeChecked();
-    await fireEvent.click(screen.getByRole("button", { name: "Continue with Claude" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open OpenBot" }));
     expect(window.openbot.saveSetup).toHaveBeenCalledWith({ preferredProvider: "claude" });
   });
 
@@ -891,13 +889,14 @@ describe("OpenBot connected desktop shell", () => {
     vi.mocked(window.openbot.saveSetup).mockRejectedValueOnce(new Error("Could not save setup."));
     render(() => <App />);
 
-    await fireEvent.click(await screen.findByRole("button", { name: /Use this computer/ }));
     expect(
       within(await screen.findByRole("radiogroup", { name: "Default provider" })).getByRole("radio", {
         name: /Codex.*Available/,
       }),
     ).toBeChecked();
-    await fireEvent.click(screen.getByRole("button", { name: "Continue with Codex" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open OpenBot" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not save setup.");
     expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
   });
@@ -917,8 +916,8 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    await fireEvent.click(await screen.findByRole("button", { name: /Use this computer/ }));
-    const row = (await screen.findByText("Screen Recording")).closest(".mac-permission-row");
+    await fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    const row = (await screen.findByText("Screen Recording")).closest(".onboarding-permission-row");
     const action = row?.querySelector("button");
     expect(action).not.toBeNull();
     if (!(action instanceof HTMLButtonElement)) throw new Error("Permission action is missing.");
@@ -926,13 +925,16 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.requestMacPermission).toHaveBeenCalledWith("screen-recording");
     await waitFor(() => expect(action).toHaveTextContent("Allowed"));
 
-    vi.mocked(window.openbot.getMacPermissions).mockResolvedValueOnce({
+    vi.mocked(window.openbot.requestMacPermission).mockResolvedValueOnce({
       screenRecording: "granted",
       accessibility: "granted",
     });
-    window.dispatchEvent(new Event("focus"));
-    const accessibilityRow = screen.getByText("Accessibility").closest(".mac-permission-row");
-    await waitFor(() => expect(accessibilityRow?.querySelector("button")).toHaveTextContent("Allowed"));
+    const accessibilityRow = screen.getByText("Accessibility").closest(".onboarding-permission-row");
+    const accessibilityAction = accessibilityRow?.querySelector("button");
+    expect(accessibilityAction).not.toBeNull();
+    if (!(accessibilityAction instanceof HTMLButtonElement)) throw new Error("Accessibility action is missing.");
+    await fireEvent.click(accessibilityAction);
+    await waitFor(() => expect(accessibilityAction).toHaveTextContent("Allowed"));
   });
 
   it("hides macOS permissions on other platforms", async () => {
@@ -948,9 +950,9 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    expect(await screen.findByRole("dialog", { name: "Where will OpenBot run?" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: /Use this computer/ }));
-    await waitFor(() => expect(screen.queryByText("Mac permissions")).not.toBeInTheDocument());
+    expect(await screen.findByRole("heading", { name: "Meet OpenBot" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(screen.queryByText("Optional computer control")).not.toBeInTheDocument());
     expect(window.openbot.getMacPermissions).not.toHaveBeenCalled();
   });
 
@@ -1233,8 +1235,8 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
   });
 
-  it("shows agent role badges without a redundant standalone heading", async () => {
-    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([BOTS[0], { ...BOTS[1], role: "   " }]);
+  it("shows agent title badges without a redundant standalone heading", async () => {
+    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([BOTS[0], { ...BOTS[1], title: "   " }]);
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
@@ -1463,9 +1465,9 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
 
     const settings = screen.getByRole("complementary", { name: "Agent settings" });
-    const thinking = within(settings).getByRole("combobox", { name: "Agent reasoning level" });
+    const thinking = within(settings).getByRole("button", { name: /Agent reasoning level/ });
     expect(within(settings).getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
-    expect(thinking).toHaveValue("medium");
+    expect(thinking).toHaveTextContent("Medium");
 
     await fireEvent.click(within(settings).getByRole("button", { name: "Agent model: Luna" }));
     let picker = within(settings).getByRole("dialog", { name: "Choose agent model" });
@@ -1484,7 +1486,8 @@ describe("OpenBot connected desktop shell", () => {
     picker = within(settings).getByRole("dialog", { name: "Choose agent model" });
     await fireEvent.click(within(picker).getByRole("tab", { name: /^Codex:/ }));
     await fireEvent.click(within(picker).getByRole("option", { name: "Sol" }));
-    await fireEvent.change(thinking, { target: { value: "xhigh" } });
+    await fireEvent.pointerDown(thinking, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "Extra high" }));
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
         botId: "chief",
@@ -2892,7 +2895,6 @@ describe("OpenBot connected desktop shell", () => {
       type: "queue-changed",
       snapshot: {
         botId: "chief",
-        paused: true,
         deliveries: [
           {
             id: "delivery-1",
@@ -2902,32 +2904,22 @@ describe("OpenBot connected desktop shell", () => {
             text: "Later",
             attachments: [],
             replyToMessageId: null,
-            status: "queued",
+            status: "running",
             position: 1,
-            turnId: null,
+            turnId: "turn-1",
             error: null,
             createdAt: new Date().toISOString(),
           },
-        ],
-      },
-    });
-    await fireEvent.click(screen.getByRole("button", { name: "Resume queue" }));
-    emitAgentEvent?.({
-      type: "queue-changed",
-      snapshot: {
-        botId: "chief",
-        paused: true,
-        deliveries: [
           {
-            id: "delivery-1",
-            messageId: "message-1",
+            id: "delivery-2",
+            messageId: "message-2",
             recipientBotId: "chief",
             sender: { kind: "user" },
-            text: "Later",
+            text: "Later, too",
             attachments: [],
             replyToMessageId: null,
             status: "queued",
-            position: 1,
+            position: 2,
             turnId: null,
             error: null,
             createdAt: new Date().toISOString(),
@@ -2935,12 +2927,9 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Delete queued message 1" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete queued message 2" }));
     await waitFor(() => expect(window.openbot.agent.cancelQueuedMessage).toHaveBeenCalled());
-    expect(window.openbot.agent.setQueuePaused).toHaveBeenCalledWith({
-      botId: "chief",
-      paused: false,
-    });
+    expect(screen.queryByRole("button", { name: "Resume queue" })).not.toBeInTheDocument();
   });
 
   it("keeps the first idle delivery in the foreground and shows later deliveries in Queue", async () => {
@@ -2971,7 +2960,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     emitAgentEvent?.({
       type: "queue-changed",
-      snapshot: { botId: "chief", paused: false, deliveries: [first] },
+      snapshot: { botId: "chief", deliveries: [first] },
     });
 
     expect(await screen.findByText("Start this work", { selector: ".message-copy" })).toBeInTheDocument();
@@ -2979,7 +2968,7 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({
       type: "queue-changed",
-      snapshot: { botId: "chief", paused: false, deliveries: [first, second, third] },
+      snapshot: { botId: "chief", deliveries: [first, second, third] },
     });
     await waitFor(() =>
       expect(Array.from(document.querySelectorAll(".agent-queue-message"), (element) => element.textContent)).toEqual([
@@ -3022,7 +3011,7 @@ describe("OpenBot connected desktop shell", () => {
       deliveries.push(delivery);
       emitAgentEvent?.({
         type: "queue-changed",
-        snapshot: { botId: input.botId, paused: false, deliveries: [...deliveries] },
+        snapshot: { botId: input.botId, deliveries: [...deliveries] },
       });
       return {
         messageId: delivery.messageId,
@@ -3069,13 +3058,13 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({
       type: "queue-changed",
-      snapshot: { botId: "chief", paused: false, deliveries: [firstStarting] },
+      snapshot: { botId: "chief", deliveries: [firstStarting] },
     });
     expect(document.querySelector(".agent-queue-panel")).toBeNull();
 
     emitAgentEvent?.({
       type: "queue-changed",
-      snapshot: { botId: "chief", paused: false, deliveries: [firstStarting, second] },
+      snapshot: { botId: "chief", deliveries: [firstStarting, second] },
     });
     expect(await screen.findByText("Next work", { selector: ".agent-queue-message" })).toBeInTheDocument();
     expect(screen.queryByText("Current work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
@@ -3085,7 +3074,6 @@ describe("OpenBot connected desktop shell", () => {
       type: "queue-changed",
       snapshot: {
         botId: "chief",
-        paused: false,
         deliveries: [
           { ...firstStarting, status: "running", turnId: "turn-live" },
           { ...second, status: "starting", position: null, turnId: "turn-live" },
@@ -3111,7 +3099,6 @@ describe("OpenBot connected desktop shell", () => {
       type: "queue-changed",
       snapshot: {
         botId: "chief",
-        paused: false,
         deliveries: [
           { ...second, position: 1, turnId: null },
           { ...third, position: 2 },
@@ -3133,7 +3120,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
-        role: "Work & projects",
+        title: "Work & projects",
         description:
           "Helps plan, organize, and execute ongoing work and projects while keeping priorities, next steps, and deliverables clear.",
         model: "gpt-5.6-luna",
@@ -3167,7 +3154,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
-        role: "Plan product launches",
+        title: "Plan product launches",
         description: "Primary focus: Plan product launches.",
         model: "gpt-5.6-luna",
         reasoningEffort: "medium",

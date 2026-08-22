@@ -48,7 +48,6 @@ function callbacks() {
     onCancel: vi.fn(),
     onEdit: vi.fn(),
     onReorder: vi.fn(),
-    onResume: vi.fn(),
   };
 }
 
@@ -63,7 +62,6 @@ describe("QueuePanel", () => {
           delivery(4, { status: "completed" }),
           delivery(2, { status: "starting" }),
         ]}
-        paused={false}
         canSteer
         {...props}
       />
@@ -78,24 +76,23 @@ describe("QueuePanel", () => {
     expect(view.container.querySelector(".agent-queue-drag-handle")).toBeNull();
   });
 
-  it("keeps steer, cancel, edit, and resume actions connected", async () => {
+  it("keeps steer, cancel, and edit actions connected", async () => {
     const props = callbacks();
-    render(() => <QueuePanel deliveries={[delivery(1)]} paused canSteer {...props} />);
+    render(() => <QueuePanel deliveries={[delivery(1)]} canSteer {...props} />);
 
     await fireEvent.click(screen.getByRole("button", { name: "Steer queued message 1" }));
     await fireEvent.click(screen.getByRole("button", { name: "Delete queued message 1" }));
     await fireEvent.click(screen.getByRole("button", { name: "Edit queued message 1" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Resume queue" }));
 
     expect(props.onSteer).toHaveBeenCalledWith("delivery-1");
     await waitFor(() => expect(props.onCancel).toHaveBeenCalledWith("delivery-1"));
     await waitFor(() => expect(props.onEdit).toHaveBeenCalledWith(expect.objectContaining({ id: "delivery-1" })));
-    expect(props.onResume).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Resume queue" })).not.toBeInTheDocument();
   });
 
   it("shows tooltips for the row actions", async () => {
     const props = callbacks();
-    render(() => <QueuePanel deliveries={[delivery(1)]} paused={false} canSteer {...props} />);
+    render(() => <QueuePanel deliveries={[delivery(1)]} canSteer {...props} />);
 
     const steer = screen.getByRole("button", { name: "Steer queued message 1" });
     await fireEvent.pointerEnter(steer);
@@ -116,9 +113,7 @@ describe("QueuePanel", () => {
 
   it("reorders queued messages with the keyboard and drag-and-drop", async () => {
     const props = callbacks();
-    const view = render(() => (
-      <QueuePanel deliveries={[delivery(1), delivery(2), delivery(3)]} paused={false} canSteer {...props} />
-    ));
+    const view = render(() => <QueuePanel deliveries={[delivery(1), delivery(2), delivery(3)]} canSteer {...props} />);
     const rows = Array.from(view.container.querySelectorAll<HTMLFieldSetElement>(".agent-queue-item"));
 
     await fireEvent.keyDown(rows[1], { key: "ArrowUp", altKey: true });
@@ -158,9 +153,7 @@ describe("QueuePanel", () => {
 
   it("does not start row dragging from an action button", async () => {
     const props = callbacks();
-    const view = render(() => (
-      <QueuePanel deliveries={[delivery(1), delivery(2)]} paused={false} canSteer {...props} />
-    ));
+    const view = render(() => <QueuePanel deliveries={[delivery(1), delivery(2)]} canSteer {...props} />);
     const edit = screen.getByRole("button", { name: "Edit queued message 1" });
     const dataTransfer = { setData: vi.fn(), effectAllowed: "move", dropEffect: "move" };
 
@@ -175,12 +168,7 @@ describe("QueuePanel", () => {
     const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
     vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
     const view = render(() => (
-      <QueuePanel
-        deliveries={Array.from({ length: 10 }, (_, index) => delivery(index + 1))}
-        paused={false}
-        canSteer
-        {...props}
-      />
+      <QueuePanel deliveries={Array.from({ length: 10 }, (_, index) => delivery(index + 1))} canSteer {...props} />
     ));
     const list = view.container.querySelector<HTMLDivElement>(".agent-queue-panel-list");
     const panel = view.container.querySelector<HTMLElement>(".agent-queue-panel");
@@ -235,7 +223,7 @@ describe("QueuePanel", () => {
   it("animates queue additions and removals", async () => {
     const props = callbacks();
     const [deliveries, setDeliveries] = createSignal([delivery(1)]);
-    const view = render(() => <QueuePanel deliveries={deliveries()} paused={false} canSteer {...props} />);
+    const view = render(() => <QueuePanel deliveries={deliveries()} canSteer {...props} />);
 
     setDeliveries([delivery(1), delivery(2)]);
     await waitFor(() =>
@@ -258,7 +246,6 @@ describe("QueuePanel", () => {
       <QueuePanel
         deliveries={[delivery(1), delivery(2), delivery(3)]}
         editingDeliveryId={editingDeliveryId()}
-        paused={false}
         canSteer
         {...props}
       />

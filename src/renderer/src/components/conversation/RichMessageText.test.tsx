@@ -10,6 +10,54 @@ afterEach(() => {
 });
 
 describe("RichMessageText tooltips", () => {
+  it("renders a plain attached file name as a styled reference", async () => {
+    const attachment = {
+      id: "report",
+      name: "raport.csv",
+      size: 1_024,
+      kind: "file" as const,
+      mimeType: "text/csv",
+      previewKind: "text" as const,
+      previewUrl: null,
+    };
+    const onOpenAttachment = vi.fn();
+    render(() => (
+      <RichMessageText
+        body="Here is raport.csv."
+        bots={[]}
+        attachments={[attachment]}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onOpenAttachment={onOpenAttachment}
+      />
+    ));
+
+    const reference = screen.getByRole("button", { name: "Open attached file raport.csv" });
+    expect(reference).toHaveTextContent("CSV");
+    expect(reference).not.toHaveTextContent("/OpenBot/");
+    await fireEvent.click(reference);
+    expect(onOpenAttachment).toHaveBeenCalledWith(attachment);
+  });
+
+  it("renders a shared path as a styled system-open reference", async () => {
+    const onOpenSharedFile = vi.fn();
+    render(() => (
+      <RichMessageText
+        body="Open ~/OpenBot/Shared/raport.csv."
+        bots={[]}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onOpenSharedFile={onOpenSharedFile}
+      />
+    ));
+
+    const reference = screen.getByRole("button", { name: "Open shared file raport.csv" });
+    expect(reference).toHaveTextContent("CSV");
+    expect(reference).not.toHaveTextContent("~/OpenBot/Shared");
+    await fireEvent.click(reference);
+    expect(onOpenSharedFile).toHaveBeenCalledWith("~/OpenBot/Shared/raport.csv");
+  });
+
   it("associates a citation tooltip with its trigger and closes it with Escape", async () => {
     render(() => (
       <RichMessageText

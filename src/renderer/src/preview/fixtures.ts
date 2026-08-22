@@ -27,7 +27,7 @@ export const STORY_BOT_SUMMARIES: BotSummary[] = [
   {
     id: "chief",
     name: "Chief",
-    role: "Chief of staff",
+    title: "Chief of staff",
     description: "Coordinates projects, priorities, and next steps across the workspace.",
     notifications: true,
     model: "gpt-5.6-luna",
@@ -43,7 +43,7 @@ export const STORY_BOT_SUMMARIES: BotSummary[] = [
   {
     id: "research",
     name: "Research",
-    role: "Research partner",
+    title: "Research partner",
     description: "Finds reliable sources and turns them into concise, useful briefs.",
     notifications: true,
     model: "claude-sonnet-5",
@@ -59,7 +59,7 @@ export const STORY_BOT_SUMMARIES: BotSummary[] = [
   {
     id: "sales",
     name: "Sales Outbound",
-    role: "Outbound specialist",
+    title: "Outbound specialist",
     description: "Prepares thoughtful prospect research and personalized outreach.",
     notifications: true,
     model: "gpt-5.6-terra",
@@ -77,7 +77,7 @@ export const STORY_BOT_SUMMARIES: BotSummary[] = [
 export const STORY_BOTS: BotProfile[] = STORY_BOT_SUMMARIES.map((bot, index) => ({
   id: bot.id,
   name: bot.name,
-  role: bot.role,
+  title: bot.title,
   description: bot.description,
   notifications: bot.notifications,
   model: bot.model,

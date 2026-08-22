@@ -11,7 +11,7 @@ const bots: BotProfile[] = [
   {
     id: "research",
     name: "Research",
-    role: "Researcher",
+    title: "Researcher",
     description: "",
     notifications: true,
     model: "gpt-5.6-luna",
@@ -26,7 +26,7 @@ const bots: BotProfile[] = [
   {
     id: "sales",
     name: "Sales",
-    role: "Sales",
+    title: "Sales",
     description: "",
     notifications: true,
     model: "gpt-5.6-luna",
@@ -158,6 +158,40 @@ describe("MessageBody", () => {
     expect(screen.getByRole("button", { name: "Preview AGENTS.md" })).toBeInTheDocument();
     await fireEvent.click(reference);
     expect(onPreview).toHaveBeenCalledWith(attachments[0]);
+  });
+
+  it("renders a plain attachment name inline without duplicating its card", async () => {
+    const attachment: AttachmentSummary = {
+      id: "attachment-report",
+      name: "raport.csv",
+      size: 1_024,
+      kind: "file",
+      mimeType: "text/csv",
+      previewKind: "text",
+      previewUrl: null,
+    };
+    const onPreview = vi.fn();
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-plain-file",
+          author: "bot",
+          body: "Here is raport.csv.",
+          time: "10:00",
+          attachments: [attachment],
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={onPreview}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    const reference = screen.getByRole("button", { name: "Open attached file raport.csv" });
+    expect(screen.queryByRole("button", { name: "Preview raport.csv" })).toBeNull();
+    await fireEvent.click(reference);
+    expect(onPreview).toHaveBeenCalledWith(attachment);
   });
 
   it("renders a Markdown table in an agent response without exposing its syntax", () => {

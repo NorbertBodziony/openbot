@@ -40,13 +40,13 @@ function resultLabel(result: GlobalSearchResult): string {
 
 function resultSearchText(result: GlobalSearchResult): string {
   if (result.kind === "bot") {
-    return normalized(`${result.bot.name} ${result.bot.role} ${result.bot.description} ${result.bot.preview}`);
+    return normalized(`${result.bot.name} ${result.bot.title} ${result.bot.description} ${result.bot.preview}`);
   }
-  return normalized(`${result.message.body} ${result.bot.name} ${result.bot.role}`);
+  return normalized(`${result.message.body} ${result.bot.name} ${result.bot.title} ${result.bot.description}`);
 }
 
 function resultDescription(result: GlobalSearchResult): string {
-  if (result.kind === "bot") return result.bot.role || result.bot.preview;
+  if (result.kind === "bot") return result.bot.title || result.bot.preview;
   const direction = result.message.author === "you" ? `You to ${result.bot.name}` : `${result.bot.name} to you`;
   return `${direction} · ${result.message.time}`;
 }

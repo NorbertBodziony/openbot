@@ -20,6 +20,8 @@ interface AgentAvatarProps {
   hue?: BotAvatarHue | null;
   url?: string | null;
   motion?: AvatarMotion;
+  cycleOffset?: number;
+  animationOffset?: number;
   class?: string;
   style?: Record<string, string>;
 }
@@ -40,7 +42,17 @@ export function AgentAvatar(props: AgentAvatarProps) {
   return (
     <Show
       when={url() && !imageFailed()}
-      fallback={<GeneratedAvatar seed={seed()} hue={hue()} motion={motion()} class={className()} style={props.style} />}
+      fallback={
+        <GeneratedAvatar
+          seed={seed()}
+          hue={hue()}
+          motion={motion()}
+          cycleOffset={props.cycleOffset}
+          animationOffset={props.animationOffset}
+          class={className()}
+          style={props.style}
+        />
+      }
     >
       <span class={`${className()} bot-avatar-custom`} style={props.style} aria-hidden="true">
         <img src={url() ?? ""} alt="" draggable={false} onError={() => setImageFailed(true)} />
@@ -53,6 +65,8 @@ function GeneratedAvatar(props: {
   seed: string;
   hue: BotAvatarHue | null;
   motion: AvatarMotion;
+  cycleOffset?: number;
+  animationOffset?: number;
   class: string;
   style?: Record<string, string>;
 }) {
@@ -60,11 +74,12 @@ function GeneratedAvatar(props: {
   const [interacting, setInteracting] = createSignal(false);
   const [reducedMotion, setReducedMotion] = createSignal(prefersReducedMotion());
   const profile = createMemo(() => bloubAvatarProfile(props.seed, props.hue));
+  const cycle = createMemo(() => offsetCycle(DEFAULT_CYCLE, props.cycleOffset ?? 0));
   const animated = () => !reducedMotion() && (props.motion !== "hover" || interacting());
-  const cycle = () => {
+  const motionCycle = () => {
     if (props.motion === "idle") return IDLE_CYCLE;
     if (props.motion === "working") return WORKING_CYCLE;
-    return DEFAULT_CYCLE;
+    return cycle();
   };
 
   onSettled(() => {
@@ -101,8 +116,9 @@ function GeneratedAvatar(props: {
       shape={profile().shape}
       color={profile().color}
       expression={profile().expression}
-      cycle={cycle()}
+      cycle={motionCycle()}
       playing={true}
+      elapsed={props.animationOffset}
       ariaLabel=""
       class="bloub-avatar-svg"
     />
@@ -128,6 +144,13 @@ function GeneratedAvatar(props: {
       </Show>
     </span>
   );
+}
+
+function offsetCycle(blocks: Block[], offset: number): Block[] {
+  if (blocks.length === 0) return blocks;
+  const start = ((Math.trunc(offset) % blocks.length) + blocks.length) % blocks.length;
+  if (start === 0) return blocks;
+  return [...blocks.slice(start), ...blocks.slice(0, start)];
 }
 
 function prefersReducedMotion(): boolean {

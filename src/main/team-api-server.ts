@@ -58,11 +58,11 @@ type TeamApiAgentMethods = Pick<
   | "markConversationRead"
   | "prepareImportedAttachments"
   | "discardDraftAttachment"
+  | "resolveSharedFile"
   | "sendMessage"
   | "listQueue"
   | "setMessageReaction"
   | "cancelQueuedMessage"
-  | "setQueuePaused"
   | "steerQueuedMessage"
   | "updateQueuedMessage"
   | "reorderQueue"
@@ -583,6 +583,25 @@ export class TeamApiServer {
           return;
         }
       }
+      if (method === "GET" && url.pathname === "/v1/shared-files") {
+        const sharedPath = url.searchParams.get("path");
+        if (!sharedPath || sharedPath.length > INPUT_LIMITS.path) {
+          throw new HttpError(400, "A valid shared file path is required.");
+        }
+        const sharedFile = await this.#options.agents.resolveSharedFile(sharedPath);
+        if (sharedFile.size > ATTACHMENT_LIMITS.fileBytes) {
+          throw new HttpError(413, "The shared file exceeds the 100 MB limit.");
+        }
+        const bytes = await readFile(sharedFile.path);
+        response.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": String(bytes.length),
+          "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(sharedFile.name)}`,
+          "X-Content-Type-Options": "nosniff",
+        });
+        response.end(bytes);
+        return;
+      }
       if (method === "GET" && url.pathname === "/v1/team/members") {
         requireAdmin(member);
         return this.#json(response, 200, this.#options.store.listMembers());
@@ -749,12 +768,6 @@ export class TeamApiServer {
         if (method === "POST" && action === "queue/cancel") {
           const body = await readJson(request);
           await this.#options.agents.cancelQueuedMessage(botId, stringField(body, "deliveryId"));
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "queue/pause") {
-          const body = await readJson(request);
-          if (!isBoolean(body.paused)) throw new HttpError(400, "paused is required.");
-          await this.#options.agents.setQueuePaused(botId, body.paused);
           return this.#empty(response, 204);
         }
         if (method === "POST" && action === "queue/steer") {
@@ -1196,10 +1209,11 @@ function approvalDecision(value: unknown): RespondToApprovalInput["decision"] {
 }
 
 function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {
+  if (value.role !== undefined) throw new HttpError(400, "role is invalid.");
   const result: UpdateBotInput = { botId };
   const textFields = {
     name: INPUT_LIMITS.agentName,
-    role: INPUT_LIMITS.agentTitle,
+    title: INPUT_LIMITS.agentTitle,
     description: INPUT_LIMITS.agentDescription,
   } as const;
   for (const [field, maxLength] of Object.entries(textFields)) {
@@ -1209,7 +1223,7 @@ function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {
       throw new HttpError(400, `${field} is invalid.`);
     }
     if (field === "name") result.name = item;
-    else if (field === "role") result.role = item;
+    else if (field === "title") result.title = item;
     else result.description = item;
   }
   if (value.notifications !== undefined) {

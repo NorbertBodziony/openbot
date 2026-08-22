@@ -31,7 +31,7 @@ import {
   Play,
   RefreshCw,
   Search,
-  Select,
+  SelectPrimitive,
   Settings,
   ShieldCheck,
   Switch,
@@ -955,7 +955,7 @@ function SettingsSelect(props: {
   onChange: (value: string) => void;
 }) {
   return (
-    <Select.Root<string>
+    <SelectPrimitive.Root<string>
       options={props.options}
       value={props.value}
       disabled={props.disabled}
@@ -964,25 +964,28 @@ function SettingsSelect(props: {
       gutter={4}
       sameWidth
       itemComponent={(item) => (
-        <Select.Item class="settings-modal-select-item" item={item.item}>
-          <Select.ItemLabel>{item.item.rawValue}</Select.ItemLabel>
-          <Select.ItemIndicator class="settings-modal-select-indicator">
+        <SelectPrimitive.Item class="settings-modal-select-item" item={item.item}>
+          <SelectPrimitive.ItemLabel>{item.item.rawValue}</SelectPrimitive.ItemLabel>
+          <SelectPrimitive.ItemIndicator class="settings-modal-select-indicator">
             <Check aria-hidden="true" />
-          </Select.ItemIndicator>
-        </Select.Item>
+          </SelectPrimitive.ItemIndicator>
+        </SelectPrimitive.Item>
       )}
     >
-      <Select.Trigger class="settings-modal-select-trigger server-settings-role-select" aria-label={props.label}>
-        <Select.Value<string>>{(state) => state.selectedOption()}</Select.Value>
+      <SelectPrimitive.Trigger
+        class="settings-modal-select-trigger server-settings-role-select"
+        aria-label={props.label}
+      >
+        <SelectPrimitive.Value<string>>{(state) => state.selectedOption()}</SelectPrimitive.Value>
         <ChevronDown aria-hidden="true" />
-      </Select.Trigger>
-      <Select.HiddenSelect />
-      <Select.Portal mount={props.mount}>
-        <Select.Content class="settings-modal-select-content">
-          <Select.Listbox class="settings-modal-select-listbox" />
-        </Select.Content>
-      </Select.Portal>
-    </Select.Root>
+      </SelectPrimitive.Trigger>
+      <SelectPrimitive.HiddenSelect />
+      <SelectPrimitive.Portal mount={props.mount}>
+        <SelectPrimitive.Content class="settings-modal-select-content">
+          <SelectPrimitive.Listbox class="settings-modal-select-listbox" />
+        </SelectPrimitive.Content>
+      </SelectPrimitive.Portal>
+    </SelectPrimitive.Root>
   );
 }
 

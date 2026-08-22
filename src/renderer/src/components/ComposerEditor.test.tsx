@@ -13,7 +13,7 @@ afterEach(() => {
   window.matchMedia = originalMatchMedia;
 });
 
-function renderComposer(attachments: DraftAttachment[] = [], initialValue = "") {
+function renderComposer(attachments: DraftAttachment[] = [], initialValue = "", bots: BotProfile[] = []) {
   const onSubmit = vi.fn();
   const onValueChange = vi.fn();
   const onOpenAttachment = vi.fn();
@@ -23,7 +23,7 @@ function renderComposer(attachments: DraftAttachment[] = [], initialValue = "") 
     return (
       <ComposerEditor
         botId="chief"
-        bots={[]}
+        bots={bots}
         attachments={attachments}
         value={value()}
         placeholder="Message Chief"
@@ -264,7 +264,7 @@ describe("ComposerEditor", () => {
     const sales: BotProfile = {
       id: "sales",
       name: "Sales",
-      role: "Agent",
+      title: "Agent",
       description: "",
       notifications: true,
       model: "gpt-5.6-luna",
@@ -294,6 +294,32 @@ describe("ComposerEditor", () => {
     await waitFor(() =>
       expect(token?.querySelector('.composer-mention-avatar svg[aria-hidden="true"]')).not.toBeNull(),
     );
+  });
+
+  it("finds mention targets by title and description", async () => {
+    const design: BotProfile = {
+      id: "design",
+      name: "Studio",
+      title: "General teammate",
+      description: "Owns product interface design.",
+      notifications: true,
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
+      threadId: null,
+      avatarSeed: "design",
+      avatarHue: null,
+      avatarUrl: null,
+      time: "",
+      preview: "",
+    };
+    const research: BotProfile = { ...design, id: "research", name: "Research", description: "Finds sources." };
+    const { editor } = renderComposer([], "", [design, research]);
+    editor.textContent = "@interface";
+    placeCaretAtEnd(editor);
+    await fireEvent.input(editor);
+
+    expect(await screen.findByRole("option", { name: "Studio Agent" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Research Agent" })).toBeNull();
   });
 
   it("inserts an attached file from the mention picker and opens the chip", async () => {

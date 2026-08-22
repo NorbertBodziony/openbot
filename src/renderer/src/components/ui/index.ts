@@ -3,6 +3,7 @@ export * from "./button";
 export * from "./complex";
 export * from "./form";
 export * from "./icons";
+export * from "./select";
 export * from "./surface";
 export * from "./switch";
 export * from "./typography";

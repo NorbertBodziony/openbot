@@ -63,7 +63,7 @@ export interface AgentStatus {
 export interface BotSummary {
   id: string;
   name: string;
-  role: string;
+  title: string;
   description: string;
   notifications: boolean;
   model: AgentModelId;
@@ -124,7 +124,7 @@ export function isAvatarHue(value: unknown): value is BotAvatarHue {
 export interface UpdateBotInput {
   botId: string;
   name?: string;
-  role?: string;
+  title?: string;
   description?: string;
   notifications?: boolean;
   model?: AgentModelId;
@@ -209,6 +209,10 @@ export interface OpenAttachmentInput {
   action: "open" | "reveal" | "download";
 }
 
+export interface OpenSharedFileInput {
+  path: string;
+}
+
 export type QueueDeliveryStatus =
   | "queued"
   | "starting"
@@ -235,7 +239,6 @@ export interface QueueDelivery {
 
 export interface QueueSnapshot {
   botId: string;
-  paused: boolean;
   deliveries: QueueDelivery[];
 }
 
@@ -324,11 +327,6 @@ export interface QueuedMessageReceipt {
 export interface CancelQueuedMessageInput {
   botId: string;
   deliveryId: string;
-}
-
-export interface SetQueuePausedInput {
-  botId: string;
-  paused: boolean;
 }
 
 export interface SteerQueuedMessageInput {

@@ -158,7 +158,7 @@ function isBotSummary(value: unknown): value is BotSummary {
     isDynamicRecord(value) &&
     isString(value.id) &&
     isString(value.name) &&
-    isString(value.role) &&
+    isString(value.title) &&
     isString(value.description) &&
     isBoolean(value.notifications) &&
     isAgentModel(value.model) &&
@@ -254,7 +254,7 @@ function decodeQueue(value: unknown): QueueSnapshot {
 }
 
 function isQueueSnapshot(value: unknown): value is QueueSnapshot {
-  return isDynamicRecord(value) && isString(value.botId) && isBoolean(value.paused) && Array.isArray(value.deliveries);
+  return isDynamicRecord(value) && isString(value.botId) && Array.isArray(value.deliveries);
 }
 
 function requiredNumber(value: DynamicRecord, field: string): number {
@@ -336,11 +336,11 @@ const openbotApi: OpenBotDesktopApi = {
     discardDraftAttachment: (attachmentId) =>
       invokeAgent(IPC_CHANNELS.agentDiscardDraftAttachment, attachmentId, decodeVoid),
     openAttachment: (input) => invokeAgent(IPC_CHANNELS.agentOpenAttachment, input, decodeVoid),
+    openSharedFile: (input) => invokeAgent(IPC_CHANNELS.agentOpenSharedFile, input, decodeVoid),
     sendMessage: (input) => invokeAgent(IPC_CHANNELS.agentSendMessage, input, decodeReceipt),
     setMessageReaction: (input) => invokeAgent(IPC_CHANNELS.agentSetMessageReaction, input, decodeVoid),
     listQueue: (botId) => invokeAgent(IPC_CHANNELS.agentListQueue, botId, decodeQueue),
     cancelQueuedMessage: (input) => invokeAgent(IPC_CHANNELS.agentCancelQueuedMessage, input, decodeVoid),
-    setQueuePaused: (input) => invokeAgent(IPC_CHANNELS.agentSetQueuePaused, input, decodeVoid),
     steerQueuedMessage: (input) => invokeAgent(IPC_CHANNELS.agentSteerQueuedMessage, input, decodeVoid),
     updateQueuedMessage: (input) => invokeAgent(IPC_CHANNELS.agentUpdateQueuedMessage, input, decodeVoid),
     reorderQueue: (input) => invokeAgent(IPC_CHANNELS.agentReorderQueue, input, decodeVoid),

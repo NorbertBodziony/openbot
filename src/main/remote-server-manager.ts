@@ -603,6 +603,27 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     };
   }
 
+  async downloadSharedFile(
+    sharedPath: string,
+    serverId = this.#state.activeServerId,
+  ): Promise<{ bytes: Uint8Array; name: string }> {
+    const server = this.#requireServer(serverId);
+    const url = new URL("/v1/shared-files", server.apiUrl);
+    url.searchParams.set("path", sharedPath);
+    const response = await remoteFetch(url, {
+      headers: { Authorization: `Bearer ${this.#token(server)}` },
+    });
+    if (!response.ok) {
+      throw new Error(responseError(await response.json(), "Shared file download failed."));
+    }
+    const disposition = response.headers.get("content-disposition") ?? "";
+    const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      name: encodedName ? decodeURIComponent(encodedName) : "shared-file",
+    };
+  }
+
   stop(): void {
     for (const controller of this.#eventControllers.values()) controller.abort();
     this.#eventControllers.clear();
@@ -868,7 +889,7 @@ export function decodeBotSummary(value: unknown): BotSummary {
   return {
     id: requiredString(record, "id"),
     name: requiredString(record, "name"),
-    role: requiredString(record, "role"),
+    title: requiredString(record, "title"),
     description: requiredString(record, "description"),
     notifications: requiredBoolean(record, "notifications"),
     model,
@@ -962,9 +983,7 @@ export function decodeQueueSnapshot(value: unknown): QueueSnapshot {
 }
 
 function isQueueSnapshotValue(value: unknown): value is QueueSnapshot {
-  return (
-    !isDynamicRecord(value) || !isString(value.botId) || !isBoolean(value.paused) || !Array.isArray(value.deliveries)
-  );
+  return isDynamicRecord(value) && isString(value.botId) && Array.isArray(value.deliveries);
 }
 
 export function decodeQueuedMessageReceipt(value: unknown): QueuedMessageReceipt {

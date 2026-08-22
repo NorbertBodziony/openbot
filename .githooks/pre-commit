@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+repository_root=$(git rev-parse --show-toplevel)
+cd "$repository_root"
+
+echo "Running staged format and lint checks..."
+bun run check:staged
+
+if git diff --cached --name-only --diff-filter=ACMR | grep -q .; then
+  git diff --cached --name-only -z --diff-filter=ACMR | xargs -0 git add --
+fi
+
+echo "Running type checks..."
+bun run typecheck

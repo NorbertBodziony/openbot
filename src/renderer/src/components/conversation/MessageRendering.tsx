@@ -1,4 +1,3 @@
-import { attachmentReferenceIds } from "@openbot/contracts/attachment-references";
 import type { AttachmentSummary, MessageReaction } from "@openbot/contracts/ipc";
 import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "@openbot/contracts/ipc";
 import { createMemo, For, Show } from "solid-js";
@@ -10,6 +9,7 @@ import { AttachmentCards } from "./AttachmentCards";
 import { ComparisonTable } from "./ComparisonTable";
 import { CheckIcon, CopyIcon, MoreIcon, PlusIcon, ReactionIcon, ReplyIcon } from "./ConversationIcons";
 import { DataTable, type MessageContentBlock, messageContentBlocks } from "./DataTable";
+import { messageFileReferences } from "./FileReference";
 import { ImageGeneration } from "./ImageGeneration";
 import { RichMessageText } from "./RichMessageText";
 import { parseSelectionInstruction } from "./SelectionActions";
@@ -141,6 +141,7 @@ export function MessageBody(props: {
   onOpenLink: (url: string) => void;
   onPreview: (attachment: AttachmentSummary) => void;
   onAttachmentAction: (attachment: AttachmentSummary, action: "open" | "reveal" | "download") => void;
+  onOpenSharedFile?: (path: string) => void;
   onDownload?: (attachment: AttachmentSummary) => void;
 }) {
   const selectionInstruction = createMemo(() =>
@@ -149,7 +150,11 @@ export function MessageBody(props: {
       : null,
   );
   const standaloneAttachments = createMemo(() => {
-    const referencedIds = attachmentReferenceIds(props.message.body);
+    const referencedIds = new Set(
+      messageFileReferences(props.message.body, props.message.attachments ?? [])
+        .filter((reference) => reference.kind === "attachment")
+        .map((reference) => reference.attachment.id),
+    );
     const generatedAttachmentId = props.message.imageGeneration ? props.message.attachments?.[0]?.id : undefined;
     return (props.message.attachments ?? []).filter(
       (attachment) => !referencedIds.has(attachment.id) && attachment.id !== generatedAttachmentId,
@@ -203,6 +208,7 @@ export function MessageBody(props: {
                         ? props.onAttachmentAction(attachment, "open")
                         : props.onPreview(attachment)
                     }
+                    onOpenSharedFile={props.onOpenSharedFile}
                     showCitationFooter={index() === lastTextBlockIndex()}
                   />
                 </p>

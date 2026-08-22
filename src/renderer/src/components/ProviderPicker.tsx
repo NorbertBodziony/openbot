@@ -1,3 +1,4 @@
+import { ProviderLogo } from "@openbot/brand";
 import type { AgentProviderId, AgentProviderState } from "@openbot/contracts/ipc";
 import { createEffect, createUniqueId, For, Show } from "solid-js";
 import { Badge, Input } from "./ui";
@@ -87,6 +88,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
                   disabled={props.disabled || (!props.allowUnavailableSelection && !available())}
                   onChange={() => props.onChange(option.id)}
                 />
+                <ProviderLogo provider={option.id} class="provider-picker-logo" />
                 <span class="provider-picker-identity">
                   <span class="provider-picker-name">{option.name}</span>
                   <Show when={option.email}>{(email) => <small class="provider-picker-email">{email()}</small>}</Show>

@@ -59,13 +59,11 @@ test("the queue panel matches the dense seven-row reference", async () => {
       <div class="composer-wrap" style={{ width: "100%" }}>
         <QueuePanel
           deliveries={deliveries}
-          paused={false}
           canSteer
           onSteer={vi.fn()}
           onCancel={vi.fn()}
           onEdit={vi.fn()}
           onReorder={vi.fn()}
-          onResume={vi.fn()}
         />
         <div class="composer" aria-hidden="true" />
       </div>
@@ -95,7 +93,6 @@ test("mouse drag-and-drop changes the interactive queue order", async () => {
       <div class="composer-wrap" style={{ position: "absolute", right: "0", bottom: "0", left: "0" }}>
         <QueuePanel
           deliveries={queue()}
-          paused={false}
           canSteer
           onSteer={vi.fn()}
           onCancel={vi.fn()}
@@ -109,7 +106,6 @@ test("mouse drag-and-drop changes the interactive queue order", async () => {
               }),
             );
           }}
-          onResume={vi.fn()}
         />
         <div class="composer" aria-hidden="true" />
       </div>

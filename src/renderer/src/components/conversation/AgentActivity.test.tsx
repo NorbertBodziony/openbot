@@ -6,7 +6,7 @@ import { AgentActivityIndicator } from "./AgentActivity";
 const bot: BotProfile = {
   id: "chief",
   name: "Chief",
-  role: "Coordinator",
+  title: "Coordinator",
   description: "",
   notifications: true,
   model: "gpt-5.6-luna",

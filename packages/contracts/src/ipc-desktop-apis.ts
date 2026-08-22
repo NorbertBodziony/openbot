@@ -25,6 +25,7 @@ import type {
   InterruptTurnInput,
   MarkConversationReadInput,
   OpenAttachmentInput,
+  OpenSharedFileInput,
   QueuedMessageReceipt,
   QueueSnapshot,
   ReorderQueueInput,
@@ -33,7 +34,6 @@ import type {
   SendMessageInput,
   SetAgentAvatarInput,
   SetMessageReactionInput,
-  SetQueuePausedInput,
   SteerQueuedMessageInput,
   UpdateBotInput,
   UpdateQueuedMessageInput,
@@ -86,11 +86,11 @@ export interface AgentDesktopApi {
   onAttachmentImport: (listener: (event: AttachmentImportEvent) => void) => () => void;
   discardDraftAttachment: (attachmentId: string) => Promise<void>;
   openAttachment: (input: OpenAttachmentInput) => Promise<void>;
+  openSharedFile: (input: OpenSharedFileInput) => Promise<void>;
   sendMessage: (input: SendMessageInput) => Promise<QueuedMessageReceipt>;
   setMessageReaction: (input: SetMessageReactionInput) => Promise<void>;
   listQueue: (botId: string) => Promise<QueueSnapshot>;
   cancelQueuedMessage: (input: CancelQueuedMessageInput) => Promise<void>;
-  setQueuePaused: (input: SetQueuePausedInput) => Promise<void>;
   steerQueuedMessage: (input: SteerQueuedMessageInput) => Promise<void>;
   updateQueuedMessage: (input: UpdateQueuedMessageInput) => Promise<void>;
   reorderQueue: (input: ReorderQueueInput) => Promise<void>;

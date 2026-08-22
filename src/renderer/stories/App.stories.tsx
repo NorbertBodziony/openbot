@@ -206,6 +206,26 @@ export const EmptyWorkspace: Story = {
 
 export const Onboarding: Story = {
   render: () => <OpenBotPlayground options={{ setupState: { completed: false, preferredProvider: null } }} />,
+  play: async ({ canvas, userEvent }) => {
+    await expect(canvas.findByRole("heading", { name: "Meet OpenBot" })).resolves.toBeInTheDocument();
+    await expect(canvas.getByRole("radiogroup", { name: "Default provider" })).toBeInTheDocument();
+
+    await userEvent.click(canvas.getByRole("button", { name: "Next" }));
+    await expect(
+      canvas.findByRole("heading", { name: "OpenBot might control your computer" }),
+    ).resolves.toBeInTheDocument();
+
+    await userEvent.click(canvas.getByRole("button", { name: "Back" }));
+    await expect(canvas.findByRole("heading", { name: "Meet OpenBot" })).resolves.toBeInTheDocument();
+
+    await userEvent.click(canvas.getByRole("button", { name: "Next" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Next" }));
+    await expect(canvas.findByRole("heading", { name: "Give each bot a job" })).resolves.toBeInTheDocument();
+    await expect(canvas.getByRole("region", { name: "Example bot jobs" })).toBeInTheDocument();
+
+    await userEvent.click(canvas.getByRole("button", { name: "Open OpenBot" }));
+    await expect(canvas.findByRole("heading", { name: "Chief" })).resolves.toBeInTheDocument();
+  },
 };
 
 export const SignedOut: Story = {

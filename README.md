@@ -100,11 +100,22 @@ The command deletes the app and test-client development profiles plus the legacy
 including `openbot.db` and its WAL files. It does not change the production profile, agent
 workspaces, `~/.codex`, or `~/.claude`.
 
+To replace only the app development profile with a durable UI showcase, quit the dev app, then run:
+
+```bash
+bun run dev:seed
+bun run dev
+```
+
+The seed adds agents, rich conversations, managed files and references, reactions, completed
+agent exchanges, and local team chat data. It does not add live queue items or start model turns.
+Use `bun run dev:seed --dry-run` to inspect the target and fixture counts without changing files.
+
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `bun run dev` | Start the Electron client with renderer HMR on its app profile. |
+| `bun run dev` | Start the local Auth API and Electron client with renderer HMR on its app profile. |
 | `bun run preview` | Preview the built Electron client with the green preview icon. |
 | `bun run api` | Start the TanStack Start API and its local D1 database on `127.0.0.1:3100`. |
 | `bun run api:start` | Build and preview the Cloudflare Worker locally. |
@@ -113,6 +124,7 @@ workspaces, `~/.codex`, or `~/.claude`.
 | `bun run api:deploy` | Build and deploy the account API to Cloudflare Workers. |
 | `bun run dev:all` | Start the API and the single local Electron instance. |
 | `bun run dev:test-client` | Start the API, the local instance, and an isolated second client for team testing. |
+| `bun run dev:seed` | Replace only the app development profile with deterministic showcase data. |
 | `bun run dev:reset` | Delete the local app, test-client, and legacy host development state. |
 | `bun run check` | Run Biome, both typechecks, offline tests, the browser smoke test, and the production build. |
 | `bun run test:backend` | Run backend tests only. |
@@ -176,6 +188,8 @@ rules for new modules.
 
 - `~/OpenBot/Bots/<bot-id>` — one working directory per agent.
 - `~/OpenBot/Shared` — files intentionally shared between agents.
+- `~/OpenBot/Shared/Transfers` — managed message snapshots and generated files. Each transfer has
+  an `.openbot-transfer.json` manifest with ownership, recipients, size, and SHA-256 metadata.
 - `~/OpenBot/Downloads` — embedded-browser downloads.
 - Electron `userData/openbot.db` — the canonical OpenBot event log and projections for agents,
   conversations, provider session bindings, queues, reactions, and attachment indexes.
@@ -183,6 +197,9 @@ rules for new modules.
   `mailbox.json` files, when these files existed before the SQLite migration.
 - `~/.codex` — login and thread history managed exclusively by Codex CLI.
 - `~/.claude` — login and session history managed exclusively by Claude CLI.
+
+Deleting an agent removes its workspace, owned generated attachments, and deliveries addressed only
+to that agent. A transfer remains when another agent still uses the same message.
 
 OpenBot keeps one stable local conversation when an agent changes between Codex and Claude. Native
 provider session identifiers stay private and are used only to resume provider runtime state.

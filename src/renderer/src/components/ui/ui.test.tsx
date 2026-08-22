@@ -11,6 +11,11 @@ import {
   Input,
   Kbd,
   NativeSelect,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Separator,
   Skeleton,
   Spinner,
@@ -103,6 +108,31 @@ describe("UI primitives", () => {
     expect(control).toBeRequired();
     await fireEvent.click(control);
     expect(control).not.toBeChecked();
+  });
+
+  it("supports a controlled accessible select", async () => {
+    const [value, setValue] = createSignal("medium");
+    const options = ["low", "medium", "high"];
+    render(() => (
+      <Select<string>
+        options={options}
+        value={value()}
+        onChange={(next) => next && setValue(next)}
+        itemComponent={(item) => <SelectItem item={item.item}>{item.item.rawValue}</SelectItem>}
+      >
+        <SelectTrigger aria-label="Reasoning">
+          <SelectValue<string>>{(state) => state.selectedOption()}</SelectValue>
+        </SelectTrigger>
+        <SelectContent />
+      </Select>
+    ));
+
+    const trigger = screen.getByRole("button", { name: /Reasoning/ });
+    expect(trigger).toHaveTextContent("medium");
+    await fireEvent.pointerDown(trigger, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "high" }));
+    expect(value()).toBe("high");
+    expect(trigger).toHaveTextContent("high");
   });
 
   it("submits and resets an uncontrolled switch through its native form input", async () => {

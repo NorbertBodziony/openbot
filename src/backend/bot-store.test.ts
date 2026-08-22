@@ -75,7 +75,7 @@ describe("BotStore", () => {
         {
           id: "chief",
           name: "Chief",
-          role: "Coordinator",
+          title: "Coordinator",
           description: "",
           notifications: true,
           model: "gpt-5.6-luna",
@@ -117,7 +117,7 @@ describe("BotStore", () => {
         {
           id: "writer",
           name: "Writer",
-          role: "Writing",
+          title: "Writing",
           description: "Writes concise copy",
           notifications: false,
           model: "claude-sonnet-5",
@@ -139,6 +139,28 @@ describe("BotStore", () => {
     expect(store.list()).toMatchObject([{ id: "writer", model: "claude-sonnet-5", threadId: null, avatarHue: 215 }]);
     await expect(readFile(statePath, "utf8")).resolves.toBe(source);
     await expect(readFile(join(userData, "legacy-backup-v1", "bots.json"), "utf8")).resolves.toBe(source);
+  });
+
+  it("rejects old role-based profiles without overwriting the source", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-old-role-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const statePath = join(userData, "bots.json");
+    await mkdir(userData, { recursive: true });
+    const source = `${JSON.stringify(
+      {
+        version: 2,
+        examplesInitialized: true,
+        bots: [{ id: "chief", role: "Coordinator" }],
+      },
+      null,
+      2,
+    )}\n`;
+    await writeFile(statePath, source);
+
+    const store = new BotStore(userData, join(root, "home"));
+    await expect(store.initialize()).rejects.toThrow("old role field");
+    await expect(readFile(statePath, "utf8")).resolves.toBe(source);
   });
 
   it("creates unique new agents at the top of the persistent list", async () => {
@@ -205,7 +227,7 @@ describe("BotStore", () => {
     await store.updateBot({
       botId: "chief",
       name: "Coordinator",
-      role: "Operations lead",
+      title: "Operations lead",
       description: "Keeps the team aligned",
       notifications: false,
       model: "gpt-5.6-sol",
@@ -217,7 +239,7 @@ describe("BotStore", () => {
     await restored.initialize();
     expect(restored.list().find((bot) => bot.id === "chief")).toMatchObject({
       name: "Coordinator",
-      role: "Operations lead",
+      title: "Operations lead",
       description: "Keeps the team aligned",
       notifications: false,
       model: "gpt-5.6-sol",
@@ -349,9 +371,11 @@ describe("BotStore", () => {
     const store = new BotStore(userData, home);
     await store.initialize();
 
-    await store.createBot();
-    for (const bot of store.list()) await store.deleteBot(bot.id);
+    const bot = await store.createBot();
+    await writeFile(join(bot.workspacePath, "generated.txt"), "workspace data");
+    await store.deleteBot(bot.id);
     expect(store.list()).toEqual([]);
+    await expect(readFile(join(bot.workspacePath, "generated.txt"))).rejects.toMatchObject({ code: "ENOENT" });
 
     const restored = new BotStore(userData, home);
     await restored.initialize();

@@ -1,10 +1,10 @@
 // @vitest-environment node
 
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { BotSummary, ConversationWithReadState, TeamPresenceSnapshot } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -55,11 +55,11 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     markConversationRead: unimplemented,
     prepareImportedAttachments: unimplemented,
     discardDraftAttachment: unimplemented,
+    resolveSharedFile: unimplemented,
     sendMessage: unimplemented,
     listQueue: unimplemented,
     setMessageReaction: unimplemented,
     cancelQueuedMessage: unimplemented,
-    setQueuePaused: unimplemented,
     steerQueuedMessage: unimplemented,
     updateQueuedMessage: unimplemented,
     reorderQueue: unimplemented,
@@ -435,6 +435,59 @@ describe("TeamApiServer administration", () => {
     }
   });
 
+  it("downloads authenticated shared files through the remote API", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-shared-file-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const filePath = join(root, "report.csv");
+    await writeFile(filePath, "name,value\nOpenBot,1\n");
+    const agents = createAgents({
+      resolveSharedFile: async (path) => ({
+        path: filePath,
+        name: path.includes("large") ? "large.csv" : "report.csv",
+        size: path.includes("large") ? ATTACHMENT_LIMITS.fileBytes + 1 : 21,
+      }),
+    });
+    const api = new TeamApiServer({
+      store,
+      agents,
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      const response = await fetch(
+        `${base}/v1/shared-files?path=${encodeURIComponent("~/OpenBot/Shared/report.csv")}`,
+        {
+          headers: { Authorization: `Bearer ${login.sessionToken}` },
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-disposition")).toContain("report.csv");
+      expect(await response.text()).toBe("name,value\nOpenBot,1\n");
+
+      const oversized = await fetch(
+        `${base}/v1/shared-files?path=${encodeURIComponent("~/OpenBot/Shared/large.csv")}`,
+        {
+          headers: { Authorization: `Bearer ${login.sessionToken}` },
+        },
+      );
+      expect(oversized.status).toBe(413);
+
+      const unauthorized = await fetch(`${base}/v1/shared-files?path=Shared/report.csv`);
+      expect(unauthorized.status).toBe(401);
+    } finally {
+      await api.stop();
+    }
+  });
+
   it("publishes agents and conversations from the same local agent service", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-local-instance-"));
     roots.push(root);
@@ -445,7 +498,7 @@ describe("TeamApiServer administration", () => {
       {
         id: "chief",
         name: "Chief",
-        role: "Lead",
+        title: "Lead",
         description: "",
         notifications: true,
         model: "gpt-5.6-luna",
