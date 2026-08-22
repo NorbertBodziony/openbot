@@ -585,6 +585,47 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.servers.join).not.toHaveBeenCalled();
   });
 
+  it("keeps the landing preview account static and omits browser and remote control", async () => {
+    vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({
+      status: "signed_in",
+      user: {
+        id: "user-1",
+        email: "norbertbodziony@gmail.com",
+        name: "Norbert",
+        avatarUrl: null,
+      },
+    });
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
+      {
+        id: "remote-1",
+        name: "Studio Mac",
+        logoUrl: null,
+        kind: "remote",
+        state: "online",
+        apiUrl: "https://studio.example.com",
+        remoteDesktopAvailable: true,
+        role: "owner",
+        active: true,
+      },
+    ]);
+
+    render(() => <App landingPreview />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    expect(screen.queryByRole("button", { name: "Open account menu" })).not.toBeInTheDocument();
+    expect(screen.getByText("Norbert")).toBeInTheDocument();
+    expect(screen.getByText("norbertbodziony@gmail.com")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open computer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /remote control/iu })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Add remote server" }));
+    expect(screen.queryByRole("dialog", { name: "Join a server" })).not.toBeInTheDocument();
+    expect(window.openbot.browser.listTabs).not.toHaveBeenCalled();
+    expect(window.openbot.browser.getControlState).not.toHaveBeenCalled();
+    expect(window.openbot.browser.setVisible).not.toHaveBeenCalled();
+    expect(window.openbot.remoteDesktop.list).not.toHaveBeenCalled();
+    expect(window.openbot.remoteDesktop.onEvent).not.toHaveBeenCalled();
+  });
+
   it("opens, hides, resumes, and disconnects Remote Control from the header", async () => {
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
       {
@@ -1354,7 +1395,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(leftResizer).toHaveAttribute("aria-valuenow", "280");
 
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
-    const rightResizer = screen.getByRole("separator", { name: "Resize right panel" });
+    const rightResizer = await screen.findByRole("separator", { name: "Resize right panel" });
     await fireEvent.keyDown(rightResizer, { key: "ArrowLeft" });
     expect(rightResizer).toHaveAttribute("aria-valuenow", "308");
     expect(screen.getByRole("main", { name: "Conversation" })).toHaveStyle("--settings-panel-width: 308px");
@@ -1505,7 +1546,7 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
 
-    const settings = screen.getByRole("complementary", { name: "Agent settings" });
+    const settings = await screen.findByRole("complementary", { name: "Agent settings" });
     const thinking = within(settings).getByRole("button", { name: /Agent reasoning level/ });
     expect(within(settings).getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
     expect(thinking).toHaveTextContent("Medium");
@@ -1541,7 +1582,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
-    const settings = screen.getByRole("complementary", { name: "Agent settings" });
+    const settings = await screen.findByRole("complementary", { name: "Agent settings" });
     const avatarButton = within(settings).getByRole("button", { name: "Edit agent avatar" });
     await fireEvent.click(avatarButton);
 
@@ -1618,7 +1659,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
-    const settings = screen.getByRole("complementary", { name: "Agent settings" });
+    const settings = await screen.findByRole("complementary", { name: "Agent settings" });
     await fireEvent.click(within(settings).getByRole("button", { name: "Edit agent avatar" }));
     const editor = within(settings).getByRole("dialog", { name: "Avatar editor" });
     await fireEvent.click(within(editor).getByRole("button", { name: "Remove" }));
@@ -1632,7 +1673,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
-    let settings = screen.getByRole("complementary", { name: "Agent settings" });
+    let settings = await screen.findByRole("complementary", { name: "Agent settings" });
     await fireEvent.click(within(settings).getByRole("button", { name: "Agent model: Luna" }));
     let picker = within(settings).getByRole("dialog", { name: "Choose agent model" });
     await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
@@ -1640,7 +1681,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
-    settings = screen.getByRole("complementary", { name: "Agent settings" });
+    settings = await screen.findByRole("complementary", { name: "Agent settings" });
     expect(within(settings).getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
 
     await fireEvent.click(within(settings).getByRole("button", { name: "Agent model: Luna" }));
@@ -1694,7 +1735,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
-    const name = screen.getByRole("textbox", { name: "Agent name" });
+    const name = await screen.findByRole("textbox", { name: "Agent name" });
     name.focus();
     let draft = "";
     let refresh = 0;
@@ -1974,7 +2015,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     expect(controlledTab.closest(".browser-tab-wrap")).toHaveClass("browser-tab-controlled");
     expect(controlledTab).toHaveAttribute("aria-description", "Press Delete or Control/Command W to close");
-    expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-controlled");
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-controlled");
     const browserTabStrip = document.querySelector(".browser-tab-strip");
     expect(browserTabStrip?.querySelectorAll(".browser-tab-wrap")).toHaveLength(3);
     expect(browserTabStrip).not.toContainElement(screen.getByRole("button", { name: "New browser tab" }));
@@ -2019,7 +2060,7 @@ describe("OpenBot connected desktop shell", () => {
     );
     expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
     expect(controlledTab.closest(".browser-tab-wrap")).not.toHaveClass("browser-tab-controlled");
-    expect(screen.getByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-controlled");
+    expect(await screen.findByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-controlled");
   });
 
   it("closes browser tabs with the middle mouse button and Control W, then closes the panel", async () => {
@@ -2077,7 +2118,7 @@ describe("OpenBot connected desktop shell", () => {
       activeTabId: "tab-embedded-shortcut",
     });
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
-    expect(screen.getByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
 
     emitAgentEvent?.({ type: "browser-changed", tabs: [], activeTabId: null });
 
@@ -2136,21 +2177,21 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("heading", { name: "Chief" });
 
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
-    expect(screen.getByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
+    expect(await screen.findByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
     expect(screen.queryByRole("complementary", { name: "Agent settings" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open computer" })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
-    expect(screen.getByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
     expect(screen.queryByRole("complementary", { name: "Agent settings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
-    expect(screen.getByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
   });
 
   it("queues from the composer and clears only after success", async () => {
@@ -3241,7 +3282,7 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Delete queued message 2" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Delete queued message 2" }));
     await waitFor(() => expect(window.openbot.agent.cancelQueuedMessage).toHaveBeenCalled());
     expect(screen.queryByRole("button", { name: "Resume queue" })).not.toBeInTheDocument();
   });
@@ -3864,7 +3905,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await fireEvent.click(await screen.findByRole("button", { name: "View agent settings" }));
     await screen.findByRole("button", { name: "Onboarding model: Luna" });
-    const name = screen.getByRole("textbox", { name: "Agent name" });
+    const name = await screen.findByRole("textbox", { name: "Agent name" });
     await fireEvent.input(name, { target: { value: "Coordinator" } });
     await fireEvent.blur(name);
     await waitFor(() =>
@@ -3912,7 +3953,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Edit agent" }), { button: 0 });
     expect(await screen.findByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
+    expect(await screen.findByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
   });
 
   it("confirms and persistently deletes a bot from its context menu", async () => {

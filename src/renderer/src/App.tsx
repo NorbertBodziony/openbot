@@ -41,13 +41,14 @@ import { isClaudeModel } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, createStore, flush, Loading, lazy, onSettled, Show } from "solid-js";
 import { desktopAnalytics } from "./analytics";
 import { playCompletionSoundForAgentEvent } from "./completion-sound";
-import { AccountDock } from "./components/AccountDock";
 import { Conversation } from "./components/Conversation";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "./components/PanelResizer";
 import { ServerRail } from "./components/ServerRail";
 import { Sidebar, type SidebarAgentState } from "./components/Sidebar";
+import { StaticAccountDock } from "./components/StaticAccountDock";
 import type { BotMessage, BotProfile } from "./data";
 
+const AccountDock = lazy(() => import("./components/AccountDock").then((module) => ({ default: module.AccountDock })));
 const AccountLogin = lazy(() =>
   import("./components/AccountLogin").then((module) => ({ default: module.AccountLogin })),
 );
@@ -202,7 +203,11 @@ const ONBOARDING_PROFILES: Record<string, { title: string; description: string; 
   },
 };
 
-export function App() {
+interface AppProps {
+  landingPreview?: boolean;
+}
+
+export function App(props: AppProps = {}) {
   const [botList, setBotList] = createSignal<BotProfile[]>([]);
   const [modelOptions, setModelOptions] = createSignal<AgentModelOption[]>([]);
   const [activeBotId, setActiveBotId] = createSignal("");
@@ -471,9 +476,9 @@ export function App() {
       receiveInvite(inviteUrl);
     });
     const unsubscribeHost = window.openbot.host.onEvent((status) => flush(() => setHostStatus(status)));
-    const unsubscribeRemoteDesktop = window.openbot.remoteDesktop.onEvent((sessions) =>
-      flush(() => setRemoteDesktopSessions(sessions)),
-    );
+    const unsubscribeRemoteDesktop = props.landingPreview
+      ? () => undefined
+      : window.openbot.remoteDesktop.onEvent((sessions) => flush(() => setRemoteDesktopSessions(sessions)));
     const handleGlobalSearchShortcut = (event: KeyboardEvent) => {
       if (
         event.key.toLocaleLowerCase() !== "k" ||
@@ -568,17 +573,19 @@ export function App() {
         .then(applyConversationReads)
         .catch(() => undefined),
     ]);
-    void window.openbot.browser
-      .listTabs()
-      .then((tabs) => {
-        setBrowserTabs(tabs);
-        setActiveBrowserTabId((current) => current ?? tabs[0]?.id ?? null);
-      })
-      .catch(() => undefined);
-    void window.openbot.browser
-      .getControlState()
-      .then(setBrowserControlState)
-      .catch(() => undefined);
+    if (!props.landingPreview) {
+      void window.openbot.browser
+        .listTabs()
+        .then((tabs) => {
+          setBrowserTabs(tabs);
+          setActiveBrowserTabId((current) => current ?? tabs[0]?.id ?? null);
+        })
+        .catch(() => undefined);
+      void window.openbot.browser
+        .getControlState()
+        .then(setBrowserControlState)
+        .catch(() => undefined);
+    }
     void window.openbot.servers
       .list()
       .then(setServers)
@@ -592,10 +599,12 @@ export function App() {
       .getStatus()
       .then(setHostStatus)
       .catch(() => undefined);
-    void window.openbot.remoteDesktop
-      .list()
-      .then(setRemoteDesktopSessions)
-      .catch(() => undefined);
+    if (!props.landingPreview) {
+      void window.openbot.remoteDesktop
+        .list()
+        .then(setRemoteDesktopSessions)
+        .catch(() => undefined);
+    }
     return cleanup;
   });
 
@@ -667,10 +676,12 @@ export function App() {
         }));
         return;
       case "browser-changed":
+        if (props.landingPreview) return;
         setBrowserTabs(event.tabs);
         setActiveBrowserTabId(event.activeTabId);
         return;
       case "browser-control-changed":
+        if (props.landingPreview) return;
         setBrowserControlState(event.state);
         return;
       case "turn-started":
@@ -1803,8 +1814,8 @@ export function App() {
       window.openbot.agent.listConversationReads(),
       window.openbot.agent.getStatus(),
       window.openbot.agent.listModels(),
-      window.openbot.browser.listTabs(),
-      window.openbot.browser.getControlState(),
+      props.landingPreview ? Promise.resolve([]) : window.openbot.browser.listTabs(),
+      props.landingPreview ? Promise.resolve({ sessions: [] }) : window.openbot.browser.getControlState(),
       window.openbot.servers.getPresence(),
     ]);
     setAgentStatus(status);
@@ -2297,7 +2308,9 @@ export function App() {
                   servers={servers()}
                   onSelect={(serverId) => void selectServer(serverId)}
                   onReorder={(serverIds) => void reorderServers(serverIds)}
-                  onAdd={() => setJoinServerOpen(true)}
+                  onAdd={() => {
+                    if (!props.landingPreview) setJoinServerOpen(true);
+                  }}
                   onOpenSettings={openServerSettings}
                 />
               </Show>
@@ -2319,21 +2332,42 @@ export function App() {
                 onCollapse={() => setSidebarCollapsed(true)}
                 onExpand={expandSidebar}
               />
-              <AccountDock
-                account={account()}
-                appInfo={appInfo()}
-                agentStatus={agentStatus()}
-                accountUsage={accountUsage()}
-                updateStatus={updateStatus()}
-                compact={leftPanelCompact()}
-                withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
-                onRefreshUsage={refreshAccountUsage}
-                onUpdateAction={runUpdateAction}
-                onUpdateAccountAvatar={updateAccountAvatar}
-                onLogout={logoutCentralAccount}
-                onOpenExternal={(destination) => window.openbot.openExternal(destination)}
-                onOpenPermissions={() => setPermissionsOpen(true)}
-              />
+              <Show
+                when={!props.landingPreview}
+                fallback={
+                  <StaticAccountDock
+                    account={account()}
+                    compact={leftPanelCompact()}
+                    withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
+                  />
+                }
+              >
+                <Loading
+                  fallback={
+                    <StaticAccountDock
+                      account={account()}
+                      compact={leftPanelCompact()}
+                      withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
+                    />
+                  }
+                >
+                  <AccountDock
+                    account={account()}
+                    appInfo={appInfo()}
+                    agentStatus={agentStatus()}
+                    accountUsage={accountUsage()}
+                    updateStatus={updateStatus()}
+                    compact={leftPanelCompact()}
+                    withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
+                    onRefreshUsage={refreshAccountUsage}
+                    onUpdateAction={runUpdateAction}
+                    onUpdateAccountAvatar={updateAccountAvatar}
+                    onLogout={logoutCentralAccount}
+                    onOpenExternal={(destination) => window.openbot.openExternal(destination)}
+                    onOpenPermissions={() => setPermissionsOpen(true)}
+                  />
+                </Loading>
+              </Show>
               <PanelResizer
                 class="left-panel-resizer"
                 label="Resize left sidebar"
@@ -2410,8 +2444,10 @@ export function App() {
                   server={activeServer()}
                   presence={teamPresence()}
                   currentUserEmail={account().email}
+                  browserEnabled={!props.landingPreview}
                   remoteDesktopSessionActive={Boolean(activeRemoteDesktopSession())}
                   remoteDesktopVisible={remoteDesktopWorkspaceVisible()}
+                  remoteDesktopEnabled={!props.landingPreview}
                   prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
                   approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
                   activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
@@ -2527,7 +2563,7 @@ export function App() {
                   />
                 </Loading>
               </Show>
-              <Show when={remoteDesktopWorkspaceServer()} keyed>
+              <Show when={!props.landingPreview && remoteDesktopWorkspaceServer()} keyed>
                 {(server) => (
                   <Loading>
                     <RemoteDesktopWorkspace

@@ -1,11 +1,7 @@
 import type { JSX } from "@solidjs/web";
 import { onCleanup, onSettled } from "solid-js";
 import { App } from "../App";
-import {
-  createLandingDemoController,
-  LANDING_PREVIEW_READY_MESSAGE,
-  LANDING_PREVIEW_START_MESSAGE,
-} from "./landing-demo";
+import { LANDING_PREVIEW_READY_MESSAGE, LANDING_PREVIEW_START_MESSAGE } from "./landing-demo-messages";
 import { LANDING_PREVIEW_OPTIONS } from "./landing-fixtures";
 import { createMockOpenBot, type MockOpenBotControls, type MockOpenBotOptions } from "./mock-openbot";
 
@@ -13,6 +9,7 @@ const LANDING_PREVIEW_READY_RETRY_MS = 250;
 
 export interface OpenBotPlaygroundDependencies {
   createMock: (options?: MockOpenBotOptions) => MockOpenBotControls;
+  loadLandingController?: () => Promise<typeof import("./landing-demo")>;
   renderApp: () => JSX.Element;
 }
 
@@ -23,22 +20,33 @@ export interface OpenBotPlaygroundProps {
 }
 
 export function OpenBotPlayground(props: OpenBotPlaygroundProps) {
+  const landingPreview = props.variant === "landing";
   const dependencies = props.dependencies ?? {
     createMock: createMockOpenBot,
-    renderApp: () => <App />,
+    renderApp: () => <App landingPreview={landingPreview} />,
   };
   const previousApi = window.openbot;
-  const mock = dependencies.createMock(props.variant === "landing" ? LANDING_PREVIEW_OPTIONS : props.options);
+  const mock = dependencies.createMock(landingPreview ? LANDING_PREVIEW_OPTIONS : props.options);
   window.openbot = mock.api;
-  const landingController =
-    props.variant === "landing"
-      ? createLandingDemoController(mock, {
-          reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
-        })
-      : null;
+  let landingController: { activate: () => void; dispose: () => void } | null = null;
+  let controllerLoading: Promise<void> | null = null;
+  let disposed = false;
+
+  function activateLandingController(): void {
+    if (!landingPreview || disposed) return;
+    if (controllerLoading) return;
+    controllerLoading = (dependencies.loadLandingController?.() ?? import("./landing-demo")).then((module) => {
+      if (disposed) return;
+      landingController = module.createLandingDemoController(mock, {
+        reducedMotion: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+      });
+      landingController.activate();
+    });
+    void controllerLoading;
+  }
 
   onSettled(() => {
-    if (!landingController || window.parent === window) return;
+    if (!landingPreview || window.parent === window) return;
     const parent = window.parent;
     const origin = window.location.origin;
     let firstPaintFrame: number | undefined;
@@ -54,7 +62,7 @@ export function OpenBotPlayground(props: OpenBotPlaygroundProps) {
       if (started) return;
       started = true;
       if (readyTimer) clearInterval(readyTimer);
-      landingController.activate();
+      activateLandingController();
     };
     window.addEventListener("message", handleMessage);
     firstPaintFrame = window.requestAnimationFrame(() => {
@@ -72,6 +80,7 @@ export function OpenBotPlayground(props: OpenBotPlaygroundProps) {
   });
 
   onCleanup(() => {
+    disposed = true;
     landingController?.dispose();
     mock.dispose();
     window.openbot = previousApi;

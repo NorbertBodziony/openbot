@@ -14,6 +14,12 @@
   background: var(--openbot-bg-canvas);
 }
 
+.openbot-playground-root .account-dock-static .account-dock-trigger {
+  cursor: default;
+  grid-template-columns: calc(var(--server-rail-width) - 12px) minmax(0, 1fr);
+  pointer-events: none;
+}
+
 .openbot-playground-root .unread-messages-banner {
   display: none;
 }

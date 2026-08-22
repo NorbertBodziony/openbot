@@ -6,11 +6,8 @@ import type {
 } from "@openbot/contracts/ipc";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createLandingDemoController } from "./landing-demo";
-import {
-  LANDING_DIRECT_SCRIPT_MESSAGE_PREFIX,
-  LANDING_PREVIEW_OPTIONS,
-  LANDING_SCRIPT_MESSAGE_PREFIX,
-} from "./landing-fixtures";
+import { LANDING_DIRECT_SCRIPT_MESSAGE_PREFIX, LANDING_SCRIPT_MESSAGE_PREFIX } from "./landing-demo-scripts";
+import { LANDING_PREVIEW_OPTIONS } from "./landing-fixtures";
 import { createMockOpenBot } from "./mock-openbot";
 
 describe("landing demo controller", () => {

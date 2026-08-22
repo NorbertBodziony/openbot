@@ -6,11 +6,8 @@ import {
   LANDING_SCRIPT_MESSAGE_PREFIX,
   type LandingDemoScript,
   type LandingDirectDemoScript,
-} from "./landing-fixtures";
+} from "./landing-demo-scripts";
 import type { MockOpenBotControls } from "./mock-openbot";
-
-export const LANDING_PREVIEW_READY_MESSAGE = "openbot:landing-preview-ready";
-export const LANDING_PREVIEW_START_MESSAGE = "openbot:landing-preview-start";
 
 interface LandingDemoControllerOptions {
   reducedMotion?: boolean;

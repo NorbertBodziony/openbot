@@ -1,5 +1,6 @@
 import { render } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createLandingDemoController } from "./landing-demo";
 import { createMockOpenBot, type MockOpenBotOptions } from "./mock-openbot";
 import { OpenBotPlayground } from "./OpenBotPlayground";
 
@@ -73,11 +74,19 @@ describe("OpenBotPlayground", () => {
     expect(receivedOptions?.directSnapshots?.["member-alice"]?.messages.at(-1)?.text).toContain("release-note.md");
     expect(receivedOptions?.directSnapshots?.["member-maya"]?.messages).toHaveLength(3);
     expect(receivedOptions?.directSnapshots?.["member-jon"]?.messages).toHaveLength(3);
+    expect(receivedOptions?.authState).toMatchObject({
+      status: "signed_in",
+      user: { email: "norbertbodziony@gmail.com", name: "Norbert" },
+    });
+    expect(receivedOptions?.presence?.members.find((member) => member.id === "member-self")?.email).toBe(
+      "norbertbodziony@gmail.com",
+    );
+    expect(receivedOptions?.remoteDesktopSessions).toEqual([]);
 
     view.unmount();
   });
 
-  it("reports ready and accepts a same-origin start message only from its parent", () => {
+  it("reports ready and accepts a same-origin start message only from its parent", async () => {
     vi.useFakeTimers();
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 1;
@@ -105,6 +114,7 @@ describe("OpenBotPlayground", () => {
         variant="landing"
         dependencies={{
           createMock: () => activeMock,
+          loadLandingController: async () => ({ createLandingDemoController }),
           renderApp: () => <div data-testid="landing-handshake-app" />,
         }}
       />
@@ -133,6 +143,8 @@ describe("OpenBotPlayground", () => {
         data: { type: "openbot:landing-preview-start" },
       }),
     );
+    await Promise.resolve();
+    await Promise.resolve();
     expect(updateConversation).toHaveBeenCalled();
     vi.advanceTimersByTime(250);
     expect(postMessage).toHaveBeenCalledTimes(2);
