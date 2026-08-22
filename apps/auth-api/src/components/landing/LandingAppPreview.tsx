@@ -3,7 +3,7 @@ import { onSettled } from "solid-js";
 const LANDING_PREVIEW_READY_MESSAGE = "openbot:landing-preview-ready";
 const LANDING_PREVIEW_START_MESSAGE = "openbot:landing-preview-start";
 const LANDING_PREVIEW_URL = "/app-preview";
-const LANDING_PREVIEW_LOAD_DELAY_MS = 150;
+const LANDING_PREVIEW_LOAD_DELAY_MS = 300;
 const LANDING_PREVIEW_REVEAL_FALLBACK_MS = 240;
 
 const LANDING_PREVIEW_MARKS = {
@@ -13,8 +13,10 @@ const LANDING_PREVIEW_MARKS = {
 } as const;
 
 function readDuration(name: string, fallback: number): number {
-  const value = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
-  return Number.isFinite(value) ? value : fallback;
+  const rawValue = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const value = Number.parseFloat(rawValue);
+  if (!Number.isFinite(value)) return fallback;
+  return rawValue.endsWith("s") && !rawValue.endsWith("ms") ? value * 1_000 : value;
 }
 
 function markPreviewTiming(name: (typeof LANDING_PREVIEW_MARKS)[keyof typeof LANDING_PREVIEW_MARKS]): void {

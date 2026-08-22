@@ -38,7 +38,7 @@ describe("LandingAppPreview", () => {
     expect(preview).toHaveAttribute("data-preview-state", "idle");
 
     expect(window.requestAnimationFrame).toHaveBeenCalledTimes(2);
-    vi.advanceTimersByTime(149);
+    vi.advanceTimersByTime(299);
     expect(frame).not.toHaveAttribute("src");
     vi.advanceTimersByTime(1);
     expect(frame).toHaveAttribute("src", "/app-preview");
@@ -84,7 +84,7 @@ describe("LandingAppPreview", () => {
     const postMessage = vi.fn();
     Object.defineProperty(previewWindow, "postMessage", { value: postMessage });
     Object.defineProperty(frame, "contentWindow", { configurable: true, value: previewWindow });
-    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(300);
 
     window.dispatchEvent(
       new MessageEvent("message", {
@@ -127,7 +127,7 @@ describe("LandingAppPreview", () => {
     const frame = view.container.querySelector("iframe");
     const preview = view.container.querySelector(".landing-preview");
     if (!frame?.contentWindow || !preview) throw new Error("Expected the landing preview");
-    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(300);
     if (!frame.contentWindow) throw new Error("Expected the loaded preview window");
     const postMessage = vi.spyOn(frame.contentWindow, "postMessage");
     window.dispatchEvent(
@@ -143,11 +143,29 @@ describe("LandingAppPreview", () => {
     expect(postMessage).toHaveBeenCalledOnce();
   });
 
+  it("reads a production duration expressed in seconds", () => {
+    document.documentElement.style.setProperty("--reveal-dur", ".24s");
+    const view = render(() => <LandingAppPreview />);
+    const frame = view.container.querySelector("iframe");
+    if (!frame?.contentWindow) throw new Error("Expected the landing iframe");
+    vi.advanceTimersByTime(300);
+    const setTimeoutMock = vi.spyOn(globalThis, "setTimeout");
+
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        origin: window.location.origin,
+        source: frame.contentWindow,
+        data: { type: "openbot:landing-preview-ready" },
+      }),
+    );
+    expect(setTimeoutMock).toHaveBeenLastCalledWith(expect.any(Function), 240);
+  });
+
   it("clears a pending start when the preview unmounts", () => {
     const view = render(() => <LandingAppPreview />);
     const frame = view.container.querySelector("iframe");
     if (!frame?.contentWindow) throw new Error("Expected the landing iframe");
-    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(300);
     if (!frame.contentWindow) throw new Error("Expected the loaded preview window");
     const postMessage = vi.spyOn(frame.contentWindow, "postMessage");
     window.dispatchEvent(
@@ -169,7 +187,7 @@ describe("LandingAppPreview", () => {
     if (!frame) throw new Error("Expected the landing iframe");
     view.unmount();
 
-    vi.advanceTimersByTime(150);
+    vi.advanceTimersByTime(300);
 
     expect(frame).not.toHaveAttribute("src");
     expect(cancelAnimationFrameMock).toHaveBeenCalledTimes(2);
