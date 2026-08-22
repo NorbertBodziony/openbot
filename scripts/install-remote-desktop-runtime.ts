@@ -25,7 +25,13 @@ type GitHubRelease = z.infer<typeof githubReleaseSchema>;
 type GitHubReleaseAsset = GitHubRelease["assets"][number];
 
 export async function installRemoteDesktopRuntime(
-  input: { sourceRoot?: string; outputRoot?: string; target?: RemoteDesktopTarget; fetchImpl?: typeof fetch } = {},
+  input: {
+    sourceRoot?: string;
+    outputRoot?: string;
+    target?: RemoteDesktopTarget;
+    fetchImpl?: typeof fetch;
+    githubToken?: string;
+  } = {},
 ): Promise<"installed" | "current"> {
   const sourceRoot = input.sourceRoot ?? process.cwd();
   const outputRoot = input.outputRoot ?? resolve(sourceRoot, "build/remote-desktop-runtime");
@@ -34,6 +40,7 @@ export async function installRemoteDesktopRuntime(
   const lock = await loadNativeRuntimeLock(sourceRoot);
   const release = lock.remoteDesktop.artifactRelease;
   const artifact = lock.remoteDesktop.releaseArtifacts[target];
+  const githubToken = input.githubToken ?? process.env.GITHUB_TOKEN;
   if (!release || !artifact) throw new Error(`No published remote desktop runtime is pinned for ${target}.`);
 
   if (await isCurrentInstallation(outputRoot, target, lock)) {
@@ -43,7 +50,13 @@ export async function installRemoteDesktopRuntime(
 
   const releaseResponse = await fetchImpl(
     `https://api.github.com/repos/${release.repository}/releases/tags/${encodeURIComponent(release.tag)}`,
-    { headers: { Accept: "application/vnd.github+json", "User-Agent": "OpenBot-runtime-installer" } },
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "OpenBot-runtime-installer",
+        ...(githubToken ? { Authorization: `Bearer ${githubToken}` } : {}),
+      },
+    },
   );
   if (!releaseResponse.ok) throw new Error(`Runtime release lookup failed with HTTP ${releaseResponse.status}.`);
   const githubRelease = githubReleaseSchema.parse(await releaseResponse.json());

@@ -5,6 +5,12 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-08-22
+
+### Fixed
+
+- Authenticate pinned runtime release lookups in GitHub Actions to avoid unauthenticated API rate-limit failures.
+
 ## [0.1.16] - 2026-08-22
 
 ### Changed

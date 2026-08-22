@@ -58,6 +58,27 @@ describe("remote desktop runtime installer", () => {
     ).rejects.toThrow("archive checksum is invalid");
   });
 
+  it("authenticates the GitHub release lookup when a token is available", async () => {
+    const fixture = await createFixture();
+    const fixtureFetch = createFixtureFetch(fixture);
+    const fetchImpl: typeof fetch = async (request, init) => {
+      if (String(request).startsWith("https://api.github.com/")) {
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer release-token");
+      }
+      return fixtureFetch(request, init);
+    };
+
+    await expect(
+      installRemoteDesktopRuntime({
+        sourceRoot: fixture.sourceRoot,
+        outputRoot: fixture.outputRoot,
+        target: "darwin-arm64",
+        fetchImpl,
+        githubToken: "release-token",
+      }),
+    ).resolves.toBe("installed");
+  });
+
   it("rejects path traversal entries", () => {
     for (const path of ["../escape", "remote-desktop-runtime/../escape", "/absolute", "C:\\escape"]) {
       expect(() => validateArchivePath(path)).toThrow("Unsafe runtime archive path");

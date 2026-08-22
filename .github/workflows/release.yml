@@ -88,6 +88,7 @@ jobs:
       contents: read
       id-token: write
     env:
+      GITHUB_TOKEN: ${{ github.token }}
       RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
     steps:
       - name: Check out tagged source
