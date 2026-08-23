@@ -5,6 +5,12 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-08-23
+
+### Fixed
+
+- Restore the Solid signals runtime dependency required by production builds.
+
 ## [0.1.20] - 2026-08-22
 
 ### Changed

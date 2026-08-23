@@ -1,7 +1,7 @@
 {
   "name": "openbot",
   "productName": "OpenBot",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "A local-first multi-agent desktop workspace for Codex and Claude.",
   "author": {
     "name": "Norbert Bodziony",
@@ -118,6 +118,7 @@
     "@openbot/brand": "workspace:*",
     "@openbot/contracts": "workspace:*",
     "@openpanel/web": "1.4.1",
+    "@solidjs/signals": "2.0.0-rc.0",
     "@solidjs/web": "2.0.0-rc.0",
     "@speed-highlight/core": "1.2.24",
     "@tanstack/virtual-core": "3.17.8",
