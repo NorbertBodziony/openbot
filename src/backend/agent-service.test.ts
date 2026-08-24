@@ -13,7 +13,14 @@ import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentService } from "./agent-service";
 import { BotStore } from "./bot-store";
 import { MailboxStore } from "./mailbox-store";
-import { type AppServerNotification, getString, type RequestId, type ResponseDecoder, type RpcError } from "./protocol";
+import {
+  type AppServerNotification,
+  type DynamicToolCallParams,
+  getString,
+  type RequestId,
+  type ResponseDecoder,
+  type RpcError,
+} from "./protocol";
 
 let root: string;
 let logPath: string;
@@ -222,6 +229,47 @@ describe.sequential("AgentService", () => {
       expect(turn.params).toMatchObject({ model: "gpt-5.6-luna", effort: "medium" });
     }
     expect((await store.getOrCreate("chief")).threadId).not.toBe((await store.getOrCreate("sales-outbound")).threadId);
+  });
+
+  it("maps provider browser tool calls to the stable OpenBot thread", async () => {
+    const calls: DynamicToolCallParams[] = [];
+    const browser = fakeBrowser();
+    browser.handleDynamicTool = async (params) => {
+      calls.push(params);
+      return { success: true, contentItems: [] };
+    };
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, browser, null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Browse" });
+    await waitFor(() => Boolean(store.activeProviderSession("chief")));
+
+    const providerThreadId = store.activeProviderSession("chief")?.externalSessionId;
+    const openbotThreadId = (await store.getOrCreate("chief")).threadId;
+    const client = clients.get("codex");
+    if (!providerThreadId || !openbotThreadId || !client) throw new Error("Browser test thread was not created.");
+    expect(providerThreadId).not.toBe(openbotThreadId);
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-call",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser",
+        callId: "browser-call",
+        namespace: "openbot_browser",
+        tool: "list_tabs",
+        arguments: {},
+      },
+    });
+
+    await waitFor(() => calls.length === 1);
+    expect(calls[0]?.threadId).toBe(openbotThreadId);
   });
 
   it("surfaces Codex approvals without auto-accepting and maps one-shot decisions", async () => {
@@ -1587,7 +1635,7 @@ function fakeBrowser() {
     onControlChanged: (_listener: (state: BrowserControlState) => void) => () => undefined,
     clearControls: () => undefined,
     endControl: () => undefined,
-    handleDynamicTool: async () => ({ success: true, contentItems: [] }),
+    handleDynamicTool: async (_params: DynamicToolCallParams) => ({ success: true, contentItems: [] }),
   };
 }
 

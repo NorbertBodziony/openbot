@@ -76,6 +76,8 @@ interface BrowserPanelProps {
 export default function BrowserPanel(props: BrowserPanelProps) {
   const defaultPanelWidth = () =>
     Math.round(Math.min(BROWSER_PANEL_MAX, Math.max(BROWSER_PANEL_MIN, props.defaultWidth())));
+  const storedPanelWidth = Number.parseFloat(window.localStorage.getItem(BROWSER_PANEL_STORAGE_KEY) ?? "");
+  let customPanelWidth = Number.isFinite(storedPanelWidth);
   const [panelWidth, setPanelWidth] = createSignal(
     readPanelWidth(BROWSER_PANEL_STORAGE_KEY, defaultPanelWidth(), BROWSER_PANEL_MIN, BROWSER_PANEL_MAX),
   );
@@ -88,6 +90,21 @@ export default function BrowserPanel(props: BrowserPanelProps) {
 
   const resizePanel = (width: number) => {
     setPanelWidth(width);
+  };
+
+  const saveCustomPanelWidth = (width: number) => {
+    customPanelWidth = true;
+    savePanelWidth(BROWSER_PANEL_STORAGE_KEY, width);
+  };
+
+  const resizeDefaultPanel = () => {
+    if (!customPanelWidth) setPanelWidth(defaultPanelWidth());
+  };
+
+  const resetPanelWidth = () => {
+    window.localStorage.removeItem(BROWSER_PANEL_STORAGE_KEY);
+    customPanelWidth = false;
+    setPanelWidth(defaultPanelWidth());
   };
 
   let cleanupPipPointer: (() => void) | undefined;
@@ -259,7 +276,9 @@ export default function BrowserPanel(props: BrowserPanelProps) {
           min={BROWSER_PANEL_MIN}
           max={props.maxWidth}
           onResize={resizePanel}
-          onResizeEnd={(value) => savePanelWidth(BROWSER_PANEL_STORAGE_KEY, value)}
+          onResizeEnd={saveCustomPanelWidth}
+          onParentResize={resizeDefaultPanel}
+          onReset={resetPanelWidth}
         />
         <header class="browser-panel-header">
           <div class="browser-tabs">

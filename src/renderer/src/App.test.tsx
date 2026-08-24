@@ -1986,6 +1986,30 @@ describe("OpenBot connected desktop shell", () => {
       "400",
     );
     expect(conversation).toHaveStyle("--browser-panel-width: 400px");
+    const resizer = screen.getByRole("separator", { name: "Resize right panel" });
+    await waitFor(() => expect(resizer).toHaveAttribute("aria-valuenow", "400"));
+
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 1000 });
+    await fireEvent(window, new Event("resize"));
+    expect(resizer).toHaveAttribute("aria-valuenow", "500");
+    expect(conversation).toHaveStyle("--browser-panel-width: 500px");
+
+    await fireEvent.keyDown(resizer, { key: "ArrowLeft" });
+    expect(resizer).toHaveAttribute("aria-valuenow", "512");
+    expect(window.localStorage.getItem("openbot:browser-panel-width")).toBe("512");
+
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 1200 });
+    await fireEvent(window, new Event("resize"));
+    expect(resizer).toHaveAttribute("aria-valuenow", "512");
+    expect(conversation).toHaveStyle("--browser-panel-width: 512px");
+
+    await fireEvent.dblClick(resizer);
+    expect(window.localStorage.getItem("openbot:browser-panel-width")).toBeNull();
+    expect(resizer).toHaveAttribute("aria-valuenow", "600");
+
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 800 });
+    await fireEvent(window, new Event("resize"));
+    expect(resizer).toHaveAttribute("aria-valuenow", "400");
   });
 
   it("moves the live embedded browser between the sidebar and Picture in Picture", async () => {

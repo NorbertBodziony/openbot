@@ -302,7 +302,9 @@ export class BrowserHost {
       }
 
       const wasVisible = tab.view.getVisible();
+      const previousBounds = tab.view.getBounds();
       if (!wasVisible) {
+        tab.view.setBounds({ ...previousBounds, x: -previousBounds.width - 1 });
         tab.view.setVisible(true);
         tab.view.webContents.invalidate();
       }
@@ -312,7 +314,11 @@ export class BrowserHost {
         await withTimeout(performAction(tab.view.webContents, action), 10_000, "Browser action timed out.");
         await delay(50);
       } finally {
-        if (!wasVisible) tab.view.setVisible(false);
+        if (!wasVisible) {
+          tab.view.setVisible(false);
+          tab.view.setBounds(previousBounds);
+          this.#syncAttachedView();
+        }
       }
       await delay(250);
       const nextRevision = tab.revision + 1;
