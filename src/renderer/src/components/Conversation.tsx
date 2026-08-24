@@ -48,6 +48,7 @@ import {
 } from "./conversation/AgentActivity";
 import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
 import { attachmentReferenceTone } from "./conversation/AttachmentReference";
+import type { BrowserPipBounds } from "./conversation/BrowserPanel";
 import { ChatSearch } from "./conversation/ChatSearch";
 import {
   CloseIcon,
@@ -209,7 +210,7 @@ interface MediaPreview {
   error: string | null;
 }
 
-type RightPanelMode = "none" | "browser" | "settings";
+type RightPanelMode = "none" | "browser" | "browser-pip" | "settings";
 
 const EMPTY_DRAFT: ComposerDraft = {
   text: "",
@@ -221,9 +222,70 @@ const SETTINGS_PANEL_DEFAULT = 296;
 const SETTINGS_PANEL_MIN = 180;
 const SETTINGS_PANEL_MAX = 1600;
 const BROWSER_PANEL_DEFAULT = 380;
+const BROWSER_PANEL_DEFAULT_RATIO = 0.5;
 const BROWSER_PANEL_MIN = 220;
 const BROWSER_PANEL_MAX = 1600;
 const CONVERSATION_PANEL_MIN = 96;
+const BROWSER_PIP_STORAGE_KEY = "openbot:browser-pip-bounds";
+const BROWSER_PIP_DEFAULT_WIDTH = 420;
+const BROWSER_PIP_DEFAULT_HEIGHT = 300;
+const BROWSER_PIP_MIN_WIDTH = 300;
+const BROWSER_PIP_MIN_HEIGHT = 220;
+const BROWSER_PIP_MARGIN = 12;
+const BROWSER_PIP_BOTTOM_INSET = 64;
+
+function readBrowserPipBounds(): BrowserPipBounds | null {
+  const values = (window.localStorage.getItem(BROWSER_PIP_STORAGE_KEY) ?? "")
+    .split(",")
+    .map((value) => Number.parseFloat(value));
+  const [x, y, width, height] = values;
+  return values.length === 4 && values.every(Number.isFinite) ? { x, y, width, height } : null;
+}
+
+function defaultBrowserPipBounds(containerWidth: number, containerHeight: number): BrowserPipBounds {
+  const width = Math.min(BROWSER_PIP_DEFAULT_WIDTH, containerWidth - BROWSER_PIP_MARGIN * 2);
+  const height = Math.min(BROWSER_PIP_DEFAULT_HEIGHT, containerHeight - BROWSER_PIP_MARGIN * 2);
+  return {
+    x: containerWidth - width - 16,
+    y: containerHeight - height - BROWSER_PIP_BOTTOM_INSET,
+    width,
+    height,
+  };
+}
+
+function bottomRightBrowserPipBounds(
+  bounds: BrowserPipBounds,
+  containerWidth: number,
+  containerHeight: number,
+): BrowserPipBounds {
+  const constrained = clampBrowserPipBounds(bounds, containerWidth, containerHeight);
+  return clampBrowserPipBounds(
+    {
+      ...constrained,
+      x: containerWidth - constrained.width - 16,
+      y: containerHeight - constrained.height - BROWSER_PIP_BOTTOM_INSET,
+    },
+    containerWidth,
+    containerHeight,
+  );
+}
+
+function clampBrowserPipBounds(
+  bounds: BrowserPipBounds,
+  containerWidth: number,
+  containerHeight: number,
+): BrowserPipBounds {
+  const availableWidth = Math.max(1, containerWidth - BROWSER_PIP_MARGIN * 2);
+  const availableHeight = Math.max(1, containerHeight - BROWSER_PIP_MARGIN * 2);
+  const width = Math.round(Math.min(availableWidth, Math.max(BROWSER_PIP_MIN_WIDTH, bounds.width)));
+  const height = Math.round(Math.min(availableHeight, Math.max(BROWSER_PIP_MIN_HEIGHT, bounds.height)));
+  return {
+    x: Math.round(Math.min(containerWidth - width - BROWSER_PIP_MARGIN, Math.max(BROWSER_PIP_MARGIN, bounds.x))),
+    y: Math.round(Math.min(containerHeight - height - BROWSER_PIP_MARGIN, Math.max(BROWSER_PIP_MARGIN, bounds.y))),
+    width,
+    height,
+  };
+}
 
 export function Conversation(props: ConversationProps) {
   const agentReady = () => props.agentStatus.phase === "ready";
@@ -249,6 +311,7 @@ export function Conversation(props: ConversationProps) {
   const [completedOnboardingBots, setCompletedOnboardingBots] = createSignal<Record<string, true>>({});
   const automaticallyOnboardedBots = new Set<string>();
   const [browserAddress, setBrowserAddress] = createSignal("https://www.google.com");
+  const [browserPipBounds, setBrowserPipBounds] = createSignal<BrowserPipBounds | null>(readBrowserPipBounds());
   const [mediaPreview, setMediaPreview] = createSignal<MediaPreview | null>(null);
   const [openReactionMessageId, setOpenReactionMessageId] = createSignal<string | null>(null);
   const [openMoreMessageId, setOpenMoreMessageId] = createSignal<string | null>(null);
@@ -307,7 +370,9 @@ export function Conversation(props: ConversationProps) {
     const botId = props.bot?.id;
     return botId ? (rightPanels()[botId] ?? "none") : "none";
   });
-  const screenOpen = () => props.browserEnabled !== false && activeRightPanel() === "browser";
+  const browserSidebarOpen = () => props.browserEnabled !== false && activeRightPanel() === "browser";
+  const browserPipOpen = () => props.browserEnabled !== false && activeRightPanel() === "browser-pip";
+  const screenOpen = () => browserSidebarOpen() || browserPipOpen();
   const settingsOpen = () => activeRightPanel() === "settings";
   const browserTabs = createMemo(() => {
     if (props.browserEnabled === false) return [];
@@ -1232,7 +1297,7 @@ export function Conversation(props: ConversationProps) {
         const next = { ...current };
         let changed = false;
         for (const botId of newlyControlledBotIds) {
-          if (next[botId] === "browser") continue;
+          if (next[botId] === "browser" || next[botId] === "browser-pip") continue;
           next[botId] = "browser";
           changed = true;
         }
@@ -1242,7 +1307,11 @@ export function Conversation(props: ConversationProps) {
   );
 
   createEffect(
-    () => ({ botId: props.bot?.id, visible: screenOpen() && !props.globalOverlayOpen }),
+    () => ({
+      botId: props.bot?.id,
+      visible: screenOpen() && !props.globalOverlayOpen,
+      pipBounds: browserPipOpen() ? browserPipBounds() : null,
+    }),
     ({ botId, visible }) => {
       if (props.browserEnabled === false) return;
       const generation = ++browserVisibilityGeneration;
@@ -1287,11 +1356,31 @@ export function Conversation(props: ConversationProps) {
           if (browserBoundsFrame !== undefined) cancelAnimationFrame(browserBoundsFrame);
           browserBoundsFrame = requestAnimationFrame(() => {
             browserBoundsFrame = undefined;
+            if (browserPipOpen()) {
+              const current = browserPipBounds();
+              if (current && conversationPanel) {
+                const constrained = clampBrowserPipBounds(
+                  current,
+                  conversationPanel.clientWidth,
+                  conversationPanel.clientHeight,
+                );
+                if (
+                  constrained.x !== current.x ||
+                  constrained.y !== current.y ||
+                  constrained.width !== current.width ||
+                  constrained.height !== current.height
+                ) {
+                  setBrowserPipBounds(constrained);
+                  return;
+                }
+              }
+            }
             syncBounds();
           });
         };
         browserResizeObserver = new ResizeObserver(scheduleBoundsSync);
         browserResizeObserver.observe(browserSurface);
+        if (conversationPanel) browserResizeObserver.observe(conversationPanel);
         browserWindowResizeHandler = scheduleBoundsSync;
         window.addEventListener("resize", browserWindowResizeHandler);
       });
@@ -1638,6 +1727,33 @@ export function Conversation(props: ConversationProps) {
     if (browserTabs().length === 0) void openBrowserAddress();
   }
 
+  function constrainBrowserPipBounds(bounds: BrowserPipBounds): BrowserPipBounds {
+    const width = conversationPanel?.clientWidth || window.innerWidth;
+    const height = conversationPanel?.clientHeight || window.innerHeight;
+    return clampBrowserPipBounds(bounds, width, height);
+  }
+
+  function showBrowserPip() {
+    if (props.browserEnabled === false) return;
+    const width = conversationPanel?.clientWidth || window.innerWidth;
+    const height = conversationPanel?.clientHeight || window.innerHeight;
+    setBrowserPipBounds((current) =>
+      bottomRightBrowserPipBounds(current ?? defaultBrowserPipBounds(width, height), width, height),
+    );
+    setActiveRightPanel("browser-pip");
+  }
+
+  function updateBrowserPipBounds(bounds: BrowserPipBounds, commit: boolean) {
+    const constrained = constrainBrowserPipBounds(bounds);
+    setBrowserPipBounds(constrained);
+    if (commit) {
+      window.localStorage.setItem(
+        BROWSER_PIP_STORAGE_KEY,
+        [constrained.x, constrained.y, constrained.width, constrained.height].join(","),
+      );
+    }
+  }
+
   function hideBrowserPanel() {
     setActiveRightPanel("none");
     if (props.browserEnabled !== false) void window.openbot.browser.setVisible({ visible: false });
@@ -1714,7 +1830,7 @@ export function Conversation(props: ConversationProps) {
         "conversation-panel",
         {
           "conversation-drop-active": dropActive(),
-          "browser-panel-active": screenOpen(),
+          "browser-panel-active": browserSidebarOpen(),
         },
       ]}
       style={`--settings-panel-width: ${settingsPanelWidth()}px; --browser-panel-width: ${browserPanelWidth()}px`}
@@ -2596,10 +2712,12 @@ export function Conversation(props: ConversationProps) {
 
       <Show when={screenOpen()}>
         <BrowserPanel
+          mode={browserPipOpen() ? "pip" : "sidebar"}
           tabs={browserTabs()}
           activeTab={activeBrowserTab()}
           activeControl={activeBrowserControl()}
           address={browserAddress()}
+          defaultWidth={() => (conversationPanel?.clientWidth || window.innerWidth) * BROWSER_PANEL_DEFAULT_RATIO}
           maxWidth={() =>
             Math.min(
               BROWSER_PANEL_MAX,
@@ -2617,6 +2735,18 @@ export function Conversation(props: ConversationProps) {
           onCloseTab={(tabId) => void closeBrowserTab(tabId)}
           onSurface={(element) => (browserSurface = element)}
           onWidthChange={setBrowserPanelWidth}
+          pipBounds={
+            browserPipBounds() ??
+            defaultBrowserPipBounds(
+              conversationPanel?.clientWidth || window.innerWidth,
+              conversationPanel?.clientHeight || window.innerHeight,
+            )
+          }
+          constrainPipBounds={constrainBrowserPipBounds}
+          onPipBoundsChange={updateBrowserPipBounds}
+          onEnterPip={showBrowserPip}
+          onDockPip={() => setActiveRightPanel("browser")}
+          onHidePip={hideBrowserPanel}
         />
       </Show>
 
