@@ -5,6 +5,8 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-08-24
+
 ### Added
 
 - Add a resizable browser Picture-in-Picture panel that stays visible while the conversation remains usable.
