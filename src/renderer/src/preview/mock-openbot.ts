@@ -607,6 +607,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         return clone(tab);
       },
       activate: async () => undefined,
+      reload: async () => undefined,
       close: async (tabId) => {
         browserTabs = browserTabs.filter((tab) => tab.id !== tabId);
         emitAgentEvent({

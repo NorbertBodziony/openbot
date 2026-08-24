@@ -1079,22 +1079,27 @@ function isQueuedMessageReceiptValue(value: unknown): value is QueuedMessageRece
 }
 
 export function decodeBrowserTabs(value: unknown): BrowserTab[] {
-  if (
-    !Array.isArray(value) ||
-    !value.every(
-      (tab) =>
-        isDynamicRecord(tab) &&
-        isString(tab.id) &&
-        isString(tab.title) &&
-        isString(tab.url) &&
-        isBoolean(tab.loading) &&
-        (tab.ownerThreadId === null || isString(tab.ownerThreadId)) &&
-        (tab.ownerBotId === null || isString(tab.ownerBotId)),
-    )
-  ) {
+  if (!Array.isArray(value) || !value.every(isBrowserTabValue)) {
     throw new Error("Invalid remote browser tabs.");
   }
   return value;
+}
+
+export function decodeBrowserTab(value: unknown): BrowserTab {
+  if (!isBrowserTabValue(value)) throw new Error("Invalid remote browser tab.");
+  return value;
+}
+
+function isBrowserTabValue(value: unknown): value is BrowserTab {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.id) &&
+    isString(value.title) &&
+    isString(value.url) &&
+    isBoolean(value.loading) &&
+    (value.ownerThreadId === null || isString(value.ownerThreadId)) &&
+    (value.ownerBotId === null || isString(value.ownerBotId))
+  );
 }
 
 export function decodeBrowserControlState(value: unknown): BrowserControlState {

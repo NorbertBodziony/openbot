@@ -316,6 +316,7 @@ describe("OpenBot connected desktop shell", () => {
         browser: {
           open: vi.fn().mockResolvedValue(undefined),
           activate: vi.fn().mockResolvedValue(undefined),
+          reload: vi.fn().mockResolvedValue(undefined),
           close: vi.fn().mockResolvedValue(undefined),
           listTabs: vi.fn().mockResolvedValue([]),
           getControlState: vi.fn().mockResolvedValue({ sessions: [] }),
@@ -1990,17 +1991,28 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(resizer).toHaveAttribute("aria-valuenow", "400"));
 
     Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 1000 });
-    await fireEvent(window, new Event("resize"));
-    expect(resizer).toHaveAttribute("aria-valuenow", "500");
+    await waitFor(() => {
+      triggerResize(conversation);
+      expect(resizer).toHaveAttribute("aria-valuenow", "500");
+    });
     expect(conversation).toHaveStyle("--browser-panel-width: 500px");
 
     await fireEvent.keyDown(resizer, { key: "ArrowLeft" });
     expect(resizer).toHaveAttribute("aria-valuenow", "512");
     expect(window.localStorage.getItem("openbot:browser-panel-width")).toBe("512");
 
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 400 });
+    await waitFor(() => {
+      triggerResize(conversation);
+      expect(resizer).toHaveAttribute("aria-valuenow", "304");
+    });
+    expect(window.localStorage.getItem("openbot:browser-panel-width")).toBe("512");
+
     Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 1200 });
-    await fireEvent(window, new Event("resize"));
-    expect(resizer).toHaveAttribute("aria-valuenow", "512");
+    await waitFor(() => {
+      triggerResize(conversation);
+      expect(resizer).toHaveAttribute("aria-valuenow", "512");
+    });
     expect(conversation).toHaveStyle("--browser-panel-width: 512px");
 
     await fireEvent.dblClick(resizer);
@@ -2043,7 +2055,43 @@ describe("OpenBot connected desktop shell", () => {
     expect(pip).toHaveStyle({ left: "588px", top: "400px", width: "420px", height: "300px" });
     expect(pip).toHaveTextContent("Picture in Picture test");
     expect(conversation).not.toHaveClass("browser-panel-active");
-    expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://example.com/pip");
+    const address = screen.getByRole("textbox", { name: "Browser address" });
+    expect(address).toHaveValue("https://example.com/pip");
+    await fireEvent.focus(address);
+    await fireEvent.input(address, { target: { value: "example.com/typed" } });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-pip",
+          title: "Updated while typing",
+          url: "https://example.com/updated",
+          loading: true,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-pip",
+    });
+    expect(address).toHaveValue("example.com/typed");
+    await fireEvent.blur(address);
+    expect(address).toHaveValue("https://example.com/updated");
+
+    vi.mocked(window.openbot.browser.open).mockResolvedValueOnce({
+      id: "tab-next",
+      title: "Next page",
+      url: "https://example.com/next",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    });
+    await fireEvent.focus(address);
+    await fireEvent.input(address, { target: { value: "example.com/next" } });
+    const addressForm = address.closest("form");
+    if (!(addressForm instanceof HTMLFormElement)) throw new Error("Browser address form was not rendered.");
+    await fireEvent.submit(addressForm);
+    await waitFor(() => expect(window.openbot.browser.open).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-pip");
 
     vi.mocked(window.openbot.browser.setVisible).mockClear();
     await fireEvent.keyDown(window, { key: "k", metaKey: true });
@@ -2100,6 +2148,9 @@ describe("OpenBot connected desktop shell", () => {
       expect(screen.getByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-pip"),
     );
     expect(conversation).toHaveClass("browser-panel-active");
+    await fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
+    expect(window.openbot.browser.reload).toHaveBeenCalledWith("tab-pip");
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
 
     await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
     const reopenedPip = await screen.findByRole("complementary", { name: "Browser" });

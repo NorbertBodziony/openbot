@@ -63,16 +63,20 @@ export function PanelResizer(props: PanelResizerProps) {
   };
 
   const enforceBounds = () => {
-    props.onParentResize?.();
+    if (props.onParentResize) {
+      props.onParentResize();
+      return;
+    }
     const next = clamp(props.value);
     if (next !== props.value) commit(next);
   };
 
   onSettled(() => {
     window.addEventListener("resize", enforceBounds);
-    if (handle?.parentElement) {
+    const resizeTarget = props.onParentResize ? handle?.parentElement?.parentElement : handle?.parentElement;
+    if (resizeTarget) {
       parentResizeObserver = new ResizeObserver(enforceBounds);
-      parentResizeObserver.observe(handle.parentElement);
+      parentResizeObserver.observe(resizeTarget);
     }
     return () => {
       cleanupDrag?.();

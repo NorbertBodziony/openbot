@@ -266,6 +266,10 @@ export class BrowserHost {
     await this.#persistState();
   }
 
+  async reload(tabId: string): Promise<void> {
+    await this.#enqueue(tabId, async (tab) => tab.view.webContents.reload());
+  }
+
   async close(tabId: string): Promise<void> {
     const tab = this.#requireTab(tabId);
     const tabIds = [...this.#tabs.keys()];
@@ -303,8 +307,13 @@ export class BrowserHost {
 
       const wasVisible = tab.view.getVisible();
       const previousBounds = tab.view.getBounds();
+      const restoreRendererFocus = !wasVisible && this.#window.webContents.isFocused();
       if (!wasVisible) {
-        tab.view.setBounds({ ...previousBounds, x: -previousBounds.width - 1 });
+        tab.view.setBounds({
+          ...previousBounds,
+          x: 1 - previousBounds.width,
+          y: 1 - previousBounds.height,
+        });
         tab.view.setVisible(true);
         tab.view.webContents.invalidate();
       }
@@ -318,6 +327,7 @@ export class BrowserHost {
           tab.view.setVisible(false);
           tab.view.setBounds(previousBounds);
           this.#syncAttachedView();
+          if (restoreRendererFocus) this.#window.webContents.focus();
         }
       }
       await delay(250);
@@ -881,30 +891,30 @@ function snapshotScript(revision: number): string {
 async function performAction(contents: WebContents, action: BrowserAction): Promise<void> {
   switch (action.type) {
     case "click": {
-      const point = await contents.executeJavaScript(
-        `(() => {
-          const node = document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]');
-          if (!(node instanceof HTMLElement)) throw new Error('Element reference is no longer available.');
-          node.scrollIntoView({ block: 'center', inline: 'center' });
-          node.focus();
-          const rect = node.getBoundingClientRect();
-          return {
-            x: Math.round(rect.left + rect.width / 2),
-            y: Math.round(rect.top + rect.height / 2),
-            direct: node instanceof HTMLAnchorElement && node.hasAttribute('download'),
-          };
-        })()`,
-        true,
-      );
-      if (!isInputPoint(point)) throw new Error("Element does not have a clickable position.");
-      if (point.direct === true) {
-        await contents.executeJavaScript(
-          `document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]')?.click()`,
+      await withDevToolsDebugger(contents, async () => {
+        const point = await contents.executeJavaScript(
+          `(() => {
+            const node = document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]');
+            if (!(node instanceof HTMLElement)) throw new Error('Element reference is no longer available.');
+            node.scrollIntoView({ block: 'center', inline: 'center' });
+            node.focus();
+            const rect = node.getBoundingClientRect();
+            return {
+              x: Math.round(rect.left + rect.width / 2),
+              y: Math.round(rect.top + rect.height / 2),
+              direct: node instanceof HTMLAnchorElement && node.hasAttribute('download'),
+            };
+          })()`,
           true,
         );
-        return;
-      }
-      await withDevToolsDebugger(contents, async () => {
+        if (!isInputPoint(point)) throw new Error("Element does not have a clickable position.");
+        if (point.direct === true) {
+          await contents.executeJavaScript(
+            `document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]')?.click()`,
+            true,
+          );
+          return;
+        }
         await contents.debugger.sendCommand("Input.dispatchMouseEvent", {
           type: "mouseMoved",
           x: point.x,
@@ -928,30 +938,30 @@ async function performAction(contents: WebContents, action: BrowserAction): Prom
       return;
     }
     case "type": {
-      await contents.executeJavaScript(
-        `(() => {
-          const node = document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]');
-          if (!(node instanceof HTMLElement)) throw new Error('Element reference is no longer available.');
-          node.focus();
-          if ('value' in node) {
-            if (typeof node.select === 'function') node.select();
-          } else if (node.isContentEditable) {
-            const selection = getSelection();
-            const range = document.createRange();
-            range.selectNodeContents(node);
-            selection?.removeAllRanges();
-            selection?.addRange(range);
-          } else {
-            throw new Error('Element does not accept text.');
-          }
-        })()`,
-        true,
-      );
-      await withDevToolsDebugger(contents, () =>
-        contents.debugger.sendCommand("Input.insertText", {
+      await withDevToolsDebugger(contents, async () => {
+        await contents.executeJavaScript(
+          `(() => {
+            const node = document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]');
+            if (!(node instanceof HTMLElement)) throw new Error('Element reference is no longer available.');
+            node.focus();
+            if ('value' in node) {
+              if (typeof node.select === 'function') node.select();
+            } else if (node.isContentEditable) {
+              const selection = getSelection();
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              selection?.removeAllRanges();
+              selection?.addRange(range);
+            } else {
+              throw new Error('Element does not accept text.');
+            }
+          })()`,
+          true,
+        );
+        await contents.debugger.sendCommand("Input.insertText", {
           text: action.text,
-        }),
-      );
+        });
+      });
       if (action.submit) pressKey(contents, "Enter");
       return;
     }

@@ -60,7 +60,9 @@ interface BrowserPanelProps {
   controlForTab: (tab: BrowserTab) => BrowserControlSession | undefined;
   controllerForTab: (tab: BrowserTab) => BotProfile | undefined;
   onAddressChange: (value: string) => void;
+  onAddressEditingChange: (editing: boolean) => void;
   onOpenAddress: (address?: string) => void;
+  onReload: (tabId: string) => void;
   onActivateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => void;
   onSurface: (element: HTMLDivElement) => void;
@@ -78,6 +80,7 @@ export default function BrowserPanel(props: BrowserPanelProps) {
     Math.round(Math.min(BROWSER_PANEL_MAX, Math.max(BROWSER_PANEL_MIN, props.defaultWidth())));
   const storedPanelWidth = Number.parseFloat(window.localStorage.getItem(BROWSER_PANEL_STORAGE_KEY) ?? "");
   let customPanelWidth = Number.isFinite(storedPanelWidth);
+  let savedCustomPanelWidth = customPanelWidth ? storedPanelWidth : null;
   const [panelWidth, setPanelWidth] = createSignal(
     readPanelWidth(BROWSER_PANEL_STORAGE_KEY, defaultPanelWidth(), BROWSER_PANEL_MIN, BROWSER_PANEL_MAX),
   );
@@ -94,16 +97,20 @@ export default function BrowserPanel(props: BrowserPanelProps) {
 
   const saveCustomPanelWidth = (width: number) => {
     customPanelWidth = true;
+    savedCustomPanelWidth = width;
     savePanelWidth(BROWSER_PANEL_STORAGE_KEY, width);
   };
 
   const resizeDefaultPanel = () => {
-    if (!customPanelWidth) setPanelWidth(defaultPanelWidth());
+    const preferredWidth =
+      customPanelWidth && savedCustomPanelWidth !== null ? savedCustomPanelWidth : defaultPanelWidth();
+    setPanelWidth(Math.round(Math.min(props.maxWidth(), Math.max(BROWSER_PANEL_MIN, preferredWidth))));
   };
 
   const resetPanelWidth = () => {
     window.localStorage.removeItem(BROWSER_PANEL_STORAGE_KEY);
     customPanelWidth = false;
+    savedCustomPanelWidth = null;
     setPanelWidth(defaultPanelWidth());
   };
 
@@ -206,6 +213,8 @@ export default function BrowserPanel(props: BrowserPanelProps) {
         aria-label="Browser address"
         maxlength={INPUT_LIMITS.browserUrl}
         onValueChange={props.onAddressChange}
+        onFocus={() => props.onAddressEditingChange(true)}
+        onBlur={() => props.onAddressEditingChange(false)}
       />
     </form>
   );
@@ -373,7 +382,8 @@ export default function BrowserPanel(props: BrowserPanelProps) {
               type="button"
               aria-label="Reload page"
               class="browser-toolbar-button"
-              onClick={() => props.onOpenAddress()}
+              disabled={!props.activeTab}
+              onClick={() => props.activeTab && props.onReload(props.activeTab.id)}
             >
               <BrowserReloadIcon />
             </Button>

@@ -311,6 +311,7 @@ export function Conversation(props: ConversationProps) {
   const [completedOnboardingBots, setCompletedOnboardingBots] = createSignal<Record<string, true>>({});
   const automaticallyOnboardedBots = new Set<string>();
   const [browserAddress, setBrowserAddress] = createSignal("https://www.google.com");
+  const [browserAddressEditing, setBrowserAddressEditing] = createSignal(false);
   const [browserPipBounds, setBrowserPipBounds] = createSignal<BrowserPipBounds | null>(readBrowserPipBounds());
   const [mediaPreview, setMediaPreview] = createSignal<MediaPreview | null>(null);
   const [openReactionMessageId, setOpenReactionMessageId] = createSignal<string | null>(null);
@@ -1268,13 +1269,14 @@ export function Conversation(props: ConversationProps) {
     () => ({
       botId: props.bot?.id,
       activeTab: activeBrowserTab(),
+      addressEditing: browserAddressEditing(),
       screenOpen: screenOpen(),
       activeBrowserTabId: props.activeBrowserTabId,
       onActivateBrowserTab: props.onActivateBrowserTab,
     }),
-    ({ activeTab, screenOpen, activeBrowserTabId, onActivateBrowserTab }) => {
+    ({ activeTab, addressEditing, screenOpen, activeBrowserTabId, onActivateBrowserTab }) => {
       if (props.browserEnabled === false) return;
-      setBrowserAddress(activeTab?.url ?? "https://www.google.com");
+      if (!addressEditing) setBrowserAddress(activeTab?.url ?? "https://www.google.com");
       if (screenOpen && activeTab && activeTab.id !== activeBrowserTabId) {
         onActivateBrowserTab(activeTab.id);
       }
@@ -1309,7 +1311,7 @@ export function Conversation(props: ConversationProps) {
   createEffect(
     () => ({
       botId: props.bot?.id,
-      visible: screenOpen() && !props.globalOverlayOpen,
+      visible: screenOpen() && !props.globalOverlayOpen && !props.remoteDesktopVisible && !mediaPreview(),
       pipBounds: browserPipOpen() ? browserPipBounds() : null,
     }),
     ({ botId, visible }) => {
@@ -1705,7 +1707,7 @@ export function Conversation(props: ConversationProps) {
         ownerBotId: props.bot?.id ?? null,
       });
       setBrowserAddress(tab.url);
-      setActiveRightPanel("browser");
+      if (!screenOpen()) setActiveRightPanel("browser");
       desktopAnalytics.track("browser_action", { action: "open", result: "succeeded" });
     } catch {
       setBrowserAddress(url);
@@ -1761,8 +1763,22 @@ export function Conversation(props: ConversationProps) {
 
   async function closeBrowserTab(tabId: string) {
     const closesLastTab = browserTabs().length === 1 && browserTabs()[0]?.id === tabId;
-    await props.onCloseBrowserTab(tabId);
-    if (closesLastTab) hideBrowserPanel();
+    try {
+      await props.onCloseBrowserTab(tabId);
+      if (closesLastTab) hideBrowserPanel();
+    } catch {
+      setComposerError("Could not close the browser tab.");
+    }
+  }
+
+  async function reloadBrowserTab(tabId: string) {
+    try {
+      await window.openbot.browser.reload(tabId);
+      desktopAnalytics.track("browser_action", { action: "reload", result: "succeeded" });
+    } catch {
+      setComposerError("Could not reload the browser tab.");
+      desktopAnalytics.track("browser_action", { action: "reload", result: "failed" });
+    }
   }
 
   function setActiveRightPanel(mode: RightPanelMode, botId = props.bot?.id) {
@@ -2730,7 +2746,9 @@ export function Conversation(props: ConversationProps) {
           controlForTab={browserControlForTab}
           controllerForTab={browserControllerForTab}
           onAddressChange={setBrowserAddress}
+          onAddressEditingChange={setBrowserAddressEditing}
           onOpenAddress={(address) => void openBrowserAddress(address)}
+          onReload={(tabId) => void reloadBrowserTab(tabId)}
           onActivateTab={props.onActivateBrowserTab}
           onCloseTab={(tabId) => void closeBrowserTab(tabId)}
           onSurface={(element) => (browserSurface = element)}
