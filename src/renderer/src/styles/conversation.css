@@ -471,13 +471,14 @@
 
 .remote-desktop-header {
   display: flex;
-  min-height: 58px;
+  height: 38px;
+  min-height: 38px;
   flex: 0 0 auto;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  overflow: hidden;
   border-bottom: 1px solid var(--openbot-border);
-  gap: 18px;
-  padding: 8px 12px 8px 16px;
+  padding: 0 8px 0 0;
   background: var(--openbot-bg-sidebar);
 }
 
@@ -485,132 +486,37 @@
   padding-left: 84px;
 }
 
-.remote-desktop-heading,
 .remote-desktop-actions {
-  display: flex;
-  align-items: center;
-}
-
-.remote-desktop-heading {
-  min-width: 0;
-  flex: 0 1 220px;
-  gap: 9px;
-}
-
-.remote-desktop-heading > div {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-}
-
-.remote-desktop-heading strong {
-  color: var(--openbot-text-primary);
-  font-size: var(--openbot-text-sm);
-  font-weight: 620;
-  line-height: 16px;
-}
-
-.remote-desktop-heading span:not(.remote-desktop-status) {
-  overflow: hidden;
-  color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-2xs);
-  line-height: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.remote-desktop-toolbar-status {
   display: flex;
   min-width: 0;
   align-items: center;
-  justify-content: center;
-  gap: 7px;
-  color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-xs);
-  white-space: nowrap;
-}
-
-.remote-desktop-toolbar-status > span:first-child {
-  color: var(--openbot-text-primary);
-  font-variant-numeric: tabular-nums;
-  font-weight: 620;
-}
-
-.remote-desktop-status {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 7px;
-  border-radius: var(--openbot-radius-pill);
-  background: var(--openbot-text-dim);
-  box-shadow: 0 0 0 3px var(--openbot-hover);
-}
-
-.remote-desktop-status-connected {
-  background: var(--openbot-success);
-  box-shadow: 0 0 0 3px var(--openbot-success-soft);
-}
-
-.remote-desktop-status-connecting {
-  background: var(--openbot-warning);
-  box-shadow: 0 0 0 3px var(--openbot-warning-soft);
-}
-
-.remote-desktop-status-error {
-  background: var(--openbot-danger);
-  box-shadow: 0 0 0 3px var(--openbot-danger-soft);
-}
-
-.remote-desktop-actions {
-  min-width: 0;
   flex: 0 1 auto;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 4px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.remote-desktop-display-controls {
+  min-width: 0;
+  display: flex;
+  flex: 0 1 168px;
+  align-items: center;
 }
 
 .remote-desktop-back-button,
 .remote-desktop-disconnect-button {
-  min-height: 40px;
-  border-radius: var(--openbot-radius-md);
-  padding: 0 14px;
-  transition:
-    background-color var(--openbot-duration-fast) ease-out,
-    color var(--openbot-duration-fast) ease-out,
-    transform var(--openbot-duration-fast) ease-out;
-}
-
-.remote-desktop-back-button {
-  gap: 7px;
-  background: var(--openbot-hover);
-  color: var(--openbot-text-primary);
+  flex: 0 0 auto;
 }
 
 .remote-desktop-disconnect-button {
+  color: var(--openbot-text-muted);
+}
+
+.remote-desktop-disconnect-button:hover:not(:disabled),
+.remote-desktop-disconnect-button:focus-visible:not(:disabled) {
   background: var(--openbot-danger-soft);
   color: var(--openbot-danger);
-}
-
-.remote-desktop-back-button:hover:not(:disabled) {
-  background: var(--openbot-border);
-}
-
-.remote-desktop-disconnect-button:hover:not(:disabled) {
-  background: var(--openbot-danger-soft);
-  color: var(--openbot-text-primary);
-}
-
-.remote-desktop-back-button:active:not(:disabled),
-.remote-desktop-disconnect-button:active:not(:disabled) {
-  transform: scale(0.96);
-}
-
-.remote-desktop-back-button svg {
-  width: 15px;
-  height: 15px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.35;
 }
 
 .remote-desktop-stage {
@@ -634,14 +540,14 @@
 }
 
 .remote-desktop-display-select {
-  width: min(190px, 22vw);
+  width: min(168px, 22vw);
   min-width: 112px;
-  height: 40px;
-  border: 1px solid var(--openbot-border);
-  border-radius: var(--openbot-radius-sm);
-  background: var(--openbot-bg-elevated);
-  color: var(--openbot-text-secondary);
-  font-size: var(--openbot-text-2xs);
+  flex: 0 1 168px;
+  font-size: var(--openbot-text-xs);
+}
+
+.remote-desktop-display-select-content {
+  z-index: calc(var(--openbot-layer-toast) + 1);
 }
 
 .remote-desktop-overlay {
@@ -665,7 +571,27 @@
   font-weight: 600;
 }
 
-.remote-desktop-overlay > span:not(.remote-desktop-spinner):not(.remote-desktop-empty-mark) {
+.remote-desktop-connecting-avatar {
+  width: 56px;
+  height: 56px;
+  margin-bottom: 5px;
+  filter: drop-shadow(0 8px 18px var(--openbot-accent-soft));
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--openbot-duration-overlay) var(--openbot-ease-out),
+    transform var(--openbot-duration-overlay) var(--openbot-ease-out);
+  will-change: opacity, transform;
+}
+
+@starting-style {
+  .remote-desktop-connecting-avatar {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+}
+
+.remote-desktop-overlay > span:not(.ui-spinner):not(.remote-desktop-empty-mark) {
   max-width: 330px;
   color: var(--openbot-text-muted);
   font-size: var(--openbot-text-xs);
@@ -692,16 +618,6 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.25;
-}
-
-.remote-desktop-spinner {
-  width: 18px;
-  height: 18px;
-  margin-bottom: 5px;
-  border: 1.5px solid var(--openbot-border-strong);
-  border-top-color: var(--openbot-text-secondary);
-  border-radius: var(--openbot-radius-pill);
-  animation: remote-desktop-spin 720ms linear infinite;
 }
 
 .remote-desktop-overlay > button {
@@ -742,43 +658,6 @@
   border: 1px solid var(--openbot-bg-sidebar);
   border-radius: var(--openbot-radius-pill);
   background: var(--openbot-success);
-}
-
-@media (max-width: 900px) {
-  .remote-desktop-header {
-    flex-wrap: wrap;
-  }
-
-  .remote-desktop-heading {
-    flex: 1 1 auto;
-  }
-
-  .remote-desktop-toolbar-status {
-    order: 3;
-    width: 100%;
-    min-height: 24px;
-  }
-}
-
-@media (max-width: 640px) {
-  .remote-desktop-workspace-darwin .remote-desktop-header {
-    padding-left: 76px;
-  }
-
-  .remote-desktop-actions {
-    width: 100%;
-    flex: 1 0 100%;
-  }
-
-  .remote-desktop-display-select {
-    width: auto;
-    flex: 1;
-  }
-
-  .remote-desktop-toolbar-status {
-    justify-content: flex-start;
-    overflow: hidden;
-  }
 }
 
 .browser-panel-header {
@@ -5963,12 +5842,6 @@
   }
 }
 
-@keyframes remote-desktop-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @keyframes browser-tab-control-glow {
   0%,
   100% {
@@ -6027,10 +5900,6 @@
   .browser-tab-control-acting,
   .computer-control-dot {
     animation: none;
-  }
-
-  .remote-desktop-spinner {
-    animation-duration: 1.4s;
   }
 }
 
@@ -6730,12 +6599,6 @@
 .remote-remove-confirmation,
 .remote-remove-confirmation button.danger {
   background: var(--openbot-danger-soft);
-}
-
-.remote-desktop-status-connected,
-.remote-desktop-status-connecting,
-.remote-desktop-status-error {
-  box-shadow: 0 0 0 3px var(--openbot-accent-soft);
 }
 
 .remote-primary-button:active:not(:disabled),

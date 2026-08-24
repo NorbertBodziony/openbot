@@ -30,7 +30,7 @@ describe("AgentAvatar", () => {
     await waitFor(() => expect(requestAnimationFrame).toHaveBeenCalled());
   });
 
-  it.each(["always", "idle", "working"] as const)(
+  it.each(["always", "idle", "working", "connecting"] as const)(
     "does not animate the %s avatar motion when reduced motion is enabled",
     (motion) => {
       const requestAnimationFrame = vi.fn(() => 1);
@@ -43,7 +43,7 @@ describe("AgentAvatar", () => {
     },
   );
 
-  it.each(["idle", "working"] as const)("continuously animates the %s avatar motion", (motion) => {
+  it.each(["idle", "working", "connecting"] as const)("continuously animates the %s avatar motion", (motion) => {
     const requestAnimationFrame = vi.fn(() => 1);
     vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
     vi.stubGlobal("cancelAnimationFrame", vi.fn());

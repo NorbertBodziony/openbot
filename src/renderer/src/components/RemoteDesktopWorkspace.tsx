@@ -2,7 +2,8 @@ import type { RemoteDesktopSession, ServerSummary } from "@openbot/contracts/ipc
 import { Portal } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { z } from "zod";
-import { Button, NativeSelect } from "./ui";
+import { AgentAvatar } from "./AgentAvatar";
+import { ArrowLeft, Button, Monitor, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui";
 
 interface RemoteDesktopWorkspaceProps {
   visible: boolean;
@@ -18,6 +19,7 @@ interface RemoteDesktopWorkspaceProps {
 }
 
 type ViewerState = "idle" | "connecting" | "connected" | "error";
+type RemoteDisplay = RemoteDesktopSession["displays"][number];
 const viewerMessageSchema = z.object({
   source: z.literal("openbot-moonlight"),
   type: z.literal("viewer-state"),
@@ -30,7 +32,6 @@ const viewerMessageSchema = z.object({
 export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
   const [viewerState, setViewerState] = createSignal<ViewerState>("idle");
   const [viewerError, setViewerError] = createSignal<string | null>(null);
-  const [viewerTransport, setViewerTransport] = createSignal<"p2p" | "relay" | null>(null);
   const [actionBusy, setActionBusy] = createSignal<"retry" | "disconnect" | "display" | null>(null);
   let workspaceElement: HTMLElement | undefined;
   let viewerFrame: HTMLIFrameElement | undefined;
@@ -45,13 +46,10 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
     if (props.connecting) return "connecting";
     return viewerState();
   });
-  const transportLabel = createMemo(() => {
-    const transport = viewerTransport();
-    if (transport === "p2p") return "P2P";
-    if (transport === "relay") return "Relay";
-    return "Connecting";
-  });
-
+  const displays = createMemo(() => props.session?.displays ?? []);
+  const selectedDisplay = createMemo(() =>
+    displays().find((display) => display.id === props.session?.selectedDisplayId),
+  );
   createEffect(
     () => props.visible,
     (visible) => {
@@ -68,7 +66,6 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
         if (!connecting) {
           activeSessionId = "";
           setViewerState(connectionError ? "error" : "idle");
-          setViewerTransport(null);
         }
         return;
       }
@@ -81,7 +78,6 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
       } else if (session.phase === "connected" || session.phase === "error") {
         setViewerState(session.phase);
       }
-      if (session.transport === "p2p" || session.transport === "relay") setViewerTransport(session.transport);
     },
   );
 
@@ -93,7 +89,6 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
     const parsed = viewerMessageSchema.safeParse(event.data);
     if (!parsed.success || parsed.data.sessionId !== session.id) return;
     setViewerState(parsed.data.state);
-    if (parsed.data.transport) setViewerTransport(parsed.data.transport);
     setViewerError(parsed.data.state === "error" ? (parsed.data.message ?? "Remote control failed.") : null);
   };
   window.addEventListener("message", receiveViewerState);
@@ -156,43 +151,37 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
         tabindex={-1}
       >
         <header class="window-drag remote-desktop-header">
-          <div class="remote-desktop-heading">
-            <span class={`remote-desktop-status remote-desktop-status-${effectiveState()}`} aria-hidden="true" />
-            <div>
-              <strong>Remote control</strong>
-              <span>{props.server.name}</span>
-            </div>
-          </div>
-
-          <div class="remote-desktop-toolbar-status" aria-live="polite">
-            <span>{transportLabel()}</span>
-            <span aria-hidden="true">·</span>
-            <span>Keyboard and pointer enabled</span>
-            <span aria-hidden="true">·</span>
-            <span>Shared control</span>
-          </div>
-
-          <div class="no-drag remote-desktop-actions">
-            <Show when={(props.session?.displays.length ?? 0) > 1}>
-              <NativeSelect
+          <Show when={displays().length > 1}>
+            <div class="no-drag remote-desktop-display-controls">
+              <Select<RemoteDisplay>
                 class="remote-desktop-display-select"
-                aria-label="Remote display"
-                value={props.session?.selectedDisplayId ?? ""}
+                options={displays()}
+                optionValue="id"
+                optionTextValue="label"
+                value={selectedDisplay()}
                 disabled={actionBusy() !== null}
-                onChange={(event) => void selectDisplay(event.currentTarget.value)}
+                onChange={(display) => display && void selectDisplay(display.id)}
+                itemComponent={(item) => <SelectItem item={item.item}>{item.item.rawValue.label}</SelectItem>}
               >
-                {props.session?.displays.map((display) => (
-                  <option value={display.id}>{display.label}</option>
-                ))}
-              </NativeSelect>
-            </Show>
-            <Button type="button" class="remote-desktop-back-button" onClick={props.onHide}>
-              <BackIcon />
+                <SelectTrigger size="sm" aria-label="Remote display">
+                  <SelectValue<RemoteDisplay>>
+                    {(state) => state.selectedOption()?.label ?? "Select display"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent class="remote-desktop-display-select-content" />
+              </Select>
+            </div>
+          </Show>
+          <div class="no-drag remote-desktop-actions">
+            <Button type="button" class="remote-desktop-back-button" size="sm" variant="ghost" onClick={props.onHide}>
+              <ArrowLeft size={14} aria-hidden="true" />
               Back to OpenBot
             </Button>
             <Button
               type="button"
               class="remote-desktop-disconnect-button"
+              size="sm"
+              variant="ghost"
               disabled={actionBusy() !== null}
               loading={actionBusy() === "disconnect"}
               onClick={() => void disconnect()}
@@ -228,9 +217,13 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
           </Show>
           <Show when={effectiveState() === "connecting"}>
             <div class="remote-desktop-overlay" role="status">
-              <span class="remote-desktop-spinner" />
-              <strong>{props.session?.message ?? "Connecting to the host…"}</strong>
-              <span>OpenBot is creating a direct P2P connection.</span>
+              <AgentAvatar
+                seed={`${props.server.id}:remote-desktop-connecting`}
+                hue={215}
+                motion="connecting"
+                class="remote-desktop-connecting-avatar"
+              />
+              <strong>Connecting…</strong>
             </div>
           </Show>
           <Show when={effectiveState() === "error" || props.session?.errorCode}>
@@ -252,27 +245,10 @@ function DesktopEmptyState(props: { title: string; message: string }) {
   return (
     <div class="remote-desktop-overlay">
       <span class="remote-desktop-empty-mark">
-        <MonitorIcon />
+        <Monitor aria-hidden="true" />
       </span>
       <strong>{props.title}</strong>
       <span>{props.message}</span>
     </div>
-  );
-}
-
-function BackIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20">
-      <path d="m11.5 5-5 5 5 5M7 10h7" />
-    </svg>
-  );
-}
-
-function MonitorIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24">
-      <rect x="3" y="4" width="18" height="13" rx="2" />
-      <path d="M8 21h8M12 17v4" />
-    </svg>
   );
 }

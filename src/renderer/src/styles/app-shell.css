@@ -3011,17 +3011,8 @@ textarea {
 .remote-status-card i.online,
 .remote-admin-nav-state i.online,
 .remote-member-presence.online i,
-.remote-desktop-status-connected,
 .person-avatar.online > i {
   background: var(--openbot-success);
-}
-
-.remote-desktop-status-connecting {
-  background: var(--openbot-warning);
-}
-
-.remote-desktop-status-error {
-  background: var(--openbot-danger);
 }
 
 .sidebar-icon-button:hover,
