@@ -232,7 +232,7 @@ const BROWSER_PIP_DEFAULT_HEIGHT = 300;
 const BROWSER_PIP_MIN_WIDTH = 300;
 const BROWSER_PIP_MIN_HEIGHT = 220;
 const BROWSER_PIP_MARGIN = 12;
-const BROWSER_PIP_BOTTOM_INSET = 64;
+const BROWSER_PIP_BOTTOM_INSET = 68;
 
 function readBrowserPipBounds(): BrowserPipBounds | null {
   const values = (window.localStorage.getItem(BROWSER_PIP_STORAGE_KEY) ?? "")

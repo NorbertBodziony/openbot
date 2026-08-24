@@ -2016,10 +2016,10 @@ describe("OpenBot connected desktop shell", () => {
 
     const pip = await screen.findByRole("complementary", { name: "Browser" });
     expect(pip).toHaveClass("browser-panel-pip");
-    expect(pip).toHaveStyle({ left: "588px", top: "404px", width: "420px", height: "300px" });
+    expect(pip).toHaveStyle({ left: "588px", top: "400px", width: "420px", height: "300px" });
     expect(pip).toHaveTextContent("Picture in Picture test");
     expect(conversation).not.toHaveClass("browser-panel-active");
-    expect(screen.queryByRole("textbox", { name: "Browser address" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://example.com/pip");
 
     vi.mocked(window.openbot.browser.setVisible).mockClear();
     await fireEvent.keyDown(window, { key: "k", metaKey: true });
@@ -2042,10 +2042,10 @@ describe("OpenBot connected desktop shell", () => {
       const height = Number.parseFloat(pip.style.height);
       return {
         x: left + 7,
-        y: top + 34,
+        y: top + 73,
         width: width - 14,
-        height: height - 41,
-        top: top + 34,
+        height: height - 80,
+        top: top + 73,
         right: left + width - 7,
         bottom: top + height - 7,
         left: left + 7,
@@ -2056,11 +2056,11 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.pointerDown(header, { button: 0, pointerId: 7, clientX: 600, clientY: 460 });
     await fireEvent.pointerMove(window, { pointerId: 7, clientX: 560, clientY: 420 });
     await fireEvent.pointerUp(window, { pointerId: 7, clientX: 560, clientY: 420 });
-    expect(window.localStorage.getItem("openbot:browser-pip-bounds")).toBe("548,364,420,300");
+    expect(window.localStorage.getItem("openbot:browser-pip-bounds")).toBe("548,360,420,300");
     await waitFor(() =>
       expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
         visible: true,
-        bounds: { x: 555, y: 398, width: 406, height: 259 },
+        bounds: { x: 555, y: 433, width: 406, height: 220 },
       }),
     );
 
@@ -2069,7 +2069,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.pointerDown(resizeHandle, { button: 0, pointerId: 8, clientX: 968, clientY: 712 });
     await fireEvent.pointerMove(window, { pointerId: 8, clientX: 928, clientY: 682 });
     await fireEvent.pointerUp(window, { pointerId: 8, clientX: 928, clientY: 682 });
-    expect(window.localStorage.getItem("openbot:browser-pip-bounds")).toBe("548,364,380,270");
+    expect(window.localStorage.getItem("openbot:browser-pip-bounds")).toBe("548,360,380,270");
 
     await fireEvent.click(screen.getByRole("button", { name: "Dock browser to right sidebar" }));
     await waitFor(() =>
@@ -2079,7 +2079,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
     const reopenedPip = await screen.findByRole("complementary", { name: "Browser" });
-    expect(reopenedPip).toHaveStyle({ left: "628px", top: "434px", width: "380px", height: "270px" });
+    expect(reopenedPip).toHaveStyle({ left: "628px", top: "430px", width: "380px", height: "270px" });
     await fireEvent.click(screen.getByRole("button", { name: "Hide browser" }));
     await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
     expect(window.openbot.browser.close).not.toHaveBeenCalled();

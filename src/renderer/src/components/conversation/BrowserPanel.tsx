@@ -176,6 +176,23 @@ export default function BrowserPanel(props: BrowserPanelProps) {
     </div>
   );
 
+  const addressBar = () => (
+    <form
+      class="browser-address-bar"
+      onSubmit={(event) => {
+        event.preventDefault();
+        props.onOpenAddress();
+      }}
+    >
+      <Input
+        value={props.address}
+        aria-label="Browser address"
+        maxlength={INPUT_LIMITS.browserUrl}
+        onValueChange={props.onAddressChange}
+      />
+    </form>
+  );
+
   return (
     <Show
       when={props.mode === "sidebar"}
@@ -209,6 +226,7 @@ export default function BrowserPanel(props: BrowserPanelProps) {
               </Button>
             </div>
           </header>
+          <div class="browser-toolbar browser-pip-toolbar">{addressBar()}</div>
           <div class="browser-pip-content">{surface()}</div>
           <For each={BROWSER_PIP_RESIZE_CORNERS}>
             {(corner) => (
@@ -340,20 +358,7 @@ export default function BrowserPanel(props: BrowserPanelProps) {
             >
               <BrowserReloadIcon />
             </Button>
-            <form
-              class="browser-address-bar"
-              onSubmit={(event) => {
-                event.preventDefault();
-                props.onOpenAddress();
-              }}
-            >
-              <Input
-                value={props.address}
-                aria-label="Browser address"
-                maxlength={INPUT_LIMITS.browserUrl}
-                onValueChange={props.onAddressChange}
-              />
-            </form>
+            {addressBar()}
             <Button
               type="button"
               class="browser-toolbar-button"

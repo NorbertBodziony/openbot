@@ -832,6 +832,10 @@
   padding: 0 7px 7px;
 }
 
+.browser-pip-toolbar {
+  padding: 0 7px;
+}
+
 .browser-pip-resize {
   position: absolute;
   z-index: 2;
