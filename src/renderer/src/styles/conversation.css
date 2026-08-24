@@ -1537,11 +1537,11 @@
 
 .agent-recipient-field input:focus-visible {
   outline: 0;
+  box-shadow: none;
 }
 
 .agent-picker-menu {
   position: absolute;
-  top: 44px;
   right: 0;
   left: 0;
   max-height: min(282px, calc(100vh - 144px));
@@ -1553,6 +1553,7 @@
   box-shadow:
     0 16px 38px var(--openbot-shadow-popover-ambient),
     0 2px 8px var(--openbot-shadow-popover-ambient);
+  transform-origin: top center;
   animation: agent-picker-in var(--openbot-duration-normal) cubic-bezier(0.2, 0.8, 0.2, 1) both;
   scrollbar-width: none;
 }
