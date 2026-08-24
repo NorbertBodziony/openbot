@@ -37,7 +37,18 @@ import type {
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import { isClaudeModel } from "@openbot/contracts/ipc";
-import { createEffect, createMemo, createSignal, createStore, flush, Loading, lazy, onSettled, Show } from "solid-js";
+import {
+  createContext,
+  createEffect,
+  createMemo,
+  createSignal,
+  createStore,
+  flush,
+  onSettled,
+  type ParentProps,
+  useContext,
+} from "solid-js";
+import { AppAccessGate } from "./AppView";
 import { desktopAnalytics } from "./analytics";
 import {
   botMessagesEqual,
@@ -51,38 +62,9 @@ import {
   withoutBot,
 } from "./app-message-projection";
 import { playCompletionSoundForAgentEvent } from "./completion-sound";
-import { Conversation } from "./components/Conversation";
-import { PanelResizer, readPanelWidth, savePanelWidth } from "./components/PanelResizer";
-import { ServerRail } from "./components/ServerRail";
-import { Sidebar, type SidebarAgentState } from "./components/Sidebar";
-import { StaticAccountDock } from "./components/StaticAccountDock";
+import { readPanelWidth } from "./components/PanelResizer";
+import type { SidebarAgentState } from "./components/Sidebar";
 import type { BotMessage, BotProfile } from "./data";
-
-const AccountDock = lazy(() => import("./components/AccountDock").then((module) => ({ default: module.AccountDock })));
-const AccountLogin = lazy(() =>
-  import("./components/AccountLogin").then((module) => ({ default: module.AccountLogin })),
-);
-const DirectConversation = lazy(() =>
-  import("./components/DirectConversation").then((module) => ({ default: module.DirectConversation })),
-);
-const GlobalSearch = lazy(() =>
-  import("./components/GlobalSearch").then((module) => ({ default: module.GlobalSearch })),
-);
-const InitialSetup = lazy(() =>
-  import("./components/InitialSetup").then((module) => ({ default: module.InitialSetup })),
-);
-const JoinServerDialog = lazy(() =>
-  import("./components/JoinServerDialog").then((module) => ({ default: module.JoinServerDialog })),
-);
-const OnboardingFlow = lazy(() =>
-  import("./components/OnboardingFlow").then((module) => ({ default: module.OnboardingFlow })),
-);
-const RemoteDesktopWorkspace = lazy(() =>
-  import("./components/RemoteDesktopWorkspace").then((module) => ({ default: module.RemoteDesktopWorkspace })),
-);
-const ServerSettingsModal = lazy(() =>
-  import("./components/ServerSettingsModal").then((module) => ({ default: module.ServerSettingsModal })),
-);
 
 const FALLBACK_STATUS: AgentStatus = {
   phase: "starting",
@@ -217,7 +199,7 @@ interface AppProps {
   landingPreview?: boolean;
 }
 
-export function App(props: AppProps = {}) {
+export function createAppController(props: AppProps = {}) {
   const [botList, setBotList] = createSignal<BotProfile[]>([]);
   const [modelOptions, setModelOptions] = createSignal<AgentModelOption[]>([]);
   const [activeBotId, setActiveBotId] = createSignal("");
@@ -2247,354 +2229,176 @@ export function App(props: AppProps = {}) {
   });
   const visibleSignedInAccount = createMemo(() => (authSuccessVisible() ? null : signedInAccount()));
 
+  return {
+    props,
+    setupLoaded,
+    appInfo,
+    visibleSignedInAccount,
+    signedInAccount,
+    centralAuth,
+    retryCentralAccount,
+    requestEmailCode,
+    verifyEmailCode,
+    logoutCentralAccount,
+    setupState,
+    pendingInviteUrl,
+    agentStatus,
+    saveSetup,
+    previewInvite,
+    joinRemoteDuringSetup,
+    leftPanelCompact,
+    remoteDesktopWorkspaceVisible,
+    LEFT_PANEL_COMPACT,
+    leftPanelWidth,
+    servers,
+    selectServer,
+    reorderServers,
+    setJoinServerOpen,
+    openServerSettings,
+    activeServer,
+    botList,
+    activeDirectMemberId,
+    activeBot,
+    directPeople,
+    directThreads,
+    sidebarAgentStates,
+    selectBot,
+    selectDirectMember,
+    openAgentPicker,
+    editBot,
+    deleteBot,
+    setSidebarCollapsed,
+    expandSidebar,
+    accountUsage,
+    updateStatus,
+    refreshAccountUsage,
+    runUpdateAction,
+    updateAccountAvatar,
+    setPermissionsOpen,
+    LEFT_PANEL_DEFAULT,
+    LEFT_PANEL_MIN,
+    LEFT_PANEL_MAX,
+    LEFT_PANEL_STORAGE_KEY,
+    LEFT_PANEL_COLLAPSE_THRESHOLD,
+    LEFT_PANEL_EXPAND_THRESHOLD,
+    setLeftPanelWidth,
+    activeDirectMember,
+    currentTeamMember,
+    directConversations,
+    directConversationLoading,
+    directConversationError,
+    directConversationPages,
+    directOlderLoading,
+    directOlderErrors,
+    directTypingMemberIds,
+    sendDirectMessage,
+    markDirectMessagesRead,
+    loadOlderDirectMessages,
+    openDirectMessage,
+    setDirectTyping,
+    modelOptions,
+    activeMessages,
+    conversationReferences,
+    conversationReads,
+    conversationLoaded,
+    conversationPages,
+    conversationWindowModes,
+    conversationOlderLoading,
+    conversationOlderErrors,
+    activeQueue,
+    browserTabs,
+    activeBrowserTabId,
+    browserControlState,
+    teamPresence,
+    activeRemoteDesktopSession,
+    pendingPrompts,
+    pendingApprovals,
+    activeTurns,
+    agentPickerOpen,
+    globalSearchOpen,
+    creatingAgent,
+    settingsRequest,
+    onboardingRequest,
+    messageFocusRequest,
+    setAgentPickerOpen,
+    createAgent,
+    updateBot,
+    setAgentAvatar,
+    sendMessage,
+    markAgentMessagesRead,
+    loadOlderAgentMessages,
+    loadLatestAgentMessages,
+    searchAgentMessages,
+    openAgentMessage,
+    setTeamTyping,
+    completeOnboarding,
+    answerPrompt,
+    respondToApproval,
+    cancelQueuedMessage,
+    steerQueuedMessage,
+    updateQueuedMessage,
+    reorderQueue,
+    activateBrowserTab,
+    closeBrowserTab,
+    openRemoteDesktopWorkspace,
+    stopActiveTurn,
+    permissionsOpen,
+    joinServerOpen,
+    setPendingInviteUrl,
+    joinServer,
+    serverSettingsTarget,
+    serverSettingsOpen,
+    setServerSettingsOpen,
+    serverSettingsRestoreTarget: () => serverSettingsRestoreTarget,
+    hostStatus,
+    serverSettingsMembers,
+    serverSettingsInvites,
+    serverSettingsLoading,
+    serverSettingsError,
+    refreshServerSettings,
+    saveServerIdentity,
+    setServerPublished,
+    createServerInvite,
+    updateServerMember,
+    removeServerMember,
+    revokeServerInvite,
+    searchGlobalMessages,
+    setGlobalSearchVisibility,
+    selectGlobalSearchMessage,
+    remoteDesktopWorkspaceServer,
+    remoteDesktopWorkspaceSession,
+    remoteDesktopConnectingServerId,
+    remoteDesktopConnectionError,
+    hideRemoteDesktopWorkspace,
+    disconnectRemoteDesktopWorkspace,
+    retryRemoteDesktopWorkspace,
+    selectRemoteDesktopDisplay,
+    setAppFrameElement: (element: HTMLDivElement) => {
+      appFrameElement = element;
+    },
+  };
+}
+
+export type AppController = ReturnType<typeof createAppController>;
+
+const AppControllerContext = createContext<AppController>();
+
+export function useAppController(): AppController {
+  const controller = useContext(AppControllerContext);
+  if (!controller) throw new Error("App controller is unavailable outside App.");
+  return controller;
+}
+
+/** @internal Test seam for remounting shell views without remounting their controller. */
+export function AppControllerProvider(props: ParentProps<{ controller: AppController }>) {
+  return <AppControllerContext value={props.controller}>{props.children}</AppControllerContext>;
+}
+
+export function App(props: AppProps = {}) {
+  const controller = createAppController(props);
   return (
-    <Show
-      when={setupLoaded() && appInfo() !== null}
-      fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}
-    >
-      <Show
-        when={visibleSignedInAccount()}
-        fallback={
-          <Loading fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}>
-            <AccountLogin
-              variant={appInfo()?.variant ?? "production"}
-              state={centralAuth()}
-              onRetry={retryCentralAccount}
-              onRequestEmailCode={requestEmailCode}
-              onVerifyEmailCode={verifyEmailCode}
-              onReset={logoutCentralAccount}
-            />
-          </Loading>
-        }
-      >
-        {(account) => (
-          <Show
-            when={setupState()?.completed}
-            fallback={
-              <Show
-                when={pendingInviteUrl().trim()}
-                fallback={
-                  <Loading fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}>
-                    <OnboardingFlow
-                      state={setupState() ?? { completed: false, preferredProvider: null }}
-                      agentStatus={agentStatus()}
-                      platform={appInfo()?.platform ?? "darwin"}
-                      onSave={saveSetup}
-                    />
-                  </Loading>
-                }
-              >
-                <Loading fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}>
-                  <InitialSetup
-                    state={setupState() ?? { completed: false, preferredProvider: null }}
-                    agentStatus={agentStatus()}
-                    platform={appInfo()?.platform ?? "darwin"}
-                    accountEmail={account().email}
-                    inviteUrl={pendingInviteUrl()}
-                    onSave={saveSetup}
-                    onPreviewInvite={previewInvite}
-                    onJoinRemote={joinRemoteDuringSetup}
-                    onLogout={logoutCentralAccount}
-                  />
-                </Loading>
-              </Show>
-            }
-          >
-            <div
-              ref={(element) => (appFrameElement = element)}
-              class={[
-                "app-frame",
-                {
-                  "app-frame-sidebar-compact": leftPanelCompact(),
-                  "app-frame-with-server-rail": appInfo()?.platform === "darwin" || appInfo()?.platform === "win32",
-                  "app-frame-platform-darwin": appInfo()?.platform === "darwin",
-                },
-              ]}
-              aria-hidden={remoteDesktopWorkspaceVisible() ? "true" : undefined}
-              style={`--left-panel-width: ${leftPanelCompact() ? LEFT_PANEL_COMPACT : leftPanelWidth()}px`}
-            >
-              <Show when={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}>
-                <ServerRail
-                  servers={servers()}
-                  onSelect={(serverId) => void selectServer(serverId)}
-                  onReorder={(serverIds) => void reorderServers(serverIds)}
-                  onAdd={() => {
-                    if (!props.landingPreview) setJoinServerOpen(true);
-                  }}
-                  onOpenSettings={openServerSettings}
-                />
-              </Show>
-              <Sidebar
-                serverName={activeServer()?.name ?? "Local"}
-                bots={botList()}
-                activeBotId={activeDirectMemberId() ? "" : (activeBot()?.id ?? "")}
-                people={directPeople()}
-                directThreads={directThreads()}
-                activeDirectMemberId={activeDirectMemberId()}
-                agentStates={sidebarAgentStates()}
-                onSelectBot={selectBot}
-                onSelectPerson={(memberId) => void selectDirectMember(memberId)}
-                onPreloadDirectConversation={() => void DirectConversation.preload()}
-                onCreateBot={openAgentPicker}
-                onEditBot={editBot}
-                onDeleteBot={deleteBot}
-                compact={leftPanelCompact()}
-                onCollapse={() => setSidebarCollapsed(true)}
-                onExpand={expandSidebar}
-              />
-              <Show
-                when={!props.landingPreview}
-                fallback={
-                  <StaticAccountDock
-                    account={account()}
-                    compact={leftPanelCompact()}
-                    withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
-                  />
-                }
-              >
-                <Loading
-                  fallback={
-                    <StaticAccountDock
-                      account={account()}
-                      compact={leftPanelCompact()}
-                      withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
-                    />
-                  }
-                >
-                  <AccountDock
-                    account={account()}
-                    appInfo={appInfo()}
-                    agentStatus={agentStatus()}
-                    accountUsage={accountUsage()}
-                    updateStatus={updateStatus()}
-                    compact={leftPanelCompact()}
-                    withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
-                    onRefreshUsage={refreshAccountUsage}
-                    onUpdateAction={runUpdateAction}
-                    onUpdateAccountAvatar={updateAccountAvatar}
-                    onLogout={logoutCentralAccount}
-                    onOpenExternal={(destination) => window.openbot.openExternal(destination)}
-                    onOpenPermissions={() => setPermissionsOpen(true)}
-                  />
-                </Loading>
-              </Show>
-              <PanelResizer
-                class="left-panel-resizer"
-                label="Resize left sidebar"
-                controls="bot-sidebar"
-                direction="left"
-                value={leftPanelWidth()}
-                defaultValue={LEFT_PANEL_DEFAULT}
-                min={LEFT_PANEL_MIN}
-                max={LEFT_PANEL_MAX}
-                onResize={setLeftPanelWidth}
-                onResizeEnd={(value) => savePanelWidth(LEFT_PANEL_STORAGE_KEY, value)}
-                snap={{
-                  compactValue: LEFT_PANEL_COMPACT,
-                  compact: leftPanelCompact(),
-                  collapseThreshold: LEFT_PANEL_COLLAPSE_THRESHOLD,
-                  expandThreshold: LEFT_PANEL_EXPAND_THRESHOLD,
-                  onCompactChange: (compact) => {
-                    if (compact) setSidebarCollapsed(true);
-                    else expandSidebar();
-                  },
-                }}
-              />
-              <Show when={activeDirectMember()} keyed>
-                {(member) => (
-                  <Loading
-                    fallback={
-                      <main class="direct-conversation" aria-label="Loading direct conversation">
-                        <div class="direct-conversation-state" role="status">
-                          Loading messages…
-                        </div>
-                      </main>
-                    }
-                  >
-                    <DirectConversation
-                      member={member}
-                      currentMemberId={currentTeamMember()?.id ?? ""}
-                      snapshot={directConversations()[member.id]}
-                      loading={directConversationLoading()}
-                      loadError={directConversationError()}
-                      hasOlder={directConversationPages()[member.id]?.hasOlder ?? false}
-                      loadingOlder={directOlderLoading()[member.id] === true}
-                      olderError={directOlderErrors()[member.id] ?? null}
-                      typing={directTypingMemberIds().has(member.id)}
-                      onSend={sendDirectMessage}
-                      onMarkRead={() => markDirectMessagesRead(member.id)}
-                      onLoadOlder={() => void loadOlderDirectMessages(member.id)}
-                      onOpenMessage={(messageId) => openDirectMessage(member.id, messageId)}
-                      onTypingChange={setDirectTyping}
-                    />
-                  </Loading>
-                )}
-              </Show>
-              <Show when={!activeDirectMember()}>
-                <Conversation
-                  agentStatus={agentStatus()}
-                  bot={activeBot()}
-                  bots={botList()}
-                  modelOptions={modelOptions()}
-                  messages={activeMessages()}
-                  messageReferences={activeBot() ? (conversationReferences()[activeBot()?.id ?? ""] ?? {}) : {}}
-                  unreadCount={activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.unreadCount ?? 0) : 0}
-                  firstUnreadMessageId={
-                    activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.firstUnreadMessageId ?? null) : null
-                  }
-                  loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
-                  hasOlder={activeBot() ? (conversationPages()[activeBot()?.id ?? ""]?.hasOlder ?? false) : false}
-                  discontinuous={activeBot() ? conversationWindowModes()[activeBot()?.id ?? ""] === "around" : false}
-                  loadingOlder={activeBot() ? conversationOlderLoading()[activeBot()?.id ?? ""] === true : false}
-                  olderError={activeBot() ? (conversationOlderErrors()[activeBot()?.id ?? ""] ?? null) : null}
-                  queue={activeQueue()}
-                  browserTabs={browserTabs()}
-                  activeBrowserTabId={activeBrowserTabId()}
-                  browserControlState={browserControlState()}
-                  server={activeServer()}
-                  presence={teamPresence()}
-                  currentUserEmail={account().email}
-                  browserEnabled={!props.landingPreview}
-                  remoteDesktopSessionActive={Boolean(activeRemoteDesktopSession())}
-                  remoteDesktopVisible={remoteDesktopWorkspaceVisible()}
-                  remoteDesktopEnabled={!props.landingPreview}
-                  prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
-                  approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
-                  activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
-                  agentPickerOpen={agentPickerOpen()}
-                  globalOverlayOpen={globalSearchOpen() || joinServerOpen() || serverSettingsOpen()}
-                  creatingAgent={creatingAgent()}
-                  settingsRequest={settingsRequest()}
-                  onboardingRequest={onboardingRequest()}
-                  messageFocusRequest={messageFocusRequest()}
-                  onCloseAgentPicker={() => setAgentPickerOpen(false)}
-                  onCreateAgent={() => void createAgent()}
-                  onSelectAgent={selectBot}
-                  onUpdateBot={updateBot}
-                  onSetAgentAvatar={setAgentAvatar}
-                  onSendMessage={sendMessage}
-                  onMarkRead={() => markAgentMessagesRead()}
-                  onLoadOlder={() => void loadOlderAgentMessages()}
-                  onLoadLatest={() =>
-                    activeBot() ? loadLatestAgentMessages(activeBot()?.id ?? "") : Promise.resolve()
-                  }
-                  onSearchMessages={(query) =>
-                    activeBot()
-                      ? searchAgentMessages(activeBot()?.id ?? "", query)
-                      : Promise.resolve({ messageIds: [], total: 0 })
-                  }
-                  onOpenSearchMessage={(messageId) =>
-                    activeBot() ? openAgentMessage(activeBot()?.id ?? "", messageId) : Promise.resolve()
-                  }
-                  onTypingChange={setTeamTyping}
-                  onCompleteOnboarding={completeOnboarding}
-                  onAnswerPrompt={answerPrompt}
-                  onRespondToApproval={respondToApproval}
-                  onCancelQueuedMessage={cancelQueuedMessage}
-                  onSteerQueuedMessage={steerQueuedMessage}
-                  onUpdateQueuedMessage={updateQueuedMessage}
-                  onReorderQueue={reorderQueue}
-                  onActivateBrowserTab={activateBrowserTab}
-                  onCloseBrowserTab={closeBrowserTab}
-                  onOpenRemoteDesktop={openRemoteDesktopWorkspace}
-                  onOpenAgentSetup={() => window.openbot.openExternal("agent-setup")}
-                  onStop={stopActiveTurn}
-                />
-              </Show>
-              <Show when={permissionsOpen()}>
-                <Loading>
-                  <InitialSetup
-                    reviewing
-                    state={
-                      setupState() ?? {
-                        completed: true,
-                        preferredProvider: "codex",
-                      }
-                    }
-                    agentStatus={agentStatus()}
-                    platform={appInfo()?.platform ?? "darwin"}
-                    accountEmail={account().email}
-                    onSave={saveSetup}
-                    onPreviewInvite={previewInvite}
-                    onJoinRemote={joinRemoteDuringSetup}
-                    onLogout={logoutCentralAccount}
-                    onClose={() => setPermissionsOpen(false)}
-                  />
-                </Loading>
-              </Show>
-              <Show when={joinServerOpen()}>
-                <Loading>
-                  <JoinServerDialog
-                    inviteUrl={pendingInviteUrl()}
-                    accountEmail={account().email}
-                    onClose={() => {
-                      setJoinServerOpen(false);
-                      setPendingInviteUrl("");
-                    }}
-                    onPreview={previewInvite}
-                    onJoin={joinServer}
-                  />
-                </Loading>
-              </Show>
-              <Show when={serverSettingsTarget()}>
-                {(server) => (
-                  <Loading>
-                    <ServerSettingsModal
-                      open={serverSettingsOpen()}
-                      onOpenChange={setServerSettingsOpen}
-                      restoreFocusTarget={serverSettingsRestoreTarget}
-                      platform={appInfo()?.platform ?? "darwin"}
-                      server={server()}
-                      hostStatus={server().kind === "local" ? hostStatus() : null}
-                      members={serverSettingsMembers()}
-                      invites={serverSettingsInvites()}
-                      loading={serverSettingsLoading()}
-                      loadError={serverSettingsError()}
-                      onRetry={() => refreshServerSettings(server().id)}
-                      onSaveIdentity={saveServerIdentity}
-                      onSetPublished={setServerPublished}
-                      onCreateInvite={createServerInvite}
-                      onUpdateMember={updateServerMember}
-                      onRemoveMember={removeServerMember}
-                      onRevokeInvite={revokeServerInvite}
-                    />
-                  </Loading>
-                )}
-              </Show>
-              <Show when={globalSearchOpen()}>
-                <Loading>
-                  <GlobalSearch
-                    open={true}
-                    bots={botList()}
-                    onSearchMessages={searchGlobalMessages}
-                    onOpenChange={setGlobalSearchVisibility}
-                    onSelectBot={selectBot}
-                    onSelectMessage={selectGlobalSearchMessage}
-                  />
-                </Loading>
-              </Show>
-              <Show when={!props.landingPreview && remoteDesktopWorkspaceServer()} keyed>
-                {(server) => (
-                  <Loading>
-                    <RemoteDesktopWorkspace
-                      visible={remoteDesktopWorkspaceVisible()}
-                      platform={appInfo()?.platform ?? "darwin"}
-                      server={server}
-                      session={remoteDesktopWorkspaceSession()}
-                      connecting={remoteDesktopConnectingServerId() === server.id}
-                      connectionError={remoteDesktopConnectionError()}
-                      onHide={hideRemoteDesktopWorkspace}
-                      onDisconnect={() => disconnectRemoteDesktopWorkspace()}
-                      onRetry={retryRemoteDesktopWorkspace}
-                      onSelectDisplay={selectRemoteDesktopDisplay}
-                    />
-                  </Loading>
-                )}
-              </Show>
-            </div>
-          </Show>
-        )}
-      </Show>
-    </Show>
+    <AppControllerProvider controller={controller}>
+      <AppAccessGate />
+    </AppControllerProvider>
   );
 }

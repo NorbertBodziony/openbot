@@ -13,8 +13,9 @@ import type {
   UpdateStatus,
 } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { createSignal, Show } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { App } from "./App";
+import { App, AppControllerProvider, createAppController, useAppController } from "./App";
 import { desktopAnalytics } from "./analytics";
 import { triggerResize } from "./setupTests";
 
@@ -524,6 +525,62 @@ describe("OpenBot connected desktop shell", () => {
     });
   });
 
+  it("keeps shell state and subscriptions when a view boundary remounts", async () => {
+    function ShellProbe() {
+      const controller = useAppController();
+      return (
+        <output data-testid="shell-controller-state">
+          {controller.activeServer()?.id}|{controller.activeBot()?.id}|{controller.activeMessages().length}|
+          {controller.leftPanelWidth()}
+        </output>
+      );
+    }
+
+    function Harness() {
+      const controller = createAppController({});
+      const [viewVisible, setViewVisible] = createSignal(true);
+      return (
+        <AppControllerProvider controller={controller}>
+          <button type="button" onClick={() => setViewVisible((current) => !current)}>
+            Toggle shell view
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              controller.setLeftPanelWidth(360);
+              controller.selectBot("sales-outbound");
+            }}
+          >
+            Set shell state
+          </button>
+          <Show when={viewVisible()}>
+            <ShellProbe />
+          </Show>
+        </AppControllerProvider>
+      );
+    }
+
+    render(() => <Harness />);
+    await waitFor(() => expect(screen.getByTestId("shell-controller-state")).toHaveTextContent("local|chief|0|280"));
+    await fireEvent.click(screen.getByRole("button", { name: "Set shell state" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("shell-controller-state")).toHaveTextContent("local|sales-outbound|0|360"),
+    );
+
+    const agentSubscriptionCount = vi.mocked(window.openbot.agent.onEvent).mock.calls.length;
+    const authSubscriptionCount = vi.mocked(window.openbot.auth.onEvent).mock.calls.length;
+    const presenceSubscriptionCount = vi.mocked(window.openbot.servers.onPresence).mock.calls.length;
+
+    await fireEvent.click(screen.getByRole("button", { name: "Toggle shell view" }));
+    expect(screen.queryByTestId("shell-controller-state")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Toggle shell view" }));
+
+    expect(screen.getByTestId("shell-controller-state")).toHaveTextContent("local|sales-outbound|0|360");
+    expect(window.openbot.agent.onEvent).toHaveBeenCalledTimes(agentSubscriptionCount);
+    expect(window.openbot.auth.onEvent).toHaveBeenCalledTimes(authSubscriptionCount);
+    expect(window.openbot.servers.onPresence).toHaveBeenCalledTimes(presenceSubscriptionCount);
+  });
+
   it("shows the first-run onboarding before starting agents", async () => {
     vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
       completed: false,
@@ -683,8 +740,11 @@ describe("OpenBot connected desktop shell", () => {
     expect(remoteDesktop).toHaveClass("remote-desktop-workspace-visible");
     expect(appFrame.inert).toBe(true);
     expect(appFrame).toHaveAttribute("aria-hidden", "true");
-    expect(within(remoteDesktop).getByText("Studio Mac")).toBeInTheDocument();
-    expect(within(remoteDesktop).getByText("Shared control")).toBeInTheDocument();
+    expect(within(remoteDesktop).queryByText("Studio Mac")).not.toBeInTheDocument();
+    expect(within(remoteDesktop).queryByText("Shared control")).not.toBeInTheDocument();
+    expect(within(remoteDesktop).getByRole("button", { name: "Back to OpenBot" })).toBeInTheDocument();
+    expect(within(remoteDesktop).getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
+    expect(within(remoteDesktop).queryByRole("button", { name: /Remote display/ })).not.toBeInTheDocument();
     expect(within(remoteDesktop).queryByLabelText(/password/iu)).not.toBeInTheDocument();
     expect(within(remoteDesktop).queryByText(/view.only/iu)).not.toBeInTheDocument();
     await waitFor(() => expect(window.openbot.remoteDesktop.connect).toHaveBeenCalledWith({ serverId: "remote-1" }));

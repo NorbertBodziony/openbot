@@ -5,6 +5,17 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-08-24
+
+### Added
+
+- Add a resizable browser Picture-in-Picture panel that stays visible while the conversation remains usable.
+
+### Changed
+
+- Keep application and conversation state stable during renderer hot updates, including selections, drafts, search, panel state, and active resources.
+- Simplify the Remote Control toolbar and show agent animation while a remote desktop connection starts.
+
 ## [0.1.21] - 2026-08-23
 
 ### Fixed

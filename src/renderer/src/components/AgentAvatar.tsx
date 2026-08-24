@@ -8,6 +8,7 @@ const DEFAULT_CYCLE: Block[] = defaultCycle().blocks;
 const SIDEBAR_MOTION_HOLD_FACTOR = 1.25;
 const IDLE_CYCLE: Block[] = [slowerBlock("idle")];
 const WORKING_CYCLE: Block[] = [slowerBlock("orbit")];
+const CONNECTING_CYCLE: Block[] = [makeBlock("orbit"), makeBlock("swirl")];
 
 function slowerBlock(state: StateId): Block {
   const block = makeBlock(state);
@@ -83,6 +84,7 @@ function GeneratedAvatar(props: {
     !reducedMotion() && (Boolean(props.animationState) || props.motion !== "hover" || interacting());
   const motionCycle = () => {
     if (props.animationState) return [slowerBlock(props.animationState)];
+    if (props.motion === "connecting") return CONNECTING_CYCLE;
     if (props.motion === "idle") return IDLE_CYCLE;
     if (props.motion === "working") return WORKING_CYCLE;
     return cycle();
