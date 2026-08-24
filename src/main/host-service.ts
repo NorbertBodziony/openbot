@@ -45,6 +45,8 @@ import { RemoteScreenGateway } from "./remote-screen-gateway";
 import { TeamApiServer } from "./team-api-server";
 import type { AuthenticatedMember, TeamStore } from "./team-store";
 
+export const DEVELOPMENT_REMOTE_CLIENT_USERNAME = "openbot-dev-client";
+
 interface HostEvents {
   changed: [status: HostStatus];
   presence: [snapshot: TeamPresenceSnapshot];
@@ -321,7 +323,7 @@ export class HostService extends EventEmitter<HostEvents> {
   }> {
     const identity = this.#options.store.getIdentity();
     if (!identity || !this.#status.apiUrl) throw new Error("The local development host is not ready.");
-    const username = "openbot-dev-client";
+    const username = DEVELOPMENT_REMOTE_CLIENT_USERNAME;
     const password = "openbot-local-development-client";
     let authenticated: AuthenticatedMember;
     try {

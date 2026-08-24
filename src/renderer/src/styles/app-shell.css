@@ -2487,6 +2487,27 @@ textarea {
   text-align: center;
 }
 
+.sidebar-first-bot-state {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.ui-button.sidebar-first-bot-action {
+  flex: 0 0 auto;
+}
+
+.sidebar-first-bot-empty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  margin: 0;
+  padding-bottom: 54px;
+  color: var(--openbot-text-readable);
+  font-size: var(--openbot-text-md);
+  text-align: center;
+}
+
 .account-dock {
   position: absolute;
   z-index: 70;

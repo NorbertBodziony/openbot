@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { realpath, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { expandAttachmentReferences } from "@openbot/contracts/attachment-references";
-import { ATTACHMENT_LIMITS } from "@openbot/contracts/input-limits";
+import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AccountUsage,
   AccountUsageLimit,
@@ -29,6 +29,7 @@ import type {
   ConversationSearchPage,
   ConversationSnapshot,
   ConversationWithReadState,
+  CreateBotInput,
   DraftAttachment,
   ImageGenerationInfo,
   QueuedMessageReceipt,
@@ -294,17 +295,37 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return structuredClone(this.#models);
   }
 
-  async createBot(): Promise<BotSummary> {
-    let bot = await this.#store.createBot();
-    if (this.#preferredProvider === "claude") {
-      bot = await this.#store.updateBot({
-        botId: bot.id,
-        model: "claude-opus-5",
-        reasoningEffort: "high",
-      });
+  async createBot(input: CreateBotInput): Promise<BotSummary> {
+    const initialMessage = input.initialMessage.trim();
+    if (!initialMessage) throw new Error("Initial message is required.");
+    if (input.initialMessage.length > INPUT_LIMITS.messageText) throw new Error("Initial message is too long.");
+    let bot = await this.#store.createBot(input);
+    try {
+      if (this.#preferredProvider === "claude") {
+        bot = await this.#store.updateBot({
+          botId: bot.id,
+          model: "claude-opus-5",
+          reasoningEffort: "high",
+        });
+      }
+      await this.sendMessage({ botId: bot.id, text: initialMessage, attachmentDraftIds: [] });
+      return this.#store.list().find((candidate) => candidate.id === bot.id) ?? bot;
+    } catch (error) {
+      let rollbackError: unknown;
+      try {
+        await this.#deleteBotData(bot);
+      } catch (caught) {
+        rollbackError = caught;
+      }
+      this.#emit({ type: "bots-changed", bots: this.#store.list() });
+      if (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "Bot setup failed and the incomplete Bot could not be removed.",
+        );
+      }
+      throw error;
     }
-    this.#emit({ type: "bots-changed", bots: this.#store.list() });
-    return bot;
   }
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
@@ -393,13 +414,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error("Stop the agent and cancel its queued messages before deleting it.");
     }
 
+    await this.#deleteBotData(bot);
+    this.#emit({ type: "bots-changed", bots: this.#store.list() });
+  }
+
+  async #deleteBotData(bot: BotSummary): Promise<void> {
     const providerSessions = bot.threadId ? this.#store.database.listProviderSessions(bot.threadId) : [];
-    await this.#mailbox.deleteBotData(botId);
-    await this.#store.deleteBot(botId);
-    this.#snapshots.delete(botId);
-    this.#lastConversationSignatures.delete(botId);
-    this.#drainingBots.delete(botId);
-    this.#scheduledDrains.delete(botId);
+    const errors: unknown[] = [];
+    try {
+      await this.#mailbox.deleteBotData(bot.id);
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      await this.#store.deleteBot(bot.id);
+    } catch (error) {
+      errors.push(error);
+    }
+    this.#snapshots.delete(bot.id);
+    this.#lastConversationSignatures.delete(bot.id);
+    this.#drainingBots.delete(bot.id);
+    this.#scheduledDrains.delete(bot.id);
     if (bot.threadId) {
       for (const session of providerSessions) {
         this.#threadToBot.delete(session.externalSessionId);
@@ -408,8 +443,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.#clearCompactionTimer(session.externalSessionId);
       }
     }
-    this.#compactingBots.delete(botId);
-    this.#emit({ type: "bots-changed", bots: this.#store.list() });
+    this.#compactingBots.delete(bot.id);
+    if (errors.length > 0) throw new AggregateError(errors, "The Bot data could not be removed completely.");
   }
 
   async initialize(): Promise<void> {

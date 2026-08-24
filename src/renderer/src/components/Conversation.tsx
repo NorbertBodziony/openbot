@@ -57,10 +57,6 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   const [rightPanels, setRightPanels] = createSignal<Record<string, RightPanelMode>>({});
   const [settingsModel, setSettingsModel] = createSignal<AgentModelId>("gpt-5.6-luna");
   const [settingsReasoning, setSettingsReasoning] = createSignal<AgentReasoningEffort>("medium");
-  const [onboardingBots, setOnboardingBots] = createSignal<Record<string, true>>({});
-  const [modelConfirmedBots, setModelConfirmedBots] = createSignal<Record<string, true>>({});
-  const [completedOnboardingBots, setCompletedOnboardingBots] = createSignal<Record<string, true>>({});
-  const automaticallyOnboardedBots = new Set<string>();
   const [browserAddress, setBrowserAddress] = createSignal("https://www.google.com");
   const [browserAddressEditing, setBrowserAddressEditing] = createSignal(false);
   const [browserPipBounds, setBrowserPipBounds] = createSignal<BrowserPipBounds | null>(readBrowserPipBounds());
@@ -137,13 +133,6 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     setSettingsModel,
     settingsReasoning,
     setSettingsReasoning,
-    onboardingBots,
-    setOnboardingBots,
-    modelConfirmedBots,
-    setModelConfirmedBots,
-    completedOnboardingBots,
-    setCompletedOnboardingBots,
-    automaticallyOnboardedBots,
     browserAddress,
     setBrowserAddress,
     browserAddressEditing,

@@ -1,5 +1,5 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { DirectThreadSummary, TeamPresenceMember } from "@openbot/contracts/ipc";
+import type { BotAvatarHue, DirectThreadSummary, TeamPresenceMember } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js";
 import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
@@ -24,6 +24,12 @@ interface SidebarProps {
   compact: boolean;
   onCollapse: () => void;
   onExpand: () => void;
+  emptyAction?: {
+    label: string;
+    avatarSeed: string;
+    avatarHue: BotAvatarHue | null;
+    onSelect: () => void;
+  };
 }
 
 export type SidebarAgentState = { kind: "working" } | { kind: "responded" } | { kind: "unread"; count: number };
@@ -217,7 +223,7 @@ export function Sidebar(props: SidebarProps) {
             type="button"
             class="sidebar-icon-button sidebar-new-button no-drag"
             onClick={props.onCreateBot}
-            aria-label="New agent"
+            aria-label="Create new Bot"
             aria-hidden={props.compact ? "true" : undefined}
             tabindex={props.compact ? -1 : 0}
           >
@@ -268,9 +274,40 @@ export function Sidebar(props: SidebarProps) {
         <Show
           when={filteredBots().length > 0 || filteredPeople().length > 0}
           fallback={
-            <p class="empty-search">
-              {query().trim() ? "No matches" : props.bots.length ? "No matches" : "No agents yet"}
-            </p>
+            <Show
+              when={!query().trim() && props.emptyAction}
+              fallback={
+                <p class="empty-search">
+                  {query().trim() ? "No matches" : props.bots.length ? "No matches" : "No agents yet"}
+                </p>
+              }
+            >
+              {(action) => (
+                <div class="sidebar-first-bot-state">
+                  <Button
+                    type="button"
+                    class="bot-row bot-row-active sidebar-first-bot-action"
+                    aria-label={action().label}
+                    aria-pressed="true"
+                    data-avatar-seed={action().avatarSeed}
+                    data-avatar-hue={action().avatarHue ?? "automatic"}
+                    onClick={action().onSelect}
+                  >
+                    <span class="bot-row-avatar">
+                      <AgentAvatar seed={action().avatarSeed} hue={action().avatarHue} motion="idle" />
+                    </span>
+                    <span class="bot-row-copy">
+                      <span class="bot-row-heading">
+                        <span class="bot-row-title">
+                          <strong>{action().label}</strong>
+                        </span>
+                      </span>
+                    </span>
+                  </Button>
+                  <p class="sidebar-first-bot-empty">No chats yet</p>
+                </div>
+              )}
+            </Show>
           }
         >
           <Show when={filteredPeople().length > 0}>

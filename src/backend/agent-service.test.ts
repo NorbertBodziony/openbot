@@ -2,13 +2,13 @@
 
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import type { AgentEvent, BrowserControlState, BrowserTab } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentService } from "./agent-service";
 import { BotStore } from "./bot-store";
@@ -27,6 +27,13 @@ let logPath: string;
 let service: AgentService | null = null;
 const originalCodexPath = process.env.OPENBOT_CODEX_PATH;
 const originalClaudePath = process.env.OPENBOT_CLAUDE_PATH;
+const CREATE_BOT_INPUT = {
+  name: "Planning Bot",
+  description: "Builds clear plans for everyday tasks.",
+  avatarSeed: "setup:planning",
+  avatarHue: 215,
+  initialMessage: "Help me make a practical plan.",
+} as const;
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "openbot-agent-test-"));
@@ -86,7 +93,7 @@ describe.sequential("AgentService", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
 
-    const bot = await store.createBot();
+    const bot = await store.createBot(CREATE_BOT_INPUT);
     const appDirectory = join(bot.workspacePath, "app");
     const page = join(appDirectory, "page.tsx");
     const spaced = join(bot.workspacePath, "lutra brand board.html");
@@ -470,15 +477,38 @@ describe.sequential("AgentService", () => {
         },
       ],
     });
+    await expect(
+      service.createBot({
+        ...CREATE_BOT_INPUT,
+        name: "Claude Planning Bot",
+        avatarSeed: "setup:claude-planning",
+      }),
+    ).resolves.toMatchObject({
+      model: "claude-opus-5",
+      reasoningEffort: "high",
+    });
     await service.setPreferredProvider("codex");
     expect(service.getStatus()).toMatchObject({
       auth: { kind: "chatgpt", email: "codex@example.com" },
       cliVersion: "0.144.1",
     });
-    await expect(service.createBot()).resolves.toMatchObject({
+    await expect(service.createBot(CREATE_BOT_INPUT)).resolves.toMatchObject({
       model: "gpt-5.6-luna",
       reasoningEffort: "medium",
     });
+  });
+
+  it("removes a new Bot and its workspace when the first message cannot enter the queue", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    vi.spyOn(mailbox, "enqueue").mockRejectedValueOnce(new Error("Queue write failed."));
+
+    await expect(service.createBot(CREATE_BOT_INPUT)).rejects.toThrow("Queue write failed.");
+
+    expect(service.listBots()).toEqual([]);
+    expect(store.database.listAgents()).toEqual([]);
+    await expect(readdir(join(root, "home", "OpenBot", "Bots"))).resolves.toEqual([]);
   });
 
   it("keeps the agent model and thread when a lazy provider cannot start", async () => {

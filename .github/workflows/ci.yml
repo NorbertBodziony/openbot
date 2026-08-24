@@ -42,15 +42,6 @@ jobs:
       - name: Run repository check
         run: bun run check
 
-      - name: Build and verify unsigned macOS application
-        shell: bash
-        run: |
-          if bun -e 'import { hasPinnedRemoteDesktopArtifacts, loadNativeRuntimeLock } from "./scripts/native-runtime-lock"; process.exit(hasPinnedRemoteDesktopArtifacts(await loadNativeRuntimeLock()) ? 0 : 1)'; then
-            bun run package:verify
-          else
-            echo "Runtime artifact bootstrap is active. The remote desktop runtime workflow performs the native package test."
-          fi
-
   preview:
     name: Cloudflare preview
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository

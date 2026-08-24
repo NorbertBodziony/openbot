@@ -8,6 +8,7 @@ import {
   type AgentReasoningEffort,
   type AvatarImageInput,
   type BotSummary,
+  type CreateBotInput,
   isAgentModel,
   isAvatarHue,
   isAvatarSeed,
@@ -133,14 +134,26 @@ export class BotStore {
     return this.#state.bots.map((bot) => ({ ...bot }));
   }
 
-  async createBot(): Promise<BotSummary> {
+  async createBot(input: Omit<CreateBotInput, "initialMessage">): Promise<BotSummary> {
     if (this.#state.bots.length >= INPUT_LIMITS.agents) {
       throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
     }
-    const record = this.#createRecord(`bot-${randomUUID()}`, "New agent", "");
-    this.#state.bots.unshift(record);
+    const name = requiredText(input.name, "Agent name", INPUT_LIMITS.agentName);
+    const description = requiredText(input.description, "Agent description", INPUT_LIMITS.agentDescription);
+    if (!isAvatarSeed(input.avatarSeed)) throw new Error("Invalid avatar seed.");
+    if (input.avatarHue !== null && !isAvatarHue(input.avatarHue)) throw new Error("Invalid avatar hue.");
+    const record = this.#createRecord(`bot-${randomUUID()}`, name, "", description);
+    record.avatarSeed = input.avatarSeed;
+    record.avatarHue = input.avatarHue;
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
-    this.#persist("agent.created");
+    this.#state.bots.unshift(record);
+    try {
+      this.#persist("agent.created");
+    } catch (error) {
+      this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== record.id);
+      await rm(record.workspacePath, { recursive: true, force: true });
+      throw error;
+    }
     return { ...record };
   }
 
