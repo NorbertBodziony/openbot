@@ -1,7 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { DirectConversationSnapshot, DirectMessage, TeamPresenceMember } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
-import { createChatVirtualizer } from "./conversation/createChatVirtualizer";
+import { calculateChatScrollMargin, createChatVirtualizer } from "./conversation/createChatVirtualizer";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import {
   scrollToUnreadBoundary,
@@ -37,6 +37,7 @@ export function DirectConversation(props: DirectConversationProps) {
   const [markingRead, setMarkingRead] = createSignal(false);
   const [showScrollToLatest, setShowScrollToLatest] = createSignal(false);
   const [unreadDividerVisible, setUnreadDividerVisible] = createSignal(false);
+  const [virtualScrollMargin, setVirtualScrollMargin] = createSignal(0);
   let messageList: HTMLDivElement | undefined;
   let virtualRoot: HTMLDivElement | undefined;
   let unreadMessagesDivider: HTMLDivElement | undefined;
@@ -50,7 +51,11 @@ export function DirectConversation(props: DirectConversationProps) {
     getScrollElement: () => messageList ?? null,
     estimateSize: () => 56,
     getItemKey: (index) => props.snapshot?.messages[index]?.id ?? index,
-    scrollMargin: () => virtualRoot?.offsetTop ?? 0,
+    keyVersion: () => {
+      const messages = props.snapshot?.messages;
+      return `${messages?.[0]?.id ?? ""}:${messages?.at(-1)?.id ?? ""}`;
+    },
+    scrollMargin: virtualScrollMargin,
     onChange: (instance) => {
       const first = instance.getVirtualItems()[0];
       if (first && first.index <= 5 && props.hasOlder && !props.loadingOlder) props.onLoadOlder?.();
@@ -79,6 +84,7 @@ export function DirectConversation(props: DirectConversationProps) {
       }
       requestAnimationFrame(() => {
         if (!messageList) return;
+        updateVirtualScrollMargin();
         if (stickToLatest) messageList.scrollTop = messageList.scrollHeight;
         updateScrollState(messageList);
         updateUnreadDividerVisibility();
@@ -93,8 +99,12 @@ export function DirectConversation(props: DirectConversationProps) {
   });
 
   onSettled(() => {
-    const resizeObserver = new ResizeObserver(updateUnreadDividerVisibility);
+    const resizeObserver = new ResizeObserver(() => {
+      updateVirtualScrollMargin();
+      updateUnreadDividerVisibility();
+    });
     if (messageList) resizeObserver.observe(messageList);
+    if (virtualRoot) resizeObserver.observe(virtualRoot);
     return () => resizeObserver.disconnect();
   });
 
@@ -112,6 +122,10 @@ export function DirectConversation(props: DirectConversationProps) {
   function updateScrollState(element: HTMLElement): void {
     const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
     setShowScrollToLatest(remaining > 80);
+  }
+
+  function updateVirtualScrollMargin(): void {
+    setVirtualScrollMargin(calculateChatScrollMargin(messageList, virtualRoot));
   }
 
   function updateUnreadDividerVisibility(): void {
@@ -219,7 +233,10 @@ export function DirectConversation(props: DirectConversationProps) {
       </Show>
 
       <div
-        ref={(element) => (messageList = element)}
+        ref={(element) => {
+          messageList = element;
+          updateVirtualScrollMargin();
+        }}
         class="direct-message-list"
         role="log"
         onScroll={(event) => {
@@ -263,9 +280,14 @@ export function DirectConversation(props: DirectConversationProps) {
                 </div>
               </Show>
               <div
-                ref={(element) => (virtualRoot = element)}
-                class="virtual-chat-list"
-                style={{ height: `${messageVirtualizer.getTotalSize()}px` }}
+                ref={(element) => {
+                  virtualRoot = element;
+                  updateVirtualScrollMargin();
+                }}
+                class={["virtual-chat-list", { "virtual-chat-list-static": !messageVirtualizer.isVirtualized() }]}
+                style={{
+                  height: messageVirtualizer.isVirtualized() ? `${messageVirtualizer.getTotalSize()}px` : "auto",
+                }}
               >
                 <For each={messageVirtualizer.getVirtualItems()}>
                   {(virtualRow) => {
@@ -279,7 +301,11 @@ export function DirectConversation(props: DirectConversationProps) {
                         data-index={virtualRow.index}
                         ref={messageVirtualizer.measureElement}
                         class="virtual-chat-row"
-                        style={{ transform: `translateY(${virtualRow.start - messageVirtualizer.scrollMargin()}px)` }}
+                        style={{
+                          transform: messageVirtualizer.isVirtualized()
+                            ? `translateY(${virtualRow.start - messageVirtualizer.scrollMargin()}px)`
+                            : "none",
+                        }}
                       >
                         <Show when={message.id === props.snapshot?.readState?.firstUnreadMessageId}>
                           <UnreadMessagesDivider

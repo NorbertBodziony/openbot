@@ -12,6 +12,7 @@ interface ChatVirtualizerOptions<TScrollElement extends Element, TItemElement ex
   getScrollElement: () => TScrollElement | null;
   estimateSize: (index: number) => number;
   getItemKey: (index: number) => string | number;
+  keyVersion: () => unknown;
   scrollMargin: () => number;
   onChange?: (virtualizer: Virtualizer<TScrollElement, TItemElement>) => void;
 }
@@ -19,9 +20,12 @@ interface ChatVirtualizerOptions<TScrollElement extends Element, TItemElement ex
 export interface ChatVirtualizer<TItemElement extends Element> {
   getVirtualItems: () => VirtualItem[];
   getTotalSize: () => number;
+  isVirtualized: () => boolean;
   measureElement: (element: TItemElement | null) => void;
   scrollMargin: () => number;
 }
+
+const STATIC_CHAT_LIMIT = 100;
 
 export function createChatVirtualizer<TScrollElement extends Element, TItemElement extends Element>(
   options: ChatVirtualizerOptions<TScrollElement, TItemElement>,
@@ -51,7 +55,10 @@ export function createChatVirtualizer<TScrollElement extends Element, TItemEleme
   const refresh = (): void => {
     const measured = [...virtualizer.getVirtualItems()];
     const count = options.count();
-    const items = measured.length > 0 ? measured : fallbackItems(count, options.estimateSize, options.getItemKey);
+    const items =
+      count <= STATIC_CHAT_LIMIT || measured.length === 0
+        ? fallbackItems(count, options.estimateSize, options.getItemKey)
+        : measured;
     const activeKeys = new Set(items.map((item) => item.key));
     const nextItems = items.map((item) => {
       const existing = stableItems.get(item.key);
@@ -80,7 +87,14 @@ export function createChatVirtualizer<TScrollElement extends Element, TItemEleme
   };
 
   createEffect(
-    () => ({ count: options.count(), scrollMargin: options.scrollMargin() }),
+    () => {
+      const count = options.count();
+      return {
+        count,
+        keyVersion: options.keyVersion(),
+        scrollMargin: options.scrollMargin(),
+      };
+    },
     ({ count, scrollMargin }) => {
       virtualizer.setOptions({
         ...virtualizer.options,
@@ -111,6 +125,7 @@ export function createChatVirtualizer<TScrollElement extends Element, TItemEleme
       return virtualItems();
     },
     getTotalSize: totalSize,
+    isVirtualized: () => options.count() > STATIC_CHAT_LIMIT,
     measureElement: (element) => {
       if (!element) {
         virtualizer.measureElement(null);
@@ -123,6 +138,17 @@ export function createChatVirtualizer<TScrollElement extends Element, TItemEleme
     },
     scrollMargin: options.scrollMargin,
   };
+}
+
+export function calculateChatScrollMargin(
+  scrollElement: HTMLElement | undefined,
+  virtualRoot: HTMLElement | undefined,
+): number {
+  if (!scrollElement || !virtualRoot) return 0;
+  return Math.max(
+    0,
+    virtualRoot.getBoundingClientRect().top - scrollElement.getBoundingClientRect().top + scrollElement.scrollTop,
+  );
 }
 
 function virtualItemsEqual(left: VirtualItem, right: VirtualItem): boolean {

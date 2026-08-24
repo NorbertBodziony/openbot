@@ -2049,6 +2049,11 @@
   width: 100%;
 }
 
+.virtual-chat-list-static .virtual-chat-row {
+  position: relative;
+  inset: auto;
+}
+
 .conversation-history-status {
   display: flex;
   min-height: 32px;

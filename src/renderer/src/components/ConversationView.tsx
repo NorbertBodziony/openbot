@@ -67,7 +67,7 @@ import {
   findChatSearchMatches,
   renderChatSearchHighlights,
 } from "./conversation/chat-search";
-import { createChatVirtualizer } from "./conversation/createChatVirtualizer";
+import { calculateChatScrollMargin, createChatVirtualizer } from "./conversation/createChatVirtualizer";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
 import { MessageSelectionActions } from "./conversation/SelectionActions";
@@ -636,6 +636,7 @@ function createConversationViewScope(props: ConversationProps) {
   const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
   const [showScrollToLatest, setShowScrollToLatest] = createSignal(false);
   const [unreadDividerVisible, setUnreadDividerVisible] = createSignal(false);
+  const [virtualScrollMargin, setVirtualScrollMargin] = createSignal(0);
   let scrollElement: HTMLDivElement | undefined;
   let virtualRoot: HTMLDivElement | undefined;
   let agentActivitySlot: HTMLDivElement | undefined;
@@ -671,7 +672,8 @@ function createConversationViewScope(props: ConversationProps) {
     getScrollElement: () => scrollElement ?? null,
     estimateSize: () => 128,
     getItemKey: (index) => props.messages[index]?.id ?? index,
-    scrollMargin: () => virtualRoot?.offsetTop ?? 0,
+    keyVersion: () => `${props.messages[0]?.id ?? ""}:${props.messages.at(-1)?.id ?? ""}`,
+    scrollMargin: virtualScrollMargin,
     onChange: (instance) => {
       const first = instance.getVirtualItems()[0];
       if (first && first.index <= 5 && props.hasOlder && !props.loadingOlder) props.onLoadOlder?.();
@@ -793,6 +795,10 @@ function createConversationViewScope(props: ConversationProps) {
     setFadeAtTop(element.scrollTop > 2);
     setFadeAtBottom(remaining > 2);
     setShowScrollToLatest(remaining > 80);
+  }
+
+  function updateVirtualScrollMargin(): void {
+    setVirtualScrollMargin(calculateChatScrollMargin(scrollElement, virtualRoot));
   }
 
   function updateUnreadDividerVisibility(): void {
@@ -988,6 +994,7 @@ function createConversationViewScope(props: ConversationProps) {
     keyboardTarget.addEventListener("keydown", handleChatSearchShortcut);
     window.addEventListener("pointerdown", closeMessageMenus);
     scrollResizeObserver = new ResizeObserver(() => {
+      updateVirtualScrollMargin();
       if (scrollElement && stickToLatest) followConversationBottom(scrollElement);
       updateScrollFade();
       updateUnreadDividerVisibility();
@@ -997,6 +1004,7 @@ function createConversationViewScope(props: ConversationProps) {
     if (agentActivitySlot) scrollResizeObserver.observe(agentActivitySlot);
     requestAnimationFrame(() => {
       if (!scrollElement) return;
+      updateVirtualScrollMargin();
       if (stickToLatest) scrollElement.scrollTop = scrollElement.scrollHeight;
       updateScrollFade(scrollElement);
       updateUnreadDividerVisibility();
@@ -1181,6 +1189,7 @@ function createConversationViewScope(props: ConversationProps) {
       latestScrollFrame = requestAnimationFrame(() => {
         latestScrollFrame = undefined;
         if (!scrollElement) return;
+        updateVirtualScrollMargin();
         if (followLatest) followConversationBottom(scrollElement);
         updateScrollFade(scrollElement);
         updateUnreadDividerVisibility();
@@ -1907,12 +1916,14 @@ function createConversationViewScope(props: ConversationProps) {
   };
   const setScrollElement = (element: HTMLDivElement) => {
     scrollElement = element;
+    updateVirtualScrollMargin();
   };
   const setStickToLatest = (value: boolean) => {
     stickToLatest = value;
   };
   const setVirtualRootElement = (element: HTMLDivElement) => {
     virtualRoot = element;
+    updateVirtualScrollMargin();
     scrollResizeObserver?.observe(element);
   };
   const setUnreadMessagesDividerElement = (element: HTMLDivElement) => {
@@ -2556,8 +2567,8 @@ export function ConversationTimeline() {
           </Show>
           <div
             ref={setVirtualRootElement}
-            class="virtual-chat-list"
-            style={{ height: `${messageVirtualizer.getTotalSize()}px` }}
+            class={["virtual-chat-list", { "virtual-chat-list-static": !messageVirtualizer.isVirtualized() }]}
+            style={{ height: messageVirtualizer.isVirtualized() ? `${messageVirtualizer.getTotalSize()}px` : "auto" }}
           >
             <For each={messageVirtualizer.getVirtualItems()}>
               {(virtualRow) => {
@@ -2570,7 +2581,11 @@ export function ConversationTimeline() {
                     data-index={virtualRow.index}
                     ref={messageVirtualizer.measureElement}
                     class="virtual-chat-row"
-                    style={{ transform: `translateY(${virtualRow.start - messageVirtualizer.scrollMargin()}px)` }}
+                    style={{
+                      transform: messageVirtualizer.isVirtualized()
+                        ? `translateY(${virtualRow.start - messageVirtualizer.scrollMargin()}px)`
+                        : "none",
+                    }}
                   >
                     <Show when={message()?.id === props.firstUnreadMessageId}>
                       <UnreadMessagesDivider
