@@ -88,7 +88,7 @@
     "test:browser": "bun scripts/browser-smoke.ts",
     "test:codex": "bun scripts/codex-doctor.ts --strict",
     "test:filesystem": "bun scripts/filesystem-smoke.ts",
-    "test:imagegen": "bun scripts/filesystem-smoke.ts --imagegen",
+    "test:imagegen": "bun scripts/filesystem-smoke.ts --provider codex --imagegen",
     "test:storage-live": "bun scripts/provider-storage-smoke.ts",
     "test:team-live": "bun scripts/team-connection-smoke.ts",
     "test:remote-desktop-runtime": "bun scripts/remote-desktop-runtime-smoke.ts",

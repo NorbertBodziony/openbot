@@ -15,6 +15,7 @@ import type {
   BrowserControlState,
   BrowserTab,
   DraftAttachment,
+  FilePreview,
   MessageReaction,
   QueueDelivery,
   QueueSnapshot,
@@ -86,6 +87,7 @@ import { Button, Combobox, Dialog, DropdownMenu, File, Image, Input, LoaderCircl
 const loadAgentSettingsPanel = () => import("./conversation/AgentSettingsPanel");
 const AgentSettingsPanel = lazy(loadAgentSettingsPanel);
 const BrowserPanel = lazy(() => import("./conversation/BrowserPanel"));
+const FilePreviewPanel = lazy(() => import("./conversation/FilePreviewPanel"));
 const QueuePanel = lazy(() => import("./conversation/QueuePanel").then((module) => ({ default: module.QueuePanel })));
 const ApprovalCard = lazy(() => import("./ConversationPrompts").then((module) => ({ default: module.ApprovalCard })));
 const ChoiceCard = lazy(() => import("./ConversationPrompts").then((module) => ({ default: module.ChoiceCard })));
@@ -210,7 +212,14 @@ interface MediaPreview {
   error: string | null;
 }
 
-type RightPanelMode = "none" | "browser" | "browser-pip" | "settings";
+interface SidebarFilePreview {
+  ownerBotId: string;
+  source: "shared" | "workspace";
+  path: string;
+  preview: FilePreview;
+}
+
+type RightPanelMode = "none" | "browser" | "browser-pip" | "settings" | "file-preview";
 
 const EMPTY_DRAFT: ComposerDraft = {
   text: "",
@@ -314,6 +323,7 @@ export function Conversation(props: ConversationProps) {
   const [browserAddressEditing, setBrowserAddressEditing] = createSignal(false);
   const [browserPipBounds, setBrowserPipBounds] = createSignal<BrowserPipBounds | null>(readBrowserPipBounds());
   const [mediaPreview, setMediaPreview] = createSignal<MediaPreview | null>(null);
+  const [sidebarFilePreview, setSidebarFilePreview] = createSignal<SidebarFilePreview | null>(null);
   const [openReactionMessageId, setOpenReactionMessageId] = createSignal<string | null>(null);
   const [openMoreMessageId, setOpenMoreMessageId] = createSignal<string | null>(null);
   const [expandedEmojiMessageId, setExpandedEmojiMessageId] = createSignal<string | null>(null);
@@ -375,6 +385,8 @@ export function Conversation(props: ConversationProps) {
   const browserPipOpen = () => props.browserEnabled !== false && activeRightPanel() === "browser-pip";
   const screenOpen = () => browserSidebarOpen() || browserPipOpen();
   const settingsOpen = () => activeRightPanel() === "settings";
+  const filePreviewOpen = () =>
+    activeRightPanel() === "file-preview" && sidebarFilePreview()?.ownerBotId === props.bot?.id;
   const browserTabs = createMemo(() => {
     if (props.browserEnabled === false) return [];
     const bot = props.bot;
@@ -623,6 +635,7 @@ export function Conversation(props: ConversationProps) {
   let browserVisibilityFrame: number | undefined;
   let browserBoundsFrame: number | undefined;
   let browserVisibilityGeneration = 0;
+  let filePreviewRequestGeneration = 0;
   let pickerInput: HTMLInputElement | undefined;
   let chatSearchInput: HTMLInputElement | undefined;
   let chatSearchReturnFocus: HTMLElement | undefined;
@@ -1243,7 +1256,13 @@ export function Conversation(props: ConversationProps) {
       if (botId === lastPanelBotId) return;
       const previousBotId = lastPanelBotId;
       lastPanelBotId = botId;
-      if (!previousBotId || !botId || panel !== "settings") return;
+      filePreviewRequestGeneration += 1;
+      const preview = sidebarFilePreview();
+      if (preview && preview.ownerBotId !== botId) {
+        setSidebarFilePreview(null);
+        setRightPanels((current) => ({ ...current, [preview.ownerBotId]: "none" }));
+      }
+      if (!previousBotId || !botId || (panel !== "settings" && panel !== "file-preview")) return;
       setRightPanels((current) => ({ ...current, [botId]: "none" }));
     },
   );
@@ -1824,17 +1843,47 @@ export function Conversation(props: ConversationProps) {
   }
 
   function openSharedFile(path: string) {
-    void window.openbot.agent
-      .openSharedFile({ path })
-      .catch((error) => setComposerError(error instanceof Error ? error.message : String(error)));
+    const ownerBotId = props.bot?.id;
+    if (!ownerBotId) return;
+    const generation = ++filePreviewRequestGeneration;
+    void window.openbot.agent.previewSharedFile({ path }).then(
+      (preview) => {
+        if (generation !== filePreviewRequestGeneration || props.bot?.id !== ownerBotId) return;
+        setSidebarFilePreview({ ownerBotId, source: "shared", path, preview });
+        setActiveRightPanel("file-preview", ownerBotId);
+      },
+      (error) => setComposerError(error instanceof Error ? error.message : String(error)),
+    );
   }
 
   function openWorkspaceFile(path: string) {
     const botId = props.bot?.id;
     if (!botId) return;
-    void window.openbot.agent
-      .openWorkspaceFile({ botId, path })
-      .catch((error) => setComposerError(error instanceof Error ? error.message : String(error)));
+    const generation = ++filePreviewRequestGeneration;
+    void window.openbot.agent.previewWorkspaceFile({ botId, path }).then(
+      (preview) => {
+        if (generation !== filePreviewRequestGeneration || props.bot?.id !== botId) return;
+        setSidebarFilePreview({ ownerBotId: botId, source: "workspace", path, preview });
+        setActiveRightPanel("file-preview", botId);
+      },
+      (error) => setComposerError(error instanceof Error ? error.message : String(error)),
+    );
+  }
+
+  function openSidebarFileExternally() {
+    const file = sidebarFilePreview();
+    if (!file) return;
+    const request =
+      file.source === "shared"
+        ? window.openbot.agent.openSharedFile({ path: file.path })
+        : window.openbot.agent.openWorkspaceFile({ botId: file.ownerBotId, path: file.path });
+    void request.catch((error) => setComposerError(error instanceof Error ? error.message : String(error)));
+  }
+
+  function closeSidebarFilePreview() {
+    filePreviewRequestGeneration += 1;
+    setSidebarFilePreview(null);
+    setActiveRightPanel("none");
   }
 
   return (
@@ -1846,7 +1895,7 @@ export function Conversation(props: ConversationProps) {
         "conversation-panel",
         {
           "conversation-drop-active": dropActive(),
-          "browser-panel-active": browserSidebarOpen(),
+          "browser-panel-active": browserSidebarOpen() || filePreviewOpen(),
         },
       ]}
       style={`--settings-panel-width: ${settingsPanelWidth()}px; --browser-panel-width: ${browserPanelWidth()}px`}
@@ -2725,6 +2774,33 @@ export function Conversation(props: ConversationProps) {
           )}
         </Show>
       </Dialog.Root>
+
+      <Show when={filePreviewOpen() && sidebarFilePreview()}>
+        {(file) => (
+          <Loading>
+            <FilePreviewPanel
+              preview={file().preview}
+              bots={props.bots}
+              defaultWidth={() => (conversationPanel?.clientWidth || window.innerWidth) * BROWSER_PANEL_DEFAULT_RATIO}
+              maxWidth={() =>
+                Math.min(
+                  BROWSER_PANEL_MAX,
+                  Math.max(
+                    BROWSER_PANEL_MIN,
+                    (conversationPanel?.clientWidth || window.innerWidth) - CONVERSATION_PANEL_MIN,
+                  ),
+                )
+              }
+              onWidthChange={setBrowserPanelWidth}
+              onOpenLink={(url) => void openExternalMessageUrl(url)}
+              onOpenSharedFile={openSharedFile}
+              onOpenWorkspaceFile={openWorkspaceFile}
+              onOpenExternally={openSidebarFileExternally}
+              onClose={closeSidebarFilePreview}
+            />
+          </Loading>
+        )}
+      </Show>
 
       <Show when={screenOpen()}>
         <BrowserPanel

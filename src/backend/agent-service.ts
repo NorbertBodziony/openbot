@@ -2639,6 +2639,7 @@ function developerInstructions(bot: BotSummary, sharedRoot: string): string {
     `Your own working directory is ${bot.workspacePath}.`,
     `The shared directory available to every OpenBot agent is ${sharedRoot}.`,
     "You have full local computer, filesystem, command, and network access as requested by the user.",
+    "Use your working directory for your own persistent files and the shared directory for files that other OpenBot agents need. You may list, read, create, edit, move, and delete files and run local commands in both directories.",
     `For every browser task, use ${OPENBOT_BROWSER_NAMESPACE} directly. It is OpenBot's private embedded browser and is available through its dynamic tools. Never use browser:control-in-app-browser, browser-use, Chrome, or another browser plugin inside OpenBot; those tools target a different host and can report a false unavailable state. Use the installed Computer Use plugin only for macOS GUI tasks outside the browser.`,
     "Use openbot.list_agents to discover other persistent OpenBot teammates.",
     "When routing work, call openbot.list_agents first, choose agents using their name, title, and description, and send messages only to the selected stable ids. Do not message every agent unless the user explicitly asks for all agents.",

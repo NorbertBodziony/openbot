@@ -138,7 +138,7 @@ Use `bun run dev:seed --dry-run` to inspect the target and fixture counts withou
 | `bun run dist:mac` | Build unsigned local ARM64 DMG and ZIP update artifacts. |
 | `bun run dist:win` | Build an unsigned Windows x64 NSIS installer on Windows. |
 | `bun run release:patch` | Create the next patch version commit and tag. |
-| `bun run test:filesystem` | **Online/manual:** run a real full-access Codex filesystem turn. |
+| `bun run test:filesystem` | **Online/manual:** run real full-access Codex and Claude filesystem turns across private and shared workspaces. |
 | `bun run test:imagegen` | **Online/manual:** run a real full-access image-generation turn. |
 | `bun run test:storage-live` | **Online/manual:** verify isolated Codex and Claude turns in a temporary SQLite database. |
 
@@ -155,6 +155,12 @@ to stop only the processes started by that runner.
 
 The normal `check` command is offline and uses a fake App Server. Manual smoke scripts may use the
 signed-in subscription and must not run in CI.
+
+Local agents run with the providers' unrestricted execution modes. Each agent starts in its own
+persistent `~/OpenBot/Bots/<agent>` workspace and also receives `~/OpenBot/Shared`; routine command
+and filesystem work in both locations runs without OpenBot adding another permission boundary.
+Because these modes are intentionally unrestricted, they also permit host access outside those
+directories when the provider and operating system allow it.
 
 ## Architecture
 

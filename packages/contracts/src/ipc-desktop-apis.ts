@@ -24,6 +24,7 @@ import type {
   ConversationSearchPage,
   ConversationWithReadState,
   DraftAttachment,
+  FilePreview,
   InterruptTurnInput,
   MarkConversationReadInput,
   OpenAttachmentInput,
@@ -97,6 +98,8 @@ export interface AgentDesktopApi {
   openAttachment: (input: OpenAttachmentInput) => Promise<void>;
   openSharedFile: (input: OpenSharedFileInput) => Promise<void>;
   openWorkspaceFile: (input: OpenWorkspaceFileInput) => Promise<void>;
+  previewSharedFile: (input: OpenSharedFileInput) => Promise<FilePreview>;
+  previewWorkspaceFile: (input: OpenWorkspaceFileInput) => Promise<FilePreview>;
   sendMessage: (input: SendMessageInput) => Promise<QueuedMessageReceipt>;
   setMessageReaction: (input: SetMessageReactionInput) => Promise<void>;
   listQueue: (botId: string) => Promise<QueueSnapshot>;

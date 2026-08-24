@@ -218,6 +218,16 @@ export interface OpenWorkspaceFileInput {
   path: string;
 }
 
+export type FilePreviewKind = "markdown" | "text" | "image" | "pdf" | "none";
+
+export interface FilePreview {
+  name: string;
+  size: number;
+  mimeType: string;
+  previewKind: FilePreviewKind;
+  bytes: Uint8Array | null;
+}
+
 export type QueueDeliveryStatus =
   | "queued"
   | "starting"

@@ -11,6 +11,7 @@ import {
   type ConversationSearchPage,
   type ConversationWithReadState,
   type DraftAttachment,
+  type FilePreview,
   type ImportAttachmentsInput,
   IPC_CHANNELS,
   isAgentModel,
@@ -90,6 +91,30 @@ function nullableString(value: unknown, label: string): value is string | null {
 function decodeVoid(value: unknown): undefined {
   if (value !== undefined && value !== null) throw new Error("IPC returned unexpected data.");
   return undefined;
+}
+
+function decodeFilePreview(value: unknown): FilePreview {
+  const preview = record(value, "file preview");
+  if (
+    !isString(preview.name) ||
+    !isNumber(preview.size) ||
+    !isString(preview.mimeType) ||
+    (preview.previewKind !== "markdown" &&
+      preview.previewKind !== "text" &&
+      preview.previewKind !== "image" &&
+      preview.previewKind !== "pdf" &&
+      preview.previewKind !== "none") ||
+    (preview.bytes !== null && !(preview.bytes instanceof Uint8Array))
+  ) {
+    throw new Error("Invalid file preview response.");
+  }
+  return {
+    name: preview.name,
+    size: preview.size,
+    mimeType: preview.mimeType,
+    previewKind: preview.previewKind,
+    bytes: preview.bytes,
+  };
 }
 
 function decodeAgentStatus(value: unknown): AgentStatus {
@@ -407,6 +432,8 @@ const openbotApi: OpenBotDesktopApi = {
     openAttachment: (input) => invokeAgent(IPC_CHANNELS.agentOpenAttachment, input, decodeVoid),
     openSharedFile: (input) => invokeAgent(IPC_CHANNELS.agentOpenSharedFile, input, decodeVoid),
     openWorkspaceFile: (input) => invokeAgent(IPC_CHANNELS.agentOpenWorkspaceFile, input, decodeVoid),
+    previewSharedFile: (input) => invokeAgent(IPC_CHANNELS.agentPreviewSharedFile, input, decodeFilePreview),
+    previewWorkspaceFile: (input) => invokeAgent(IPC_CHANNELS.agentPreviewWorkspaceFile, input, decodeFilePreview),
     sendMessage: (input) => invokeAgent(IPC_CHANNELS.agentSendMessage, input, decodeReceipt),
     setMessageReaction: (input) => invokeAgent(IPC_CHANNELS.agentSetMessageReaction, input, decodeVoid),
     listQueue: (botId) => invokeAgent(IPC_CHANNELS.agentListQueue, botId, decodeQueue),

@@ -210,6 +210,13 @@ describe.sequential("AgentService", () => {
         ephemeral: false,
         serviceName: "openbot",
       });
+      expect(params.runtimeWorkspaceRoots).toEqual([params.cwd, store.sharedRoot]);
+      expect(params.developerInstructions).toContain(
+        "You have full local computer, filesystem, command, and network access",
+      );
+      expect(params.developerInstructions).toContain(
+        "You may list, read, create, edit, move, and delete files and run local commands in both directories.",
+      );
       expect(params.dynamicTools).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ type: "namespace", name: "openbot_browser" }),
@@ -226,7 +233,15 @@ describe.sequential("AgentService", () => {
       );
     }
     for (const turn of requests.filter((message) => message.method === "turn/start")) {
-      expect(turn.params).toMatchObject({ model: "gpt-5.6-luna", effort: "medium" });
+      const params = paramsRecord(turn.params);
+      if (!params) throw new Error("The fake turn request has no parameters.");
+      expect(params).toMatchObject({
+        model: "gpt-5.6-luna",
+        effort: "medium",
+        approvalPolicy: "on-request",
+        sandboxPolicy: { type: "dangerFullAccess" },
+      });
+      expect(params.runtimeWorkspaceRoots).toEqual([params.cwd, store.sharedRoot]);
     }
     expect((await store.getOrCreate("chief")).threadId).not.toBe((await store.getOrCreate("sales-outbound")).threadId);
   });
