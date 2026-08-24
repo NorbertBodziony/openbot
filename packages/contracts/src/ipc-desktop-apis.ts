@@ -113,6 +113,7 @@ export interface AgentDesktopApi {
 export interface BrowserDesktopApi {
   open: (input: BrowserOpenInput) => Promise<BrowserTab>;
   activate: (tabId: string) => Promise<void>;
+  reload: (tabId: string) => Promise<void>;
   close: (tabId: string) => Promise<void>;
   listTabs: () => Promise<BrowserTab[]>;
   getControlState: () => Promise<BrowserControlState>;

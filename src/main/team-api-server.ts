@@ -88,7 +88,10 @@ type TeamApiAgents = TeamApiAgentMethods & {
 };
 
 type TeamApiMailbox = Pick<MailboxStore, "resolveAttachment">;
-type TeamApiBrowser = Pick<BrowserHost, "listTabs" | "getControlState" | "open" | "activate" | "close" | "setVisible">;
+type TeamApiBrowser = Pick<
+  BrowserHost,
+  "listTabs" | "getControlState" | "open" | "activate" | "reload" | "close" | "setVisible"
+>;
 type TeamApiRemoteScreen = Pick<
   RemoteScreenGateway,
   | "handlesUpgrade"
@@ -591,6 +594,11 @@ export class TeamApiServer {
       if (method === "POST" && url.pathname === "/v1/browser/activate") {
         const body = await readJson(request);
         await this.#options.browser.activate(stringField(body, "tabId"));
+        return this.#empty(response, 204);
+      }
+      if (method === "POST" && url.pathname === "/v1/browser/reload") {
+        const body = await readJson(request);
+        await this.#options.browser.reload(stringField(body, "tabId"));
         return this.#empty(response, 204);
       }
       if (method === "POST" && url.pathname === "/v1/browser/close") {

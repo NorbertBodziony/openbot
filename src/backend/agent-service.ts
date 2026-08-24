@@ -1018,7 +1018,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         case "item/tool/call": {
           if (!isDynamicToolCall(request.params)) throw new Error("Invalid dynamic tool request.");
           if (request.params.namespace === OPENBOT_BROWSER_NAMESPACE) {
-            client.respond(request.id, await this.#browser.handleDynamicTool(request.params));
+            const botId = this.#threadToBot.get(request.params.threadId);
+            if (!botId) throw new Error("The browsing OpenBot agent is unknown.");
+            client.respond(
+              request.id,
+              await this.#browser.handleDynamicTool({
+                ...request.params,
+                threadId: this.#publicThreadId(botId, request.params.threadId),
+              }),
+            );
             return;
           }
           if (request.params.namespace === "openbot") {
@@ -1670,7 +1678,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.#waitForImageGenerationOperations(threadId, turnId);
     await this.#turnAssociations.get(turnId)?.catch(() => undefined);
     const shouldCompact = this.#reserveContextCompaction(botId, threadId);
-    this.#browser.endControl(threadId, turnId);
+    this.#browser.endControl(this.#publicThreadId(botId, threadId), turnId);
     const snapshot = this.#ensureSnapshot(botId, threadId);
     snapshot.activeTurnId = null;
     for (const message of snapshot.messages) {

@@ -6,11 +6,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isValidRemoteApiUrl, RemoteServerManager, remoteAttachmentPreviewUrl } from "./remote-server-manager";
+import {
+  decodeBrowserTab,
+  isValidRemoteApiUrl,
+  RemoteServerManager,
+  remoteAttachmentPreviewUrl,
+} from "./remote-server-manager";
 import { fingerprint } from "./team-store";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe("remote browser responses", () => {
+  it("decodes an opened browser tab", () => {
+    expect(
+      decodeBrowserTab({
+        id: "tab-1",
+        title: "Example",
+        url: "https://example.com/",
+        loading: false,
+        ownerThreadId: "thread-1",
+        ownerBotId: "bot-1",
+      }),
+    ).toMatchObject({ id: "tab-1", url: "https://example.com/" });
+    expect(() => decodeBrowserTab(undefined)).toThrowError("Invalid remote browser tab.");
+  });
 });
 
 describe("remote server links", () => {

@@ -316,6 +316,7 @@ describe("OpenBot connected desktop shell", () => {
         browser: {
           open: vi.fn().mockResolvedValue(undefined),
           activate: vi.fn().mockResolvedValue(undefined),
+          reload: vi.fn().mockResolvedValue(undefined),
           close: vi.fn().mockResolvedValue(undefined),
           listTabs: vi.fn().mockResolvedValue([]),
           getControlState: vi.fn().mockResolvedValue({ sessions: [] }),
@@ -1957,6 +1958,258 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("heading", { name: "Chief" });
 
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "240");
+  });
+
+  it("defaults the embedded browser to half of the conversation container", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-browser-split",
+          title: "Browser split",
+          url: "https://example.com",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-browser-split",
+    });
+    const conversation = screen.getByRole("main", { name: "Conversation" });
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 800 });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+
+    expect(await screen.findByRole("separator", { name: "Resize right panel" })).toHaveAttribute(
+      "aria-valuenow",
+      "400",
+    );
+    expect(conversation).toHaveStyle("--browser-panel-width: 400px");
+    const resizer = screen.getByRole("separator", { name: "Resize right panel" });
+    await waitFor(() => expect(resizer).toHaveAttribute("aria-valuenow", "400"));
+
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 1000 });
+    await waitFor(() => {
+      triggerResize(conversation);
+      expect(resizer).toHaveAttribute("aria-valuenow", "500");
+    });
+    expect(conversation).toHaveStyle("--browser-panel-width: 500px");
+
+    await fireEvent.keyDown(resizer, { key: "ArrowLeft" });
+    expect(resizer).toHaveAttribute("aria-valuenow", "512");
+    expect(window.localStorage.getItem("openbot:browser-panel-width")).toBe("512");
+
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 400 });
+    await waitFor(() => {
+      triggerResize(conversation);
+      expect(resizer).toHaveAttribute("aria-valuenow", "304");
+    });
+    expect(window.localStorage.getItem("openbot:browser-panel-width")).toBe("512");
+
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 1200 });
+    await waitFor(() => {
+      triggerResize(conversation);
+      expect(resizer).toHaveAttribute("aria-valuenow", "512");
+    });
+    expect(conversation).toHaveStyle("--browser-panel-width: 512px");
+
+    await fireEvent.dblClick(resizer);
+    expect(window.localStorage.getItem("openbot:browser-panel-width")).toBeNull();
+    expect(resizer).toHaveAttribute("aria-valuenow", "600");
+
+    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 800 });
+    await fireEvent(window, new Event("resize"));
+    expect(resizer).toHaveAttribute("aria-valuenow", "400");
+  });
+
+  it("moves the live embedded browser between the sidebar and Picture in Picture", async () => {
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-pip",
+          title: "Picture in Picture test",
+          url: "https://example.com/pip",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-pip",
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    const conversation = screen.getByRole("main", { name: "Conversation" });
+    expect(await screen.findByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-pip");
+    expect(conversation).toHaveClass("browser-panel-active");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
+
+    const pip = await screen.findByRole("complementary", { name: "Browser" });
+    expect(pip).toHaveClass("browser-panel-pip");
+    expect(pip).toHaveStyle({ left: "588px", top: "400px", width: "420px", height: "300px" });
+    expect(pip).toHaveTextContent("Picture in Picture test");
+    expect(conversation).not.toHaveClass("browser-panel-active");
+    const address = screen.getByRole("textbox", { name: "Browser address" });
+    expect(address).toHaveValue("https://example.com/pip");
+    await fireEvent.focus(address);
+    await fireEvent.input(address, { target: { value: "example.com/typed" } });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-pip",
+          title: "Updated while typing",
+          url: "https://example.com/updated",
+          loading: true,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-pip",
+    });
+    expect(address).toHaveValue("example.com/typed");
+    await fireEvent.blur(address);
+    expect(address).toHaveValue("https://example.com/updated");
+
+    vi.mocked(window.openbot.browser.open).mockResolvedValueOnce({
+      id: "tab-next",
+      title: "Next page",
+      url: "https://example.com/next",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    });
+    await fireEvent.focus(address);
+    await fireEvent.input(address, { target: { value: "example.com/next" } });
+    const addressForm = address.closest("form");
+    if (!(addressForm instanceof HTMLFormElement)) throw new Error("Browser address form was not rendered.");
+    await fireEvent.submit(addressForm);
+    await waitFor(() => expect(window.openbot.browser.open).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-pip");
+
+    vi.mocked(window.openbot.browser.setVisible).mockClear();
+    await fireEvent.keyDown(window, { key: "k", metaKey: true });
+    expect(await screen.findByRole("dialog", { name: "Search OpenBot" })).toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false }));
+    await fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Search OpenBot" })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true })),
+    );
+
+    const header = pip.querySelector(".browser-pip-header");
+    if (!(header instanceof HTMLElement)) throw new Error("Picture in Picture header was not rendered.");
+    const surface = pip.querySelector(".browser-surface");
+    if (!(surface instanceof HTMLElement)) throw new Error("Picture in Picture browser surface was not rendered.");
+    vi.spyOn(surface, "getBoundingClientRect").mockImplementation(() => {
+      const left = Number.parseFloat(pip.style.left);
+      const top = Number.parseFloat(pip.style.top);
+      const width = Number.parseFloat(pip.style.width);
+      const height = Number.parseFloat(pip.style.height);
+      return {
+        x: left + 7,
+        y: top + 73,
+        width: width - 14,
+        height: height - 80,
+        top: top + 73,
+        right: left + width - 7,
+        bottom: top + height - 7,
+        left: left + 7,
+        toJSON: () => ({}),
+      };
+    });
+    vi.mocked(window.openbot.browser.setVisible).mockClear();
+    await fireEvent.pointerDown(header, { button: 0, pointerId: 7, clientX: 600, clientY: 460 });
+    await fireEvent.pointerMove(window, { pointerId: 7, clientX: 560, clientY: 420 });
+    await fireEvent.pointerUp(window, { pointerId: 7, clientX: 560, clientY: 420 });
+    expect(window.localStorage.getItem("openbot:browser-pip-bounds")).toBe("548,360,420,300");
+    await waitFor(() =>
+      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
+        visible: true,
+        bounds: { x: 555, y: 433, width: 406, height: 220 },
+      }),
+    );
+
+    const resizeHandle = pip.querySelector(".browser-pip-resize-bottom-right");
+    if (!(resizeHandle instanceof HTMLElement)) throw new Error("Picture in Picture resize handle was not rendered.");
+    await fireEvent.pointerDown(resizeHandle, { button: 0, pointerId: 8, clientX: 968, clientY: 712 });
+    await fireEvent.pointerMove(window, { pointerId: 8, clientX: 928, clientY: 682 });
+    await fireEvent.pointerUp(window, { pointerId: 8, clientX: 928, clientY: 682 });
+    expect(window.localStorage.getItem("openbot:browser-pip-bounds")).toBe("548,360,380,270");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Dock browser to right sidebar" }));
+    await waitFor(() =>
+      expect(screen.getByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-pip"),
+    );
+    expect(conversation).toHaveClass("browser-panel-active");
+    await fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
+    expect(window.openbot.browser.reload).toHaveBeenCalledWith("tab-pip");
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
+    const reopenedPip = await screen.findByRole("complementary", { name: "Browser" });
+    expect(reopenedPip).toHaveStyle({ left: "628px", top: "430px", width: "380px", height: "270px" });
+    await fireEvent.click(screen.getByRole("button", { name: "Hide browser" }));
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
+    expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
+  });
+
+  it("clamps and restores Picture in Picture per conversation without overriding it during agent control", async () => {
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
+    window.localStorage.setItem("openbot:browser-pip-bounds", "-50,-50,2000,2000");
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-pip-restore",
+          title: "Restored PiP",
+          url: "https://example.com",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-pip-restore",
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
+
+    const pip = await screen.findByRole("complementary", { name: "Browser" });
+    expect(pip).toHaveClass("browser-panel-pip");
+    expect(pip).toHaveStyle({ left: "12px", top: "12px", width: "1000px", height: "744px" });
+
+    emitAgentEvent?.({
+      type: "browser-control-changed",
+      state: {
+        sessions: [
+          {
+            id: "thread-chief:turn-pip",
+            threadId: "thread-chief",
+            turnId: "turn-pip",
+            callId: "call-pip",
+            tabId: "tab-pip-restore",
+            action: "click",
+            phase: "acting",
+            startedAt: "2026-08-24T08:00:00.000Z",
+          },
+        ],
+      },
+    });
+    expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-pip");
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-pip");
   });
 
   it("shows a stable indicator while an agent controls the embedded browser", async () => {

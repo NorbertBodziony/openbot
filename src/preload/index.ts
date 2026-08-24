@@ -428,6 +428,7 @@ const openbotApi: OpenBotDesktopApi = {
   browser: {
     open: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserOpen, input),
     activate: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserActivate, tabId),
+    reload: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserReload, tabId),
     close: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserClose, tabId),
     listTabs: () => ipcRenderer.invoke(IPC_CHANNELS.browserListTabs),
     getControlState: () => ipcRenderer.invoke(IPC_CHANNELS.browserGetControlState),

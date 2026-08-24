@@ -11,6 +11,8 @@ interface PanelResizerProps {
   max: number | (() => number);
   onResize: (value: number) => void;
   onResizeEnd: (value: number) => void;
+  onParentResize?: () => void;
+  onReset?: () => void;
   snap?: {
     compactValue: number;
     compact: boolean;
@@ -61,15 +63,20 @@ export function PanelResizer(props: PanelResizerProps) {
   };
 
   const enforceBounds = () => {
+    if (props.onParentResize) {
+      props.onParentResize();
+      return;
+    }
     const next = clamp(props.value);
     if (next !== props.value) commit(next);
   };
 
   onSettled(() => {
     window.addEventListener("resize", enforceBounds);
-    if (handle?.parentElement) {
+    const resizeTarget = props.onParentResize ? handle?.parentElement?.parentElement : handle?.parentElement;
+    if (resizeTarget) {
       parentResizeObserver = new ResizeObserver(enforceBounds);
-      parentResizeObserver.observe(handle.parentElement);
+      parentResizeObserver.observe(resizeTarget);
     }
     return () => {
       cleanupDrag?.();
@@ -163,7 +170,8 @@ export function PanelResizer(props: PanelResizerProps) {
       onKeyDown={handleKeyDown}
       onDblClick={(event) => {
         event.preventDefault();
-        commit(props.defaultValue);
+        if (props.onReset) props.onReset();
+        else commit(props.defaultValue);
       }}
     />
   );

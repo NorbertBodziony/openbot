@@ -83,6 +83,7 @@ function createBrowser(): TestBrowser {
     getControlState: unimplemented,
     open: unimplemented,
     activate: unimplemented,
+    reload: unimplemented,
     close: unimplemented,
     setVisible: unimplemented,
   };

@@ -67,7 +67,7 @@ export interface DesktopAnalyticsEvents {
     role?: "admin" | "member";
     email_bound?: boolean;
   };
-  browser_action: { action: "open" | "activate" | "close" | "show" | "hide"; result: Result };
+  browser_action: { action: "open" | "activate" | "reload" | "close" | "show" | "hide"; result: Result };
   search_used: { scope: "global" | "agent"; result_count: number };
   remote_desktop_action: {
     action: "connect" | "disconnect" | "select_display";

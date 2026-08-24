@@ -90,6 +90,7 @@ import {
   decodeBotSummaries,
   decodeBotSummary,
   decodeBrowserControlState,
+  decodeBrowserTab,
   decodeBrowserTabs,
   decodeQueuedMessageReceipt,
   decodeQueueSnapshot,
@@ -625,13 +626,23 @@ function registerIpcHandlers(
     const parsed = parseBrowserOpen(input);
     return remoteServers.activeServerId === "local"
       ? browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null)
-      : remoteServers.request("/v1/browser/open", { method: "POST", body: parsed }, undefined, decodeVoid);
+      : remoteServers.request("/v1/browser/open", { method: "POST", body: parsed }, undefined, decodeBrowserTab);
   });
   handleTrusted(IPC_CHANNELS.browserActivate, (tabId: unknown) =>
     remoteServers.activeServerId === "local"
       ? browser.activate(requireString(tabId, "tabId"))
       : remoteServers.request(
           "/v1/browser/activate",
+          { method: "POST", body: { tabId: requireString(tabId, "tabId") } },
+          undefined,
+          decodeVoid,
+        ),
+  );
+  handleTrusted(IPC_CHANNELS.browserReload, (tabId: unknown) =>
+    remoteServers.activeServerId === "local"
+      ? browser.reload(requireString(tabId, "tabId"))
+      : remoteServers.request(
+          "/v1/browser/reload",
           { method: "POST", body: { tabId: requireString(tabId, "tabId") } },
           undefined,
           decodeVoid,
