@@ -23,6 +23,7 @@ import type {
   ConversationReadState,
   ConversationSearchPage,
   ConversationWithReadState,
+  CreateBotInput,
   DraftAttachment,
   InterruptTurnInput,
   MarkConversationReadInput,
@@ -82,7 +83,7 @@ export interface AgentDesktopApi {
   getUsage: () => Promise<AccountUsage>;
   listModels: () => Promise<AgentModelOption[]>;
   listBots: () => Promise<BotSummary[]>;
-  createBot: () => Promise<BotSummary>;
+  createBot: (input: CreateBotInput) => Promise<BotSummary>;
   updateBot: (input: UpdateBotInput) => Promise<BotSummary>;
   setAvatar: (input: SetAgentAvatarInput) => Promise<BotSummary>;
   deleteBot: (botId: string) => Promise<void>;

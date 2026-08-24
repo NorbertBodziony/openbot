@@ -55,6 +55,7 @@ import {
   parseApprovalResponse,
   parseCancelQueuedMessage,
   parseChooseAttachments,
+  parseCreateBot,
   parseImportAttachments,
   parseInterrupt,
   parseMarkConversationRead,
@@ -318,10 +319,11 @@ function registerIpcHandlers(
       : remoteServers.request("/v1/agents", {}, serverId, decodeBotSummaries);
   });
   handleTrusted(IPC_CHANNELS.agentCreateBot, (input: unknown) => {
-    const { serverId } = parseAgentRequest(input);
+    const { serverId, payload } = parseAgentRequest(input);
+    const parsed = parseCreateBot(payload);
     return serverId === "local"
-      ? service.createBot()
-      : remoteServers.request("/v1/agents", { method: "POST", body: {} }, serverId, decodeBotSummary);
+      ? service.createBot(parsed)
+      : remoteServers.request("/v1/agents", { method: "POST", body: parsed }, serverId, decodeBotSummary);
   });
   handleTrusted(IPC_CHANNELS.agentUpdateBot, (input: unknown) => {
     const scoped = parseAgentRequest(input);

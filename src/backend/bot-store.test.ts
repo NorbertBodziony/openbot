@@ -8,6 +8,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BotStore } from "./bot-store";
 
 const temporaryRoots: string[] = [];
+const BOT_PROFILE_INPUT = {
+  name: "Planning Bot",
+  description: "Builds clear plans for everyday tasks.",
+  avatarSeed: "setup:planning",
+  avatarHue: 215,
+} as const;
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true })));
@@ -170,12 +176,12 @@ describe("BotStore", () => {
     const store = new BotStore(userData, join(root, "home"));
     await store.initialize();
 
-    const first = await store.createBot();
-    const second = await store.createBot();
+    const first = await store.createBot({ ...BOT_PROFILE_INPUT, name: "First Bot", avatarSeed: "setup:first" });
+    const second = await store.createBot({ ...BOT_PROFILE_INPUT, name: "Second Bot", avatarSeed: "setup:second" });
 
     expect(first.id).not.toBe(second.id);
-    expect(first.name).toBe("New agent");
-    expect(second.name).toBe("New agent");
+    expect(first.name).toBe("First Bot");
+    expect(second.name).toBe("Second Bot");
     expect(first.title).toBe("");
     expect(second.title).toBe("");
     expect(
@@ -193,6 +199,20 @@ describe("BotStore", () => {
         .slice(0, 2)
         .map((bot) => bot.id),
     ).toEqual([second.id, first.id]);
+  });
+
+  it("validates the complete Bot profile before it writes data", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
+    temporaryRoots.push(root);
+    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    await store.initialize();
+
+    await expect(store.createBot({ ...BOT_PROFILE_INPUT, name: " " })).rejects.toThrow("Agent name is required.");
+    await expect(store.createBot({ ...BOT_PROFILE_INPUT, description: " " })).rejects.toThrow(
+      "Agent description is required.",
+    );
+    await expect(store.createBot({ ...BOT_PROFILE_INPUT, avatarSeed: "" })).rejects.toThrow("Invalid avatar seed.");
+    expect(store.list()).toEqual([]);
   });
 
   it("rejects path traversal bot ids", async () => {
@@ -373,7 +393,7 @@ describe("BotStore", () => {
     const store = new BotStore(userData, home);
     await store.initialize();
 
-    const bot = await store.createBot();
+    const bot = await store.createBot(BOT_PROFILE_INPUT);
     await writeFile(join(bot.workspacePath, "generated.txt"), "workspace data");
     await store.deleteBot(bot.id);
     expect(store.list()).toEqual([]);

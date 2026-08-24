@@ -1,6 +1,7 @@
 import { Loading, lazy, Show } from "solid-js";
 import { useAppController } from "./App";
 import { Conversation } from "./components/Conversation";
+import { FIRST_BOT_SUGGESTIONS, FirstBotSetup } from "./components/FirstBotSetup";
 import { PanelResizer, savePanelWidth } from "./components/PanelResizer";
 import { ServerRail } from "./components/ServerRail";
 import { Sidebar } from "./components/Sidebar";
@@ -135,7 +136,8 @@ function WorkspaceShell(props: {
     sidebarAgentStates,
     selectBot,
     selectDirectMember,
-    openAgentPicker,
+    openBotSetup,
+    cancelBotSetup,
     editBot,
     deleteBot,
     setSidebarCollapsed,
@@ -187,15 +189,16 @@ function WorkspaceShell(props: {
     pendingPrompts,
     pendingApprovals,
     activeTurns,
-    agentPickerOpen,
+    botSetupOpen,
+    botSetupDraft,
+    setBotSetupDraft,
+    botSetupError,
     globalSearchOpen,
     joinServerOpen,
     serverSettingsOpen,
     creatingAgent,
     settingsRequest,
-    onboardingRequest,
     messageFocusRequest,
-    setAgentPickerOpen,
     createAgent,
     updateBot,
     setAgentAvatar,
@@ -206,7 +209,6 @@ function WorkspaceShell(props: {
     searchAgentMessages,
     openAgentMessage,
     setTeamTyping,
-    completeOnboarding,
     answerPrompt,
     respondToApproval,
     cancelQueuedMessage,
@@ -255,12 +257,22 @@ function WorkspaceShell(props: {
         onSelectBot={selectBot}
         onSelectPerson={(memberId) => void selectDirectMember(memberId)}
         onPreloadDirectConversation={() => void DirectConversation.preload()}
-        onCreateBot={openAgentPicker}
+        onCreateBot={openBotSetup}
         onEditBot={editBot}
         onDeleteBot={deleteBot}
         compact={leftPanelCompact()}
         onCollapse={() => setSidebarCollapsed(true)}
         onExpand={expandSidebar}
+        emptyAction={
+          botList().length === 0
+            ? {
+                label: "Create your first Bot",
+                avatarSeed: botSetupDraft().avatarSeed,
+                avatarHue: botSetupDraft().avatarHue,
+                onSelect: openBotSetup,
+              }
+            : undefined
+        }
       />
       <Show
         when={!appProps.landingPreview}
@@ -320,7 +332,19 @@ function WorkspaceShell(props: {
           },
         }}
       />
-      <Show when={activeDirectMember()} keyed>
+      <Show when={botSetupOpen()}>
+        <FirstBotSetup
+          value={botSetupDraft()}
+          suggestions={FIRST_BOT_SUGGESTIONS}
+          mode={botList().length === 0 ? "first" : "additional"}
+          submitting={creatingAgent()}
+          error={botSetupError()}
+          onChange={setBotSetupDraft}
+          onSubmit={createAgent}
+          onCancel={botList().length > 0 ? cancelBotSetup : undefined}
+        />
+      </Show>
+      <Show when={!botSetupOpen() && activeDirectMember()} keyed>
         {(member) => (
           <Loading
             fallback={
@@ -350,7 +374,7 @@ function WorkspaceShell(props: {
           </Loading>
         )}
       </Show>
-      <Show when={!activeDirectMember()}>
+      <Show when={!botSetupOpen() && !activeDirectMember()}>
         <Conversation
           agentStatus={agentStatus()}
           bot={activeBot()}
@@ -381,14 +405,9 @@ function WorkspaceShell(props: {
           prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
           approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
           activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
-          agentPickerOpen={agentPickerOpen()}
           globalOverlayOpen={globalSearchOpen() || joinServerOpen() || serverSettingsOpen()}
-          creatingAgent={creatingAgent()}
           settingsRequest={settingsRequest()}
-          onboardingRequest={onboardingRequest()}
           messageFocusRequest={messageFocusRequest()}
-          onCloseAgentPicker={() => setAgentPickerOpen(false)}
-          onCreateAgent={() => void createAgent()}
           onSelectAgent={selectBot}
           onUpdateBot={updateBot}
           onSetAgentAvatar={setAgentAvatar}
@@ -405,7 +424,6 @@ function WorkspaceShell(props: {
             activeBot() ? openAgentMessage(activeBot()?.id ?? "", messageId) : Promise.resolve()
           }
           onTypingChange={setTeamTyping}
-          onCompleteOnboarding={completeOnboarding}
           onAnswerPrompt={answerPrompt}
           onRespondToApproval={respondToApproval}
           onCancelQueuedMessage={cancelQueuedMessage}

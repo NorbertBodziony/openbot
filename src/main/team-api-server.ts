@@ -8,6 +8,7 @@ import {
   type AgentEvent,
   type CentralAuthUser,
   type ConversationPageAnchor,
+  type CreateBotInput,
   type CreateTeamInviteInput,
   type DirectConversationPage,
   type DirectConversationPageAnchor,
@@ -771,7 +772,8 @@ export class TeamApiServer {
         return this.#json(response, 200, this.#options.agents.listConversationReads(member.id));
       }
       if (method === "POST" && url.pathname === "/v1/agents") {
-        return this.#json(response, 201, await this.#options.agents.createBot());
+        const body = await readJson(request);
+        return this.#json(response, 201, await this.#options.agents.createBot(botCreate(body)));
       }
 
       const agentMatch = url.pathname.match(/^\/v1\/agents\/([^/]+)(?:\/(.*))?$/);
@@ -1370,6 +1372,26 @@ function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {
     result.avatarHue = value.avatarHue;
   }
   return result;
+}
+
+function botCreate(value: DynamicRecord): CreateBotInput {
+  const avatarHue = value.avatarHue;
+  if (!isAvatarSeed(value.avatarSeed)) throw new HttpError(400, "avatarSeed is invalid.");
+  if (avatarHue !== null && !isAvatarHue(avatarHue)) throw new HttpError(400, "avatarHue is invalid.");
+  return {
+    name: requiredCreateText(value.name, "name", INPUT_LIMITS.agentName),
+    description: requiredCreateText(value.description, "description", INPUT_LIMITS.agentDescription),
+    avatarSeed: value.avatarSeed,
+    avatarHue,
+    initialMessage: requiredCreateText(value.initialMessage, "initialMessage", INPUT_LIMITS.messageText),
+  };
+}
+
+function requiredCreateText(value: unknown, field: string, maximum: number): string {
+  if (!isString(value) || !value.trim() || value.length > maximum) {
+    throw new HttpError(400, `${field} is invalid.`);
+  }
+  return value;
 }
 
 async function readBinary(request: import("node:http").IncomingMessage, limit: number): Promise<Uint8Array> {
