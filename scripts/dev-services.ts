@@ -15,6 +15,16 @@ export interface DevelopmentServiceSpec {
   env: NodeJS.ProcessEnv;
 }
 
+export function developmentEnvironmentForTarget(
+  target: DevelopmentTarget,
+  environment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return {
+    ...environment,
+    OPENBOT_DEV_TEST_CLIENT_ENABLED: target === "test-client" ? "1" : "0",
+  };
+}
+
 const scriptsRoot = dirname(fileURLToPath(import.meta.url));
 export const projectRoot = dirname(scriptsRoot);
 
@@ -93,7 +103,7 @@ export function parseDevelopmentTarget(args: string[]): {
 async function main(): Promise<void> {
   const { target, dryRun } = parseDevelopmentTarget(process.argv.slice(2));
   const services = servicesForTarget(target);
-  const sharedEnvironment = { ...process.env };
+  const sharedEnvironment = developmentEnvironmentForTarget(target);
   const reservedPorts = new Set<number>();
 
   if (services.includes("api")) {

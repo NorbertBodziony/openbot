@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createDevelopmentServiceSpec, parseDevelopmentTarget, projectRoot, servicesForTarget } from "./dev-services";
+import {
+  createDevelopmentServiceSpec,
+  developmentEnvironmentForTarget,
+  parseDevelopmentTarget,
+  projectRoot,
+  servicesForTarget,
+} from "./dev-services";
 
 describe("development service runner", () => {
   it("runs the normal API and app in a stable order", () => {
@@ -10,6 +16,11 @@ describe("development service runner", () => {
   it("starts a complete isolated two-client harness on demand", () => {
     expect(servicesForTarget("test-client")).toEqual(["api", "app", "test-client"]);
     expect(servicesForTarget("api")).toEqual(["api"]);
+  });
+
+  it("provisions the technical remote member only for the test-client harness", () => {
+    expect(developmentEnvironmentForTarget("app", {}).OPENBOT_DEV_TEST_CLIENT_ENABLED).toBe("0");
+    expect(developmentEnvironmentForTarget("test-client", {}).OPENBOT_DEV_TEST_CLIENT_ENABLED).toBe("1");
   });
 
   it("builds the API command without a shell command string", () => {

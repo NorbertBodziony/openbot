@@ -49,7 +49,7 @@ import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manage
 import { resolveOpenBotCloudflaredExecutable } from "./cloudflared-artifact";
 import { buildContentSecurityPolicy } from "./content-security-policy";
 import { developmentUserDataName, readDevelopmentProfile, shouldAutoStartHost } from "./development-profile";
-import { HostService } from "./host-service";
+import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
 import {
   parseAgentRequest,
   parseApprovalResponse,
@@ -112,6 +112,7 @@ const developmentRemoteRole =
   (process.env.OPENBOT_DEV_REMOTE_ROLE === "host" || process.env.OPENBOT_DEV_REMOTE_ROLE === "client")
     ? process.env.OPENBOT_DEV_REMOTE_ROLE
     : null;
+const developmentTestClientEnabled = !app.isPackaged && process.env.OPENBOT_DEV_TEST_CLIENT_ENABLED === "1";
 if (!app.isPackaged && /^\d{4,5}$/u.test(process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT ?? "")) {
   app.commandLine.appendSwitch("remote-debugging-port", process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT);
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
@@ -1010,6 +1011,14 @@ if (!hasSingleInstanceLock) {
           await writeSetupState(setupFile, "codex");
         }
       }
+      if (developmentRemoteRole === "host" && !developmentTestClientEnabled) {
+        const technicalMember = teamStore
+          .listMembers()
+          .find((member) => member.username === DEVELOPMENT_REMOTE_CLIENT_USERNAME);
+        if (technicalMember && technicalMember.role !== "owner") {
+          await teamStore.removeMember(technicalMember.id);
+        }
+      }
       const teamChatStore = new TeamChatStore(store.database);
       const remoteDesktopRuntime = await resolveRemoteDesktopRuntime({
         isPackaged: app.isPackaged,
@@ -1114,7 +1123,9 @@ if (!hasSingleInstanceLock) {
       if (developmentRemoteRole === "host") {
         await rm(developmentRemoteConnectionPath(), { force: true });
         await hostService.startDevelopmentLocal();
-        await writeDevelopmentRemoteConnection(await hostService.createDevelopmentConnection());
+        if (developmentTestClientEnabled) {
+          await writeDevelopmentRemoteConnection(await hostService.createDevelopmentConnection());
+        }
       } else if (developmentRemoteRole === "client") {
         await connectDevelopmentRemoteServer(remoteServerManager);
       }
