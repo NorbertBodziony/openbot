@@ -64,6 +64,15 @@ import { createFirstBotDraft, type FirstBotDraft } from "./components/FirstBotSe
 import { readPanelWidth } from "./components/PanelResizer";
 import type { SidebarAgentState } from "./components/Sidebar";
 import type { BotMessage, BotProfile } from "./data";
+import {
+  MAX_SIDEBAR_PINNED_ITEMS,
+  normalizeSidebarPinnedItems,
+  readSidebarPins,
+  type SidebarPinnedItem,
+  type SidebarPinsByServer,
+  sidebarPinnedItemKey,
+  writeSidebarPins,
+} from "./sidebar-pins";
 
 const FALLBACK_STATUS: AgentStatus = {
   phase: "starting",
@@ -227,6 +236,7 @@ export function createAppController(props: AppProps = {}) {
     window.localStorage.getItem(LEFT_PANEL_COLLAPSED_STORAGE_KEY) === "true",
   );
   const [leftPanelAutoCompact, setLeftPanelAutoCompact] = createSignal(false);
+  const [sidebarPinsByServer, setSidebarPinsByServer] = createSignal<SidebarPinsByServer>(readSidebarPins());
   const [setupState, setSetupState] = createSignal<AppSetupState | null>(null);
   const [setupLoaded, setSetupLoaded] = createSignal(false);
   const [centralAuth, setCentralAuth] = createSignal<CentralAuthState>({
@@ -1447,6 +1457,7 @@ export function createAppController(props: AppProps = {}) {
       setRecentReplies((current) => withoutBot(current, botId));
       setQueues((current) => withoutBot(current, botId));
       setPendingPrompts((current) => withoutBot(current, botId));
+      removePinnedSidebarItemEverywhere({ kind: "agent", id: botId });
       const replyTimer = recentReplyTimers.get(botId);
       if (replyTimer) clearTimeout(replyTimer);
       recentReplyTimers.delete(botId);
@@ -2163,6 +2174,52 @@ export function createAppController(props: AppProps = {}) {
   }
 
   const activeServer = createMemo(() => servers().find((server) => server.active));
+  const activeServerSidebarKey = createMemo(() => activeServer()?.id ?? "local");
+  const pinnedSidebarItems = createMemo(() => sidebarPinsByServer()[activeServerSidebarKey()] ?? []);
+
+  function updateActiveServerPins(update: (items: SidebarPinnedItem[]) => SidebarPinnedItem[]): void {
+    const serverId = activeServerSidebarKey();
+    setSidebarPinsByServer((current) => {
+      const items = normalizeSidebarPinnedItems(update(current[serverId] ?? []));
+      const next = { ...current };
+      if (items.length > 0) next[serverId] = items;
+      else delete next[serverId];
+      writeSidebarPins(next);
+      return next;
+    });
+  }
+
+  function pinSidebarItem(item: SidebarPinnedItem): void {
+    updateActiveServerPins((items) =>
+      items.length >= MAX_SIDEBAR_PINNED_ITEMS ||
+      items.some((candidate) => sidebarPinnedItemKey(candidate) === sidebarPinnedItemKey(item))
+        ? items
+        : [...items, item],
+    );
+  }
+
+  function unpinSidebarItem(item: SidebarPinnedItem): void {
+    const key = sidebarPinnedItemKey(item);
+    updateActiveServerPins((items) => items.filter((candidate) => sidebarPinnedItemKey(candidate) !== key));
+  }
+
+  function reorderPinnedSidebarItems(items: SidebarPinnedItem[]): void {
+    updateActiveServerPins(() => items);
+  }
+
+  function removePinnedSidebarItemEverywhere(item: SidebarPinnedItem): void {
+    const key = sidebarPinnedItemKey(item);
+    setSidebarPinsByServer((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).flatMap(([serverId, items]) => {
+          const filtered = items.filter((candidate) => sidebarPinnedItemKey(candidate) !== key);
+          return filtered.length > 0 ? [[serverId, filtered]] : [];
+        }),
+      );
+      writeSidebarPins(next);
+      return next;
+    });
+  }
   const serverSettingsTarget = createMemo(() => servers().find((server) => server.id === serverSettingsTargetId()));
   const activeRemoteDesktopSession = createMemo(() => {
     const server = activeServer();
@@ -2242,6 +2299,10 @@ export function createAppController(props: AppProps = {}) {
     directPeople,
     directThreads,
     sidebarAgentStates,
+    pinnedSidebarItems,
+    pinSidebarItem,
+    unpinSidebarItem,
+    reorderPinnedSidebarItems,
     selectBot,
     selectDirectMember,
     openBotSetup,

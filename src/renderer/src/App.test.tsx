@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App, AppControllerProvider, createAppController, createBotInitialMessage, useAppController } from "./App";
 import { desktopAnalytics } from "./analytics";
 import { triggerResize } from "./setupTests";
+import { SIDEBAR_PINS_STORAGE_KEY } from "./sidebar-pins";
 
 const trackAnalytics = vi.spyOn(desktopAnalytics, "track").mockImplementation(() => undefined);
 
@@ -1404,6 +1405,21 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByRole("heading", { name: "People" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Agents" })).toBeInTheDocument();
+  });
+
+  it("restores and persists pinned chats for the active server", async () => {
+    window.localStorage.setItem(SIDEBAR_PINS_STORAGE_KEY, JSON.stringify({ local: [{ kind: "agent", id: "chief" }] }));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    const pinnedChief = screen.getByRole("button", { name: "Chief, pinned agent" });
+    expect(screen.getByRole("region", { name: "Pinned chats" })).toBeInTheDocument();
+    await fireEvent.contextMenu(pinnedChief, { clientX: 120, clientY: 90 });
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Unpin" }), { button: 0 });
+
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Pinned chats" })).not.toBeInTheDocument());
+    expect(JSON.parse(window.localStorage.getItem(SIDEBAR_PINS_STORAGE_KEY) ?? "{}")).toEqual({});
+    expect(screen.getByRole("button", { name: /Chief, Chief of staff/ })).toBeInTheDocument();
   });
 
   it("creates a Bot from a suggestion with one complete backend input", async () => {

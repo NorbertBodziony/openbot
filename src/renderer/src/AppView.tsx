@@ -137,6 +137,10 @@ function WorkspaceShell(props: {
     directPeople,
     directThreads,
     sidebarAgentStates,
+    pinnedSidebarItems,
+    pinSidebarItem,
+    unpinSidebarItem,
+    reorderPinnedSidebarItems,
     selectBot,
     selectDirectMember,
     openBotSetup,
@@ -258,6 +262,10 @@ function WorkspaceShell(props: {
         directThreads={directThreads()}
         activeDirectMemberId={activeDirectMemberId()}
         agentStates={sidebarAgentStates()}
+        pinnedItems={pinnedSidebarItems()}
+        onPin={pinSidebarItem}
+        onUnpin={unpinSidebarItem}
+        onReorderPinned={reorderPinnedSidebarItems}
         onSelectBot={selectBot}
         onSelectPerson={(memberId) => void selectDirectMember(memberId)}
         onPreloadDirectConversation={() => void DirectConversation.preload()}

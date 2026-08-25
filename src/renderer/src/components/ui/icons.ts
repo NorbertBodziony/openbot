@@ -17,6 +17,8 @@ export { default as PanelRight } from "lucide-solid/icons/panel-right";
 export { default as Pause } from "lucide-solid/icons/pause";
 export { default as Pencil } from "lucide-solid/icons/pencil";
 export { default as PictureInPicture2 } from "lucide-solid/icons/picture-in-picture-2";
+export { default as Pin } from "lucide-solid/icons/pin";
+export { default as PinOff } from "lucide-solid/icons/pin-off";
 export { default as Play } from "lucide-solid/icons/play";
 export { default as Plus } from "lucide-solid/icons/plus";
 export { default as Puzzle } from "lucide-solid/icons/puzzle";
