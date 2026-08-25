@@ -51,7 +51,7 @@
   min-width: 68px;
   height: 26px;
   padding-inline: var(--openbot-space-3);
-  border-radius: calc(var(--openbot-radius-lg) - 2px);
+  border-radius: var(--openbot-radius-md);
   color: var(--openbot-text-muted);
 }
 .skills-marketplace-tab {

@@ -509,7 +509,8 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                         <For each={installed()}>
                           {(item) => (
                             <article class="skills-installed-row">
-                              <button
+                              <Button
+                                variant="ghost"
                                 type="button"
                                 class="skills-marketplace-row-hitarea"
                                 aria-label={`View ${item.name} details`}
@@ -714,7 +715,8 @@ description: Turn merged work into clear, consistent release notes.
                         <For each={submissions()}>
                           {(item) => (
                             <article class="skills-submission-row">
-                              <button
+                              <Button
+                                variant="ghost"
                                 type="button"
                                 class="skills-marketplace-row-hitarea"
                                 aria-label={`View ${item.name} submission details`}
@@ -884,7 +886,8 @@ function SkillCategorySection(props: {
             const local = () => props.installedById.get(skill.id);
             return (
               <article class="skills-marketplace-card">
-                <button
+                <Button
+                  variant="ghost"
                   type="button"
                   class="skills-marketplace-card-hitarea"
                   aria-label={`View ${skill.name} details`}
