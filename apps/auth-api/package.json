@@ -31,7 +31,9 @@
     "@tanstack/solid-router": "2.0.0-rc.0",
     "@tanstack/solid-start": "2.0.0-rc.0",
     "class-variance-authority": "0.7.1",
-    "solid-js": "2.0.0-rc.0"
+    "fflate": "0.8.2",
+    "solid-js": "2.0.0-rc.0",
+    "yaml": "2.8.1"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.52.1",

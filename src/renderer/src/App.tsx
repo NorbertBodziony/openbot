@@ -244,6 +244,7 @@ export function createAppController(props: AppProps = {}) {
   });
   const [authSuccessVisible, setAuthSuccessVisible] = createSignal(false);
   const [permissionsOpen, setPermissionsOpen] = createSignal(false);
+  const [skillsMarketplaceOpen, setSkillsMarketplaceOpen] = createSignal(false);
   const [servers, setServers] = createSignal<ServerSummary[]>([]);
   const [joinServerOpen, setJoinServerOpen] = createSignal(false);
   const [pendingInviteUrl, setPendingInviteUrl] = createSignal("");
@@ -2316,6 +2317,8 @@ export function createAppController(props: AppProps = {}) {
     runUpdateAction,
     updateAccountAvatar,
     setPermissionsOpen,
+    skillsMarketplaceOpen,
+    setSkillsMarketplaceOpen,
     LEFT_PANEL_DEFAULT,
     LEFT_PANEL_MIN,
     LEFT_PANEL_MAX,

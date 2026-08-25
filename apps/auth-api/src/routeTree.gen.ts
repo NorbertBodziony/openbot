@@ -21,6 +21,9 @@ import { Route as V1MeRouteImport } from './routes/v1/me'
 import { Route as V1AuthLogoutRouteImport } from './routes/v1/auth/logout'
 import { Route as V1AvatarsUserIdRouteImport } from './routes/v1/avatars/$userId'
 import { Route as V1MeAvatarRouteImport } from './routes/v1/me/avatar'
+import { Route as V1SkillsIndexRouteImport } from './routes/v1/skills/index'
+import { Route as V1SkillsSkillIdRouteImport } from './routes/v1/skills/$skillId'
+import { Route as V1SkillsMineRouteImport } from './routes/v1/skills/mine'
 import { Route as V1TeamAuthRedeemRouteImport } from './routes/v1/team-auth/redeem'
 import { Route as V1TeamAuthTicketRouteImport } from './routes/v1/team-auth/ticket'
 import { Route as V1TeamHostsIceServersRouteImport } from './routes/v1/team-hosts/ice-servers'
@@ -28,6 +31,12 @@ import { Route as V1TeamInvitationsEmailRouteImport } from './routes/v1/team-inv
 import { Route as V1TeamTunnelsProvisionRouteImport } from './routes/v1/team-tunnels/provision'
 import { Route as V1AuthEmailStartRouteImport } from './routes/v1/auth/email/start'
 import { Route as V1AuthEmailVerifyRouteImport } from './routes/v1/auth/email/verify'
+import { Route as V1SkillsSkillIdContentRouteImport } from './routes/v1/skills/$skillId/content'
+import { Route as V1SkillsSkillIdIconRouteImport } from './routes/v1/skills/$skillId/icon'
+import { Route as V1SkillsSkillIdInstallRouteImport } from './routes/v1/skills/$skillId/install'
+import { Route as V1SkillsAdminSubmissionsRouteImport } from './routes/v1/skills/admin/submissions'
+import { Route as V1SkillsAdminFeaturedSkillIdRouteImport } from './routes/v1/skills/admin/featured/$skillId'
+import { Route as V1SkillsAdminSubmissionsVersionIdRouteImport } from './routes/v1/skills/admin/submissions/$versionId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -90,6 +99,21 @@ const V1MeAvatarRoute = V1MeAvatarRouteImport.update({
   path: '/avatar',
   getParentRoute: () => V1MeRoute,
 } as any)
+const V1SkillsIndexRoute = V1SkillsIndexRouteImport.update({
+  id: '/v1/skills/',
+  path: '/v1/skills/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V1SkillsSkillIdRoute = V1SkillsSkillIdRouteImport.update({
+  id: '/v1/skills/$skillId',
+  path: '/v1/skills/$skillId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V1SkillsMineRoute = V1SkillsMineRouteImport.update({
+  id: '/v1/skills/mine',
+  path: '/v1/skills/mine',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const V1TeamAuthRedeemRoute = V1TeamAuthRedeemRouteImport.update({
   id: '/v1/team-auth/redeem',
   path: '/v1/team-auth/redeem',
@@ -125,6 +149,39 @@ const V1AuthEmailVerifyRoute = V1AuthEmailVerifyRouteImport.update({
   path: '/v1/auth/email/verify',
   getParentRoute: () => rootRouteImport,
 } as any)
+const V1SkillsSkillIdContentRoute = V1SkillsSkillIdContentRouteImport.update({
+  id: '/content',
+  path: '/content',
+  getParentRoute: () => V1SkillsSkillIdRoute,
+} as any)
+const V1SkillsSkillIdIconRoute = V1SkillsSkillIdIconRouteImport.update({
+  id: '/icon',
+  path: '/icon',
+  getParentRoute: () => V1SkillsSkillIdRoute,
+} as any)
+const V1SkillsSkillIdInstallRoute = V1SkillsSkillIdInstallRouteImport.update({
+  id: '/install',
+  path: '/install',
+  getParentRoute: () => V1SkillsSkillIdRoute,
+} as any)
+const V1SkillsAdminSubmissionsRoute =
+  V1SkillsAdminSubmissionsRouteImport.update({
+    id: '/v1/skills/admin/submissions',
+    path: '/v1/skills/admin/submissions',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const V1SkillsAdminFeaturedSkillIdRoute =
+  V1SkillsAdminFeaturedSkillIdRouteImport.update({
+    id: '/v1/skills/admin/featured/$skillId',
+    path: '/v1/skills/admin/featured/$skillId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const V1SkillsAdminSubmissionsVersionIdRoute =
+  V1SkillsAdminSubmissionsVersionIdRouteImport.update({
+    id: '/$versionId',
+    path: '/$versionId',
+    getParentRoute: () => V1SkillsAdminSubmissionsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -139,13 +196,22 @@ export interface FileRoutesByFullPath {
   '/v1/auth/logout': typeof V1AuthLogoutRoute
   '/v1/avatars/$userId': typeof V1AvatarsUserIdRoute
   '/v1/me/avatar': typeof V1MeAvatarRoute
+  '/v1/skills/$skillId': typeof V1SkillsSkillIdRouteWithChildren
+  '/v1/skills/mine': typeof V1SkillsMineRoute
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
   '/v1/team-auth/ticket': typeof V1TeamAuthTicketRoute
   '/v1/team-hosts/ice-servers': typeof V1TeamHostsIceServersRoute
   '/v1/team-invitations/email': typeof V1TeamInvitationsEmailRoute
   '/v1/team-tunnels/provision': typeof V1TeamTunnelsProvisionRoute
+  '/v1/skills/': typeof V1SkillsIndexRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
+  '/v1/skills/$skillId/content': typeof V1SkillsSkillIdContentRoute
+  '/v1/skills/$skillId/icon': typeof V1SkillsSkillIdIconRoute
+  '/v1/skills/$skillId/install': typeof V1SkillsSkillIdInstallRoute
+  '/v1/skills/admin/submissions': typeof V1SkillsAdminSubmissionsRouteWithChildren
+  '/v1/skills/admin/featured/$skillId': typeof V1SkillsAdminFeaturedSkillIdRoute
+  '/v1/skills/admin/submissions/$versionId': typeof V1SkillsAdminSubmissionsVersionIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -160,13 +226,22 @@ export interface FileRoutesByTo {
   '/v1/auth/logout': typeof V1AuthLogoutRoute
   '/v1/avatars/$userId': typeof V1AvatarsUserIdRoute
   '/v1/me/avatar': typeof V1MeAvatarRoute
+  '/v1/skills/$skillId': typeof V1SkillsSkillIdRouteWithChildren
+  '/v1/skills/mine': typeof V1SkillsMineRoute
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
   '/v1/team-auth/ticket': typeof V1TeamAuthTicketRoute
   '/v1/team-hosts/ice-servers': typeof V1TeamHostsIceServersRoute
   '/v1/team-invitations/email': typeof V1TeamInvitationsEmailRoute
   '/v1/team-tunnels/provision': typeof V1TeamTunnelsProvisionRoute
+  '/v1/skills': typeof V1SkillsIndexRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
+  '/v1/skills/$skillId/content': typeof V1SkillsSkillIdContentRoute
+  '/v1/skills/$skillId/icon': typeof V1SkillsSkillIdIconRoute
+  '/v1/skills/$skillId/install': typeof V1SkillsSkillIdInstallRoute
+  '/v1/skills/admin/submissions': typeof V1SkillsAdminSubmissionsRouteWithChildren
+  '/v1/skills/admin/featured/$skillId': typeof V1SkillsAdminFeaturedSkillIdRoute
+  '/v1/skills/admin/submissions/$versionId': typeof V1SkillsAdminSubmissionsVersionIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -182,13 +257,22 @@ export interface FileRoutesById {
   '/v1/auth/logout': typeof V1AuthLogoutRoute
   '/v1/avatars/$userId': typeof V1AvatarsUserIdRoute
   '/v1/me/avatar': typeof V1MeAvatarRoute
+  '/v1/skills/$skillId': typeof V1SkillsSkillIdRouteWithChildren
+  '/v1/skills/mine': typeof V1SkillsMineRoute
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
   '/v1/team-auth/ticket': typeof V1TeamAuthTicketRoute
   '/v1/team-hosts/ice-servers': typeof V1TeamHostsIceServersRoute
   '/v1/team-invitations/email': typeof V1TeamInvitationsEmailRoute
   '/v1/team-tunnels/provision': typeof V1TeamTunnelsProvisionRoute
+  '/v1/skills/': typeof V1SkillsIndexRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
+  '/v1/skills/$skillId/content': typeof V1SkillsSkillIdContentRoute
+  '/v1/skills/$skillId/icon': typeof V1SkillsSkillIdIconRoute
+  '/v1/skills/$skillId/install': typeof V1SkillsSkillIdInstallRoute
+  '/v1/skills/admin/submissions': typeof V1SkillsAdminSubmissionsRouteWithChildren
+  '/v1/skills/admin/featured/$skillId': typeof V1SkillsAdminFeaturedSkillIdRoute
+  '/v1/skills/admin/submissions/$versionId': typeof V1SkillsAdminSubmissionsVersionIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -205,13 +289,22 @@ export interface FileRouteTypes {
     | '/v1/auth/logout'
     | '/v1/avatars/$userId'
     | '/v1/me/avatar'
+    | '/v1/skills/$skillId'
+    | '/v1/skills/mine'
     | '/v1/team-auth/redeem'
     | '/v1/team-auth/ticket'
     | '/v1/team-hosts/ice-servers'
     | '/v1/team-invitations/email'
     | '/v1/team-tunnels/provision'
+    | '/v1/skills/'
     | '/v1/auth/email/start'
     | '/v1/auth/email/verify'
+    | '/v1/skills/$skillId/content'
+    | '/v1/skills/$skillId/icon'
+    | '/v1/skills/$skillId/install'
+    | '/v1/skills/admin/submissions'
+    | '/v1/skills/admin/featured/$skillId'
+    | '/v1/skills/admin/submissions/$versionId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -226,13 +319,22 @@ export interface FileRouteTypes {
     | '/v1/auth/logout'
     | '/v1/avatars/$userId'
     | '/v1/me/avatar'
+    | '/v1/skills/$skillId'
+    | '/v1/skills/mine'
     | '/v1/team-auth/redeem'
     | '/v1/team-auth/ticket'
     | '/v1/team-hosts/ice-servers'
     | '/v1/team-invitations/email'
     | '/v1/team-tunnels/provision'
+    | '/v1/skills'
     | '/v1/auth/email/start'
     | '/v1/auth/email/verify'
+    | '/v1/skills/$skillId/content'
+    | '/v1/skills/$skillId/icon'
+    | '/v1/skills/$skillId/install'
+    | '/v1/skills/admin/submissions'
+    | '/v1/skills/admin/featured/$skillId'
+    | '/v1/skills/admin/submissions/$versionId'
   id:
     | '__root__'
     | '/'
@@ -247,13 +349,22 @@ export interface FileRouteTypes {
     | '/v1/auth/logout'
     | '/v1/avatars/$userId'
     | '/v1/me/avatar'
+    | '/v1/skills/$skillId'
+    | '/v1/skills/mine'
     | '/v1/team-auth/redeem'
     | '/v1/team-auth/ticket'
     | '/v1/team-hosts/ice-servers'
     | '/v1/team-invitations/email'
     | '/v1/team-tunnels/provision'
+    | '/v1/skills/'
     | '/v1/auth/email/start'
     | '/v1/auth/email/verify'
+    | '/v1/skills/$skillId/content'
+    | '/v1/skills/$skillId/icon'
+    | '/v1/skills/$skillId/install'
+    | '/v1/skills/admin/submissions'
+    | '/v1/skills/admin/featured/$skillId'
+    | '/v1/skills/admin/submissions/$versionId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -268,13 +379,18 @@ export interface RootRouteChildren {
   V1MeRoute: typeof V1MeRouteWithChildren
   V1AuthLogoutRoute: typeof V1AuthLogoutRoute
   V1AvatarsUserIdRoute: typeof V1AvatarsUserIdRoute
+  V1SkillsSkillIdRoute: typeof V1SkillsSkillIdRouteWithChildren
+  V1SkillsMineRoute: typeof V1SkillsMineRoute
   V1TeamAuthRedeemRoute: typeof V1TeamAuthRedeemRoute
   V1TeamAuthTicketRoute: typeof V1TeamAuthTicketRoute
   V1TeamHostsIceServersRoute: typeof V1TeamHostsIceServersRoute
   V1TeamInvitationsEmailRoute: typeof V1TeamInvitationsEmailRoute
   V1TeamTunnelsProvisionRoute: typeof V1TeamTunnelsProvisionRoute
+  V1SkillsIndexRoute: typeof V1SkillsIndexRoute
   V1AuthEmailStartRoute: typeof V1AuthEmailStartRoute
   V1AuthEmailVerifyRoute: typeof V1AuthEmailVerifyRoute
+  V1SkillsAdminSubmissionsRoute: typeof V1SkillsAdminSubmissionsRouteWithChildren
+  V1SkillsAdminFeaturedSkillIdRoute: typeof V1SkillsAdminFeaturedSkillIdRoute
 }
 
 declare module '@tanstack/solid-router' {
@@ -363,6 +479,27 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1MeAvatarRouteImport
       parentRoute: typeof V1MeRoute
     }
+    '/v1/skills/': {
+      id: '/v1/skills/'
+      path: '/v1/skills'
+      fullPath: '/v1/skills/'
+      preLoaderRoute: typeof V1SkillsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/skills/$skillId': {
+      id: '/v1/skills/$skillId'
+      path: '/v1/skills/$skillId'
+      fullPath: '/v1/skills/$skillId'
+      preLoaderRoute: typeof V1SkillsSkillIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/skills/mine': {
+      id: '/v1/skills/mine'
+      path: '/v1/skills/mine'
+      fullPath: '/v1/skills/mine'
+      preLoaderRoute: typeof V1SkillsMineRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/v1/team-auth/redeem': {
       id: '/v1/team-auth/redeem'
       path: '/v1/team-auth/redeem'
@@ -412,6 +549,48 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1AuthEmailVerifyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/v1/skills/$skillId/content': {
+      id: '/v1/skills/$skillId/content'
+      path: '/content'
+      fullPath: '/v1/skills/$skillId/content'
+      preLoaderRoute: typeof V1SkillsSkillIdContentRouteImport
+      parentRoute: typeof V1SkillsSkillIdRoute
+    }
+    '/v1/skills/$skillId/icon': {
+      id: '/v1/skills/$skillId/icon'
+      path: '/icon'
+      fullPath: '/v1/skills/$skillId/icon'
+      preLoaderRoute: typeof V1SkillsSkillIdIconRouteImport
+      parentRoute: typeof V1SkillsSkillIdRoute
+    }
+    '/v1/skills/$skillId/install': {
+      id: '/v1/skills/$skillId/install'
+      path: '/install'
+      fullPath: '/v1/skills/$skillId/install'
+      preLoaderRoute: typeof V1SkillsSkillIdInstallRouteImport
+      parentRoute: typeof V1SkillsSkillIdRoute
+    }
+    '/v1/skills/admin/submissions': {
+      id: '/v1/skills/admin/submissions'
+      path: '/v1/skills/admin/submissions'
+      fullPath: '/v1/skills/admin/submissions'
+      preLoaderRoute: typeof V1SkillsAdminSubmissionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/skills/admin/featured/$skillId': {
+      id: '/v1/skills/admin/featured/$skillId'
+      path: '/v1/skills/admin/featured/$skillId'
+      fullPath: '/v1/skills/admin/featured/$skillId'
+      preLoaderRoute: typeof V1SkillsAdminFeaturedSkillIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/skills/admin/submissions/$versionId': {
+      id: '/v1/skills/admin/submissions/$versionId'
+      path: '/$versionId'
+      fullPath: '/v1/skills/admin/submissions/$versionId'
+      preLoaderRoute: typeof V1SkillsAdminSubmissionsVersionIdRouteImport
+      parentRoute: typeof V1SkillsAdminSubmissionsRoute
+    }
   }
 }
 
@@ -424,6 +603,37 @@ const V1MeRouteChildren: V1MeRouteChildren = {
 }
 
 const V1MeRouteWithChildren = V1MeRoute._addFileChildren(V1MeRouteChildren)
+
+interface V1SkillsSkillIdRouteChildren {
+  V1SkillsSkillIdContentRoute: typeof V1SkillsSkillIdContentRoute
+  V1SkillsSkillIdIconRoute: typeof V1SkillsSkillIdIconRoute
+  V1SkillsSkillIdInstallRoute: typeof V1SkillsSkillIdInstallRoute
+}
+
+const V1SkillsSkillIdRouteChildren: V1SkillsSkillIdRouteChildren = {
+  V1SkillsSkillIdContentRoute: V1SkillsSkillIdContentRoute,
+  V1SkillsSkillIdIconRoute: V1SkillsSkillIdIconRoute,
+  V1SkillsSkillIdInstallRoute: V1SkillsSkillIdInstallRoute,
+}
+
+const V1SkillsSkillIdRouteWithChildren = V1SkillsSkillIdRoute._addFileChildren(
+  V1SkillsSkillIdRouteChildren,
+)
+
+interface V1SkillsAdminSubmissionsRouteChildren {
+  V1SkillsAdminSubmissionsVersionIdRoute: typeof V1SkillsAdminSubmissionsVersionIdRoute
+}
+
+const V1SkillsAdminSubmissionsRouteChildren: V1SkillsAdminSubmissionsRouteChildren =
+  {
+    V1SkillsAdminSubmissionsVersionIdRoute:
+      V1SkillsAdminSubmissionsVersionIdRoute,
+  }
+
+const V1SkillsAdminSubmissionsRouteWithChildren =
+  V1SkillsAdminSubmissionsRoute._addFileChildren(
+    V1SkillsAdminSubmissionsRouteChildren,
+  )
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -438,13 +648,18 @@ const rootRouteChildren: RootRouteChildren = {
   V1MeRoute: V1MeRouteWithChildren,
   V1AuthLogoutRoute: V1AuthLogoutRoute,
   V1AvatarsUserIdRoute: V1AvatarsUserIdRoute,
+  V1SkillsSkillIdRoute: V1SkillsSkillIdRouteWithChildren,
+  V1SkillsMineRoute: V1SkillsMineRoute,
   V1TeamAuthRedeemRoute: V1TeamAuthRedeemRoute,
   V1TeamAuthTicketRoute: V1TeamAuthTicketRoute,
   V1TeamHostsIceServersRoute: V1TeamHostsIceServersRoute,
   V1TeamInvitationsEmailRoute: V1TeamInvitationsEmailRoute,
   V1TeamTunnelsProvisionRoute: V1TeamTunnelsProvisionRoute,
+  V1SkillsIndexRoute: V1SkillsIndexRoute,
   V1AuthEmailStartRoute: V1AuthEmailStartRoute,
   V1AuthEmailVerifyRoute: V1AuthEmailVerifyRoute,
+  V1SkillsAdminSubmissionsRoute: V1SkillsAdminSubmissionsRouteWithChildren,
+  V1SkillsAdminFeaturedSkillIdRoute: V1SkillsAdminFeaturedSkillIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

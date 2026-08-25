@@ -5,6 +5,7 @@ import { D1AuthRepository } from "./d1-auth-repository";
 import { D1TeamTunnelRepository } from "./d1-team-tunnel-repository";
 import { createEmailCodeDelivery, createTeamInviteEmailDelivery } from "./email-delivery";
 import { JsonBodyError } from "./json-body";
+import { SkillMarketplace, SkillMarketplaceError } from "./skill-marketplace";
 import { authenticateTeamHost, TeamTunnelService } from "./team-tunnel-service";
 import { requireWorkerBindings, type TeamInviteEmailDelivery } from "./types";
 
@@ -21,6 +22,28 @@ export function requestAuthService(): AuthService {
 export function requestAvatarBucket(): R2Bucket {
   const bindings = requireWorkerBindings(env);
   return bindings.AVATARS;
+}
+
+export function requestSkillMarketplace(): SkillMarketplace {
+  const bindings = requireWorkerBindings(env);
+  return new SkillMarketplace(bindings);
+}
+
+export async function requestUser(request: Request) {
+  const token = bearerToken(request);
+  if (!token) return null;
+  return requestAuthService().authenticate(token);
+}
+
+export function skillErrorResponse(error: unknown): Response {
+  if (error instanceof SkillMarketplaceError) return apiError(error.status, error.code, error.message);
+  return authErrorResponse(error);
+}
+
+export function requireSkillsAdmin(request: Request): boolean {
+  const bindings = requireWorkerBindings(env);
+  const expected = bindings.SKILLS_ADMIN_TOKEN;
+  return Boolean(expected && bearerToken(request) === expected);
 }
 
 export function requestTeamInviteEmailDelivery(): TeamInviteEmailDelivery | null {

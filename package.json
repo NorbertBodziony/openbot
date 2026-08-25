@@ -93,6 +93,8 @@
     "test:team-live": "bun scripts/team-connection-smoke.ts",
     "test:remote-desktop-runtime": "bun scripts/remote-desktop-runtime-smoke.ts",
     "codex:doctor": "bun scripts/codex-doctor.ts",
+    "skills:review": "bun scripts/review-skills.ts",
+    "skills:seed": "bun scripts/seed-marketplace-skills.ts",
     "release:preflight": "bun scripts/release-preflight.ts",
     "release:patch": "bun scripts/prepare-release.ts patch",
     "release:minor": "bun scripts/prepare-release.ts minor",
@@ -123,10 +125,12 @@
     "@speed-highlight/core": "1.2.24",
     "@tanstack/virtual-core": "3.17.8",
     "electron-updater": "6.8.9",
+    "fflate": "0.8.2",
     "lucide-solid": "^1.33.0",
     "marked": "18.0.10",
     "solid-js": "2.0.0-rc.0",
     "ws": "8.21.3",
+    "yaml": "2.8.1",
     "zod": "4.4.3"
   },
   "devDependencies": {

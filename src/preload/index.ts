@@ -13,10 +13,14 @@ import {
   type DraftAttachment,
   type FilePreview,
   type ImportAttachmentsInput,
+  type InstalledSkill,
   IPC_CHANNELS,
   isAgentModel,
   isConversationMessage,
   isReasoningEffort,
+  isSkillCategory,
+  type MarketplaceSkillDetail,
+  type MarketplaceSkillPage,
   type OpenBotDesktopApi,
   type QueuedMessageReceipt,
   type QueueSnapshot,
@@ -24,9 +28,18 @@ import {
   type ScopedDirectMessageEvent,
   type ScopedDirectTypingEvent,
   type ScopedTeamPresenceSnapshot,
+  type SkillPackagePreview,
+  type SkillSubmission,
   type UpdateStatus,
 } from "@openbot/contracts/ipc";
-import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import {
+  type DynamicRecord,
+  isBoolean,
+  isDynamicRecord,
+  isNumber,
+  isOneOf,
+  isString,
+} from "@openbot/contracts/runtime-values";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 const attachmentImportListeners = new Set<(event: AttachmentImportEvent) => void>();
@@ -359,12 +372,117 @@ function requiredNullableString(value: DynamicRecord, field: string): string | n
   return item;
 }
 
+function decodeSkillSummary(value: unknown) {
+  const item = record(value, "marketplace skill");
+  if (!isSkillCategory(item.category)) throw new Error("Invalid skill category.");
+  return {
+    id: requiredString(item, "id"),
+    slug: requiredString(item, "slug"),
+    name: requiredString(item, "name"),
+    description: requiredString(item, "description"),
+    category: item.category,
+    creatorName: requiredString(item, "creatorName"),
+    version: requiredNumber(item, "version"),
+    installs: requiredNumber(item, "installs"),
+    featured: requiredBoolean(item, "featured"),
+    iconUrl: requiredNullableString(item, "iconUrl"),
+    updatedAt: requiredString(item, "updatedAt"),
+  };
+}
+
+function decodeSkillPage(value: unknown): MarketplaceSkillPage {
+  const page = record(value, "marketplace page");
+  if (!Array.isArray(page.skills)) throw new Error("Invalid marketplace skills.");
+  return { skills: page.skills.map(decodeSkillSummary), nextCursor: requiredNullableString(page, "nextCursor") };
+}
+
+function decodeSkillDetail(value: unknown): MarketplaceSkillDetail {
+  const item = record(value, "skill detail");
+  const summary = decodeSkillSummary(item);
+  if (!Array.isArray(item.files) || !item.files.every(isString)) throw new Error("Invalid skill files.");
+  return {
+    ...summary,
+    versionId: requiredString(item, "versionId"),
+    bundleSha256: requiredString(item, "bundleSha256"),
+    files: item.files,
+    instructions: requiredString(item, "instructions"),
+  };
+}
+
+function decodeSubmission(value: unknown): SkillSubmission {
+  const item = record(value, "skill submission");
+  const status = item.status;
+  if (!isSkillCategory(item.category) || !isOneOf(["pending", "approved", "rejected"], status)) {
+    throw new Error("Invalid skill submission state.");
+  }
+  return {
+    id: requiredString(item, "id"),
+    skillId: requiredString(item, "skillId"),
+    slug: requiredString(item, "slug"),
+    name: requiredString(item, "name"),
+    description: requiredString(item, "description"),
+    category: item.category,
+    version: requiredNumber(item, "version"),
+    status,
+    rejectionNote: requiredNullableString(item, "rejectionNote"),
+    iconUrl: requiredNullableString(item, "iconUrl"),
+    createdAt: requiredString(item, "createdAt"),
+  };
+}
+
+function decodeSubmissions(value: unknown): SkillSubmission[] {
+  if (!Array.isArray(value)) throw new Error("Invalid skill submissions.");
+  return value.map(decodeSubmission);
+}
+
+function decodeSkillPreview(value: unknown): SkillPackagePreview | null {
+  if (value === null) return null;
+  const item = record(value, "skill package preview");
+  if (!Array.isArray(item.files) || !item.files.every(isString)) throw new Error("Invalid skill package files.");
+  return {
+    draftId: requiredString(item, "draftId"),
+    name: requiredString(item, "name"),
+    description: requiredString(item, "description"),
+    slug: requiredString(item, "slug"),
+    files: item.files,
+    size: requiredNumber(item, "size"),
+  };
+}
+
+function decodeInstalledSkill(value: unknown): InstalledSkill {
+  const item = record(value, "installed skill");
+  const state = item.state;
+  if (!isOneOf(["installed", "update-available", "modified", "needs-repair"], state)) {
+    throw new Error("Invalid installed skill state.");
+  }
+  return {
+    skillId: requiredString(item, "skillId"),
+    slug: requiredString(item, "slug"),
+    name: requiredString(item, "name"),
+    installedVersion: requiredNumber(item, "installedVersion"),
+    availableVersion: requiredNumber(item, "availableVersion"),
+    state,
+  };
+}
+
+function decodeInstalledSkills(value: unknown): InstalledSkill[] {
+  if (!Array.isArray(value)) throw new Error("Invalid installed skills.");
+  return value.map(decodeInstalledSkill);
+}
+
+function isConversationDropTarget(target: EventTarget | null): boolean {
+  const conversation = document.querySelector(".conversation-panel");
+  return target instanceof Node && Boolean(conversation?.contains(target));
+}
+
 window.addEventListener("dragover", (event) => {
+  if (!isConversationDropTarget(event.target)) return;
   if ([...(event.dataTransfer?.items ?? [])].some((item) => item.kind === "file")) {
     event.preventDefault();
   }
 });
 window.addEventListener("drop", (event) => {
+  if (!isConversationDropTarget(event.target)) return;
   const files = [...(event.dataTransfer?.files ?? [])];
   if (!files.length) return;
   event.preventDefault();
@@ -406,6 +524,16 @@ const openbotApi: OpenBotDesktopApi = {
       ipcRenderer.on(IPC_CHANNELS.authEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.authEvent, handler);
     },
+  },
+  skills: {
+    list: (query) => ipcRenderer.invoke(IPC_CHANNELS.skillsList, query ?? null).then(decodeSkillPage),
+    get: (skillId) => ipcRenderer.invoke(IPC_CHANNELS.skillsGet, skillId).then(decodeSkillDetail),
+    listMine: () => ipcRenderer.invoke(IPC_CHANNELS.skillsListMine).then(decodeSubmissions),
+    choosePackage: () => ipcRenderer.invoke(IPC_CHANNELS.skillsChoosePackage).then(decodeSkillPreview),
+    submit: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsSubmit, input).then(decodeSubmission),
+    listInstalled: (botId) => ipcRenderer.invoke(IPC_CHANNELS.skillsListInstalled, botId).then(decodeInstalledSkills),
+    install: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsInstall, input).then(decodeInstalledSkill),
+    uninstall: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsUninstall, input).then(decodeVoid),
   },
   agent: {
     getStatus: () => invokeAgent(IPC_CHANNELS.agentGetStatus, null, decodeAgentStatus),

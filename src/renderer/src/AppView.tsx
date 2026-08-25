@@ -32,6 +32,9 @@ const RemoteDesktopWorkspace = lazy(() =>
 const ServerSettingsModal = lazy(() =>
   import("./components/ServerSettingsModal").then((module) => ({ default: module.ServerSettingsModal })),
 );
+const SkillsMarketplaceModal = lazy(() =>
+  import("./components/SkillsMarketplaceModal").then((module) => ({ default: module.SkillsMarketplaceModal })),
+);
 export function AppAccessGate() {
   const {
     setupLoaded,
@@ -154,6 +157,7 @@ function WorkspaceShell(props: {
     updateAccountAvatar,
     logoutCentralAccount,
     setPermissionsOpen,
+    setSkillsMarketplaceOpen,
     LEFT_PANEL_DEFAULT,
     LEFT_PANEL_MIN,
     LEFT_PANEL_MAX,
@@ -315,6 +319,7 @@ function WorkspaceShell(props: {
             onLogout={logoutCentralAccount}
             onOpenExternal={(destination) => window.openbot.openExternal(destination)}
             onOpenPermissions={() => setPermissionsOpen(true)}
+            onOpenSkills={() => setSkillsMarketplaceOpen(true)}
           />
         </Loading>
       </Show>
@@ -456,6 +461,8 @@ function WorkspaceOverlays(props: {
   const {
     props: appProps,
     permissionsOpen,
+    skillsMarketplaceOpen,
+    setSkillsMarketplaceOpen,
     setupState,
     agentStatus,
     appInfo,
@@ -487,6 +494,8 @@ function WorkspaceOverlays(props: {
     revokeServerInvite,
     globalSearchOpen,
     botList,
+    activeBot,
+    activeServer,
     searchGlobalMessages,
     setGlobalSearchVisibility,
     selectBot,
@@ -517,6 +526,16 @@ function WorkspaceOverlays(props: {
             onJoinRemote={joinRemoteDuringSetup}
             onLogout={logoutCentralAccount}
             onClose={() => setPermissionsOpen(false)}
+          />
+        </Loading>
+      </Show>
+      <Show when={skillsMarketplaceOpen()}>
+        <Loading>
+          <SkillsMarketplaceModal
+            open={true}
+            bots={activeServer()?.kind === "local" ? botList() : []}
+            activeBotId={activeServer()?.kind === "local" ? (activeBot()?.id ?? "") : ""}
+            onOpenChange={setSkillsMarketplaceOpen}
           />
         </Loading>
       </Show>
