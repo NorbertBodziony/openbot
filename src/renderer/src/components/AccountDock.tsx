@@ -9,7 +9,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { normalizeAvatarFile } from "../avatar-image";
-import { Badge, Button, Input, Popover } from "./ui";
+import { Badge, Button, Input, Popover, Puzzle } from "./ui";
 
 interface AccountDockProps {
   account: CentralAuthUser;
@@ -25,6 +25,7 @@ interface AccountDockProps {
   onLogout: () => Promise<void>;
   onOpenExternal: (destination: ExternalDestination) => Promise<void>;
   onOpenPermissions: () => void;
+  onOpenSkills: () => void;
 }
 
 function UsageIcon() {
@@ -369,6 +370,17 @@ export function AccountDock(props: AccountDockProps) {
             </Button>
 
             <div class="account-menu-separator" />
+            <Button
+              type="button"
+              class="account-menu-row"
+              onClick={() => {
+                setOpen(false);
+                props.onOpenSkills();
+              }}
+            >
+              <Puzzle class="account-menu-icon" />
+              <span>Skills marketplace</span>
+            </Button>
             <Button
               type="button"
               class="account-menu-row"

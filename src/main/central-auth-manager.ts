@@ -80,6 +80,29 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     return structuredClone(this.#state.user);
   }
 
+  resolveApiUrl(path: string): string {
+    return new URL(path, this.#options.apiUrl).toString();
+  }
+
+  requestAuthorized<T>(
+    path: string,
+    init: RequestInit,
+    decoder: (value: unknown) => T,
+    timeoutMs?: number,
+  ): Promise<T> {
+    return this.#authorizedRequest(path, init, decoder, timeoutMs);
+  }
+
+  async downloadAuthorized(path: string, timeoutMs = 30_000): Promise<Uint8Array> {
+    if (!this.#sessionToken) throw new AuthApiError(401, "unauthorized", "Sign in is required.");
+    const response = await this.#options.fetch(new URL(path, this.#options.apiUrl), {
+      headers: { Authorization: `Bearer ${this.#sessionToken}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) throw await AuthApiError.fromResponse(response);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
   async createTeamAuthTicket(serverId: string): Promise<string> {
     const result = await this.#authorizedRequest(
       "/v1/team-auth/ticket",

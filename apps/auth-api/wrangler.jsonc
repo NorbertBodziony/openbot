@@ -20,7 +20,7 @@
     }
   ],
   "secrets": {
-    "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN"]
+    "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN"]
   },
   "vars": {
     "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
@@ -45,6 +45,11 @@
       "binding": "AVATARS",
       "bucket_name": "openbot-avatars",
       "preview_bucket_name": "openbot-avatars-test"
+    },
+    {
+      "binding": "SKILLS",
+      "bucket_name": "openbot-skills",
+      "preview_bucket_name": "openbot-skills-test"
     }
   ],
   "env": {
@@ -81,7 +86,7 @@
         "crons": []
       },
       "secrets": {
-        "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN"]
+        "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN"]
       },
       "vars": {
         "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
@@ -105,6 +110,10 @@
         {
           "binding": "AVATARS",
           "bucket_name": "openbot-avatars-test"
+        },
+        {
+          "binding": "SKILLS",
+          "bucket_name": "openbot-skills-test"
         }
       ]
     }

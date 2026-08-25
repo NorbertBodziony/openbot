@@ -373,6 +373,22 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         return () => authListeners.delete(listener);
       },
     },
+    skills: {
+      list: async () => ({ skills: [], nextCursor: null }),
+      get: async () => {
+        throw new Error("Skill not found");
+      },
+      listMine: async () => [],
+      choosePackage: async () => null,
+      submit: async () => {
+        throw new Error("Skill submission is unavailable in preview mode.");
+      },
+      listInstalled: async () => [],
+      install: async () => {
+        throw new Error("Skill installation is unavailable in preview mode.");
+      },
+      uninstall: async () => undefined,
+    },
     agent: {
       getStatus: async () => clone(agentStatus),
       getUsage: async () => clone(usage),

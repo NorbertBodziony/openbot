@@ -3,6 +3,7 @@ import { isDynamicRecord, isFunction } from "@openbot/contracts/runtime-values";
 export interface WorkerBindings {
   DB: D1Database;
   AVATARS: R2Bucket;
+  SKILLS: R2Bucket;
   AUTH_EXPOSE_DEVELOPMENT_CODE?: string;
   EMAIL_SMTP_HOST?: string;
   EMAIL_SMTP_PORT?: string;
@@ -15,19 +16,25 @@ export interface WorkerBindings {
   CLOUDFLARE_ZONE_ID?: string;
   CLOUDFLARE_TUNNEL_DOMAIN?: string;
   CLOUDFLARE_API_TOKEN?: string;
+  SKILLS_ADMIN_TOKEN?: string;
 }
 
 export function isWorkerBindings(value: unknown): value is WorkerBindings {
   if (!isDynamicRecord(value)) return false;
   const database = value.DB;
   const avatars = value.AVATARS;
+  const skills = value.SKILLS;
   if (
     !isDynamicRecord(database) ||
     !isFunction(database.prepare) ||
     !isDynamicRecord(avatars) ||
     !isFunction(avatars.get) ||
     !isFunction(avatars.put) ||
-    !isFunction(avatars.delete)
+    !isFunction(avatars.delete) ||
+    !isDynamicRecord(skills) ||
+    !isFunction(skills.get) ||
+    !isFunction(skills.put) ||
+    !isFunction(skills.delete)
   ) {
     return false;
   }
