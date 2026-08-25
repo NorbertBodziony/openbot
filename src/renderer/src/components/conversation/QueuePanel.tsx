@@ -1,5 +1,6 @@
 import type { QueueDelivery } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, createUniqueId, For, onCleanup, Show, untrack } from "solid-js";
+import { createVerticalDragPreview } from "../createVerticalDragPreview";
 import { Button } from "../ui";
 import { AnchoredTooltip } from "./AnchoredTooltip";
 import { fileBadge } from "./AttachmentCards";
@@ -38,6 +39,7 @@ export function QueuePanel(props: QueuePanelProps) {
   let lastDragClientY = 0;
   let autoScrollVelocity = 0;
   let autoScrollFrame: number | null = null;
+  const dragPreview = createVerticalDragPreview();
   let editingExitTimer: ReturnType<typeof setTimeout> | undefined;
   const externalRemovalTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const animationTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -177,6 +179,7 @@ export function QueuePanel(props: QueuePanelProps) {
 
   onCleanup(() => {
     stopAutoScroll();
+    dragPreview.stop();
     if (editingExitTimer) clearTimeout(editingExitTimer);
     for (const timer of externalRemovalTimers.values()) clearTimeout(timer);
     for (const timer of animationTimers) clearTimeout(timer);
@@ -295,19 +298,13 @@ export function QueuePanel(props: QueuePanelProps) {
   }
 
   function setDragPreview(event: DragEvent & { currentTarget: HTMLFieldSetElement }) {
-    if (!event.dataTransfer?.setDragImage) return;
-
-    const source = event.currentTarget;
-    const preview = source.cloneNode(true);
-    if (!(preview instanceof HTMLFieldSetElement)) return;
-    preview.classList.remove("agent-queue-item-dragging", "agent-queue-item-drag-over");
-    preview.classList.add("agent-queue-drag-preview");
-    preview.setAttribute("aria-hidden", "true");
-    preview.removeAttribute("tabindex");
-    preview.style.width = `${source.getBoundingClientRect().width}px`;
-    document.body.append(preview);
-    event.dataTransfer.setDragImage(preview, 28, 15);
-    requestAnimationFrame(() => preview.remove());
+    if (!queueList) return;
+    dragPreview.start({
+      bounds: queueList,
+      className: "agent-queue-drag-preview",
+      event,
+      source: event.currentTarget,
+    });
   }
 
   function moveDelivery(deliveryId: string, direction: -1 | 1) {
@@ -369,6 +366,7 @@ export function QueuePanel(props: QueuePanelProps) {
           if (!draggedId()) return;
           event.preventDefault();
           if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+          dragPreview.move(event.clientY);
           updateDragTarget(event.clientY);
           updateAutoScroll(event.clientY);
         }}
@@ -379,6 +377,7 @@ export function QueuePanel(props: QueuePanelProps) {
           setDraggedId(null);
           setDragOverId(null);
           stopAutoScroll();
+          dragPreview.stop();
         }}
       >
         <div class="agent-queue-panel-resize" ref={(element) => (queueResizeContainer = element)}>
@@ -423,6 +422,7 @@ export function QueuePanel(props: QueuePanelProps) {
                       setDraggedId(null);
                       setDragOverId(null);
                       stopAutoScroll();
+                      dragPreview.stop();
                     }}
                     onKeyDown={(event) => {
                       if (delivery.status !== "queued" || !event.altKey) return;

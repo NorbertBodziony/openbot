@@ -358,6 +358,18 @@
   opacity: 0.55;
 }
 
+.server-rail-drag-preview {
+  position: fixed;
+  z-index: var(--openbot-layer-dropdown);
+  box-sizing: border-box;
+  margin: 0;
+  list-style: none;
+  opacity: 0.96;
+  pointer-events: none;
+  transform: none;
+  transition: none;
+}
+
 .server-rail-server-item-dragging .server-rail-button,
 .server-rail-remote-list[data-dragging] {
   cursor: grabbing;

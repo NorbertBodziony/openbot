@@ -1,5 +1,6 @@
 import type { ServerSummary } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
+import { createVerticalDragPreview } from "./createVerticalDragPreview";
 import { Button, ContextMenu, Tooltip } from "./ui";
 
 const SERVER_RAIL_TOOLTIP_OPEN_DELAY = 150;
@@ -30,10 +31,14 @@ export function ServerRail(props: ServerRailProps) {
   let lastDragClientY = 0;
   let autoScrollVelocity = 0;
   let autoScrollFrame: number | null = null;
+  const dragPreview = createVerticalDragPreview();
   const localServers = () => props.servers.filter((server) => server.kind === "local");
   const remoteServers = () => props.servers.filter((server) => server.kind === "remote");
 
-  onCleanup(stopAutoScroll);
+  onCleanup(() => {
+    stopAutoScroll();
+    dragPreview.stop();
+  });
 
   onSettled(() => {
     const resizeObserver = new ResizeObserver(updateScrollFade);
@@ -184,6 +189,7 @@ export function ServerRail(props: ServerRailProps) {
     setDraggedId(null);
     setDragOverId(null);
     stopAutoScroll();
+    dragPreview.stop();
   }
 
   return (
@@ -194,6 +200,7 @@ export function ServerRail(props: ServerRailProps) {
         if (!draggedId()) return;
         event.preventDefault();
         if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+        dragPreview.move(event.clientY);
         updateDragTarget(event.clientY);
         updateAutoScroll(event.clientY);
       }}
@@ -243,6 +250,14 @@ export function ServerRail(props: ServerRailProps) {
                     event.dataTransfer?.setData("text/plain", server().id);
                     if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
                     measureDragSlots();
+                    if (railList) {
+                      dragPreview.start({
+                        bounds: railList,
+                        className: "server-rail-drag-preview",
+                        event,
+                        source: event.currentTarget,
+                      });
+                    }
                     setDraggedId(server().id);
                     setDragOverId(server().id);
                   }}
