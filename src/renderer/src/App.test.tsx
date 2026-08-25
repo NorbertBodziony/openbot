@@ -301,6 +301,20 @@ describe("OpenBot connected desktop shell", () => {
           openAttachment: vi.fn().mockResolvedValue(undefined),
           openSharedFile: vi.fn().mockResolvedValue(undefined),
           openWorkspaceFile: vi.fn().mockResolvedValue(undefined),
+          previewSharedFile: vi.fn().mockResolvedValue({
+            name: "preview.md",
+            size: 9,
+            mimeType: "text/plain",
+            previewKind: "markdown",
+            bytes: new TextEncoder().encode("# Preview"),
+          }),
+          previewWorkspaceFile: vi.fn().mockResolvedValue({
+            name: "preview.md",
+            size: 9,
+            mimeType: "text/plain",
+            previewKind: "markdown",
+            bytes: new TextEncoder().encode("# Preview"),
+          }),
           sendMessage: vi.fn().mockResolvedValue({
             messageId: "message-1",
             deliveries: [{ id: "delivery-1", recipientBotId: "chief", status: "queued", position: 1 }],
@@ -2523,6 +2537,67 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
     expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+  });
+
+  it("opens workspace Markdown in the right sidebar and keeps external opening explicit", async () => {
+    const workspacePath = "/tmp/OpenBot/Bots/chief/recipe-tomato-basil-pasta.md";
+    const sharedPath = "/tmp/OpenBot/Shared/menu.txt";
+    vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) => ({
+      botId,
+      threadId: botId === "chief" ? "thread-chief" : null,
+      activeTurnId: null,
+      revision: 1,
+      messages:
+        botId === "chief"
+          ? [
+              {
+                id: "message-file-preview",
+                author: "assistant",
+                text: `Created [recipe-tomato-basil-pasta.md](${workspacePath}) and [menu.txt](${sharedPath}).`,
+                createdAt: "2026-08-24T12:16:00.000Z",
+                status: "completed",
+              },
+            ]
+          : [],
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    }));
+    vi.mocked(window.openbot.agent.previewWorkspaceFile).mockResolvedValueOnce({
+      name: "recipe-tomato-basil-pasta.md",
+      size: 41,
+      mimeType: "text/plain",
+      previewKind: "markdown",
+      bytes: new TextEncoder().encode("# Tomato Basil Pasta\n\nUse **fresh basil**."),
+    });
+    vi.mocked(window.openbot.agent.previewSharedFile).mockResolvedValueOnce({
+      name: "menu.txt",
+      size: 12,
+      mimeType: "text/plain",
+      previewKind: "text",
+      bytes: new TextEncoder().encode("Pasta menu"),
+    });
+
+    render(() => <App />);
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "Open workspace file recipe-tomato-basil-pasta.md" }),
+    );
+
+    expect(await screen.findByRole("complementary", { name: "File preview" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Tomato Basil Pasta" })).toBeInTheDocument();
+    expect(screen.getByText("fresh basil").tagName).toBe("STRONG");
+    expect(window.openbot.agent.previewWorkspaceFile).toHaveBeenCalledWith({ botId: "chief", path: workspacePath });
+    expect(window.openbot.agent.openWorkspaceFile).not.toHaveBeenCalled();
+    expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open file externally" }));
+    expect(window.openbot.agent.openWorkspaceFile).toHaveBeenCalledWith({ botId: "chief", path: workspacePath });
+    await fireEvent.click(screen.getByRole("button", { name: "Close file preview" }));
+    expect(screen.queryByRole("complementary", { name: "File preview" })).not.toBeInTheDocument();
+    expect(screen.getByRole("main", { name: "Conversation" })).not.toHaveClass("browser-panel-active");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open shared file menu.txt" }));
+    expect(await screen.findByText("Pasta menu")).toBeInTheDocument();
+    expect(window.openbot.agent.previewSharedFile).toHaveBeenCalledWith({ path: sharedPath });
+    expect(window.openbot.agent.openSharedFile).not.toHaveBeenCalled();
   });
 
   it("queues from the composer and clears only after success", async () => {

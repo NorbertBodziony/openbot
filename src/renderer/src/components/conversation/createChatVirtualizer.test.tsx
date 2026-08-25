@@ -13,6 +13,7 @@ describe("chat virtualizer", () => {
         getScrollElement: () => scrollElement ?? null,
         estimateSize: () => 128,
         getItemKey: (index) => `message-${index}`,
+        keyVersion: () => "message-0:message-1",
         scrollMargin: () => 64,
       });
 

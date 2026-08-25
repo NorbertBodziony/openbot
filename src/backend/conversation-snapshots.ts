@@ -118,6 +118,34 @@ export function mergeConversationSnapshots(
   return merged;
 }
 
+export function mergeProviderHistory(
+  stored: ConversationSnapshot,
+  imported: ConversationSnapshot,
+): ConversationSnapshot {
+  const importedIds = new Set(imported.messages.map((message) => message.id));
+  const importedAssistantMessages = new Set(
+    imported.messages.filter(isProviderAssistantMessage).map(providerMessageIdentity),
+  );
+  const reconciledStored = {
+    ...stored,
+    messages: stored.messages.filter(
+      (message) =>
+        importedIds.has(message.id) ||
+        !isProviderAssistantMessage(message) ||
+        !importedAssistantMessages.has(providerMessageIdentity(message)),
+    ),
+  };
+  return mergeConversationSnapshots(reconciledStored, imported);
+}
+
+function isProviderAssistantMessage(message: ConversationMessage): boolean {
+  return message.author === "assistant" && Boolean(message.turnId) && Boolean(message.text || message.imageGeneration);
+}
+
+function providerMessageIdentity(message: ConversationMessage): string {
+  return JSON.stringify([message.turnId, message.itemType ?? null, message.text, message.imageGeneration ?? null]);
+}
+
 export function sortConversationMessages(messages: ConversationMessage[]): void {
   const originalIndexes = new Map(messages.map((message, index) => [message, index]));
   const groupKeys = new Map<ConversationMessage, string>();

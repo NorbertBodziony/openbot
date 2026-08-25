@@ -420,6 +420,132 @@
     -10px 0 28px var(--openbot-accent-soft);
 }
 
+.file-preview-header {
+  display: flex;
+  height: 39px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--openbot-line);
+  padding: 0 7px 0 11px;
+}
+
+.file-preview-header h2 {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  margin: 0;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-preview-file-icon {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--openbot-text-muted);
+  stroke-width: 1.7;
+}
+
+.file-preview-content {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  background: var(--openbot-bg-canvas);
+}
+
+.file-preview-markdown {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 26px 48px;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-md);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.file-preview-text {
+  min-width: min-content;
+  min-height: 100%;
+  margin: 0;
+  padding: 18px 20px 48px;
+  color: var(--openbot-text-primary);
+  font-family: var(--openbot-font-mono);
+  font-size: var(--openbot-text-xs);
+  line-height: 1.55;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.file-preview-image-wrap {
+  display: grid;
+  min-height: 100%;
+  padding: 20px;
+  place-items: center;
+}
+
+.file-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.file-preview-pdf {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--openbot-bg-canvas);
+}
+
+.file-preview-unsupported {
+  display: grid;
+  min-height: 100%;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--openbot-text-muted);
+  text-align: center;
+}
+
+.file-preview-unsupported > svg {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 4px;
+}
+
+.file-preview-unsupported strong {
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-md);
+}
+
+.file-preview-unsupported span {
+  max-width: 260px;
+  font-size: var(--openbot-text-xs);
+  line-height: 1.45;
+}
+
+.file-preview-unsupported button {
+  margin-top: 6px;
+}
+
+.file-preview-truncated {
+  position: sticky;
+  bottom: 0;
+  margin: 0;
+  border-top: 1px solid var(--openbot-line);
+  background: var(--openbot-bg-control);
+  padding: 7px 12px;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-2xs);
+  text-align: center;
+}
+
 .browser-panel-pip {
   right: auto;
   bottom: auto;
@@ -1411,11 +1537,11 @@
 
 .agent-recipient-field input:focus-visible {
   outline: 0;
+  box-shadow: none;
 }
 
 .agent-picker-menu {
   position: absolute;
-  top: 44px;
   right: 0;
   left: 0;
   max-height: min(282px, calc(100vh - 144px));
@@ -1427,6 +1553,7 @@
   box-shadow:
     0 16px 38px var(--openbot-shadow-popover-ambient),
     0 2px 8px var(--openbot-shadow-popover-ambient);
+  transform-origin: top center;
   animation: agent-picker-in var(--openbot-duration-normal) cubic-bezier(0.2, 0.8, 0.2, 1) both;
   scrollbar-width: none;
 }
@@ -1921,6 +2048,11 @@
   position: absolute;
   inset: 0 0 auto;
   width: 100%;
+}
+
+.virtual-chat-list-static .virtual-chat-row {
+  position: relative;
+  inset: auto;
 }
 
 .conversation-history-status {
@@ -5773,14 +5905,18 @@
   max-width: calc(100% - var(--settings-panel-width, 296px) - 32px);
 }
 
-.conversation-panel:has(#browser-side-panel) .chat-search {
+.conversation-panel:has(#browser-side-panel) .chat-search,
+.conversation-panel:has(#file-preview-panel) .chat-search {
   right: calc(var(--browser-panel-width, 380px) + 16px);
   max-width: calc(100% - var(--browser-panel-width, 380px) - 32px);
 }
 
 .conversation-panel:has(#browser-side-panel) .conversation-header,
 .conversation-panel:has(#browser-side-panel) .conversation-scroll,
-.conversation-panel:has(#browser-side-panel) .composer-wrap {
+.conversation-panel:has(#browser-side-panel) .composer-wrap,
+.conversation-panel:has(#file-preview-panel) .conversation-header,
+.conversation-panel:has(#file-preview-panel) .conversation-scroll,
+.conversation-panel:has(#file-preview-panel) .composer-wrap {
   width: 100%;
 }
 

@@ -323,6 +323,95 @@ describe("MessageBody", () => {
     expect(onOpenWorkspaceFile).toHaveBeenNthCalledWith(2, cssPath);
   });
 
+  it("routes absolute Shared Markdown paths through the shared file handler", async () => {
+    const onOpenSharedFile = vi.fn();
+    const onOpenWorkspaceFile = vi.fn();
+    const sharedPath = "/Users/arozycka23/OpenBot/Shared/shared-access-test.txt";
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-shared-path",
+          author: "bot",
+          body: `Shared result: [shared-access-test.txt](${sharedPath})`,
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+        onOpenSharedFile={onOpenSharedFile}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    const fileLink = screen.getByRole("button", { name: "Open shared file shared-access-test.txt" });
+    await fireEvent.click(fileLink);
+    expect(onOpenSharedFile).toHaveBeenCalledWith(sharedPath);
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
+  });
+
+  it("turns filenames listed after a Shared directory into preview references", async () => {
+    const onOpenSharedFile = vi.fn();
+    const onOpenWorkspaceFile = vi.fn();
+    const directory = "/Users/sniezka/OpenBot/Shared/";
+    const names = [
+      "recipe-format-sample.txt",
+      "recipe-format-sample.md",
+      "recipe-format-sample.csv",
+      "recipe-format-sample.json",
+    ];
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-shared-file-list",
+          author: "bot",
+          body: `Created four formats in \`${directory}\`:\n\n${names.map((name) => `- \`${name}\``).join("\n")}`,
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+        onOpenSharedFile={onOpenSharedFile}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    for (const name of names) {
+      await fireEvent.click(screen.getByRole("button", { name: `Open shared file ${name}` }));
+    }
+    expect(onOpenSharedFile.mock.calls).toEqual(names.map((name) => [`${directory}${name}`]));
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
+    expect(screen.getByText(directory).tagName).toBe("CODE");
+  });
+
+  it("turns standalone file-like code mentions into workspace preview references", async () => {
+    const onOpenWorkspaceFile = vi.fn();
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-relative-file-list",
+          author: "bot",
+          body: "Updated `package.json` and `src/main.ts`.",
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open workspace file package.json" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open workspace file main.ts" }));
+    expect(onOpenWorkspaceFile).toHaveBeenNthCalledWith(1, "package.json");
+    expect(onOpenWorkspaceFile).toHaveBeenNthCalledWith(2, "src/main.ts");
+  });
+
   it("normalizes an angle-wrapped relative workspace link with spaces", async () => {
     const onOpenWorkspaceFile = vi.fn();
     render(() => (

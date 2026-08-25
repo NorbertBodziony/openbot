@@ -467,6 +467,20 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       openAttachment: async (_input: OpenAttachmentInput) => undefined,
       openSharedFile: async (_input: OpenSharedFileInput) => undefined,
       openWorkspaceFile: async (_input: OpenWorkspaceFileInput) => undefined,
+      previewSharedFile: async (input: OpenSharedFileInput) => ({
+        name: input.path.split("/").at(-1) ?? "shared-file",
+        size: 0,
+        mimeType: "application/octet-stream",
+        previewKind: "none",
+        bytes: null,
+      }),
+      previewWorkspaceFile: async (input: OpenWorkspaceFileInput) => ({
+        name: input.path.split("/").at(-1) ?? "workspace-file",
+        size: 0,
+        mimeType: "application/octet-stream",
+        previewKind: "none",
+        bytes: null,
+      }),
       sendMessage: async (input: SendMessageInput) => {
         const messageId = `mock-message-${messageCounter++}`;
         const deliveryId = `mock-delivery-${messageCounter++}`;

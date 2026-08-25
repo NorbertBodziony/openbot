@@ -588,6 +588,22 @@ export class OpenBotDatabase {
           `UPDATE projection_threads
            SET active_turn_id = ?, updated_at = ?, last_event_sequence = ? WHERE thread_id = ?`,
         ).run(snapshot.activeTurnId, new Date().toISOString(), sequence, snapshot.threadId);
+        const messageIds = new Set(snapshot.messages.map((message) => message.id));
+        const staleMessageIds = databaseRows(
+          db.prepare("SELECT message_id FROM projection_thread_messages WHERE thread_id = ?").all(threadId),
+        )
+          .map((row) => requiredStringColumn(row, "message_id"))
+          .filter((messageId) => !messageIds.has(messageId));
+        const deleteMessage = db.prepare(
+          "DELETE FROM projection_thread_messages WHERE thread_id = ? AND message_id = ?",
+        );
+        const deleteAttachments = db.prepare(
+          "DELETE FROM projection_attachments WHERE owner_kind = 'thread-message' AND owner_id = ?",
+        );
+        for (const messageId of staleMessageIds) {
+          deleteAttachments.run(`${threadId}:${messageId}`);
+          deleteMessage.run(threadId, messageId);
+        }
         const upsert = db.prepare(`
           INSERT INTO projection_thread_messages (
             thread_id, message_id, turn_id, author, status, item_type, created_at,

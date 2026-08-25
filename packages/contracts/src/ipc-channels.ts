@@ -42,6 +42,8 @@ export const IPC_CHANNELS = {
   agentOpenAttachment: "agent:open-attachment",
   agentOpenSharedFile: "agent:open-shared-file",
   agentOpenWorkspaceFile: "agent:open-workspace-file",
+  agentPreviewSharedFile: "agent:preview-shared-file",
+  agentPreviewWorkspaceFile: "agent:preview-workspace-file",
   agentListQueue: "agent:list-queue",
   agentCancelQueuedMessage: "agent:cancel-queued-message",
   agentSteerQueuedMessage: "agent:steer-queued-message",

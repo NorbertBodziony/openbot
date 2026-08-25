@@ -11,6 +11,7 @@ import {
   type AppSetupState,
   type CentralAuthState,
   type ExternalDestination,
+  type FilePreview,
   type ImportAttachmentsInput,
   IPC_CHANNELS,
   type MacPermissionId,
@@ -49,6 +50,7 @@ import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manage
 import { resolveOpenBotCloudflaredExecutable } from "./cloudflared-artifact";
 import { buildContentSecurityPolicy } from "./content-security-policy";
 import { developmentUserDataName, readDevelopmentProfile, shouldAutoStartHost } from "./development-profile";
+import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "./file-preview";
 import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
 import {
   parseAgentRequest,
@@ -528,6 +530,26 @@ function registerIpcHandlers(
     const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
     const openError = await shell.openPath(workspaceFile.path);
     if (openError) throw new Error(openError);
+  });
+  handleTrusted(IPC_CHANNELS.agentPreviewSharedFile, async (input: unknown): Promise<FilePreview> => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseOpenSharedFile(scoped.payload);
+    if (scoped.serverId !== "local") {
+      const downloaded = await remoteServers.downloadSharedFile(parsed.path, scoped.serverId);
+      return filePreviewFromBytes(downloaded.name, downloaded.bytes);
+    }
+    const sharedFile = await service.resolveSharedFile(parsed.path);
+    return localFilePreview(sharedFile.path, sharedFile.name, sharedFile.size);
+  });
+  handleTrusted(IPC_CHANNELS.agentPreviewWorkspaceFile, async (input: unknown): Promise<FilePreview> => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseOpenWorkspaceFile(scoped.payload);
+    if (scoped.serverId !== "local") {
+      const downloaded = await remoteServers.downloadWorkspaceFile(parsed.botId, parsed.path, scoped.serverId);
+      return filePreviewFromBytes(downloaded.name, downloaded.bytes);
+    }
+    const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
+    return localFilePreview(workspaceFile.path, workspaceFile.name, workspaceFile.size);
   });
   handleTrusted(IPC_CHANNELS.agentListQueue, (input: unknown) => {
     const scoped = parseAgentRequest(input);
@@ -1455,27 +1477,6 @@ async function uploadRemoteImports(
   return Promise.all(
     files.map((file) => remoteServers.uploadAttachment(file.name, file.mimeType, file.bytes, serverId)),
   );
-}
-
-function mimeTypeForName(
-  name: string,
-): "image/png" | "image/jpeg" | "image/gif" | "application/pdf" | "text/plain" | "application/octet-stream" {
-  switch (extname(name).toLowerCase()) {
-    case ".png":
-      return "image/png";
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".gif":
-      return "image/gif";
-    case ".pdf":
-      return "application/pdf";
-    case ".txt":
-    case ".md":
-      return "text/plain";
-    default:
-      return "application/octet-stream";
-  }
 }
 
 function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService): void {

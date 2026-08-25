@@ -249,6 +249,26 @@ describe("OpenBotDatabase", () => {
     database.close();
   });
 
+  it("removes messages omitted from the latest full conversation snapshot", async () => {
+    const database = await createDatabase();
+    const bot = testBot();
+    database.replaceAgents("agents-import", [bot], "agents.imported");
+    const snapshot = conversationSnapshot(bot, "Canonical reply");
+    snapshot.messages.push({
+      ...snapshot.messages[0],
+      id: "provisional-reply",
+    });
+    database.persistConversation(snapshot, "conversation.snapshot-updated");
+
+    snapshot.messages = snapshot.messages.filter((message) => message.id !== "provisional-reply");
+    database.persistConversation(snapshot, "provider-history.backfilled");
+
+    expect(database.readConversation(bot.id, bot.threadId).messages.map((message) => message.id)).toEqual([
+      "assistant-1",
+    ]);
+    database.close();
+  });
+
   it("rebuilds provider turn links, summaries, and attachment projections from compact history", async () => {
     const database = await createDatabase();
     const bot = testBot();

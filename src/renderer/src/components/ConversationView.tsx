@@ -13,6 +13,7 @@ import type {
   BrowserControlState,
   BrowserTab,
   DraftAttachment,
+  FilePreview,
   MessageReaction,
   QueueDelivery,
   QueueSnapshot,
@@ -64,7 +65,7 @@ import {
   findChatSearchMatches,
   renderChatSearchHighlights,
 } from "./conversation/chat-search";
-import { createChatVirtualizer } from "./conversation/createChatVirtualizer";
+import { calculateChatScrollMargin, createChatVirtualizer } from "./conversation/createChatVirtualizer";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
 import { MessageSelectionActions } from "./conversation/SelectionActions";
@@ -86,6 +87,7 @@ import { Button, Dialog, DropdownMenu, File, Image, Input, LoaderCircle, Mic, Pu
 const loadAgentSettingsPanel = () => import("./conversation/AgentSettingsPanel");
 const AgentSettingsPanel = lazy(loadAgentSettingsPanel);
 const BrowserPanel = lazy(() => import("./conversation/BrowserPanel"));
+const FilePreviewPanel = lazy(() => import("./conversation/FilePreviewPanel"));
 const QueuePanel = lazy(() => import("./conversation/QueuePanel").then((module) => ({ default: module.QueuePanel })));
 const ApprovalCard = lazy(() => import("./ConversationPrompts").then((module) => ({ default: module.ApprovalCard })));
 
@@ -192,7 +194,14 @@ export interface MediaPreview {
   error: string | null;
 }
 
-export type RightPanelMode = "none" | "browser" | "browser-pip" | "settings";
+export interface SidebarFilePreview {
+  ownerBotId: string;
+  source: "shared" | "workspace";
+  path: string;
+  preview: FilePreview;
+}
+
+export type RightPanelMode = "none" | "browser" | "browser-pip" | "settings" | "file-preview";
 
 const EMPTY_DRAFT: ComposerDraft = {
   text: "",
@@ -302,6 +311,8 @@ function createConversationViewScope(props: ConversationProps) {
     setBrowserPipBounds,
     mediaPreview,
     setMediaPreview,
+    sidebarFilePreview,
+    setSidebarFilePreview,
     openReactionMessageId,
     setOpenReactionMessageId,
     openMoreMessageId,
@@ -355,6 +366,8 @@ function createConversationViewScope(props: ConversationProps) {
   const browserPipOpen = () => props.browserEnabled !== false && activeRightPanel() === "browser-pip";
   const screenOpen = () => browserSidebarOpen() || browserPipOpen();
   const settingsOpen = () => activeRightPanel() === "settings";
+  const filePreviewOpen = () =>
+    activeRightPanel() === "file-preview" && sidebarFilePreview()?.ownerBotId === props.bot?.id;
   const browserTabs = createMemo(() => {
     if (props.browserEnabled === false) return [];
     const bot = props.bot;
@@ -586,6 +599,7 @@ function createConversationViewScope(props: ConversationProps) {
   const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
   const [showScrollToLatest, setShowScrollToLatest] = createSignal(false);
   const [unreadDividerVisible, setUnreadDividerVisible] = createSignal(false);
+  const [virtualScrollMargin, setVirtualScrollMargin] = createSignal(0);
   let scrollElement: HTMLDivElement | undefined;
   let virtualRoot: HTMLDivElement | undefined;
   let agentActivitySlot: HTMLDivElement | undefined;
@@ -614,12 +628,12 @@ function createConversationViewScope(props: ConversationProps) {
   let lastHandledSettingsRequestNonce: number | undefined;
   let lastHandledMessageFocusNonce: number | undefined;
   let lastRuntimeSettingsSignature: string | undefined;
-  const [virtualScrollMargin, setVirtualScrollMargin] = createSignal(0);
   const messageVirtualizer = createChatVirtualizer<HTMLDivElement, HTMLDivElement>({
     count: () => props.messages.length,
     getScrollElement: () => scrollElement ?? null,
     estimateSize: () => 128,
     getItemKey: (index) => props.messages[index]?.id ?? index,
+    keyVersion: () => `${props.messages[0]?.id ?? ""}:${props.messages.at(-1)?.id ?? ""}`,
     scrollMargin: virtualScrollMargin,
     onChange: (instance) => {
       const first = instance.getVirtualItems()[0];
@@ -723,6 +737,10 @@ function createConversationViewScope(props: ConversationProps) {
     setFadeAtTop(element.scrollTop > 2);
     setFadeAtBottom(remaining > 2);
     setShowScrollToLatest(remaining > 80);
+  }
+
+  function updateVirtualScrollMargin(): void {
+    setVirtualScrollMargin(calculateChatScrollMargin(scrollElement, virtualRoot));
   }
 
   function updateUnreadDividerVisibility(): void {
@@ -917,7 +935,7 @@ function createConversationViewScope(props: ConversationProps) {
     keyboardTarget.addEventListener("keydown", handleChatSearchShortcut);
     window.addEventListener("pointerdown", closeMessageMenus);
     scrollResizeObserver = new ResizeObserver(() => {
-      setVirtualScrollMargin(virtualRoot?.offsetTop ?? 0);
+      updateVirtualScrollMargin();
       if (scrollElement && stickToLatest) followConversationBottom(scrollElement);
       updateScrollFade();
       updateUnreadDividerVisibility();
@@ -927,6 +945,7 @@ function createConversationViewScope(props: ConversationProps) {
     if (agentActivitySlot) scrollResizeObserver.observe(agentActivitySlot);
     requestAnimationFrame(() => {
       if (!scrollElement) return;
+      updateVirtualScrollMargin();
       if (stickToLatest) scrollElement.scrollTop = scrollElement.scrollHeight;
       updateScrollFade(scrollElement);
       updateUnreadDividerVisibility();
@@ -1095,6 +1114,7 @@ function createConversationViewScope(props: ConversationProps) {
       latestScrollFrame = requestAnimationFrame(() => {
         latestScrollFrame = undefined;
         if (!scrollElement) return;
+        updateVirtualScrollMargin();
         if (followLatest) followConversationBottom(scrollElement);
         updateScrollFade(scrollElement);
         updateUnreadDividerVisibility();
@@ -1144,7 +1164,13 @@ function createConversationViewScope(props: ConversationProps) {
       if (botId === lastPanelBotId) return;
       const previousBotId = lastPanelBotId;
       lastPanelBotId = botId;
-      if (!previousBotId || !botId || panel !== "settings") return;
+      resources.filePreviewRequestGeneration += 1;
+      const preview = sidebarFilePreview();
+      if (preview && preview.ownerBotId !== botId) {
+        setSidebarFilePreview(null);
+        setRightPanels((current) => ({ ...current, [preview.ownerBotId]: "none" }));
+      }
+      if (!previousBotId || !botId || (panel !== "settings" && panel !== "file-preview")) return;
       setRightPanels((current) => ({ ...current, [botId]: "none" }));
     },
   );
@@ -1711,17 +1737,47 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   function openSharedFile(path: string) {
-    void window.openbot.agent
-      .openSharedFile({ path })
-      .catch((error) => setComposerError(error instanceof Error ? error.message : String(error)));
+    const ownerBotId = props.bot?.id;
+    if (!ownerBotId) return;
+    const generation = ++resources.filePreviewRequestGeneration;
+    void window.openbot.agent.previewSharedFile({ path }).then(
+      (preview) => {
+        if (generation !== resources.filePreviewRequestGeneration || props.bot?.id !== ownerBotId) return;
+        setSidebarFilePreview({ ownerBotId, source: "shared", path, preview });
+        setActiveRightPanel("file-preview", ownerBotId);
+      },
+      (error) => setComposerError(error instanceof Error ? error.message : String(error)),
+    );
   }
 
   function openWorkspaceFile(path: string) {
     const botId = props.bot?.id;
     if (!botId) return;
-    void window.openbot.agent
-      .openWorkspaceFile({ botId, path })
-      .catch((error) => setComposerError(error instanceof Error ? error.message : String(error)));
+    const generation = ++resources.filePreviewRequestGeneration;
+    void window.openbot.agent.previewWorkspaceFile({ botId, path }).then(
+      (preview) => {
+        if (generation !== resources.filePreviewRequestGeneration || props.bot?.id !== botId) return;
+        setSidebarFilePreview({ ownerBotId: botId, source: "workspace", path, preview });
+        setActiveRightPanel("file-preview", botId);
+      },
+      (error) => setComposerError(error instanceof Error ? error.message : String(error)),
+    );
+  }
+
+  function openSidebarFileExternally() {
+    const file = sidebarFilePreview();
+    if (!file) return;
+    const request =
+      file.source === "shared"
+        ? window.openbot.agent.openSharedFile({ path: file.path })
+        : window.openbot.agent.openWorkspaceFile({ botId: file.ownerBotId, path: file.path });
+    void request.catch((error) => setComposerError(error instanceof Error ? error.message : String(error)));
+  }
+
+  function closeSidebarFilePreview() {
+    resources.filePreviewRequestGeneration += 1;
+    setSidebarFilePreview(null);
+    setActiveRightPanel("none");
   }
 
   const setConversationPanelElement = (element: HTMLElement) => {
@@ -1733,13 +1789,14 @@ function createConversationViewScope(props: ConversationProps) {
   };
   const setScrollElement = (element: HTMLDivElement) => {
     scrollElement = element;
+    updateVirtualScrollMargin();
   };
   const setStickToLatest = (value: boolean) => {
     stickToLatest = value;
   };
   const setVirtualRootElement = (element: HTMLDivElement) => {
     virtualRoot = element;
-    setVirtualScrollMargin(element.offsetTop);
+    updateVirtualScrollMargin();
     scrollResizeObserver?.observe(element);
   };
   const setUnreadMessagesDividerElement = (element: HTMLDivElement) => {
@@ -1818,6 +1875,7 @@ function createConversationViewScope(props: ConversationProps) {
     clearAgentActivityShowTimer,
     closeBrowserTab,
     closeChatSearch,
+    closeSidebarFilePreview,
     composerError,
     composerFocusRequest,
     composerHasContent,
@@ -1836,6 +1894,7 @@ function createConversationViewScope(props: ConversationProps) {
     expandedThinkingMessages,
     fadeAtBottom,
     fadeAtTop,
+    filePreviewOpen,
     finishVoiceRecording,
     handleChatSearchShortcut,
     hideBrowserPanel,
@@ -1864,6 +1923,7 @@ function createConversationViewScope(props: ConversationProps) {
     openMoreMessageId,
     openReactionMessageId,
     openSharedFile,
+    openSidebarFileExternally,
     openWorkspaceFile,
     orderedQueuedDeliveries,
     presentedQueueDeliveries,
@@ -1923,6 +1983,7 @@ function createConversationViewScope(props: ConversationProps) {
     setRenderedQueueDeliveries,
     setRightPanels,
     setSelectionSending,
+    setSidebarFilePreview,
     setSettingsModel,
     setSettingsPanelWidth,
     setSettingsReasoning,
@@ -1936,6 +1997,7 @@ function createConversationViewScope(props: ConversationProps) {
     settingsOpen,
     settingsPanelWidth,
     settingsReasoning,
+    sidebarFilePreview,
     showBrowserPanel,
     showBrowserPip,
     showComposerActions,
@@ -2217,8 +2279,8 @@ export function ConversationTimeline() {
           </Show>
           <div
             ref={setVirtualRootElement}
-            class="virtual-chat-list"
-            style={{ height: `${messageVirtualizer.getTotalSize()}px` }}
+            class={["virtual-chat-list", { "virtual-chat-list-static": !messageVirtualizer.isVirtualized() }]}
+            style={{ height: messageVirtualizer.isVirtualized() ? `${messageVirtualizer.getTotalSize()}px` : "auto" }}
           >
             <For each={messageVirtualizer.getVirtualItems()}>
               {(virtualRow) => {
@@ -2231,7 +2293,11 @@ export function ConversationTimeline() {
                     data-index={virtualRow.index}
                     ref={messageVirtualizer.measureElement}
                     class="virtual-chat-row"
-                    style={{ transform: `translateY(${virtualRow.start - messageVirtualizer.scrollMargin()}px)` }}
+                    style={{
+                      transform: messageVirtualizer.isVirtualized()
+                        ? `translateY(${virtualRow.start - messageVirtualizer.scrollMargin()}px)`
+                        : "none",
+                    }}
                   >
                     <Show when={message()?.id === props.firstUnreadMessageId}>
                       <UnreadMessagesDivider
@@ -2749,10 +2815,16 @@ export function ConversationPanels() {
     browserPipBounds,
     browserPipOpen,
     browserTabs,
+    closeSidebarFilePreview,
     closeBrowserTab,
     constrainBrowserPipBounds,
     conversationPanelElement,
+    filePreviewOpen,
     openBrowserAddress,
+    openExternalMessageUrl,
+    openSharedFile,
+    openSidebarFileExternally,
+    openWorkspaceFile,
     props,
     reloadBrowserTab,
     screenOpen,
@@ -2764,11 +2836,41 @@ export function ConversationPanels() {
     setSettingsPanelWidth,
     showBrowserPip,
     hideBrowserPanel,
+    sidebarFilePreview,
     settingsOpen,
     updateBrowserPipBounds,
   } = useConversationViewScope();
   return (
     <>
+      <Show when={filePreviewOpen() && sidebarFilePreview()}>
+        {(file) => (
+          <Loading>
+            <FilePreviewPanel
+              preview={file().preview}
+              bots={props.bots}
+              defaultWidth={() =>
+                (conversationPanelElement()?.clientWidth || window.innerWidth) * BROWSER_PANEL_DEFAULT_RATIO
+              }
+              maxWidth={() =>
+                Math.min(
+                  BROWSER_PANEL_MAX,
+                  Math.max(
+                    BROWSER_PANEL_MIN,
+                    (conversationPanelElement()?.clientWidth || window.innerWidth) - CONVERSATION_PANEL_MIN,
+                  ),
+                )
+              }
+              onWidthChange={setBrowserPanelWidth}
+              onOpenLink={(url) => void openExternalMessageUrl(url)}
+              onOpenSharedFile={openSharedFile}
+              onOpenWorkspaceFile={openWorkspaceFile}
+              onOpenExternally={openSidebarFileExternally}
+              onClose={closeSidebarFilePreview}
+            />
+          </Loading>
+        )}
+      </Show>
+
       <Show when={screenOpen()}>
         <BrowserPanel
           mode={browserPipOpen() ? "pip" : "sidebar"}
@@ -2906,6 +3008,7 @@ export function ConversationView(props: ConversationProps) {
     browserPanelWidth,
     browserSidebarOpen,
     dropActive,
+    filePreviewOpen,
     handleChatSearchShortcut,
     sendSelectionInstruction,
     setConversationPanelElement,
@@ -2923,7 +3026,7 @@ export function ConversationView(props: ConversationProps) {
           "conversation-panel",
           {
             "conversation-drop-active": dropActive(),
-            "browser-panel-active": browserSidebarOpen(),
+            "browser-panel-active": browserSidebarOpen() || filePreviewOpen(),
           },
         ]}
         style={`--settings-panel-width: ${settingsPanelWidth()}px; --browser-panel-width: ${browserPanelWidth()}px`}

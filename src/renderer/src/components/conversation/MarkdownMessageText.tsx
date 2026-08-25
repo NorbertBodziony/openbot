@@ -12,7 +12,14 @@ type MarkdownMessageTextProps = Omit<RichMessageTextProps, "showCitationFooter">
   streaming?: boolean;
 };
 
-type MarkdownContentProps = Omit<MarkdownMessageTextProps, "body" | "showCitationFooter" | "streaming">;
+type MarkdownContentProps = Omit<MarkdownMessageTextProps, "body" | "showCitationFooter" | "streaming"> & {
+  fileDirectory: FileDirectoryContext | null;
+};
+
+interface FileDirectoryContext {
+  path: string;
+  kind: "shared" | "workspace";
+}
 
 interface MarkdownTokenByType {
   heading: Tokens.Heading;
@@ -55,6 +62,7 @@ export function MarkdownMessageText(props: MarkdownMessageTextProps) {
     onOpenAttachment: props.onOpenAttachment,
     onOpenSharedFile: props.onOpenSharedFile,
     onOpenWorkspaceFile: props.onOpenWorkspaceFile,
+    fileDirectory: messageFileDirectory(props.body),
   });
 
   return (
@@ -78,6 +86,7 @@ export function MarkdownInlineText(props: Omit<MarkdownMessageTextProps, "showCi
     onOpenAttachment: props.onOpenAttachment,
     onOpenSharedFile: props.onOpenSharedFile,
     onOpenWorkspaceFile: props.onOpenWorkspaceFile,
+    fileDirectory: messageFileDirectory(props.body),
   });
   return <MarkdownInline tokens={tokens()} content={contentProps()} />;
 }
@@ -249,13 +258,31 @@ function MarkdownInline(props: { tokens: Token[]; content: MarkdownContentProps 
             );
           case "codespan": {
             if (!tokenIs(token, "codespan")) return token.raw;
-            return <code>{token.text}</code>;
+            const file = mentionedFileTarget(token.text, props.content.fileDirectory);
+            return file && file.kind === "shared" && props.content.onOpenSharedFile ? (
+              <LocalFileLink
+                path={file.path}
+                label={token.text}
+                kind="shared"
+                onOpen={props.content.onOpenSharedFile}
+              />
+            ) : file && file.kind === "workspace" && props.content.onOpenWorkspaceFile ? (
+              <LocalFileLink
+                path={file.path}
+                label={token.text}
+                kind="workspace"
+                onOpen={props.content.onOpenWorkspaceFile}
+              />
+            ) : (
+              <code>{token.text}</code>
+            );
           }
           case "br":
             return <br />;
           case "link": {
             if (!tokenIs(token, "link")) return token.raw;
             const url = safeBrowserUrl(token.href);
+            const sharedPath = sharedFileTarget(token.href);
             const workspacePath = workspaceFileTarget(token.href);
             return url ? (
               <MessageLink url={url} title={token.title} onOpenLink={props.content.onOpenLink}>
@@ -265,11 +292,19 @@ function MarkdownInline(props: { tokens: Token[]; content: MarkdownContentProps 
                   <MarkdownInline tokens={token.tokens} content={props.content} />
                 )}
               </MessageLink>
+            ) : sharedPath && props.content.onOpenSharedFile ? (
+              <LocalFileLink
+                path={sharedPath}
+                label={token.text}
+                kind="shared"
+                onOpen={props.content.onOpenSharedFile}
+              />
             ) : workspacePath && props.content.onOpenWorkspaceFile ? (
-              <WorkspaceFileLink
+              <LocalFileLink
                 path={workspacePath}
                 label={token.text}
-                onOpenWorkspaceFile={props.content.onOpenWorkspaceFile}
+                kind="workspace"
+                onOpen={props.content.onOpenWorkspaceFile}
               />
             ) : (
               <RichText body={token.text} content={props.content} />
@@ -320,21 +355,37 @@ function RichText(props: { body: string; content: MarkdownContentProps }) {
   return <RichMessageText {...props.content} body={props.body} showCitationFooter={false} />;
 }
 
-function WorkspaceFileLink(props: { path: string; label: string; onOpenWorkspaceFile: (path: string) => void }) {
+function LocalFileLink(props: {
+  path: string;
+  label: string;
+  kind: "shared" | "workspace";
+  onOpen: (path: string) => void;
+}) {
   const name = workspaceFileName(props.path);
   return (
     <Button
       type="button"
       class="inline-file-reference"
       data-file-tone={attachmentReferenceTone(name)}
-      aria-label={`Open workspace file ${name}`}
+      aria-label={`Open ${props.kind} file ${name}`}
       title={props.path}
-      onClick={() => props.onOpenWorkspaceFile(props.path)}
+      onClick={() => props.onOpen(props.path)}
     >
       <AttachmentReferenceVisual name={name} />
       <span class="inline-file-reference-name">{props.label || name}</span>
     </Button>
   );
+}
+
+function sharedFileTarget(value: string): string | null {
+  const path = value.trim();
+  if (!path || /[\0\r\n]/u.test(path)) return null;
+  const normalized = path.replaceAll("\\", "/");
+  return normalized.startsWith("~/OpenBot/Shared/") ||
+    normalized.startsWith("OpenBot/Shared/") ||
+    normalized.includes("/OpenBot/Shared/")
+    ? path
+    : null;
 }
 
 function workspaceFileTarget(value: string): string | null {
@@ -352,4 +403,43 @@ function workspaceFileName(path: string): string {
   } catch {
     return name;
   }
+}
+
+function messageFileDirectory(body: string): FileDirectoryContext | null {
+  const contexts = new Map<string, FileDirectoryContext>();
+  for (const match of body.matchAll(/`([^`\r\n]+[/\\])`/gu)) {
+    const path = match[1]?.trim();
+    if (!path) continue;
+    const shared = sharedFileTarget(`${path}file`);
+    const workspace = workspaceFileTarget(`${path}file`);
+    if (shared) contexts.set(path, { path, kind: "shared" });
+    else if (workspace) contexts.set(path, { path, kind: "workspace" });
+  }
+  return contexts.size === 1 ? (contexts.values().next().value ?? null) : null;
+}
+
+function mentionedFileTarget(value: string, directory: FileDirectoryContext | null): FileDirectoryContext | null {
+  const path = value.trim();
+  if (!isFileMention(path)) return null;
+  const shared = sharedFileTarget(path);
+  if (shared) return { path: shared, kind: "shared" };
+  if (/^(?:~[/\\]|[/\\]|[A-Za-z]:[/\\])/u.test(path)) {
+    const workspace = workspaceFileTarget(path);
+    return workspace ? { path: workspace, kind: "workspace" } : null;
+  }
+  if (!directory) return { path, kind: "workspace" };
+  const separator = directory.path.includes("\\") && !directory.path.includes("/") ? "\\" : "/";
+  return {
+    path: `${directory.path.replace(/[/\\]+$/u, "")}${separator}${path}`,
+    kind: directory.kind,
+  };
+}
+
+function isFileMention(value: string): boolean {
+  if (!value || /[\0\r\n]/u.test(value) || /[/\\]$/u.test(value)) return false;
+  const name = workspaceFileName(value);
+  if (/^(Dockerfile|Makefile|\.gitignore)$/iu.test(name)) return true;
+  return /\.(?:avif|bash|c|conf|cpp|cs|css|csv|env|fish|gif|go|h|hpp|html?|ini|java|jpe?g|jsx?|json|kt|kts|log|markdown|md|pdf|php|png|ps1|py|rb|rs|scala|sh|sql|swift|toml|tsx?|txt|webp|xml|ya?ml|zsh)$/iu.test(
+    name,
+  );
 }

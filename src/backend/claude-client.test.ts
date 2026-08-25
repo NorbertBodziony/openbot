@@ -55,6 +55,7 @@ afterEach(async () => {
 describe("ClaudeAgentClient", () => {
   it("streams a Claude SDK turn through the App Server event contract", async () => {
     root = await mkdtemp(join(tmpdir(), "openbot-claude-client-"));
+    const sharedRoot = join(root, "shared");
     const executable = join(root, "claude");
     await writeFile(
       executable,
@@ -71,6 +72,12 @@ fi
     const generator = new TestQuery(output);
     const client = new ClaudeAgentClient({ executable, version: "2.1.231" }, (params) => {
       if (!isString(params.prompt)) prompt = params.prompt;
+      expect(params.options).toMatchObject({
+        cwd: root,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        additionalDirectories: [root, sharedRoot],
+      });
       return generator;
     });
     const notifications: Array<{ method: string; params: unknown }> = [];
@@ -86,7 +93,7 @@ fi
         cwd: root,
         model: "claude-sonnet-5",
         developerInstructions: "Be concise.",
-        runtimeWorkspaceRoots: [root],
+        runtimeWorkspaceRoots: [root, sharedRoot],
       },
       decodeThreadResponse,
     );

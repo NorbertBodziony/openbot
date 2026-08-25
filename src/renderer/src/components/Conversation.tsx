@@ -6,6 +6,7 @@ import {
   ConversationView,
   type MediaPreview,
   type RightPanelMode,
+  type SidebarFilePreview,
 } from "./ConversationView";
 import type { AgentActivityPresentation } from "./conversation/AgentActivity";
 import type { BrowserPipBounds } from "./conversation/BrowserPanel";
@@ -37,6 +38,7 @@ interface ConversationResources {
   voiceChunks: Blob[];
   voiceBotId: string | undefined;
   voiceDisposed: boolean;
+  filePreviewRequestGeneration: number;
 }
 
 /** @internal Stable owner for renderer state that must survive Conversation view HMR. */
@@ -61,6 +63,7 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   const [browserAddressEditing, setBrowserAddressEditing] = createSignal(false);
   const [browserPipBounds, setBrowserPipBounds] = createSignal<BrowserPipBounds | null>(readBrowserPipBounds());
   const [mediaPreview, setMediaPreview] = createSignal<MediaPreview | null>(null);
+  const [sidebarFilePreview, setSidebarFilePreview] = createSignal<SidebarFilePreview | null>(null);
   const [openReactionMessageId, setOpenReactionMessageId] = createSignal<string | null>(null);
   const [openMoreMessageId, setOpenMoreMessageId] = createSignal<string | null>(null);
   const [expandedEmojiMessageId, setExpandedEmojiMessageId] = createSignal<string | null>(null);
@@ -88,6 +91,7 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     voiceChunks: [],
     voiceBotId: undefined,
     voiceDisposed: false,
+    filePreviewRequestGeneration: 0,
   };
 
   onCleanup(() => {
@@ -141,6 +145,8 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     setBrowserPipBounds,
     mediaPreview,
     setMediaPreview,
+    sidebarFilePreview,
+    setSidebarFilePreview,
     openReactionMessageId,
     setOpenReactionMessageId,
     openMoreMessageId,
