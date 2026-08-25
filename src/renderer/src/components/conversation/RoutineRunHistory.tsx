@@ -1,6 +1,6 @@
 import type { RoutineRun } from "@openbot/contracts/ipc";
-import { Check, CirclePause, Clock3, TriangleAlert, X } from "lucide-solid";
 import { For, Show } from "solid-js";
+import { Check, CirclePause, Clock3, TriangleAlert, X } from "../ui";
 
 interface RoutineRunHistoryProps {
   runs: RoutineRun[];

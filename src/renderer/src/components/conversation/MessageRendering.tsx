@@ -1,11 +1,10 @@
 import type { AttachmentSummary, MessageReaction } from "@openbot/contracts/ipc";
 import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "@openbot/contracts/ipc";
-import { CalendarClock } from "lucide-solid";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { avatarHeadColor } from "../../bloub-avatar";
 import type { BotMessage, BotProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
-import { Button, DropdownMenu } from "../ui";
+import { Button, CalendarClock, DropdownMenu } from "../ui";
 import { AttachmentCards } from "./AttachmentCards";
 import { CodeBlock } from "./CodeBlock";
 import { ComparisonTable } from "./ComparisonTable";

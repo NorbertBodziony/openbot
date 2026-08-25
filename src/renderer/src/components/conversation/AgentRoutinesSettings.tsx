@@ -1,9 +1,8 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { Routine, RoutineRun, RoutineSchedule } from "@openbot/contracts/ipc";
-import { CirclePause, Clock3, Plus } from "lucide-solid";
 import { createEffect, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
 import { desktopAnalytics } from "../../analytics";
-import { Button, Dialog, Input, Switch, Textarea } from "../ui";
+import { Button, CirclePause, Clock3, Dialog, Input, Plus, Switch, Textarea } from "../ui";
 import { BackIcon, SettingsForwardIcon } from "./ConversationIcons";
 import { RoutineRunHistory } from "./RoutineRunHistory";
 import { RoutineScheduleEditor } from "./RoutineScheduleEditor";

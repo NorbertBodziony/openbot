@@ -1,8 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { RoutineSchedule } from "@openbot/contracts/ipc";
-import { Clock3 } from "lucide-solid";
 import { Show } from "solid-js";
-import { Button, Input } from "../ui";
+import { Button, Clock3, Input } from "../ui";
 import { RoutineSelect, TimeSelect } from "./RoutineSelect";
 import {
   dailyRoutineSchedule,

@@ -5,6 +5,22 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-25
+
+### Added
+
+- Add scheduled agent routines with timezone-aware schedules, manual test runs, run history, and delivery in the agent chat.
+- Add agent memories, shared sidebar sections, and the skills marketplace.
+
+### Changed
+
+- Refresh the sidebar, agent settings, dialogs, buttons, switches, selects, and Storybook examples with the shared visual system.
+
+### Fixed
+
+- Prevent resumed routines from running missed schedules and protect unsaved routine edits before navigation.
+- Render newly appended chat messages without virtualizer refresh loops.
+
 ## [0.2.0] - 2026-08-24
 
 ### Added
