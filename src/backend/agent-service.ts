@@ -54,6 +54,7 @@ import { type ClaudeCliInfo, CodexCliError, type CodexCliInfo, resolveClaudeCli,
 import { ConversationReadStore } from "./conversation-read-store";
 import {
   mergeConversationSnapshots,
+  mergeProviderHistory,
   newAssistantMessage,
   normalizeCompletionStatus,
   snapshotFromThread,
@@ -1520,7 +1521,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         );
         imported.threadId = bot.threadId;
         const current = this.#store.database.readConversation(bot.id, bot.threadId);
-        const merged = mergeConversationSnapshots(current, imported);
+        const merged = mergeProviderHistory(current, imported);
         this.#syncMailboxMessages(merged);
         if (conversationContentSignature(merged) === conversationContentSignature(current)) {
           const live = this.#snapshots.get(bot.id);
