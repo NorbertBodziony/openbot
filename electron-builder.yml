@@ -84,11 +84,18 @@ win:
         - x64
 dmg:
   title: ${productName} ${version}
-  backgroundColor: "#0b0d0e"
+  background: build/dmg-background.png
+  iconSize: 128
+  iconTextSize: 14
+  window:
+    x: 400
+    y: 467
+    width: 680
+    height: 506
   contents:
-    - x: 145
-      y: 180
-    - x: 395
-      y: 180
+    - x: 190
+      y: 220
+    - x: 490
+      y: 220
       type: link
       path: /Applications

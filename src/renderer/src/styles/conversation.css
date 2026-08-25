@@ -5716,9 +5716,9 @@
 .agent-queue-drag-preview {
   position: fixed;
   z-index: var(--openbot-layer-dropdown);
-  top: 0;
-  left: -200vw;
+  box-sizing: border-box;
   min-height: 31px;
+  margin: 0;
   border: 1px solid var(--openbot-border-strong);
   background: var(--openbot-bg-surface-raised);
   box-shadow: var(--openbot-shadow-raised);

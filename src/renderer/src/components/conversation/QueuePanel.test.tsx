@@ -164,6 +164,46 @@ describe("QueuePanel", () => {
     expect(view.container.querySelector(".agent-queue-panel")).not.toHaveClass("agent-queue-panel-dragging");
   });
 
+  it("keeps the drag preview inside the queue and locks its horizontal position", async () => {
+    const props = callbacks();
+    const view = render(() => <QueuePanel deliveries={[delivery(1), delivery(2)]} canSteer {...props} />);
+    const list = view.container.querySelector<HTMLDivElement>(".agent-queue-panel-list");
+    const row = view.container.querySelector<HTMLFieldSetElement>(".agent-queue-item");
+    if (!list || !row) throw new Error("Queue elements are missing.");
+
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(
+      DOMRect.fromRect({ x: 100, y: 50, width: 400, height: 150 }),
+    );
+    vi.spyOn(row, "getBoundingClientRect").mockReturnValue(DOMRect.fromRect({ x: 112, y: 60, width: 376, height: 29 }));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    const dispatchDrag = (type: "dragstart" | "drag" | "dragend", clientX: number, clientY: number) => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX, clientY });
+      Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+      fireEvent(row, event);
+    };
+
+    dispatchDrag("dragstart", 200, 70);
+    const preview = document.body.querySelector<HTMLElement>(".agent-queue-drag-preview");
+    expect(preview).toBeInTheDocument();
+    expect(dataTransfer.setDragImage).toHaveBeenCalled();
+    expect(preview).toHaveStyle({ left: "112px", top: "60px", width: "376px" });
+
+    window.dispatchEvent(new MouseEvent("dragover", { clientX: -500, clientY: 250 }));
+    expect(preview).toHaveStyle({ left: "112px", top: "171px" });
+
+    window.dispatchEvent(new MouseEvent("dragover", { clientX: 900, clientY: 25 }));
+    expect(preview).toHaveStyle({ left: "112px", top: "50px" });
+
+    dispatchDrag("dragend", 900, 25);
+    expect(preview).not.toBeInTheDocument();
+  });
+
   it("auto-scrolls a long queue while dragging near its edge", async () => {
     const props = callbacks();
     const requestFrame = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);

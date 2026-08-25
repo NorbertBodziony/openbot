@@ -1,0 +1,38 @@
+--- a/out/dmgUtil.js
++++ b/out/dmgUtil.js
+@@ -155,22 +155,22 @@
+     }
+     if (specification.backgroundColor != null || specification.background == null) {
+         settings["background-color"] = specification.backgroundColor || "#ffffff";
+-        const window = specification.window;
+-        if (window != null) {
+-            settings.window = {
+-                position: {
+-                    x: (_b = window.x) !== null && _b !== void 0 ? _b : 100,
+-                    y: (_c = window.y) !== null && _c !== void 0 ? _c : 400,
+-                },
+-                size: {
+-                    width: (_d = window.width) !== null && _d !== void 0 ? _d : 540,
+-                    height: (_e = window.height) !== null && _e !== void 0 ? _e : 300,
+-                },
+-            };
+-        }
+     }
+     else {
+         settings.background = specification.background == null ? null : await transformBackgroundFileIfNeed(specification.background, packager.info.tempDirManager);
++    }
++    const window = specification.window;
++    if (window != null) {
++        settings.window = {
++            position: {
++                x: (_b = window.x) !== null && _b !== void 0 ? _b : 100,
++                y: (_c = window.y) !== null && _c !== void 0 ? _c : 400,
++            },
++            size: {
++                width: (_d = window.width) !== null && _d !== void 0 ? _d : 540,
++                height: (_e = window.height) !== null && _e !== void 0 ? _e : 300,
++            },
++        };
+     }
+     if (!(0, builder_util_1.isEmptyOrSpaces)(settings.background)) {
+         const size = await getImageSizeUsingSips(settings.background);
