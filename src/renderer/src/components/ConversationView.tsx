@@ -614,12 +614,13 @@ function createConversationViewScope(props: ConversationProps) {
   let lastHandledSettingsRequestNonce: number | undefined;
   let lastHandledMessageFocusNonce: number | undefined;
   let lastRuntimeSettingsSignature: string | undefined;
+  const [virtualScrollMargin, setVirtualScrollMargin] = createSignal(0);
   const messageVirtualizer = createChatVirtualizer<HTMLDivElement, HTMLDivElement>({
     count: () => props.messages.length,
     getScrollElement: () => scrollElement ?? null,
     estimateSize: () => 128,
     getItemKey: (index) => props.messages[index]?.id ?? index,
-    scrollMargin: () => virtualRoot?.offsetTop ?? 0,
+    scrollMargin: virtualScrollMargin,
     onChange: (instance) => {
       const first = instance.getVirtualItems()[0];
       if (first && first.index <= 5 && props.hasOlder && !props.loadingOlder) props.onLoadOlder?.();
@@ -916,6 +917,7 @@ function createConversationViewScope(props: ConversationProps) {
     keyboardTarget.addEventListener("keydown", handleChatSearchShortcut);
     window.addEventListener("pointerdown", closeMessageMenus);
     scrollResizeObserver = new ResizeObserver(() => {
+      setVirtualScrollMargin(virtualRoot?.offsetTop ?? 0);
       if (scrollElement && stickToLatest) followConversationBottom(scrollElement);
       updateScrollFade();
       updateUnreadDividerVisibility();
@@ -1737,6 +1739,7 @@ function createConversationViewScope(props: ConversationProps) {
   };
   const setVirtualRootElement = (element: HTMLDivElement) => {
     virtualRoot = element;
+    setVirtualScrollMargin(element.offsetTop);
     scrollResizeObserver?.observe(element);
   };
   const setUnreadMessagesDividerElement = (element: HTMLDivElement) => {
