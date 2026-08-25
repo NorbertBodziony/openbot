@@ -5,6 +5,22 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-24
+
+### Added
+
+- Add the production Create Bot flow with practical suggestions, synchronized animated avatars, and first/additional Bot modes.
+
+### Changed
+
+- Create a Bot only after its complete profile is submitted, then queue its initial role message as one rollback-safe operation.
+- Replace the legacy new-agent picker and empty-chat onboarding with the dedicated Bot setup screen.
+
+### Fixed
+
+- Keep the technical development client out of a normal private dev server while preserving the two-client test harness.
+- Limit the first visible Bot message to its ongoing role.
+
 ## [0.1.22] - 2026-08-24
 
 ### Added

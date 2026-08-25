@@ -378,12 +378,27 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       getUsage: async () => clone(usage),
       listModels: async () => clone(models),
       listBots: async () => clone(bots),
-      createBot: async () => {
-        const bot = createBotSummary();
+      createBot: async (input) => {
+        const bot = createBotSummary({
+          name: input.name,
+          title: "",
+          description: input.description,
+          avatarSeed: input.avatarSeed,
+          avatarHue: input.avatarHue,
+        });
         bots = [...bots, bot];
         queues.set(bot.id, emptyQueue(bot.id));
         emitAgentEvent({ type: "bots-changed", bots });
-        return clone(bot);
+        try {
+          await api.agent.sendMessage({ botId: bot.id, text: input.initialMessage, attachmentDraftIds: [] });
+          return clone(bot);
+        } catch (error) {
+          bots = bots.filter((candidate) => candidate.id !== bot.id);
+          queues.delete(bot.id);
+          delete snapshots[bot.id];
+          emitAgentEvent({ type: "bots-changed", bots });
+          throw error;
+        }
       },
       updateBot: async (input: UpdateBotInput) => {
         const current = bots.find((bot) => bot.id === input.botId);

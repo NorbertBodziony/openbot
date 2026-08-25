@@ -53,9 +53,6 @@ describe("Conversation HMR boundary", () => {
               controller?.setSettingsPanelWidth(420);
               controller?.setBrowserPanelWidth(520);
               controller?.setBrowserAddress("https://example.com");
-              controller?.setOnboardingBots({ chief: true });
-              controller?.setModelConfirmedBots({ chief: true });
-              controller?.setCompletedOnboardingBots({ chief: true });
               controller?.setOpenReactionMessageId("message-1");
               controller?.setOpenMoreMessageId("message-2");
               controller?.setExpandedEmojiMessageId("message-3");
@@ -103,9 +100,6 @@ describe("Conversation HMR boundary", () => {
     expect(controller?.activeChatSearchIndex()).toBe(0);
     expect(controller?.browserPanelWidth()).toBe(520);
     expect(controller?.browserAddress()).toBe("https://example.com");
-    expect(controller?.onboardingBots().chief).toBe(true);
-    expect(controller?.modelConfirmedBots().chief).toBe(true);
-    expect(controller?.completedOnboardingBots().chief).toBe(true);
     expect(controller?.openMoreMessageId()).toBe("message-2");
     expect(controller?.expandedEmojiMessageId()).toBe("message-3");
     expect(controller?.voicePhase()).toBe("recording");

@@ -4,7 +4,7 @@ import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { App } from "../src/App";
 import type { MockOpenBotOptions } from "../src/preview/mock-openbot";
 import { OpenBotPlayground } from "../src/preview/OpenBotPlayground";
-import { STORY_AGENT_STATUS, STORY_APP_INFO, STORY_BOT_SUMMARIES } from "./fixtures";
+import { STORY_AGENT_STATUS, STORY_APP_INFO, STORY_BOT_SUMMARIES, STORY_SERVERS } from "./fixtures";
 
 const meta = {
   title: "App",
@@ -201,7 +201,32 @@ export const LongAccountName: Story = {
 };
 
 export const EmptyWorkspace: Story = {
-  render: () => <OpenBotPlayground options={{ bots: [] }} />,
+  render: () => (
+    <OpenBotPlayground
+      options={{
+        bots: [],
+        servers: STORY_SERVERS.filter((server) => server.kind === "local"),
+        presence: { serverId: "local", updatedAt: "2026-08-24T12:00:00.000Z", members: [] },
+        directThreads: [],
+        teamMembers: [],
+        browserTabs: [],
+        remoteDesktopSessions: [],
+      }}
+    />
+  ),
+  play: async ({ canvas }) => {
+    await expect(canvas.findByText("No chats yet")).resolves.toBeInTheDocument();
+    await expect(canvas.queryByRole("heading", { name: "People" })).not.toBeInTheDocument();
+    await expect(canvas.queryByRole("button", { name: "OpenBot team server" })).not.toBeInTheDocument();
+    await expect(canvas.getAllByRole("listitem")).toHaveLength(6);
+
+    const createButton = canvas.getByRole("button", { name: "Create Bot" });
+    await expect(createButton).toBeDisabled();
+    const nameInput = canvas.getByRole("textbox", { name: "Name" });
+    const purposeInput = canvas.getByRole("textbox", { name: "What should this Bot help with?" });
+    await expect(nameInput).toHaveValue("New Bot");
+    await expect(purposeInput).toHaveValue("");
+  },
 };
 
 export const Onboarding: Story = {

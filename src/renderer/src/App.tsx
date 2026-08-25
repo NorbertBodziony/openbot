@@ -2,10 +2,8 @@ import type {
   AccountUsage,
   AgentApproval,
   AgentEvent,
-  AgentModelId,
   AgentModelOption,
   AgentProviderId,
-  AgentReasoningEffort,
   AgentStatus,
   AppInfo,
   AppSetupState,
@@ -62,6 +60,7 @@ import {
   withoutBot,
 } from "./app-message-projection";
 import { playCompletionSoundForAgentEvent } from "./completion-sound";
+import { createFirstBotDraft, type FirstBotDraft } from "./components/FirstBotSetup";
 import { readPanelWidth } from "./components/PanelResizer";
 import type { SidebarAgentState } from "./components/Sidebar";
 import type { BotMessage, BotProfile } from "./data";
@@ -174,26 +173,9 @@ function normalizedTurnStatus(value: string): string {
   return ["completed", "failed", "interrupted", "cancelled"].includes(value) ? value : "other";
 }
 
-const ONBOARDING_PROFILES: Record<string, { title: string; description: string; firstMessage: string }> = {
-  "Work & projects": {
-    title: "Work & projects",
-    description:
-      "Helps plan, organize, and execute ongoing work and projects while keeping priorities, next steps, and deliverables clear.",
-    firstMessage: "Focus on my work and projects. Help me plan, organize, and execute them proactively.",
-  },
-  "Research & writing": {
-    title: "Research & writing",
-    description: "Researches topics, synthesizes reliable sources, and helps draft, edit, and refine clear writing.",
-    firstMessage:
-      "Focus on research and writing. Help me investigate topics and turn the findings into clear, useful writing.",
-  },
-  "Sales & outreach": {
-    title: "Sales & outreach",
-    description: "Supports prospect research, sales preparation, personalized outreach, and organized follow-up work.",
-    firstMessage:
-      "Focus on sales and outreach. Help me research prospects, prepare personalized outreach, and manage follow-ups.",
-  },
-};
+export function createBotInitialMessage(draft: Pick<FirstBotDraft, "purpose">): string {
+  return `Your ongoing role is: ${draft.purpose.trim()}`;
+}
 
 interface AppProps {
   landingPreview?: boolean;
@@ -224,13 +206,11 @@ export function createAppController(props: AppProps = {}) {
   const [browserControlState, setBrowserControlState] = createSignal<BrowserControlState>({
     sessions: [],
   });
-  const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
+  const [botSetupOpen, setBotSetupOpen] = createSignal(false);
+  const [botSetupDraft, setBotSetupDraft] = createSignal<FirstBotDraft>(createFirstBotDraft());
+  const [botSetupError, setBotSetupError] = createSignal<string | null>(null);
   const [creatingAgent, setCreatingAgent] = createSignal(false);
   const [settingsRequest, setSettingsRequest] = createSignal<{
-    botId: string;
-    nonce: number;
-  } | null>(null);
-  const [onboardingRequest, setOnboardingRequest] = createSignal<{
     botId: string;
     nonce: number;
   } | null>(null);
@@ -764,7 +744,11 @@ export function createAppController(props: AppProps = {}) {
     });
     setBotList(profiles);
     setActiveBotId((current) => (profiles.some((bot) => bot.id === current) ? current : (profiles[0]?.id ?? "")));
-    if (profiles.length === 0) setAgentPickerOpen(true);
+    if (profiles.length === 0 && !botSetupOpen()) {
+      setBotSetupDraft(createFirstBotDraft());
+      setBotSetupError(null);
+      setBotSetupOpen(true);
+    }
   }
 
   function applyConversationReads(reads: Record<string, ConversationReadState>): void {
@@ -799,7 +783,7 @@ export function createAppController(props: AppProps = {}) {
   }
 
   function isAgentChatOpen(botId: string): boolean {
-    return !agentPickerOpen() && !activeDirectMemberId() && activeBot()?.id === botId;
+    return !botSetupOpen() && !activeDirectMemberId() && activeBot()?.id === botId;
   }
 
   function autoMarkAgentMessageRead(botId: string, messageId: string): void {
@@ -983,43 +967,59 @@ export function createAppController(props: AppProps = {}) {
     }
   }
 
-  async function createAgent() {
+  async function createAgent(draft: FirstBotDraft = botSetupDraft()) {
     if (creatingAgent()) return;
+    const submitted = { ...draft };
     setCreatingAgent(true);
+    setBotSetupError(null);
     try {
-      const stored = await window.openbot.agent.createBot();
+      const stored = await window.openbot.agent.createBot({
+        name: submitted.name.trim(),
+        description: submitted.purpose.trim(),
+        avatarSeed: submitted.avatarSeed,
+        avatarHue: submitted.avatarHue,
+        initialMessage: createBotInitialMessage(submitted),
+      });
       const newAgent = createStoredProfile(toBotProfile(stored));
       setBotList((current) => [newAgent, ...current.filter((item) => item.id !== newAgent.id)]);
-      setLiveMessages((current) => ({ ...current, [newAgent.id]: [] }));
+      setLiveMessages((current) => (current[newAgent.id] ? current : { ...current, [newAgent.id]: [] }));
       setConversationLoaded((current) => ({ ...current, [newAgent.id]: true }));
-      setAgentPickerOpen(false);
+      setBotSetupOpen(false);
       setActiveDirectMemberId(null);
       setActiveBotId(newAgent.id);
-      setOnboardingRequest({ botId: newAgent.id, nonce: Date.now() });
       const properties = analyticsAgentProperties(newAgent.id);
       if (properties) desktopAnalytics.track("agent_created", properties);
     } catch (error) {
-      setAgentPickerOpen(false);
-      if (activeBotId()) appendUiError(activeBotId(), error, "Create failed");
+      setBotSetupError(error instanceof Error ? error.message : "The Bot could not be created.");
     } finally {
       setCreatingAgent(false);
     }
   }
 
-  function openAgentPicker() {
+  function openBotSetup() {
+    if (botSetupOpen()) return;
     const directMemberId = activeDirectMemberId();
     if (directMemberId) {
       void window.openbot.servers.setDirectTyping({ memberId: directMemberId, typing: false }).catch(() => undefined);
     }
-    setActiveDirectMemberId(null);
-    setDirectConversationError(null);
-    setAgentPickerOpen(true);
+    setBotSetupDraft(createFirstBotDraft());
+    setBotSetupError(null);
+    setBotSetupOpen(true);
+  }
+
+  function cancelBotSetup() {
+    if (creatingAgent() || botList().length === 0) return;
+    setBotSetupOpen(false);
+    setBotSetupError(null);
+    setBotSetupDraft(createFirstBotDraft());
   }
 
   function selectBot(botId: string) {
+    if (botSetupOpen() && creatingAgent()) return;
     const previousBotId = activeBotId();
     if (previousBotId && previousBotId !== botId) pruneInactiveAgentHistory(previousBotId);
-    setAgentPickerOpen(false);
+    setBotSetupOpen(false);
+    setBotSetupError(null);
     const directMemberId = activeDirectMemberId();
     if (directMemberId) {
       void window.openbot.servers.setDirectTyping({ memberId: directMemberId, typing: false }).catch(() => undefined);
@@ -1082,10 +1082,12 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function selectDirectMember(memberId: string): Promise<void> {
+    if (botSetupOpen() && creatingAgent()) return;
     if (!currentTeamMember() || !directPeople().some((member) => member.id === memberId)) return;
     const previousBotId = activeBotId();
     if (previousBotId) pruneInactiveAgentHistory(previousBotId);
-    setAgentPickerOpen(false);
+    setBotSetupOpen(false);
+    setBotSetupError(null);
     setSettingsRequest(null);
     const previousMemberId = activeDirectMemberId();
     if (previousMemberId && previousMemberId !== memberId) {
@@ -1421,11 +1423,13 @@ export function createAppController(props: AppProps = {}) {
   }
 
   function editBot(botId: string) {
+    if (botSetupOpen() && creatingAgent()) return;
     selectBot(botId);
     setSettingsRequest({ botId, nonce: Date.now() });
   }
 
   async function deleteBot(botId: string) {
+    if (botSetupOpen() && creatingAgent()) return;
     try {
       await window.openbot.agent.deleteBot(botId);
       const remaining = botList().filter((bot) => bot.id !== botId);
@@ -1510,33 +1514,6 @@ export function createAppController(props: AppProps = {}) {
     });
     applyConversationReadState(botId, state);
     clearRecentReply(botId);
-  }
-
-  async function completeOnboarding(
-    answer: string,
-    model: AgentModelId,
-    reasoningEffort: AgentReasoningEffort,
-  ): Promise<boolean> {
-    const bot = activeBot();
-    const topic = answer.trim();
-    if (!bot || !topic) return false;
-    const predefined = ONBOARDING_PROFILES[topic];
-    const profile = predefined ?? {
-      title: topic.length <= 60 ? topic : "Custom focus",
-      description: `Primary focus: ${topic.slice(0, 1_900)}.`,
-      firstMessage: `My main focus for you is: ${topic}. Treat this as your ongoing specialty.`,
-    };
-    try {
-      await updateBot(bot.id, {
-        title: profile.title,
-        description: profile.description,
-        model,
-        reasoningEffort,
-      });
-    } catch {
-      return false;
-    }
-    return sendMessageToBot(bot.id, profile.firstMessage, []);
   }
 
   async function answerPrompt(answers: Record<string, string[]>): Promise<boolean> {
@@ -1776,6 +1753,7 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function selectServer(serverId: string): Promise<void> {
+    if (botSetupOpen() && creatingAgent()) return;
     const previousServerId = servers().find((server) => server.active)?.id;
     if (previousServerId && previousServerId !== serverId) {
       await disconnectRemoteDesktopWorkspace(false);
@@ -1783,7 +1761,8 @@ export function createAppController(props: AppProps = {}) {
     directConversationRequest += 1;
     const nextServers = await window.openbot.servers.select(serverId);
     setServers(nextServers);
-    setAgentPickerOpen(false);
+    setBotSetupOpen(false);
+    setBotSetupError(null);
     setSettingsRequest(null);
     setBotList([]);
     setActiveBotId("");
@@ -2264,7 +2243,8 @@ export function createAppController(props: AppProps = {}) {
     sidebarAgentStates,
     selectBot,
     selectDirectMember,
-    openAgentPicker,
+    openBotSetup,
+    cancelBotSetup,
     editBot,
     deleteBot,
     setSidebarCollapsed,
@@ -2314,13 +2294,14 @@ export function createAppController(props: AppProps = {}) {
     pendingPrompts,
     pendingApprovals,
     activeTurns,
-    agentPickerOpen,
+    botSetupOpen,
+    botSetupDraft,
+    setBotSetupDraft,
+    botSetupError,
     globalSearchOpen,
     creatingAgent,
     settingsRequest,
-    onboardingRequest,
     messageFocusRequest,
-    setAgentPickerOpen,
     createAgent,
     updateBot,
     setAgentAvatar,
@@ -2331,7 +2312,6 @@ export function createAppController(props: AppProps = {}) {
     searchAgentMessages,
     openAgentMessage,
     setTeamTyping,
-    completeOnboarding,
     answerPrompt,
     respondToApproval,
     cancelQueuedMessage,

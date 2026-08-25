@@ -6,6 +6,7 @@ import {
   parseApprovalResponse,
   parseCancelQueuedMessage,
   parseChooseAttachments,
+  parseCreateBot,
   parseImportAttachments,
   parseInterrupt,
   parseMarkConversationRead,
@@ -163,6 +164,21 @@ describe("agent IPC input parsing", () => {
   });
 
   it("parses bot, attachment, queue, and prompt values", () => {
+    expect(
+      parseCreateBot({
+        name: "Trip Planner",
+        description: "Builds practical itineraries.",
+        avatarSeed: "setup:trip",
+        avatarHue: 215,
+        initialMessage: "Help me plan a trip.",
+      }),
+    ).toEqual({
+      name: "Trip Planner",
+      description: "Builds practical itineraries.",
+      avatarSeed: "setup:trip",
+      avatarHue: 215,
+      initialMessage: "Help me plan a trip.",
+    });
     expect(parseUpdateBot({ botId: "bot-1", name: "Ada", title: "Coordinator", notifications: true })).toEqual({
       botId: "bot-1",
       name: "Ada",
@@ -237,6 +253,24 @@ describe("agent IPC input parsing", () => {
   });
 
   it("keeps agent input error messages", () => {
+    expect(() =>
+      parseCreateBot({
+        name: " ",
+        description: "Builds practical itineraries.",
+        avatarSeed: "setup:trip",
+        avatarHue: 215,
+        initialMessage: "Help me plan a trip.",
+      }),
+    ).toThrowError("name is required.");
+    expect(() =>
+      parseCreateBot({
+        name: "Trip Planner",
+        description: "Builds practical itineraries.",
+        avatarSeed: "setup:trip",
+        avatarHue: 215,
+        initialMessage: " ",
+      }),
+    ).toThrowError("initialMessage is required.");
     expect(() => parseUpdateBot({ botId: "bot-1", role: "Coordinator" })).toThrowError("Invalid role.");
     expect(() => parseAgentRequest(null)).toThrowError("Invalid agent request.");
     expect(() => parseSendMessage({ botId: "bot-1", text: " " })).toThrowError("A message or attachment is required.");

@@ -121,6 +121,14 @@ export function isAvatarHue(value: unknown): value is BotAvatarHue {
   return isOneOf(BOT_AVATAR_HUES, value);
 }
 
+export interface CreateBotInput {
+  name: string;
+  description: string;
+  avatarSeed: string;
+  avatarHue: BotAvatarHue | null;
+  initialMessage: string;
+}
+
 export interface UpdateBotInput {
   botId: string;
   name?: string;

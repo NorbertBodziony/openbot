@@ -5,7 +5,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { BotSummary, ConversationWithReadState, TeamPresenceSnapshot } from "@openbot/contracts/ipc";
+import type {
+  BotSummary,
+  ConversationWithReadState,
+  CreateBotInput,
+  TeamPresenceSnapshot,
+} from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
@@ -665,8 +670,20 @@ describe("TeamApiServer administration", () => {
         },
       ],
     };
+    const createBot = vi.fn(
+      async (input: CreateBotInput): Promise<BotSummary> => ({
+        ...localBots[0],
+        id: "trip-planner",
+        name: input.name,
+        title: "",
+        description: input.description,
+        avatarSeed: input.avatarSeed,
+        avatarHue: input.avatarHue,
+      }),
+    );
     const agents = createAgents({
       listBots: () => localBots,
+      createBot,
       listConversationReads: () => ({
         chief: { unreadCount: 1, firstUnreadMessageId: "message-1", throughMessageId: null },
       }),
@@ -694,6 +711,22 @@ describe("TeamApiServer administration", () => {
       const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
         body: { username: "owner", password: "correct horse battery" },
       });
+      const createInput: CreateBotInput = {
+        name: "Trip Planner",
+        description: "Builds practical itineraries.",
+        avatarSeed: "setup:trip",
+        avatarHue: 215,
+        initialMessage: "Help me plan a trip.",
+      };
+      await expect(
+        jsonRequest(base, "/v1/agents", { token: login.sessionToken, body: createInput }),
+      ).resolves.toMatchObject({
+        id: "trip-planner",
+        name: "Trip Planner",
+        description: "Builds practical itineraries.",
+        title: "",
+      });
+      expect(createBot).toHaveBeenCalledWith(createInput);
       await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(localBots);
       await expect(jsonRequest(base, "/v1/agents/chief/conversation", { token: login.sessionToken })).resolves.toEqual({
         ...localConversation,

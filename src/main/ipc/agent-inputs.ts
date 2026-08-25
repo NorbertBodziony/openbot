@@ -3,6 +3,7 @@ import {
   type AgentIpcRequest,
   type CancelQueuedMessageInput,
   type ChooseAttachmentsInput,
+  type CreateBotInput,
   type ImportAttachmentsInput,
   type InterruptTurnInput,
   isAgentModel,
@@ -35,6 +36,20 @@ export function parseAgentRequest(value: unknown): AgentIpcRequest {
   return {
     serverId: requireString(value.serverId, "serverId"),
     payload: value.payload,
+  };
+}
+
+export function parseCreateBot(value: unknown): CreateBotInput {
+  if (!isObject(value)) throw new Error("Invalid bot creation request.");
+  const avatarHue = value.avatarHue;
+  if (!isAvatarSeed(value.avatarSeed)) throw new Error("Invalid avatar seed.");
+  if (avatarHue !== null && !isAvatarHue(avatarHue)) throw new Error("Invalid avatar hue.");
+  return {
+    name: requireString(value.name, "name", INPUT_LIMITS.agentName),
+    description: requireString(value.description, "description", INPUT_LIMITS.agentDescription),
+    avatarSeed: value.avatarSeed,
+    avatarHue,
+    initialMessage: requireString(value.initialMessage, "initialMessage", INPUT_LIMITS.messageText),
   };
 }
 

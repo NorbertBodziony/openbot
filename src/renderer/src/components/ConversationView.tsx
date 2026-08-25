@@ -3,12 +3,10 @@ import {
   expandAttachmentReferences,
   removeAttachmentReferences,
 } from "@openbot/contracts/attachment-references";
-import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AgentEvent,
   AgentModelId,
   AgentModelOption,
-  AgentReasoningEffort,
   AgentStatus,
   AttachmentSummary,
   AvatarImageInput,
@@ -84,7 +82,7 @@ import {
   voiceTranscriptionError,
 } from "./conversation/voice-status";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { Button, Combobox, Dialog, DropdownMenu, File, Image, Input, LoaderCircle, Mic, Puzzle } from "./ui";
+import { Button, Dialog, DropdownMenu, File, Image, Input, LoaderCircle, Mic, Puzzle } from "./ui";
 
 const loadAgentSettingsPanel = () => import("./conversation/AgentSettingsPanel");
 const AgentSettingsPanel = lazy(loadAgentSettingsPanel);
@@ -92,7 +90,6 @@ const BrowserPanel = lazy(() => import("./conversation/BrowserPanel"));
 const FilePreviewPanel = lazy(() => import("./conversation/FilePreviewPanel"));
 const QueuePanel = lazy(() => import("./conversation/QueuePanel").then((module) => ({ default: module.QueuePanel })));
 const ApprovalCard = lazy(() => import("./ConversationPrompts").then((module) => ({ default: module.ApprovalCard })));
-const ChoiceCard = lazy(() => import("./ConversationPrompts").then((module) => ({ default: module.ChoiceCard })));
 
 interface RenderedAgentActivity {
   activityId: string;
@@ -125,8 +122,6 @@ function followConversationBottom(element: HTMLDivElement): void {
   element.scrollTop = element.scrollHeight;
 }
 
-type AgentPickerOption = { kind: "create" } | { kind: "bot"; bot: BotProfile };
-
 export interface ConversationProps {
   agentStatus: AgentStatus;
   bot: BotProfile | undefined;
@@ -142,11 +137,8 @@ export interface ConversationProps {
   loadingOlder?: boolean;
   olderError?: string | null;
   activeTurnId: string | null | undefined;
-  agentPickerOpen: boolean;
   globalOverlayOpen: boolean;
-  creatingAgent: boolean;
   settingsRequest: { botId: string; nonce: number } | null;
-  onboardingRequest: { botId: string; nonce: number } | null;
   messageFocusRequest: { botId: string; messageId: string; nonce: number } | null;
   queue: QueueSnapshot | undefined;
   browserTabs: BrowserTab[];
@@ -161,8 +153,6 @@ export interface ConversationProps {
   remoteDesktopVisible: boolean;
   prompt: Extract<AgentEvent, { type: "prompt" }> | undefined;
   approval: Extract<AgentEvent, { type: "approval" }>["approval"] | undefined;
-  onCloseAgentPicker: () => void;
-  onCreateAgent: () => void;
   onSelectAgent: (botId: string) => void;
   onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
   onSetAgentAvatar: (botId: string, image: AvatarImageInput | null) => Promise<void>;
@@ -173,11 +163,6 @@ export interface ConversationProps {
   onSearchMessages?: (query: string) => Promise<{ messageIds: string[]; total: number }>;
   onOpenSearchMessage?: (messageId: string) => Promise<void>;
   onTypingChange: (botId: string, typing: boolean) => void;
-  onCompleteOnboarding: (
-    answer: string,
-    model: AgentModelId,
-    reasoningEffort: AgentReasoningEffort,
-  ) => Promise<boolean>;
   onAnswerPrompt: (answers: Record<string, string[]>) => Promise<boolean>;
   onRespondToApproval: (decision: "accept" | "decline") => Promise<boolean>;
   onCancelQueuedMessage: (deliveryId: string) => void;
@@ -223,7 +208,6 @@ const EMPTY_DRAFT: ComposerDraft = {
   attachments: [],
   replyToMessageId: null,
 };
-const ONBOARDING_CHOICES = ["Work & projects", "Research & writing", "Sales & outreach", "Something else"];
 const SETTINGS_PANEL_MIN = 180;
 const SETTINGS_PANEL_MAX = 1600;
 const BROWSER_PANEL_DEFAULT_RATIO = 0.5;
@@ -319,13 +303,6 @@ function createConversationViewScope(props: ConversationProps) {
     setSettingsModel,
     settingsReasoning,
     setSettingsReasoning,
-    onboardingBots,
-    setOnboardingBots,
-    modelConfirmedBots,
-    setModelConfirmedBots,
-    completedOnboardingBots,
-    setCompletedOnboardingBots,
-    automaticallyOnboardedBots,
     browserAddress,
     setBrowserAddress,
     browserAddressEditing,
@@ -366,15 +343,6 @@ function createConversationViewScope(props: ConversationProps) {
   } = controller;
   let imageAttachmentPicker: HTMLInputElement | undefined;
   let contextAttachmentPicker: HTMLInputElement | undefined;
-  const onboardingActive = createMemo(() => {
-    const botId = props.bot?.id;
-    return Boolean(botId && onboardingBots()[botId]);
-  });
-  const onboardingModelConfirmed = createMemo(() => {
-    const botId = props.bot?.id;
-    return Boolean(botId && onboardingActive() && modelConfirmedBots()[botId]);
-  });
-  const onboardingModelRequired = createMemo(() => agentReady() && onboardingActive() && !onboardingModelConfirmed());
   const currentDraft = createMemo(() => {
     const id = props.bot?.id;
     return id ? (drafts()[id] ?? EMPTY_DRAFT) : EMPTY_DRAFT;
@@ -390,12 +358,7 @@ function createConversationViewScope(props: ConversationProps) {
     const id = currentDraft().replyToMessageId;
     return id ? props.messages.find((message) => message.id === id) : undefined;
   });
-  const agentPickerOptions = createMemo<AgentPickerOption[]>(() => [
-    { kind: "create" },
-    ...props.bots.map((bot) => ({ kind: "bot" as const, bot })),
-  ]);
   const activeRightPanel = createMemo<RightPanelMode>(() => {
-    if (props.agentPickerOpen) return "none";
     const botId = props.bot?.id;
     return botId ? (rightPanels()[botId] ?? "none") : "none";
   });
@@ -653,7 +616,6 @@ function createConversationViewScope(props: ConversationProps) {
   let browserVisibilityFrame: number | undefined;
   let browserBoundsFrame: number | undefined;
   let browserVisibilityGeneration = 0;
-  let pickerInput: HTMLInputElement | undefined;
   let chatSearchInput: HTMLInputElement | undefined;
   let chatSearchReturnFocus: HTMLElement | undefined;
   let chatSearchFrame: number | undefined;
@@ -664,7 +626,6 @@ function createConversationViewScope(props: ConversationProps) {
   let lastConversationBotId: string | undefined;
   let lastPanelBotId: string | undefined;
   let lastHandledSettingsRequestNonce: number | undefined;
-  let lastHandledOnboardingRequestNonce: number | undefined;
   let lastHandledMessageFocusNonce: number | undefined;
   let lastRuntimeSettingsSignature: string | undefined;
   const messageVirtualizer = createChatVirtualizer<HTMLDivElement, HTMLDivElement>({
@@ -767,26 +728,7 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   async function selectAndConfirmModel(model: AgentModelId): Promise<void> {
-    if (!(await selectModel(model, true, true))) return;
-    const botId = props.bot?.id;
-    if (botId) setModelConfirmedBots((current) => ({ ...current, [botId]: true }));
-  }
-
-  function finishOnboarding(botId: string): void {
-    automaticallyOnboardedBots.delete(botId);
-    setCompletedOnboardingBots((current) => ({ ...current, [botId]: true }));
-    setOnboardingBots((current) => {
-      if (!current[botId]) return current;
-      const next = { ...current };
-      delete next[botId];
-      return next;
-    });
-    setModelConfirmedBots((current) => {
-      if (!current[botId]) return current;
-      const next = { ...current };
-      delete next[botId];
-      return next;
-    });
+    await selectModel(model, true, true);
   }
 
   function updateScrollFade(element = scrollElement) {
@@ -963,7 +905,6 @@ function createConversationViewScope(props: ConversationProps) {
       setExpandedEmojiMessageId(null);
       hideBrowserPanel();
       setMediaPreview(null);
-      props.onCloseAgentPicker();
     };
     const closeActiveBrowserTab = (event: KeyboardEvent) => {
       if (
@@ -1141,21 +1082,6 @@ function createConversationViewScope(props: ConversationProps) {
   });
 
   createEffect(
-    () => ({ request: props.onboardingRequest, botId: props.bot?.id }),
-    ({ request, botId }) => {
-      if (!request || botId !== request.botId || request.nonce === lastHandledOnboardingRequestNonce) return;
-      lastHandledOnboardingRequestNonce = request.nonce;
-      automaticallyOnboardedBots.delete(request.botId);
-      setOnboardingBots((current) => ({ ...current, [request.botId]: true }));
-      setModelConfirmedBots((current) => ({
-        ...current,
-        [request.botId]: true,
-      }));
-      setActiveRightPanel("none", botId);
-    },
-  );
-
-  createEffect(
     () => {
       const lastMessage = props.messages[props.messages.length - 1];
       return {
@@ -1168,7 +1094,6 @@ function createConversationViewScope(props: ConversationProps) {
           .map((delivery) => `${delivery.id}:${delivery.status}:${delivery.position}`)
           .join("|"),
         loaded: props.loaded,
-        agentPickerOpen: props.agentPickerOpen,
         prompt: props.prompt,
         unreadCount: props.unreadCount,
       };
@@ -1213,22 +1138,6 @@ function createConversationViewScope(props: ConversationProps) {
   });
 
   createEffect(
-    () => ({
-      botId: props.bot?.id,
-      hasConversationMessage: props.messages.some((message) => !message.id.startsWith("ui-")),
-    }),
-    ({ botId, hasConversationMessage }) => {
-      if (!botId || !hasConversationMessage || !automaticallyOnboardedBots.delete(botId)) return;
-      setOnboardingBots((current) => {
-        if (!current[botId]) return current;
-        const next = { ...current };
-        delete next[botId];
-        return next;
-      });
-    },
-  );
-
-  createEffect(
     () => {
       const bot = props.bot;
       if (!bot) return null;
@@ -1243,30 +1152,6 @@ function createConversationViewScope(props: ConversationProps) {
       lastRuntimeSettingsSignature = bot.signature;
       setSettingsModel(bot.model);
       setSettingsReasoning(bot.reasoningEffort);
-    },
-  );
-
-  createEffect(
-    () => {
-      const botId = props.bot?.id;
-      if (
-        !botId ||
-        !props.loaded ||
-        !agentReady() ||
-        props.activeTurnId ||
-        props.messages.length > 0 ||
-        props.onboardingRequest?.botId === botId ||
-        completedOnboardingBots()[botId] ||
-        onboardingBots()[botId]
-      )
-        return null;
-      return botId;
-    },
-    (botId) => {
-      if (botId) {
-        automaticallyOnboardedBots.add(botId);
-        setOnboardingBots((current) => ({ ...current, [botId]: true }));
-      }
     },
   );
 
@@ -1296,14 +1181,6 @@ function createConversationViewScope(props: ConversationProps) {
       if (!request || botId !== request.botId || request.nonce === lastHandledSettingsRequestNonce) return;
       lastHandledSettingsRequestNonce = request.nonce;
       setActiveRightPanel("settings", botId);
-    },
-  );
-
-  createEffect(
-    () => props.agentPickerOpen,
-    (open) => {
-      if (!open) return;
-      requestAnimationFrame(() => pickerInput?.focus());
     },
   );
 
@@ -1604,7 +1481,7 @@ function createConversationViewScope(props: ConversationProps) {
     const draft = currentDraft();
     const text = override ?? expandComposerMentions(draft.text);
     const attachments = override ? [] : draft.attachments;
-    if (!botId || submitting() || onboardingModelRequired() || (!text.trim() && attachments.length === 0)) return;
+    if (!botId || submitting() || (!text.trim() && attachments.length === 0)) return;
     stopTeamTyping();
     stickToLatest = true;
     setSubmitting(true);
@@ -1617,12 +1494,11 @@ function createConversationViewScope(props: ConversationProps) {
     setSubmitting(false);
     if (sent) {
       setDrafts((current) => ({ ...current, [botId]: EMPTY_DRAFT }));
-      finishOnboarding(botId);
     }
   }
 
   async function sendSelectionInstruction(messageId: string, body: string): Promise<boolean> {
-    if (!props.bot || submitting() || selectionSending() || !agentReady() || onboardingModelRequired()) {
+    if (!props.bot || submitting() || selectionSending() || !agentReady()) {
       return false;
     }
     setSelectionSending(true);
@@ -1908,9 +1784,6 @@ function createConversationViewScope(props: ConversationProps) {
     conversationPanel = element;
   };
   const conversationPanelElement = () => conversationPanel;
-  const setPickerInputElement = (element: HTMLInputElement) => {
-    pickerInput = element;
-  };
   const setChatSearchInputElement = (element: HTMLInputElement) => {
     chatSearchInput = element;
   };
@@ -1951,7 +1824,6 @@ function createConversationViewScope(props: ConversationProps) {
     setConversationPanelElement,
     setContextAttachmentPickerElement,
     setImageAttachmentPickerElement,
-    setPickerInputElement,
     setScrollElement,
     setStickToLatest,
     setUnreadMessagesDividerElement,
@@ -1970,11 +1842,9 @@ function createConversationViewScope(props: ConversationProps) {
     agentActivityShowTimer,
     agentActivitySlot,
     agentActivitySpaceReserved,
-    agentPickerOptions,
     agentReady,
     attachmentAction,
     attachmentBusy,
-    automaticallyOnboardedBots,
     browserAddress,
     browserPipBounds,
     browserPipOpen,
@@ -2006,7 +1876,6 @@ function createConversationViewScope(props: ConversationProps) {
     closeBrowserTab,
     closeChatSearch,
     closeSidebarFilePreview,
-    completedOnboardingBots,
     composerError,
     composerFocusRequest,
     composerHasContent,
@@ -2026,7 +1895,6 @@ function createConversationViewScope(props: ConversationProps) {
     fadeAtBottom,
     fadeAtTop,
     filePreviewOpen,
-    finishOnboarding,
     finishVoiceRecording,
     handleChatSearchShortcut,
     hideBrowserPanel,
@@ -2036,7 +1904,6 @@ function createConversationViewScope(props: ConversationProps) {
     lastChatSearchQuery,
     lastConversationBotId,
     lastHandledMessageFocusNonce,
-    lastHandledOnboardingRequestNonce,
     lastHandledSettingsRequestNonce,
     lastPanelBotId,
     lastRuntimeSettingsSignature,
@@ -2047,12 +1914,7 @@ function createConversationViewScope(props: ConversationProps) {
     markingRead,
     mediaPreview,
     messageVirtualizer,
-    modelConfirmedBots,
     moveChatSearch,
-    onboardingActive,
-    onboardingBots,
-    onboardingModelConfirmed,
-    onboardingModelRequired,
     openAttachmentPicker,
     openAttachmentPickerFromKey,
     openBrowserAddress,
@@ -2064,7 +1926,6 @@ function createConversationViewScope(props: ConversationProps) {
     openSidebarFileExternally,
     openWorkspaceFile,
     orderedQueuedDeliveries,
-    pickerInput,
     presentedQueueDeliveries,
     previewAttachment,
     previousBrowserTabCount,
@@ -2103,7 +1964,6 @@ function createConversationViewScope(props: ConversationProps) {
     setChatSearchOpen,
     setChatSearchQuery,
     setChatSearchTotal,
-    setCompletedOnboardingBots,
     setComposerError,
     setComposerFocusRequest,
     setCopiedMessageId,
@@ -2117,8 +1977,6 @@ function createConversationViewScope(props: ConversationProps) {
     setFadeAtTop,
     setMarkingRead,
     setMediaPreview,
-    setModelConfirmedBots,
-    setOnboardingBots,
     setOpenMoreMessageId,
     setOpenReactionMessageId,
     setRenderedAgentActivity,
@@ -2184,7 +2042,6 @@ export function ConversationHeader() {
   const {
     activeBrowserControl,
     agentActivity,
-    agentPickerOptions,
     agentReady,
     browserControlBot,
     hideBrowserPanel,
@@ -2192,184 +2049,92 @@ export function ConversationHeader() {
     screenOpen,
     selectAndConfirmModel,
     setActiveRightPanel,
-    setPickerInputElement,
     settingsModel,
     showBrowserPanel,
   } = useConversationViewScope();
   return (
     <header class="window-drag conversation-header">
-      <Show
-        when={props.agentPickerOpen}
-        fallback={
-          <>
-            <div class="conversation-heading-group">
-              <Show when={props.bot}>
-                {(bot) => (
-                  <Button
-                    type="button"
-                    class="conversation-title no-drag"
-                    aria-label="View agent settings"
-                    onPointerEnter={() => void loadAgentSettingsPanel()}
-                    onFocus={() => void loadAgentSettingsPanel()}
-                    onClick={() => {
-                      setActiveRightPanel("settings");
-                    }}
-                  >
-                    <AgentAvatar bot={bot()} />
-                    <h1>{bot().name}</h1>
-                  </Button>
-                )}
-              </Show>
-            </div>
-            <div class="conversation-header-actions no-drag">
-              <Show when={props.bot}>
-                <ProviderModelPicker
-                  value={settingsModel()}
-                  modelOptions={props.modelOptions}
-                  agentStatus={props.agentStatus}
-                  disabled={!agentReady() || agentActivity() === "Working"}
-                  disabledReason={
-                    agentActivity() === "Working"
-                      ? "Wait for the current work to finish before changing models."
-                      : "Models are available after an agent CLI connects."
-                  }
-                  onChange={(model) => void selectAndConfirmModel(model)}
-                />
-              </Show>
-              <Show
-                when={
-                  props.remoteDesktopEnabled !== false && props.server?.kind === "remote" ? props.server : undefined
-                }
+      <div class="conversation-heading-group">
+        <Show when={props.bot}>
+          {(bot) => (
+            <Button
+              type="button"
+              class="conversation-title no-drag"
+              aria-label="View agent settings"
+              onPointerEnter={() => void loadAgentSettingsPanel()}
+              onFocus={() => void loadAgentSettingsPanel()}
+              onClick={() => setActiveRightPanel("settings")}
+            >
+              <AgentAvatar bot={bot()} />
+              <h1>{bot().name}</h1>
+            </Button>
+          )}
+        </Show>
+      </div>
+      <div class="conversation-header-actions no-drag">
+        <Show when={props.bot}>
+          <ProviderModelPicker
+            value={settingsModel()}
+            modelOptions={props.modelOptions}
+            agentStatus={props.agentStatus}
+            disabled={!agentReady() || agentActivity() === "Working"}
+            disabledReason={
+              agentActivity() === "Working"
+                ? "Wait for the current work to finish before changing models."
+                : "Models are available after an agent CLI connects."
+            }
+            onChange={(model) => void selectAndConfirmModel(model)}
+          />
+        </Show>
+        <Show when={props.remoteDesktopEnabled !== false && props.server?.kind === "remote" ? props.server : undefined}>
+          {(server) => {
+            const enabled = () =>
+              props.remoteDesktopSessionActive || (server().state === "online" && server().remoteDesktopAvailable);
+            const label = () => (props.remoteDesktopSessionActive ? "Resume remote control" : "Open remote control");
+            return (
+              <Button
+                type="button"
+                class="header-panel-toggle remote-desktop-button"
+                aria-label={label()}
+                aria-expanded={props.remoteDesktopVisible ? "true" : "false"}
+                disabled={!enabled()}
+                onClick={(event) => void props.onOpenRemoteDesktop(server().id, event.currentTarget)}
               >
-                {(server) => {
-                  const enabled = () =>
-                    props.remoteDesktopSessionActive ||
-                    (server().state === "online" && server().remoteDesktopAvailable);
-                  const label = () =>
-                    props.remoteDesktopSessionActive ? "Resume remote control" : "Open remote control";
-                  return (
-                    <Button
-                      type="button"
-                      class="header-panel-toggle remote-desktop-button"
-                      aria-label={label()}
-                      aria-expanded={props.remoteDesktopVisible ? "true" : "false"}
-                      disabled={!enabled()}
-                      onClick={(event) => void props.onOpenRemoteDesktop(server().id, event.currentTarget)}
-                    >
-                      <RemoteDesktopIcon />
-                      <Show when={props.remoteDesktopSessionActive}>
-                        <span class="remote-desktop-button-dot" aria-hidden="true" />
-                      </Show>
-                    </Button>
-                  );
-                }}
-              </Show>
-              <Show when={props.browserEnabled !== false}>
-                <Button
-                  type="button"
-                  class={[
-                    "header-panel-toggle computer-button",
-                    {
-                      "computer-button-agent-active": Boolean(activeBrowserControl()),
-                    },
-                  ]}
-                  aria-label={
-                    activeBrowserControl()
-                      ? `${browserControlBot()?.name ?? "Agent"} is controlling the browser`
-                      : screenOpen()
-                        ? "Hide computer"
-                        : "Open computer"
-                  }
-                  aria-expanded={screenOpen() ? "true" : "false"}
-                  onClick={() => {
-                    if (screenOpen()) hideBrowserPanel();
-                    else showBrowserPanel();
-                  }}
-                >
-                  <ComputerIcon />
-                  <Show when={activeBrowserControl()}>
-                    <span class="computer-control-dot" aria-hidden="true" />
-                  </Show>
-                </Button>
-              </Show>
-            </div>
-          </>
-        }
-      >
-        <div class="agent-picker-root no-drag">
-          <Combobox.Root<AgentPickerOption>
-            options={agentPickerOptions()}
-            open={true}
-            modal={false}
-            triggerMode="input"
-            closeOnSelection={false}
-            shouldFocusWrap={true}
-            defaultFilter={(option, inputValue) =>
-              option.kind === "create" ||
-              `${option.bot.name} ${option.bot.title} ${option.bot.description}`
-                .toLocaleLowerCase()
-                .includes(inputValue.toLocaleLowerCase())
+                <RemoteDesktopIcon />
+                <Show when={props.remoteDesktopSessionActive}>
+                  <span class="remote-desktop-button-dot" aria-hidden="true" />
+                </Show>
+              </Button>
+            );
+          }}
+        </Show>
+        <Show when={props.browserEnabled !== false}>
+          <Button
+            type="button"
+            class={[
+              "header-panel-toggle computer-button",
+              { "computer-button-agent-active": Boolean(activeBrowserControl()) },
+            ]}
+            aria-label={
+              activeBrowserControl()
+                ? `${browserControlBot()?.name ?? "Agent"} is controlling the browser`
+                : screenOpen()
+                  ? "Hide computer"
+                  : "Open computer"
             }
-            optionValue={(option) => (option.kind === "create" ? "create" : option.bot.id)}
-            optionTextValue={(option) =>
-              option.kind === "create"
-                ? "Create new agent"
-                : `${option.bot.name} ${option.bot.title} ${option.bot.description}`
-            }
-            optionLabel={(option) => (option.kind === "create" ? "Create new agent" : option.bot.name)}
-            optionDisabled={(option) => option.kind === "create" && props.creatingAgent}
-            onChange={(option) => {
-              if (!option) return;
-              if (option.kind === "create") props.onCreateAgent();
-              else props.onSelectAgent(option.bot.id);
-            }}
-            itemComponent={(itemProps) => {
-              const option = itemProps.item.rawValue;
-              return (
-                <Combobox.Item
-                  item={itemProps.item}
-                  class={["agent-picker-option", { "agent-picker-create": option.kind === "create" }]}
-                >
-                  <Show
-                    when={option.kind === "bot" ? option.bot : undefined}
-                    fallback={
-                      <span class="agent-picker-plus">
-                        <PlusIcon />
-                      </span>
-                    }
-                  >
-                    {(bot) => <AgentAvatar bot={bot()} />}
-                  </Show>
-                  <Combobox.ItemLabel>
-                    {option.kind === "create"
-                      ? props.creatingAgent
-                        ? "Creating agent…"
-                        : "Create new agent"
-                      : option.bot.name}
-                  </Combobox.ItemLabel>
-                </Combobox.Item>
-              );
+            aria-expanded={screenOpen() ? "true" : "false"}
+            onClick={() => {
+              if (screenOpen()) hideBrowserPanel();
+              else showBrowserPanel();
             }}
           >
-            <Combobox.Control class="agent-recipient-field">
-              <Combobox.Label>To:</Combobox.Label>
-              <Combobox.Input
-                as={Input}
-                ref={setPickerInputElement}
-                aria-label="To:"
-                placeholder="Search or create agents"
-                maxlength={INPUT_LIMITS.agentName}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") props.onCloseAgentPicker();
-                }}
-              />
-            </Combobox.Control>
-            <Combobox.Content class="agent-picker-menu" aria-hidden={props.agentPickerOpen ? undefined : "true"}>
-              <Combobox.Listbox />
-            </Combobox.Content>
-          </Combobox.Root>
-        </div>
-      </Show>
+            <ComputerIcon />
+            <Show when={activeBrowserControl()}>
+              <span class="computer-control-dot" aria-hidden="true" />
+            </Show>
+          </Button>
+        </Show>
+      </div>
     </header>
   );
 }
@@ -2392,7 +2157,6 @@ export function ConversationTimeline() {
     expandedThinkingMessages,
     fadeAtBottom,
     fadeAtTop,
-    finishOnboarding,
     jumpToLatestMessage,
     jumpToUnreadMessages,
     markMessageSeen,
@@ -2400,8 +2164,6 @@ export function ConversationTimeline() {
     markingRead,
     messageVirtualizer,
     moveChatSearch,
-    onboardingActive,
-    onboardingModelConfirmed,
     openExternalMessageUrl,
     openMoreMessageId,
     openReactionMessageId,
@@ -2413,18 +2175,13 @@ export function ConversationTimeline() {
     renderedAgentActivity,
     replyToMessage,
     scheduleUnreadDividerVisibilityUpdate,
-    selectAndConfirmModel,
     setChatSearchQuery,
     setComposerError,
     setExpandedEmojiMessageId,
     setExpandedThinkingMessages,
     setOpenMoreMessageId,
     setOpenReactionMessageId,
-    setSubmitting,
-    settingsModel,
-    settingsReasoning,
     showScrollToLatest,
-    submitting,
     unreadDividerVisible,
     updateScrollFade,
     updateUnreadDividerVisibility,
@@ -2478,7 +2235,7 @@ export function ConversationTimeline() {
         <Show when={showScrollToLatest() || props.discontinuous}>
           <ScrollToLatestButton onClick={() => void jumpToLatestMessage()} />
         </Show>
-        <Show when={!props.agentPickerOpen && props.loaded}>
+        <Show when={props.loaded}>
           <Show when={!agentReady()}>
             <section class="agent-setup-card" role="status">
               <div>
@@ -2509,51 +2266,6 @@ export function ConversationTimeline() {
             <div class="time-marker">
               <span>{props.messages[0]?.time ?? "now"}</span>
             </div>
-          </Show>
-          <Show when={agentReady() && onboardingActive() && !props.activeTurnId}>
-            <article class="message-entry message-entry-animated message-entry-bot onboarding-message">
-              <div class="bot-bubble">
-                <p class="message-copy">Choose a model to get started.</p>
-              </div>
-              <div class="onboarding-model-picker">
-                <ProviderModelPicker
-                  ariaLabel="Onboarding model"
-                  value={settingsModel()}
-                  agentStatus={props.agentStatus}
-                  modelOptions={props.modelOptions}
-                  onChange={(model) => void selectAndConfirmModel(model)}
-                />
-              </div>
-              <Show when={onboardingModelConfirmed()}>
-                <div class="onboarding-specialty-step message-entry-animated">
-                  <Loading>
-                    <ChoiceCard
-                      title="What do you want me helping with most?"
-                      hint="This becomes my ongoing specialty. You can change it later in Settings."
-                      choices={ONBOARDING_CHOICES}
-                      customChoice="Something else"
-                      pending={submitting()}
-                      onSubmit={async (answer) => {
-                        if (submitting()) return false;
-                        setSubmitting(true);
-                        setComposerError(null);
-                        const completed = await props.onCompleteOnboarding(
-                          answer,
-                          settingsModel(),
-                          settingsReasoning(),
-                        );
-                        if (completed) {
-                          const botId = props.bot?.id;
-                          if (botId) finishOnboarding(botId);
-                        }
-                        setSubmitting(false);
-                        return completed;
-                      }}
-                    />
-                  </Loading>
-                </div>
-              </Show>
-            </article>
           </Show>
           <Show when={props.loadingOlder || props.olderError}>
             <div class="conversation-history-status" role={props.olderError ? "alert" : "status"}>
@@ -2798,7 +2510,6 @@ export function ConversationComposer() {
     editQueuedMessage,
     editingDeliveryId,
     imageGenerationUnavailable,
-    onboardingModelRequired,
     openAttachmentPicker,
     openAttachmentPickerFromKey,
     presentedQueueDeliveries,
@@ -2924,23 +2635,15 @@ export function ConversationComposer() {
               bots={props.bots}
               attachments={currentDraft().attachments}
               value={currentDraft().text}
-              disabled={
-                props.agentPickerOpen ||
-                submitting() ||
-                selectionSending() ||
-                !agentReady() ||
-                onboardingModelRequired()
-              }
+              disabled={submitting() || selectionSending() || !agentReady()}
               placeholder={
                 !agentReady()
                   ? "Complete agent CLI setup to start"
-                  : onboardingModelRequired()
-                    ? "Choose a model to continue"
-                    : replyTarget()
-                      ? "Reply…"
-                      : `Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`
+                  : replyTarget()
+                    ? "Reply…"
+                    : `Message ${props.bot?.name ?? "agent"}`
               }
-              ariaLabel={`Message ${props.agentPickerOpen ? "agent" : (props.bot?.name ?? "agent")}`}
+              ariaLabel={`Message ${props.bot?.name ?? "agent"}`}
               focusRequest={composerFocusRequest()}
               onValueChange={(text) => {
                 updateCurrentDraft({ text });
@@ -2982,14 +2685,7 @@ export function ConversationComposer() {
               <DropdownMenu.Trigger
                 class="composer-button"
                 aria-label="Add to prompt"
-                disabled={
-                  props.agentPickerOpen ||
-                  attachmentBusy() ||
-                  submitting() ||
-                  selectionSending() ||
-                  !agentReady() ||
-                  onboardingModelRequired()
-                }
+                disabled={attachmentBusy() || submitting() || selectionSending() || !agentReady()}
               >
                 <PlusIcon />
               </DropdownMenu.Trigger>
@@ -3048,8 +2744,7 @@ export function ConversationComposer() {
                     disabled={
                       voicePhase() === "requesting" ||
                       voicePhase() === "transcribing" ||
-                      (voicePhase() === "idle" &&
-                        (props.agentPickerOpen || !props.bot || !agentReady() || onboardingModelRequired()))
+                      (voicePhase() === "idle" && (!props.bot || !agentReady()))
                     }
                     onClick={() => void startVoiceRecording()}
                   >
@@ -3084,7 +2779,7 @@ export function ConversationComposer() {
                     type="button"
                     class="voice-button"
                     aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
-                    disabled={submitting() || selectionSending() || !agentReady() || onboardingModelRequired()}
+                    disabled={submitting() || selectionSending() || !agentReady()}
                     onClick={() => void submitMessage()}
                   >
                     {submitting() ? "…" : "↑"}
@@ -3315,7 +3010,6 @@ export function ConversationView(props: ConversationProps) {
     dropActive,
     filePreviewOpen,
     handleChatSearchShortcut,
-    onboardingModelRequired,
     sendSelectionInstruction,
     setConversationPanelElement,
     setDropActive,
@@ -3352,7 +3046,7 @@ export function ConversationView(props: ConversationProps) {
       >
         <MessageSelectionActions
           contextKey={props.bot?.id}
-          disabled={!props.bot || !agentReady() || onboardingModelRequired() || submitting()}
+          disabled={!props.bot || !agentReady() || submitting()}
           onSend={sendSelectionInstruction}
         />
         <Show when={dropActive()}>

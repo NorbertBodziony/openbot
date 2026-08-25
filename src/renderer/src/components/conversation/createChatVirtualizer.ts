@@ -32,7 +32,7 @@ export function createChatVirtualizer<TScrollElement extends Element, TItemEleme
 ): ChatVirtualizer<TItemElement> {
   const initialCount = options.count();
   const [virtualItems, setVirtualItems] = createSignal<VirtualItem[]>(
-    fallbackItems(initialCount, options.estimateSize, options.getItemKey),
+    fallbackItems(initialCount, options.estimateSize, options.getItemKey, options.scrollMargin()),
   );
   const [totalSize, setTotalSize] = createSignal(initialCount * options.estimateSize(0));
   const stableItems = new Map<VirtualItem["key"], { item: VirtualItem; update: (next: VirtualItem) => void }>();
@@ -57,7 +57,7 @@ export function createChatVirtualizer<TScrollElement extends Element, TItemEleme
     const count = options.count();
     const items =
       count <= STATIC_CHAT_LIMIT || measured.length === 0
-        ? fallbackItems(count, options.estimateSize, options.getItemKey)
+        ? fallbackItems(count, options.estimateSize, options.getItemKey, options.scrollMargin())
         : measured;
     const activeKeys = new Set(items.map((item) => item.key));
     const nextItems = items.map((item) => {
@@ -166,12 +166,13 @@ function fallbackItems(
   count: number,
   estimateSize: (index: number) => number,
   getItemKey: (index: number) => string | number,
+  scrollMargin: number,
 ): VirtualItem[] {
   const startIndex = count <= 100 ? 0 : Math.max(0, count - 10);
   return Array.from({ length: count - startIndex }, (_, offset): VirtualItem => {
     const index = startIndex + offset;
     const size = estimateSize(index);
-    const start = index * size;
+    const start = scrollMargin + index * size;
     return { key: getItemKey(index), index, start, end: start + size, size, lane: 0 };
   });
 }
