@@ -1065,10 +1065,16 @@ function AgentSelect(props: {
 }
 
 function SkillIcon(props: { skill: { name: string; iconUrl: string | null } }) {
+  const [failedUrl, setFailedUrl] = createSignal<string | null>(null);
+  const iconUrl = createMemo(() => {
+    const url = props.skill.iconUrl;
+    return url && failedUrl() !== url ? url : null;
+  });
+
   return (
     <span class="skills-marketplace-icon">
-      <Show when={props.skill.iconUrl} fallback={<Puzzle />} keyed>
-        {(url) => <img src={url} alt="" />}
+      <Show when={iconUrl()} fallback={<Puzzle />} keyed>
+        {(url) => <img src={url} alt="" onError={() => setFailedUrl(url)} />}
       </Show>
     </span>
   );

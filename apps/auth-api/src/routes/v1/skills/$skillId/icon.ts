@@ -14,7 +14,7 @@ export const Route = createFileRoute("/v1/skills/$skillId/icon")({
                   "Cache-Control": "public, max-age=3600",
                 },
               })
-            : new Response(null, { status: 404 });
+            : new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } });
         } catch (error) {
           return skillErrorResponse(error);
         }

@@ -108,6 +108,36 @@ describe("SkillsMarketplaceModal", () => {
     });
   });
 
+  it("shows the default skill icon when a marketplace image fails to load", async () => {
+    const pageWithIcon: MarketplaceSkillPage = {
+      skills: [
+        {
+          id: "release-notes",
+          slug: "release-notes",
+          name: "Release Notes",
+          description: "Turns merged work into clear release notes.",
+          category: "documents",
+          creatorName: "Ada",
+          version: 2,
+          installs: 1280,
+          featured: true,
+          iconUrl: "http://127.0.0.1:3100/v1/skills/release-notes/icon?v=release-notes-v2",
+          updatedAt: "2026-08-25T00:00:00.000Z",
+        },
+      ],
+      nextCursor: null,
+    };
+    window.openbot.skills.list = vi.fn(async () => pageWithIcon);
+    render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
+
+    await waitFor(() => expect(document.querySelector(".skills-marketplace-icon img")).toBeInTheDocument());
+    const icon = document.querySelector<HTMLImageElement>(".skills-marketplace-icon img");
+    if (!icon) throw new Error("Missing marketplace skill image.");
+    fireEvent.error(icon);
+
+    await waitFor(() => expect(document.querySelector(".skills-marketplace-icon svg")).toBeInTheDocument());
+  });
+
   it("uses category and card skeletons while discover listings load", async () => {
     let resolvePage!: (page: MarketplaceSkillPage) => void;
     const pendingPage = new Promise<MarketplaceSkillPage>((resolve) => {

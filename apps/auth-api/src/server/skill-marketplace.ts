@@ -491,8 +491,18 @@ function parseFiles(value: string): string[] {
   const parsed = JSON.parse(value);
   return Array.isArray(parsed) ? parsed : [];
 }
-function iconUrl(row: { id?: string; skill_id?: string; icon_key: string | null }): string | null {
-  return row.icon_key ? `/v1/skills/${row.id ?? row.skill_id}/icon` : null;
+function iconUrl(row: {
+  id?: string;
+  skill_id?: string;
+  version_id?: string;
+  status?: string;
+  icon_key: string | null;
+}): string | null {
+  if (!row.icon_key) return null;
+  const skillId = row.skill_id ?? row.id;
+  const versionId = row.version_id ?? (row.skill_id ? row.id : undefined);
+  const cacheKey = row.status ? `${versionId}-${row.status}` : versionId;
+  return `/v1/skills/${skillId}/icon${cacheKey ? `?v=${encodeURIComponent(cacheKey)}` : ""}`;
 }
 function publicSummary(row: ApprovedRow) {
   return {
