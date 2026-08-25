@@ -153,17 +153,20 @@ jobs:
         env:
           EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
           OPENBOT_TUNNEL_API_TOKEN: ${{ secrets.OPENBOT_TUNNEL_API_TOKEN }}
+          SKILLS_ADMIN_TOKEN: ${{ secrets.SKILLS_ADMIN_TOKEN }}
         run: |
           secrets_path="$RUNNER_TEMP/openbot-worker-secrets.json"
           umask 077
           SECRETS_PATH="$secrets_path" bun -e '
             const smtp = process.env.EMAIL_SMTP_PASSWORD;
             const tunnel = process.env.OPENBOT_TUNNEL_API_TOKEN;
+            const skillsAdmin = process.env.SKILLS_ADMIN_TOKEN;
             const path = process.env.SECRETS_PATH;
-            if (!smtp || !tunnel || !path) throw new Error("Required production secrets are missing.");
+            if (!smtp || !tunnel || !skillsAdmin || !path) throw new Error("Required production secrets are missing.");
             await Bun.write(path, JSON.stringify({
               EMAIL_SMTP_PASSWORD: smtp,
               CLOUDFLARE_API_TOKEN: tunnel,
+              SKILLS_ADMIN_TOKEN: skillsAdmin,
             }));
           '
           echo "path=$secrets_path" >> "$GITHUB_OUTPUT"
