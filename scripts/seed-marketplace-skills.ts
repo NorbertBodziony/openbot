@@ -19,6 +19,7 @@ interface SeedSkill {
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const authApiRoot = join(projectRoot, "apps", "auth-api");
 const wrangler = join(authApiRoot, "node_modules", ".bin", "wrangler");
+const localSkillsBucket = "openbot-skills-test";
 const encoder = new TextEncoder();
 const seededAt = Date.parse("2026-08-25T10:00:00.000Z");
 
@@ -368,7 +369,7 @@ async function main(): Promise<void> {
         "r2",
         "object",
         "put",
-        `openbot-skills/${bundleKey}`,
+        `${localSkillsBucket}/${bundleKey}`,
         "--local",
         "--file",
         archivePath,

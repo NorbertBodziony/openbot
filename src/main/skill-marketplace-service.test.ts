@@ -59,6 +59,7 @@ describe("SkillMarketplaceService", () => {
             versionId: "version-1",
             bundleSha256: hash,
             files: ["SKILL.md", "references/template.md"],
+            instructions: "Writes release notes.",
           });
         if (path.endsWith("/content")) {
           return new Response(Uint8Array.from(bundle).buffer, {

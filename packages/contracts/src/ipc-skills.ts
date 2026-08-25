@@ -31,6 +31,7 @@ export interface MarketplaceSkillDetail extends MarketplaceSkillSummary {
   versionId: string;
   bundleSha256: string;
   files: string[];
+  instructions: string;
 }
 
 export interface MarketplaceSkillPage {

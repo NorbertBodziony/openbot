@@ -26,6 +26,7 @@ describe("skill marketplace archives", () => {
       description: "Turns merged work into clear release notes.",
       slug: "release-notes",
       files: ["SKILL.md", "references/template.md"],
+      instructions: "",
     });
   });
 

@@ -379,7 +379,7 @@ export function AccountDock(props: AccountDockProps) {
               }}
             >
               <Puzzle class="account-menu-icon" />
-              <span>Skills marketplace</span>
+              <span>Marketplace</span>
             </Button>
             <Button
               type="button"

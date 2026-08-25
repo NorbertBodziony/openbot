@@ -452,6 +452,7 @@ function isMarketplaceSkillDetail(value: unknown): value is MarketplaceSkillDeta
     isMarketplaceSkillSummary(value) &&
     isString(value.versionId) &&
     isString(value.bundleSha256) &&
+    isString(value.instructions) &&
     Array.isArray(value.files) &&
     value.files.every(isString)
   );

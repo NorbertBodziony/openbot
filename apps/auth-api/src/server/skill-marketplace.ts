@@ -23,6 +23,7 @@ interface ApprovedRow {
   category: string;
   version: number;
   version_id: string;
+  bundle_key: string;
   bundle_sha256: string;
   files_json: string;
   icon_key: string | null;
@@ -50,6 +51,7 @@ export interface SkillArchivePreview {
   description: string;
   slug: string;
   files: string[];
+  instructions: string;
 }
 
 export class SkillMarketplace {
@@ -111,11 +113,15 @@ export class SkillMarketplace {
   async get(skillId: string) {
     const row = await this.approvedRow(skillId);
     if (!row) throw new SkillMarketplaceError(404, "skill_not_found", "The skill was not found.");
+    const object = await this.bindings.SKILLS.get(row.bundle_key);
+    if (!object) throw new SkillMarketplaceError(404, "bundle_not_found", "The skill bundle is unavailable.");
+    const preview = inspectSkillArchive(new Uint8Array(await object.arrayBuffer()));
     return {
       ...publicSummary(row),
       versionId: row.version_id,
       bundleSha256: row.bundle_sha256,
       files: parseFiles(row.files_json),
+      instructions: preview.instructions,
     };
   }
 
@@ -343,7 +349,7 @@ export class SkillMarketplace {
     return this.bindings.DB.prepare(
       `SELECT skills.id, skills.slug, skills.installs, skills.featured, skills.updated_at,
               versions.id AS version_id, versions.name, versions.description, versions.category,
-              versions.version, versions.bundle_sha256, versions.files_json, versions.icon_key,
+              versions.version, versions.bundle_key, versions.bundle_sha256, versions.files_json, versions.icon_key,
               users.name AS creator_name, users.email AS creator_email
        FROM marketplace_skills skills
        JOIN marketplace_skill_versions versions ON versions.id = skills.approved_version_id
@@ -422,7 +428,7 @@ export function inspectSkillArchive(bytes: Uint8Array): SkillArchivePreview {
   return { ...metadata, slug: slugify(metadata.name), files: normalized.map(([name]) => name).sort() };
 }
 
-function parseSkillMetadata(text: string): { name: string; description: string } {
+function parseSkillMetadata(text: string): { name: string; description: string; instructions: string } {
   const match = text.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u);
   if (!match) throw new SkillMarketplaceError(400, "invalid_skill", "SKILL.md must begin with YAML frontmatter.");
   let value: unknown;
@@ -441,7 +447,7 @@ function parseSkillMetadata(text: string): { name: string; description: string }
       "SKILL.md needs a name and description within marketplace limits.",
     );
   }
-  return { name, description };
+  return { name, description, instructions: text.slice(match[0].length).trim() };
 }
 
 function validateArchivePath(name: string): void {

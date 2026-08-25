@@ -405,6 +405,7 @@ function decodeSkillDetail(value: unknown): MarketplaceSkillDetail {
     versionId: requiredString(item, "versionId"),
     bundleSha256: requiredString(item, "bundleSha256"),
     files: item.files,
+    instructions: requiredString(item, "instructions"),
   };
 }
 

@@ -1,6 +1,7 @@
 import type {
   AvatarImageInput,
   InstalledSkill,
+  MarketplaceSkillDetail,
   MarketplaceSkillSummary,
   SkillCategory,
   SkillPackagePreview,
@@ -10,6 +11,7 @@ import { isSkillCategory, SKILL_CATEGORIES } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { normalizeAvatarFile } from "../avatar-image";
 import {
+  ArrowLeft,
   Button,
   Check,
   ChevronDown,
@@ -21,7 +23,7 @@ import {
   Puzzle,
   RefreshCw,
   Search,
-  Spinner,
+  Skeleton,
   Trash2,
   Upload,
   X,
@@ -57,12 +59,17 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   const [targetBotId, setTargetBotId] = createSignal("");
   const [loading, setLoading] = createSignal(false);
   const [busyId, setBusyId] = createSignal<string | null>(null);
+  const [detail, setDetail] = createSignal<MarketplaceSkillDetail | null>(null);
+  const [submissionDetail, setSubmissionDetail] = createSignal<SkillSubmission | null>(null);
+  const [detailLoading, setDetailLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [preview, setPreview] = createSignal<SkillPackagePreview | null>(null);
   const [publishCategory, setPublishCategory] = createSignal<SkillCategory>("other");
   const [publishIcon, setPublishIcon] = createSignal<AvatarImageInput | null>(null);
+  const [publishIconPreviewUrl, setPublishIconPreviewUrl] = createSignal<string | null>(null);
   const [publishSkillId, setPublishSkillId] = createSignal<string | undefined>();
-  let iconInput: HTMLInputElement | undefined;
+  let marketplaceBody: HTMLDivElement | undefined;
+  let listScrollTop = 0;
   let searchTimer: number | undefined;
 
   const installedById = createMemo(() => new Map(installed().map((item) => [item.skillId, item])));
@@ -71,7 +78,11 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   createEffect(
     () => props.open,
     (open) => {
-      if (!open) return;
+      if (!open) {
+        setDetail(null);
+        setSubmissionDetail(null);
+        return;
+      }
       setTargetBotId((current) => current || props.activeBotId || props.bots[0]?.id || "");
       void loadSkills();
     },
@@ -98,12 +109,17 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
     if (searchTimer !== undefined) window.clearTimeout(searchTimer);
   });
 
+  function clearPublishIcon() {
+    setPublishIcon(null);
+    setPublishIconPreviewUrl(null);
+  }
+
   async function run<T>(work: () => Promise<T>): Promise<T | undefined> {
     setError(null);
     try {
       return await work();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(marketplaceErrorMessage(cause));
       return undefined;
     }
   }
@@ -160,9 +176,64 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
 
   function selectTab(next: Tab) {
     setTab(next);
+    setDetail(null);
+    setSubmissionDetail(null);
     setPreview(null);
+    clearPublishIcon();
     setError(null);
     refresh(next);
+  }
+
+  function enterDetails() {
+    if (!detail() && !submissionDetail() && !detailLoading()) {
+      listScrollTop = marketplaceBody?.scrollTop ?? 0;
+    }
+    if (marketplaceBody) marketplaceBody.scrollTop = 0;
+  }
+
+  function leaveDetails() {
+    setDetail(null);
+    setSubmissionDetail(null);
+    queueMicrotask(() => {
+      if (marketplaceBody) marketplaceBody.scrollTop = listScrollTop;
+    });
+  }
+
+  async function openDetails(skill: MarketplaceSkillSummary) {
+    enterDetails();
+    setSubmissionDetail(null);
+    setDetail(null);
+    setDetailLoading(true);
+    const value = await run(() => window.openbot.skills.get(skill.id));
+    if (value) setDetail(value);
+    setDetailLoading(false);
+    if (!value) leaveDetails();
+  }
+
+  async function openDetailsById(skillId: string) {
+    const summary = skills().find((skill) => skill.id === skillId);
+    if (summary) {
+      await openDetails(summary);
+      return;
+    }
+    enterDetails();
+    setSubmissionDetail(null);
+    setDetail(null);
+    setDetailLoading(true);
+    const value = await run(() => window.openbot.skills.get(skillId));
+    if (value) setDetail(value);
+    setDetailLoading(false);
+    if (!value) leaveDetails();
+  }
+
+  function openSubmissionDetails(submission: SkillSubmission) {
+    if (submission.status === "approved") {
+      void openDetailsById(submission.skillId);
+      return;
+    }
+    enterDetails();
+    setDetail(null);
+    setSubmissionDetail(submission);
   }
 
   async function install(skill: MarketplaceSkillSummary, replaceModified = false) {
@@ -210,7 +281,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
     setPublishCategory(
       skillId ? (submissions().find((item) => item.skillId === skillId)?.category ?? "other") : "other",
     );
-    setPublishIcon(null);
+    clearPublishIcon();
   }
 
   async function submit() {
@@ -227,6 +298,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
     );
     if (created) {
       setPreview(null);
+      clearPublishIcon();
       await loadMine();
     }
     setBusyId(null);
@@ -235,8 +307,9 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   async function chooseIcon(file: File | undefined) {
     if (!file) return;
     const icon = await run(() => normalizeAvatarFile(file));
-    if (icon) setPublishIcon(icon);
-    if (iconInput) iconInput.value = "";
+    if (!icon) return;
+    setPublishIcon(icon);
+    setPublishIconPreviewUrl(avatarImageDataUrl(icon));
   }
 
   return (
@@ -310,9 +383,18 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
               </div>
             </header>
 
-            <div class="skills-marketplace-body">
+            <div
+              class="skills-marketplace-body"
+              data-detail-open={detailLoading() || detail() || submissionDetail() ? "" : undefined}
+              ref={(element) => (marketplaceBody = element)}
+            >
               <Show when={tab() === "discover"}>
-                <section class="skills-marketplace-discover" aria-label="Discover skills">
+                <section
+                  class="skills-marketplace-discover"
+                  aria-label="Discover skills"
+                  aria-hidden={detail() || detailLoading() ? "true" : undefined}
+                  inert={detail() || detailLoading() ? true : undefined}
+                >
                   <div class="skills-marketplace-heading">
                     <div>
                       <h1>Skills</h1>
@@ -349,14 +431,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                       )}
                     </For>
                   </div>
-                  <Show
-                    when={!loading()}
-                    fallback={
-                      <div class="skills-marketplace-state">
-                        <Spinner /> Loading skills…
-                      </div>
-                    }
-                  >
+                  <Show when={!loading()} fallback={<SkillsListSkeleton category={category()} />}>
                     <Show
                       when={skills().length}
                       fallback={<div class="skills-marketplace-state">No skills match this search.</div>}
@@ -370,6 +445,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                             installedById={installedById()}
                             busyId={busyId()}
                             onInstall={install}
+                            onOpen={openDetails}
                           />
                         }
                       >
@@ -384,6 +460,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                                   installedById={installedById()}
                                   busyId={busyId()}
                                   onInstall={install}
+                                  onOpen={openDetails}
                                 />
                               </Show>
                             );
@@ -420,6 +497,12 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                         <For each={installed()}>
                           {(item) => (
                             <article class="skills-installed-row">
+                              <button
+                                type="button"
+                                class="skills-marketplace-row-hitarea"
+                                aria-label={`View ${item.name} details`}
+                                onClick={() => void openDetailsById(item.skillId)}
+                              />
                               <span class="skills-marketplace-default-icon">
                                 <Puzzle />
                               </span>
@@ -536,9 +619,21 @@ description: Turn merged work into clear, consistent release notes.
                     {(value) => (
                       <div class="skills-publish-card">
                         <div class="skills-publish-summary">
-                          <span class="skills-marketplace-default-icon">
-                            <Puzzle />
-                          </span>
+                          <Show
+                            when={publishIconPreviewUrl()}
+                            fallback={
+                              <span class="skills-marketplace-default-icon">
+                                <Puzzle />
+                              </span>
+                            }
+                            keyed
+                          >
+                            {(url) => (
+                              <span class="skills-marketplace-icon">
+                                <img src={url} alt="" />
+                              </span>
+                            )}
+                          </Show>
                           <div>
                             <h2>{value().name}</h2>
                             <p>{value().description}</p>
@@ -566,7 +661,6 @@ description: Turn merged work into clear, consistent release notes.
                           <label>
                             Icon (optional)
                             <Input
-                              ref={(element) => (iconInput = element)}
                               type="file"
                               accept="image/png,image/jpeg,image/webp"
                               onChange={(event) => void chooseIcon(event.currentTarget.files?.[0])}
@@ -574,7 +668,13 @@ description: Turn merged work into clear, consistent release notes.
                           </label>
                         </div>
                         <div class="skills-publish-actions">
-                          <Button variant="ghost" onClick={() => setPreview(null)}>
+                          <Button
+                            variant="ghost"
+                            onClick={() => {
+                              setPreview(null);
+                              clearPublishIcon();
+                            }}
+                          >
                             Cancel
                           </Button>
                           <Button
@@ -602,6 +702,12 @@ description: Turn merged work into clear, consistent release notes.
                         <For each={submissions()}>
                           {(item) => (
                             <article class="skills-submission-row">
+                              <button
+                                type="button"
+                                class="skills-marketplace-row-hitarea"
+                                aria-label={`View ${item.name} submission details`}
+                                onClick={() => openSubmissionDetails(item)}
+                              />
                               <SkillIcon skill={item} />
                               <div>
                                 <h3>{item.name}</h3>
@@ -628,6 +734,26 @@ description: Turn merged work into clear, consistent release notes.
                   </Show>
                 </section>
               </Show>
+              <Show when={detailLoading() || detail() || submissionDetail()}>
+                <div class="skills-marketplace-detail-layer">
+                  <Show when={!detailLoading()} fallback={<SkillDetailSkeleton />}>
+                    <Show when={detail()} keyed>
+                      {(skill) => (
+                        <SkillDetailView
+                          skill={skill}
+                          installed={installedById().get(skill.id)}
+                          busy={busyId() === skill.id}
+                          onBack={leaveDetails}
+                          onInstall={install}
+                        />
+                      )}
+                    </Show>
+                    <Show when={submissionDetail()} keyed>
+                      {(submission) => <SkillSubmissionDetailView submission={submission} onBack={leaveDetails} />}
+                    </Show>
+                  </Show>
+                </div>
+              </Show>
               <Show when={error()}>
                 {(message) => (
                   <div class="skills-marketplace-error" role="alert">
@@ -643,12 +769,96 @@ description: Turn merged work into clear, consistent release notes.
   );
 }
 
+function SkillsListSkeleton(props: { category: SkillCategory | null }) {
+  const categories = () => (props.category ? [props.category] : SKILL_CATEGORIES);
+
+  return (
+    <div class="skills-marketplace-list-skeleton" role="status" aria-label="Loading skills">
+      <For each={categories()}>
+        {() => (
+          <section class="skills-marketplace-category-section">
+            <div class="skills-marketplace-section-title">
+              <Skeleton class="skills-marketplace-skeleton-section-label" />
+              <Skeleton class="skills-marketplace-skeleton-count" />
+            </div>
+            <div class="skills-marketplace-grid">
+              <For each={Array.from({ length: 5 })}>
+                {() => (
+                  <article class="skills-marketplace-card skills-marketplace-card-skeleton">
+                    <Skeleton class="skills-marketplace-skeleton-icon" />
+                    <div class="skills-marketplace-card-copy">
+                      <div>
+                        <Skeleton class="skills-marketplace-skeleton-name" />
+                        <Skeleton class="skills-marketplace-skeleton-installs" />
+                      </div>
+                      <Skeleton class="skills-marketplace-skeleton-description" />
+                    </div>
+                    <Skeleton class="skills-marketplace-skeleton-action" />
+                  </article>
+                )}
+              </For>
+            </div>
+          </section>
+        )}
+      </For>
+    </div>
+  );
+}
+
+function SkillDetailSkeleton() {
+  return (
+    <section
+      class="skills-marketplace-detail skills-marketplace-detail-skeleton"
+      role="status"
+      aria-label="Loading skill"
+    >
+      <Skeleton class="skills-marketplace-detail-skeleton-back" />
+      <div class="skills-marketplace-detail-hero">
+        <Skeleton class="skills-marketplace-detail-skeleton-icon" />
+        <div>
+          <Skeleton class="skills-marketplace-detail-skeleton-category" />
+          <Skeleton class="skills-marketplace-detail-skeleton-title" />
+          <Skeleton class="skills-marketplace-detail-skeleton-description" />
+          <div class="skills-marketplace-detail-meta">
+            <Skeleton />
+            <Skeleton />
+            <Skeleton />
+          </div>
+        </div>
+        <Skeleton class="skills-marketplace-detail-skeleton-action" />
+      </div>
+      <div class="skills-marketplace-detail-content">
+        <div class="skills-marketplace-detail-instructions">
+          <Skeleton class="skills-marketplace-detail-skeleton-heading" />
+          <div class="skills-marketplace-detail-skeleton-copy">
+            <Skeleton />
+            <Skeleton />
+            <Skeleton />
+            <Skeleton />
+          </div>
+        </div>
+        <aside class="skills-marketplace-detail-package">
+          <Skeleton class="skills-marketplace-detail-skeleton-package-heading" />
+          <Skeleton class="skills-marketplace-detail-skeleton-package-count" />
+          <div class="skills-marketplace-detail-skeleton-files">
+            <Skeleton />
+            <Skeleton />
+            <Skeleton />
+            <Skeleton />
+          </div>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
 function SkillCategorySection(props: {
   label: string;
   skills: MarketplaceSkillSummary[];
   installedById: Map<string, InstalledSkill>;
   busyId: string | null;
   onInstall: (skill: MarketplaceSkillSummary) => Promise<void>;
+  onOpen: (skill: MarketplaceSkillSummary) => Promise<void>;
 }) {
   return (
     <section class="skills-marketplace-category-section">
@@ -662,6 +872,12 @@ function SkillCategorySection(props: {
             const local = () => props.installedById.get(skill.id);
             return (
               <article class="skills-marketplace-card">
+                <button
+                  type="button"
+                  class="skills-marketplace-card-hitarea"
+                  aria-label={`View ${skill.name} details`}
+                  onClick={() => void props.onOpen(skill)}
+                />
                 <SkillIcon skill={skill} />
                 <div class="skills-marketplace-card-copy">
                   <div>
@@ -671,10 +887,14 @@ function SkillCategorySection(props: {
                   <p>{skill.description}</p>
                 </div>
                 <Button
+                  class="skills-marketplace-card-action"
                   size="sm"
                   loading={props.busyId === skill.id}
                   disabled={Boolean(local() && local()?.state === "installed")}
-                  onClick={() => void props.onInstall(skill)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void props.onInstall(skill);
+                  }}
                 >
                   <Show when={local()} fallback="Install">
                     {(item) =>
@@ -697,6 +917,129 @@ function SkillCategorySection(props: {
   );
 }
 
+function SkillDetailView(props: {
+  skill: MarketplaceSkillDetail;
+  installed: InstalledSkill | undefined;
+  busy: boolean;
+  onBack: () => void;
+  onInstall: (skill: MarketplaceSkillSummary) => Promise<void>;
+}) {
+  return (
+    <section class="skills-marketplace-detail" aria-label={`${props.skill.name} details`}>
+      <Button class="skills-marketplace-detail-back" variant="ghost" size="sm" onClick={props.onBack}>
+        <ArrowLeft /> Back to skills
+      </Button>
+      <div class="skills-marketplace-detail-hero">
+        <SkillIcon skill={props.skill} />
+        <div>
+          <p class="skills-marketplace-detail-category">{CATEGORY_LABELS[props.skill.category]}</p>
+          <h1>{props.skill.name}</h1>
+          <p>{props.skill.description}</p>
+          <div class="skills-marketplace-detail-meta">
+            <span>by {props.skill.creatorName}</span>
+            <span>{props.skill.installs.toLocaleString()} installs</span>
+            <span>Version {props.skill.version}</span>
+          </div>
+        </div>
+        <Button
+          variant="primary"
+          loading={props.busy}
+          disabled={props.installed?.state === "installed"}
+          onClick={() => void props.onInstall(props.skill)}
+        >
+          <Show when={props.installed} fallback="Install skill">
+            {(item) =>
+              item().state === "installed" ? (
+                <>
+                  <Check /> Installed
+                </>
+              ) : (
+                "Update skill"
+              )
+            }
+          </Show>
+        </Button>
+      </div>
+      <div class="skills-marketplace-detail-content">
+        <div class="skills-marketplace-detail-instructions">
+          <h2>What this skill does</h2>
+          <div>{displayInstructions(props.skill)}</div>
+        </div>
+        <aside class="skills-marketplace-detail-package">
+          <h2>Package contents</h2>
+          <p>{props.skill.files.length} files included</p>
+          <ul>
+            <For each={props.skill.files}>{(file) => <li>{file}</li>}</For>
+          </ul>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function SkillSubmissionDetailView(props: { submission: SkillSubmission; onBack: () => void }) {
+  return (
+    <section class="skills-marketplace-detail" aria-label={`${props.submission.name} submission details`}>
+      <Button class="skills-marketplace-detail-back" variant="ghost" size="sm" onClick={props.onBack}>
+        <ArrowLeft /> Back to submissions
+      </Button>
+      <div class="skills-marketplace-detail-hero skills-submission-detail-hero">
+        <SkillIcon skill={props.submission} />
+        <div>
+          <p class="skills-marketplace-detail-category">{CATEGORY_LABELS[props.submission.category]}</p>
+          <h1>{props.submission.name}</h1>
+          <p>{props.submission.description}</p>
+          <div class="skills-marketplace-detail-meta">
+            <span>Submitted by you</span>
+            <span>Version {props.submission.version}</span>
+            <span>{new Date(props.submission.createdAt).toLocaleDateString()}</span>
+          </div>
+        </div>
+      </div>
+      <div class="skills-marketplace-detail-content">
+        <div class="skills-marketplace-detail-instructions">
+          <h2>What this skill does</h2>
+          <div>{props.submission.description}</div>
+        </div>
+        <aside class="skills-marketplace-detail-package skills-submission-detail-review">
+          <h2>Review status</h2>
+          <span class="skills-submission-status" data-status={props.submission.status}>
+            {props.submission.status}
+          </span>
+          <Show when={props.submission.rejectionNote}>
+            {(note) => <p class="skills-submission-detail-note">{note()}</p>}
+          </Show>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function displayInstructions(skill: MarketplaceSkillDetail): string {
+  const instructions = skill.instructions || skill.description;
+  const [firstLine, ...remaining] = instructions.split(/\r?\n/u);
+  if (firstLine?.replace(/^#\s+/u, "").trim() === skill.name) return remaining.join("\n").trim();
+  return instructions;
+}
+
+function avatarImageDataUrl(image: AvatarImageInput): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < image.bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...image.bytes.subarray(offset, offset + chunkSize));
+  }
+  return `data:${image.mimeType};base64,${btoa(binary)}`;
+}
+
+function marketplaceErrorMessage(cause: unknown): string {
+  const rawMessage = cause instanceof Error ? cause.message : String(cause);
+  const message = rawMessage.replace(/^Error invoking remote method '[^']+': (?:Error: )?/u, "");
+  if (message === "A skill with this name already exists.") {
+    return "That skill name is already taken. Choose a different name in SKILL.md, then try again.";
+  }
+  return message;
+}
+
 function AgentSelect(props: {
   bots: Array<{ id: string; name: string }>;
   value: string;
@@ -705,15 +1048,18 @@ function AgentSelect(props: {
   return (
     <label class="skills-agent-select">
       <span>Install to</span>
-      <NativeSelect
-        value={props.value}
-        onChange={(event) => props.onChange(event.currentTarget.value)}
-        disabled={!props.bots.length}
-      >
-        <Show when={props.bots.length} fallback={<option value="">No local agents</option>}>
-          <For each={props.bots}>{(bot) => <option value={bot.id}>{bot.name}</option>}</For>
-        </Show>
-      </NativeSelect>
+      <span class="skills-agent-select-control">
+        <NativeSelect
+          value={props.value}
+          onChange={(event) => props.onChange(event.currentTarget.value)}
+          disabled={!props.bots.length}
+        >
+          <Show when={props.bots.length} fallback={<option value="">No local agents</option>}>
+            <For each={props.bots}>{(bot) => <option value={bot.id}>{bot.name}</option>}</For>
+          </Show>
+        </NativeSelect>
+        <ChevronDown aria-hidden="true" />
+      </span>
     </label>
   );
 }
