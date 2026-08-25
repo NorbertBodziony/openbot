@@ -106,6 +106,7 @@
   "patchedDependencies": {
     "@kobalte/core@2.0.0-alpha.0": "patches/@kobalte%2Fcore@2.0.0-alpha.0.patch",
     "lucide-solid@1.33.0": "patches/lucide-solid@1.33.0.patch",
+    "dmg-builder@26.15.3": "patches/dmg-builder@26.15.3.patch",
   },
   "packages": {
     "@adobe/css-tools": ["@adobe/css-tools@4.5.0", "", {}, "sha512-6OzddxPio9UiWTCemp4N8cYLV2ZN1ncRnV1cVGtve7dhPOtRkleRyx32GQCYSwDYgaHU3USMm84tNsvKzRCa1Q=="],

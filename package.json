@@ -153,6 +153,7 @@
   },
   "patchedDependencies": {
     "lucide-solid@1.33.0": "patches/lucide-solid@1.33.0.patch",
-    "@kobalte/core@2.0.0-alpha.0": "patches/@kobalte%2Fcore@2.0.0-alpha.0.patch"
+    "@kobalte/core@2.0.0-alpha.0": "patches/@kobalte%2Fcore@2.0.0-alpha.0.patch",
+    "dmg-builder@26.15.3": "patches/dmg-builder@26.15.3.patch"
   }
 }
