@@ -7,6 +7,7 @@ const nativeCanvasGetContext = HTMLCanvasElement.prototype.getContext;
 
 describe("SkillsMarketplaceModal", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
@@ -106,6 +107,22 @@ describe("SkillsMarketplaceModal", () => {
       sort: "installs",
       limit: 5,
     });
+  });
+
+  it("waits 500ms after typing before searching", async () => {
+    vi.useFakeTimers();
+    render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
+    await Promise.resolve();
+    await Promise.resolve();
+    const list = vi.mocked(window.openbot.skills.list);
+    list.mockClear();
+
+    fireEvent.input(screen.getByLabelText("Search skills"), { target: { value: "solana" } });
+    await vi.advanceTimersByTimeAsync(499);
+    expect(list).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(list).toHaveBeenCalled();
   });
 
   it("shows the default skill icon when a marketplace image fails to load", async () => {

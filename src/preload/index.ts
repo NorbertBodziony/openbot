@@ -470,12 +470,19 @@ function decodeInstalledSkills(value: unknown): InstalledSkill[] {
   return value.map(decodeInstalledSkill);
 }
 
+function isConversationDropTarget(target: EventTarget | null): boolean {
+  const conversation = document.querySelector(".conversation-panel");
+  return target instanceof Node && Boolean(conversation?.contains(target));
+}
+
 window.addEventListener("dragover", (event) => {
+  if (!isConversationDropTarget(event.target)) return;
   if ([...(event.dataTransfer?.items ?? [])].some((item) => item.kind === "file")) {
     event.preventDefault();
   }
 });
 window.addEventListener("drop", (event) => {
+  if (!isConversationDropTarget(event.target)) return;
   const files = [...(event.dataTransfer?.files ?? [])];
   if (!files.length) return;
   event.preventDefault();

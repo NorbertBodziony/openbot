@@ -37,6 +37,7 @@ interface SkillsMarketplaceModalProps {
 }
 
 type Tab = "discover" | "installed" | "mine";
+const SKILLS_SEARCH_DEBOUNCE_MS = 500;
 
 const CATEGORY_LABELS: Record<SkillCategory, string> = {
   coding: "Coding",
@@ -71,6 +72,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   let marketplaceBody: HTMLDivElement | undefined;
   let listScrollTop = 0;
   let searchTimer: number | undefined;
+  let searchInitialized = false;
 
   const installedById = createMemo(() => new Map(installed().map((item) => [item.skillId, item])));
   const targetBot = createMemo(() => props.bots.find((bot) => bot.id === targetBotId()) ?? null);
@@ -89,11 +91,15 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   );
 
   createEffect(
-    () => [query(), category()] as const,
+    () => query(),
     () => {
       if (searchTimer !== undefined) window.clearTimeout(searchTimer);
+      if (!searchInitialized) {
+        searchInitialized = true;
+        return;
+      }
       if (!props.open || tab() !== "discover") return;
-      searchTimer = window.setTimeout(() => void loadSkills(), 180);
+      searchTimer = window.setTimeout(() => void loadSkills(), SKILLS_SEARCH_DEBOUNCE_MS);
     },
   );
 
@@ -112,6 +118,12 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   function clearPublishIcon() {
     setPublishIcon(null);
     setPublishIconPreviewUrl(null);
+  }
+
+  function selectCategory(nextCategory: SkillCategory | null) {
+    if (searchTimer !== undefined) window.clearTimeout(searchTimer);
+    setCategory(nextCategory);
+    void loadSkills();
   }
 
   async function run<T>(work: () => Promise<T>): Promise<T | undefined> {
@@ -415,7 +427,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                     <Button
                       size="sm"
                       data-active={category() === null ? "" : undefined}
-                      onClick={() => setCategory(null)}
+                      onClick={() => selectCategory(null)}
                     >
                       All
                     </Button>
@@ -424,7 +436,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                         <Button
                           size="sm"
                           data-active={category() === item ? "" : undefined}
-                          onClick={() => setCategory(item)}
+                          onClick={() => selectCategory(item)}
                         >
                           {CATEGORY_LABELS[item]}
                         </Button>
