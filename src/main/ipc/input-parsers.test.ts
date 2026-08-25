@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { describe, expect, it } from "vitest";
 import {
   parseAgentRequest,
@@ -7,8 +8,13 @@ import {
   parseCancelQueuedMessage,
   parseChooseAttachments,
   parseCreateBot,
+  parseCreateBotMemory,
+  parseCreateRoutine,
+  parseDeleteBotMemory,
+  parseDeleteRoutine,
   parseImportAttachments,
   parseInterrupt,
+  parseListRoutineRuns,
   parseMarkConversationRead,
   parseMessageReaction,
   parseOpenAttachment,
@@ -17,9 +23,12 @@ import {
   parsePromptResponse,
   parseReorderQueue,
   parseSendMessage,
+  parseSidebarLayoutAction,
   parseSteerQueuedMessage,
   parseUpdateBot,
+  parseUpdateBotMemory,
   parseUpdateQueuedMessage,
+  parseUpdateRoutine,
 } from "./agent-inputs";
 import { parseMacPermission, parseProvider } from "./app-inputs";
 import { parseBrowserOpen, parseVisibility } from "./browser-inputs";
@@ -160,6 +169,19 @@ describe("agent IPC input parsing", () => {
     expect(parseMarkConversationRead({ botId: "bot-1", throughMessageId: "message-1" })).toEqual({
       botId: "bot-1",
       throughMessageId: "message-1",
+    });
+    expect(parseCreateBotMemory({ botId: "bot-1", text: "Uses metric units." })).toEqual({
+      botId: "bot-1",
+      text: "Uses metric units.",
+    });
+    expect(parseUpdateBotMemory({ botId: "bot-1", memoryId: "memory-1", text: "Uses SI units." })).toEqual({
+      botId: "bot-1",
+      memoryId: "memory-1",
+      text: "Uses SI units.",
+    });
+    expect(parseDeleteBotMemory({ botId: "bot-1", memoryId: "memory-1" })).toEqual({
+      botId: "bot-1",
+      memoryId: "memory-1",
     });
   });
 
@@ -303,6 +325,14 @@ describe("agent IPC input parsing", () => {
     expect(() => parseMarkConversationRead({ botId: "bot-1", throughMessageId: 1 })).toThrowError(
       "Invalid conversation read boundary.",
     );
+    expect(() => parseCreateBotMemory({ botId: "bot-1", text: " " })).toThrowError("text is required.");
+    expect(() =>
+      parseCreateBotMemory({ botId: "bot-1", text: "x".repeat(INPUT_LIMITS.agentMemoryText + 1) }),
+    ).toThrowError("text is too long.");
+    expect(() => parseUpdateBotMemory({ botId: "bot-1", memoryId: "", text: "Fact" })).toThrowError(
+      "memoryId is required.",
+    );
+    expect(() => parseDeleteBotMemory({ botId: "", memoryId: "memory-1" })).toThrowError("botId is required.");
     expect(() => parsePromptResponse({ requestId: 1, answers: null })).toThrowError("Prompt answers are required.");
     expect(() => parseApprovalResponse({ requestId: "approval-1", decision: "maybe" })).toThrowError(
       "Invalid approval decision.",
@@ -310,6 +340,69 @@ describe("agent IPC input parsing", () => {
     expect(() => parseApprovalResponse({ requestId: 1.5, decision: "accept" })).toThrowError(
       "Invalid approval response.",
     );
+  });
+});
+
+describe("routine IPC input parsing", () => {
+  it("parses create, update, delete, and history values", () => {
+    const schedule = { kind: "weekdays" as const, time: "07:00" };
+    expect(
+      parseCreateRoutine({
+        botId: "chief",
+        name: "Morning brief",
+        instruction: "Prepare the brief.",
+        active: true,
+        timezone: "Europe/Warsaw",
+        schedule,
+      }),
+    ).toEqual({
+      botId: "chief",
+      name: "Morning brief",
+      instruction: "Prepare the brief.",
+      active: true,
+      timezone: "Europe/Warsaw",
+      schedule,
+    });
+    expect(parseUpdateRoutine({ botId: "chief", routineId: "routine-1", active: false })).toEqual({
+      botId: "chief",
+      routineId: "routine-1",
+      active: false,
+    });
+    expect(parseDeleteRoutine({ botId: "chief", routineId: "routine-1" })).toEqual({
+      botId: "chief",
+      routineId: "routine-1",
+    });
+    expect(parseListRoutineRuns({ botId: "chief", routineId: "routine-1" })).toEqual({
+      botId: "chief",
+      routineId: "routine-1",
+      limit: 50,
+    });
+  });
+
+  it("rejects invalid routine IPC values", () => {
+    expect(() =>
+      parseCreateRoutine({
+        botId: "chief",
+        name: "Morning brief",
+        instruction: "Prepare the brief.",
+        active: true,
+        timezone: "Europe/Warsaw",
+        schedules: [{ kind: "weekdays", time: "07:00" }],
+      }),
+    ).toThrow("routine schedule");
+    expect(() =>
+      parseCreateRoutine({
+        botId: "chief",
+        name: "Morning brief",
+        instruction: "Prepare the brief.",
+        active: true,
+        timezone: "Europe/Warsaw",
+        schedule: [{ kind: "weekdays", time: "07:00" }],
+      }),
+    ).toThrow("routine schedule");
+    expect(() => parseUpdateRoutine({ botId: "chief", routineId: "routine-1" })).toThrow("update is required");
+    expect(() => parseDeleteRoutine({ botId: "chief", routineId: "" })).toThrow("routineId is required");
+    expect(() => parseListRoutineRuns({ botId: "chief", routineId: "routine-1", limit: 101 })).toThrow("history limit");
   });
 });
 
@@ -340,5 +433,38 @@ describe("shared IPC validation", () => {
     expect(() => requireString(" ", "field")).toThrowError("field is required.");
     expect(() => requireString("long", "field", 3)).toThrowError("field is too long.");
     expect(requireString(" value ", "field")).toBe(" value ");
+  });
+});
+
+describe("sidebar layout input parsing", () => {
+  it("accepts a bounded multi-position section move", () => {
+    expect(parseSidebarLayoutAction({ type: "move", sectionId: "section-1", direction: "down", steps: 3 })).toEqual({
+      type: "move",
+      sectionId: "section-1",
+      direction: "down",
+      steps: 3,
+    });
+  });
+
+  it("accepts an agent move with an optional order target", () => {
+    expect(
+      parseSidebarLayoutAction({
+        type: "move-agent",
+        agentId: "research",
+        sectionId: "section-1",
+        beforeAgentId: "chief",
+      }),
+    ).toEqual({
+      type: "move-agent",
+      agentId: "research",
+      sectionId: "section-1",
+      beforeAgentId: "chief",
+    });
+  });
+
+  it("rejects an invalid section move distance", () => {
+    expect(() =>
+      parseSidebarLayoutAction({ type: "move", sectionId: "section-1", direction: "down", steps: 0 }),
+    ).toThrowError("Invalid section move distance.");
   });
 });

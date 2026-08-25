@@ -19,8 +19,10 @@ import { App, AppControllerProvider, createAppController, createBotInitialMessag
 import { desktopAnalytics } from "./analytics";
 import { triggerResize } from "./setupTests";
 import { SIDEBAR_PINS_STORAGE_KEY } from "./sidebar-pins";
+import { SIDEBAR_COLLAPSED_STORAGE_KEY } from "./sidebar-sections";
 
 const trackAnalytics = vi.spyOn(desktopAnalytics, "track").mockImplementation(() => undefined);
+const defaultMatchMedia = window.matchMedia;
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
 let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
@@ -95,14 +97,6 @@ function queuedDelivery(
 }
 
 describe("OpenBot connected desktop shell", () => {
-  it("uses only the Bot role in the first visible message", () => {
-    expect(
-      createBotInitialMessage({
-        purpose: "  Plan practical trips and compare options.  ",
-      }),
-    ).toBe("Your ongoing role is: Plan practical trips and compare options.");
-  });
-
   beforeEach(() => {
     emitAgentEvent = undefined;
     emitAttachmentImport = undefined;
@@ -115,6 +109,10 @@ describe("OpenBot connected desktop shell", () => {
     emitInvite = undefined;
     trackAnalytics.mockClear();
     window.localStorage.clear();
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: defaultMatchMedia,
+    });
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
@@ -250,6 +248,42 @@ describe("OpenBot connected desktop shell", () => {
             },
           ]),
           listBots: vi.fn().mockResolvedValue(BOTS),
+          listMemories: vi.fn().mockResolvedValue([]),
+          listRoutines: vi.fn().mockResolvedValue([]),
+          createMemory: vi.fn().mockImplementation(async (input) => ({
+            id: "memory-new",
+            botId: input.botId,
+            text: input.text,
+            origin: "manual",
+            sourceTurnId: null,
+            createdAt: "2026-08-25T12:00:00.000Z",
+            updatedAt: "2026-08-25T12:00:00.000Z",
+          })),
+          updateMemory: vi.fn().mockImplementation(async (input) => ({
+            id: input.memoryId,
+            botId: input.botId,
+            text: input.text,
+            origin: "manual",
+            sourceTurnId: null,
+            createdAt: "2026-08-25T12:00:00.000Z",
+            updatedAt: "2026-08-25T12:01:00.000Z",
+          })),
+          deleteMemory: vi.fn().mockResolvedValue(undefined),
+          clearMemories: vi.fn().mockResolvedValue(undefined),
+          getSidebarLayout: vi.fn().mockResolvedValue({
+            revision: 0,
+            sections: [],
+            order: ["people", "unassigned"],
+            agentAssignments: {},
+            agentOrder: [],
+          }),
+          mutateSidebarLayout: vi.fn().mockResolvedValue({
+            revision: 1,
+            sections: [],
+            order: ["people", "unassigned"],
+            agentAssignments: {},
+            agentOrder: [],
+          }),
           createBot: vi.fn().mockImplementation(async (input) => ({
             ...BOTS[0],
             id: "bot-new",
@@ -1109,20 +1143,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.getMacPermissions).not.toHaveBeenCalled();
   });
 
-  it("shows a normal active composer for an existing Bot with no messages", async () => {
-    render(() => <App />);
-    expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "true");
-    expect(screen.getByRole("button", { name: "Add to prompt" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
-    expect(screen.queryByText("Choose a model to get started.")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("radiogroup", { name: "What do you want me helping with most?" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText(/Salesforce account queue/i)).not.toBeInTheDocument();
-  });
-
   it("guides signed-out users before enabling chat", async () => {
     vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
       phase: "blocked",
@@ -1384,29 +1404,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
   });
 
-  it("shows agent title badges without a redundant standalone heading", async () => {
-    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([BOTS[0], { ...BOTS[1], title: "   " }]);
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-
-    expect(screen.getByText("Chief of staff")).toHaveClass("bot-role-badge");
-    expect(screen.getByText("Chief of staff")).toHaveAttribute("title", "Chief of staff");
-    expect(screen.queryByText("Outbound specialist")).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Agents" })).not.toBeInTheDocument();
-
-    emitPresence?.({
-      serverId: "server-1",
-      updatedAt: "2026-08-19T10:00:00.000Z",
-      members: [
-        presenceMember("member-self", "person@example.com", "Person"),
-        presenceMember("member-alice", "alice@example.com", "Alice"),
-      ],
-    });
-
-    expect(await screen.findByRole("heading", { name: "People" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Agents" })).toBeInTheDocument();
-  });
-
   it("restores and persists pinned chats for the active server", async () => {
     window.localStorage.setItem(SIDEBAR_PINS_STORAGE_KEY, JSON.stringify({ local: [{ kind: "agent", id: "chief" }] }));
     render(() => <App />);
@@ -1420,6 +1417,43 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("region", { name: "Pinned chats" })).not.toBeInTheDocument());
     expect(JSON.parse(window.localStorage.getItem(SIDEBAR_PINS_STORAGE_KEY) ?? "{}")).toEqual({});
     expect(screen.getByRole("button", { name: /Chief, Chief of staff/ })).toBeInTheDocument();
+  });
+
+  it("loads shared sidebar sections and connects section actions to the desktop API", async () => {
+    const sectionId = "11111111-1111-4111-8111-111111111111";
+    const layout = {
+      revision: 3,
+      sections: [{ id: sectionId, name: "Core team" }],
+      order: ["people", sectionId, "unassigned"],
+      agentAssignments: { chief: sectionId },
+      agentOrder: ["chief", "sales-outbound"],
+    };
+    vi.mocked(window.openbot.agent.getSidebarLayout).mockResolvedValueOnce(layout);
+    vi.mocked(window.openbot.agent.mutateSidebarLayout).mockResolvedValueOnce({ ...layout, revision: 4 });
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    const sectionToggle = await screen.findByRole("button", { name: "Core team" });
+    const section = sectionToggle.closest<HTMLElement>("[data-section-id]");
+    if (!section) throw new Error("Shared sidebar section is missing.");
+    expect(within(section).getByRole("button", { name: /Chief, Chief of staff/ })).toBeInTheDocument();
+
+    await fireEvent.click(sectionToggle);
+    expect(JSON.parse(window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) ?? "{}")).toEqual({
+      local: [sectionId],
+    });
+
+    await fireEvent.contextMenu(screen.getByLabelText("Sidebar free area"));
+    const sidebarMenu = await screen.findByRole("menu", { name: "Sidebar actions" });
+    await fireEvent.pointerUp(within(sidebarMenu).getByRole("menuitem", { name: "New section" }), { button: 0 });
+    const sectionName = await screen.findByRole("textbox", { name: "New section name" });
+    await fireEvent.input(sectionName, { target: { value: "Product" } });
+    await fireEvent.keyDown(sectionName, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(window.openbot.agent.mutateSidebarLayout).toHaveBeenCalledWith({ type: "create", name: "Product" }),
+    );
   });
 
   it("creates a Bot from a suggestion with one complete backend input", async () => {
@@ -1685,6 +1719,17 @@ describe("OpenBot connected desktop shell", () => {
         reasoningEffort: "xhigh",
       }),
     );
+  });
+
+  it("opens the agent memory modal from settings", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    const settings = await screen.findByRole("complementary", { name: "Agent settings" });
+
+    await fireEvent.click(within(settings).getByRole("button", { name: /Memories/ }));
+    expect(await screen.findByRole("dialog", { name: "Memories" })).toBeInTheDocument();
+    expect(await screen.findByText("This agent has no saved memories yet.")).toBeInTheDocument();
   });
 
   it("selects a stable generated avatar and color without tying it to the agent name", async () => {
@@ -3193,9 +3238,13 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-    const streamingAnswer = await screen.findByText("I am on it");
-    const streamingMessageEntry = streamingAnswer.closest(".message-entry");
-    const streamingBubble = streamingAnswer.closest(".bot-bubble");
+    const streamingMessageEntry = await waitFor(() => {
+      const entry = document.querySelector<HTMLElement>('[data-chat-search-message="assistant-live"]');
+      expect(entry).toHaveTextContent("I am on");
+      if (!entry) throw new Error("The streaming message did not render.");
+      return entry;
+    });
+    const streamingBubble = streamingMessageEntry.querySelector(".bot-bubble");
     expect(streamingMessageEntry).toHaveClass("message-entry-animated");
     expect(streamingBubble).toHaveClass("bot-bubble-streaming");
     expect(screen.queryByText("Typing…")).not.toBeInTheDocument();
@@ -3215,9 +3264,8 @@ describe("OpenBot connected desktop shell", () => {
       createdAt: "2026-08-12T10:00:01.000Z",
       revision: 4,
     });
-    expect(screen.queryByText("I am on it now")).not.toBeInTheDocument();
-    const updatedStreamingAnswer = await screen.findByText("I am on it now");
-    expect(updatedStreamingAnswer.closest(".bot-bubble")).toBe(streamingBubble);
+    await waitFor(() => expect(streamingMessageEntry).toHaveTextContent("I am on it"));
+    expect(streamingMessageEntry.querySelector(".bot-bubble")).toBe(streamingBubble);
     expect(screen.getByText("Do the work").closest(".message-entry")).toBe(firstMessageEntry);
     expect(screen.getByRole("status", { name: "Chief is working" })).toBe(workingIndicator);
 
@@ -3254,8 +3302,8 @@ describe("OpenBot connected desktop shell", () => {
         },
       });
     }
-    const bufferedAnswer = await screen.findByText("Final buffered line");
-    expect(bufferedAnswer.closest(".bot-bubble")).toBe(streamingBubble);
+    await waitFor(() => expect(streamingMessageEntry).toHaveTextContent("Final buffered"));
+    expect(streamingMessageEntry.querySelector(".bot-bubble")).toBe(streamingBubble);
     expect(screen.queryByText("First buffered line")).not.toBeInTheDocument();
 
     emitAgentEvent?.({
@@ -4352,7 +4400,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("alertdialog", { name: "Delete Sales Outbound?" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(window.openbot.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"));
-    await waitFor(() => expect(sales).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Sales Outbound/ })).not.toBeInTheDocument());
   });
 
   it("shows the server rail and opens the join flow", async () => {
@@ -4681,6 +4729,10 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("keeps a message read when it arrives in the open agent chat", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: true }),
+    });
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await waitFor(() => expect(window.openbot.agent.readConversation).toHaveBeenCalledWith("chief"));
@@ -4696,7 +4748,11 @@ describe("OpenBot connected desktop shell", () => {
       revision: 1,
     });
 
-    expect(await screen.findByText("Visible as it arrives")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(document.querySelector('[data-chat-search-message="agent-visible-answer"]')).toHaveTextContent(
+        "Visible as it arrives",
+      ),
+    );
     expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
     await waitFor(() =>

@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, within } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { STORY_BOTS, STORY_DIRECT_THREADS, STORY_PRESENCE } from "../../stories/fixtures";
 import type { SidebarPinnedItem } from "../sidebar-pins";
+import { defaultSidebarLayout } from "../sidebar-sections";
 import { Sidebar } from "./Sidebar";
 
 function sidebarProps(pinnedItems: SidebarPinnedItem[] = []) {
@@ -16,10 +18,16 @@ function sidebarProps(pinnedItems: SidebarPinnedItem[] = []) {
       chief: { kind: "working" as const },
       research: { kind: "unread" as const, count: 3 },
     },
+    layout: defaultSidebarLayout(),
+    collapsedSectionIds: [],
+    onMutateLayout: vi.fn(async () => undefined),
+    onToggleSection: vi.fn(),
     pinnedItems,
+    peopleOrder: [],
     onPin: vi.fn(),
     onUnpin: vi.fn(),
     onReorderPinned: vi.fn(),
+    onReorderPeople: vi.fn(),
     onSelectBot: vi.fn(),
     onSelectPerson: vi.fn(),
     onCreateBot: vi.fn(),
@@ -31,8 +39,78 @@ function sidebarProps(pinnedItems: SidebarPinnedItem[] = []) {
   };
 }
 
+function sidebarPropsWithExtraAgents(pinnedItems: SidebarPinnedItem[], count: number) {
+  const props = sidebarProps(pinnedItems);
+  props.bots = [
+    ...STORY_BOTS,
+    ...Array.from({ length: count }, (_, index) => ({
+      ...STORY_BOTS[2],
+      id: `extra-${index + 1}`,
+      name: `Extra ${index + 1}`,
+      threadId: `thread-extra-${index + 1}`,
+      avatarSeed: `extra-${index + 1}`,
+    })),
+  ];
+  return props;
+}
+
+function sidebarPointerEvent(type: string, clientX: number, clientY: number, pointerId = 1): Event {
+  const event = new MouseEvent(type, { bubbles: true, button: 0, cancelable: true, clientX, clientY });
+  Object.defineProperties(event, {
+    isPrimary: { value: true },
+    pointerId: { value: pointerId },
+  });
+  return event;
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+interface DragTestDataTransfer {
+  dropEffect: string;
+  effectAllowed: string;
+  setData: ReturnType<typeof vi.fn>;
+  setDragImage: ReturnType<typeof vi.fn>;
+}
+
+async function dragOverFrame(
+  element: Element,
+  dataTransfer: DragTestDataTransfer,
+  point: { clientX: number; clientY: number },
+): Promise<void> {
+  fireEvent(element, nativeDragEvent("dragover", dataTransfer, point));
+  await nextAnimationFrame();
+}
+
+function dragStartAt(
+  element: Element,
+  dataTransfer: DragTestDataTransfer,
+  point: { clientX: number; clientY: number },
+): void {
+  fireEvent(element, nativeDragEvent("dragstart", dataTransfer, point));
+}
+
+function dropAt(
+  element: Element,
+  dataTransfer: DragTestDataTransfer,
+  point: { clientX: number; clientY: number },
+): void {
+  fireEvent(element, nativeDragEvent("drop", dataTransfer, point));
+}
+
+function nativeDragEvent(
+  type: string,
+  dataTransfer: DragTestDataTransfer,
+  point: { clientX: number; clientY: number },
+): MouseEvent {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, ...point });
+  Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+  return event;
+}
+
 describe("Sidebar pinned chats", () => {
-  it("shows mixed pinned chats once and filters them with search", async () => {
+  it("shows agent pins, ignores legacy person pins, and filters with search", async () => {
     const props = sidebarProps([
       { kind: "agent", id: "chief" },
       { kind: "person", id: "member-alice" },
@@ -43,7 +121,7 @@ describe("Sidebar pinned chats", () => {
     expect(screen.getByRole("region", { name: "Pinned chats" })).toBeInTheDocument();
     expect(screen.queryByText("Pinned")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Chief, pinned agent" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Alice Chen, pinned person" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Alice Chen, pinned person" })).not.toBeInTheDocument();
     expect(screen.getByTitle("Chief of staff")).toHaveTextContent("Chief of staff");
     expect(screen.getAllByText("Chief")).toHaveLength(1);
     expect(screen.getAllByText("Alice Chen")).toHaveLength(1);
@@ -55,14 +133,13 @@ describe("Sidebar pinned chats", () => {
     expect(screen.getByRole("button", { name: /Sales/ })).toBeInTheDocument();
   });
 
-  it("offers pin actions for people and full agent actions for pinned agents", async () => {
+  it("does not offer pin actions for people and keeps full actions for pinned agents", async () => {
     const props = sidebarProps([{ kind: "agent", id: "chief" }]);
     render(() => <Sidebar {...props} />);
 
     await fireEvent.contextMenu(screen.getByRole("button", { name: /Alice Chen/ }));
-    const personMenu = await screen.findByRole("menu", { name: "Person actions" });
-    await fireEvent.pointerUp(within(personMenu).getByRole("menuitem", { name: "Pin" }), { button: 0 });
-    expect(props.onPin).toHaveBeenCalledWith({ kind: "person", id: "member-alice" });
+    expect(screen.queryByRole("menu", { name: "Person actions" })).not.toBeInTheDocument();
+    expect(props.onPin).not.toHaveBeenCalled();
 
     await fireEvent.contextMenu(screen.getByRole("button", { name: "Chief, pinned agent" }));
     const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
@@ -76,20 +153,23 @@ describe("Sidebar pinned chats", () => {
     expect(props.onUnpin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
   });
 
-  it("disables pin actions after six chats are pinned", async () => {
-    const props = sidebarProps([
-      { kind: "agent", id: "chief" },
-      { kind: "agent", id: "research" },
-      { kind: "agent", id: "sales" },
-      { kind: "person", id: "member-alice" },
-      { kind: "person", id: "member-jon" },
-      { kind: "person", id: "member-maya" },
-    ]);
+  it("disables agent pin actions after six chats are pinned", async () => {
+    const props = sidebarPropsWithExtraAgents(
+      [
+        { kind: "agent", id: "chief" },
+        { kind: "agent", id: "research" },
+        { kind: "agent", id: "sales" },
+        { kind: "agent", id: "extra-1" },
+        { kind: "agent", id: "extra-2" },
+        { kind: "agent", id: "extra-3" },
+      ],
+      4,
+    );
     render(() => <Sidebar {...props} />);
 
-    await fireEvent.contextMenu(screen.getByRole("button", { name: /^Norbert\./ }));
-    const personMenu = await screen.findByRole("menu", { name: "Person actions" });
-    const pinItem = within(personMenu).getByRole("menuitem", { name: "Pin" });
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Extra 4/ }));
+    const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
+    const pinItem = within(agentMenu).getByRole("menuitem", { name: "Pin" });
     expect(pinItem).toHaveAttribute("data-disabled");
     expect(pinItem).toHaveAttribute("title", "Maximum 6 pinned chats");
 
@@ -101,7 +181,7 @@ describe("Sidebar pinned chats", () => {
     const props = sidebarProps([
       { kind: "agent", id: "chief" },
       { kind: "agent", id: "research" },
-      { kind: "person", id: "member-alice" },
+      { kind: "agent", id: "sales" },
     ]);
     const view = render(() => <Sidebar {...props} />);
     const rows = Array.from(view.container.querySelectorAll<HTMLElement>(".sidebar-pinned-item"));
@@ -110,7 +190,7 @@ describe("Sidebar pinned chats", () => {
     expect(props.onReorderPinned).toHaveBeenLastCalledWith([
       { kind: "agent", id: "research" },
       { kind: "agent", id: "chief" },
-      { kind: "person", id: "member-alice" },
+      { kind: "agent", id: "sales" },
     ]);
     expect(screen.getByRole("status")).toHaveTextContent("Moved pinned chat to position 1 of 3.");
 
@@ -128,18 +208,21 @@ describe("Sidebar pinned chats", () => {
       });
     }
     const list = view.container.querySelector<HTMLElement>(".sidebar-pinned-list");
-    if (!list) throw new Error("Pinned list is missing.");
-    vi.spyOn(list, "getBoundingClientRect").mockReturnValue({
+    const root = view.container.querySelector<HTMLElement>(".bot-list");
+    const pinned = screen.getByRole("region", { name: "Pinned chats" });
+    if (!list || !root) throw new Error("Pinned list is missing.");
+    vi.spyOn(root, "getBoundingClientRect").mockReturnValue({
       top: 0,
-      bottom: 80,
+      bottom: 600,
       left: 0,
-      right: 256,
-      width: 256,
-      height: 80,
+      right: 280,
+      width: 280,
+      height: 600,
       x: 0,
       y: 0,
       toJSON: () => ({}),
     });
+    vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 120));
 
     const dataTransfer = {
       setData: vi.fn(),
@@ -147,16 +230,16 @@ describe("Sidebar pinned chats", () => {
       effectAllowed: "move",
       dropEffect: "move",
     };
-    await fireEvent.dragStart(rows[0], { dataTransfer, clientX: 36, clientY: 20 });
-    expect(rows[0]).toHaveClass("sidebar-pinned-item-dragging");
-    await fireEvent.dragOver(rows[2], { dataTransfer, clientX: 800, clientY: 20 });
+    dragStartAt(rows[0], dataTransfer, { clientX: 36, clientY: 20 });
+    await waitFor(() => expect(rows[0]).toHaveClass("sidebar-pinned-item-dragging"));
+    await dragOverFrame(rows[2], dataTransfer, { clientX: 200, clientY: 20 });
     expect(rows[2]).toHaveClass("sidebar-pinned-item-drag-over");
     expect(document.querySelector(".sidebar-pinned-drag-preview")).toBeInTheDocument();
-    await fireEvent.drop(rows[2], { dataTransfer, clientX: 800, clientY: 20 });
+    dropAt(rows[2], dataTransfer, { clientX: 200, clientY: 20 });
 
     expect(props.onReorderPinned).toHaveBeenLastCalledWith([
       { kind: "agent", id: "research" },
-      { kind: "person", id: "member-alice" },
+      { kind: "agent", id: "sales" },
       { kind: "agent", id: "chief" },
     ]);
     expect(dataTransfer.setDragImage).toHaveBeenCalledOnce();
@@ -164,14 +247,17 @@ describe("Sidebar pinned chats", () => {
   });
 
   it("moves the preview and surrounding chats between pinned rows", async () => {
-    const props = sidebarProps([
-      { kind: "agent", id: "chief" },
-      { kind: "agent", id: "research" },
-      { kind: "agent", id: "sales" },
-      { kind: "person", id: "member-alice" },
-      { kind: "person", id: "member-jon" },
-      { kind: "person", id: "member-maya" },
-    ]);
+    const props = sidebarPropsWithExtraAgents(
+      [
+        { kind: "agent", id: "chief" },
+        { kind: "agent", id: "research" },
+        { kind: "agent", id: "sales" },
+        { kind: "agent", id: "extra-1" },
+        { kind: "agent", id: "extra-2" },
+        { kind: "agent", id: "extra-3" },
+      ],
+      3,
+    );
     const view = render(() => <Sidebar {...props} />);
     const rows = Array.from(view.container.querySelectorAll<HTMLElement>(".sidebar-pinned-item"));
     for (const [index, row] of rows.entries()) {
@@ -180,8 +266,11 @@ describe("Sidebar pinned chats", () => {
       vi.spyOn(row, "getBoundingClientRect").mockReturnValue(rect(column * 80, line * 102, 72, 94));
     }
     const list = view.container.querySelector<HTMLElement>(".sidebar-pinned-list");
-    if (!list) throw new Error("Pinned list is missing.");
-    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 236, 200));
+    const root = view.container.querySelector<HTMLElement>(".bot-list");
+    const pinned = screen.getByRole("region", { name: "Pinned chats" });
+    if (!list || !root) throw new Error("Pinned list is missing.");
+    vi.spyOn(root, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 210));
     const dataTransfer = {
       setData: vi.fn(),
       setDragImage: vi.fn(),
@@ -189,14 +278,791 @@ describe("Sidebar pinned chats", () => {
       dropEffect: "move",
     };
 
-    await fireEvent.dragStart(rows[0], { dataTransfer, clientX: 36, clientY: 47 });
-    await fireEvent.dragOver(rows[3], { dataTransfer, clientX: 36, clientY: 149 });
+    dragStartAt(rows[0], dataTransfer, { clientX: 36, clientY: 47 });
+    await dragOverFrame(rows[3], dataTransfer, { clientX: 36, clientY: 149 });
 
     expect(rows[3]).toHaveClass("sidebar-pinned-item-drag-over");
     expect(rows[3].style.getPropertyValue("--sidebar-pinned-drag-y")).toBe("-102px");
     expect(document.querySelector(".sidebar-pinned-drag-preview")).toBeInTheDocument();
     await fireEvent.dragEnd(rows[0], { dataTransfer });
     expect(document.querySelector(".sidebar-pinned-drag-preview")).not.toBeInTheDocument();
+  });
+
+  it("pins an agent dropped on the pinned area with the same native drag path", async () => {
+    const props = sidebarProps([{ kind: "agent", id: "research" }]);
+    const view = render(() => <Sidebar {...props} />);
+    const chief = screen.getByRole("button", { name: /Chief/ });
+    const chiefItem = chief.closest<HTMLElement>("[data-agent-id]");
+    const pinned = screen.getByRole("region", { name: "Pinned chats" });
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    if (!chiefItem || !list) throw new Error("Sidebar list is missing.");
+    vi.spyOn(chiefItem, "getBoundingClientRect").mockReturnValue(rect(12, 180, 256, 54));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue(rect(0, 20, 280, 120));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(chiefItem, dataTransfer, { clientX: 30, clientY: 200 });
+    expect(screen.queryByText("Drag here to pin")).not.toBeInTheDocument();
+    await dragOverFrame(pinned, dataTransfer, { clientX: 100, clientY: 100 });
+    expect(pinned).toHaveClass("sidebar-pinned-group-agent-drop-target");
+    expect(list).toHaveAttribute("data-sidebar-dragging");
+
+    dropAt(pinned, dataTransfer, { clientX: 100, clientY: 100 });
+
+    expect(props.onPin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
+    expect(pinned).not.toHaveClass("sidebar-pinned-group-agent-drop-target");
+    await waitFor(() => expect(list).not.toHaveAttribute("data-sidebar-dragging"));
+    expect(document.querySelector(".sidebar-agent-drag-preview")).not.toBeInTheDocument();
+  });
+
+  it("reveals the empty pin drop field only while an agent is dragged", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} />);
+    const chief = screen.getByRole("button", { name: /Chief/ });
+    const chiefItem = chief.closest<HTMLElement>("[data-agent-id]");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    if (!chiefItem || !list) throw new Error("Sidebar agent drag source is missing.");
+    vi.spyOn(chiefItem, "getBoundingClientRect").mockReturnValue(rect(12, 180, 256, 54));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    expect(screen.queryByText("Drag here to pin")).not.toBeInTheDocument();
+    dragStartAt(chiefItem, dataTransfer, { clientX: 30, clientY: 200 });
+    expect(screen.queryByText("Drag here to pin")).not.toBeInTheDocument();
+    await dragOverFrame(list, dataTransfer, { clientX: 32, clientY: 196 });
+    await waitFor(() => expect(screen.getByText("Drag here to pin")).toBeInTheDocument());
+    expect(screen.getByRole("region", { name: "Pinned chats" })).toHaveClass("sidebar-pinned-group-empty-target");
+
+    await fireEvent.dragEnd(chiefItem, { dataTransfer });
+    await waitFor(() => expect(screen.queryByText("Drag here to pin")).not.toBeInTheDocument());
+  });
+
+  it("keeps the animated empty pin field as a live drop target", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} />);
+    const chief = screen.getByRole("button", { name: /Chief/ });
+    const chiefItem = chief.closest<HTMLElement>("[data-agent-id]");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    if (!chiefItem || !list) throw new Error("Sidebar agent drag source is missing.");
+    vi.spyOn(chiefItem, "getBoundingClientRect").mockReturnValue(rect(12, 180, 256, 54));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(chiefItem, dataTransfer, { clientX: 30, clientY: 200 });
+    await dragOverFrame(list, dataTransfer, { clientX: 32, clientY: 196 });
+    const pinned = screen.getByRole("region", { name: "Pinned chats" });
+    const field = screen.getByText("Drag here to pin");
+    vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue(rect(0, 20, 280, 6));
+    vi.spyOn(field, "getBoundingClientRect").mockReturnValue(rect(12, 24, 256, 104));
+
+    await fireEvent.transitionEnd(pinned, { propertyName: "grid-template-rows" });
+    await dragOverFrame(field, dataTransfer, { clientX: 100, clientY: 72 });
+    expect(pinned).toHaveClass("sidebar-pinned-group-agent-drop-target");
+
+    vi.mocked(field.getBoundingClientRect).mockReturnValue(rect(12, 200, 256, 104));
+    fireEvent(chiefItem, nativeDragEvent("dragend", dataTransfer, { clientX: 100, clientY: 72 }));
+    expect(props.onPin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
+  });
+});
+
+describe("Sidebar people", () => {
+  it("reorders people with immediate row movement and keeps the order controlled", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} />);
+    const peopleItems = Array.from(view.container.querySelectorAll<HTMLElement>("[data-person-id]"));
+    const sourceItem = peopleItems[0];
+    const targetItem = peopleItems[1];
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    if (!sourceItem || !targetItem || !list) throw new Error("Sidebar person drag targets are missing.");
+    const source = within(sourceItem).getByRole("button");
+    const peopleSection = screen.getByRole("button", { name: "People" }).closest<HTMLElement>("section");
+    const initialIds = peopleItems.map((item) => item.dataset.personId ?? "");
+    for (const [index, item] of peopleItems.entries()) {
+      vi.spyOn(item, "getBoundingClientRect").mockReturnValue(rect(12, 120 + index * 58, 256, 54));
+    }
+    vi.spyOn(source, "getBoundingClientRect").mockReturnValue(rect(12, 120, 256, 54));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    if (!peopleSection) throw new Error("People section is missing.");
+    vi.spyOn(peopleSection, "getBoundingClientRect").mockReturnValue(rect(0, 90, 280, 300));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(sourceItem, dataTransfer, { clientX: 30, clientY: 140 });
+    expect(screen.queryByText("Drag here to pin")).not.toBeInTheDocument();
+    await dragOverFrame(targetItem, dataTransfer, { clientX: 30, clientY: 190 });
+
+    expect(targetItem.style.getPropertyValue("--sidebar-person-drag-y")).toBe("-58px");
+    const preview = document.querySelector<HTMLElement>(".sidebar-person-drag-preview");
+    expect(preview).toBeInTheDocument();
+    expect(preview).toHaveStyle({ height: "94px", width: "72px" });
+    expect(preview).toHaveTextContent(source.textContent?.match(/Alice Chen|Maya|Norbert|Jon/)?.[0] ?? "");
+    expect(preview?.querySelector(".bot-row-preview")).not.toBeInTheDocument();
+
+    dropAt(targetItem, dataTransfer, { clientX: 30, clientY: 190 });
+
+    expect(props.onReorderPeople).toHaveBeenCalledWith([initialIds[1], initialIds[0], ...initialIds.slice(2)]);
+    expect(props.onMutateLayout).not.toHaveBeenCalled();
+    expect(document.querySelector(".sidebar-person-drag-preview")).not.toBeInTheDocument();
+  });
+
+  it("does not pin a dragged person and supports keyboard reordering", async () => {
+    const props = sidebarProps([{ kind: "agent", id: "chief" }]);
+    const view = render(() => <Sidebar {...props} />);
+    const peopleItems = Array.from(view.container.querySelectorAll<HTMLElement>("[data-person-id]"));
+    const sourceItem = peopleItems[0];
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    const pinned = screen.getByRole("region", { name: "Pinned chats" });
+    if (!sourceItem || !list) throw new Error("Sidebar person drag source is missing.");
+    const source = within(sourceItem).getByRole("button");
+    for (const [index, item] of peopleItems.entries()) {
+      vi.spyOn(item, "getBoundingClientRect").mockReturnValue(rect(12, 120 + index * 58, 256, 54));
+    }
+    vi.spyOn(source, "getBoundingClientRect").mockReturnValue(rect(12, 120, 256, 54));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue(rect(0, 20, 280, 90));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(sourceItem, dataTransfer, { clientX: 30, clientY: 140 });
+    await dragOverFrame(pinned, dataTransfer, { clientX: 100, clientY: 70 });
+    expect(pinned).not.toHaveClass("sidebar-pinned-group-agent-drop-target");
+    dropAt(pinned, dataTransfer, { clientX: 100, clientY: 70 });
+
+    expect(props.onPin).not.toHaveBeenCalled();
+    expect(props.onReorderPeople).not.toHaveBeenCalled();
+
+    const nextSource = within(peopleItems[1]).getByRole("button");
+    fireEvent.keyDown(nextSource, { altKey: true, key: "ArrowDown" });
+    const currentIds = peopleItems.map((item) => item.dataset.personId ?? "");
+    expect(props.onReorderPeople).toHaveBeenCalledWith([
+      currentIds[0],
+      currentIds[2],
+      currentIds[1],
+      ...currentIds.slice(3),
+    ]);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/Moved .+ to position 3 of 4\./));
+  });
+});
+
+describe("Sidebar sections", () => {
+  const demoId = "11111111-1111-4111-8111-111111111111";
+  const emptyId = "22222222-2222-4222-8222-222222222222";
+  const productId = "33333333-3333-4333-8333-333333333333";
+
+  function sectionLayout() {
+    return {
+      revision: 1,
+      sections: [
+        { id: demoId, name: "Demo" },
+        { id: emptyId, name: "Empty" },
+      ],
+      order: [demoId, "people", "unassigned", emptyId],
+      agentAssignments: { chief: demoId, research: demoId },
+      agentOrder: ["chief", "research", "sales"],
+    };
+  }
+
+  function multiSectionLayout() {
+    return {
+      revision: 1,
+      sections: [
+        { id: demoId, name: "Demo" },
+        { id: productId, name: "Product" },
+      ],
+      order: [demoId, "people", productId, "unassigned"],
+      agentAssignments: { chief: demoId, research: demoId, sales: productId },
+      agentOrder: ["chief", "research", "sales"],
+    };
+  }
+
+  it("removes an agent row when the controlled bot list changes", async () => {
+    const props = sidebarProps();
+    const [bots, setBots] = createSignal(STORY_BOTS);
+    render(() => <Sidebar {...props} bots={bots()} />);
+
+    const sales = screen.getByRole("button", { name: /Sales/ });
+    setBots((current) => current.filter((bot) => bot.id !== "sales"));
+
+    await waitFor(() => expect(sales).not.toBeInTheDocument());
+  });
+
+  it("renders shared order, hides empty sections, and excludes pinned agents from counts", () => {
+    const props = sidebarProps([{ kind: "agent", id: "chief" }]);
+    render(() => <Sidebar {...props} layout={sectionLayout()} />);
+
+    const demo = screen.getByRole("button", { name: "Demo" });
+    const people = screen.getByRole("button", { name: "People" });
+    const unassigned = screen.getByRole("button", { name: "Unassigned" });
+    expect(demo.getBoundingClientRect().top).toBeLessThanOrEqual(people.getBoundingClientRect().top);
+    expect(screen.queryByText("Empty")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Research/ })).toBeInTheDocument();
+    expect(screen.getAllByText("Chief")).toHaveLength(1);
+    expect(unassigned).toBeInTheDocument();
+  });
+
+  it("renders agents in the shared agent order", () => {
+    const props = sidebarProps();
+    const view = render(() => (
+      <Sidebar {...props} layout={{ ...sectionLayout(), agentOrder: ["research", "chief", "sales"] }} />
+    ));
+    const demo = view.container.querySelector<HTMLElement>(`[data-section-id="${demoId}"]`);
+    expect(
+      Array.from(demo?.querySelectorAll<HTMLElement>("[data-agent-id]") ?? []).map((row) => row.dataset.agentId),
+    ).toEqual(["research", "chief"]);
+  });
+
+  it("moves across hidden sections and disables movement at the visible edge", async () => {
+    const props = sidebarProps();
+    const layout = sectionLayout();
+    const layoutWithHiddenGap = { ...layout, order: [demoId, emptyId, "people", "unassigned"] };
+    render(() => <Sidebar {...props} layout={layoutWithHiddenGap} />);
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: "Demo" }));
+    let sectionMenu = await screen.findByRole("menu", { name: "Section actions" });
+    await fireEvent.pointerUp(within(sectionMenu).getByRole("menuitem", { name: "Move down" }), { button: 0 });
+    expect(props.onMutateLayout).toHaveBeenCalledWith({
+      type: "move",
+      sectionId: demoId,
+      direction: "down",
+      steps: 2,
+    });
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: "Unassigned" }));
+    sectionMenu = await screen.findByRole("menu", { name: "Section actions" });
+    expect(within(sectionMenu).getByRole("menuitem", { name: "Move down" })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("assigns agents to sections with bounded vertical drag and drop", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} layout={sectionLayout()} />);
+    const research = screen.getByRole("button", { name: /Research/ });
+    const researchItem = research.closest<HTMLElement>("[data-agent-id]");
+    const unassigned = screen.getByRole("button", { name: "Unassigned" }).closest<HTMLElement>("section");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    if (!researchItem || !unassigned || !list) throw new Error("Sidebar drag targets are missing.");
+    vi.spyOn(researchItem, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 54));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    vi.spyOn(unassigned, "getBoundingClientRect").mockReturnValue(rect(12, 300, 256, 100));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(researchItem, dataTransfer, { clientX: 30, clientY: 100 });
+    await waitFor(() => expect(research).toHaveClass("sidebar-agent-row-dragging"));
+    expect(document.querySelector(".sidebar-agent-drag-preview")).toBeInTheDocument();
+    await dragOverFrame(unassigned, dataTransfer, { clientX: 250, clientY: 330 });
+    expect(unassigned).toHaveClass("sidebar-section-agent-drop-target");
+    dropAt(unassigned, dataTransfer, { clientX: 250, clientY: 330 });
+
+    expect(props.onMutateLayout).toHaveBeenCalledWith({
+      type: "move-agent",
+      agentId: "research",
+      sectionId: null,
+      beforeAgentId: null,
+    });
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Moved Research to Unassigned."));
+    expect(document.querySelector(".sidebar-agent-drag-preview")).not.toBeInTheDocument();
+  });
+
+  it("unpins a pinned agent when it is dragged back into the sidebar", async () => {
+    const props = sidebarProps([{ kind: "agent", id: "chief" }]);
+    const view = render(() => <Sidebar {...props} layout={sectionLayout()} />);
+    const pinnedItem = view.container.querySelector<HTMLElement>(".sidebar-pinned-item");
+    const pinned = screen.getByRole("region", { name: "Pinned chats" });
+    const demoSection = screen.getByRole("button", { name: "Demo" }).closest<HTMLElement>("section");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    if (!pinnedItem || !demoSection || !list) throw new Error("Pinned drag targets are missing.");
+    vi.spyOn(pinnedItem, "getBoundingClientRect").mockReturnValue(rect(16, 20, 72, 94));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    vi.spyOn(demoSection, "getBoundingClientRect").mockReturnValue(rect(12, 200, 256, 100));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(pinnedItem, dataTransfer, { clientX: 52, clientY: 48 });
+    await dragOverFrame(demoSection, dataTransfer, { clientX: 250, clientY: 300 });
+
+    expect(demoSection).toHaveClass("sidebar-section-agent-drop-target");
+    expect(pinned).not.toHaveClass("sidebar-pinned-group-agent-drop-target");
+    expect(list).toHaveAttribute("data-sidebar-dragging");
+    expect(document.querySelector(".sidebar-pinned-drag-preview")).toBeInTheDocument();
+
+    dropAt(demoSection, dataTransfer, { clientX: 250, clientY: 300 });
+
+    expect(props.onUnpin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Moved Chief to Demo."));
+    expect(demoSection).not.toHaveClass("sidebar-section-agent-drop-target");
+    expect(list).not.toHaveAttribute("data-sidebar-dragging");
+    expect(document.querySelector(".sidebar-pinned-drag-preview")).not.toBeInTheDocument();
+  });
+
+  it("tracks every valid section for a pinned agent and clears the target over People", async () => {
+    const props = sidebarProps([{ kind: "agent", id: "chief" }]);
+    const view = render(() => <Sidebar {...props} layout={multiSectionLayout()} />);
+    const pinnedItem = view.container.querySelector<HTMLElement>(".sidebar-pinned-item");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    const people = screen.getByRole("button", { name: "People" }).closest<HTMLElement>("section");
+    const demo = screen.getByRole("button", { name: "Demo" }).closest<HTMLElement>("section");
+    const product = screen.getByRole("button", { name: "Product" }).closest<HTMLElement>("section");
+    const sales = screen.getByRole("button", { name: /Sales/ }).closest<HTMLElement>("[data-agent-id]");
+    const pinned = screen.getByRole("region", { name: "Pinned chats" });
+    if (!pinnedItem || !list || !people || !demo || !product || !sales) {
+      throw new Error("Multi-section drag targets are missing.");
+    }
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 700));
+    vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 100));
+    const peopleBounds = vi.spyOn(people, "getBoundingClientRect").mockReturnValue(rect(12, 110, 256, 180));
+    const demoBounds = vi.spyOn(demo, "getBoundingClientRect").mockReturnValue(rect(12, 300, 256, 90));
+    const productBounds = vi.spyOn(product, "getBoundingClientRect").mockReturnValue(rect(12, 400, 256, 90));
+    vi.spyOn(pinnedItem, "getBoundingClientRect").mockReturnValue(rect(16, 8, 72, 94));
+    vi.spyOn(sales, "getBoundingClientRect").mockReturnValue(rect(12, 432, 256, 54));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(pinnedItem, dataTransfer, { clientX: 40, clientY: 40 });
+    await dragOverFrame(demo, dataTransfer, { clientX: 120, clientY: 340 });
+    expect(demo).toHaveClass("sidebar-section-agent-drop-target");
+
+    await dragOverFrame(people, dataTransfer, { clientX: 120, clientY: 180 });
+    expect(demo).not.toHaveClass("sidebar-section-agent-drop-target");
+    expect(people).not.toHaveClass("sidebar-section-agent-drop-target");
+
+    for (let index = 0; index < 50; index += 1) {
+      fireEvent(product, nativeDragEvent("dragover", dataTransfer, { clientX: 120, clientY: 440 }));
+    }
+    await nextAnimationFrame();
+    expect(product).toHaveClass("sidebar-section-agent-drop-target");
+    expect(demo).not.toHaveClass("sidebar-section-agent-drop-target");
+    expect(peopleBounds).toHaveBeenCalledTimes(1);
+    expect(demoBounds).toHaveBeenCalledTimes(1);
+    expect(productBounds).toHaveBeenCalledTimes(1);
+
+    dropAt(sales, dataTransfer, { clientX: 120, clientY: 440 });
+    await waitFor(() =>
+      expect(props.onMutateLayout).toHaveBeenCalledWith({
+        type: "move-agent",
+        agentId: "chief",
+        sectionId: productId,
+        beforeAgentId: "sales",
+      }),
+    );
+    await waitFor(() => expect(props.onUnpin).toHaveBeenCalledWith({ kind: "agent", id: "chief" }));
+  });
+
+  it("keeps a pinned agent pinned when the target section mutation fails", async () => {
+    const props = sidebarProps([{ kind: "agent", id: "chief" }]);
+    props.onMutateLayout.mockRejectedValueOnce(new Error("Section move failed"));
+    const view = render(() => <Sidebar {...props} layout={multiSectionLayout()} />);
+    const pinnedItem = view.container.querySelector<HTMLElement>(".sidebar-pinned-item");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    const product = screen.getByRole("button", { name: "Product" }).closest<HTMLElement>("section");
+    const pinned = screen.getByRole("region", { name: "Pinned chats" });
+    if (!pinnedItem || !list || !product) throw new Error("Pinned failure targets are missing.");
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 700));
+    vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 100));
+    vi.spyOn(product, "getBoundingClientRect").mockReturnValue(rect(12, 400, 256, 90));
+    vi.spyOn(pinnedItem, "getBoundingClientRect").mockReturnValue(rect(16, 8, 72, 94));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(pinnedItem, dataTransfer, { clientX: 40, clientY: 40 });
+    await dragOverFrame(product, dataTransfer, { clientX: 120, clientY: 440 });
+    dropAt(product, dataTransfer, { clientX: 120, clientY: 440 });
+
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Section move failed"));
+    expect(props.onUnpin).not.toHaveBeenCalled();
+  });
+
+  it("clears a normal agent target immediately when it crosses People", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} layout={multiSectionLayout()} />);
+    const research = screen.getByRole("button", { name: /Research/ }).closest<HTMLElement>("[data-agent-id]");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    const people = screen.getByRole("button", { name: "People" }).closest<HTMLElement>("section");
+    const demo = screen.getByRole("button", { name: "Demo" }).closest<HTMLElement>("section");
+    const product = screen.getByRole("button", { name: "Product" }).closest<HTMLElement>("section");
+    if (!research || !list || !people || !demo || !product) throw new Error("Agent crossing targets are missing.");
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 700));
+    vi.spyOn(people, "getBoundingClientRect").mockReturnValue(rect(12, 110, 256, 180));
+    vi.spyOn(demo, "getBoundingClientRect").mockReturnValue(rect(12, 300, 256, 90));
+    vi.spyOn(product, "getBoundingClientRect").mockReturnValue(rect(12, 400, 256, 90));
+    vi.spyOn(research, "getBoundingClientRect").mockReturnValue(rect(12, 332, 256, 54));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(research, dataTransfer, { clientX: 40, clientY: 350 });
+    await dragOverFrame(product, dataTransfer, { clientX: 120, clientY: 440 });
+    expect(product).toHaveClass("sidebar-section-agent-drop-target");
+    await dragOverFrame(people, dataTransfer, { clientX: 120, clientY: 180 });
+    expect(product).not.toHaveClass("sidebar-section-agent-drop-target");
+    expect(people).not.toHaveClass("sidebar-section-agent-drop-target");
+    fireEvent(research, new Event("dragend", { bubbles: true }));
+  });
+
+  it("keeps the active target when a nested dragleave has no related target", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} layout={multiSectionLayout()} />);
+    const research = screen.getByRole("button", { name: /Research/ }).closest<HTMLElement>("[data-agent-id]");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    const people = screen.getByRole("button", { name: "People" }).closest<HTMLElement>("section");
+    const demo = screen.getByRole("button", { name: "Demo" }).closest<HTMLElement>("section");
+    const product = screen.getByRole("button", { name: "Product" }).closest<HTMLElement>("section");
+    if (!research || !list || !people || !demo || !product) throw new Error("Nested leave targets are missing.");
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 700));
+    vi.spyOn(people, "getBoundingClientRect").mockReturnValue(rect(12, 110, 256, 180));
+    vi.spyOn(demo, "getBoundingClientRect").mockReturnValue(rect(12, 300, 256, 90));
+    vi.spyOn(product, "getBoundingClientRect").mockReturnValue(rect(12, 400, 256, 90));
+    vi.spyOn(research, "getBoundingClientRect").mockReturnValue(rect(12, 332, 256, 54));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(research, dataTransfer, { clientX: 40, clientY: 350 });
+    await dragOverFrame(product, dataTransfer, { clientX: 120, clientY: 440 });
+    expect(product).toHaveClass("sidebar-section-agent-drop-target");
+
+    fireEvent(product, nativeDragEvent("dragleave", dataTransfer, { clientX: 120, clientY: 440 }));
+    await nextAnimationFrame();
+
+    expect(product).toHaveClass("sidebar-section-agent-drop-target");
+    fireEvent(research, new Event("dragend", { bubbles: true }));
+  });
+
+  it("reorders visible sections by drag and drop across hidden sections", async () => {
+    const props = sidebarProps();
+    const layout = sectionLayout();
+    const layoutWithHiddenGap = { ...layout, order: [demoId, emptyId, "people", "unassigned"] };
+    const view = render(() => <Sidebar {...props} layout={layoutWithHiddenGap} />);
+    const demo = screen.getByRole("button", { name: "Demo" });
+    const demoSection = demo.closest<HTMLElement>("section");
+    const peopleSection = screen.getByRole("button", { name: "People" }).closest<HTMLElement>("section");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    if (!demoSection || !peopleSection || !list) throw new Error("Sidebar section drag targets are missing.");
+    vi.spyOn(demo, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 32));
+    vi.spyOn(demoSection, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 86));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    const peopleBounds = vi.spyOn(peopleSection, "getBoundingClientRect").mockReturnValue(rect(12, 180, 256, 180));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(demo, dataTransfer, { clientX: 30, clientY: 96 });
+    await waitFor(() => expect(demoSection).toHaveClass("sidebar-section-dragging"));
+    for (let index = 0; index < 50; index += 1) {
+      fireEvent(peopleSection, nativeDragEvent("dragover", dataTransfer, { clientX: 250, clientY: 320 }));
+    }
+    await nextAnimationFrame();
+    expect(peopleSection).toHaveClass("sidebar-section-drop-after");
+    expect(peopleSection.style.getPropertyValue("--sidebar-section-drag-y")).toBe("-100px");
+    expect(peopleBounds).toHaveBeenCalledTimes(1);
+    const preview = document.querySelector<HTMLElement>(".sidebar-section-drag-preview");
+    expect(preview).toBeInTheDocument();
+    expect(preview?.style.transform).toContain("translate3d(12px,");
+    dropAt(peopleSection, dataTransfer, { clientX: 250, clientY: 320 });
+
+    expect(props.onMutateLayout).toHaveBeenCalledWith({
+      type: "move",
+      sectionId: demoId,
+      direction: "down",
+      steps: 2,
+    });
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Moved Demo to position 2 of 3."));
+    expect(document.querySelector(".sidebar-section-drag-preview")).not.toBeInTheDocument();
+  });
+
+  it("reorders agents inside one section with live row movement", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} layout={sectionLayout()} />);
+    const chief = screen.getByRole("button", { name: /Chief/ });
+    const research = screen.getByRole("button", { name: /Research/ });
+    const chiefItem = chief.closest<HTMLElement>("[data-agent-id]");
+    const researchItem = research.closest<HTMLElement>("[data-agent-id]");
+    const demoSection = screen.getByRole("button", { name: "Demo" }).closest<HTMLElement>("section");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    if (!list || !chiefItem || !researchItem || !demoSection) throw new Error("Sidebar list is missing.");
+    vi.spyOn(chief, "getBoundingClientRect").mockReturnValue(rect(12, 120, 256, 54));
+    vi.spyOn(research, "getBoundingClientRect").mockReturnValue(rect(12, 174, 256, 54));
+    vi.spyOn(chiefItem, "getBoundingClientRect").mockReturnValue(rect(12, 120, 256, 54));
+    vi.spyOn(researchItem, "getBoundingClientRect").mockReturnValue(rect(12, 174, 256, 54));
+    vi.spyOn(demoSection, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 180));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(researchItem, dataTransfer, { clientX: 30, clientY: 190 });
+    const dragOver = new MouseEvent("dragover", { bubbles: true, cancelable: true, clientX: 30, clientY: 125 });
+    Object.defineProperty(dragOver, "dataTransfer", { value: dataTransfer });
+    fireEvent(chiefItem, dragOver);
+    await nextAnimationFrame();
+
+    await waitFor(() => expect(chiefItem.style.getPropertyValue("--sidebar-agent-drag-y")).toBe("54px"));
+    const drop = new MouseEvent("drop", { bubbles: true, cancelable: true, clientX: 30, clientY: 125 });
+    Object.defineProperty(drop, "dataTransfer", { value: dataTransfer });
+    fireEvent(chiefItem, drop);
+    expect(props.onMutateLayout).toHaveBeenCalledWith({
+      type: "move-agent",
+      agentId: "research",
+      sectionId: demoId,
+      beforeAgentId: "chief",
+    });
+  });
+
+  it("uses the same native mouse drag path as pinned items", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} layout={sectionLayout()} />);
+    const research = screen.getByRole("button", { name: /Research/ });
+    const researchItem = research.closest<HTMLElement>("[data-agent-id]");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    if (!list || !researchItem) throw new Error("Sidebar native drag target is missing.");
+    vi.spyOn(researchItem, "getBoundingClientRect").mockReturnValue(rect(12, 174, 256, 54));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    const pointerDown = sidebarPointerEvent("pointerdown", 30, 190);
+    Object.defineProperty(pointerDown, "pointerType", { value: "mouse" });
+
+    fireEvent(research, pointerDown);
+    window.dispatchEvent(sidebarPointerEvent("pointermove", 60, 230));
+
+    expect(researchItem).toHaveAttribute("draggable", "true");
+    expect(research).not.toHaveAttribute("draggable");
+    expect(document.querySelector(".sidebar-agent-drag-preview")).not.toBeInTheDocument();
+
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+    dragStartAt(researchItem, dataTransfer, { clientX: 30, clientY: 190 });
+    await waitFor(() => expect(list).toHaveAttribute("data-sidebar-dragging", "agent"));
+    expect(document.querySelector(".sidebar-agent-drag-preview")).toBeInTheDocument();
+    await fireEvent.dragEnd(researchItem, { dataTransfer });
+  });
+
+  it("shifts an adjacent agent as soon as native drag enters its row", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} layout={sectionLayout()} />);
+    const chief = screen.getByRole("button", { name: /Chief/ });
+    const chiefItem = chief.closest<HTMLElement>("[data-agent-id]");
+    const researchItem = screen.getByRole("button", { name: /Research/ }).closest<HTMLElement>("[data-agent-id]");
+    const demoSection = screen.getByRole("button", { name: "Demo" }).closest<HTMLElement>("section");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    if (!chiefItem || !researchItem || !demoSection || !list) throw new Error("Sidebar pointer targets are missing.");
+    vi.spyOn(chief, "getBoundingClientRect").mockReturnValue(rect(12, 120, 256, 54));
+    vi.spyOn(chiefItem, "getBoundingClientRect").mockReturnValue(rect(12, 120, 256, 54));
+    vi.spyOn(researchItem, "getBoundingClientRect").mockReturnValue(rect(12, 174, 256, 54));
+    vi.spyOn(demoSection, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 180));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(chiefItem, dataTransfer, { clientX: 30, clientY: 140 });
+    await dragOverFrame(researchItem, dataTransfer, { clientX: 30, clientY: 180 });
+
+    expect(researchItem.style.getPropertyValue("--sidebar-agent-drag-y")).toBe("-54px");
+    await fireEvent.dragEnd(chiefItem, { dataTransfer });
+  });
+
+  it("keeps the nearest agent target active while the pointer crosses the row gap", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} layout={sectionLayout()} />);
+    const chiefItem = screen.getByRole("button", { name: /Chief/ }).closest<HTMLElement>("[data-agent-id]");
+    const researchItem = screen.getByRole("button", { name: /Research/ }).closest<HTMLElement>("[data-agent-id]");
+    const demoSection = screen.getByRole("button", { name: "Demo" }).closest<HTMLElement>("section");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    if (!chiefItem || !researchItem || !demoSection || !list) throw new Error("Sidebar gap targets are missing.");
+    vi.spyOn(chiefItem, "getBoundingClientRect").mockReturnValue(rect(12, 120, 256, 54));
+    vi.spyOn(researchItem, "getBoundingClientRect").mockReturnValue(rect(12, 178, 256, 54));
+    vi.spyOn(demoSection, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 190));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(chiefItem, dataTransfer, { clientX: 30, clientY: 140 });
+    await dragOverFrame(demoSection, dataTransfer, { clientX: 30, clientY: 176 });
+
+    expect(researchItem.style.getPropertyValue("--sidebar-agent-drag-y")).toBe("-58px");
+    await fireEvent.dragEnd(chiefItem, { dataTransfer });
+  });
+
+  it("moves a full section through the shared native path without repeated geometry reads", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} layout={sectionLayout()} />);
+    const demo = screen.getByRole("button", { name: "Demo" });
+    const demoSection = demo.closest<HTMLElement>("section");
+    const peopleSection = screen.getByRole("button", { name: "People" }).closest<HTMLElement>("section");
+    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    if (!demoSection || !peopleSection || !list) throw new Error("Sidebar pointer targets are missing.");
+    vi.spyOn(demo, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 32));
+    vi.spyOn(demoSection, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 86));
+    const peopleBounds = vi.spyOn(peopleSection, "getBoundingClientRect").mockReturnValue(rect(12, 180, 256, 180));
+    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: "move",
+      dropEffect: "move",
+    };
+
+    dragStartAt(demo, dataTransfer, { clientX: 30, clientY: 96 });
+    for (let index = 0; index < 50; index += 1) {
+      fireEvent(peopleSection, nativeDragEvent("dragover", dataTransfer, { clientX: 30, clientY: 320 }));
+    }
+    await nextAnimationFrame();
+    await waitFor(() => expect(peopleSection).toHaveClass("sidebar-section-drop-after"));
+    expect(peopleSection.style.getPropertyValue("--sidebar-section-drag-y")).toBe("-100px");
+    dropAt(peopleSection, dataTransfer, { clientX: 30, clientY: 320 });
+
+    expect(props.onMutateLayout).toHaveBeenCalledWith({
+      type: "move",
+      sectionId: demoId,
+      direction: "down",
+      steps: 1,
+    });
+    expect(peopleBounds).toHaveBeenCalledTimes(1);
+    expect(document.querySelector(".sidebar-section-drag-preview")).not.toBeInTheDocument();
+  });
+
+  it("keeps collapsed private and expands matching search results temporarily", async () => {
+    const props = sidebarProps();
+    const [collapsed, setCollapsed] = createSignal([demoId]);
+    const view = render(() => (
+      <Sidebar
+        {...props}
+        layout={sectionLayout()}
+        collapsedSectionIds={collapsed()}
+        onToggleSection={(sectionId) =>
+          setCollapsed((current) =>
+            current.includes(sectionId)
+              ? current.filter((candidate) => candidate !== sectionId)
+              : [...current, sectionId],
+          )
+        }
+      />
+    ));
+
+    const body = view.container.querySelector<HTMLElement>(`#sidebar-section-body-${demoId}`)?.parentElement;
+    expect(body).toHaveAttribute("data-collapsed");
+    expect(body).toHaveAttribute("inert");
+
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search chats" }), {
+      target: { value: "Research" },
+    });
+    expect(body).not.toHaveAttribute("data-collapsed");
+    expect(screen.getByRole("button", { name: /Research/ })).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByRole("searchbox", { name: "Search chats" }), { target: { value: "" } });
+    expect(body).toHaveAttribute("data-collapsed");
+  });
+
+  it("creates and renames sections inline, with duplicate-name validation", async () => {
+    const props = sidebarProps();
+    render(() => <Sidebar {...props} layout={sectionLayout()} />);
+
+    await fireEvent.contextMenu(screen.getByLabelText("Sidebar free area"));
+    const sidebarMenu = await screen.findByRole("menu", { name: "Sidebar actions" });
+    const newSection = within(sidebarMenu).getByRole("menuitem", { name: "New section" });
+    await fireEvent.pointerUp(newSection, { button: 0 });
+    const createInput = await screen.findByRole("textbox", { name: "New section name" });
+    await fireEvent.input(createInput, { target: { value: "Product" } });
+    await fireEvent.keyDown(createInput, { key: "Enter" });
+    expect(props.onMutateLayout).toHaveBeenCalledWith({ type: "create", name: "Product" });
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: "Demo" }));
+    const sectionMenu = await screen.findByRole("menu", { name: "Section actions" });
+    await fireEvent.pointerUp(within(sectionMenu).getByRole("menuitem", { name: "Rename" }), { button: 0 });
+    const renameInput = await screen.findByRole("textbox", { name: "Rename section" });
+    await fireEvent.input(renameInput, { target: { value: "Empty" } });
+    await fireEvent.keyDown(renameInput, { key: "Enter" });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Section names must be unique");
+
+    await fireEvent.input(renameInput, { target: { value: "Core" } });
+    await fireEvent.keyDown(renameInput, { key: "Enter" });
+    expect(props.onMutateLayout).toHaveBeenCalledWith({ type: "rename", sectionId: demoId, name: "Core" });
+  });
+
+  it("confirms section deletion and moves system sections through shared actions", async () => {
+    const props = sidebarProps();
+    render(() => <Sidebar {...props} layout={sectionLayout()} />);
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: "Demo" }));
+    let sectionMenu = await screen.findByRole("menu", { name: "Section actions" });
+    await fireEvent.pointerUp(within(sectionMenu).getByRole("menuitem", { name: "Delete" }), { button: 0 });
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete Demo?" });
+    expect(dialog).toHaveTextContent("Agents in this section will move to Unassigned");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(props.onMutateLayout).toHaveBeenCalledWith({ type: "delete", sectionId: demoId });
+    await waitFor(() => expect(screen.queryByRole("alertdialog", { name: "Delete Demo?" })).not.toBeInTheDocument());
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: "People" }));
+    sectionMenu = await screen.findByRole("menu", { name: "Section actions" });
+    expect(within(sectionMenu).queryByRole("menuitem", { name: "Rename" })).not.toBeInTheDocument();
+    expect(within(sectionMenu).queryByRole("menuitem", { name: "Delete" })).not.toBeInTheDocument();
+    await fireEvent.pointerUp(within(sectionMenu).getByRole("menuitem", { name: "Move up" }), { button: 0 });
+    expect(props.onMutateLayout).toHaveBeenCalledWith({
+      type: "move",
+      sectionId: "people",
+      direction: "up",
+      steps: 1,
+    });
   });
 });
 

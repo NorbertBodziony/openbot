@@ -1,12 +1,19 @@
+export { default as ArrowDown } from "lucide-solid/icons/arrow-down";
 export { default as ArrowLeft } from "lucide-solid/icons/arrow-left";
+export { default as ArrowUp } from "lucide-solid/icons/arrow-up";
 export { default as Bell } from "lucide-solid/icons/bell";
+export { default as Brain } from "lucide-solid/icons/brain";
 export { default as Check } from "lucide-solid/icons/check";
 export { default as ChevronDown } from "lucide-solid/icons/chevron-down";
+export { default as ChevronRight } from "lucide-solid/icons/chevron-right";
 export { default as ChevronUp } from "lucide-solid/icons/chevron-up";
 export { default as Copy } from "lucide-solid/icons/copy";
 export { default as Ellipsis } from "lucide-solid/icons/ellipsis";
 export { default as ExternalLink } from "lucide-solid/icons/external-link";
 export { default as File } from "lucide-solid/icons/file";
+export { default as Folder } from "lucide-solid/icons/folder";
+export { default as FolderInput } from "lucide-solid/icons/folder-input";
+export { default as FolderPlus } from "lucide-solid/icons/folder-plus";
 export { default as Image } from "lucide-solid/icons/image";
 export { default as Link2 } from "lucide-solid/icons/link-2";
 export { default as LoaderCircle } from "lucide-solid/icons/loader-circle";
@@ -20,6 +27,7 @@ export { default as PictureInPicture2 } from "lucide-solid/icons/picture-in-pict
 export { default as Pin } from "lucide-solid/icons/pin";
 export { default as PinOff } from "lucide-solid/icons/pin-off";
 export { default as Play } from "lucide-solid/icons/play";
+export { default as Plus } from "lucide-solid/icons/plus";
 export { default as Puzzle } from "lucide-solid/icons/puzzle";
 export { default as RefreshCw } from "lucide-solid/icons/refresh-cw";
 export { default as Search } from "lucide-solid/icons/search";

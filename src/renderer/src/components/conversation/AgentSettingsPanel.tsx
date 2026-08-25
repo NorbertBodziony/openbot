@@ -17,6 +17,7 @@ import { PanelResizer, readPanelWidth, savePanelWidth } from "../PanelResizer";
 import { ProviderModelPicker } from "../ProviderModelPicker";
 import {
   Button,
+  ChevronRight,
   Input,
   Popover,
   Select,
@@ -27,6 +28,8 @@ import {
   Switch,
   Textarea,
 } from "../ui";
+import { AgentMemoriesModal } from "./AgentMemoriesModal";
+import { AgentRoutinesSettings, type AgentRoutinesView } from "./AgentRoutinesSettings";
 import { BackIcon, SettingsForwardIcon } from "./ConversationIcons";
 
 const SETTINGS_PANEL_STORAGE_KEY = "openbot:settings-panel-width";
@@ -64,6 +67,11 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   const [avatarUploadBusy, setAvatarUploadBusy] = createSignal(false);
   const [avatarCandidateSeed, setAvatarCandidateSeed] = createSignal("agent");
   const [avatarBatch, setAvatarBatch] = createSignal(0);
+  const [memoryModalOpen, setMemoryModalOpen] = createSignal(false);
+  const [memoryCount, setMemoryCount] = createSignal(0);
+  const [routinesOpen, setRoutinesOpen] = createSignal(false);
+  const [, setRoutineView] = createSignal<AgentRoutinesView>("list");
+  const [routineCount, setRoutineCount] = createSignal(0);
   const avatarUrl = () => props.bot.avatarUrl ?? null;
   const selectedModel = createMemo(() => props.modelOptions.find((option) => option.id === model()));
   const reasoningOptions = createMemo(() => selectedModel()?.supportedReasoningEfforts ?? ["medium" as const]);
@@ -117,6 +125,16 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
         setAvatarCandidateSeed(bot.avatarSeed);
         setAvatarBatch(0);
         setAvatarPickerOpen(false);
+        setMemoryModalOpen(false);
+        setRoutinesOpen(false);
+        void window.openbot.agent
+          .listMemories(bot.id)
+          .then((items) => setMemoryCount(items.length))
+          .catch(() => setMemoryCount(0));
+        void window.openbot.agent
+          .listRoutines(bot.id)
+          .then((items) => setRoutineCount(items.length))
+          .catch(() => setRoutineCount(0));
       }
     },
   );
@@ -239,272 +257,335 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
         onResize={setPanelWidth}
         onResizeEnd={(value) => savePanelWidth(SETTINGS_PANEL_STORAGE_KEY, value)}
       />
-      <header class="agent-settings-header">
-        <Button type="button" class="agent-settings-nav-button" aria-label="Back to details" onClick={props.onClose}>
-          <BackIcon />
-        </Button>
-        <h2>Settings</h2>
-        <Button type="button" class="agent-settings-nav-button" aria-label="Close details" onClick={props.onClose}>
-          <SettingsForwardIcon />
-        </Button>
-      </header>
-      <div class="agent-settings-content">
-        <div ref={(element) => (avatarPickerRoot = element)} class="agent-settings-avatar-picker">
-          <Popover.Root
-            open={avatarPickerOpen()}
-            placement="bottom"
-            gutter={11}
-            onOpenChange={(open) => {
-              if (open) {
-                setAvatarCandidateSeed(avatarSeed());
-                setAvatarBatch(0);
-              }
-              setAvatarPickerOpen(open);
-            }}
+      <Show when={!routinesOpen()}>
+        <header class="agent-settings-header">
+          <Button
+            variant="ghost"
+            type="button"
+            class="agent-settings-nav-button"
+            aria-label="Back to details"
+            onClick={props.onClose}
           >
-            <Popover.Trigger class="agent-settings-avatar" aria-label="Edit agent avatar">
-              <AgentAvatar seed={avatarSeed()} hue={avatarHue()} url={avatarUrl()} motion="always" />
-            </Popover.Trigger>
-            <Popover.Content class="avatar-editor" aria-hidden={avatarPickerOpen() ? undefined : "true"}>
-              <Popover.Title class="sr-only">Avatar editor</Popover.Title>
-              <Input
-                ref={(element) => (avatarFileInput = element)}
-                class="sr-only"
-                type="file"
-                aria-label="Attach files"
-                accept="image/png,image/jpeg,image/webp"
-                onChange={(event) => void uploadAgentAvatar(event.currentTarget.files?.[0])}
-              />
-              <div class="avatar-editor-heading">
-                <span>Image</span>
-                <div class="avatar-editor-actions">
-                  <Show when={avatarUrl()}>
-                    <Button type="button" disabled={avatarUploadBusy()} onClick={() => void setCustomAvatar(null)}>
-                      Remove
-                    </Button>
-                  </Show>
-                </div>
-              </div>
-              <Button
-                type="button"
-                class={["avatar-image-upload", { "avatar-image-upload-active": Boolean(avatarUrl()) }]}
-                disabled={avatarUploadBusy()}
-                onClick={() => avatarFileInput?.click()}
-              >
-                <span class="avatar-image-upload-preview">
-                  <Show
-                    when={avatarUrl()}
-                    fallback={
-                      <svg aria-hidden="true" viewBox="0 0 24 24">
-                        <path d="M12 5v14M5 12h14" />
-                      </svg>
-                    }
-                  >
-                    <AgentAvatar seed={avatarSeed()} hue={avatarHue()} url={avatarUrl()} />
-                  </Show>
-                </span>
-                <span>
-                  <strong>{avatarUrl() ? "Replace image" : "Upload image"}</strong>
-                  <small>PNG, JPEG or WebP · square crop</small>
-                </span>
-              </Button>
-              <div class="avatar-editor-divider" />
-              <div class="avatar-editor-heading">
-                <span>Generated face</span>
-                <div class="avatar-editor-actions">
-                  <Show when={avatarSeed() !== props.bot.id}>
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        setAvatarCandidateSeed(props.bot.id);
-                        setAvatarBatch(0);
-                        void selectGeneratedAvatar(props.bot.id);
-                      }}
-                    >
-                      Reset to ID
-                    </Button>
-                  </Show>
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      setAvatarCandidateSeed(avatarSeed());
-                      setAvatarBatch((batch) => batch + 1);
-                    }}
-                  >
-                    New set
-                  </Button>
-                </div>
-              </div>
-              <fieldset class="avatar-face-grid" aria-label="Generated avatar faces">
-                <For each={avatarCandidates()}>
-                  {(seed, index) => (
-                    <Button
-                      type="button"
-                      class={[
-                        "avatar-face-choice",
-                        { "avatar-choice-selected": !avatarUrl() && avatarSeed() === seed },
-                      ]}
-                      aria-label={
-                        !avatarUrl() && avatarSeed() === seed ? "Selected avatar" : `Avatar option ${index() + 1}`
-                      }
-                      aria-pressed={!avatarUrl() && avatarSeed() === seed ? "true" : "false"}
-                      onClick={() => void selectGeneratedAvatar(seed)}
-                    >
-                      <AgentAvatar seed={seed} hue={avatarHue()} />
-                    </Button>
-                  )}
-                </For>
-              </fieldset>
-              <div class="avatar-editor-divider" />
-              <div class="avatar-editor-heading">
-                <span>Color</span>
-              </div>
-              <fieldset class="avatar-color-grid" aria-label="Avatar color">
-                <Button
-                  type="button"
-                  class={["avatar-color-choice", { "avatar-choice-selected": avatarHue() === null }]}
-                  aria-label="Automatic avatar color"
-                  aria-pressed={avatarHue() === null ? "true" : "false"}
-                  onClick={() => {
-                    setAvatarHue(null);
-                    void saveBotPatch({ avatarHue: null });
-                  }}
-                >
-                  <span class="avatar-color-swatch avatar-color-swatch-auto">A</span>
-                </Button>
-                <For each={AVATAR_HUE_OPTIONS}>
-                  {(option) => (
-                    <Button
-                      type="button"
-                      class={["avatar-color-choice", { "avatar-choice-selected": avatarHue() === option.hue }]}
-                      aria-label={`${option.label} avatar color`}
-                      aria-pressed={avatarHue() === option.hue ? "true" : "false"}
-                      onClick={() => {
-                        setAvatarHue(option.hue);
-                        void saveBotPatch({ avatarHue: option.hue });
-                      }}
-                    >
-                      <span class="avatar-color-swatch" style={{ background: avatarHueSwatch(option.hue) }} />
-                    </Button>
-                  )}
-                </For>
-              </fieldset>
-            </Popover.Content>
-          </Popover.Root>
-        </div>
-        <label class="agent-settings-field">
-          <span>Name</span>
-          <Input
-            value={name()}
-            aria-label="Agent name"
-            maxlength={INPUT_LIMITS.agentName}
-            onValueChange={(value) => {
-              setName(value);
-              setDirty((current) => ({ ...current, name: true }));
-            }}
-            onBlur={saveName}
-          />
-        </label>
-        <label class="agent-settings-field">
-          <span>Title</span>
-          <Input
-            value={title()}
-            aria-label="Agent title"
-            placeholder="Describe what your agent does"
-            maxlength={INPUT_LIMITS.agentTitle}
-            onValueChange={(value) => {
-              setTitle(value);
-              setDirty((current) => ({ ...current, title: true }));
-            }}
-            onBlur={saveTitle}
-          />
-        </label>
-        <label class="agent-settings-field agent-settings-description">
-          <span>Description</span>
-          <Textarea
-            rows="4"
-            value={description()}
-            aria-label="Agent description"
-            placeholder="What this agent is for"
-            maxlength={INPUT_LIMITS.agentDescription}
-            onValueChange={(value) => {
-              setDescription(value);
-              setDirty((current) => ({ ...current, description: true }));
-            }}
-            onBlur={saveDescription}
-          />
-        </label>
-        <section class="agent-settings-model" aria-labelledby="agent-model-heading">
-          <div class="agent-settings-section-heading">
-            <strong id="agent-model-heading">Runtime</strong>
-            <span>Choose how this agent runs</span>
-          </div>
-          <div class="agent-settings-model-controls">
-            <div class="agent-settings-model-option">
-              <ProviderModelPicker
-                variant="field"
-                ariaLabel="Agent model"
-                value={model()}
-                agentStatus={props.agentStatus}
-                modelOptions={props.modelOptions}
-                disabled={props.agentStatus.phase !== "ready" || props.working}
-                disabledReason={
-                  props.working
-                    ? "Wait for the current work to finish before changing models."
-                    : "Models are available after an agent CLI connects."
+            <BackIcon />
+          </Button>
+          <h2>Settings</h2>
+          <Button
+            variant="ghost"
+            type="button"
+            class="agent-settings-nav-button"
+            aria-label="Close details"
+            onClick={props.onClose}
+          >
+            <SettingsForwardIcon />
+          </Button>
+        </header>
+      </Show>
+      <Show when={!routinesOpen()}>
+        <div class="agent-settings-content">
+          <div ref={(element) => (avatarPickerRoot = element)} class="agent-settings-avatar-picker">
+            <Popover.Root
+              open={avatarPickerOpen()}
+              placement="bottom"
+              gutter={11}
+              onOpenChange={(open) => {
+                if (open) {
+                  setAvatarCandidateSeed(avatarSeed());
+                  setAvatarBatch(0);
                 }
-                onChange={(nextModel) => void selectModel(nextModel)}
-              />
-            </div>
-            <div class="agent-settings-model-row agent-settings-thinking-row">
-              <span>Reasoning</span>
-              <Select<AgentReasoningEffort>
-                class="agent-settings-reasoning-control"
-                options={reasoningOptions()}
-                value={reasoning()}
-                onChange={(nextReasoning) => {
-                  if (!nextReasoning) return;
-                  setReasoning(nextReasoning);
-                  void saveBotPatch({ reasoningEffort: nextReasoning });
-                }}
-                itemComponent={(item) => <SelectItem item={item.item}>{reasoningLabel(item.item.rawValue)}</SelectItem>}
-              >
-                <SelectTrigger size="sm" class="agent-settings-reasoning-select" aria-label="Agent reasoning level">
-                  <SelectValue<AgentReasoningEffort>>
-                    {(state) => {
-                      const effort = state.selectedOption();
-                      return effort ? reasoningLabel(effort) : "Select reasoning";
+                setAvatarPickerOpen(open);
+              }}
+            >
+              <Popover.Trigger class="agent-settings-avatar" aria-label="Edit agent avatar">
+                <AgentAvatar seed={avatarSeed()} hue={avatarHue()} url={avatarUrl()} motion="always" />
+              </Popover.Trigger>
+              <Popover.Content class="avatar-editor" aria-hidden={avatarPickerOpen() ? undefined : "true"}>
+                <Popover.Title class="sr-only">Avatar editor</Popover.Title>
+                <Input
+                  ref={(element) => (avatarFileInput = element)}
+                  class="sr-only"
+                  type="file"
+                  aria-label="Attach files"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={(event) => void uploadAgentAvatar(event.currentTarget.files?.[0])}
+                />
+                <div class="avatar-editor-heading">
+                  <span>Image</span>
+                  <div class="avatar-editor-actions">
+                    <Show when={avatarUrl()}>
+                      <Button
+                        variant="outline"
+                        type="button"
+                        disabled={avatarUploadBusy()}
+                        onClick={() => void setCustomAvatar(null)}
+                      >
+                        Remove
+                      </Button>
+                    </Show>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  type="button"
+                  class={["avatar-image-upload", { "avatar-image-upload-active": Boolean(avatarUrl()) }]}
+                  disabled={avatarUploadBusy()}
+                  onClick={() => avatarFileInput?.click()}
+                >
+                  <span class="avatar-image-upload-preview">
+                    <Show
+                      when={avatarUrl()}
+                      fallback={
+                        <svg aria-hidden="true" viewBox="0 0 24 24">
+                          <path d="M12 5v14M5 12h14" />
+                        </svg>
+                      }
+                    >
+                      <AgentAvatar seed={avatarSeed()} hue={avatarHue()} url={avatarUrl()} />
+                    </Show>
+                  </span>
+                  <span>
+                    <strong>{avatarUrl() ? "Replace image" : "Upload image"}</strong>
+                    <small>PNG, JPEG or WebP · square crop</small>
+                  </span>
+                </Button>
+                <div class="avatar-editor-divider" />
+                <div class="avatar-editor-heading">
+                  <span>Generated face</span>
+                  <div class="avatar-editor-actions">
+                    <Show when={avatarSeed() !== props.bot.id}>
+                      <Button
+                        variant="outline"
+                        type="button"
+                        onClick={() => {
+                          setAvatarCandidateSeed(props.bot.id);
+                          setAvatarBatch(0);
+                          void selectGeneratedAvatar(props.bot.id);
+                        }}
+                      >
+                        Reset to ID
+                      </Button>
+                    </Show>
+                    <Button
+                      variant="outline"
+                      type="button"
+                      onClick={() => {
+                        setAvatarCandidateSeed(avatarSeed());
+                        setAvatarBatch((batch) => batch + 1);
+                      }}
+                    >
+                      New set
+                    </Button>
+                  </div>
+                </div>
+                <fieldset class="avatar-face-grid" aria-label="Generated avatar faces">
+                  <For each={avatarCandidates()}>
+                    {(seed, index) => (
+                      <Button
+                        variant="ghost"
+                        type="button"
+                        class={[
+                          "avatar-face-choice",
+                          { "avatar-choice-selected": !avatarUrl() && avatarSeed() === seed },
+                        ]}
+                        aria-label={
+                          !avatarUrl() && avatarSeed() === seed ? "Selected avatar" : `Avatar option ${index() + 1}`
+                        }
+                        aria-pressed={!avatarUrl() && avatarSeed() === seed ? "true" : "false"}
+                        onClick={() => void selectGeneratedAvatar(seed)}
+                      >
+                        <AgentAvatar seed={seed} hue={avatarHue()} />
+                      </Button>
+                    )}
+                  </For>
+                </fieldset>
+                <div class="avatar-editor-divider" />
+                <div class="avatar-editor-heading">
+                  <span>Color</span>
+                </div>
+                <fieldset class="avatar-color-grid" aria-label="Avatar color">
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    class={["avatar-color-choice", { "avatar-choice-selected": avatarHue() === null }]}
+                    aria-label="Automatic avatar color"
+                    aria-pressed={avatarHue() === null ? "true" : "false"}
+                    onClick={() => {
+                      setAvatarHue(null);
+                      void saveBotPatch({ avatarHue: null });
                     }}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent />
-              </Select>
+                  >
+                    <span class="avatar-color-swatch avatar-color-swatch-auto">A</span>
+                  </Button>
+                  <For each={AVATAR_HUE_OPTIONS}>
+                    {(option) => (
+                      <Button
+                        variant="ghost"
+                        type="button"
+                        class={["avatar-color-choice", { "avatar-choice-selected": avatarHue() === option.hue }]}
+                        aria-label={`${option.label} avatar color`}
+                        aria-pressed={avatarHue() === option.hue ? "true" : "false"}
+                        onClick={() => {
+                          setAvatarHue(option.hue);
+                          void saveBotPatch({ avatarHue: option.hue });
+                        }}
+                      >
+                        <span class="avatar-color-swatch" style={{ background: avatarHueSwatch(option.hue) }} />
+                      </Button>
+                    )}
+                  </For>
+                </fieldset>
+              </Popover.Content>
+            </Popover.Root>
+          </div>
+          <label class="agent-settings-field">
+            <span>Name</span>
+            <Input
+              value={name()}
+              aria-label="Agent name"
+              maxlength={INPUT_LIMITS.agentName}
+              onValueChange={(value) => {
+                setName(value);
+                setDirty((current) => ({ ...current, name: true }));
+              }}
+              onBlur={saveName}
+            />
+          </label>
+          <label class="agent-settings-field">
+            <span>Title</span>
+            <Input
+              value={title()}
+              aria-label="Agent title"
+              placeholder="Describe what your agent does"
+              maxlength={INPUT_LIMITS.agentTitle}
+              onValueChange={(value) => {
+                setTitle(value);
+                setDirty((current) => ({ ...current, title: true }));
+              }}
+              onBlur={saveTitle}
+            />
+          </label>
+          <label class="agent-settings-field agent-settings-description">
+            <span>Description</span>
+            <Textarea
+              rows="4"
+              value={description()}
+              aria-label="Agent description"
+              placeholder="What this agent is for"
+              maxlength={INPUT_LIMITS.agentDescription}
+              onValueChange={(value) => {
+                setDescription(value);
+                setDirty((current) => ({ ...current, description: true }));
+              }}
+              onBlur={saveDescription}
+            />
+          </label>
+          <div class="agent-settings-links">
+            <Button variant="ghost" type="button" class="agent-settings-link" onClick={() => setMemoryModalOpen(true)}>
+              <span class="agent-settings-link-label">Memories</span>
+              <span class="agent-settings-link-value">
+                {memoryCount()} saved
+                <ChevronRight />
+              </span>
+            </Button>
+            <Button variant="ghost" type="button" class="agent-settings-link" onClick={() => setRoutinesOpen(true)}>
+              <span class="agent-settings-link-label">Routines</span>
+              <span class="agent-settings-link-value">
+                {routineCount()} configured
+                <ChevronRight />
+              </span>
+            </Button>
+          </div>
+          <section class="agent-settings-model" aria-labelledby="agent-model-heading">
+            <div class="agent-settings-section-heading">
+              <strong id="agent-model-heading">Runtime</strong>
+              <span>Choose how this agent runs</span>
             </div>
+            <div class="agent-settings-model-controls">
+              <div class="agent-settings-model-option">
+                <ProviderModelPicker
+                  variant="field"
+                  ariaLabel="Agent model"
+                  value={model()}
+                  agentStatus={props.agentStatus}
+                  modelOptions={props.modelOptions}
+                  disabled={props.agentStatus.phase !== "ready" || props.working}
+                  disabledReason={
+                    props.working
+                      ? "Wait for the current work to finish before changing models."
+                      : "Models are available after an agent CLI connects."
+                  }
+                  onChange={(nextModel) => void selectModel(nextModel)}
+                />
+              </div>
+              <div class="agent-settings-model-row agent-settings-thinking-row">
+                <span>Reasoning</span>
+                <Select<AgentReasoningEffort>
+                  class="agent-settings-reasoning-control"
+                  options={reasoningOptions()}
+                  value={reasoning()}
+                  onChange={(nextReasoning) => {
+                    if (!nextReasoning) return;
+                    setReasoning(nextReasoning);
+                    void saveBotPatch({ reasoningEffort: nextReasoning });
+                  }}
+                  itemComponent={(item) => (
+                    <SelectItem item={item.item}>{reasoningLabel(item.item.rawValue)}</SelectItem>
+                  )}
+                >
+                  <SelectTrigger size="sm" class="agent-settings-reasoning-select" aria-label="Agent reasoning level">
+                    <SelectValue<AgentReasoningEffort>>
+                      {(state) => {
+                        const effort = state.selectedOption();
+                        return effort ? reasoningLabel(effort) : "Select reasoning";
+                      }}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent />
+                </Select>
+              </div>
+            </div>
+          </section>
+          <Show when={saveError()}>
+            {(message) => (
+              <p class="agent-settings-save-error" role="alert">
+                {message()}
+              </p>
+            )}
+          </Show>
+          <div class="agent-settings-notifications">
+            <div>
+              <strong>Notifications</strong>
+              <span>Get notified when this agent finishes or needs input</span>
+            </div>
+            <Switch
+              size="sm"
+              aria-label="Notifications"
+              checked={notifications()}
+              onChange={(next) => {
+                setNotifications(next);
+                void saveBotPatch({ notifications: next });
+              }}
+            />
           </div>
-        </section>
-        <Show when={saveError()}>
-          {(message) => (
-            <p class="agent-settings-save-error" role="alert">
-              {message()}
-            </p>
-          )}
-        </Show>
-        <div class="agent-settings-notifications">
-          <div>
-            <strong>Notifications</strong>
-            <span>Get notified when this agent finishes or needs input</span>
-          </div>
-          <Switch
-            size="sm"
-            aria-label="Notifications"
-            checked={notifications()}
-            onChange={(next) => {
-              setNotifications(next);
-              void saveBotPatch({ notifications: next });
-            }}
+        </div>
+      </Show>
+      <Show when={routinesOpen()}>
+        <div class="agent-routines-overlay">
+          <AgentRoutinesSettings
+            botId={props.bot.id}
+            onCountChange={setRoutineCount}
+            onViewChange={setRoutineView}
+            onBack={() => setRoutinesOpen(false)}
+            onClose={props.onClose}
           />
         </div>
-      </div>
+      </Show>
+      <AgentMemoriesModal
+        botId={props.bot.id}
+        botName={props.bot.name}
+        open={memoryModalOpen()}
+        onOpenChange={setMemoryModalOpen}
+        onCountChange={setMemoryCount}
+      />
     </aside>
   );
 }

@@ -409,6 +409,7 @@ export function SelectionActionsBar(props: {
                 Couldn’t send
               </span>
               <Button
+                variant="ghost"
                 type="button"
                 class="selection-actions-control"
                 onPointerDown={(event) => event.preventDefault()}
@@ -418,6 +419,7 @@ export function SelectionActionsBar(props: {
                 <span class="selection-actions-label">Retry</span>
               </Button>
               <Button
+                variant="ghost"
                 type="button"
                 class="selection-actions-icon-button"
                 aria-label="Close selected text actions"
@@ -504,6 +506,7 @@ export function SelectionActionsBar(props: {
                 </Show>
                 <span class="selection-actions-divider selection-actions-more-divider" aria-hidden="true" />
                 <Button
+                  variant="ghost"
                   type="button"
                   class="selection-actions-icon-button selection-actions-expand"
                   aria-label={expanded() ? "Show fewer actions" : "Show more actions"}
@@ -520,6 +523,7 @@ export function SelectionActionsBar(props: {
                 aria-hidden={hasPrompt() ? undefined : "true"}
               >
                 <Button
+                  variant="ghost"
                   type="button"
                   class="selection-actions-send"
                   aria-label="Send edit instruction"
@@ -541,6 +545,7 @@ export function SelectionActionsBar(props: {
 function PresetButton(props: { label: string; icon: SolidElement; onSelect: () => void }) {
   return (
     <Button
+      variant="ghost"
       type="button"
       class="selection-actions-control"
       aria-label={props.label}

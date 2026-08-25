@@ -37,6 +37,7 @@ import type {
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
+import type { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import type { TeamChatStore } from "../backend/team-chat-store";
 import type { ProvisionedTeamTunnel } from "./central-auth-manager";
 import { appendDiagnosticLog, resolveCloudflaredExecutable, stopOwnedProcess } from "./host-tunnel-runtime";
@@ -57,6 +58,7 @@ interface HostEvents {
 interface HostServiceOptions {
   store: TeamStore;
   agents: AgentService;
+  sidebarLayout: SidebarLayoutStore;
   mailbox: MailboxStore;
   browser: BrowserHost;
   chat?: TeamChatStore;
@@ -166,6 +168,7 @@ export class HostService extends EventEmitter<HostEvents> {
     this.#api = new TeamApiServer({
       store: options.store,
       agents: options.agents,
+      sidebarLayout: options.sidebarLayout,
       mailbox: options.mailbox,
       browser: options.browser,
       remoteScreen: this.#remoteScreen,

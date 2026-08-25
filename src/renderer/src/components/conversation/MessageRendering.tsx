@@ -1,5 +1,6 @@
 import type { AttachmentSummary, MessageReaction } from "@openbot/contracts/ipc";
 import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "@openbot/contracts/ipc";
+import { CalendarClock } from "lucide-solid";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { avatarHeadColor } from "../../bloub-avatar";
 import type { BotMessage, BotProfile } from "../../data";
@@ -17,24 +18,28 @@ import { MarkdownInlineText, MarkdownMessageText } from "./MarkdownMessageText";
 import { RichMessageText } from "./RichMessageText";
 import { parseSelectionInstruction } from "./SelectionActions";
 
-const STREAMING_TEXT_INTERVAL_MS = 42;
-const STREAMING_TEXT_BASE_CHUNK_SIZE = 4;
+const STREAMING_TEXT_GAP_FALLBACK_MS = 60;
+const STREAMING_WORD_WITH_SEPARATOR = /^(?:\s*(?:(?:#{1,6}|[-+*>]|\d+[.)])\s+)?\S+\s+)/u;
 
-function nextStreamingText(current: string, target: string): string {
+function nextStreamingText(current: string, target: string, streaming: boolean): string {
   if (!target.startsWith(current)) return target;
-  const remaining = Array.from(target.slice(current.length));
-  if (remaining.length === 0) return current;
-  const chunkSize =
-    remaining.length > 96
-      ? STREAMING_TEXT_BASE_CHUNK_SIZE * 3
-      : remaining.length > 48
-        ? STREAMING_TEXT_BASE_CHUNK_SIZE * 2
-        : STREAMING_TEXT_BASE_CHUNK_SIZE;
-  return current + remaining.slice(0, chunkSize).join("");
+  const remaining = target.slice(current.length);
+  if (!remaining) return current;
+  const nextWord = remaining.match(STREAMING_WORD_WITH_SEPARATOR)?.[0];
+  if (nextWord) return current + nextWord;
+  return streaming ? current : target;
 }
 
 function prefersReducedStreamingMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+}
+
+function streamingTextGapMs(): number {
+  const value = getComputedStyle(document.documentElement).getPropertyValue("--stream-gap").trim();
+  if (!value) return STREAMING_TEXT_GAP_FALLBACK_MS;
+  const amount = Number.parseFloat(value);
+  if (!Number.isFinite(amount)) return STREAMING_TEXT_GAP_FALLBACK_MS;
+  return value.endsWith("s") && !value.endsWith("ms") ? amount * 1000 : amount;
 }
 
 function createStreamingBody(message: () => BotMessage) {
@@ -47,6 +52,7 @@ function createStreamingBody(message: () => BotMessage) {
   let targetBody = initialMessage.body;
   let targetStreaming = initialMessage.author === "bot" && initialMessage.streaming === true;
   const [body, setBody] = createSignal(animateInitialText ? "" : initialMessage.body);
+  const [animateTail, setAnimateTail] = createSignal(false);
   const [smoothHeight, setSmoothHeight] = createSignal(targetStreaming);
   let smoothingActive = targetStreaming;
   let revealTimer: number | undefined;
@@ -67,14 +73,16 @@ function createStreamingBody(message: () => BotMessage) {
     smoothHeightTimer = window.setTimeout(() => {
       smoothHeightTimer = undefined;
       setSmoothHeight(false);
-    }, STREAMING_TEXT_INTERVAL_MS * 2);
+    }, streamingTextGapMs() * 2);
   };
   const scheduleReveal = () => {
     if (revealTimer !== undefined) return;
     revealTimer = window.setTimeout(() => {
       revealTimer = undefined;
       const current = untrack(body);
-      const next = nextStreamingText(current, targetBody);
+      const next = nextStreamingText(current, targetBody, targetStreaming);
+      if (next === current) return;
+      setAnimateTail(true);
       setBody(next);
       if (next !== targetBody) {
         scheduleReveal();
@@ -82,7 +90,7 @@ function createStreamingBody(message: () => BotMessage) {
         smoothingActive = false;
         settleHeightSmoothing();
       }
-    }, STREAMING_TEXT_INTERVAL_MS);
+    }, streamingTextGapMs());
   };
 
   createEffect(
@@ -100,6 +108,7 @@ function createStreamingBody(message: () => BotMessage) {
       const current = untrack(body);
       if (prefersReducedStreamingMotion() || !nextBody.startsWith(current) || (!streaming && !smoothingActive)) {
         clearRevealTimer();
+        setAnimateTail(false);
         setBody(nextBody);
         smoothingActive = false;
         settleHeightSmoothing();
@@ -117,7 +126,7 @@ function createStreamingBody(message: () => BotMessage) {
     clearRevealTimer();
     if (smoothHeightTimer !== undefined) window.clearTimeout(smoothHeightTimer);
   });
-  return { body, smoothHeight };
+  return { animateTail, body, smoothHeight };
 }
 
 function ExchangeAgentAvatar(props: { bot: BotProfile | undefined }) {
@@ -163,6 +172,7 @@ export function ExchangeSystemRow(props: {
           <>
             <span class="exchange-system-label">Message from</span>
             <Button
+              variant="ghost"
               type="button"
               class="exchange-agent-trigger exchange-agent-trigger-incoming"
               style={exchangeAgentStyle(sender())}
@@ -219,6 +229,7 @@ export function ExchangeSystemRow(props: {
           }
         >
           <Button
+            variant="ghost"
             type="button"
             class="exchange-agent-trigger exchange-agent-trigger-single"
             style={exchangeAgentStyle(singleRecipient())}
@@ -314,6 +325,14 @@ export function MessageBody(props: {
           </div>
         )}
       </Show>
+      <Show when={props.message.routine}>
+        {(routine) => (
+          <div class="routine-message-label" title={`Scheduled for ${routine().scheduledFor}`}>
+            <CalendarClock aria-hidden="true" />
+            <span>{routine().name}</span>
+          </div>
+        )}
+      </Show>
       <div class="message-content-resize" ref={(element) => (messageContentResize = element)}>
         <div class="message-content-blocks" ref={(element) => (messageContent = element)}>
           <Show when={props.message.author === "bot" ? streamedBody() : props.message.body}>
@@ -334,7 +353,7 @@ export function MessageBody(props: {
                 if (props.message.author === "bot") {
                   return (
                     <div
-                      class="message-copy message-markdown"
+                      class={`message-copy message-markdown${streamingBody.animateTail() ? " t-stream" : ""}`}
                       data-selection-message-id={props.message.streaming !== true ? props.message.id : undefined}
                     >
                       <MarkdownMessageText
@@ -353,6 +372,7 @@ export function MessageBody(props: {
                         onOpenWorkspaceFile={props.onOpenWorkspaceFile}
                         showCitationFooter={index() === lastTextBlockIndex()}
                         streaming={props.message.streaming === true}
+                        streamingTail={streamingBody.animateTail() && index() === lastTextBlockIndex()}
                       />
                     </div>
                   );
@@ -505,6 +525,7 @@ export function MessageActions(props: {
         </DropdownMenu.Root>
       </div>
       <Button
+        variant="ghost"
         type="button"
         class="message-action-button"
         aria-label={`Reply to ${props.message.author === "you" ? "User" : "Agent"} message`}

@@ -33,6 +33,10 @@ describe("OpenBotDatabase", () => {
         "orchestration_events",
         "orchestration_command_receipts",
         "projection_agents",
+        "projection_agent_memories",
+        "projection_agent_routines",
+        "projection_routine_triggers",
+        "projection_routine_runs",
         "projection_threads",
         "projection_provider_sessions",
         "projection_turns",
@@ -373,7 +377,7 @@ describe("OpenBotDatabase", () => {
 
     const legacy = new DatabaseSync(database.path);
     legacy.exec("PRAGMA journal_mode = WAL");
-    legacy.prepare("DELETE FROM schema_migrations WHERE version = 4").run();
+    legacy.prepare("DELETE FROM schema_migrations WHERE version = 6").run();
     legacy
       .prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)")
       .run("2026-08-20T10:00:00.000Z");
@@ -416,7 +420,7 @@ describe("OpenBotDatabase", () => {
     expect(snapshotEventCount(migrated, bot.threadId)).toBe(1);
     expect(migrated.readConversation(bot.id, bot.threadId).messages[0]?.text).toHaveLength(40_000);
     expect(migrated.connection.prepare("PRAGMA integrity_check").get()).toMatchObject({ integrity_check: "ok" });
-    expect(migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 4").get()).toEqual({
+    expect(migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 6").get()).toEqual({
       applied: 1,
     });
     migrated.close();

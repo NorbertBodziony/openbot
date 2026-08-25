@@ -4,7 +4,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { isString } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import { ClaudeAgentClient } from "./claude-client";
 import {
@@ -78,6 +78,14 @@ fi
         allowDangerouslySkipPermissions: true,
         additionalDirectories: [root, sharedRoot],
       });
+      const options: DynamicRecord | null = isDynamicRecord(params.options) ? params.options : null;
+      const mcpServers: DynamicRecord | null = isDynamicRecord(options?.mcpServers) ? options.mcpServers : null;
+      const openbotServer = mcpServers?.openbot;
+      const serverInstance = isDynamicRecord(openbotServer) ? openbotServer.instance : null;
+      const registeredTools = isDynamicRecord(serverInstance) ? serverInstance._registeredTools : null;
+      expect(isDynamicRecord(registeredTools) ? Object.keys(registeredTools) : []).toEqual(
+        expect.arrayContaining(["remember", "forget_memory"]),
+      );
       return generator;
     });
     const notifications: Array<{ method: string; params: unknown }> = [];
@@ -147,6 +155,40 @@ fi
         }),
       ]),
     );
+    await client.stop();
+  });
+
+  it("restarts an inactive session when resumed with updated memory instructions", async () => {
+    root = await mkdtemp(join(tmpdir(), "openbot-claude-memory-resume-"));
+    const instructions: string[] = [];
+    const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.231" }, (params) => {
+      const options: DynamicRecord | null = isDynamicRecord(params.options) ? params.options : null;
+      const systemPrompt = options?.systemPrompt;
+      if (isDynamicRecord(systemPrompt) && isString(systemPrompt.append)) instructions.push(systemPrompt.append);
+      return new TestQuery(new TestQueue<TestStreamMessage>());
+    });
+    client.start();
+    const config = {
+      cwd: root,
+      model: "claude-sonnet-5",
+      developerInstructions: "<agent_memories>[]</agent_memories>",
+      runtimeWorkspaceRoots: [root],
+    };
+    const thread = await client.request("thread/start", config, decodeThreadResponse);
+    await client.request(
+      "thread/resume",
+      {
+        ...config,
+        threadId: thread.thread.id,
+        developerInstructions: '<agent_memories>[{"text":"Uses metric units."}]</agent_memories>',
+      },
+      decodeThreadResponse,
+    );
+
+    expect(instructions).toEqual([
+      "<agent_memories>[]</agent_memories>",
+      '<agent_memories>[{"text":"Uses metric units."}]</agent_memories>',
+    ]);
     await client.stop();
   });
 

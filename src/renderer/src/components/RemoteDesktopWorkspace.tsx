@@ -230,7 +230,7 @@ export function RemoteDesktopWorkspace(props: RemoteDesktopWorkspaceProps) {
             <div class="remote-desktop-overlay remote-desktop-error" role="alert">
               <strong>Could not open the desktop</strong>
               <span>{viewerError() ?? props.connectionError ?? props.session?.message}</span>
-              <Button type="button" loading={actionBusy() === "retry"} onClick={() => void retry()}>
+              <Button variant="outline" type="button" loading={actionBusy() === "retry"} onClick={() => void retry()}>
                 Try again
               </Button>
             </div>

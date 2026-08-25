@@ -331,6 +331,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
             <legend class="sr-only">Bot color</legend>
             <div class="first-bot-color-options">
               <Button
+                variant="ghost"
                 type="button"
                 size="sm"
                 class="first-bot-color-choice"
@@ -346,6 +347,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
               <For each={FIRST_BOT_HUE_OPTIONS}>
                 {(option) => (
                   <Button
+                    variant="ghost"
                     type="button"
                     size="sm"
                     class="first-bot-color-choice"
@@ -366,6 +368,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
               <For each={FIRST_BOT_AVATAR_SEEDS}>
                 {(seed, index) => (
                   <Button
+                    variant="ghost"
                     type="button"
                     size="sm"
                     class="first-bot-face-choice"
@@ -418,8 +421,8 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
           <div class="first-bot-submit-actions">
             <Button
               type="submit"
-              variant="primary"
-              size="lg"
+              variant="default"
+              size="default"
               class="first-bot-submit"
               disabled={!canSubmit()}
               loading={props.submitting}
@@ -448,6 +451,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
                 {(suggestion) => (
                   <li class="first-bot-suggestion-item">
                     <Button
+                      variant="ghost"
                       type="button"
                       class="first-bot-suggestion-card"
                       data-animation-cycle-offset={suggestion.animationCycleOffset}

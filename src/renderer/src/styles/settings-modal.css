@@ -76,8 +76,8 @@
   font-size: var(--openbot-text-md);
   text-align: left;
   transition:
-    background-color var(--openbot-duration-normal) ease,
-    color var(--openbot-duration-normal) ease;
+    background-color var(--openbot-duration-selectable-hover) ease,
+    color var(--openbot-duration-selectable-hover) ease;
 }
 
 .settings-modal-nav-item svg {
@@ -227,19 +227,14 @@
   background: var(--openbot-bg-control);
 }
 
-.settings-modal-card > .ui-switch,
+.settings-modal-card > .ui-switch-field,
 .settings-modal-row {
   min-height: 60px;
 }
 
-.settings-modal-card > .ui-switch {
+.settings-modal-card > .ui-switch-field {
   width: 100%;
   justify-content: space-between;
-}
-
-.settings-modal-card .ui-switch[data-checked] .ui-switch-control {
-  border-color: var(--openbot-accent-hover);
-  background: var(--openbot-accent);
 }
 
 .settings-modal-card > :not(:first-child) {

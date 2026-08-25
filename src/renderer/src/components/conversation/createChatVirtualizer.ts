@@ -73,7 +73,11 @@ export function createChatVirtualizer<TScrollElement extends Element, TItemEleme
     for (const key of stableItems.keys()) {
       if (!activeKeys.has(key)) stableItems.delete(key);
     }
-    setVirtualItems(nextItems);
+    setVirtualItems((current) =>
+      current.length === nextItems.length && current.every((item, index) => item === nextItems[index])
+        ? current
+        : nextItems,
+    );
     setTotalSize(virtualizer.getTotalSize() || count * options.estimateSize(0));
   };
 

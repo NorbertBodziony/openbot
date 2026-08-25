@@ -345,7 +345,7 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
                               </span>
                               <Button
                                 type="button"
-                                variant="secondary"
+                                variant="outline"
                                 size="sm"
                                 class="onboarding-permission-action"
                                 disabled={
@@ -418,19 +418,13 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
 
         <div class="onboarding-actions">
           <Show when={step() !== "meet"}>
-            <Button
-              type="button"
-              variant="secondary"
-              class="onboarding-back"
-              disabled={saving()}
-              onClick={previousStep}
-            >
+            <Button type="button" variant="outline" class="onboarding-back" disabled={saving()} onClick={previousStep}>
               Back
             </Button>
           </Show>
           <Button
             type="button"
-            variant="primary"
+            variant="default"
             class="onboarding-next"
             disabled={saving()}
             loading={saving()}

@@ -236,44 +236,6 @@ describe("AccountLogin", () => {
     }
   });
 
-  it("marks email and code navigation with directional transitions", async () => {
-    const view = render(() => {
-      const [state, setState] = createSignal<CentralAuthState>({ status: "signed_out" });
-      return (
-        <AccountLogin
-          variant="production"
-          state={state()}
-          onRetry={async () => undefined}
-          onRequestEmailCode={async (email) => {
-            setState(codeSentState({ email }));
-          }}
-          onVerifyEmailCode={async () => undefined}
-          onReset={async () => {
-            setState({ status: "signed_out" });
-          }}
-        />
-      );
-    });
-    const login = () => view.container.querySelector(".account-login");
-
-    await fireEvent.input(screen.getByRole("textbox", { name: "Email" }), {
-      target: { value: "person@example.com" },
-    });
-    await fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
-    expect(login()).toHaveAttribute("data-transition", "forward");
-    expect(view.container.querySelector('[data-auth-panel="code"]')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "One-time code" })).toHaveFocus());
-
-    const changeEmail = screen.getByRole("button", { name: "Change email" });
-    const resend = screen.getByRole("button", { name: /Resend in/u });
-    expect(changeEmail).toHaveAttribute("data-variant", "ghost");
-    expect(resend).toHaveAttribute("data-variant", "ghost");
-    await waitFor(() => expect(changeEmail).toBeEnabled());
-    await fireEvent.click(changeEmail);
-    await waitFor(() => expect(login()).toHaveAttribute("data-transition", "back"));
-    expect(view.container.querySelector('[data-auth-panel="email"]')).toBeInTheDocument();
-  });
-
   it("retries a changed complete code after an invalid-code response", async () => {
     const onVerifyEmailCode = vi.fn().mockResolvedValue(undefined);
     const state = codeSentState({

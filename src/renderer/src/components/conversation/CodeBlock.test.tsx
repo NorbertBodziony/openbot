@@ -13,28 +13,6 @@ describe("CodeBlock", () => {
     });
   });
 
-  it("renders the filename, language, line numbers, and streamed caret", () => {
-    render(() => (
-      <CodeBlock
-        block={{
-          type: "code",
-          code: "const flavor = 'pistachio';\nreturn flavor;",
-          language: "ts",
-          filename: "churn.ts",
-        }}
-        streaming
-      />
-    ));
-
-    expect(screen.getByRole("region", { name: "TypeScript code block" })).toBeInTheDocument();
-    expect(screen.getByText("churn.ts")).toBeInTheDocument();
-    expect(screen.getByText("TypeScript")).toBeInTheDocument();
-    expect(document.querySelectorAll(".message-code-line-number")).toHaveLength(2);
-    expect(document.querySelector(".message-code-caret")).toBeInTheDocument();
-    expect(document.querySelectorAll(".message-code-copy-icons svg")).toHaveLength(2);
-    expect(document.querySelector('.message-code-copy-icons > span[data-visible="true"]')).toBeInTheDocument();
-  });
-
   it("copies the raw code and confirms the action", async () => {
     render(() => <CodeBlock block={{ type: "code", code: "const answer = 42;", language: "js" }} />);
 

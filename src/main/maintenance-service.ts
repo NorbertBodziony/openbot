@@ -43,14 +43,15 @@ export async function exportOpenBotData(
       context.mailbox.listExportAttachments(),
     ]);
     const manifest = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       exportedAt: new Date().toISOString(),
       application: { name: "OpenBot", version: app.getVersion() },
       scope: {
-        includes: ["agent profiles", "conversation snapshots", "queues", "attachments"],
+        includes: ["agent profiles", "agent memories", "conversation snapshots", "queues", "attachments"],
         excludes: ["Codex credentials", "browser cookies", "agent workspace files"],
       },
       bots: bots.map(toBackupBot),
+      memories: bots.flatMap((bot) => context.service.listMemories(bot.id)),
       conversations,
       queues,
     };

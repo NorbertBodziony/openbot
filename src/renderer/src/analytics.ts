@@ -51,6 +51,12 @@ export interface DesktopAnalyticsEvents {
     action: "cancel" | "steer" | "edit" | "reorder" | "interrupt";
     result: Result;
   };
+  routine_action: {
+    action: "create" | "update" | "delete" | "test";
+    trigger_type: string;
+    delay_ms: number;
+    result: Result;
+  };
   team_action: {
     action:
       | "server_selected"

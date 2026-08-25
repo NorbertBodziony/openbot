@@ -71,7 +71,14 @@ interface MailboxProjectionAttachment {
 
 interface MailboxProjectionMessage {
   id: string;
-  sender: { kind: string; botId?: string };
+  sender: {
+    kind: string;
+    botId?: string;
+    routineId?: string;
+    runId?: string;
+    routineName?: string;
+    scheduledFor?: string;
+  };
   text: string;
   replyToMessageId: string | null;
   createdAt: string;
@@ -270,6 +277,39 @@ export class OpenBotDatabase {
       ],
       (db, sequences) => {
         const sequence = sequences[0] ?? 0;
+        const memoryIds = databaseRows(
+          db.prepare("SELECT memory_id FROM projection_agent_memories WHERE agent_id = ?").all(botId),
+        ).map((row) => requiredStringColumn(row, "memory_id"));
+        const routineIds = databaseRows(
+          db.prepare("SELECT routine_id FROM projection_agent_routines WHERE agent_id = ?").all(botId),
+        ).map((row) => requiredStringColumn(row, "routine_id"));
+        if (memoryIds.length > 0) {
+          const placeholders = memoryIds.map(() => "?").join(", ");
+          db.prepare(
+            `DELETE FROM orchestration_command_receipts WHERE command_id IN (
+               SELECT DISTINCT command_id
+               FROM orchestration_events
+               WHERE aggregate_type = 'agent-memory' AND aggregate_id IN (${placeholders})
+             )`,
+          ).run(...memoryIds);
+          db.prepare(
+            `DELETE FROM orchestration_events
+             WHERE aggregate_type = 'agent-memory' AND aggregate_id IN (${placeholders})`,
+          ).run(...memoryIds);
+        }
+        if (routineIds.length > 0) {
+          const placeholders = routineIds.map(() => "?").join(", ");
+          db.prepare(
+            `DELETE FROM orchestration_command_receipts WHERE command_id IN (
+               SELECT DISTINCT command_id FROM orchestration_events
+               WHERE aggregate_type IN ('agent-routine', 'routine-run') AND aggregate_id IN (${placeholders})
+             )`,
+          ).run(...routineIds);
+          db.prepare(
+            `DELETE FROM orchestration_events
+             WHERE aggregate_type IN ('agent-routine', 'routine-run') AND aggregate_id IN (${placeholders})`,
+          ).run(...routineIds);
+        }
         const sensitiveFilter = threadId
           ? `(aggregate_id = ? OR aggregate_id = ? OR
               (aggregate_type = 'agents' AND aggregate_id = 'agents' AND sequence < ?))`
@@ -283,6 +323,8 @@ export class OpenBotDatabase {
         ).run(...sensitiveParameters);
         db.prepare(`DELETE FROM orchestration_events WHERE ${sensitiveFilter}`).run(...sensitiveParameters);
         db.prepare("DELETE FROM projection_agents WHERE agent_id = ?").run(botId);
+        db.prepare("DELETE FROM projection_agent_memories WHERE agent_id = ?").run(botId);
+        db.prepare("DELETE FROM projection_agent_routines WHERE agent_id = ?").run(botId);
         db.prepare("DELETE FROM projection_reactions WHERE agent_id = ?").run(botId);
         db.prepare("DELETE FROM projection_deliveries WHERE recipient_agent_id = ?").run(botId);
         db.prepare("DELETE FROM projection_queue_state WHERE agent_id = ?").run(botId);

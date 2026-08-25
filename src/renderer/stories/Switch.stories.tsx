@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { Heading, Switch } from "../src/components/ui";
+import { Heading, Switch, SwitchField } from "../src/components/ui";
 
 const meta = {
   title: "Foundations/Switch",
@@ -11,6 +11,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Gallery: Story = {
+  args: {},
   render: () => {
     const [checked, setChecked] = createSignal(false);
     return (
@@ -18,15 +19,22 @@ export const Gallery: Story = {
         <Heading as="h1" size="lg">
           Switches
         </Heading>
-        <div class="foundation-story-stack">
-          <Switch
+        <div class="foundation-story-stack" style={{ "max-width": "440px" }}>
+          <SwitchField
             checked={checked()}
             onChange={setChecked}
             label="Desktop notifications"
             description="Receive updates when an agent finishes."
           />
-          <Switch defaultChecked size="sm" label="Compact enabled" />
-          <Switch disabled label="Disabled setting" />
+          <SwitchField defaultChecked size="sm" label="Compact enabled" />
+          <SwitchField disabled label="Disabled setting" />
+          <SwitchField validationState="invalid" label="Invalid setting" />
+          <div style={{ display: "flex", "align-items": "center", gap: "16px" }}>
+            <Switch aria-label="Default off" />
+            <Switch defaultChecked aria-label="Default on" />
+            <Switch size="sm" aria-label="Small off" />
+            <Switch defaultChecked size="sm" aria-label="Small on" />
+          </div>
         </div>
       </main>
     );

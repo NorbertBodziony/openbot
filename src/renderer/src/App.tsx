@@ -27,6 +27,8 @@ import type {
   QueueSnapshot,
   RemoteDesktopSession,
   ServerSummary,
+  SidebarLayoutAction,
+  SidebarLayoutSnapshot,
   TeamInviteSummary,
   TeamPresenceMember,
   TeamPresenceSnapshot,
@@ -65,6 +67,12 @@ import { readPanelWidth } from "./components/PanelResizer";
 import type { SidebarAgentState } from "./components/Sidebar";
 import type { BotMessage, BotProfile } from "./data";
 import {
+  normalizeSidebarPeopleOrder,
+  readSidebarPeopleOrder,
+  type SidebarPeopleOrderByServer,
+  writeSidebarPeopleOrder,
+} from "./sidebar-people-order";
+import {
   MAX_SIDEBAR_PINNED_ITEMS,
   normalizeSidebarPinnedItems,
   readSidebarPins,
@@ -73,6 +81,12 @@ import {
   sidebarPinnedItemKey,
   writeSidebarPins,
 } from "./sidebar-pins";
+import {
+  defaultSidebarLayout,
+  readSidebarCollapsed,
+  type SidebarCollapsedByServer,
+  writeSidebarCollapsed,
+} from "./sidebar-sections";
 
 const FALLBACK_STATUS: AgentStatus = {
   phase: "starting",
@@ -237,6 +251,13 @@ export function createAppController(props: AppProps = {}) {
   );
   const [leftPanelAutoCompact, setLeftPanelAutoCompact] = createSignal(false);
   const [sidebarPinsByServer, setSidebarPinsByServer] = createSignal<SidebarPinsByServer>(readSidebarPins());
+  const [sidebarPeopleOrderByServer, setSidebarPeopleOrderByServer] = createSignal<SidebarPeopleOrderByServer>(
+    readSidebarPeopleOrder(),
+  );
+  const [sidebarLayout, setSidebarLayout] = createSignal<SidebarLayoutSnapshot>(defaultSidebarLayout());
+  const [sidebarCollapsedByServer, setSidebarCollapsedByServer] = createSignal<SidebarCollapsedByServer>(
+    readSidebarCollapsed(),
+  );
   const [setupState, setSetupState] = createSignal<AppSetupState | null>(null);
   const [setupLoaded, setSetupLoaded] = createSignal(false);
   const [centralAuth, setCentralAuth] = createSignal<CentralAuthState>({
@@ -551,6 +572,10 @@ export function createAppController(props: AppProps = {}) {
           setAgentStatus((current) => ({ ...current, message: String(error) }));
         }),
       window.openbot.agent
+        .getSidebarLayout()
+        .then(setSidebarLayout)
+        .catch(() => setSidebarLayout(defaultSidebarLayout())),
+      window.openbot.agent
         .listConversationReads()
         .then(applyConversationReads)
         .catch(() => undefined),
@@ -644,6 +669,9 @@ export function createAppController(props: AppProps = {}) {
         return;
       case "bots-changed":
         applyStoredBots(event.bots);
+        return;
+      case "sidebar-layout-changed":
+        setSidebarLayout(event.layout);
         return;
       case "conversation":
         scheduleConversation(event.snapshot, isAgentChatOpen(event.snapshot.botId));
@@ -1776,6 +1804,7 @@ export function createAppController(props: AppProps = {}) {
     setBotSetupError(null);
     setSettingsRequest(null);
     setBotList([]);
+    setSidebarLayout(defaultSidebarLayout());
     setActiveBotId("");
     setActiveDirectMemberId(null);
     setDirectConversationError(null);
@@ -1791,8 +1820,9 @@ export function createAppController(props: AppProps = {}) {
     setUnreadReplies({});
     setQueues({});
     setTeamPresence(EMPTY_TEAM_PRESENCE);
-    const [storedBots, reads, status, models, tabs, controlState, presence] = await Promise.all([
+    const [storedBots, layout, reads, status, models, tabs, controlState, presence] = await Promise.all([
       window.openbot.agent.listBots(),
+      window.openbot.agent.getSidebarLayout(),
       window.openbot.agent.listConversationReads(),
       window.openbot.agent.getStatus(),
       window.openbot.agent.listModels(),
@@ -1806,6 +1836,7 @@ export function createAppController(props: AppProps = {}) {
     setActiveBrowserTabId(tabs[0]?.id ?? null);
     setBrowserControlState(controlState);
     setTeamPresence(presence);
+    setSidebarLayout(layout);
     applyStoredBots(storedBots);
     applyConversationReads(reads);
     desktopAnalytics.track("team_action", {
@@ -2175,6 +2206,27 @@ export function createAppController(props: AppProps = {}) {
   const activeServer = createMemo(() => servers().find((server) => server.active));
   const activeServerSidebarKey = createMemo(() => activeServer()?.id ?? "local");
   const pinnedSidebarItems = createMemo(() => sidebarPinsByServer()[activeServerSidebarKey()] ?? []);
+  const sidebarPeopleOrder = createMemo(() => sidebarPeopleOrderByServer()[activeServerSidebarKey()] ?? []);
+  const collapsedSidebarSectionIds = createMemo(() => sidebarCollapsedByServer()[activeServerSidebarKey()] ?? []);
+
+  async function mutateSidebarLayout(action: SidebarLayoutAction): Promise<void> {
+    const layout = await window.openbot.agent.mutateSidebarLayout(action);
+    setSidebarLayout(layout);
+  }
+
+  function toggleSidebarSection(sectionId: string): void {
+    const serverId = activeServerSidebarKey();
+    setSidebarCollapsedByServer((current) => {
+      const values = new Set(current[serverId] ?? []);
+      if (values.has(sectionId)) values.delete(sectionId);
+      else values.add(sectionId);
+      const next = { ...current };
+      if (values.size > 0) next[serverId] = [...values];
+      else delete next[serverId];
+      writeSidebarCollapsed(next);
+      return next;
+    });
+  }
 
   function updateActiveServerPins(update: (items: SidebarPinnedItem[]) => SidebarPinnedItem[]): void {
     const serverId = activeServerSidebarKey();
@@ -2204,6 +2256,18 @@ export function createAppController(props: AppProps = {}) {
 
   function reorderPinnedSidebarItems(items: SidebarPinnedItem[]): void {
     updateActiveServerPins(() => items);
+  }
+
+  function reorderSidebarPeople(memberIds: string[]): void {
+    const serverId = activeServerSidebarKey();
+    setSidebarPeopleOrderByServer((current) => {
+      const order = normalizeSidebarPeopleOrder(memberIds);
+      const next = { ...current };
+      if (order.length > 0) next[serverId] = order;
+      else delete next[serverId];
+      writeSidebarPeopleOrder(next);
+      return next;
+    });
   }
 
   function removePinnedSidebarItemEverywhere(item: SidebarPinnedItem): void {
@@ -2298,10 +2362,16 @@ export function createAppController(props: AppProps = {}) {
     directPeople,
     directThreads,
     sidebarAgentStates,
+    sidebarLayout,
+    collapsedSidebarSectionIds,
+    mutateSidebarLayout,
+    toggleSidebarSection,
     pinnedSidebarItems,
+    sidebarPeopleOrder,
     pinSidebarItem,
     unpinSidebarItem,
     reorderPinnedSidebarItems,
+    reorderSidebarPeople,
     selectBot,
     selectDirectMember,
     openBotSetup,

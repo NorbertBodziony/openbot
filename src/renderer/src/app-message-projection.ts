@@ -36,6 +36,7 @@ export function toBotMessage(message: ConversationMessage): BotMessage {
     imageGeneration: message.imageGeneration,
     exchange: message.exchange,
     reaction: message.reaction,
+    routine: message.routine,
     status: message.exchange
       ? undefined
       : message.delivery?.status === "queued"
@@ -135,6 +136,7 @@ export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
     left.reaction === right.reaction &&
     JSON.stringify(left.attachments) === JSON.stringify(right.attachments) &&
     JSON.stringify(left.exchange) === JSON.stringify(right.exchange) &&
+    JSON.stringify(left.routine) === JSON.stringify(right.routine) &&
     JSON.stringify(left.items) === JSON.stringify(right.items)
   );
 }

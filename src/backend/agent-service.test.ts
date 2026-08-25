@@ -46,6 +46,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await service?.stop();
   service = null;
+  vi.useRealTimers();
   if (originalCodexPath === undefined) delete process.env.OPENBOT_CODEX_PATH;
   else process.env.OPENBOT_CODEX_PATH = originalCodexPath;
   if (originalClaudePath === undefined) delete process.env.OPENBOT_CLAUDE_PATH;
@@ -426,6 +427,193 @@ describe.sequential("AgentService", () => {
       throw new Error("The question result has no text content.");
     }
     expect(JSON.parse(content.text)).toEqual({ favorite: ["Blue"] });
+  });
+
+  it("commits an automatic memory only after a successful turn and refreshes the next turn context", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "DONE", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "I prefer concise status updates." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The memory test turn did not start.");
+    const startRequest = client.requests.find((request) => request.method === "thread/start");
+    expect(JSON.stringify(startRequest?.params)).toContain('"name":"remember"');
+    expect(JSON.stringify(startRequest?.params)).toContain('"name":"forget_memory"');
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "remember-request",
+      params: {
+        threadId,
+        turnId,
+        callId: "remember-call",
+        namespace: "openbot",
+        tool: "remember",
+        arguments: { text: "The user prefers concise status updates." },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "remember-request"));
+    expect(service.listMemories("chief")).toEqual([]);
+
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
+    );
+    await waitFor(() => service?.listMemories("chief").length === 1);
+    expect(events).toContainEqual({ type: "memories-changed", botId: "chief" });
+
+    await service.sendMessage({ botId: "chief", text: "Prepare an update." });
+    await waitFor(() => client.requests.filter((request) => request.method === "thread/resume").length > 0);
+    const resume = client.requests.findLast((request) => request.method === "thread/resume");
+    expect(JSON.stringify(resume?.params)).toContain("The user prefers concise status updates.");
+  });
+
+  it("discards staged memories after a failed turn and preserves a concurrent manual edit", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "DONE", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await store.getOrCreate("chief");
+    const manual = service.createMemory({ botId: "chief", text: "Use Bun for scripts." });
+    await store.getOrCreate("research");
+    const otherMemory = service.createMemory({ botId: "research", text: "Research-only memory." });
+    await service.sendMessage({ botId: "chief", text: "Change my package manager preference." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The memory conflict turn did not start.");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "foreign-memory-request",
+      params: {
+        threadId,
+        turnId,
+        callId: "foreign-memory-call",
+        namespace: "openbot",
+        tool: "remember",
+        arguments: { memoryId: otherMemory.id, text: "Changed by another agent." },
+      },
+    });
+    await waitFor(() => client.errors.some((response) => response.id === "foreign-memory-request"));
+    expect(service.listMemories("research").map((memory) => memory.text)).toEqual(["Research-only memory."]);
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "update-memory-request",
+      params: {
+        threadId,
+        turnId,
+        callId: "update-memory-call",
+        namespace: "openbot",
+        tool: "remember",
+        arguments: { memoryId: manual.id, text: "Use npm for scripts." },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "update-memory-request"));
+    service.updateMemory({ botId: "chief", memoryId: manual.id, text: "Use Bun 1.3 for scripts." });
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
+    );
+    await waitFor(() => events.some((event) => event.type === "turn-completed"));
+    expect(service.listMemories("chief").map((memory) => memory.text)).toEqual(["Use Bun 1.3 for scripts."]);
+
+    await service.sendMessage({ botId: "chief", text: "Remember one temporary value." });
+    await waitFor(() => events.filter((event) => event.type === "turn-started").length === 2);
+    const failedTurnId = events.filter((event) => event.type === "turn-started")[1]?.turnId;
+    if (!failedTurnId) throw new Error("The failed memory turn did not start.");
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "failed-memory-request",
+      params: {
+        threadId,
+        turnId: failedTurnId,
+        callId: "failed-memory-call",
+        namespace: "openbot",
+        tool: "remember",
+        arguments: { text: "This must not persist." },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "failed-memory-request"));
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: failedTurnId, status: "failed" } }),
+    );
+    await waitFor(() => events.filter((event) => event.type === "turn-completed").length === 2);
+    expect(service.listMemories("chief").map((memory) => memory.text)).toEqual(["Use Bun 1.3 for scripts."]);
+
+    await service.sendMessage({ botId: "chief", text: "Remember a value, then stop." });
+    await waitFor(() => events.filter((event) => event.type === "turn-started").length === 3);
+    const interruptedTurnId = events.filter((event) => event.type === "turn-started")[2]?.turnId;
+    if (!interruptedTurnId) throw new Error("The interrupted memory turn did not start.");
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "interrupted-memory-request",
+      params: {
+        threadId,
+        turnId: interruptedTurnId,
+        callId: "interrupted-memory-call",
+        namespace: "openbot",
+        tool: "remember",
+        arguments: { text: "This interrupted value must not persist." },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "interrupted-memory-request"));
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: interruptedTurnId, status: "interrupted" } }),
+    );
+    await waitFor(() => events.filter((event) => event.type === "turn-completed").length === 3);
+    expect(service.listMemories("chief").map((memory) => memory.text)).toEqual(["Use Bun 1.3 for scripts."]);
+
+    await service.sendMessage({ botId: "chief", text: "Remember a value while I clear memory." });
+    await waitFor(() => events.filter((event) => event.type === "turn-started").length === 4);
+    const clearedTurnId = events.filter((event) => event.type === "turn-started")[3]?.turnId;
+    if (!clearedTurnId) throw new Error("The clear-memory turn did not start.");
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "cleared-memory-request",
+      params: {
+        threadId,
+        turnId: clearedTurnId,
+        callId: "cleared-memory-call",
+        namespace: "openbot",
+        tool: "remember",
+        arguments: { text: "This staged value must not return after clear." },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "cleared-memory-request"));
+    const memoryEventCount = events.filter((event) => event.type === "memories-changed").length;
+    service.clearMemories("chief");
+    expect(service.listMemories("chief")).toEqual([]);
+    expect(events.filter((event) => event.type === "memories-changed")).toHaveLength(memoryEventCount + 1);
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: clearedTurnId, status: "completed" } }),
+    );
+    await waitFor(() => events.filter((event) => event.type === "turn-completed").length === 4);
+    expect(service.listMemories("chief")).toEqual([]);
+    expect(events.filter((event) => event.type === "memories-changed")).toHaveLength(memoryEventCount + 1);
   });
 
   it("keeps legacy approvals interactive and clears pending approvals on shutdown", async () => {
@@ -1531,11 +1719,186 @@ describe.sequential("AgentService", () => {
     );
     expect(service.listBots().some((bot) => bot.id === "chief")).toBe(true);
   });
+  it("queues independent manual routine runs and renders routine metadata", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Queue health",
+      instruction: "Check the current queue health.",
+      active: true,
+      timezone: "Europe/Warsaw",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => service?.listQueue(bot.id).deliveries.some((delivery) => delivery.status === "running"));
+
+    const queue = service.listQueue(bot.id);
+    expect(queue.deliveries.map((delivery) => delivery.status)).toEqual(["running", "queued"]);
+    expect(queue.deliveries.every((delivery) => delivery.sender.kind === "routine")).toBe(true);
+    const conversation = await service.readConversation(bot.id);
+    expect(conversation.messages.filter((message) => message.routine?.name === "Queue health")).toHaveLength(2);
+
+    const running = queue.deliveries.find((delivery) => delivery.status === "running");
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    if (!running?.turnId || !client || !threadId) throw new Error("The routine turn did not start.");
+    client.emit("request", {
+      id: "routine-approval",
+      method: "item/commandExecution/requestApproval",
+      params: { threadId, turnId: running.turnId, command: "echo routine" },
+    });
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((run) => run.status === "needs-attention"),
+    );
+    expect(client.responses).toEqual([]);
+    await service.respondToApproval({ requestId: "routine-approval", decision: "accept" });
+    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "running" })]),
+    );
+    expect(client.responses).toEqual([
+      expect.objectContaining({ id: "routine-approval", result: { decision: "accept" } }),
+    ]);
+
+    const queued = queue.deliveries.find((delivery) => delivery.status === "queued");
+    if (!queued) throw new Error("The second routine run was not queued.");
+    await service.cancelQueuedMessage(bot.id, queued.id);
+    expect(
+      service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 }).map((run) => run.status),
+    ).toEqual(expect.arrayContaining(["running", "cancelled"]));
+    expect(client.requests.some((request) => request.method === "turn/start")).toBe(true);
+
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId,
+        turn: { id: running.turnId, status: "failed" },
+      }),
+    );
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((run) => run.status === "failed"),
+    );
+
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(
+      () => service?.listQueue(bot.id).deliveries.filter((delivery) => delivery.status === "running").length === 1,
+    );
+    const interruptedDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "running");
+    if (!interruptedDelivery?.turnId) throw new Error("The interrupted routine turn did not start.");
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId,
+        turn: { id: interruptedDelivery.turnId, status: "interrupted" },
+      }),
+    );
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((run) => run.status === "interrupted"),
+    );
+  });
+
+  it("reschedules a paused routine from now when it is reactivated", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      null,
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider),
+    );
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    vi.useFakeTimers({ now: new Date("2026-08-25T08:00:00.000Z") });
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Morning brief",
+      instruction: "Prepare the daily brief.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    service.updateRoutine({ botId: bot.id, routineId: routine.id, active: false });
+
+    vi.setSystemTime(new Date("2026-08-27T10:00:00.000Z"));
+    const resumed = service.updateRoutine({ botId: bot.id, routineId: routine.id, active: true });
+
+    expect(resumed.trigger.nextRunAt).toBe("2026-08-28T09:00:00.000Z");
+    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toEqual([]);
+  });
+
+  it("queues only the last missed run after sleep and does not duplicate it after restart", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      null,
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider),
+    );
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    vi.useFakeTimers({ now: new Date("2026-08-25T11:07:00.000Z") });
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Quarter-hour check",
+      instruction: "Check the current queue.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "interval", amount: 15, unit: "minutes", anchorAt: "2026-08-25T10:00:00.000Z" },
+    });
+    store.database.connection
+      .prepare("UPDATE projection_routine_triggers SET next_run_at = ? WHERE trigger_id = ?")
+      .run("2026-08-25T10:15:00.000Z", routine.trigger.id);
+    service.updateRoutine({ botId: bot.id, routineId: routine.id, name: routine.name });
+    const routineChanged = nextRoutinesChanged(service, bot.id);
+
+    await vi.advanceTimersByTimeAsync(0);
+    await routineChanged;
+
+    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toEqual([
+      expect.objectContaining({ kind: "scheduled", scheduledFor: "2026-08-25T11:00:00.000Z" }),
+    ]);
+    expect(service.listRoutines(bot.id)[0]?.trigger.nextRunAt).toBe("2026-08-25T11:15:00.000Z");
+
+    await service.stop();
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      null,
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider),
+    );
+    await service.initialize();
+
+    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toHaveLength(1);
+  });
 });
 
 class FakeAgentClient extends EventEmitter implements AgentClient {
   readonly requests: Array<{ method: string; params: unknown }> = [];
   readonly responses: Array<{ id: RequestId; result: unknown }> = [];
+  readonly errors: Array<{ id: RequestId; error: RpcError }> = [];
   #threadCounter = 0;
   running = false;
 
@@ -1640,7 +2003,9 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
     this.responses.push({ id, result: structuredClone(result) });
   }
 
-  respondError(_id: RequestId, _error: RpcError): void {}
+  respondError(id: RequestId, error: RpcError): void {
+    this.errors.push({ id, error: structuredClone(error) });
+  }
 }
 
 function notification(method: string, params: unknown): AppServerNotification {
@@ -1682,6 +2047,17 @@ function fakeBrowser() {
     endControl: () => undefined,
     handleDynamicTool: async (_params: DynamicToolCallParams) => ({ success: true, contentItems: [] }),
   };
+}
+
+function nextRoutinesChanged(agentService: AgentService, botId: string): Promise<void> {
+  return new Promise((resolve) => {
+    const listener = (event: AgentEvent) => {
+      if (event.type !== "routines-changed" || event.botId !== botId) return;
+      agentService.off("event", listener);
+      resolve();
+    };
+    agentService.on("event", listener);
+  });
 }
 
 async function protocolMessages(): Promise<DynamicRecord[]> {

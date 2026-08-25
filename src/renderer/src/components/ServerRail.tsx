@@ -1,7 +1,7 @@
 import type { ServerSummary } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
 import { createVerticalDragPreview } from "./createVerticalDragPreview";
-import { Button, ContextMenu, Tooltip } from "./ui";
+import { buttonVariants, ContextMenu, Tooltip } from "./ui";
 
 const SERVER_RAIL_TOOLTIP_OPEN_DELAY = 150;
 
@@ -283,9 +283,7 @@ export function ServerRail(props: ServerRailProps) {
         >
           <Tooltip.Trigger
             type="button"
-            class="ui-button server-rail-button server-rail-action"
-            data-variant="secondary"
-            data-size="md"
+            class={`${buttonVariants({ variant: "outline", size: "sm" })} server-rail-button server-rail-action`}
             aria-label="Add remote server"
             onClick={props.onAdd}
           >
@@ -324,19 +322,19 @@ function ServerRailButton(props: {
       <Tooltip.Trigger as="div" class="server-rail-tooltip-trigger">
         <ContextMenu.Root modal={false}>
           <ContextMenu.Trigger
-            as={Button}
+            as="button"
             type="button"
-            class="server-rail-button"
+            class={buttonVariants({ variant: "ghost", class: "server-rail-button" })}
             aria-label={`${props.server.name} server${props.server.state === "online" ? "" : `, ${props.server.state}`}`}
             aria-pressed={props.server.active ? "true" : "false"}
             aria-keyshortcuts={props.onMove ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
             onClick={() => props.onSelect(props.server.id)}
-            onContextMenu={(event) => {
+            onContextMenu={(event: MouseEvent & { currentTarget: HTMLButtonElement }) => {
               trigger = event.currentTarget;
             }}
             onFocus={() => setTooltipOpen(true)}
             onBlur={() => setTooltipOpen(false)}
-            onKeyDown={(event) => {
+            onKeyDown={(event: KeyboardEvent) => {
               if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
               event.preventDefault();
               props.onMove?.(event.key === "ArrowUp" ? -1 : 1);

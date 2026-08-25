@@ -9,7 +9,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { normalizeAvatarFile } from "../avatar-image";
-import { Badge, Button, Input, Popover } from "./ui";
+import { Badge, Button, buttonVariants, Input, Popover } from "./ui";
 
 interface AccountDockProps {
   account: CentralAuthUser;
@@ -273,9 +273,9 @@ export function AccountDock(props: AccountDockProps) {
         gutter={8}
       >
         <Popover.Trigger
-          as={Button}
+          as="button"
           type="button"
-          class="account-dock-trigger"
+          class={buttonVariants({ variant: "ghost", class: "account-dock-trigger" })}
           aria-label="Open account menu"
           aria-expanded={open() ? "true" : "false"}
         >
@@ -315,6 +315,7 @@ export function AccountDock(props: AccountDockProps) {
                 onChange={(event) => void uploadAvatar(event.currentTarget.files?.[0])}
               />
               <Button
+                variant="ghost"
                 type="button"
                 class="account-profile-photo"
                 aria-label={props.account.avatarUrl ? "Replace photo" : "Upload photo"}
@@ -333,6 +334,7 @@ export function AccountDock(props: AccountDockProps) {
                 </Show>
                 <Show when={props.account.avatarUrl}>
                   <Button
+                    variant="ghost"
                     type="button"
                     class="account-profile-remove"
                     onClick={() => void updateAvatar(null)}
@@ -347,6 +349,7 @@ export function AccountDock(props: AccountDockProps) {
             <div class="account-menu-separator" />
             <Show when={props.updateStatus.phase !== "unsupported"}>
               <Button
+                variant="ghost"
                 type="button"
                 class="account-menu-row account-update-row"
                 onClick={runUpdateAction}
@@ -358,6 +361,7 @@ export function AccountDock(props: AccountDockProps) {
               </Button>
             </Show>
             <Button
+              variant="destructive-ghost"
               type="button"
               class="account-menu-row"
               onClick={() => void refreshUsage()}
@@ -370,6 +374,7 @@ export function AccountDock(props: AccountDockProps) {
 
             <div class="account-menu-separator" />
             <Button
+              variant="ghost"
               type="button"
               class="account-menu-row"
               onClick={() => {
@@ -382,17 +387,18 @@ export function AccountDock(props: AccountDockProps) {
             </Button>
 
             <div class="account-menu-separator" />
-            <Button type="button" class="account-menu-row" onClick={() => openExternal("feedback")}>
+            <Button variant="ghost" type="button" class="account-menu-row" onClick={() => openExternal("feedback")}>
               <FeedbackIcon />
               <span>Send feedback</span>
             </Button>
-            <Button type="button" class="account-menu-row" onClick={() => openExternal("message")}>
+            <Button variant="ghost" type="button" class="account-menu-row" onClick={() => openExternal("message")}>
               <MessageIcon />
               <span>Message</span>
             </Button>
 
             <div class="account-menu-separator" />
             <Button
+              variant="ghost"
               type="button"
               class="account-menu-row account-menu-danger"
               onClick={() => void logout()}

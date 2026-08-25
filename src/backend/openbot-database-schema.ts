@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 6;
 
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -47,6 +47,68 @@ const SCHEMA_SQL = `
     agent_json TEXT NOT NULL CHECK(json_valid(agent_json)),
     last_event_sequence INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS projection_agent_memories (
+    memory_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    normalized_text TEXT NOT NULL,
+    origin TEXT NOT NULL CHECK(origin IN ('automatic', 'manual')),
+    source_turn_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_event_sequence INTEGER NOT NULL,
+    UNIQUE(agent_id, normalized_text)
+  );
+  CREATE INDEX IF NOT EXISTS agent_memories_agent
+    ON projection_agent_memories(agent_id, updated_at DESC, memory_id);
+  CREATE TABLE IF NOT EXISTS projection_agent_routines (
+    routine_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    instruction TEXT NOT NULL,
+    active INTEGER NOT NULL CHECK(active IN (0, 1)),
+    timezone TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_event_sequence INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS agent_routines_agent
+    ON projection_agent_routines(agent_id, updated_at DESC, routine_id);
+  CREATE TABLE IF NOT EXISTS projection_routine_triggers (
+    trigger_id TEXT PRIMARY KEY,
+    routine_id TEXT NOT NULL REFERENCES projection_agent_routines(routine_id) ON DELETE CASCADE,
+    schedule_json TEXT NOT NULL CHECK(json_valid(schedule_json)),
+    next_run_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_event_sequence INTEGER NOT NULL,
+    UNIQUE(routine_id)
+  );
+  CREATE INDEX IF NOT EXISTS routine_triggers_due
+    ON projection_routine_triggers(next_run_at, routine_id);
+  CREATE TABLE IF NOT EXISTS projection_routine_runs (
+    run_id TEXT PRIMARY KEY,
+    routine_id TEXT NOT NULL REFERENCES projection_agent_routines(routine_id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL,
+    trigger_id TEXT,
+    run_kind TEXT NOT NULL CHECK(run_kind IN ('scheduled', 'manual')),
+    scheduled_for TEXT NOT NULL,
+    routine_name TEXT NOT NULL,
+    instruction TEXT NOT NULL,
+    delivery_id TEXT,
+    status TEXT NOT NULL CHECK(status IN (
+      'queued', 'running', 'needs-attention', 'succeeded', 'failed', 'interrupted', 'cancelled'
+    )),
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_event_sequence INTEGER NOT NULL,
+    UNIQUE(trigger_id, scheduled_for)
+  );
+  CREATE INDEX IF NOT EXISTS routine_runs_routine
+    ON projection_routine_runs(routine_id, created_at DESC, run_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS routine_runs_delivery
+    ON projection_routine_runs(delivery_id) WHERE delivery_id IS NOT NULL;
   CREATE TABLE IF NOT EXISTS projection_provider_sessions (
     id TEXT PRIMARY KEY,
     thread_id TEXT NOT NULL REFERENCES projection_threads(thread_id) ON DELETE CASCADE,

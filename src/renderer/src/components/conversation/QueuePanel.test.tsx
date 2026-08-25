@@ -192,13 +192,18 @@ describe("QueuePanel", () => {
     const preview = document.body.querySelector<HTMLElement>(".agent-queue-drag-preview");
     expect(preview).toBeInTheDocument();
     expect(dataTransfer.setDragImage).toHaveBeenCalled();
-    expect(preview).toHaveStyle({ left: "112px", top: "60px", width: "376px" });
+    expect(preview).toHaveStyle({
+      left: "112px",
+      top: "0px",
+      width: "376px",
+      transform: "translate3d(0px, 60px, 0)",
+    });
 
     window.dispatchEvent(new MouseEvent("dragover", { clientX: -500, clientY: 250 }));
-    expect(preview).toHaveStyle({ left: "112px", top: "171px" });
+    expect(preview).toHaveStyle({ left: "112px", transform: "translate3d(0px, 171px, 0)" });
 
     window.dispatchEvent(new MouseEvent("dragover", { clientX: 900, clientY: 25 }));
-    expect(preview).toHaveStyle({ left: "112px", top: "50px" });
+    expect(preview).toHaveStyle({ left: "112px", transform: "translate3d(0px, 50px, 0)" });
 
     dispatchDrag("dragend", 900, 25);
     expect(preview).not.toBeInTheDocument();

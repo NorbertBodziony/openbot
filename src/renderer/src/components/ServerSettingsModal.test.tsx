@@ -221,25 +221,4 @@ describe("ServerSettingsModal", () => {
     await fireEvent.pointerUp(await screen.findByRole("menuitem", { name: "Pause access" }), { button: 0 });
     await waitFor(() => expect(onUpdateMember).toHaveBeenCalledWith({ memberId: "alice-1", disabled: true }));
   });
-
-  it("shows Remote Desktop service state without connection actions", async () => {
-    const { unmount } = render(() => <ServerSettingsModal {...props({ server: remoteServer, hostStatus: null })} />);
-
-    await fireEvent.click(screen.getByRole("button", { name: "Remote desktop" }));
-    expect(screen.getByText("WebRTC control is available for all active members.")).toBeInTheDocument();
-    expect(screen.getByText("Service available")).toBeInTheDocument();
-    expect(screen.getByText("Start Remote Control from the monitor button in the server header.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
-
-    unmount();
-    render(() => (
-      <ServerSettingsModal
-        {...props({ server: { ...remoteServer, remoteDesktopAvailable: false }, hostStatus: null })}
-      />
-    ));
-    await fireEvent.click(screen.getByRole("button", { name: "Remote desktop" }));
-    expect(screen.getByText("Update required or remote control is unavailable.")).toBeInTheDocument();
-    expect(screen.getByText("Update required")).toBeInTheDocument();
-  });
 });

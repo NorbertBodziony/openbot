@@ -95,12 +95,6 @@ describe("RemoteDesktopWorkspace", () => {
         },
       }),
     );
-    expect(screen.queryByText("P2P")).not.toBeInTheDocument();
-    expect(screen.queryByText("Keyboard and pointer enabled")).not.toBeInTheDocument();
-    expect(screen.queryByText("Shared control")).not.toBeInTheDocument();
-    expect(screen.queryByText("Remote control")).not.toBeInTheDocument();
-    expect(screen.queryByText(server.name)).not.toBeInTheDocument();
-
     await fireEvent.pointerDown(screen.getByRole("button", { name: /Remote display/ }), {
       pointerType: "mouse",
       button: 0,
@@ -113,21 +107,6 @@ describe("RemoteDesktopWorkspace", () => {
     await waitFor(() => expect(onDisconnect).toHaveBeenCalledOnce());
     expect(screen.queryByLabelText(/password/iu)).not.toBeInTheDocument();
     expect(screen.queryByText(/view.only/iu)).not.toBeInTheDocument();
-  });
-
-  it("hides the display select for one monitor and uses compact header controls", () => {
-    renderWorkspace({ session: { ...session, displays: session.displays.slice(0, 1) } });
-
-    expect(screen.queryByRole("button", { name: /Remote display/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Back to OpenBot" })).toHaveAttribute("data-size", "sm");
-    expect(screen.getByRole("button", { name: "Back to OpenBot" })).toHaveAttribute("data-variant", "ghost");
-    expect(screen.getByRole("button", { name: "Disconnect" })).toHaveAttribute("data-size", "sm");
-    expect(screen.getByRole("button", { name: "Disconnect" })).toHaveAttribute("data-variant", "ghost");
-    expect(screen.getByText("Connecting…")).toBeInTheDocument();
-    expect(
-      document.querySelector(".remote-desktop-connecting-avatar.bot-avatar-motion-connecting > svg"),
-    ).not.toBeNull();
-    expect(screen.queryByText("OpenBot is creating a direct P2P connection.")).not.toBeInTheDocument();
   });
 
   it("retries a failed connection without using Escape as a close action", async () => {

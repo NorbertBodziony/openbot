@@ -1,6 +1,6 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { DirectConversationSnapshot, DirectMessage, TeamPresenceMember } from "@openbot/contracts/ipc";
-import { createEffect, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
 import { calculateChatScrollMargin, createChatVirtualizer } from "./conversation/createChatVirtualizer";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import {
@@ -61,6 +61,7 @@ export function DirectConversation(props: DirectConversationProps) {
       if (first && first.index <= 5 && props.hasOlder && !props.loadingOlder) props.onLoadOlder?.();
     },
   });
+  const virtualMessageRows = createMemo(() => messageVirtualizer.getVirtualItems());
   const unreadBannerReady = (): boolean => {
     const unreadMessageId = props.snapshot?.readState?.firstUnreadMessageId;
     if (!unreadMessageId) return true;
@@ -289,7 +290,7 @@ export function DirectConversation(props: DirectConversationProps) {
                   height: messageVirtualizer.isVirtualized() ? `${messageVirtualizer.getTotalSize()}px` : "auto",
                 }}
               >
-                <For each={messageVirtualizer.getVirtualItems()}>
+                <For each={virtualMessageRows()}>
                   {(virtualRow) => {
                     const message = props.snapshot?.messages[virtualRow.index];
                     if (!message) return null;
@@ -358,6 +359,7 @@ export function DirectConversation(props: DirectConversationProps) {
             }}
           />
           <Button
+            variant="default"
             type="button"
             aria-label="Send direct message"
             disabled={!text().trim() || sending()}

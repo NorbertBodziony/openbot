@@ -25,6 +25,7 @@ import {
   isReasoningEffort,
   type ReorderQueueInput,
   type RespondToApprovalInput,
+  type SidebarLayoutSnapshot,
   type SteerQueuedMessageInput,
   type TeamMemberSummary,
   type TeamPresenceSnapshot,
@@ -37,12 +38,19 @@ import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
+import type { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import type { TeamChatStore } from "../backend/team-chat-store";
+import {
+  parseCreateRoutine,
+  parseListRoutineRuns,
+  parseSidebarLayoutAction,
+  parseUpdateRoutine,
+} from "./ipc/agent-inputs";
 import { RemoteScreenError, type RemoteScreenGateway } from "./remote-screen-gateway";
 import { type TeamStore, TeamStoreError } from "./team-store";
 
 const JSON_LIMIT = 1024 * 1024;
-const EVENT_PAYLOAD_LIMIT = 1_024;
+const EVENT_PAYLOAD_LIMIT = 256 * 1_024;
 const TYPING_TIMEOUT_MS = 5_000;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1_000;
 const RATE_LIMIT_SWEEP_MS = 60_000;
@@ -61,6 +69,17 @@ type TeamApiAgentMethods = Pick<
   | "createBot"
   | "updateBot"
   | "deleteBot"
+  | "listMemories"
+  | "createMemory"
+  | "updateMemory"
+  | "deleteMemory"
+  | "clearMemories"
+  | "listRoutines"
+  | "createRoutine"
+  | "updateRoutine"
+  | "deleteRoutine"
+  | "testRoutine"
+  | "listRoutineRuns"
   | "setAvatar"
   | "resolveAvatar"
   | "readConversationFor"
@@ -89,6 +108,10 @@ type TeamApiAgents = TeamApiAgentMethods & {
 };
 
 type TeamApiMailbox = Pick<MailboxStore, "resolveAttachment">;
+type TeamApiSidebarLayout = Pick<SidebarLayoutStore, "getSnapshot" | "mutate" | "removeAgent"> & {
+  on: (event: "changed", listener: (layout: SidebarLayoutSnapshot) => void) => void;
+  off: (event: "changed", listener: (layout: SidebarLayoutSnapshot) => void) => void;
+};
 type TeamApiBrowser = Pick<
   BrowserHost,
   "listTabs" | "getControlState" | "open" | "activate" | "reload" | "close" | "setVisible"
@@ -111,6 +134,7 @@ type TeamApiRemoteScreen = Pick<
 interface TeamApiOptions {
   store: TeamStore;
   agents: TeamApiAgents;
+  sidebarLayout?: TeamApiSidebarLayout;
   mailbox: TeamApiMailbox;
   browser: TeamApiBrowser;
   remoteScreen?: TeamApiRemoteScreen;
@@ -139,7 +163,7 @@ interface RateEntry {
 }
 
 export class TeamApiServer {
-  readonly #options: TeamApiOptions;
+  readonly #options: Omit<TeamApiOptions, "sidebarLayout"> & { sidebarLayout: TeamApiSidebarLayout };
   readonly #rateLimits = new Map<string, RateEntry>();
   readonly #eventClients = new Map<Ws.WebSocket, EventClientState>();
   readonly #webSockets = new webSockets.WebSocketServer({
@@ -153,11 +177,12 @@ export class TeamApiServer {
   #port: number | null = null;
   #heartbeat: ReturnType<typeof setInterval> | null = null;
   #agentListener: ((event: AgentEvent) => void) | null = null;
+  #sidebarLayoutListener: ((layout: SidebarLayoutSnapshot) => void) | null = null;
   #localTypingBotId: string | null = null;
   #nextRateLimitSweepAt = 0;
 
   constructor(options: TeamApiOptions) {
-    this.#options = options;
+    this.#options = { ...options, sidebarLayout: options.sidebarLayout ?? unavailableSidebarLayout() };
     this.#rateLimitCapacity = options.rateLimitCapacity ?? RATE_LIMIT_CAPACITY;
     this.#now = options.now ?? Date.now;
   }
@@ -207,6 +232,8 @@ export class TeamApiServer {
     this.#port = address.port;
     this.#agentListener = (event) => this.#broadcastAgentEvent(event);
     this.#options.agents.on("event", this.#agentListener);
+    this.#sidebarLayoutListener = (layout) => this.#broadcastAgentEvent({ type: "sidebar-layout-changed", layout });
+    this.#options.sidebarLayout.on("changed", this.#sidebarLayoutListener);
     this.#heartbeat = setInterval(() => {
       for (const [client, connection] of this.#eventClients) {
         if (!this.#options.store.authenticate(connection.token)) {
@@ -224,6 +251,8 @@ export class TeamApiServer {
     this.#heartbeat = null;
     if (this.#agentListener) this.#options.agents.off("event", this.#agentListener);
     this.#agentListener = null;
+    if (this.#sidebarLayoutListener) this.#options.sidebarLayout.off("changed", this.#sidebarLayoutListener);
+    this.#sidebarLayoutListener = null;
     for (const [client, connection] of this.#eventClients) {
       if (connection.typingTimer) clearTimeout(connection.typingTimer);
       if (connection.directTypingTimer) clearTimeout(connection.directTypingTimer);
@@ -759,6 +788,17 @@ export class TeamApiServer {
       if (method === "GET" && url.pathname === "/v1/agents/status") {
         return this.#json(response, 200, this.#options.agents.getStatus());
       }
+      if (method === "GET" && url.pathname === "/v1/sidebar-layout") {
+        return this.#json(response, 200, this.#options.sidebarLayout.getSnapshot());
+      }
+      if (method === "POST" && url.pathname === "/v1/sidebar-layout/actions") {
+        const action = parseSidebarLayoutAction(await readJson(request));
+        const layout = await this.#options.sidebarLayout.mutate(
+          action,
+          new Set(this.#options.agents.listBots().map((bot) => bot.id)),
+        );
+        return this.#json(response, 200, layout);
+      }
       if (method === "GET" && url.pathname === "/v1/agents/usage") {
         return this.#json(response, 200, await this.#options.agents.getUsage());
       }
@@ -787,7 +827,90 @@ export class TeamApiServer {
         if (method === "DELETE" && !action) {
           if (member.role === "member") throw new HttpError(403, "Members cannot delete agents.");
           await this.#options.agents.deleteBot(botId);
+          await this.#options.sidebarLayout.removeAgent(botId);
           return this.#empty(response, 204);
+        }
+        if (action === "memories") {
+          if (method === "GET") {
+            return this.#json(response, 200, this.#options.agents.listMemories(botId));
+          }
+          if (method === "POST") {
+            const body = await readJson(request);
+            return this.#json(
+              response,
+              201,
+              this.#options.agents.createMemory({
+                botId,
+                text: stringField(body, "text", false, INPUT_LIMITS.agentMemoryText),
+              }),
+            );
+          }
+          if (method === "DELETE") {
+            this.#options.agents.clearMemories(botId);
+            return this.#empty(response, 204);
+          }
+        }
+        const memoryMatch = action.match(/^memories\/([^/]+)$/);
+        if (memoryMatch) {
+          const memoryId = pathIdentifier(memoryMatch[1], "memoryId");
+          if (method === "PATCH") {
+            const body = await readJson(request);
+            return this.#json(
+              response,
+              200,
+              this.#options.agents.updateMemory({
+                botId,
+                memoryId,
+                text: stringField(body, "text", false, INPUT_LIMITS.agentMemoryText),
+              }),
+            );
+          }
+          if (method === "DELETE") {
+            this.#options.agents.deleteMemory({ botId, memoryId });
+            return this.#empty(response, 204);
+          }
+        }
+        if (action === "routines") {
+          if (method === "GET") {
+            return this.#json(response, 200, this.#options.agents.listRoutines(botId));
+          }
+          if (method === "POST") {
+            const body = await readJson(request);
+            return this.#json(
+              response,
+              201,
+              this.#options.agents.createRoutine(parseCreateRoutine({ ...body, botId })),
+            );
+          }
+        }
+        const routineMatch = action.match(/^routines\/([^/]+)(?:\/(test|runs))?$/);
+        if (routineMatch) {
+          const routineId = pathIdentifier(routineMatch[1], "routineId");
+          const routineAction = routineMatch[2] ?? "";
+          if (method === "PATCH" && !routineAction) {
+            const body = await readJson(request);
+            return this.#json(
+              response,
+              200,
+              this.#options.agents.updateRoutine(parseUpdateRoutine({ ...body, botId, routineId })),
+            );
+          }
+          if (method === "DELETE" && !routineAction) {
+            await this.#options.agents.deleteRoutine({ botId, routineId });
+            return this.#empty(response, 204);
+          }
+          if (method === "POST" && routineAction === "test") {
+            return this.#json(response, 201, await this.#options.agents.testRoutine({ botId, routineId }));
+          }
+          if (method === "GET" && routineAction === "runs") {
+            const rawLimit = url.searchParams.get("limit");
+            const limit = rawLimit === null ? 50 : Number(rawLimit);
+            return this.#json(
+              response,
+              200,
+              this.#options.agents.listRoutineRuns(parseListRoutineRuns({ botId, routineId, limit })),
+            );
+          }
         }
         if (action === "avatar") {
           if (method === "PUT") {
@@ -1157,6 +1280,30 @@ export class TeamApiServer {
     response.writeHead(status);
     response.end();
   }
+}
+
+function unavailableSidebarLayout(): TeamApiSidebarLayout {
+  return {
+    getSnapshot: () => ({
+      revision: 0,
+      sections: [],
+      order: ["people", "unassigned"],
+      agentAssignments: {},
+      agentOrder: [],
+    }),
+    mutate: async () => {
+      throw new HttpError(503, "Sidebar layout is unavailable.");
+    },
+    removeAgent: async () => ({
+      revision: 0,
+      sections: [],
+      order: ["people", "unassigned"],
+      agentAssignments: {},
+      agentOrder: [],
+    }),
+    on: () => undefined,
+    off: () => undefined,
+  };
 }
 
 class HttpError extends Error {

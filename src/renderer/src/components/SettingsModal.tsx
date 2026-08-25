@@ -14,7 +14,7 @@ import {
   SelectPrimitive,
   Settings,
   SlidersHorizontal,
-  Switch,
+  SwitchField,
   Text,
   UserRound,
 } from "./ui";
@@ -119,7 +119,7 @@ export function SettingsModal(props: SettingsModalProps) {
                       person@example.com
                     </Text>
                   </div>
-                  <Button type="button" size="sm">
+                  <Button variant="outline" type="button" size="sm">
                     Change avatar
                   </Button>
                 </div>
@@ -138,7 +138,7 @@ export function SettingsModal(props: SettingsModalProps) {
                 >
                   <Input id="settings-profile-name" value={profileName()} onValueChange={setProfileName} />
                 </Field>
-                <Switch
+                <SwitchField
                   defaultChecked
                   label="Show activity status"
                   description="Let workspace members see when you are active."
@@ -154,12 +154,12 @@ export function SettingsModal(props: SettingsModalProps) {
               App behavior
             </Heading>
             <Card class="settings-modal-card">
-              <Switch
+              <SwitchField
                 defaultChecked
                 label="Launch OpenBot at login"
                 description="Open the app when you sign in to this computer."
               />
-              <Switch
+              <SwitchField
                 label="Keep OpenBot running in the background"
                 description="Keep active tasks running after you close the window."
               />
@@ -171,7 +171,7 @@ export function SettingsModal(props: SettingsModalProps) {
               Workspace
             </Heading>
             <Card class="settings-modal-card">
-              <Switch
+              <SwitchField
                 defaultChecked
                 label="Restore the last workspace on launch"
                 description="Open the workspace and tasks from your previous session."
@@ -219,12 +219,15 @@ export function SettingsModal(props: SettingsModalProps) {
               Notifications
             </Heading>
             <Card class="settings-modal-card">
-              <Switch
+              <SwitchField
                 defaultChecked
                 label="Desktop notifications"
                 description="Show a notification when an agent needs attention."
               />
-              <Switch label="Play a sound when a task finishes" description="Use a short sound for completed tasks." />
+              <SwitchField
+                label="Play a sound when a task finishes"
+                description="Use a short sound for completed tasks."
+              />
             </Card>
           </section>
 
@@ -233,7 +236,7 @@ export function SettingsModal(props: SettingsModalProps) {
               Updates
             </Heading>
             <Card class="settings-modal-card">
-              <Switch
+              <SwitchField
                 defaultChecked
                 label="Automatically download updates"
                 description="Download new versions when they become available."
@@ -250,7 +253,7 @@ export function SettingsModal(props: SettingsModalProps) {
                     </Badge>
                   </div>
                 </div>
-                <Button type="button" size="sm" onClick={() => setUpdateChecked(true)}>
+                <Button variant="outline" type="button" size="sm" onClick={() => setUpdateChecked(true)}>
                   {updateChecked() ? "Checked" : "Check for updates"}
                 </Button>
               </div>

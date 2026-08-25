@@ -176,6 +176,7 @@ export function ApprovalCard(props: {
                   <For each={question().options ?? []}>
                     {(option, index) => (
                       <Button
+                        variant="ghost"
                         type="button"
                         aria-pressed={
                           answers()[question().id] === option.label && !customSelected()[question().id]
@@ -206,6 +207,7 @@ export function ApprovalCard(props: {
                     when={customEditing()[question().id]}
                     fallback={
                       <Button
+                        variant="ghost"
                         type="button"
                         class={[
                           "approval-custom-option",
@@ -261,6 +263,7 @@ export function ApprovalCard(props: {
         <footer class="approval-card-footer">
           <nav class="approval-question-nav" aria-label={`Question ${step() + 1} of ${questionCount()}`}>
             <Button
+              variant="ghost"
               type="button"
               class="approval-icon-button"
               aria-label="Previous question"
@@ -273,6 +276,7 @@ export function ApprovalCard(props: {
             <span class="approval-question-divider">/</span>
             <span>{questionCount()}</span>
             <Button
+              variant="ghost"
               type="button"
               class="approval-icon-button"
               aria-label="Next question"
@@ -284,6 +288,7 @@ export function ApprovalCard(props: {
           </nav>
           <div class="approval-card-actions">
             <Button
+              variant="ghost"
               type="button"
               class="approval-button approval-button-ghost"
               disabled={submitting()}
@@ -292,6 +297,7 @@ export function ApprovalCard(props: {
               Skip
             </Button>
             <Button
+              variant="default"
               type="button"
               class="approval-button approval-button-primary"
               disabled={!canAdvance()}
@@ -335,6 +341,7 @@ export function ApprovalCard(props: {
             <footer class="approval-card-footer approval-card-footer-end">
               <div class="approval-card-actions">
                 <Button
+                  variant="ghost"
                   type="button"
                   class="approval-button approval-button-ghost"
                   disabled={submitting()}
@@ -343,6 +350,7 @@ export function ApprovalCard(props: {
                   {submitting() ? "Waiting…" : "Reject"}
                 </Button>
                 <Button
+                  variant="default"
                   type="button"
                   class="approval-button approval-button-primary"
                   disabled={submitting()}

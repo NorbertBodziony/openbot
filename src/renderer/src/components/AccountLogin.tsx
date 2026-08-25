@@ -359,6 +359,7 @@ export function AccountLogin(props: AccountLoginProps) {
               )}
             </Show>
             <Button
+              variant="default"
               type="button"
               class="account-login-primary"
               disabled={pendingAction() === "retry"}
@@ -437,6 +438,7 @@ export function AccountLogin(props: AccountLoginProps) {
                   </Show>
 
                   <Button
+                    variant="default"
                     type="submit"
                     class="account-login-primary"
                     disabled={emailBusy() || !email().trim() || emailRetryIn() > 0}
@@ -494,6 +496,7 @@ export function AccountLogin(props: AccountLoginProps) {
                 <Show when={!verified()}>
                   <Show when={codeNeedsReplacement()}>
                     <Button
+                      variant="default"
                       type="button"
                       class="account-login-primary"
                       disabled={pendingAction() !== null || resendAvailableIn() > 0}

@@ -1,35 +1,40 @@
 interface BoundedDragPreviewStart {
   bounds: HTMLElement;
   className: string;
+  createPreview?: (source: HTMLElement) => HTMLElement;
   event: {
     clientX: number;
     clientY: number;
     dataTransfer: Pick<DataTransfer, "setDragImage"> | null;
   };
+  horizontal?: boolean;
+  previewSize?: { height: number; width: number };
   source: HTMLElement;
 }
 
 export function createBoundedDragPreview() {
   let preview: HTMLElement | undefined;
-  let boundsElement: HTMLElement | undefined;
+  let boundsRect: DOMRect | undefined;
   let pointerOffsetX = 0;
   let pointerOffsetY = 0;
   let previewWidth = 0;
   let previewHeight = 0;
+  let previewLeft = 0;
+  let horizontal = true;
 
   function move(clientX: number, clientY: number): void {
-    if (!preview || !boundsElement) return;
-    const bounds = boundsElement.getBoundingClientRect();
-    const left = Math.min(
-      Math.max(clientX - pointerOffsetX, bounds.left),
-      Math.max(bounds.left, bounds.right - previewWidth),
-    );
+    if (!preview || !boundsRect) return;
+    const left = horizontal
+      ? Math.min(
+          Math.max(clientX - pointerOffsetX, boundsRect.left),
+          Math.max(boundsRect.left, boundsRect.right - previewWidth),
+        )
+      : previewLeft;
     const top = Math.min(
-      Math.max(clientY - pointerOffsetY, bounds.top),
-      Math.max(bounds.top, bounds.bottom - previewHeight),
+      Math.max(clientY - pointerOffsetY, boundsRect.top),
+      Math.max(boundsRect.top, boundsRect.bottom - previewHeight),
     );
-    preview.style.left = `${left}px`;
-    preview.style.top = `${top}px`;
+    preview.style.transform = `translate3d(${left}px, ${top}px, 0)`;
   }
 
   function track(event: DragEvent): void {
@@ -41,14 +46,23 @@ export function createBoundedDragPreview() {
     window.removeEventListener("dragover", track);
     preview?.remove();
     preview = undefined;
-    boundsElement = undefined;
+    boundsRect = undefined;
   }
 
-  function start({ bounds, className, event, source }: BoundedDragPreviewStart): void {
+  function start({
+    bounds,
+    className,
+    createPreview,
+    event,
+    horizontal: allowHorizontal = true,
+    previewSize,
+    source,
+  }: BoundedDragPreviewStart): void {
     if (!event.dataTransfer?.setDragImage) return;
 
     const sourceBounds = source.getBoundingClientRect();
-    const clone = source.cloneNode(true);
+    const nextBoundsRect = bounds.getBoundingClientRect();
+    const clone = createPreview ? createPreview(source) : source.cloneNode(true);
     if (!(clone instanceof HTMLElement)) return;
     stop();
     clone.classList.add(className);
@@ -56,15 +70,28 @@ export function createBoundedDragPreview() {
     clone.setAttribute("inert", "");
     clone.removeAttribute("tabindex");
     clone.removeAttribute("draggable");
-    clone.style.width = `${sourceBounds.width}px`;
+    clone.style.width = `${previewSize?.width ?? sourceBounds.width}px`;
+    if (previewSize) clone.style.height = `${previewSize.height}px`;
+    clone.style.left = "0px";
+    clone.style.top = "0px";
+    clone.style.contain = "layout paint style";
+    clone.style.willChange = "transform";
     document.body.append(clone);
 
     preview = clone;
-    boundsElement = bounds;
-    pointerOffsetX = Math.min(Math.max(event.clientX - sourceBounds.left, 0), sourceBounds.width);
-    pointerOffsetY = Math.min(Math.max(event.clientY - sourceBounds.top, 0), sourceBounds.height);
-    previewWidth = sourceBounds.width;
-    previewHeight = sourceBounds.height;
+    boundsRect = nextBoundsRect;
+    horizontal = allowHorizontal;
+    pointerOffsetX = Math.min(Math.max(event.clientX - sourceBounds.left, 0), previewSize?.width ?? sourceBounds.width);
+    pointerOffsetY = Math.min(
+      Math.max(event.clientY - sourceBounds.top, 0),
+      previewSize?.height ?? sourceBounds.height,
+    );
+    previewWidth = previewSize?.width ?? sourceBounds.width;
+    previewHeight = previewSize?.height ?? sourceBounds.height;
+    previewLeft = Math.min(
+      Math.max(sourceBounds.left, nextBoundsRect.left),
+      Math.max(nextBoundsRect.left, nextBoundsRect.right - previewWidth),
+    );
     move(event.clientX, event.clientY);
     window.addEventListener("dragover", track);
 

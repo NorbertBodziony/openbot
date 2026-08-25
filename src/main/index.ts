@@ -17,6 +17,7 @@ import {
   type MacPermissionId,
   type MacPermissionsState,
   type SendMessageInput,
+  type SidebarLayoutSnapshot,
   type UpdateBotInput,
   type VoiceTranscriptionResult,
 } from "@openbot/contracts/ipc";
@@ -42,6 +43,7 @@ import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
 import { isCloseBrowserTabShortcut, isSelectAllShortcut, isToggleDevToolsShortcut } from "../backend/browser-shortcuts";
 import { MailboxStore } from "../backend/mailbox-store";
+import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import { TeamChatStore } from "../backend/team-chat-store";
 import { AgentInitializationGate } from "./agent-initialization";
 import { notificationForAgentEvent } from "./agent-notifications";
@@ -58,8 +60,13 @@ import {
   parseCancelQueuedMessage,
   parseChooseAttachments,
   parseCreateBot,
+  parseCreateBotMemory,
+  parseCreateRoutine,
+  parseDeleteBotMemory,
+  parseDeleteRoutine,
   parseImportAttachments,
   parseInterrupt,
+  parseListRoutineRuns,
   parseMarkConversationRead,
   parseMessageReaction,
   parseOpenAttachment,
@@ -71,9 +78,13 @@ import {
   parseSearchConversationMessages,
   parseSendMessage,
   parseSetAgentAvatar,
+  parseSidebarLayoutAction,
   parseSteerQueuedMessage,
+  parseTestRoutine,
   parseUpdateBot,
+  parseUpdateBotMemory,
   parseUpdateQueuedMessage,
+  parseUpdateRoutine,
 } from "./ipc/agent-inputs";
 import { parseMacPermission, parseProvider } from "./ipc/app-inputs";
 import { parseAvatarImage } from "./ipc/avatar-inputs";
@@ -90,6 +101,8 @@ import {
   decodeAccountUsage,
   decodeAgentModelOptions,
   decodeAgentStatus,
+  decodeBotMemories,
+  decodeBotMemory,
   decodeBotSummaries,
   decodeBotSummary,
   decodeBrowserControlState,
@@ -97,6 +110,11 @@ import {
   decodeBrowserTabs,
   decodeQueuedMessageReceipt,
   decodeQueueSnapshot,
+  decodeRoutine,
+  decodeRoutineRun,
+  decodeRoutineRuns,
+  decodeRoutines,
+  decodeSidebarLayoutSnapshot,
   decodeVoid,
   RemoteServerManager,
 } from "./remote-server-manager";
@@ -182,6 +200,7 @@ let inviteReceiverReady = false;
 
 const SETUP_FILE = "openbot-setup-v2.json";
 const BROWSER_STATE_FILE = "openbot-browser-state-v1.json";
+const SIDEBAR_LAYOUT_FILE = "openbot-sidebar-layout-v1.json";
 const TEAM_FILE = "openbot-team-server-v1.json";
 const REMOTE_SERVERS_FILE = "openbot-remote-servers-v1.json";
 const CENTRAL_AUTH_FILE = "openbot-central-auth-v1.bin";
@@ -218,6 +237,7 @@ function registerIpcHandlers(
   updater: UpdateService,
   setupFile: string,
   initializeAgent: () => Promise<void>,
+  sidebarLayout: SidebarLayoutStore,
   host: HostService,
   remoteDesktop: RemoteDesktopManager,
   remoteServers: RemoteServerManager,
@@ -321,6 +341,24 @@ function registerIpcHandlers(
       ? service.listBots()
       : remoteServers.request("/v1/agents", {}, serverId, decodeBotSummaries);
   });
+  handleTrusted(IPC_CHANNELS.agentGetSidebarLayout, (input: unknown): Promise<SidebarLayoutSnapshot> => {
+    const { serverId } = parseAgentRequest(input);
+    return serverId === "local"
+      ? Promise.resolve(sidebarLayout.getSnapshot())
+      : remoteServers.request("/v1/sidebar-layout", {}, serverId, decodeSidebarLayoutSnapshot);
+  });
+  handleTrusted(IPC_CHANNELS.agentMutateSidebarLayout, (input: unknown): Promise<SidebarLayoutSnapshot> => {
+    const scoped = parseAgentRequest(input);
+    const action = parseSidebarLayoutAction(scoped.payload);
+    return scoped.serverId === "local"
+      ? sidebarLayout.mutate(action, new Set(service.listBots().map((bot) => bot.id)))
+      : remoteServers.request(
+          "/v1/sidebar-layout/actions",
+          { method: "POST", body: action },
+          scoped.serverId,
+          decodeSidebarLayoutSnapshot,
+        );
+  });
   handleTrusted(IPC_CHANNELS.agentCreateBot, (input: unknown) => {
     const { serverId, payload } = parseAgentRequest(input);
     const parsed = parseCreateBot(payload);
@@ -341,7 +379,132 @@ function registerIpcHandlers(
   });
   handleTrusted(IPC_CHANNELS.agentDeleteBot, (input: unknown) => {
     const scoped = parseAgentRequest(input);
-    return routeDeleteBot(service, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
+    const botId = requireString(scoped.payload, "botId");
+    return routeDeleteBot(service, sidebarLayout, remoteServers, scoped.serverId, botId);
+  });
+  handleTrusted(IPC_CHANNELS.agentListMemories, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
+    return scoped.serverId === "local"
+      ? service.listMemories(botId)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(botId)}/memories`,
+          {},
+          scoped.serverId,
+          decodeBotMemories,
+        );
+  });
+  handleTrusted(IPC_CHANNELS.agentCreateMemory, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseCreateBotMemory(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.createMemory(parsed)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/memories`,
+          { method: "POST", body: { text: parsed.text } },
+          scoped.serverId,
+          decodeBotMemory,
+        );
+  });
+  handleTrusted(IPC_CHANNELS.agentUpdateMemory, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseUpdateBotMemory(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.updateMemory(parsed)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/memories/${encodeURIComponent(parsed.memoryId)}`,
+          { method: "PATCH", body: { text: parsed.text } },
+          scoped.serverId,
+          decodeBotMemory,
+        );
+  });
+  handleTrusted(IPC_CHANNELS.agentDeleteMemory, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseDeleteBotMemory(scoped.payload);
+    if (scoped.serverId === "local") return service.deleteMemory(parsed);
+    return remoteServers.request(
+      `/v1/agents/${encodeURIComponent(parsed.botId)}/memories/${encodeURIComponent(parsed.memoryId)}`,
+      { method: "DELETE" },
+      scoped.serverId,
+      decodeVoid,
+    );
+  });
+  handleTrusted(IPC_CHANNELS.agentClearMemories, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
+    if (scoped.serverId === "local") return service.clearMemories(botId);
+    return remoteServers.request(
+      `/v1/agents/${encodeURIComponent(botId)}/memories`,
+      { method: "DELETE" },
+      scoped.serverId,
+      decodeVoid,
+    );
+  });
+  handleTrusted(IPC_CHANNELS.agentListRoutines, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
+    return scoped.serverId === "local"
+      ? service.listRoutines(botId)
+      : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/routines`, {}, scoped.serverId, decodeRoutines);
+  });
+  handleTrusted(IPC_CHANNELS.agentCreateRoutine, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseCreateRoutine(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.createRoutine(parsed)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/routines`,
+          { method: "POST", body: parsed },
+          scoped.serverId,
+          decodeRoutine,
+        );
+  });
+  handleTrusted(IPC_CHANNELS.agentUpdateRoutine, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseUpdateRoutine(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.updateRoutine(parsed)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/routines/${encodeURIComponent(parsed.routineId)}`,
+          { method: "PATCH", body: parsed },
+          scoped.serverId,
+          decodeRoutine,
+        );
+  });
+  handleTrusted(IPC_CHANNELS.agentDeleteRoutine, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseDeleteRoutine(scoped.payload);
+    if (scoped.serverId === "local") return service.deleteRoutine(parsed);
+    return remoteServers.request(
+      `/v1/agents/${encodeURIComponent(parsed.botId)}/routines/${encodeURIComponent(parsed.routineId)}`,
+      { method: "DELETE" },
+      scoped.serverId,
+      decodeVoid,
+    );
+  });
+  handleTrusted(IPC_CHANNELS.agentTestRoutine, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseTestRoutine(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.testRoutine(parsed)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/routines/${encodeURIComponent(parsed.routineId)}/test`,
+          { method: "POST" },
+          scoped.serverId,
+          decodeRoutineRun,
+        );
+  });
+  handleTrusted(IPC_CHANNELS.agentListRoutineRuns, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseListRoutineRuns(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.listRoutineRuns(parsed)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/routines/${encodeURIComponent(parsed.routineId)}/runs?limit=${parsed.limit}`,
+          {},
+          scoped.serverId,
+          decodeRoutineRuns,
+        );
   });
   handleTrusted(IPC_CHANNELS.agentReadConversation, (input: unknown) => {
     const scoped = parseAgentRequest(input);
@@ -1001,6 +1164,9 @@ if (!hasSingleInstanceLock) {
       const centralAuthInitialization = centralAuthManager.initialize();
       const store = new BotStore(app.getPath("userData"), homedir());
       await store.initialize();
+      const sidebarLayoutStore = new SidebarLayoutStore(join(app.getPath("userData"), SIDEBAR_LAYOUT_FILE));
+      await sidebarLayoutStore.initialize();
+      await sidebarLayoutStore.reconcileAgents(new Set(store.list().map((bot) => bot.id)));
       mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot, store.database);
       await mailboxStore.initialize();
       configureApplicationProtocol();
@@ -1053,6 +1219,7 @@ if (!hasSingleInstanceLock) {
       hostService = new HostService({
         store: teamStore,
         agents: service,
+        sidebarLayout: sidebarLayoutStore,
         mailbox: mailboxStore,
         browser: browserHost,
         chat: teamChatStore,
@@ -1169,6 +1336,9 @@ if (!hasSingleInstanceLock) {
         beforeInstall: prepareForShutdown,
       });
       service.on("event", (event) => forwardAgentEvent("local", event));
+      sidebarLayoutStore.on("changed", (layout) =>
+        forwardAgentEvent("local", { type: "sidebar-layout-changed", layout }),
+      );
       host.on("changed", forwardHostStatus);
       host.on("presence", (snapshot) => forwardTeamPresence("local", snapshot));
       host.on("directMessage", (event) => forwardDirectMessage("local", event));
@@ -1191,6 +1361,7 @@ if (!hasSingleInstanceLock) {
         updateService,
         setupFile,
         () => agentInitialization.start(),
+        sidebarLayoutStore,
         host,
         remoteDesktop,
         remoteServers,
@@ -1386,10 +1557,19 @@ function routeUpdateBot(
       );
 }
 
-function routeDeleteBot(service: AgentService, remoteServers: RemoteServerManager, serverId: string, botId: string) {
-  return serverId === "local"
-    ? service.deleteBot(botId)
-    : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}`, { method: "DELETE" }, serverId, decodeVoid);
+async function routeDeleteBot(
+  service: AgentService,
+  sidebarLayout: SidebarLayoutStore,
+  remoteServers: RemoteServerManager,
+  serverId: string,
+  botId: string,
+): Promise<void> {
+  if (serverId === "local") {
+    await service.deleteBot(botId);
+    await sidebarLayout.removeAgent(botId);
+    return;
+  }
+  await remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}`, { method: "DELETE" }, serverId, decodeVoid);
 }
 
 function routeReadConversation(host: HostService, remoteServers: RemoteServerManager, serverId: string, botId: string) {

@@ -35,6 +35,12 @@ export interface BotMessage {
   citations?: MessageCitation[];
   exchange?: AgentExchangeSummary;
   reaction?: MessageReaction | null;
+  routine?: {
+    routineId: string;
+    runId: string;
+    name: string;
+    scheduledFor: string;
+  };
   items?: string[];
 }
 

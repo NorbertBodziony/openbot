@@ -37,7 +37,7 @@ export const Gallery: Story = {
         <Field label="Invalid example" htmlFor="foundation-invalid" error="This field needs attention.">
           <Input id="foundation-invalid" invalid value="Invalid value" />
         </Field>
-        <Button type="submit" variant="primary">
+        <Button type="submit" variant="default">
           Save agent
         </Button>
       </form>

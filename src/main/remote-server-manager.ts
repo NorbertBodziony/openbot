@@ -9,6 +9,7 @@ import type {
   AgentModelOption,
   AgentStatus,
   AvatarImageInput,
+  BotMemory,
   BotSummary,
   BrowserControlState,
   BrowserTab,
@@ -38,9 +39,12 @@ import type {
   QueueSnapshot,
   RemoteDesktopCapabilities,
   RemoteDesktopSession,
+  Routine,
+  RoutineRun,
   SendDirectMessageInput,
   ServerSummary,
   SetTeamTypingInput,
+  SidebarLayoutSnapshot,
   TeamInviteSummary,
   TeamMemberSummary,
   TeamPresenceSnapshot,
@@ -52,8 +56,12 @@ import {
   isAgentModel,
   isAvatarHue,
   isAvatarSeed,
+  isBotMemory,
   isConversationMessage,
   isReasoningEffort,
+  isRoutine,
+  isRoutineRun,
+  isSidebarLayoutSnapshot,
   isTeamRealtimeEvent,
 } from "@openbot/contracts/ipc";
 import {
@@ -1054,6 +1062,43 @@ export function decodeAgentModelOptions(value: unknown): AgentModelOption[] {
 export function decodeBotSummaries(value: unknown): BotSummary[] {
   if (!Array.isArray(value)) throw new Error("Invalid remote agent list.");
   return value.map(decodeBotSummary);
+}
+
+export function decodeBotMemory(value: unknown): BotMemory {
+  if (!isBotMemory(value)) throw new Error("Invalid remote agent memory.");
+  return value;
+}
+
+export function decodeBotMemories(value: unknown): BotMemory[] {
+  if (!Array.isArray(value) || !value.every(isBotMemory)) {
+    throw new Error("Invalid remote agent memories.");
+  }
+  return value;
+}
+
+export function decodeRoutine(value: unknown): Routine {
+  if (!isRoutine(value)) throw new Error("Invalid remote routine.");
+  return value;
+}
+
+export function decodeRoutines(value: unknown): Routine[] {
+  if (!Array.isArray(value) || !value.every(isRoutine)) throw new Error("Invalid remote routine list.");
+  return value;
+}
+
+export function decodeRoutineRun(value: unknown): RoutineRun {
+  if (!isRoutineRun(value)) throw new Error("Invalid remote routine run.");
+  return value;
+}
+
+export function decodeRoutineRuns(value: unknown): RoutineRun[] {
+  if (!Array.isArray(value) || !value.every(isRoutineRun)) throw new Error("Invalid remote routine history.");
+  return value;
+}
+
+export function decodeSidebarLayoutSnapshot(value: unknown): SidebarLayoutSnapshot {
+  if (!isSidebarLayoutSnapshot(value)) throw new Error("Invalid sidebar layout response.");
+  return value;
 }
 
 export function decodeQueueSnapshot(value: unknown): QueueSnapshot {

@@ -1,6 +1,6 @@
 import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import type { JSX } from "@solidjs/web";
-import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js";
+import { createMemo, createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
 import type { BotProfile, MessageCitation } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui";
@@ -20,6 +20,7 @@ export interface RichMessageTextProps {
   onOpenSharedFile?: (path: string) => void;
   onOpenWorkspaceFile?: (path: string) => void;
   showCitationFooter?: boolean;
+  streamingTail?: boolean;
 }
 
 export function RichMessageText(props: RichMessageTextProps) {
@@ -30,6 +31,13 @@ export function RichMessageText(props: RichMessageTextProps) {
     () => new Map((props.attachments ?? []).map((attachment) => [attachment.id, attachment])),
   );
   const parts = createMemo(() => richMessageParts(props.body, props.bots, citationsByNumber(), attachmentsById()));
+  const renderedParts = createMemo(() => {
+    const values = parts();
+    return values.map((part, index) => ({
+      part,
+      streamingTail: props.streamingTail === true && index === values.length - 1,
+    }));
+  });
   const citations = createMemo(() => (props.citations ?? []).filter((citation) => safeBrowserUrl(citation.url)));
   const tooltipId = `rich-message-tooltip-${createUniqueId()}`;
   const [tooltip, setTooltip] = createSignal<{
@@ -61,14 +69,16 @@ export function RichMessageText(props: RichMessageTextProps) {
 
   return (
     <>
-      <For each={parts()}>
-        {(part) => {
+      <For each={renderedParts()}>
+        {(renderedPart) => {
+          const part = renderedPart.part;
           const attachment = part.attachment;
           const sharedPath = part.sharedPath;
           if (attachment || sharedPath) {
             const name = attachment?.name ?? part.text;
             return (
               <Button
+                variant="ghost"
                 type="button"
                 class="message-file-reference"
                 data-file-tone={attachmentReferenceTone(name)}
@@ -103,6 +113,7 @@ export function RichMessageText(props: RichMessageTextProps) {
           if (part.bot) {
             return (
               <Button
+                variant="ghost"
                 type="button"
                 class="message-agent-tag"
                 aria-label={`Open agent ${part.bot.name}`}
@@ -139,7 +150,7 @@ export function RichMessageText(props: RichMessageTextProps) {
               </span>
             );
           }
-          return part.text;
+          return renderedPart.streamingTail ? <StreamingTailText body={part.text} /> : part.text;
         }}
       </For>
       <Show when={props.showCitationFooter !== false && citations().length > 0}>
@@ -181,6 +192,47 @@ export function RichMessageText(props: RichMessageTextProps) {
       </Show>
     </>
   );
+}
+
+function StreamingTailText(props: { body: string }) {
+  const parts = createMemo(() => splitStreamingTail(props.body));
+  let word: HTMLSpanElement | undefined;
+  let revealFrame: number | undefined;
+
+  const revealWord = (element: HTMLSpanElement) => {
+    word = element;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      word.classList.add("is-in");
+      return;
+    }
+    word.style.transition = "none";
+    word.classList.remove("is-in");
+    void word.offsetWidth;
+    word.style.removeProperty("transition");
+    revealFrame = window.requestAnimationFrame(() => word?.classList.add("is-in"));
+  };
+  onCleanup(() => {
+    if (revealFrame !== undefined) window.cancelAnimationFrame(revealFrame);
+  });
+
+  return (
+    <>
+      {parts().prefix}
+      <Show when={parts().tail}>
+        {(tail) => (
+          <span ref={revealWord} class="t-stream-w">
+            {tail()}
+          </span>
+        )}
+      </Show>
+    </>
+  );
+}
+
+function splitStreamingTail(body: string): { prefix: string; tail: string } {
+  const match = /(\S+\s*)$/u.exec(body);
+  if (!match || match.index === undefined) return { prefix: body, tail: "" };
+  return { prefix: body.slice(0, match.index), tail: match[1] };
 }
 
 export function MessageLink(props: {

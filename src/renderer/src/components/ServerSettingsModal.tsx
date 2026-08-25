@@ -17,6 +17,7 @@ import { TeamPersonAvatar, teamMemberName } from "./TeamPersonAvatar";
 import {
   Badge,
   Button,
+  buttonVariants,
   Card,
   Check,
   ChevronDown,
@@ -34,7 +35,7 @@ import {
   SelectPrimitive,
   Settings,
   ShieldCheck,
-  Switch,
+  SwitchField,
   Tabs,
   Text,
   Trash2,
@@ -307,7 +308,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
               <Show when={props.loadError}>
                 <Button
                   type="button"
-                  size="md"
+                  size="sm"
                   variant="ghost"
                   loading={props.loading}
                   onClick={() => void run("retry", props.onRetry)}
@@ -324,13 +325,13 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 Unsaved changes
               </Text>
               <div class="server-settings-save-actions">
-                <Button type="button" size="md" variant="ghost" disabled={Boolean(busy())} onClick={resetIdentity}>
+                <Button type="button" size="sm" variant="ghost" disabled={Boolean(busy())} onClick={resetIdentity}>
                   Reset
                 </Button>
                 <Button
                   type="button"
-                  size="md"
-                  variant="primary"
+                  size="sm"
+                  variant="default"
                   loading={busy() === "identity"}
                   loadingLabel="Saving…"
                   disabled={Boolean(busy())}
@@ -418,7 +419,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   <div class="server-settings-logo-actions">
                     <Button
                       type="button"
-                      size="md"
+                      size="sm"
                       variant="ghost"
                       aria-label="Change server logo"
                       onClick={() => logoInput?.click()}
@@ -428,7 +429,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                     <Show when={draftLogoUrl()}>
                       <Button
                         type="button"
-                        size="md"
+                        size="sm"
                         variant="ghost"
                         aria-label="Remove server logo"
                         onClick={() => {
@@ -496,9 +497,9 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
             Access
           </Heading>
           <Card class="server-settings-general-card">
-            <Switch
+            <SwitchField
               class="server-settings-general-row server-settings-publish-setting"
-              size="md"
+              size="default"
               checked={published()}
               disabled={!local() || !configured() || Boolean(busy())}
               onChange={(value) => void run("publish", () => props.onSetPublished(value))}
@@ -516,7 +517,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
               </div>
               <div class="server-settings-address-control">
                 <code>{address() ?? "Not available while private"}</code>
-                <Button type="button" size="md" variant="ghost" disabled={!address()} onClick={copyAddress}>
+                <Button type="button" size="sm" variant="ghost" disabled={!address()} onClick={copyAddress}>
                   <Copy aria-hidden="true" />
                   {addressCopied() ? "Copied" : "Copy address"}
                 </Button>
@@ -640,8 +641,8 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
               />
               <Button
                 type="button"
-                size="lg"
-                variant="primary"
+                size="default"
+                variant="default"
                 loading={busy() === "invite"}
                 disabled={!canInvite()}
                 onClick={() => void createInvite()}
@@ -670,7 +671,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   <Show when={!result().email}>
                     <Button
                       type="button"
-                      size="md"
+                      size="sm"
                       variant="ghost"
                       onClick={() => void copyText(result().inviteUrl, setInviteCopied)}
                     >
@@ -729,13 +730,13 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
         <Show when={removeMemberId() === member.id}>
           <div class="server-settings-remove-confirmation" role="alert">
             <span>Remove this member from the server?</span>
-            <Button type="button" size="md" onClick={() => setRemoveMemberId(null)}>
+            <Button variant="outline" type="button" size="sm" onClick={() => setRemoveMemberId(null)}>
               Cancel
             </Button>
             <Button
               type="button"
-              size="md"
-              variant="danger"
+              size="sm"
+              variant="destructive"
               loading={busy() === `remove:${member.id}`}
               onClick={() =>
                 void run(`remove:${member.id}`, async () => {
@@ -779,7 +780,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   </div>
                   <Button
                     type="button"
-                    size="md"
+                    size="sm"
                     variant="ghost"
                     disabled={!actionsAvailable() || Boolean(busy())}
                     onClick={() => void run(`invite:${invite.id}`, () => props.onRevokeInvite(invite.id))}
@@ -915,9 +916,7 @@ function MemberActionsMenu(props: {
   return (
     <DropdownMenu.Root placement="bottom-end" gutter={4} modal={false}>
       <DropdownMenu.Trigger
-        class="ui-button ui-icon-button server-settings-member-menu-trigger"
-        data-variant="ghost"
-        data-size="md"
+        class={`${buttonVariants({ variant: "ghost", size: "icon-sm" })} ui-icon-button server-settings-member-menu-trigger`}
         aria-label={`Actions for ${name()}`}
       >
         <Ellipsis aria-hidden="true" />

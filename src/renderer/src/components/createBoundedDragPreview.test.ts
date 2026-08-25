@@ -11,7 +11,7 @@ describe("createBoundedDragPreview", () => {
     const source = document.createElement("div");
     bounds.append(source);
     document.body.append(bounds);
-    vi.spyOn(bounds, "getBoundingClientRect").mockReturnValue(rect(12, 5, 256, 200));
+    const boundsRead = vi.spyOn(bounds, "getBoundingClientRect").mockReturnValue(rect(12, 5, 256, 200));
     vi.spyOn(source, "getBoundingClientRect").mockReturnValue(rect(12, 10, 72, 94));
     const setDragImage = vi.fn();
     const event = { clientX: 48, clientY: 30, dataTransfer: { setDragImage } };
@@ -21,12 +21,12 @@ describe("createBoundedDragPreview", () => {
     preview.move(800, 800);
 
     const clone = document.querySelector<HTMLElement>(".test-drag-preview");
-    expect(clone?.style.left).toBe("196px");
-    expect(clone?.style.top).toBe("111px");
+    expect(clone?.style.transform).toBe("translate3d(196px, 111px, 0)");
 
     preview.move(-100, -100);
-    expect(clone?.style.left).toBe("12px");
-    expect(clone?.style.top).toBe("5px");
+    expect(clone?.style.transform).toBe("translate3d(12px, 5px, 0)");
+    for (let index = 0; index < 50; index += 1) preview.move(index * 8, index * 8);
+    expect(boundsRead).toHaveBeenCalledTimes(1);
     expect(setDragImage).toHaveBeenCalledOnce();
     preview.stop();
     expect(document.querySelector(".test-drag-preview")).not.toBeInTheDocument();

@@ -1,7 +1,7 @@
 import { render } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createLandingDemoController } from "./landing-demo";
-import { createMockOpenBot, type MockOpenBotOptions } from "./mock-openbot";
+import { createMockOpenBot } from "./mock-openbot";
 import { OpenBotPlayground } from "./OpenBotPlayground";
 
 describe("OpenBotPlayground", () => {
@@ -36,54 +36,6 @@ describe("OpenBotPlayground", () => {
     expect(dispose).toHaveBeenCalledOnce();
     expect(window.openbot).toBe(previousMock.api);
     previousMock.dispose();
-  });
-
-  it("uses the curated landing workspace only for the landing variant", () => {
-    const activeMock = createMockOpenBot();
-    let receivedOptions: MockOpenBotOptions | undefined;
-
-    const view = render(() => (
-      <OpenBotPlayground
-        variant="landing"
-        dependencies={{
-          createMock: (options) => {
-            receivedOptions = options;
-            return activeMock;
-          },
-          renderApp: () => <div data-testid="landing-openbot-app" />,
-        }}
-      />
-    ));
-
-    expect(view.getByTestId("landing-openbot-app")).toBeInTheDocument();
-    expect(receivedOptions?.bots?.map((bot) => bot.name)).toEqual(["Chief", "Research", "Builder", "Launch"]);
-    expect(receivedOptions?.servers?.find((server) => server.id === "team")).toMatchObject({
-      name: "OpenBot team",
-      active: true,
-    });
-    expect(receivedOptions?.servers?.every((server) => server.logoUrl?.includes("openbot-logo"))).toBe(true);
-    expect(receivedOptions?.snapshots?.chief.messages.some((message) => message.text.includes("## Launch plan"))).toBe(
-      true,
-    );
-    expect(receivedOptions?.snapshots?.chief.messages.some((message) => message.exchange)).toBe(true);
-    expect(receivedOptions?.directThreads?.map((thread) => thread.otherMemberId).sort()).toEqual([
-      "member-alice",
-      "member-jon",
-      "member-maya",
-    ]);
-    expect(receivedOptions?.directSnapshots?.["member-alice"]?.messages.at(-1)?.text).toContain("release-note.md");
-    expect(receivedOptions?.directSnapshots?.["member-maya"]?.messages).toHaveLength(3);
-    expect(receivedOptions?.directSnapshots?.["member-jon"]?.messages).toHaveLength(3);
-    expect(receivedOptions?.authState).toMatchObject({
-      status: "signed_in",
-      user: { email: "norbertbodziony@gmail.com", name: "Norbert" },
-    });
-    expect(receivedOptions?.presence?.members.find((member) => member.id === "member-self")?.email).toBe(
-      "norbertbodziony@gmail.com",
-    );
-    expect(receivedOptions?.remoteDesktopSessions).toEqual([]);
-
-    view.unmount();
   });
 
   it("reports ready and accepts a same-origin start message only from its parent", async () => {

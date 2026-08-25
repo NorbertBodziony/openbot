@@ -29,6 +29,7 @@ export function normalizeSidebarPinnedItems(value: readonly SidebarPinnedItem[])
   const seen = new Set<string>();
   const items: SidebarPinnedItem[] = [];
   for (const candidate of value) {
+    if (candidate.kind !== "agent") continue;
     const key = sidebarPinnedItemKey(candidate);
     if (seen.has(key)) continue;
     seen.add(key);

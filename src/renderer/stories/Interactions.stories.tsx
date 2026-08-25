@@ -3,6 +3,7 @@ import { expect, fn, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import {
   AlertDialog,
+  buttonVariants,
   Combobox,
   ContextMenu,
   Copy,
@@ -36,9 +37,7 @@ export const DialogFocus: Story = {
         Dialog
       </Heading>
       <Dialog.Root>
-        <Dialog.Trigger class="ui-button" data-variant="secondary" data-size="md">
-          Open dialog
-        </Dialog.Trigger>
+        <Dialog.Trigger class={buttonVariants({ variant: "outline", size: "sm" })}>Open dialog</Dialog.Trigger>
         <Dialog.Portal>
           <Dialog.Overlay class="foundation-overlay">
             <Dialog.Content class="foundation-dialog">
@@ -46,10 +45,10 @@ export const DialogFocus: Story = {
               <Dialog.Description>Choose a short, recognizable name.</Dialog.Description>
               <Input aria-label="Agent name" value="Researcher" />
               <div class="foundation-dialog-actions">
-                <Dialog.CloseButton class="ui-button" data-variant="secondary" data-size="md">
+                <Dialog.CloseButton class={buttonVariants({ variant: "outline", size: "sm" })}>
                   Cancel
                 </Dialog.CloseButton>
-                <Dialog.CloseButton class="ui-button" data-variant="primary" data-size="md">
+                <Dialog.CloseButton class={buttonVariants({ variant: "default", size: "sm" })}>
                   Create
                 </Dialog.CloseButton>
               </div>
@@ -83,7 +82,7 @@ export const AlertDialogConfirmation: Story = {
         Alert dialog
       </Heading>
       <AlertDialog.Root>
-        <AlertDialog.Trigger class="ui-button" data-variant="danger" data-size="md">
+        <AlertDialog.Trigger class={buttonVariants({ variant: "destructive", size: "sm" })}>
           Delete agent
         </AlertDialog.Trigger>
         <AlertDialog.Portal>
@@ -92,10 +91,13 @@ export const AlertDialogConfirmation: Story = {
               <AlertDialog.Title>Delete Researcher?</AlertDialog.Title>
               <AlertDialog.Description>This action cannot be undone.</AlertDialog.Description>
               <div class="foundation-dialog-actions">
-                <AlertDialog.CloseButton class="ui-button" data-variant="secondary" data-size="md" aria-label="Cancel">
+                <AlertDialog.CloseButton class={buttonVariants({ variant: "outline", size: "sm" })} aria-label="Cancel">
                   Cancel
                 </AlertDialog.CloseButton>
-                <AlertDialog.CloseButton class="ui-button" data-variant="danger" data-size="md" aria-label="Delete">
+                <AlertDialog.CloseButton
+                  class={buttonVariants({ variant: "destructive", size: "sm" })}
+                  aria-label="Delete"
+                >
                   Delete
                 </AlertDialog.CloseButton>
               </div>
@@ -125,7 +127,7 @@ export const MenuPopoverTooltip: Story = {
       </Heading>
       <div class="foundation-story-row">
         <DropdownMenu.Root>
-          <DropdownMenu.Trigger class="ui-button" data-variant="secondary" data-size="md">
+          <DropdownMenu.Trigger class={buttonVariants({ variant: "outline", size: "sm" })}>
             Agent actions
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
@@ -147,23 +149,19 @@ export const MenuPopoverTooltip: Story = {
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
         <Popover.Root>
-          <Popover.Trigger class="ui-button" data-variant="secondary" data-size="md">
-            Show details
-          </Popover.Trigger>
+          <Popover.Trigger class={buttonVariants({ variant: "outline", size: "sm" })}>Show details</Popover.Trigger>
           <Popover.Portal>
             <Popover.Content class="foundation-popover">
               <Popover.Title>Agent details</Popover.Title>
               <Popover.Description>Compact information anchored to its trigger.</Popover.Description>
-              <Popover.CloseButton class="ui-button" data-variant="ghost" data-size="sm" aria-label="Close">
+              <Popover.CloseButton class={buttonVariants({ variant: "ghost", size: "sm" })} aria-label="Close">
                 Close
               </Popover.CloseButton>
             </Popover.Content>
           </Popover.Portal>
         </Popover.Root>
         <Tooltip.Root openDelay={0} closeDelay={0}>
-          <Tooltip.Trigger class="ui-button" data-variant="ghost" data-size="md">
-            Hover or focus
-          </Tooltip.Trigger>
+          <Tooltip.Trigger class={buttonVariants({ variant: "ghost", size: "sm" })}>Hover or focus</Tooltip.Trigger>
           <Tooltip.Portal>
             <Tooltip.Content class="foundation-tooltip">Keyboard shortcut: ⌘K</Tooltip.Content>
           </Tooltip.Portal>

@@ -3,7 +3,7 @@ import type { BrowserControlAction, BrowserControlSession, BrowserTab } from "@o
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import type { BotProfile } from "../../data";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "../PanelResizer";
-import { Button, Input, PanelRight, PictureInPicture2, Tabs, X } from "../ui";
+import { Button, buttonVariants, Input, PanelRight, PictureInPicture2, Tabs, X } from "../ui";
 import {
   BrowserBackIcon,
   BrowserControlIcon,
@@ -240,6 +240,7 @@ export default function BrowserPanel(props: BrowserPanelProps) {
             </span>
             <div class="browser-pip-actions">
               <Button
+                variant="ghost"
                 type="button"
                 class="browser-toolbar-button"
                 aria-label="Dock browser to right sidebar"
@@ -247,7 +248,13 @@ export default function BrowserPanel(props: BrowserPanelProps) {
               >
                 <PanelRight class="browser-toolbar-icon" />
               </Button>
-              <Button type="button" class="browser-toolbar-button" aria-label="Hide browser" onClick={props.onHidePip}>
+              <Button
+                variant="ghost"
+                type="button"
+                class="browser-toolbar-button"
+                aria-label="Hide browser"
+                onClick={props.onHidePip}
+              >
                 <X class="browser-toolbar-icon" />
               </Button>
             </div>
@@ -303,11 +310,11 @@ export default function BrowserPanel(props: BrowserPanelProps) {
                       class={["browser-tab-wrap", { "browser-tab-controlled": Boolean(control()) }]}
                     >
                       <Tabs.Trigger
-                        as={Button}
+                        as="button"
                         value={tab.id}
                         aria-label={control() ? `${title()}, controlled by ${controller()?.name ?? "agent"}` : title()}
                         aria-description="Press Delete or Control/Command W to close"
-                        class="browser-tab"
+                        class={buttonVariants({ variant: "ghost", class: "browser-tab" })}
                         onPointerDown={(event) => {
                           if (event.button !== 1) return;
                           event.preventDefault();
@@ -358,6 +365,7 @@ export default function BrowserPanel(props: BrowserPanelProps) {
               </For>
             </Tabs.List>
             <Button
+              variant="ghost"
               type="button"
               class="browser-new-tab"
               aria-label="New browser tab"
@@ -372,13 +380,14 @@ export default function BrowserPanel(props: BrowserPanelProps) {
         </header>
         <Tabs.Content forceMount value={props.activeTab?.id ?? "__empty"} class="browser-tab-panel">
           <div class="browser-toolbar">
-            <Button type="button" aria-label="Go back" class="browser-toolbar-button" disabled>
+            <Button variant="ghost" type="button" aria-label="Go back" class="browser-toolbar-button" disabled>
               <BrowserBackIcon />
             </Button>
-            <Button type="button" aria-label="Go forward" class="browser-toolbar-button" disabled>
+            <Button variant="ghost" type="button" aria-label="Go forward" class="browser-toolbar-button" disabled>
               <BrowserForwardIcon />
             </Button>
             <Button
+              variant="ghost"
               type="button"
               aria-label="Reload page"
               class="browser-toolbar-button"
@@ -389,6 +398,7 @@ export default function BrowserPanel(props: BrowserPanelProps) {
             </Button>
             {addressBar()}
             <Button
+              variant="ghost"
               type="button"
               class="browser-toolbar-button"
               aria-label="Open browser Picture in Picture"

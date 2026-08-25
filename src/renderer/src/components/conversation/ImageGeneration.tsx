@@ -86,6 +86,7 @@ export function ImageGeneration(props: ImageGenerationProps) {
         </div>
         <Show when={Boolean(props.attachment?.previewUrl) && !previewError()}>
           <Button
+            variant="ghost"
             type="button"
             class={["image-generation-preview", { "image-generation-preview-visible": hasImage() }]}
             aria-label="Preview generated image"
@@ -106,6 +107,7 @@ export function ImageGeneration(props: ImageGenerationProps) {
         </Show>
         <Show when={hasImage() && props.attachment && props.onDownload}>
           <Button
+            variant="ghost"
             type="button"
             class="image-generation-hover-download"
             aria-label="Download generated image"

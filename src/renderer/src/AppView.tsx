@@ -134,10 +134,16 @@ function WorkspaceShell(props: {
     directPeople,
     directThreads,
     sidebarAgentStates,
+    sidebarLayout,
+    collapsedSidebarSectionIds,
+    mutateSidebarLayout,
+    toggleSidebarSection,
     pinnedSidebarItems,
+    sidebarPeopleOrder,
     pinSidebarItem,
     unpinSidebarItem,
     reorderPinnedSidebarItems,
+    reorderSidebarPeople,
     selectBot,
     selectDirectMember,
     openBotSetup,
@@ -258,10 +264,16 @@ function WorkspaceShell(props: {
         directThreads={directThreads()}
         activeDirectMemberId={activeDirectMemberId()}
         agentStates={sidebarAgentStates()}
+        layout={sidebarLayout()}
+        collapsedSectionIds={collapsedSidebarSectionIds()}
+        onMutateLayout={mutateSidebarLayout}
+        onToggleSection={toggleSidebarSection}
         pinnedItems={pinnedSidebarItems()}
+        peopleOrder={sidebarPeopleOrder()}
         onPin={pinSidebarItem}
         onUnpin={unpinSidebarItem}
         onReorderPinned={reorderPinnedSidebarItems}
+        onReorderPeople={reorderSidebarPeople}
         onSelectBot={selectBot}
         onSelectPerson={(memberId) => void selectDirectMember(memberId)}
         onPreloadDirectConversation={() => void DirectConversation.preload()}

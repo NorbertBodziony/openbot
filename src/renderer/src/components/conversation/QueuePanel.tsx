@@ -457,6 +457,7 @@ export function QueuePanel(props: QueuePanelProps) {
                     </span>
                     <div class="agent-queue-actions">
                       <Button
+                        variant="ghost"
                         type="button"
                         class="agent-queue-steer"
                         disabled={!props.canSteer || delivery.status !== "queued"}
@@ -478,6 +479,7 @@ export function QueuePanel(props: QueuePanelProps) {
                         <span>{delivery.status === "starting" ? "Steering" : "Steer"}</span>
                       </Button>
                       <Button
+                        variant="destructive-ghost"
                         type="button"
                         class="agent-queue-icon-button agent-queue-delete"
                         disabled={delivery.status !== "queued"}
@@ -498,6 +500,7 @@ export function QueuePanel(props: QueuePanelProps) {
                         <TrashIcon />
                       </Button>
                       <Button
+                        variant="ghost"
                         type="button"
                         class="agent-queue-icon-button agent-queue-edit"
                         disabled={delivery.status !== "queued"}

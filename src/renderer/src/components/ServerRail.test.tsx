@@ -52,13 +52,18 @@ describe("ServerRail", () => {
     const preview = document.body.querySelector<HTMLElement>(".server-rail-drag-preview");
     expect(preview).toBeInTheDocument();
     expect(dataTransfer.setDragImage).toHaveBeenCalled();
-    expect(preview).toHaveStyle({ left: "8px", top: "60px", width: "56px" });
+    expect(preview).toHaveStyle({
+      left: "8px",
+      top: "0px",
+      width: "56px",
+      transform: "translate3d(0px, 60px, 0)",
+    });
 
     window.dispatchEvent(new MouseEvent("dragover", { clientX: 900, clientY: 500 }));
-    expect(preview).toHaveStyle({ left: "8px", top: "354px" });
+    expect(preview).toHaveStyle({ left: "8px", transform: "translate3d(0px, 354px, 0)" });
 
     window.dispatchEvent(new MouseEvent("dragover", { clientX: -500, clientY: 0 }));
-    expect(preview).toHaveStyle({ left: "8px", top: "10px" });
+    expect(preview).toHaveStyle({ left: "8px", transform: "translate3d(0px, 10px, 0)" });
 
     fireEvent.dragEnd(item, { dataTransfer });
     expect(preview).not.toBeInTheDocument();

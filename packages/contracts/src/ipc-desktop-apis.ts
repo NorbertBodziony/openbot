@@ -16,6 +16,7 @@ import type {
   AgentModelOption,
   AgentStatus,
   AttachmentImportEvent,
+  BotMemory,
   BotSummary,
   CancelQueuedMessageInput,
   ChooseAttachmentsInput,
@@ -24,9 +25,14 @@ import type {
   ConversationSearchPage,
   ConversationWithReadState,
   CreateBotInput,
+  CreateBotMemoryInput,
+  CreateRoutineInput,
+  DeleteBotMemoryInput,
+  DeleteRoutineInput,
   DraftAttachment,
   FilePreview,
   InterruptTurnInput,
+  ListRoutineRunsInput,
   MarkConversationReadInput,
   OpenAttachmentInput,
   OpenSharedFileInput,
@@ -37,13 +43,20 @@ import type {
   ReorderQueueInput,
   RespondToApprovalInput,
   RespondToPromptInput,
+  Routine,
+  RoutineRun,
   SearchConversationMessagesInput,
   SendMessageInput,
   SetAgentAvatarInput,
   SetMessageReactionInput,
+  SidebarLayoutAction,
+  SidebarLayoutSnapshot,
   SteerQueuedMessageInput,
+  TestRoutineInput,
   UpdateBotInput,
+  UpdateBotMemoryInput,
   UpdateQueuedMessageInput,
+  UpdateRoutineInput,
 } from "./ipc-conversation";
 import type {
   ConfigureHostInput,
@@ -84,10 +97,23 @@ export interface AgentDesktopApi {
   getUsage: () => Promise<AccountUsage>;
   listModels: () => Promise<AgentModelOption[]>;
   listBots: () => Promise<BotSummary[]>;
+  getSidebarLayout: () => Promise<SidebarLayoutSnapshot>;
+  mutateSidebarLayout: (action: SidebarLayoutAction) => Promise<SidebarLayoutSnapshot>;
   createBot: (input: CreateBotInput) => Promise<BotSummary>;
   updateBot: (input: UpdateBotInput) => Promise<BotSummary>;
   setAvatar: (input: SetAgentAvatarInput) => Promise<BotSummary>;
   deleteBot: (botId: string) => Promise<void>;
+  listMemories: (botId: string) => Promise<BotMemory[]>;
+  createMemory: (input: CreateBotMemoryInput) => Promise<BotMemory>;
+  updateMemory: (input: UpdateBotMemoryInput) => Promise<BotMemory>;
+  deleteMemory: (input: DeleteBotMemoryInput) => Promise<void>;
+  clearMemories: (botId: string) => Promise<void>;
+  listRoutines: (botId: string) => Promise<Routine[]>;
+  createRoutine: (input: CreateRoutineInput) => Promise<Routine>;
+  updateRoutine: (input: UpdateRoutineInput) => Promise<Routine>;
+  deleteRoutine: (input: DeleteRoutineInput) => Promise<void>;
+  testRoutine: (input: TestRoutineInput) => Promise<RoutineRun>;
+  listRoutineRuns: (input: ListRoutineRunsInput) => Promise<RoutineRun[]>;
   readConversation: (botId: string) => Promise<ConversationWithReadState>;
   readConversationPage: (input: ReadConversationPageInput) => Promise<ConversationPage>;
   searchConversationMessages: (input: SearchConversationMessagesInput) => Promise<ConversationSearchPage>;

@@ -4,6 +4,10 @@ import {
   type CancelQueuedMessageInput,
   type ChooseAttachmentsInput,
   type CreateBotInput,
+  type CreateBotMemoryInput,
+  type CreateRoutineInput,
+  type DeleteBotMemoryInput,
+  type DeleteRoutineInput,
   type ImportAttachmentsInput,
   type InterruptTurnInput,
   isAgentModel,
@@ -11,6 +15,8 @@ import {
   isAvatarSeed,
   isMessageReaction,
   isReasoningEffort,
+  isRoutineSchedule,
+  type ListRoutineRunsInput,
   type MarkConversationReadInput,
   type OpenAttachmentInput,
   type OpenSharedFileInput,
@@ -23,9 +29,13 @@ import {
   type SendMessageInput,
   type SetAgentAvatarInput,
   type SetMessageReactionInput,
+  type SidebarLayoutAction,
   type SteerQueuedMessageInput,
+  type TestRoutineInput,
   type UpdateBotInput,
+  type UpdateBotMemoryInput,
   type UpdateQueuedMessageInput,
+  type UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { parseAvatarImage } from "./avatar-inputs";
@@ -37,6 +47,72 @@ export function parseAgentRequest(value: unknown): AgentIpcRequest {
     serverId: requireString(value.serverId, "serverId"),
     payload: value.payload,
   };
+}
+
+export function parseSidebarLayoutAction(value: unknown): SidebarLayoutAction {
+  if (!isObject(value) || !isString(value.type)) throw new Error("Invalid sidebar layout action.");
+  switch (value.type) {
+    case "create":
+      return {
+        type: "create",
+        name: requireString(value.name, "name", INPUT_LIMITS.sidebarSectionName),
+        ...(value.agentId === undefined
+          ? {}
+          : { agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier) }),
+      };
+    case "rename":
+      return {
+        type: "rename",
+        sectionId: requireString(value.sectionId, "sectionId", INPUT_LIMITS.identifier),
+        name: requireString(value.name, "name", INPUT_LIMITS.sidebarSectionName),
+      };
+    case "delete":
+      return {
+        type: "delete",
+        sectionId: requireString(value.sectionId, "sectionId", INPUT_LIMITS.identifier),
+      };
+    case "move": {
+      const direction = value.direction;
+      if (direction !== "up" && direction !== "down") throw new Error("Invalid section move direction.");
+      const steps = value.steps;
+      if (
+        steps !== undefined &&
+        (!isNumber(steps) || !Number.isInteger(steps) || steps < 1 || steps > INPUT_LIMITS.sidebarSections + 2)
+      ) {
+        throw new Error("Invalid section move distance.");
+      }
+      return {
+        type: "move",
+        sectionId: requireString(value.sectionId, "sectionId", INPUT_LIMITS.identifier),
+        direction,
+        ...(steps === undefined ? {} : { steps }),
+      };
+    }
+    case "assign": {
+      const sectionId = value.sectionId;
+      if (sectionId !== null && !isString(sectionId)) throw new Error("Invalid section assignment.");
+      return {
+        type: "assign",
+        agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
+        sectionId,
+      };
+    }
+    case "move-agent": {
+      const sectionId = value.sectionId;
+      const beforeAgentId = value.beforeAgentId;
+      if (sectionId !== null && !isString(sectionId)) throw new Error("Invalid section assignment.");
+      if (beforeAgentId !== null && !isString(beforeAgentId)) throw new Error("Invalid agent order target.");
+      return {
+        type: "move-agent",
+        agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
+        sectionId,
+        beforeAgentId:
+          beforeAgentId === null ? null : requireString(beforeAgentId, "beforeAgentId", INPUT_LIMITS.identifier),
+      };
+    }
+    default:
+      throw new Error("Unknown sidebar layout action.");
+  }
 }
 
 export function parseCreateBot(value: unknown): CreateBotInput {
@@ -51,6 +127,90 @@ export function parseCreateBot(value: unknown): CreateBotInput {
     avatarHue,
     initialMessage: requireString(value.initialMessage, "initialMessage", INPUT_LIMITS.messageText),
   };
+}
+
+export function parseCreateBotMemory(value: unknown): CreateBotMemoryInput {
+  if (!isObject(value)) throw new Error("Invalid memory creation request.");
+  return {
+    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    text: requireString(value.text, "text", INPUT_LIMITS.agentMemoryText),
+  };
+}
+
+export function parseUpdateBotMemory(value: unknown): UpdateBotMemoryInput {
+  if (!isObject(value)) throw new Error("Invalid memory update request.");
+  return {
+    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    memoryId: requireString(value.memoryId, "memoryId", INPUT_LIMITS.identifier),
+    text: requireString(value.text, "text", INPUT_LIMITS.agentMemoryText),
+  };
+}
+
+export function parseDeleteBotMemory(value: unknown): DeleteBotMemoryInput {
+  if (!isObject(value)) throw new Error("Invalid memory deletion request.");
+  return {
+    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    memoryId: requireString(value.memoryId, "memoryId", INPUT_LIMITS.identifier),
+  };
+}
+
+export function parseCreateRoutine(value: unknown): CreateRoutineInput {
+  if (!isObject(value)) throw new Error("Invalid routine creation request.");
+  if (!isBoolean(value.active)) throw new Error("active must be a boolean.");
+  return {
+    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    name: requireString(value.name, "name", INPUT_LIMITS.routineName),
+    instruction: requireString(value.instruction, "instruction", INPUT_LIMITS.routineInstruction),
+    active: value.active,
+    timezone: requireString(value.timezone, "timezone", 128),
+    schedule: parseRoutineSchedule(value.schedule),
+  };
+}
+
+export function parseUpdateRoutine(value: unknown): UpdateRoutineInput {
+  if (!isObject(value)) throw new Error("Invalid routine update request.");
+  const parsed: UpdateRoutineInput = {
+    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    routineId: requireString(value.routineId, "routineId", INPUT_LIMITS.identifier),
+  };
+  if (value.name !== undefined) parsed.name = requireString(value.name, "name", INPUT_LIMITS.routineName);
+  if (value.instruction !== undefined) {
+    parsed.instruction = requireString(value.instruction, "instruction", INPUT_LIMITS.routineInstruction);
+  }
+  if (value.active !== undefined) {
+    if (!isBoolean(value.active)) throw new Error("active must be a boolean.");
+    parsed.active = value.active;
+  }
+  if (value.schedule !== undefined) parsed.schedule = parseRoutineSchedule(value.schedule);
+  if (Object.keys(parsed).length === 2) throw new Error("A routine update is required.");
+  return parsed;
+}
+
+export function parseDeleteRoutine(value: unknown): DeleteRoutineInput {
+  if (!isObject(value)) throw new Error("Invalid routine deletion request.");
+  return {
+    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    routineId: requireString(value.routineId, "routineId", INPUT_LIMITS.identifier),
+  };
+}
+
+export function parseTestRoutine(value: unknown): TestRoutineInput {
+  return parseDeleteRoutine(value);
+}
+
+export function parseListRoutineRuns(value: unknown): ListRoutineRunsInput {
+  const input = parseDeleteRoutine(value);
+  if (!isObject(value)) throw new Error("Invalid routine history request.");
+  const limit = value.limit ?? 50;
+  if (!isNumber(limit) || !Number.isInteger(limit) || limit < 1 || limit > INPUT_LIMITS.routineRunsPage) {
+    throw new Error("Invalid routine history limit.");
+  }
+  return { ...input, limit };
+}
+
+function parseRoutineSchedule(value: unknown): CreateRoutineInput["schedule"] {
+  if (!isRoutineSchedule(value)) throw new Error("Invalid routine schedule.");
+  return structuredClone(value);
 }
 
 export function parseReadConversationPage(value: unknown): ReadConversationPageInput {

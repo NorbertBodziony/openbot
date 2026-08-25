@@ -4,6 +4,14 @@
   min-width: 0;
 }
 
+.agent-memories-story-stage {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  overflow: hidden;
+  background: var(--openbot-bg-canvas);
+}
+
 .foundation-story {
   min-height: 100%;
   display: grid;

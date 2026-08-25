@@ -138,6 +138,9 @@ interface ContextMenuApi {
   Portal: typeof ContextMenuPrimitive.Portal;
   Trigger: typeof ContextMenuPrimitive.Trigger;
   Content: typeof ContextMenuPrimitive.Content;
+  Sub: typeof ContextMenuPrimitive.Sub;
+  SubTrigger: typeof ContextMenuPrimitive.SubTrigger;
+  SubContent: typeof ContextMenuPrimitive.SubContent;
   Item: typeof ContextMenuPrimitive.Item;
   Separator: typeof ContextMenuPrimitive.Separator;
 }
@@ -149,6 +152,9 @@ export const ContextMenu: ContextMenuApi = {
   Portal: (props) => <ContextMenuPrimitive.Portal {...props} />,
   Trigger: (props) => <ContextMenuPrimitive.Trigger {...props} />,
   Content: (props) => <ContextMenuPrimitive.Content {...props} class={actionMenuClass(props.class)} />,
+  Sub: ContextMenuPrimitive.Sub,
+  SubTrigger: ContextMenuPrimitive.SubTrigger,
+  SubContent: ContextMenuPrimitive.SubContent,
   Item: (props) => <ContextMenuPrimitive.Item {...props} />,
   Separator: (props) => <ContextMenuPrimitive.Separator {...props} />,
 };

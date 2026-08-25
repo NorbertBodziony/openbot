@@ -152,14 +152,14 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
                     when={preview()}
                     fallback={
                       <>
-                        <Button type="button" variant="ghost" size="lg" disabled={busy()} onClick={props.onClose}>
+                        <Button type="button" variant="ghost" size="default" disabled={busy()} onClick={props.onClose}>
                           Cancel
                         </Button>
                         <Button
                           class="join-server-submit"
                           type="submit"
-                          variant="primary"
-                          size="lg"
+                          variant="default"
+                          size="default"
                           fullWidth
                           loading={busy()}
                           loadingLabel="Checking…"
@@ -173,8 +173,8 @@ export function JoinServerDialog(props: JoinServerDialogProps) {
                     <Button
                       class="join-server-submit"
                       type="submit"
-                      variant="primary"
-                      size="lg"
+                      variant="default"
+                      size="default"
                       fullWidth
                       loading={busy()}
                       loadingLabel="Connecting…"

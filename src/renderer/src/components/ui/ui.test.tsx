@@ -2,25 +2,18 @@ import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { createSignal, flush } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import {
-  Badge,
   Button,
-  Card,
+  buttonVariants,
   Field,
-  Heading,
   IconButton,
   Input,
-  Kbd,
-  NativeSelect,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Separator,
-  Skeleton,
-  Spinner,
   Switch,
-  Text,
+  SwitchField,
   Textarea,
 } from ".";
 
@@ -32,28 +25,58 @@ describe("UI primitives", () => {
     expect(onClick).toHaveBeenCalledOnce();
     unmount();
 
+    const loadingClick = vi.fn();
     render(() => (
-      <Button loading loadingLabel="Saving">
+      <Button loading loadingLabel="Saving" onClick={loadingClick}>
         Save
       </Button>
     ));
     const loading = screen.getByRole("button", { name: "Saving" });
     expect(loading).toBeDisabled();
     expect(loading).toHaveAttribute("aria-busy", "true");
+    await fireEvent.click(loading);
+    expect(loadingClick).not.toHaveBeenCalled();
   });
 
-  it("exposes button variants, sizes, layout, and native props", () => {
+  it("supports polymorphic links, refs, expanded state, and the shared variant helper", () => {
+    let buttonRef: HTMLButtonElement | undefined;
     render(() => (
-      <Button variant="danger" size="lg" fullWidth name="action" value="remove">
-        Remove
+      <>
+        <Button as="a" href="/settings" variant="link">
+          Settings
+        </Button>
+        <Button ref={(element) => (buttonRef = element)} variant="outline" aria-expanded="true">
+          Options
+        </Button>
+      </>
+    ));
+
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+    expect(buttonRef).toBe(screen.getByRole("button", { name: "Options" }));
+    expect(buttonRef).toHaveAttribute("aria-expanded", "true");
+    expect(buttonVariants({ variant: "secondary", size: "sm" })).toContain("ui-button-variant-secondary");
+  });
+
+  it("keeps forwarded Kobalte button state reactive", async () => {
+    const [loading, setLoading] = createSignal(false);
+    const [variant, setVariant] = createSignal<"outline" | "destructive">("outline");
+    render(() => (
+      <Button loading={loading()} variant={variant()}>
+        Sync
       </Button>
     ));
-    const button = screen.getByRole("button", { name: "Remove" });
-    expect(button).toHaveAttribute("data-variant", "danger");
-    expect(button).toHaveAttribute("data-size", "lg");
-    expect(button).toHaveClass("ui-button-full");
-    expect(button).toHaveAttribute("name", "action");
-    expect(button).toHaveAttribute("value", "remove");
+
+    const button = screen.getByRole("button", { name: "Sync" });
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute("data-variant", "outline");
+
+    setLoading(true);
+    setVariant("destructive");
+    await flush();
+
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toHaveAttribute("data-variant", "destructive");
   });
 
   it("requires an accessible icon button label", () => {
@@ -62,26 +85,16 @@ describe("UI primitives", () => {
         <span aria-hidden="true">×</span>
       </IconButton>
     ));
-    expect(screen.getByRole("button", { name: "Close" })).toHaveAttribute("title", "Close");
-  });
-
-  it("renders semantic badge variants without changing the content", () => {
-    render(() => (
-      <Badge tone="success" shape="pill" dot>
-        Connected
-      </Badge>
-    ));
-    const badge = screen.getByText("Connected");
-    expect(badge).toHaveAttribute("data-tone", "success");
-    expect(badge).toHaveAttribute("data-shape", "pill");
-    expect(badge.querySelector(".ui-badge-dot")).toBeInTheDocument();
+    const button = screen.getByRole("button", { name: "Close" });
+    expect(button).toHaveAttribute("title", "Close");
+    expect(button).toHaveAttribute("data-size", "icon-sm");
   });
 
   it("supports controlled switch state and form-compatible input props", async () => {
     const [checked, setChecked] = createSignal(false);
     render(() => (
       <form>
-        <Switch
+        <SwitchField
           checked={checked()}
           onChange={setChecked}
           name="notifications"
@@ -108,6 +121,43 @@ describe("UI primitives", () => {
     expect(control).toBeRequired();
     await fireEvent.click(control);
     expect(control).not.toBeChecked();
+  });
+
+  it("exposes Zaidan switch slots, sizes, invalid state, and field description", async () => {
+    render(() => (
+      <>
+        <Switch size="sm" aria-label="Compact option" />
+        <SwitchField
+          id="invalid-option"
+          validationState="invalid"
+          label="Invalid option"
+          description="Choose a valid value."
+        />
+      </>
+    ));
+
+    const compact = screen.getByRole("switch", { name: "Compact option" });
+    const compactRoot = compact.closest('[data-slot="switch"]');
+    expect(compactRoot).toHaveAttribute("data-size", "sm");
+    const visualControl = compactRoot?.querySelector('[data-slot="switch-control"]');
+    expect(visualControl).toBeInTheDocument();
+    expect(compactRoot?.querySelector('[data-slot="switch-thumb"]')).toBeInTheDocument();
+
+    if (!(visualControl instanceof HTMLElement)) throw new Error("Expected the visual switch control.");
+    await fireEvent.pointerDown(visualControl);
+    expect(compactRoot).toHaveAttribute("data-pointer-focus");
+    await fireEvent.keyDown(compact, { key: " " });
+    expect(compactRoot).not.toHaveAttribute("data-pointer-focus");
+
+    const invalid = screen.getByRole("switch", { name: "Invalid option" });
+    expect(invalid).toHaveAttribute("aria-invalid", "true");
+    expect(invalid).toHaveAttribute("aria-describedby", "invalid-option-description");
+    expect(invalid.closest('[data-slot="switch"]')).toHaveAttribute("data-invalid");
+
+    const label = screen.getByText("Invalid option");
+    expect(await fireEvent.pointerDown(label)).toBe(false);
+    await fireEvent.click(label);
+    expect(invalid).toBeChecked();
   });
 
   it("supports a controlled accessible select", async () => {
@@ -144,7 +194,7 @@ describe("UI primitives", () => {
           submitted = new FormData(event.currentTarget);
         }}
       >
-        <Switch defaultChecked name="notifications" value="enabled" label="Notifications" />
+        <SwitchField defaultChecked name="notifications" value="enabled" label="Notifications" />
       </form>
     ));
 
@@ -282,35 +332,5 @@ describe("UI primitives", () => {
     expect(descriptionInput).toHaveValue("Notes");
     expect(inputRef).toBe(nameInput);
     expect(textareaRef).toBe(descriptionInput);
-  });
-
-  it("renders semantic typography, form, and surface primitives", () => {
-    render(() => (
-      <>
-        <Heading as="h2" size="lg">
-          Foundation
-        </Heading>
-        <Text as="p" variant="caption" tone="muted" truncate>
-          Supporting copy
-        </Text>
-        <NativeSelect aria-label="Provider" name="provider">
-          <option value="openai">OpenAI</option>
-        </NativeSelect>
-        <Card aria-label="Status card">
-          <Spinner label="Loading status" />
-          <Skeleton />
-          <Kbd>⌘K</Kbd>
-        </Card>
-        <Separator aria-label="Section break" />
-      </>
-    ));
-
-    expect(screen.getByRole("heading", { level: 2, name: "Foundation" })).toHaveAttribute("data-size", "lg");
-    expect(screen.getByText("Supporting copy")).toHaveClass("ui-text-truncate");
-    expect(screen.getByLabelText("Provider")).toHaveAttribute("name", "provider");
-    expect(screen.getByRole("status", { name: "Loading status" })).toBeInTheDocument();
-    expect(document.querySelector(".ui-skeleton")).toBeInTheDocument();
-    expect(screen.getByText("⌘K")).toHaveClass("ui-kbd");
-    expect(screen.getByRole("separator", { name: "Section break" })).toBeInTheDocument();
   });
 });

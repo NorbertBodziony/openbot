@@ -42,7 +42,10 @@ interface StoredDraft extends StoredAttachment {
 
 interface StoredMessage {
   id: string;
-  sender: { kind: "user" } | { kind: "bot"; botId: string };
+  sender:
+    | { kind: "user" }
+    | { kind: "bot"; botId: string }
+    | { kind: "routine"; routineId: string; runId: string; routineName: string; scheduledFor: string };
   text: string;
   attachments: StoredAttachment[];
   replyToMessageId: string | null;
@@ -429,7 +432,7 @@ export class MailboxStore {
           id: delivery.id,
           turnId: storedDelivery.turnId ?? undefined,
           author: message.sender.kind === "bot" ? "agent" : "user",
-          source: message.sender.kind === "bot" ? "agent" : "user",
+          source: message.sender.kind === "bot" ? "agent" : message.sender.kind === "routine" ? "routine" : "user",
           text: message.text,
           senderBotId: message.sender.kind === "bot" ? message.sender.botId : undefined,
           attachments: message.attachments.map(toAttachmentSummary),
@@ -459,9 +462,23 @@ export class MailboxStore {
                   }),
                 }
               : undefined,
+          routine:
+            message.sender.kind === "routine"
+              ? {
+                  routineId: message.sender.routineId,
+                  runId: message.sender.runId,
+                  name: message.sender.routineName,
+                  scheduledFor: message.sender.scheduledFor,
+                }
+              : undefined,
           createdAt: message.createdAt,
           status: delivery.status === "failed" ? "failed" : "completed",
-          itemType: message.sender.kind === "bot" ? "agent-exchange" : undefined,
+          itemType:
+            message.sender.kind === "bot"
+              ? "agent-exchange"
+              : message.sender.kind === "routine"
+                ? "routine"
+                : undefined,
         });
       }
     }
@@ -1317,7 +1334,13 @@ function isStoredMessage(value: unknown): value is StoredMessage {
     isRecord(value) &&
     isString(value.id) &&
     isRecord(value.sender) &&
-    (value.sender.kind === "user" || (value.sender.kind === "bot" && isString(value.sender.botId))) &&
+    (value.sender.kind === "user" ||
+      (value.sender.kind === "bot" && isString(value.sender.botId)) ||
+      (value.sender.kind === "routine" &&
+        isString(value.sender.routineId) &&
+        isString(value.sender.runId) &&
+        isString(value.sender.routineName) &&
+        isString(value.sender.scheduledFor))) &&
     isString(value.text) &&
     Array.isArray(value.attachments) &&
     value.attachments.every(isStoredAttachment) &&

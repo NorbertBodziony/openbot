@@ -233,6 +233,7 @@ export function InitialSetup(props: InitialSetupProps) {
             <div class="initial-setup-account-row">
               <Show when={!props.reviewing && route()}>
                 <Button
+                  variant="ghost"
                   type="button"
                   class="initial-setup-back"
                   aria-label="Back to connection choice"
@@ -250,7 +251,7 @@ export function InitialSetup(props: InitialSetupProps) {
                 <i aria-hidden="true" />
                 {props.accountEmail}
               </span>
-              <Button type="button" class="initial-setup-signout" onClick={() => void props.onLogout()}>
+              <Button variant="ghost" type="button" class="initial-setup-signout" onClick={() => void props.onLogout()}>
                 Sign out
               </Button>
             </div>
@@ -266,7 +267,7 @@ export function InitialSetup(props: InitialSetupProps) {
           <Show when={!props.reviewing && route() === null}>
             <ul class="setup-route-list" aria-label="Connection type">
               <li>
-                <Button type="button" class="setup-route-button" onClick={() => chooseRoute("local")}>
+                <Button variant="ghost" type="button" class="setup-route-button" onClick={() => chooseRoute("local")}>
                   <span class="setup-route-icon setup-route-icon-local" aria-hidden="true">
                     <svg viewBox="0 0 24 24">
                       <title>Local computer</title>
@@ -283,7 +284,7 @@ export function InitialSetup(props: InitialSetupProps) {
                 </Button>
               </li>
               <li>
-                <Button type="button" class="setup-route-button" onClick={() => chooseRoute("remote")}>
+                <Button variant="ghost" type="button" class="setup-route-button" onClick={() => chooseRoute("remote")}>
                   <span class="setup-route-icon" aria-hidden="true">
                     <svg viewBox="0 0 24 24">
                       <title>Remote host</title>
@@ -336,6 +337,7 @@ export function InitialSetup(props: InitialSetupProps) {
                               <small>{permission.description}</small>
                             </span>
                             <Button
+                              variant="ghost"
                               type="button"
                               class={["mac-permission-action", { "mac-permission-allowed": state() === "granted" }]}
                               disabled={permissionBusy() !== null || state() === "granted" || state() === "restricted"}
@@ -387,6 +389,7 @@ export function InitialSetup(props: InitialSetupProps) {
                   <>
                     <InvitePreviewCard preview={preview()} accountEmail={props.accountEmail} />
                     <Button
+                      variant="ghost"
                       type="button"
                       class="setup-remote-change"
                       disabled={saving()}
@@ -418,11 +421,12 @@ export function InitialSetup(props: InitialSetupProps) {
           <Show when={route() !== null}>
             <div class="initial-setup-actions">
               <Show when={props.reviewing}>
-                <Button type="button" class="initial-setup-secondary" onClick={props.onClose}>
+                <Button variant="ghost" type="button" class="initial-setup-secondary" onClick={props.onClose}>
                   Cancel
                 </Button>
               </Show>
               <Button
+                variant="default"
                 type="button"
                 class="initial-setup-save"
                 disabled={

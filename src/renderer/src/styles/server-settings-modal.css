@@ -36,15 +36,11 @@
 }
 
 .server-settings-modal-shell .ui-input,
-.server-settings-modal-shell .ui-button[data-size="md"],
-.server-settings-modal-shell .ui-button[data-size="lg"] {
+.server-settings-modal-shell .ui-button-size-sm,
+.server-settings-modal-shell .ui-button-size-default,
+.server-settings-modal-shell .ui-button-size-lg {
   font-size: var(--openbot-text-md);
   line-height: var(--openbot-leading-md);
-}
-
-.server-settings-modal-shell .ui-button:active:not(:disabled),
-.server-settings-modal-shell .ui-switch-control:active:not([data-disabled]) {
-  transform: scale(0.96);
 }
 
 .server-settings-modal-shell .settings-modal-scroll-frame::before {
@@ -192,29 +188,10 @@
   visibility: hidden;
 }
 
-.server-settings-publish-setting.ui-switch {
+.server-settings-publish-setting.ui-switch-field {
   width: 100%;
   justify-content: space-between;
   gap: var(--openbot-space-6);
-}
-
-.server-settings-general-card .ui-switch-control {
-  width: 38px;
-  height: 22px;
-}
-
-.server-settings-general-card .ui-switch-thumb {
-  width: 16px;
-  height: 16px;
-}
-
-.server-settings-general-card .ui-switch-thumb[data-checked] {
-  transform: translateX(16px);
-}
-
-.server-settings-general-card .ui-switch[data-checked] .ui-switch-control {
-  border-color: var(--openbot-accent-hover);
-  background: var(--openbot-accent);
 }
 
 .server-settings-address-control {
@@ -388,8 +365,8 @@
   font-size: var(--openbot-text-sm);
   cursor: pointer;
   transition:
-    background-color var(--openbot-duration-normal) ease,
-    color var(--openbot-duration-normal) ease;
+    background-color var(--openbot-duration-selectable-hover) ease,
+    color var(--openbot-duration-selectable-hover) ease;
 }
 
 .server-settings-invite-tabs button[data-selected] {

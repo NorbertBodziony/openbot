@@ -8,17 +8,14 @@ import {
 } from "./sidebar-pins";
 
 describe("sidebar pins", () => {
-  it("removes duplicate supported items", () => {
+  it("keeps unique agents and removes legacy person pins", () => {
     expect(
       normalizeSidebarPinnedItems([
         { kind: "agent", id: "chief" },
         { kind: "person", id: "member-alice" },
         { kind: "agent", id: "chief" },
       ]),
-    ).toEqual([
-      { kind: "agent", id: "chief" },
-      { kind: "person", id: "member-alice" },
-    ]);
+    ).toEqual([{ kind: "agent", id: "chief" }]);
   });
 
   it("keeps at most six items", () => {
@@ -47,7 +44,6 @@ describe("sidebar pins", () => {
 
     expect(readSidebarPins(storage)).toEqual({
       local: [{ kind: "agent", id: "chief" }],
-      team: [{ kind: "person", id: "member-alice" }],
     });
   });
 

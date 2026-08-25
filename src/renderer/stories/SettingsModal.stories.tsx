@@ -13,7 +13,7 @@ function SettingsModalStory(props: { initialOpen: boolean }) {
         Workspace settings
       </Heading>
       <Text tone="secondary">Preview the standalone settings surface before it is connected to the app.</Text>
-      <Button type="button" onClick={() => setOpen(true)}>
+      <Button variant="outline" type="button" onClick={() => setOpen(true)}>
         Open settings
       </Button>
       <SettingsModal open={open()} onOpenChange={setOpen} />

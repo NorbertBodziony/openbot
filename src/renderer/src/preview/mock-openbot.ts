@@ -5,6 +5,7 @@ import type {
   AppInfo,
   AppSetupState,
   AttachmentImportEvent,
+  BotMemory,
   BotSummary,
   BrowserControlState,
   BrowserOpenInput,
@@ -34,12 +35,16 @@ import type {
   RemoteDesktopSession,
   ReorderQueueInput,
   RespondToPromptInput,
+  Routine,
+  RoutineRun,
   SendDirectMessageInput,
   SendMessageInput,
   ServerSummary,
   SetAgentAvatarInput,
   SetMessageReactionInput,
   SetTeamTypingInput,
+  SidebarLayoutAction,
+  SidebarLayoutSnapshot,
   SteerQueuedMessageInput,
   TeamInviteSummary,
   TeamMemberSummary,
@@ -50,6 +55,7 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
+import { SIDEBAR_PEOPLE_SECTION_ID, SIDEBAR_UNASSIGNED_SECTION_ID } from "@openbot/contracts/ipc";
 import {
   STORY_AGENT_STATUS,
   STORY_APP_INFO,
@@ -93,6 +99,8 @@ export interface MockOpenBotOptions {
   sessions?: TeamSessionSummary[];
   remoteDesktopSessions?: RemoteDesktopSession[];
   updateStatus?: UpdateStatus;
+  memories?: Record<string, BotMemory[]>;
+  routines?: Record<string, Routine[]>;
 }
 
 export interface MockOpenBotControls {
@@ -140,6 +148,13 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let setupState = clone<AppSetupState>(options.setupState ?? { completed: true, preferredProvider: "codex" });
   const agentStatus = clone(options.agentStatus ?? STORY_AGENT_STATUS);
   let bots = clone(options.bots ?? STORY_BOT_SUMMARIES);
+  let sidebarLayout: SidebarLayoutSnapshot = {
+    revision: 0,
+    sections: [],
+    order: [SIDEBAR_PEOPLE_SECTION_ID, SIDEBAR_UNASSIGNED_SECTION_ID],
+    agentAssignments: {},
+    agentOrder: [],
+  };
   const models = clone(options.models ?? STORY_MODELS);
   const snapshots = clone(options.snapshots ?? STORY_SNAPSHOTS);
   let browserTabs = clone(options.browserTabs ?? STORY_BROWSER_TABS);
@@ -185,6 +200,9 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   };
   const emptyQueue = (botId: string): QueueSnapshot => ({ botId, deliveries: [] });
   const queues = new Map<string, QueueSnapshot>(bots.map((bot) => [bot.id, emptyQueue(bot.id)]));
+  const memories = new Map<string, BotMemory[]>(Object.entries(clone(options.memories ?? {})));
+  const routines = new Map<string, Routine[]>(Object.entries(clone(options.routines ?? {})));
+  const routineRuns = new Map<string, RoutineRun[]>();
 
   function emitAgentEvent(event: AgentEvent): void {
     emit(agentListeners, event);
@@ -378,6 +396,12 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       getUsage: async () => clone(usage),
       listModels: async () => clone(models),
       listBots: async () => clone(bots),
+      getSidebarLayout: async () => clone(sidebarLayout),
+      mutateSidebarLayout: async (action) => {
+        sidebarLayout = applySidebarLayoutAction(sidebarLayout, action);
+        emitAgentEvent({ type: "sidebar-layout-changed", layout: sidebarLayout });
+        return clone(sidebarLayout);
+      },
       createBot: async (input) => {
         const bot = createBotSummary({
           name: input.name,
@@ -423,8 +447,134 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       deleteBot: async (botId) => {
         bots = bots.filter((bot) => bot.id !== botId);
         queues.delete(botId);
+        memories.delete(botId);
+        routines.delete(botId);
         emitAgentEvent({ type: "bots-changed", bots });
       },
+      listMemories: async (botId) => clone(memories.get(botId) ?? []),
+      createMemory: async (input) => {
+        const now = new Date().toISOString();
+        const memory: BotMemory = {
+          id: crypto.randomUUID(),
+          botId: input.botId,
+          text: input.text.trim(),
+          origin: "manual",
+          sourceTurnId: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        memories.set(input.botId, [...(memories.get(input.botId) ?? []), memory]);
+        emitAgentEvent({ type: "memories-changed", botId: input.botId });
+        return clone(memory);
+      },
+      updateMemory: async (input) => {
+        const current = memories.get(input.botId)?.find((memory) => memory.id === input.memoryId);
+        if (!current) throw new Error("Memory not found");
+        const updated = { ...current, text: input.text.trim(), updatedAt: new Date().toISOString() };
+        memories.set(
+          input.botId,
+          (memories.get(input.botId) ?? []).map((memory) => (memory.id === input.memoryId ? updated : memory)),
+        );
+        emitAgentEvent({ type: "memories-changed", botId: input.botId });
+        return clone(updated);
+      },
+      deleteMemory: async (input) => {
+        memories.set(
+          input.botId,
+          (memories.get(input.botId) ?? []).filter((memory) => memory.id !== input.memoryId),
+        );
+        emitAgentEvent({ type: "memories-changed", botId: input.botId });
+      },
+      clearMemories: async (botId) => {
+        memories.delete(botId);
+        emitAgentEvent({ type: "memories-changed", botId });
+      },
+      listRoutines: async (botId) => clone(routines.get(botId) ?? []),
+      createRoutine: async (input) => {
+        const now = new Date().toISOString();
+        const routineId = crypto.randomUUID();
+        const routine: Routine = {
+          id: routineId,
+          botId: input.botId,
+          name: input.name.trim(),
+          instruction: input.instruction.trim(),
+          active: input.active,
+          timezone: input.timezone,
+          trigger: {
+            id: crypto.randomUUID(),
+            routineId,
+            schedule: input.schedule,
+            nextRunAt: new Date(Date.now() + 3_600_000).toISOString(),
+            createdAt: now,
+            updatedAt: now,
+          },
+          createdAt: now,
+          updatedAt: now,
+        };
+        routines.set(input.botId, [routine, ...(routines.get(input.botId) ?? [])]);
+        emitAgentEvent({ type: "routines-changed", botId: input.botId });
+        return clone(routine);
+      },
+      updateRoutine: async (input) => {
+        const current = routines.get(input.botId)?.find((routine) => routine.id === input.routineId);
+        if (!current) throw new Error("Routine not found");
+        const updated: Routine = {
+          ...current,
+          ...(input.name === undefined ? {} : { name: input.name.trim() }),
+          ...(input.instruction === undefined ? {} : { instruction: input.instruction.trim() }),
+          ...(input.active === undefined ? {} : { active: input.active }),
+          ...(input.schedule === undefined
+            ? {}
+            : {
+                trigger: {
+                  id: crypto.randomUUID(),
+                  routineId: current.id,
+                  schedule: input.schedule,
+                  nextRunAt: new Date(Date.now() + 3_600_000).toISOString(),
+                  createdAt: current.createdAt,
+                  updatedAt: new Date().toISOString(),
+                },
+              }),
+          updatedAt: new Date().toISOString(),
+        };
+        routines.set(
+          input.botId,
+          (routines.get(input.botId) ?? []).map((routine) => (routine.id === current.id ? updated : routine)),
+        );
+        emitAgentEvent({ type: "routines-changed", botId: input.botId });
+        return clone(updated);
+      },
+      deleteRoutine: async (input) => {
+        routines.set(
+          input.botId,
+          (routines.get(input.botId) ?? []).filter((routine) => routine.id !== input.routineId),
+        );
+        emitAgentEvent({ type: "routines-changed", botId: input.botId });
+      },
+      testRoutine: async (input) => {
+        const routine = routines.get(input.botId)?.find((candidate) => candidate.id === input.routineId);
+        if (!routine) throw new Error("Routine not found");
+        const now = new Date().toISOString();
+        const run: RoutineRun = {
+          id: crypto.randomUUID(),
+          routineId: routine.id,
+          botId: input.botId,
+          triggerId: null,
+          kind: "manual",
+          scheduledFor: now,
+          routineName: routine.name,
+          instruction: routine.instruction,
+          deliveryId: crypto.randomUUID(),
+          status: "queued",
+          error: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        routineRuns.set(routine.id, [run, ...(routineRuns.get(routine.id) ?? [])]);
+        emitAgentEvent({ type: "routines-changed", botId: input.botId });
+        return clone(run);
+      },
+      listRoutineRuns: async (input) => clone((routineRuns.get(input.routineId) ?? []).slice(0, input.limit)),
       readConversation: async (botId) => ({
         ...clone(getSnapshot(botId)),
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
@@ -975,4 +1125,65 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       void appInfo;
     },
   };
+}
+
+function applySidebarLayoutAction(layout: SidebarLayoutSnapshot, action: SidebarLayoutAction): SidebarLayoutSnapshot {
+  const revision = layout.revision + 1;
+  if (action.type === "create") {
+    const id = crypto.randomUUID();
+    return {
+      ...layout,
+      revision,
+      sections: [...layout.sections, { id, name: action.name.trim() }],
+      order: [...layout.order, id],
+      agentAssignments: action.agentId
+        ? { ...layout.agentAssignments, [action.agentId]: id }
+        : { ...layout.agentAssignments },
+      agentOrder: [...layout.agentOrder],
+    };
+  }
+  if (action.type === "rename") {
+    return {
+      ...layout,
+      revision,
+      sections: layout.sections.map((section) =>
+        section.id === action.sectionId ? { ...section, name: action.name.trim() } : section,
+      ),
+    };
+  }
+  if (action.type === "delete") {
+    return {
+      ...layout,
+      revision,
+      sections: layout.sections.filter((section) => section.id !== action.sectionId),
+      order: layout.order.filter((sectionId) => sectionId !== action.sectionId),
+      agentAssignments: Object.fromEntries(
+        Object.entries(layout.agentAssignments).filter(([, sectionId]) => sectionId !== action.sectionId),
+      ),
+      agentOrder: [...layout.agentOrder],
+    };
+  }
+  if (action.type === "move") {
+    const order = [...layout.order];
+    const index = order.indexOf(action.sectionId);
+    const target = index + (action.direction === "up" ? -1 : 1) * (action.steps ?? 1);
+    if (index >= 0 && target >= 0 && target < order.length) {
+      const [movedSectionId] = order.splice(index, 1);
+      if (movedSectionId) order.splice(target, 0, movedSectionId);
+    }
+    return { ...layout, revision, order };
+  }
+  if (action.type === "move-agent") {
+    const agentOrder = layout.agentOrder.filter((agentId) => agentId !== action.agentId);
+    const insertionIndex = action.beforeAgentId === null ? agentOrder.length : agentOrder.indexOf(action.beforeAgentId);
+    agentOrder.splice(insertionIndex < 0 ? agentOrder.length : insertionIndex, 0, action.agentId);
+    const agentAssignments = { ...layout.agentAssignments };
+    if (action.sectionId === null) delete agentAssignments[action.agentId];
+    else agentAssignments[action.agentId] = action.sectionId;
+    return { ...layout, revision, agentAssignments, agentOrder };
+  }
+  const agentAssignments = { ...layout.agentAssignments };
+  if (action.sectionId === null) delete agentAssignments[action.agentId];
+  else agentAssignments[action.agentId] = action.sectionId;
+  return { ...layout, revision, agentAssignments };
 }

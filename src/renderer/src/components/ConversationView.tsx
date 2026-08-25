@@ -640,7 +640,6 @@ function createConversationViewScope(props: ConversationProps) {
       if (first && first.index <= 5 && props.hasOlder && !props.loadingOlder) props.onLoadOlder?.();
     },
   });
-
   function openChatSearch(): void {
     if (!chatSearchOpen() && document.activeElement instanceof HTMLElement) {
       chatSearchReturnFocus = document.activeElement;
@@ -2058,6 +2057,7 @@ export function ConversationHeader() {
         <Show when={props.bot}>
           {(bot) => (
             <Button
+              variant="ghost"
               type="button"
               class="conversation-title no-drag"
               aria-label="View agent settings"
@@ -2093,6 +2093,7 @@ export function ConversationHeader() {
             const label = () => (props.remoteDesktopSessionActive ? "Resume remote control" : "Open remote control");
             return (
               <Button
+                variant="ghost"
                 type="button"
                 class="header-panel-toggle remote-desktop-button"
                 aria-label={label()}
@@ -2110,6 +2111,7 @@ export function ConversationHeader() {
         </Show>
         <Show when={props.browserEnabled !== false}>
           <Button
+            variant="ghost"
             type="button"
             class={[
               "header-panel-toggle computer-button",
@@ -2192,6 +2194,7 @@ export function ConversationTimeline() {
     setUnreadMessagesDividerElement,
     setVirtualRootElement,
   } = useConversationViewScope();
+  const virtualMessageRows = createMemo(() => messageVirtualizer.getVirtualItems());
   return (
     <>
       <Show when={chatSearchOpen()}>
@@ -2250,6 +2253,7 @@ export function ConversationTimeline() {
               </div>
               <Show when={props.agentStatus.phase !== "starting" && props.agentStatus.phase !== "restarting"}>
                 <Button
+                  variant="outline"
                   type="button"
                   onClick={() =>
                     void props
@@ -2282,7 +2286,7 @@ export function ConversationTimeline() {
             class={["virtual-chat-list", { "virtual-chat-list-static": !messageVirtualizer.isVirtualized() }]}
             style={{ height: messageVirtualizer.isVirtualized() ? `${messageVirtualizer.getTotalSize()}px` : "auto" }}
           >
-            <For each={messageVirtualizer.getVirtualItems()}>
+            <For each={virtualMessageRows()}>
               {(virtualRow) => {
                 const message = createMemo(() => props.messages[virtualRow.index]);
                 const initialMessage = untrack(message);
@@ -2395,6 +2399,7 @@ export function ConversationTimeline() {
                               <Show when={message()?.reaction}>
                                 {(reaction) => (
                                   <Button
+                                    variant="ghost"
                                     type="button"
                                     class="message-reaction-pill"
                                     aria-label={`Remove reaction ${reaction()}`}
@@ -2580,6 +2585,7 @@ export function ConversationComposer() {
                     </span>
                   </Show>
                   <Button
+                    variant="ghost"
                     type="button"
                     aria-label={`Remove ${attachment.name}`}
                     onClick={() => removeAttachment(attachment.id)}
@@ -2599,6 +2605,7 @@ export function ConversationComposer() {
                 <p>{message().body || "Attachment"}</p>
               </div>
               <Button
+                variant="ghost"
                 type="button"
                 aria-label="Cancel reply"
                 onClick={() => updateCurrentDraft({ replyToMessageId: null })}
@@ -2738,6 +2745,7 @@ export function ConversationComposer() {
                 when={voicePhase() === "recording"}
                 fallback={
                   <Button
+                    variant="ghost"
                     type="button"
                     class="dictation-button"
                     aria-label={voiceButtonLabel(voicePhase())}
@@ -2759,6 +2767,7 @@ export function ConversationComposer() {
               >
                 <fieldset class="voice-recording-status" aria-label="Voice recording">
                   <Button
+                    variant="ghost"
                     type="button"
                     class="voice-recording-stop"
                     aria-label="Stop voice recording"
@@ -2776,6 +2785,7 @@ export function ConversationComposer() {
                 when={props.activeTurnId && !editingDeliveryId() && !composerHasContent()}
                 fallback={
                   <Button
+                    variant="ghost"
                     type="button"
                     class="voice-button"
                     aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
@@ -2787,6 +2797,7 @@ export function ConversationComposer() {
                 }
               >
                 <Button
+                  variant="ghost"
                   type="button"
                   class="voice-button voice-button-active"
                   aria-label="Stop agent"
@@ -2956,6 +2967,7 @@ export function ConversationOverlays() {
               <Dialog.Content as="section" class="media-modal">
                 <Dialog.Title class="sr-only">{preview().attachment.name}</Dialog.Title>
                 <Button
+                  variant="ghost"
                   type="button"
                   class="media-close"
                   aria-label="Close media preview"
@@ -2982,13 +2994,25 @@ export function ConversationOverlays() {
                 </Show>
                 <div class="media-caption">
                   <span>{preview().attachment.name}</span>
-                  <Button type="button" onClick={() => attachmentAction(preview().attachment, "open")}>
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => attachmentAction(preview().attachment, "open")}
+                  >
                     Open
                   </Button>
-                  <Button type="button" onClick={() => attachmentAction(preview().attachment, "download")}>
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => attachmentAction(preview().attachment, "download")}
+                  >
                     Download
                   </Button>
-                  <Button type="button" onClick={() => attachmentAction(preview().attachment, "reveal")}>
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => attachmentAction(preview().attachment, "reveal")}
+                  >
                     Show in Finder
                   </Button>
                 </div>

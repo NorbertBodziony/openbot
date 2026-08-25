@@ -11,6 +11,7 @@ export function UnreadMessagesBanner(props: {
   return (
     <div class="unread-messages-banner" role="status" aria-label={label()}>
       <Button
+        variant="ghost"
         class="unread-messages-jump"
         type="button"
         aria-label={`Jump to ${label()}`}
@@ -18,7 +19,13 @@ export function UnreadMessagesBanner(props: {
       >
         {label()}
       </Button>
-      <Button class="unread-messages-mark-read" type="button" disabled={props.busy} onClick={props.onMarkRead}>
+      <Button
+        variant="ghost"
+        class="unread-messages-mark-read"
+        type="button"
+        disabled={props.busy}
+        onClick={props.onMarkRead}
+      >
         {props.busy ? "Marking…" : "Mark as read"}
       </Button>
     </div>

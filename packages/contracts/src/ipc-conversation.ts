@@ -1,5 +1,6 @@
+import { INPUT_LIMITS } from "./input-limits";
 import type { BrowserControlState, BrowserTab } from "./ipc-browser";
-import { isDynamicRecord, isNumber, isOneOf, isString } from "./runtime-values";
+import { isBoolean, isDynamicRecord, isNumber, isOneOf, isString } from "./runtime-values";
 
 export type AgentPhase = "idle" | "starting" | "ready" | "restarting" | "blocked" | "stopped";
 
@@ -76,6 +77,296 @@ export interface BotSummary {
   avatarHue: BotAvatarHue | null;
   avatarUrl: string | null;
 }
+
+export type BotMemoryOrigin = "automatic" | "manual";
+
+export interface BotMemory {
+  id: string;
+  botId: string;
+  text: string;
+  origin: BotMemoryOrigin;
+  sourceTurnId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateBotMemoryInput {
+  botId: string;
+  text: string;
+}
+
+export interface UpdateBotMemoryInput {
+  botId: string;
+  memoryId: string;
+  text: string;
+}
+
+export interface DeleteBotMemoryInput {
+  botId: string;
+  memoryId: string;
+}
+
+export type RoutineIntervalUnit = "minutes" | "hours" | "days";
+export type RoutineDaySelection =
+  | { kind: "every-day" }
+  | { kind: "days-of-week"; days: number[] }
+  | { kind: "days-of-month"; days: number[] };
+export type RoutineTimeSelection =
+  | { kind: "at-time"; time: string }
+  | { kind: "every"; amount: number; unit: Exclude<RoutineIntervalUnit, "days"> };
+
+export type RoutineSchedule =
+  | { kind: "hourly"; minute: number }
+  | { kind: "daily"; time: string }
+  | { kind: "weekdays"; time: string }
+  | { kind: "weekly"; weekday: number; time: string }
+  | { kind: "monthly"; day: number; time: string }
+  | { kind: "interval"; amount: number; unit: RoutineIntervalUnit; anchorAt: string }
+  | {
+      kind: "advanced";
+      months: number[];
+      days: RoutineDaySelection;
+      time: RoutineTimeSelection;
+    }
+  | { kind: "custom"; expression: string };
+
+export interface RoutineTrigger {
+  id: string;
+  routineId: string;
+  schedule: RoutineSchedule;
+  nextRunAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Routine {
+  id: string;
+  botId: string;
+  name: string;
+  instruction: string;
+  active: boolean;
+  timezone: string;
+  trigger: RoutineTrigger;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type RoutineRunStatus =
+  | "queued"
+  | "running"
+  | "needs-attention"
+  | "succeeded"
+  | "failed"
+  | "interrupted"
+  | "cancelled";
+
+export interface RoutineRun {
+  id: string;
+  routineId: string;
+  botId: string;
+  triggerId: string | null;
+  kind: "scheduled" | "manual";
+  scheduledFor: string;
+  routineName: string;
+  instruction: string;
+  deliveryId: string | null;
+  status: RoutineRunStatus;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateRoutineInput {
+  botId: string;
+  name: string;
+  instruction: string;
+  active: boolean;
+  timezone: string;
+  schedule: RoutineSchedule;
+}
+
+export interface UpdateRoutineInput {
+  botId: string;
+  routineId: string;
+  name?: string;
+  instruction?: string;
+  active?: boolean;
+  schedule?: RoutineSchedule;
+}
+
+export interface DeleteRoutineInput {
+  botId: string;
+  routineId: string;
+}
+
+export interface TestRoutineInput {
+  botId: string;
+  routineId: string;
+}
+
+export interface ListRoutineRunsInput {
+  botId: string;
+  routineId: string;
+  limit?: number;
+}
+
+export function isRoutineSchedule(value: unknown): value is RoutineSchedule {
+  if (!isDynamicRecord(value) || !isString(value.kind)) return false;
+  switch (value.kind) {
+    case "hourly":
+      return integerInRange(value.minute, 0, 59);
+    case "daily":
+    case "weekdays":
+      return isRoutineTime(value.time);
+    case "weekly":
+      return integerInRange(value.weekday, 0, 6) && isRoutineTime(value.time);
+    case "monthly":
+      return integerInRange(value.day, 1, 31) && isRoutineTime(value.time);
+    case "interval":
+      return (
+        integerInRange(value.amount, 1, 100_000) &&
+        isOneOf(["minutes", "hours", "days"] as const, value.unit) &&
+        isString(value.anchorAt) &&
+        !Number.isNaN(Date.parse(value.anchorAt))
+      );
+    case "advanced":
+      return (
+        Array.isArray(value.months) &&
+        value.months.length > 0 &&
+        value.months.every((month) => integerInRange(month, 1, 12)) &&
+        isRoutineDaySelection(value.days) &&
+        isRoutineTimeSelection(value.time)
+      );
+    case "custom":
+      return (
+        isString(value.expression) && value.expression.length > 0 && value.expression.length <= INPUT_LIMITS.routineCron
+      );
+    default:
+      return false;
+  }
+}
+
+export function isRoutine(value: unknown): value is Routine {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.id) &&
+    isString(value.botId) &&
+    isString(value.name) &&
+    isString(value.instruction) &&
+    isBoolean(value.active) &&
+    isString(value.timezone) &&
+    isRoutineTrigger(value.trigger) &&
+    isString(value.createdAt) &&
+    isString(value.updatedAt)
+  );
+}
+
+export function isRoutineRun(value: unknown): value is RoutineRun {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.id) &&
+    isString(value.routineId) &&
+    isString(value.botId) &&
+    (value.triggerId === null || isString(value.triggerId)) &&
+    isOneOf(["scheduled", "manual"] as const, value.kind) &&
+    isString(value.scheduledFor) &&
+    isString(value.routineName) &&
+    isString(value.instruction) &&
+    (value.deliveryId === null || isString(value.deliveryId)) &&
+    isOneOf(
+      ["queued", "running", "needs-attention", "succeeded", "failed", "interrupted", "cancelled"] as const,
+      value.status,
+    ) &&
+    (value.error === null || isString(value.error)) &&
+    isString(value.createdAt) &&
+    isString(value.updatedAt)
+  );
+}
+
+function isRoutineTrigger(value: unknown): value is RoutineTrigger {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.id) &&
+    isString(value.routineId) &&
+    isRoutineSchedule(value.schedule) &&
+    isString(value.nextRunAt) &&
+    isString(value.createdAt) &&
+    isString(value.updatedAt)
+  );
+}
+
+function isRoutineTime(value: unknown): value is string {
+  return isString(value) && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
+
+function isRoutineDaySelection(value: unknown): value is RoutineDaySelection {
+  if (!isDynamicRecord(value) || !isString(value.kind)) return false;
+  if (value.kind === "every-day") return true;
+  if (!Array.isArray(value.days) || value.days.length === 0) return false;
+  if (value.kind === "days-of-week") return value.days.every((day) => integerInRange(day, 0, 6));
+  if (value.kind === "days-of-month") return value.days.every((day) => integerInRange(day, 1, 31));
+  return false;
+}
+
+function isRoutineTimeSelection(value: unknown): value is RoutineTimeSelection {
+  if (!isDynamicRecord(value) || !isString(value.kind)) return false;
+  if (value.kind === "at-time") return isRoutineTime(value.time);
+  return (
+    value.kind === "every" &&
+    integerInRange(value.amount, 1, 100_000) &&
+    isOneOf(["minutes", "hours"] as const, value.unit)
+  );
+}
+
+function integerInRange(value: unknown, minimum: number, maximum: number): value is number {
+  return isNumber(value) && Number.isInteger(value) && value >= minimum && value <= maximum;
+}
+
+export function isBotMemory(value: unknown): value is BotMemory {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.id) &&
+    value.id.length > 0 &&
+    value.id.length <= INPUT_LIMITS.identifier &&
+    isString(value.botId) &&
+    value.botId.length > 0 &&
+    value.botId.length <= INPUT_LIMITS.identifier &&
+    isString(value.text) &&
+    value.text.length > 0 &&
+    value.text.length <= INPUT_LIMITS.agentMemoryText &&
+    isOneOf(["automatic", "manual"] as const, value.origin) &&
+    (value.sourceTurnId === null ||
+      (isString(value.sourceTurnId) &&
+        value.sourceTurnId.length > 0 &&
+        value.sourceTurnId.length <= INPUT_LIMITS.identifier)) &&
+    isString(value.createdAt) &&
+    isString(value.updatedAt)
+  );
+}
+
+export const SIDEBAR_PEOPLE_SECTION_ID = "people";
+export const SIDEBAR_UNASSIGNED_SECTION_ID = "unassigned";
+
+export interface SidebarSection {
+  id: string;
+  name: string;
+}
+
+export interface SidebarLayoutSnapshot {
+  revision: number;
+  sections: SidebarSection[];
+  order: string[];
+  agentAssignments: Record<string, string>;
+  agentOrder: string[];
+}
+
+export type SidebarLayoutAction =
+  | { type: "create"; name: string; agentId?: string }
+  | { type: "rename"; sectionId: string; name: string }
+  | { type: "delete"; sectionId: string }
+  | { type: "move"; sectionId: string; direction: "up" | "down"; steps?: number }
+  | { type: "assign"; agentId: string; sectionId: string | null }
+  | { type: "move-agent"; agentId: string; sectionId: string | null; beforeAgentId: string | null };
 
 export const AGENT_MODELS = [
   "gpt-5.6-luna",
@@ -249,7 +540,10 @@ export interface QueueDelivery {
   id: string;
   messageId: string;
   recipientBotId: string;
-  sender: { kind: "user" } | { kind: "bot"; botId: string };
+  sender:
+    | { kind: "user" }
+    | { kind: "bot"; botId: string }
+    | { kind: "routine"; routineId: string; runId: string; routineName: string; scheduledFor: string };
   text: string;
   attachments: AttachmentSummary[];
   replyToMessageId: string | null;
@@ -273,7 +567,7 @@ export interface ConversationMessage {
   createdAt: string;
   status: "streaming" | "completed" | "failed" | "interrupted";
   itemType?: string;
-  source?: "user" | "assistant" | "agent" | "system";
+  source?: "user" | "assistant" | "agent" | "system" | "routine";
   senderBotId?: string;
   replyToMessageId?: string | null;
   attachments?: AttachmentSummary[];
@@ -281,6 +575,12 @@ export interface ConversationMessage {
   delivery?: Pick<QueueDelivery, "id" | "status" | "position">;
   exchange?: AgentExchangeSummary;
   reaction?: MessageReaction | null;
+  routine?: {
+    routineId: string;
+    runId: string;
+    name: string;
+    scheduledFor: string;
+  };
 }
 
 export function isConversationMessage(value: unknown): value is ConversationMessage {
@@ -299,9 +599,16 @@ export function isConversationMessage(value: unknown): value is ConversationMess
       value.source === "user" ||
       value.source === "assistant" ||
       value.source === "agent" ||
-      value.source === "system") &&
+      value.source === "system" ||
+      value.source === "routine") &&
     (value.senderBotId === undefined || isString(value.senderBotId)) &&
     (value.replyToMessageId === undefined || value.replyToMessageId === null || isString(value.replyToMessageId)) &&
+    (value.routine === undefined ||
+      (isDynamicRecord(value.routine) &&
+        isString(value.routine.routineId) &&
+        isString(value.routine.runId) &&
+        isString(value.routine.name) &&
+        isString(value.routine.scheduledFor))) &&
     (value.imageGeneration === undefined || isImageGenerationInfo(value.imageGeneration))
   );
 }
@@ -489,6 +796,9 @@ export type AgentEvent =
   | { type: "status"; status: AgentStatus }
   | { type: "usage-changed"; usage: AccountUsage }
   | { type: "bots-changed"; bots: BotSummary[] }
+  | { type: "memories-changed"; botId: string }
+  | { type: "routines-changed"; botId: string }
+  | { type: "sidebar-layout-changed"; layout: SidebarLayoutSnapshot }
   | { type: "conversation"; snapshot: ConversationSnapshot }
   | {
       type: "conversation-delta";
@@ -531,6 +841,12 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
       return isDynamicRecord(value.usage);
     case "bots-changed":
       return Array.isArray(value.bots);
+    case "memories-changed":
+      return isString(value.botId) && value.botId.length > 0 && value.botId.length <= INPUT_LIMITS.identifier;
+    case "routines-changed":
+      return isString(value.botId) && value.botId.length > 0 && value.botId.length <= INPUT_LIMITS.identifier;
+    case "sidebar-layout-changed":
+      return isSidebarLayoutSnapshot(value.layout);
     case "conversation":
       return isDynamicRecord(value.snapshot);
     case "conversation-delta":
@@ -567,6 +883,27 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
     default:
       return false;
   }
+}
+
+export function isSidebarLayoutSnapshot(value: unknown): value is SidebarLayoutSnapshot {
+  if (!isDynamicRecord(value) || !isNumber(value.revision) || !Number.isInteger(value.revision) || value.revision < 0) {
+    return false;
+  }
+  if (
+    !Array.isArray(value.sections) ||
+    !Array.isArray(value.order) ||
+    !isDynamicRecord(value.agentAssignments) ||
+    !Array.isArray(value.agentOrder)
+  ) {
+    return false;
+  }
+  return (
+    value.sections.every((section) => isDynamicRecord(section) && isString(section.id) && isString(section.name)) &&
+    value.order.every(isString) &&
+    Object.values(value.agentAssignments).every(isString) &&
+    value.agentOrder.every(isString) &&
+    new Set(value.agentOrder).size === value.agentOrder.length
+  );
 }
 
 export interface ScopedAgentEvent {

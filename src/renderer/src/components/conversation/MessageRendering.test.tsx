@@ -486,7 +486,7 @@ describe("MessageBody", () => {
     expect(messageContent).not.toHaveTextContent("Resize the row");
     await waitFor(() => expect(screen.getByText("Kobalte").tagName).toBe("STRONG"));
     expect(messageContent).not.toHaveTextContent("Resize the row");
-    await waitFor(() => expect(screen.getByText("Resize the row")).toBeInTheDocument());
+    await waitFor(() => expect(messageContent).toHaveTextContent("Resize the row"));
     expect(screen.getByText("Parse Markdown")).toBeInTheDocument();
     expect(screen.queryByText("Use **Kobal")).toBeNull();
     expect(container.querySelector(".message-content-blocks")).toBe(messageContent);
@@ -511,6 +511,35 @@ describe("MessageBody", () => {
 
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.getByText(/\| --- \| --- \|/u)).toBeInTheDocument();
+  });
+
+  it("labels a routine prompt and keeps the full instruction", () => {
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-routine",
+          author: "you",
+          body: "Prepare the full morning brief with every required section.",
+          time: "07:00",
+          routine: {
+            routineId: "routine-1",
+            runId: "run-1",
+            name: "Morning brief",
+            scheduledFor: "2026-08-25T05:00:00.000Z",
+          },
+          status: "Queued #1",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByText("Morning brief", { selector: ".routine-message-label span" })).toBeInTheDocument();
+    expect(screen.getByText("Prepare the full morning brief with every required section.")).toBeInTheDocument();
+    expect(screen.getByText("Queued #1")).toBeInTheDocument();
   });
 
   it("renders a selected-text instruction as a compact quote while preserving reply context", () => {

@@ -29,6 +29,7 @@ export function AttachmentCards(props: {
           {(attachment) => (
             <div class="message-attachment">
               <Button
+                variant="ghost"
                 type="button"
                 class="attachment-preview-button"
                 disabled={attachment.previewKind === "none"}
@@ -60,6 +61,7 @@ export function AttachmentCards(props: {
                 </span>
               </Button>
               <Button
+                variant="ghost"
                 type="button"
                 class="attachment-open-button"
                 aria-label={`Open ${attachment.name}`}

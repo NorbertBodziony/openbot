@@ -89,6 +89,7 @@ export default function FilePreviewPanel(props: FilePreviewPanelProps) {
         <File class="file-preview-file-icon" />
         <h2 title={props.preview.name}>{props.preview.name}</h2>
         <Button
+          variant="ghost"
           type="button"
           class="browser-toolbar-button"
           aria-label="Open file externally"
@@ -96,7 +97,13 @@ export default function FilePreviewPanel(props: FilePreviewPanelProps) {
         >
           <ExternalLink class="browser-toolbar-icon" />
         </Button>
-        <Button type="button" class="browser-toolbar-button" aria-label="Close file preview" onClick={props.onClose}>
+        <Button
+          variant="ghost"
+          type="button"
+          class="browser-toolbar-button"
+          aria-label="Close file preview"
+          onClick={props.onClose}
+        >
           <X class="browser-toolbar-icon" />
         </Button>
       </header>
@@ -132,7 +139,7 @@ export default function FilePreviewPanel(props: FilePreviewPanelProps) {
             <File />
             <strong>Preview unavailable</strong>
             <span>This file type can be opened in its default application.</span>
-            <Button type="button" onClick={props.onOpenExternally}>
+            <Button variant="outline" type="button" onClick={props.onOpenExternally}>
               Open externally
             </Button>
           </div>

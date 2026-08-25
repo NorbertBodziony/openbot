@@ -153,8 +153,17 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       }
       case "thread/resume": {
         const threadId = requiredString(params, "threadId");
+        const config = readThreadConfig(params);
+        const current = this.#threads.get(threadId);
+        if (current && JSON.stringify(current.config) !== JSON.stringify(config)) {
+          if (current.activeTurn) throw new Error("Wait for the active Claude turn before refreshing its context.");
+          this.#threads.delete(threadId);
+          current.input.close();
+          current.query.close();
+          await current.consume;
+        }
         if (!this.#threads.has(threadId)) {
-          await this.#startThread(threadId, readThreadConfig(params), true);
+          await this.#startThread(threadId, config, true);
         }
         return decoder({ thread: { id: threadId } });
       }
@@ -326,9 +335,11 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   async #consume(runtime: ThreadRuntime): Promise<void> {
     try {
       for await (const message of runtime.query) this.#handleMessage(runtime, message);
-      if (this.#running) this.#fail(new Error("Claude session stream ended unexpectedly."));
+      if (this.#running && this.#threads.get(runtime.id) === runtime) {
+        this.#fail(new Error("Claude session stream ended unexpectedly."));
+      }
     } catch (error) {
-      if (!this.#running) return;
+      if (!this.#running || this.#threads.get(runtime.id) !== runtime) return;
       const activeTurn = runtime.activeTurn;
       if (activeTurn) this.#completeTurn(runtime, "failed", error);
       this.#fail(error instanceof Error ? error : new Error(String(error)));
@@ -507,6 +518,21 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         tools: [
           tool("list_agents", "List OpenBot agents that can receive local messages.", {}, (args) =>
             call("openbot", "list_agents", args),
+          ),
+          tool(
+            "remember",
+            "Stage one durable memory for this agent. Use memoryId to update an existing memory.",
+            {
+              text: z.string().min(1).max(500),
+              memoryId: z.string().optional(),
+            },
+            (args) => call("openbot", "remember", args),
+          ),
+          tool(
+            "forget_memory",
+            "Stage deletion of one saved memory when the user asks you to forget it.",
+            { memoryId: z.string().min(1) },
+            (args) => call("openbot", "forget_memory", args),
           ),
           tool(
             "send_message",

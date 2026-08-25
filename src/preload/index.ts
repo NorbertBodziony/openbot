@@ -4,6 +4,7 @@ import {
   type AgentModelOption,
   type AgentStatus,
   type AttachmentImportEvent,
+  type BotMemory,
   type BotSummary,
   type ConversationMessage,
   type ConversationPage,
@@ -15,15 +16,22 @@ import {
   type ImportAttachmentsInput,
   IPC_CHANNELS,
   isAgentModel,
+  isBotMemory,
   isConversationMessage,
   isReasoningEffort,
+  isRoutine,
+  isRoutineRun,
+  isSidebarLayoutSnapshot,
   type OpenBotDesktopApi,
   type QueuedMessageReceipt,
   type QueueSnapshot,
+  type Routine,
+  type RoutineRun,
   type ScopedAgentEvent,
   type ScopedDirectMessageEvent,
   type ScopedDirectTypingEvent,
   type ScopedTeamPresenceSnapshot,
+  type SidebarLayoutSnapshot,
   type UpdateStatus,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
@@ -91,6 +99,26 @@ function nullableString(value: unknown, label: string): value is string | null {
 function decodeVoid(value: unknown): undefined {
   if (value !== undefined && value !== null) throw new Error("IPC returned unexpected data.");
   return undefined;
+}
+
+function decodeRoutine(value: unknown): Routine {
+  if (!isRoutine(value)) throw new Error("Invalid routine response.");
+  return value;
+}
+
+function decodeRoutines(value: unknown): Routine[] {
+  if (!Array.isArray(value) || !value.every(isRoutine)) throw new Error("Invalid routine list response.");
+  return value;
+}
+
+function decodeRoutineRun(value: unknown): RoutineRun {
+  if (!isRoutineRun(value)) throw new Error("Invalid routine run response.");
+  return value;
+}
+
+function decodeRoutineRuns(value: unknown): RoutineRun[] {
+  if (!Array.isArray(value) || !value.every(isRoutineRun)) throw new Error("Invalid routine history response.");
+  return value;
 }
 
 function decodeFilePreview(value: unknown): FilePreview {
@@ -206,6 +234,21 @@ function decodeBots(value: unknown): BotSummary[] {
   if (!Array.isArray(value) || !value.every(isBotSummary)) {
     throw new Error("Invalid agent list response.");
   }
+  return value;
+}
+
+function decodeMemory(value: unknown): BotMemory {
+  if (!isBotMemory(value)) throw new Error("Invalid agent memory response.");
+  return value;
+}
+
+function decodeMemories(value: unknown): BotMemory[] {
+  if (!Array.isArray(value) || !value.every(isBotMemory)) throw new Error("Invalid agent memories response.");
+  return value;
+}
+
+function decodeSidebarLayout(value: unknown): SidebarLayoutSnapshot {
+  if (!isSidebarLayoutSnapshot(value)) throw new Error("Invalid sidebar layout response.");
   return value;
 }
 
@@ -412,10 +455,23 @@ const openbotApi: OpenBotDesktopApi = {
     getUsage: () => invokeAgent(IPC_CHANNELS.agentGetUsage, null, decodeAccountUsage),
     listModels: () => invokeAgent(IPC_CHANNELS.agentListModels, null, decodeAgentModels),
     listBots: () => invokeAgent(IPC_CHANNELS.agentListBots, null, decodeBots),
+    getSidebarLayout: () => invokeAgent(IPC_CHANNELS.agentGetSidebarLayout, null, decodeSidebarLayout),
+    mutateSidebarLayout: (action) => invokeAgent(IPC_CHANNELS.agentMutateSidebarLayout, action, decodeSidebarLayout),
     createBot: (input) => invokeAgent(IPC_CHANNELS.agentCreateBot, input, decodeBot),
     updateBot: (input) => invokeAgent(IPC_CHANNELS.agentUpdateBot, input, decodeBot),
     setAvatar: (input) => invokeAgent(IPC_CHANNELS.agentSetAvatar, input, decodeBot),
     deleteBot: (botId) => invokeAgent(IPC_CHANNELS.agentDeleteBot, botId, decodeVoid),
+    listMemories: (botId) => invokeAgent(IPC_CHANNELS.agentListMemories, botId, decodeMemories),
+    createMemory: (input) => invokeAgent(IPC_CHANNELS.agentCreateMemory, input, decodeMemory),
+    updateMemory: (input) => invokeAgent(IPC_CHANNELS.agentUpdateMemory, input, decodeMemory),
+    deleteMemory: (input) => invokeAgent(IPC_CHANNELS.agentDeleteMemory, input, decodeVoid),
+    clearMemories: (botId) => invokeAgent(IPC_CHANNELS.agentClearMemories, botId, decodeVoid),
+    listRoutines: (botId) => invokeAgent(IPC_CHANNELS.agentListRoutines, botId, decodeRoutines),
+    createRoutine: (input) => invokeAgent(IPC_CHANNELS.agentCreateRoutine, input, decodeRoutine),
+    updateRoutine: (input) => invokeAgent(IPC_CHANNELS.agentUpdateRoutine, input, decodeRoutine),
+    deleteRoutine: (input) => invokeAgent(IPC_CHANNELS.agentDeleteRoutine, input, decodeVoid),
+    testRoutine: (input) => invokeAgent(IPC_CHANNELS.agentTestRoutine, input, decodeRoutineRun),
+    listRoutineRuns: (input) => invokeAgent(IPC_CHANNELS.agentListRoutineRuns, input, decodeRoutineRuns),
     readConversation: (botId) => invokeAgent(IPC_CHANNELS.agentReadConversation, botId, decodeConversation),
     readConversationPage: (input) => invokeAgent(IPC_CHANNELS.agentReadConversationPage, input, decodeConversationPage),
     searchConversationMessages: (input) =>

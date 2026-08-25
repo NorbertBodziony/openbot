@@ -6,14 +6,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
+  BotMemory,
   BotSummary,
   ConversationWithReadState,
   CreateBotInput,
+  Routine,
+  RoutineRun,
   TeamPresenceSnapshot,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
+import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import { TeamChatStore } from "../backend/team-chat-store";
 import { TeamApiServer } from "./team-api-server";
 import { TeamStore } from "./team-store";
@@ -32,6 +36,7 @@ interface TestRealtimeEvent {
   senderMemberId?: string;
   recipientMemberId?: string;
   typing?: boolean;
+  layout?: unknown;
 }
 
 function unimplemented(..._arguments_: unknown[]): never {
@@ -50,6 +55,17 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     getUsage: unimplemented,
     listModels: unimplemented,
     listBots: unimplemented,
+    listMemories: unimplemented,
+    createMemory: unimplemented,
+    updateMemory: unimplemented,
+    deleteMemory: unimplemented,
+    clearMemories: unimplemented,
+    listRoutines: unimplemented,
+    createRoutine: unimplemented,
+    updateRoutine: unimplemented,
+    deleteRoutine: unimplemented,
+    testRoutine: unimplemented,
+    listRoutineRuns: unimplemented,
     listConversationReads: unimplemented,
     createBot: unimplemented,
     updateBot: unimplemented,
@@ -99,6 +115,95 @@ afterEach(async () => {
 });
 
 describe("TeamApiServer administration", () => {
+  it("shares sidebar layout mutations with owner, admin, and member clients", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-sidebar-layout-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const adminInvite = await store.createInvite("admin");
+    const memberInvite = await store.createInvite("member");
+    const admin = await store.acceptInviteWithAccount(adminInvite.token, {
+      id: "admin-account",
+      email: "admin@example.com",
+      name: "Admin",
+      avatarUrl: null,
+    });
+    const member = await store.acceptInviteWithAccount(memberInvite.token, {
+      id: "member-account",
+      email: "member@example.com",
+      name: "Member",
+      avatarUrl: null,
+    });
+    const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
+    await sidebarLayout.initialize();
+    const agents = createAgents({
+      listBots: () => [
+        {
+          id: "chief",
+          name: "Chief",
+          title: "Lead",
+          description: "",
+          notifications: true,
+          model: "gpt-5.6-luna",
+          reasoningEffort: "medium",
+          threadId: "thread-chief",
+          workspacePath: root,
+          preview: "",
+          updatedAt: null,
+          avatarSeed: "chief",
+          avatarHue: null,
+          avatarUrl: null,
+        } satisfies BotSummary,
+      ],
+    });
+    const api = new TeamApiServer({
+      store,
+      agents,
+      sidebarLayout,
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const owner = await store.login("owner", "correct horse battery");
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
+        "openbot-events",
+        `openbot-token.${member.sessionToken}`,
+      ]);
+      const initialPresence = nextJsonEvent(socket);
+      await new Promise<void>((resolve, reject) => {
+        socket.addEventListener("open", () => resolve(), { once: true });
+        socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
+      });
+      await expect(initialPresence).resolves.toMatchObject({ type: "team-presence" });
+
+      for (const [index, token] of [owner.sessionToken, admin.sessionToken, member.sessionToken].entries()) {
+        const event = nextJsonEvent(socket);
+        const layout = await jsonRequest<{ sections: Array<{ name: string }>; revision: number }>(
+          base,
+          "/v1/sidebar-layout/actions",
+          { token, body: { type: "create", name: `Shared ${index + 1}` } },
+        );
+        expect(layout.sections.at(-1)?.name).toBe(`Shared ${index + 1}`);
+        await expect(event).resolves.toMatchObject({
+          type: "sidebar-layout-changed",
+          layout: { revision: index + 1 },
+        });
+      }
+
+      await expect(jsonRequest(base, "/v1/sidebar-layout", { token: member.sessionToken })).resolves.toMatchObject({
+        revision: 3,
+        sections: [{ name: "Shared 1" }, { name: "Shared 2" }, { name: "Shared 3" }],
+      });
+      socket.close();
+    } finally {
+      await api.stop();
+    }
+  });
+
   it("does not expose unexpected internal errors", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-errors-"));
     roots.push(root);
@@ -207,7 +312,7 @@ describe("TeamApiServer administration", () => {
       const closed = new Promise<number>((resolve) => {
         socket.addEventListener("close", (event) => resolve(event.code), { once: true });
       });
-      socket.send("x".repeat(1_025));
+      socket.send("x".repeat(256 * 1_024 + 1));
       await expect(closed).resolves.toBe(1009);
     } finally {
       socket.close();
@@ -555,6 +660,212 @@ describe("TeamApiServer administration", () => {
         body: JSON.stringify({ name: "x".repeat(INPUT_LIMITS.agentName + 1) }),
       });
       expect(update.status).toBe(400);
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("supports memory operations through the authenticated team API", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-memories-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const memories: BotMemory[] = [];
+    const createMemory = vi.fn((input: { botId: string; text: string }) => {
+      const memory: BotMemory = {
+        id: "memory-1",
+        botId: input.botId,
+        text: input.text,
+        origin: "manual",
+        sourceTurnId: null,
+        createdAt: "2026-08-25T12:00:00.000Z",
+        updatedAt: "2026-08-25T12:00:00.000Z",
+      };
+      memories.push(memory);
+      return memory;
+    });
+    const updateMemory = vi.fn((input: { botId: string; memoryId: string; text: string }) => {
+      const memory = memories.find((item) => item.id === input.memoryId && item.botId === input.botId);
+      if (!memory) throw new Error("Memory not found.");
+      memory.text = input.text;
+      memory.updatedAt = "2026-08-25T12:01:00.000Z";
+      return memory;
+    });
+    const deleteMemory = vi.fn((input: { botId: string; memoryId: string }) => {
+      const index = memories.findIndex((item) => item.id === input.memoryId && item.botId === input.botId);
+      if (index >= 0) memories.splice(index, 1);
+    });
+    const clearMemories = vi.fn((botId: string) => {
+      for (let index = memories.length - 1; index >= 0; index -= 1) {
+        if (memories[index]?.botId === botId) memories.splice(index, 1);
+      }
+    });
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents({
+        listMemories: (botId) => memories.filter((memory) => memory.botId === botId),
+        createMemory,
+        updateMemory,
+        deleteMemory,
+        clearMemories,
+      }),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      const token = login.sessionToken;
+      await expect(
+        jsonRequest<BotMemory>(base, "/v1/agents/chief/memories", {
+          token,
+          body: { text: "Uses metric units." },
+        }),
+      ).resolves.toMatchObject({ id: "memory-1", botId: "chief", origin: "manual" });
+      await expect(jsonRequest(base, "/v1/agents/chief/memories", { token })).resolves.toHaveLength(1);
+      await expect(
+        jsonRequest<BotMemory>(base, "/v1/agents/chief/memories/memory-1", {
+          method: "PATCH",
+          token,
+          body: { text: "Uses SI units." },
+        }),
+      ).resolves.toMatchObject({ text: "Uses SI units." });
+      await emptyRequest(base, "/v1/agents/chief/memories/memory-1", { method: "DELETE", token });
+      await expect(jsonRequest(base, "/v1/agents/chief/memories", { token })).resolves.toEqual([]);
+      expect(createMemory).toHaveBeenCalledWith({ botId: "chief", text: "Uses metric units." });
+      expect(updateMemory).toHaveBeenCalledWith({ botId: "chief", memoryId: "memory-1", text: "Uses SI units." });
+      expect(deleteMemory).toHaveBeenCalledWith({ botId: "chief", memoryId: "memory-1" });
+
+      await jsonRequest<BotMemory>(base, "/v1/agents/chief/memories", {
+        token,
+        body: { text: "Clear this memory." },
+      });
+      await emptyRequest(base, "/v1/agents/chief/memories", { method: "DELETE", token });
+      await expect(jsonRequest(base, "/v1/agents/chief/memories", { token })).resolves.toEqual([]);
+      expect(clearMemories).toHaveBeenCalledWith("chief");
+
+      const oversized = await fetch(`${base}/v1/agents/chief/memories`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ text: "x".repeat(INPUT_LIMITS.agentMemoryText + 1) }),
+      });
+      expect(oversized.status).toBe(400);
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("supports routine operations through the authenticated team API", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-routines-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const routines: Routine[] = [];
+    const createRoutine = vi.fn((input: Parameters<TestAgents["createRoutine"]>[0]) => {
+      const now = "2026-08-25T12:00:00.000Z";
+      const routine: Routine = {
+        id: "routine-1",
+        botId: input.botId,
+        name: input.name,
+        instruction: input.instruction,
+        active: input.active,
+        timezone: input.timezone,
+        trigger: {
+          id: "trigger-1",
+          routineId: "routine-1",
+          schedule: input.schedule,
+          nextRunAt: "2026-08-26T05:00:00.000Z",
+          createdAt: now,
+          updatedAt: now,
+        },
+        createdAt: now,
+        updatedAt: now,
+      };
+      routines.push(routine);
+      return routine;
+    });
+    const updateRoutine = vi.fn((input: Parameters<TestAgents["updateRoutine"]>[0]) => {
+      const routine = routines.find((item) => item.id === input.routineId && item.botId === input.botId);
+      if (!routine) throw new Error("Routine not found.");
+      if (input.name !== undefined) routine.name = input.name;
+      if (input.active !== undefined) routine.active = input.active;
+      if (input.schedule !== undefined) routine.trigger.schedule = input.schedule;
+      return routine;
+    });
+    const run: RoutineRun = {
+      id: "run-1",
+      routineId: "routine-1",
+      botId: "chief",
+      triggerId: null,
+      kind: "manual",
+      scheduledFor: "2026-08-25T12:05:00.000Z",
+      routineName: "Morning brief",
+      instruction: "Prepare the brief.",
+      deliveryId: "delivery-1",
+      status: "queued",
+      error: null,
+      createdAt: "2026-08-25T12:05:00.000Z",
+      updatedAt: "2026-08-25T12:05:00.000Z",
+    };
+    const deleteRoutine = vi.fn(async ({ routineId }: { routineId: string }) => {
+      const index = routines.findIndex((routine) => routine.id === routineId);
+      if (index >= 0) routines.splice(index, 1);
+    });
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents({
+        listRoutines: (botId) => routines.filter((routine) => routine.botId === botId),
+        createRoutine,
+        updateRoutine,
+        deleteRoutine,
+        testRoutine: vi.fn(async () => run),
+        listRoutineRuns: vi.fn(() => [run]),
+      }),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      const token = login.sessionToken;
+      await expect(
+        jsonRequest<Routine>(base, "/v1/agents/chief/routines", {
+          token,
+          body: {
+            name: "Morning brief",
+            instruction: "Prepare the brief.",
+            active: true,
+            timezone: "Europe/Warsaw",
+            schedule: { kind: "weekdays", time: "07:00" },
+          },
+        }),
+      ).resolves.toMatchObject({ id: "routine-1", botId: "chief" });
+      await expect(jsonRequest(base, "/v1/agents/chief/routines", { token })).resolves.toHaveLength(1);
+      await expect(
+        jsonRequest<Routine>(base, "/v1/agents/chief/routines/routine-1", {
+          method: "PATCH",
+          token,
+          body: { active: false, schedule: { kind: "daily", time: "09:15" } },
+        }),
+      ).resolves.toMatchObject({ active: false, trigger: { schedule: { kind: "daily", time: "09:15" } } });
+      await expect(
+        jsonRequest<RoutineRun>(base, "/v1/agents/chief/routines/routine-1/test", { token, body: {} }),
+      ).resolves.toMatchObject({ kind: "manual", status: "queued" });
+      await expect(jsonRequest(base, "/v1/agents/chief/routines/routine-1/runs?limit=10", { token })).resolves.toEqual([
+        run,
+      ]);
+      await emptyRequest(base, "/v1/agents/chief/routines/routine-1", { method: "DELETE", token });
+      await expect(jsonRequest(base, "/v1/agents/chief/routines", { token })).resolves.toEqual([]);
     } finally {
       await api.stop();
     }
@@ -984,6 +1295,7 @@ function decodeTestRealtimeEvent(value: unknown): TestRealtimeEvent {
     ...(code === undefined ? {} : { code }),
     ...(value.snapshot === undefined ? {} : { snapshot: value.snapshot }),
     ...(value.message === undefined ? {} : { message: value.message }),
+    ...(value.layout === undefined ? {} : { layout: value.layout }),
     ...(senderMemberId === undefined ? {} : { senderMemberId }),
     ...(recipientMemberId === undefined ? {} : { recipientMemberId }),
     ...(typing === undefined ? {} : { typing }),
