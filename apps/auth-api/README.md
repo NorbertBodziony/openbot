@@ -46,10 +46,13 @@ EMAIL_FROM=hello@openbot.run
 ```
 
 For a deployed Worker, `bun run api:deploy` decrypts `.env.production`, sends
-`EMAIL_SMTP_PASSWORD` to `wrangler secret put` through standard input, builds the
-Worker, and deploys it. The password is never passed as a process argument. The
-other values are Worker variables. The SMTP connection uses TLS from the start
-and accepts only port 465.
+`EMAIL_SMTP_PASSWORD`, `CLOUDFLARE_API_TOKEN`, and `SKILLS_ADMIN_TOKEN` to
+`wrangler secret put` through standard input, builds the Worker, and deploys it.
+Secrets are never passed as process arguments. The other values are Worker
+variables. The SMTP connection uses TLS from the start and accepts only port 465.
+
+GitHub Actions reads `SKILLS_ADMIN_TOKEN` from the `cloudflare-production`
+Environment and includes it in Wrangler's temporary runtime secrets file.
 
 Use `bun run api:deploy:test` for the isolated `openbot-auth-api-test` Worker
 and the `openbot-auth-test` D1 database.

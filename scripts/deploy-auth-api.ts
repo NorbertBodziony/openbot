@@ -19,6 +19,10 @@ async function main(): Promise<void> {
   if (!cloudflareApiToken?.trim()) {
     throw new Error("CLOUDFLARE_API_TOKEN is missing from the decrypted production environment.");
   }
+  const skillsAdminToken = process.env.SKILLS_ADMIN_TOKEN;
+  if (!skillsAdminToken?.trim()) {
+    throw new Error("SKILLS_ADMIN_TOKEN is missing from the decrypted production environment.");
+  }
   await run(wranglerExecutable, ["secret", "put", "EMAIL_SMTP_PASSWORD", ...environmentArgs], {
     input: `${smtpPassword}\n`,
     label: "Cloudflare SMTP secret",
@@ -26,6 +30,10 @@ async function main(): Promise<void> {
   await run(wranglerExecutable, ["secret", "put", "CLOUDFLARE_API_TOKEN", ...environmentArgs], {
     input: `${cloudflareApiToken}\n`,
     label: "Cloudflare tunnel API secret",
+  });
+  await run(wranglerExecutable, ["secret", "put", "SKILLS_ADMIN_TOKEN", ...environmentArgs], {
+    input: `${skillsAdminToken}\n`,
+    label: "Skills marketplace admin secret",
   });
   await run(wranglerExecutable, ["d1", "migrations", "apply", "DB", "--remote", ...environmentArgs], {
     label: "Remote D1 migrations",
