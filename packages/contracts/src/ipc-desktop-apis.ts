@@ -59,6 +59,17 @@ import type {
   UpdateRoutineInput,
 } from "./ipc-conversation";
 import type {
+  InstalledSkill,
+  InstallSkillInput,
+  MarketplaceSkillDetail,
+  MarketplaceSkillPage,
+  MarketplaceSkillQuery,
+  SkillPackagePreview,
+  SkillSubmission,
+  SubmitSkillInput,
+  UninstallSkillInput,
+} from "./ipc-skills";
+import type {
   ConfigureHostInput,
   CreateTeamInviteInput,
   DirectConversationPage,
@@ -225,6 +236,17 @@ export interface VoiceDesktopApi {
   transcribe: (input: VoiceTranscriptionInput) => Promise<VoiceTranscriptionResult>;
 }
 
+export interface SkillsDesktopApi {
+  list: (query?: MarketplaceSkillQuery) => Promise<MarketplaceSkillPage>;
+  get: (skillId: string) => Promise<MarketplaceSkillDetail>;
+  listMine: () => Promise<SkillSubmission[]>;
+  choosePackage: () => Promise<SkillPackagePreview | null>;
+  submit: (input: SubmitSkillInput) => Promise<SkillSubmission>;
+  listInstalled: (botId: string) => Promise<InstalledSkill[]>;
+  install: (input: InstallSkillInput) => Promise<InstalledSkill>;
+  uninstall: (input: UninstallSkillInput) => Promise<void>;
+}
+
 export interface OpenBotDesktopApi {
   getAppInfo: () => Promise<AppInfo>;
   getSetupState: () => Promise<AppSetupState>;
@@ -234,6 +256,7 @@ export interface OpenBotDesktopApi {
   openExternal: (destination: ExternalDestination) => Promise<void>;
   openUrl: (url: string) => Promise<void>;
   voice: VoiceDesktopApi;
+  skills: SkillsDesktopApi;
   auth: CentralAuthDesktopApi;
   agent: AgentDesktopApi;
   browser: BrowserDesktopApi;

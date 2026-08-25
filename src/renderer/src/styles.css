@@ -13,6 +13,7 @@
 @import "./styles/conversation.css";
 @import "./styles/settings-modal.css";
 @import "./styles/server-settings-modal.css";
+@import "./styles/skills-marketplace.css";
 
 :root {
   color-scheme: dark;

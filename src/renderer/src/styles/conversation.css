@@ -7117,11 +7117,11 @@
   place-items: center;
   border: 1px dashed color-mix(in srgb, var(--accent) 70%, var(--openbot-text-primary));
   border-radius: var(--openbot-radius-lg);
-  background: color-mix(in srgb, var(--background) 82%, transparent);
+  background: color-mix(in srgb, var(--background) 38%, transparent);
   color: var(--text-primary);
   font-size: var(--openbot-text-lg);
   font-weight: 650;
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(3px);
   pointer-events: none;
 }
 

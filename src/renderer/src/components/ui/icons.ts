@@ -35,6 +35,7 @@ export { default as Settings } from "lucide-solid/icons/settings";
 export { default as ShieldCheck } from "lucide-solid/icons/shield-check";
 export { default as SlidersHorizontal } from "lucide-solid/icons/sliders-horizontal";
 export { default as Trash2 } from "lucide-solid/icons/trash-2";
+export { default as Upload } from "lucide-solid/icons/upload";
 export { default as UserRound } from "lucide-solid/icons/user-round";
 export { default as UsersRound } from "lucide-solid/icons/users-round";
 export { default as X } from "lucide-solid/icons/x";

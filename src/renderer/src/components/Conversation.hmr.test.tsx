@@ -2,12 +2,24 @@ import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { ConversationControllerProvider, type ConversationProps, createConversationController } from "./Conversation";
+import { isDragLeavingConversation } from "./ConversationView";
 
 function controllerProps(onTypingChange = vi.fn()): Pick<ConversationProps, "onTypingChange"> {
   return { onTypingChange };
 }
 
 describe("Conversation HMR boundary", () => {
+  it("keeps the file drop overlay active while dragging across conversation children", () => {
+    const panel = document.createElement("main");
+    const child = document.createElement("div");
+    const outside = document.createElement("aside");
+    panel.append(child);
+
+    expect(isDragLeavingConversation(panel, child)).toBe(false);
+    expect(isDragLeavingConversation(panel, outside)).toBe(true);
+    expect(isDragLeavingConversation(panel, null)).toBe(true);
+  });
+
   it("keeps user state when the view subtree remounts", async () => {
     let controller: ReturnType<typeof createConversationController> | undefined;
 

@@ -201,6 +201,11 @@ export interface SidebarFilePreview {
   preview: FilePreview;
 }
 
+/** @internal Keeps file-drag state active while the pointer moves between conversation descendants. */
+export function isDragLeavingConversation(currentTarget: HTMLElement, relatedTarget: EventTarget | null): boolean {
+  return !(relatedTarget instanceof Node && currentTarget.contains(relatedTarget));
+}
+
 export type RightPanelMode = "none" | "browser" | "browser-pip" | "settings" | "file-preview";
 
 const EMPTY_DRAFT: ComposerDraft = {
@@ -3040,6 +3045,12 @@ export function ConversationView(props: ConversationProps) {
     settingsPanelWidth,
     submitting,
   } = scope;
+  createEffect(
+    () => props.globalOverlayOpen,
+    (open) => {
+      if (open) setDropActive(false);
+    },
+  );
   return (
     <ConversationViewScopeContext value={scope}>
       <main
@@ -3055,13 +3066,13 @@ export function ConversationView(props: ConversationProps) {
         ]}
         style={`--settings-panel-width: ${settingsPanelWidth()}px; --browser-panel-width: ${browserPanelWidth()}px`}
         onDragEnter={(event) => {
-          if (event.dataTransfer?.types.includes("Files")) setDropActive(true);
+          if (!props.globalOverlayOpen && event.dataTransfer?.types.includes("Files")) setDropActive(true);
         }}
         onDragOver={(event) => {
-          if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+          if (!props.globalOverlayOpen && event.dataTransfer?.types.includes("Files")) event.preventDefault();
         }}
         onDragLeave={(event) => {
-          if (event.currentTarget === event.target) setDropActive(false);
+          if (isDragLeavingConversation(event.currentTarget, event.relatedTarget)) setDropActive(false);
         }}
         onDrop={(event) => {
           event.preventDefault();

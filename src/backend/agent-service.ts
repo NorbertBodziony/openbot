@@ -277,6 +277,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #compactingBots = new Set<string>();
   readonly #compactionTimers = new Map<string, NodeJS.Timeout>();
   readonly #pendingHandoffs = new Map<string, string>();
+  readonly #pendingRuntimeRefreshes = new Set<string>();
   readonly #pendingDeltas = new Map<string, PendingDelta>();
   readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
   readonly #memoryEpochs = new Map<string, number>();
@@ -502,6 +503,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return bot;
   }
 
+  refreshBotRuntime(botId: string): void {
+    const bot = this.#store.list().find((candidate) => candidate.id === botId);
+    if (!bot) throw new Error("The selected agent no longer exists.");
+    this.#pendingRuntimeRefreshes.add(botId);
+    this.#applyPendingRuntimeRefresh(bot);
+  }
+
   resolveAvatar(botId: string): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
     return this.#store.resolveAvatar(botId);
   }
@@ -632,6 +640,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#pendingDeltas.clear();
     this.#pendingHandoffs.clear();
     this.#pendingMemoryMutations.clear();
+    this.#pendingRuntimeRefreshes.clear();
     this.#clearPendingPrompts();
     this.#pendingApprovals.clear();
     for (const [botId, snapshot] of this.#snapshots) {
@@ -1500,6 +1509,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#emitQueue(delivery.recipientBotId);
       await this.#mailbox.verifyDeliveryAttachments(delivery.id);
       const bot = await this.#store.getOrCreate(delivery.recipientBotId);
+      this.#applyPendingRuntimeRefresh(bot);
       await this.ensureProvider(providerForBot(bot));
       const client = this.#requireReadyClient(providerForBot(bot));
       const threadId = await this.#ensureThread(bot, client);
@@ -2530,6 +2540,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!this.#computerUsePrerequisites) return "setup-required";
     const prerequisites = this.#computerUsePrerequisites();
     return prerequisites.screenRecording && prerequisites.accessibility ? "ready" : "setup-required";
+  }
+
+  #applyPendingRuntimeRefresh(bot: BotSummary): void {
+    if (!this.#pendingRuntimeRefreshes.has(bot.id)) return;
+    const session = this.#store.activeProviderSession(bot.id);
+    if (!session || !bot.threadId) {
+      this.#pendingRuntimeRefreshes.delete(bot.id);
+      return;
+    }
+    const activeTurnId =
+      this.#snapshots.get(bot.id)?.activeTurnId ??
+      this.#store.database.readConversation(bot.id, bot.threadId).activeTurnId;
+    if (activeTurnId) return;
+    this.#store.database.deactivateProviderSessions(bot.threadId);
+    this.#threadToBot.delete(session.externalSessionId);
+    this.#loadedThreads.delete(session.externalSessionId);
+    this.#contextBudgets.delete(session.externalSessionId);
+    this.#clearCompactionTimer(session.externalSessionId);
+    this.#pendingHandoffs.delete(session.externalSessionId);
+    this.#pendingRuntimeRefreshes.delete(bot.id);
   }
 
   #ensureSnapshot(botId: string, threadId: string | null): ConversationSnapshot {
