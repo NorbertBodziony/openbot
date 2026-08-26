@@ -212,6 +212,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         timeout: 5_000,
         maxBuffer: 64 * 1024,
         shell: process.platform === "win32",
+        env: claudeEnvironment(this.#cli),
       });
       const status = JSON.parse(stdout);
       if (!isRecord(status) || status.loggedIn !== true) {
@@ -260,7 +261,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         additionalDirectories: config.additionalDirectories,
         canUseTool,
         mcpServers,
-        env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "openbot/0.1.0" },
+        env: { ...claudeEnvironment(this.#cli), CLAUDE_AGENT_SDK_CLIENT_APP: "openbot/0.1.0" },
       },
     });
     const runtime: ThreadRuntime = {
@@ -659,6 +660,13 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     if (!runtime) throw new Error(`Unknown Claude thread: ${threadId}`);
     return runtime;
   }
+}
+
+function claudeEnvironment(cli: ClaudeCliInfo): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...(cli.source === "bundled" ? { DISABLE_AUTOUPDATER: "1" } : {}),
+  };
 }
 
 class AsyncMessageQueue implements AsyncIterable<SDKUserMessage> {

@@ -51,6 +51,13 @@ export function AppAccessGate() {
     setupState,
     pendingInviteUrl,
     agentStatus,
+    refreshingProviders,
+    connectChatGPT,
+    connectClaude,
+    connectGrok,
+    openProviderInstallGuide,
+    openProviderSignInGuide,
+    refreshAgentProviders,
     saveSetup,
     previewInvite,
     joinRemoteDuringSetup,
@@ -88,6 +95,21 @@ export function AppAccessGate() {
                       state={setupState() ?? { completed: false, preferredProvider: null }}
                       agentStatus={agentStatus()}
                       platform={appInfo()?.platform ?? "darwin"}
+                      refreshingProviders={
+                        refreshingProviders() ||
+                        agentStatus().phase === "starting" ||
+                        agentStatus().phase === "restarting"
+                      }
+                      onConnectProvider={(provider) =>
+                        provider === "codex"
+                          ? connectChatGPT()
+                          : provider === "claude"
+                            ? connectClaude()
+                            : connectGrok()
+                      }
+                      onInstallProvider={openProviderInstallGuide}
+                      onSignInProvider={openProviderSignInGuide}
+                      onRefreshProviders={refreshAgentProviders}
                       onSave={saveSetup}
                     />
                   </Loading>

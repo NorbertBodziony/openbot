@@ -273,6 +273,10 @@ export interface OpenBotDesktopApi {
   getMacPermissions: () => Promise<MacPermissionsState>;
   requestMacPermission: (permission: MacPermissionId) => Promise<MacPermissionsState>;
   openExternal: (destination: ExternalDestination) => Promise<void>;
+  connectChatGPT: () => Promise<AgentStatus>;
+  connectClaude: () => Promise<AgentStatus>;
+  connectGrok: () => Promise<AgentStatus>;
+  refreshAgentProviders: () => Promise<AgentStatus>;
   openUrl: (url: string) => Promise<void>;
   voice: VoiceDesktopApi;
   skills: SkillsDesktopApi;

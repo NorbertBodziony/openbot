@@ -1,4 +1,4 @@
-import type { AgentProviderId, MacPermissionId } from "@openbot/contracts/ipc";
+import type { AgentProviderId, ExternalDestination, MacPermissionId } from "@openbot/contracts/ipc";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 
 export function parseProvider(input: unknown): AgentProviderId {
@@ -11,6 +11,19 @@ export function parseProvider(input: unknown): AgentProviderId {
 export function parseMacPermission(input: unknown): MacPermissionId {
   if (input !== "screen-recording" && input !== "accessibility") {
     throw new Error("Unknown macOS permission.");
+  }
+  return input;
+}
+
+export function parseExternalDestination(input: unknown): ExternalDestination {
+  if (
+    input !== "agent-setup" &&
+    input !== "claude-install" &&
+    input !== "claude-sign-in" &&
+    input !== "feedback" &&
+    input !== "message"
+  ) {
+    throw new Error("Unknown external destination.");
   }
   return input;
 }
