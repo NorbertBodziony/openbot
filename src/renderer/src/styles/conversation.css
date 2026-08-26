@@ -3465,6 +3465,11 @@
   padding-inline: 2px;
 }
 
+.ui-bubble-reactions.message-reaction-anchor:has(> .message-reaction-pill:only-child) > .message-reaction-pill {
+  width: var(--openbot-leading-lg);
+  border-radius: var(--openbot-radius-pill);
+}
+
 .message-reaction-anchor .ui-bubble-reaction-overflow {
   padding-right: 6px;
 }
