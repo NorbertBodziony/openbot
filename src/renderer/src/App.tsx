@@ -313,6 +313,7 @@ export function createAppController(props: AppProps = {}) {
   const autoReadAgentMessageIds = new Map<string, string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const conversationPageRequests = new Map<string, number>();
+  const queueSnapshotRequests = new Map<string, number>();
   const turnStartedAt = new Map<string, number>();
   const completedTurnByBot = new Map<string, string>();
   let conversationFrame: number | undefined;
@@ -549,66 +550,68 @@ export function createAppController(props: AppProps = {}) {
       .then((inviteUrl) => inviteUrl && receiveInvite(inviteUrl))
       .catch(() => undefined);
 
-    void Promise.all([
-      window.openbot
-        .getAppInfo()
-        .then((info) => {
-          appInfoLoadedFromHost = true;
-          setAppInfo(info);
-        })
-        .catch(() =>
-          setAppInfo({
-            name: "OpenBot",
-            version: "unavailable",
-            platform: "darwin",
-            variant: "production",
-          }),
-        ),
-      window.openbot.agent
-        .getStatus()
-        .then(setAgentStatus)
-        .catch(() => undefined),
-      window.openbot.agent
-        .listModels()
-        .then(setModelOptions)
-        .catch(() => undefined),
-      window.openbot.agent
-        .listBots()
-        .then(applyStoredBots)
-        .catch((error) => {
-          setAgentStatus((current) => ({ ...current, message: String(error) }));
+    void window.openbot
+      .getAppInfo()
+      .then((info) => {
+        appInfoLoadedFromHost = true;
+        setAppInfo(info);
+      })
+      .catch(() =>
+        setAppInfo({
+          name: "OpenBot",
+          version: "unavailable",
+          platform: "darwin",
+          variant: "production",
         }),
-      window.openbot.agent
-        .getSidebarLayout()
-        .then(setSidebarLayout)
-        .catch(() => setSidebarLayout(defaultSidebarLayout())),
-      window.openbot.agent
-        .listConversationReads()
-        .then(applyConversationReads)
-        .catch(() => undefined),
-    ]);
-    if (!props.landingPreview) {
-      void window.openbot.browser
-        .listTabs()
-        .then((tabs) => {
-          setBrowserTabs(tabs);
-          setActiveBrowserTabId((current) => current ?? tabs[0]?.id ?? null);
-        })
-        .catch(() => undefined);
-      void window.openbot.browser
-        .getControlState()
-        .then(setBrowserControlState)
-        .catch(() => undefined);
-    }
-    void window.openbot.servers
+      );
+    const initialServerReady = window.openbot.servers
       .list()
       .then(setServers)
       .catch(() => undefined);
-    void window.openbot.servers
-      .getPresence()
-      .then(setTeamPresence)
-      .catch(() => undefined);
-    void refreshDirectThreads();
+    void initialServerReady.then(() => {
+      void Promise.all([
+        window.openbot.agent
+          .getStatus()
+          .then(setAgentStatus)
+          .catch(() => undefined),
+        window.openbot.agent
+          .listModels()
+          .then(setModelOptions)
+          .catch(() => undefined),
+        window.openbot.agent
+          .listBots()
+          .then(applyStoredBots)
+          .catch((error) => {
+            setAgentStatus((current) => ({ ...current, message: String(error) }));
+          }),
+        window.openbot.agent
+          .getSidebarLayout()
+          .then(setSidebarLayout)
+          .catch(() => setSidebarLayout(defaultSidebarLayout())),
+        window.openbot.agent
+          .listConversationReads()
+          .then(applyConversationReads)
+          .catch(() => undefined),
+      ]);
+      if (!props.landingPreview) {
+        void window.openbot.browser
+          .listTabs()
+          .then((tabs) => {
+            setBrowserTabs(tabs);
+            setActiveBrowserTabId((current) => current ?? tabs[0]?.id ?? null);
+          })
+          .catch(() => undefined);
+        void window.openbot.browser
+          .getControlState()
+          .then(setBrowserControlState)
+          .catch(() => undefined);
+      }
+      void window.openbot.servers
+        .getPresence()
+        .then(setTeamPresence)
+        .catch(() => undefined);
+      void refreshDirectThreads();
+    });
     void window.openbot.host
       .getStatus()
       .then(setHostStatus)
@@ -642,13 +645,17 @@ export function createAppController(props: AppProps = {}) {
       const markReadOnOpen = agentChatsToMarkRead.delete(botId);
       const pageRequest = (conversationPageRequests.get(botId) ?? 0) + 1;
       conversationPageRequests.set(botId, pageRequest);
+      const queueRequest = (queueSnapshotRequests.get(botId) ?? 0) + 1;
+      queueSnapshotRequests.set(botId, queueRequest);
       void Promise.all([
         window.openbot.agent.readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 }),
         window.openbot.agent.listQueue(botId),
       ])
         .then(([page, queue]) => {
           if (conversationPageRequests.get(botId) !== pageRequest) return;
-          setQueues((current) => ({ ...current, [botId]: queue }));
+          if (queueSnapshotRequests.get(botId) === queueRequest) {
+            setQueues((current) => ({ ...current, [botId]: queue }));
+          }
           applyConversationPage(page, true, "latest");
           if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
             void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null).catch((error) =>
@@ -687,6 +694,7 @@ export function createAppController(props: AppProps = {}) {
         applyConversationDelta(event);
         return;
       case "queue-changed":
+        queueSnapshotRequests.set(event.snapshot.botId, (queueSnapshotRequests.get(event.snapshot.botId) ?? 0) + 1);
         setQueues((current) => ({
           ...current,
           [event.snapshot.botId]: event.snapshot,
