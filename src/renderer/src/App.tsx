@@ -548,66 +548,68 @@ export function createAppController(props: AppProps = {}) {
       .then((inviteUrl) => inviteUrl && receiveInvite(inviteUrl))
       .catch(() => undefined);
 
-    void Promise.all([
-      window.openbot
-        .getAppInfo()
-        .then((info) => {
-          appInfoLoadedFromHost = true;
-          setAppInfo(info);
-        })
-        .catch(() =>
-          setAppInfo({
-            name: "OpenBot",
-            version: "unavailable",
-            platform: "darwin",
-            variant: "production",
-          }),
-        ),
-      window.openbot.agent
-        .getStatus()
-        .then(setAgentStatus)
-        .catch(() => undefined),
-      window.openbot.agent
-        .listModels()
-        .then(setModelOptions)
-        .catch(() => undefined),
-      window.openbot.agent
-        .listBots()
-        .then(applyStoredBots)
-        .catch((error) => {
-          setAgentStatus((current) => ({ ...current, message: String(error) }));
+    void window.openbot
+      .getAppInfo()
+      .then((info) => {
+        appInfoLoadedFromHost = true;
+        setAppInfo(info);
+      })
+      .catch(() =>
+        setAppInfo({
+          name: "OpenBot",
+          version: "unavailable",
+          platform: "darwin",
+          variant: "production",
         }),
-      window.openbot.agent
-        .getSidebarLayout()
-        .then(setSidebarLayout)
-        .catch(() => setSidebarLayout(defaultSidebarLayout())),
-      window.openbot.agent
-        .listConversationReads()
-        .then(applyConversationReads)
-        .catch(() => undefined),
-    ]);
-    if (!props.landingPreview) {
-      void window.openbot.browser
-        .listTabs()
-        .then((tabs) => {
-          setBrowserTabs(tabs);
-          setActiveBrowserTabId((current) => current ?? tabs[0]?.id ?? null);
-        })
-        .catch(() => undefined);
-      void window.openbot.browser
-        .getControlState()
-        .then(setBrowserControlState)
-        .catch(() => undefined);
-    }
-    void window.openbot.servers
+      );
+    const initialServerReady = window.openbot.servers
       .list()
       .then(setServers)
       .catch(() => undefined);
-    void window.openbot.servers
-      .getPresence()
-      .then(setTeamPresence)
-      .catch(() => undefined);
-    void refreshDirectThreads();
+    void initialServerReady.then(() => {
+      void Promise.all([
+        window.openbot.agent
+          .getStatus()
+          .then(setAgentStatus)
+          .catch(() => undefined),
+        window.openbot.agent
+          .listModels()
+          .then(setModelOptions)
+          .catch(() => undefined),
+        window.openbot.agent
+          .listBots()
+          .then(applyStoredBots)
+          .catch((error) => {
+            setAgentStatus((current) => ({ ...current, message: String(error) }));
+          }),
+        window.openbot.agent
+          .getSidebarLayout()
+          .then(setSidebarLayout)
+          .catch(() => setSidebarLayout(defaultSidebarLayout())),
+        window.openbot.agent
+          .listConversationReads()
+          .then(applyConversationReads)
+          .catch(() => undefined),
+      ]);
+      if (!props.landingPreview) {
+        void window.openbot.browser
+          .listTabs()
+          .then((tabs) => {
+            setBrowserTabs(tabs);
+            setActiveBrowserTabId((current) => current ?? tabs[0]?.id ?? null);
+          })
+          .catch(() => undefined);
+        void window.openbot.browser
+          .getControlState()
+          .then(setBrowserControlState)
+          .catch(() => undefined);
+      }
+      void window.openbot.servers
+        .getPresence()
+        .then(setTeamPresence)
+        .catch(() => undefined);
+      void refreshDirectThreads();
+    });
     void window.openbot.host
       .getStatus()
       .then(setHostStatus)
