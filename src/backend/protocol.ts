@@ -61,6 +61,18 @@ export interface AccountReadResult {
   requiresOpenaiAuth: boolean;
 }
 
+export interface AccountLoginStartResult {
+  type: "chatgpt";
+  loginId: string;
+  authUrl: string;
+}
+
+export interface AccountLoginCompletedResult {
+  loginId: string | null;
+  success: boolean;
+  error: string | null;
+}
+
 export interface AccountRateLimitWindowResult {
   usedPercent?: number | null;
   windowDurationMins?: number | null;
@@ -166,6 +178,26 @@ export function decodeAccountReadResult(value: unknown): AccountReadResult {
       planType: optionalString(accountRecord, "planType"),
     },
     requiresOpenaiAuth: requiresOpenaiAuth === undefined ? false : recordBoolean(record, "requiresOpenaiAuth"),
+  };
+}
+
+export function decodeAccountLoginStartResult(value: unknown): AccountLoginStartResult {
+  const record = requiredRecord(value, "account login response");
+  if (requiredString(record, "type") !== "chatgpt") throw new Error("Unexpected Codex login type.");
+  const authUrl = requiredString(record, "authUrl");
+  const url = new URL(authUrl);
+  if (url.protocol !== "https:") throw new Error("Codex returned an unsafe login URL.");
+  return { type: "chatgpt", loginId: requiredString(record, "loginId"), authUrl: url.toString() };
+}
+
+export function decodeAccountLoginCompletedResult(value: unknown): AccountLoginCompletedResult {
+  const record = requiredRecord(value, "account login completion");
+  const loginId = optionalString(record, "loginId");
+  const error = optionalString(record, "error");
+  return {
+    loginId: loginId ?? null,
+    success: recordBoolean(record, "success"),
+    error: error ?? null,
   };
 }
 

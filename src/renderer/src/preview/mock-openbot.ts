@@ -352,6 +352,10 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       accessibility: "granted",
     }),
     openExternal: async () => undefined,
+    connectChatGPT: async () => clone(agentStatus),
+    connectClaude: async () => clone(agentStatus),
+    connectGrok: async () => clone(agentStatus),
+    refreshAgentProviders: async () => clone(agentStatus),
     openUrl: async () => undefined,
     voice: {
       transcribe: async () => ({ text: "Mock voice transcript" }),

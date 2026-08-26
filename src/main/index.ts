@@ -44,6 +44,7 @@ import { AgentService } from "../backend/agent-service";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
 import { isCloseBrowserTabShortcut, isSelectAllShortcut, isToggleDevToolsShortcut } from "../backend/browser-shortcuts";
+import { bundledClaudeExecutable, bundledCodexExecutable, bundledGrokExecutable } from "../backend/cli";
 import { MailboxStore } from "../backend/mailbox-store";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import { TeamChatStore } from "../backend/team-chat-store";
@@ -54,7 +55,13 @@ import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
 import { resolveOpenBotCloudflaredExecutable } from "./cloudflared-artifact";
 import { buildContentSecurityPolicy } from "./content-security-policy";
-import { developmentUserDataName, readDevelopmentProfile, shouldAutoStartHost } from "./development-profile";
+import {
+  developmentUserDataName,
+  readDevelopmentInstanceId,
+  readDevelopmentProfile,
+  shouldAutoStartHost,
+  shouldShowDevelopmentWindow,
+} from "./development-profile";
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "./file-preview";
 import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
 import {
@@ -89,7 +96,7 @@ import {
   parseUpdateQueuedMessage,
   parseUpdateRoutine,
 } from "./ipc/agent-inputs";
-import { parseMacPermission, parseProvider } from "./ipc/app-inputs";
+import { parseExternalDestination, parseMacPermission, parseProvider } from "./ipc/app-inputs";
 import { parseAvatarImage } from "./ipc/avatar-inputs";
 import { parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
 import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
@@ -144,7 +151,16 @@ if (!app.isPackaged && /^\d{4,5}$/u.test(process.env.OPENBOT_DEV_REMOTE_DEBUGGIN
 if (commandLineUserDataDirectory) {
   app.setPath("userData", resolve(commandLineUserDataDirectory));
 } else if (!app.isPackaged) {
-  app.setPath("userData", join(app.getPath("appData"), developmentUserDataName(developmentProfile ?? "app")));
+  app.setPath(
+    "userData",
+    join(
+      app.getPath("appData"),
+      developmentUserDataName(
+        developmentProfile ?? "app",
+        readDevelopmentInstanceId(process.env.OPENBOT_DEV_INSTANCE_ID),
+      ),
+    ),
+  );
 }
 app.enableSandbox();
 if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
@@ -213,6 +229,8 @@ const REMOTE_DESKTOP_RUNTIME_SECRET_FILE = "openbot-remote-desktop-runtime-v1.js
 
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "agent-setup": "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
+  "claude-install": "https://code.claude.com/docs",
+  "claude-sign-in": "https://code.claude.com/docs/en/authentication",
   feedback: "https://x.com/intent/post?text=Feedback%20for%20OpenBot%20%40norbertbodziony%3A%20",
   message: "https://x.com/norbertbodziony",
 };
@@ -270,11 +288,18 @@ function registerIpcHandlers(
     requestMacPermission(parseMacPermission(permission)),
   );
   handleTrusted(IPC_CHANNELS.openExternal, (destination: unknown) => {
-    if (destination !== "agent-setup" && destination !== "feedback" && destination !== "message") {
-      throw new Error("Unknown external destination.");
-    }
-    return shell.openExternal(EXTERNAL_DESTINATIONS[destination]);
+    return shell.openExternal(EXTERNAL_DESTINATIONS[parseExternalDestination(destination)]);
   });
+  handleTrusted(IPC_CHANNELS.connectChatGPT, () =>
+    service.connectChatGPT(async (value) => {
+      const url = new URL(value);
+      if (url.protocol !== "https:") throw new Error("Only HTTPS ChatGPT login links can open in the browser.");
+      await shell.openExternal(url.toString());
+    }),
+  );
+  handleTrusted(IPC_CHANNELS.connectClaude, () => service.connectClaude());
+  handleTrusted(IPC_CHANNELS.connectGrok, () => service.connectGrok());
+  handleTrusted(IPC_CHANNELS.refreshAgentProviders, () => service.refreshProviders());
   handleTrusted(IPC_CHANNELS.openUrl, (value: unknown) => {
     const url = new URL(requireString(value, "URL", INPUT_LIMITS.browserUrl));
     if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -985,7 +1010,14 @@ function createWindow(): BrowserWindow {
   });
 
   window.once("ready-to-show", () => {
-    if (developmentRemoteRole !== "host") window.show();
+    if (
+      shouldShowDevelopmentWindow({
+        remoteRole: developmentRemoteRole,
+        testClientEnabled: developmentTestClientEnabled,
+      })
+    ) {
+      window.show();
+    }
   });
   window.on("close", (event) => {
     if (process.platform === "darwin" && !isQuitting) {
@@ -1276,6 +1308,10 @@ if (!hasSingleInstanceLock) {
         readComputerUsePrerequisites,
         30_000,
         setupState.preferredProvider ?? "codex",
+        null,
+        bundledCodexExecutable(process.platform, process.arch, app.isPackaged ? process.resourcesPath : null),
+        bundledClaudeExecutable(process.platform, process.arch, app.isPackaged ? process.resourcesPath : null),
+        bundledGrokExecutable(process.platform, process.arch, app.isPackaged ? process.resourcesPath : null),
       );
       const service = agentService;
       const skillMarketplace = new SkillMarketplaceService(

@@ -1,5 +1,6 @@
 import type {
   AgentEvent,
+  AgentStatus,
   AttachmentImportEvent,
   BotSummary,
   CentralAuthState,
@@ -143,6 +144,85 @@ describe("OpenBot connected desktop shell", () => {
           accessibility: "granted",
         }),
         openExternal: vi.fn().mockResolvedValue(undefined),
+        connectChatGPT: vi.fn().mockResolvedValue({
+          phase: "blocked",
+          cliVersion: "0.149.1",
+          auth: { kind: "unknown" },
+          providers: [
+            {
+              id: "codex",
+              state: "sign-in-required",
+              connectionState: "connecting",
+              version: "0.149.1",
+              message: null,
+            },
+            { id: "claude", state: "sign-in-required", version: "2.1.246", message: null },
+          ],
+          capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+          message: null,
+          fullAccess: true,
+        }),
+        connectClaude: vi.fn().mockResolvedValue({
+          phase: "blocked",
+          cliVersion: "2.1.246",
+          auth: { kind: "unknown" },
+          providers: [
+            { id: "codex", state: "sign-in-required", version: "0.149.1", message: null },
+            {
+              id: "claude",
+              state: "sign-in-required",
+              connectionState: "connecting",
+              version: "2.1.246",
+              message: null,
+            },
+          ],
+          capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+          message: null,
+          fullAccess: true,
+        }),
+        connectGrok: vi.fn().mockResolvedValue({
+          phase: "blocked",
+          cliVersion: "1.0.5",
+          auth: { kind: "unknown" },
+          providers: [
+            { id: "codex", state: "sign-in-required", version: "0.149.1", message: null },
+            { id: "claude", state: "sign-in-required", version: "2.1.246", message: null },
+            {
+              id: "grok",
+              state: "sign-in-required",
+              connectionState: "connecting",
+              version: "1.0.5",
+              message: null,
+            },
+          ],
+          capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+          message: null,
+          fullAccess: true,
+        }),
+        refreshAgentProviders: vi.fn().mockResolvedValue({
+          phase: "ready",
+          cliVersion: "0.144.1",
+          auth: { kind: "chatgpt", email: "norbert@example.com" },
+          providers: [
+            {
+              id: "codex",
+              state: "available",
+              version: "0.144.1",
+              message: null,
+              email: "norbert@example.com",
+            },
+            {
+              id: "claude",
+              state: "available",
+              version: "2.1.231",
+              message: null,
+              email: "claude@example.com",
+            },
+          ],
+          capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+          message: null,
+          fullAccess: true,
+        }),
         openUrl: vi.fn().mockResolvedValue(undefined),
         voice: {
           transcribe: vi.fn().mockResolvedValue({ text: "Voice transcript" }),
@@ -642,14 +722,302 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
     const providers = screen.getByRole("radiogroup", { name: "Default provider" });
-    const codex = within(providers).getByRole("radio", { name: /Codex.*Available/ });
+    const codex = within(providers).getByRole("radio", { name: /ChatGPT.*Connected/ });
     expect(codex).toHaveFocus();
-    await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Available/ }));
+    expect(codex).toBeChecked();
+    await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Connected/ }));
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await fireEvent.click(screen.getByRole("button", { name: "Open OpenBot" }));
     expect(window.openbot.saveSetup).toHaveBeenCalledWith({ preferredProvider: "claude" });
     expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
+  });
+
+  it("connects bundled Claude and Grok providers", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: "Connect ChatGPT." },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Sign in to Claude." },
+        { id: "grok", state: "sign-in-required", version: "1.0.5", message: "Sign in to Grok." },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Install a provider.",
+      fullAccess: true,
+    });
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Connect Claude" }));
+
+    expect(window.openbot.connectClaude).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Restart Claude" })).toBeEnabled();
+    await fireEvent.click(screen.getByRole("button", { name: "Connect Grok" }));
+    expect(window.openbot.connectGrok).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Restart Grok" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+
+  it("restarts provider connections independently and Refresh resets both", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    const disconnectedStatus: AgentStatus = {
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: null },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: null },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: null,
+      fullAccess: true,
+    };
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce(disconnectedStatus);
+    const bothConnecting: AgentStatus = {
+      ...disconnectedStatus,
+      providers: disconnectedStatus.providers?.map((provider) => ({
+        ...provider,
+        connectionState: "connecting" as const,
+      })),
+    };
+    vi.mocked(window.openbot.connectChatGPT).mockResolvedValue(bothConnecting);
+    vi.mocked(window.openbot.connectClaude).mockResolvedValue(bothConnecting);
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Connect ChatGPT" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Restart Claude" }));
+    expect(screen.getByRole("button", { name: "Restart ChatGPT" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Restart Claude" })).toBeEnabled();
+    expect(window.openbot.connectChatGPT).toHaveBeenCalledTimes(1);
+    expect(window.openbot.connectClaude).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Restart ChatGPT" }));
+    expect(window.openbot.connectChatGPT).toHaveBeenCalledTimes(2);
+    emitAgentEvent?.({
+      type: "status",
+      status: {
+        ...disconnectedStatus,
+        phase: "ready",
+        providers: [
+          {
+            id: "codex",
+            state: "sign-in-required",
+            version: "0.149.1",
+            message: "ChatGPT connection was not completed. Try again.",
+          },
+          {
+            id: "claude",
+            state: "available",
+            version: "2.1.246",
+            message: null,
+            email: "claude@example.com",
+          },
+        ],
+      },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("ChatGPT connection was not completed. Try again.");
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh providers" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reconnect ChatGPT" })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Reconnect Claude" })).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("refreshes provider detection and opens the matching sign-in guide", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: "Connect ChatGPT." },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Sign in to Claude." },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Install a provider.",
+      fullAccess: true,
+    });
+    let finishRefresh: ((status: AgentStatus) => void) | undefined;
+    vi.mocked(window.openbot.refreshAgentProviders).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishRefresh = resolve;
+      }),
+    );
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Refresh providers" }));
+    expect(screen.getByRole("button", { name: "Checking providers" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /^Install / })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+
+    expect(finishRefresh).toBeTypeOf("function");
+    finishRefresh?.({
+      phase: "ready",
+      cliVersion: "2.1.231",
+      auth: { kind: "claude", email: "claude@example.com" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.144.1", message: "Sign in to ChatGPT." },
+        {
+          id: "claude",
+          state: "available",
+          version: "2.1.231",
+          message: null,
+          email: "claude@example.com",
+        },
+      ],
+      capabilities: { chat: "ready", browser: "ready", computerUse: "unavailable" },
+      message: null,
+      fullAccess: true,
+    });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Connect ChatGPT" })).toBeEnabled());
+    expect(
+      within(screen.getByRole("radiogroup", { name: "Default provider" })).getByRole("radio", { name: /Claude/ }),
+    ).toBeChecked();
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+    const connectChatGPT = screen.getByRole("button", { name: "Connect ChatGPT" });
+    await fireEvent.click(connectChatGPT);
+    expect(window.openbot.connectChatGPT).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Restart ChatGPT" })).toBeEnabled();
+  });
+
+  it("refreshes providers after returning from a Connect browser flow", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: "Connect ChatGPT." },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Connect Claude." },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: null,
+      fullAccess: true,
+    });
+    render(() => <App />);
+    window.dispatchEvent(new Event("focus"));
+    expect(window.openbot.refreshAgentProviders).not.toHaveBeenCalled();
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Connect ChatGPT" }));
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() => expect(window.openbot.refreshAgentProviders).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows a provider-specific warning when Refresh cannot verify an existing connection", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({ completed: false, preferredProvider: null });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "ready",
+      cliVersion: "0.149.1",
+      auth: { kind: "chatgpt", email: "norbert@example.com" },
+      providers: [
+        {
+          id: "codex",
+          state: "available",
+          version: "0.149.1",
+          message: null,
+          email: "norbert@example.com",
+          checkError: "Could not verify ChatGPT. Keeping the existing connection.",
+        },
+      ],
+      capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+      message: null,
+      fullAccess: true,
+    });
+
+    render(() => <App />);
+
+    expect(await screen.findByText("Could not verify ChatGPT. Keeping the existing connection.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Reconnect ChatGPT" })).toBeEnabled();
+  });
+
+  it("shows a friendly inline error when a provider guide cannot open", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: "Connect ChatGPT." },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Sign in to Claude." },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Install a provider.",
+      fullAccess: true,
+    });
+    vi.mocked(window.openbot.connectChatGPT).mockRejectedValueOnce(new Error("Raw IPC failure"));
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Connect ChatGPT" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("OpenBot could not connect ChatGPT. Try again.");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Raw IPC failure");
+  });
+
+  it("shows a native ChatGPT login failure reported after the browser opens", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: "Connect ChatGPT." },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Sign in to Claude." },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Connect ChatGPT.",
+      fullAccess: true,
+    });
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Connect ChatGPT" }));
+    expect(screen.getByRole("button", { name: "Restart ChatGPT" })).toBeEnabled();
+
+    emitAgentEvent?.({
+      type: "status",
+      status: {
+        phase: "blocked",
+        cliVersion: null,
+        auth: { kind: "unknown" },
+        providers: [
+          {
+            id: "codex",
+            state: "sign-in-required",
+            version: "0.149.1",
+            message: "ChatGPT connection timed out. Try again.",
+          },
+          { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Sign in to Claude." },
+        ],
+        capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+        message: "ChatGPT connection timed out. Try again.",
+        fullAccess: true,
+      },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("ChatGPT connection timed out. Try again.");
+    expect(screen.getByRole("button", { name: "Connect ChatGPT" })).toBeEnabled();
   });
 
   it("connects to a remote host after account sign-in", async () => {
@@ -996,7 +1364,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
 
     const providers = await screen.findByRole("radiogroup", { name: "Default provider" });
-    const codex = within(providers).getByRole("radio", { name: /Codex.*Checking/ });
+    const codex = within(providers).getByRole("radio", { name: /ChatGPT.*Checking/ });
     const claude = within(providers).getByRole("radio", { name: /Claude.*Checking/ });
 
     expect(codex).toBeEnabled();
@@ -1005,7 +1373,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(claude);
     expect(claude).toBeChecked();
-    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
 
     emitAgentEvent?.({
       type: "status",
@@ -1040,6 +1408,38 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     expect(claude).toBeChecked();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+
+    emitAgentEvent?.({
+      type: "status",
+      status: {
+        phase: "ready",
+        cliVersion: "2.1.231",
+        auth: { kind: "claude", email: "claude@example.com" },
+        providers: [
+          {
+            id: "codex",
+            state: "not-installed",
+            version: null,
+            message: "Codex CLI is not installed.",
+            email: null,
+          },
+          {
+            id: "claude",
+            state: "available",
+            version: "2.1.231",
+            message: null,
+            email: "claude@example.com",
+          },
+        ],
+        capabilities: { chat: "ready", browser: "ready", computerUse: "setup-required" },
+        message: null,
+        fullAccess: true,
+      },
+    });
+
+    expect(claude).toBeChecked();
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await fireEvent.click(screen.getByRole("button", { name: "Open OpenBot" }));
@@ -1055,11 +1455,11 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(screen.getByRole("dialog", { name: "Providers & permissions" })).toBeInTheDocument();
     const providers = screen.getByRole("radiogroup", { name: "Default provider" });
-    expect(within(providers).getByRole("radio", { name: /Codex.*Available/ })).toBeChecked();
+    expect(within(providers).getByRole("radio", { name: /Codex.*Connected/ })).toBeChecked();
     expect(within(providers).getByText("norbert@example.com")).toBeInTheDocument();
     expect(within(providers).getByText("claude@example.com")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Available/ }));
+    await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Connected/ }));
     await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     expect(window.openbot.saveSetup).toHaveBeenLastCalledWith({ preferredProvider: "claude" });
     expect(screen.queryByRole("dialog", { name: "Providers & permissions" })).not.toBeInTheDocument();
@@ -1085,7 +1485,7 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(
       within(await screen.findByRole("radiogroup", { name: "Default provider" })).getByRole("radio", {
-        name: /Codex.*Available/,
+        name: /ChatGPT.*Connected/,
       }),
     ).toBeChecked();
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
