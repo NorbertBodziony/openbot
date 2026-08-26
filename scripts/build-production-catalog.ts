@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isSkillCategory, type SkillCategory } from "@openbot/contracts/ipc";
+import { type BotAvatarHue, isAvatarHue, isSkillCategory, type SkillCategory } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { unzipSync, zipSync } from "fflate";
 import { parse as parseYaml } from "yaml";
@@ -34,7 +34,7 @@ interface AgentSpec {
   name: string;
   title: string;
   description: string;
-  avatarHue: number;
+  avatarHue: BotAvatarHue;
   skills: string[];
 }
 
@@ -285,8 +285,7 @@ function parseAgentSpec(value: unknown): AgentSpec {
     !isString(value.title) ||
     !isString(value.description) ||
     !isNumber(value.avatarHue) ||
-    value.avatarHue < 0 ||
-    value.avatarHue >= 360 ||
+    !isAvatarHue(value.avatarHue) ||
     !Array.isArray(value.skills) ||
     !value.skills.every(isString)
   ) {

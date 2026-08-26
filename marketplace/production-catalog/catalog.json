@@ -49,7 +49,7 @@
       "name": "Application Security Reviewer",
       "title": "Finds concrete risks and builds actionable threat models",
       "description": "Reviews supported codebases for security weaknesses and maps realistic abuse paths to prioritized mitigations.",
-      "avatarHue": 12,
+      "avatarHue": 30,
       "skills": ["secure-code-guidance", "repository-threat-model"]
     },
     {
@@ -57,7 +57,7 @@
       "name": "Product Design Lead",
       "title": "Turns product intent into distinctive, usable interfaces",
       "description": "Shapes clear product briefs and carries their intent through deliberate visual direction, interaction, and interface copy.",
-      "avatarHue": 276,
+      "avatarHue": 280,
       "skills": ["distinctive-frontend-design"]
     },
     {
@@ -65,7 +65,7 @@
       "name": "Communications Partner",
       "title": "Makes important writing clear, useful, and decision-ready",
       "description": "Coauthors structured documents and internal updates while surfacing assumptions that deserve a final check.",
-      "avatarHue": 192,
+      "avatarHue": 185,
       "skills": ["internal-communications", "decision-quality-check"]
     }
   ]
