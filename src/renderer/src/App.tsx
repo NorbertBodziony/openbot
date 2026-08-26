@@ -1847,6 +1847,12 @@ export function createAppController(props: AppProps = {}) {
     });
   }
 
+  async function openInstalledMarketplaceAgent(bot: BotSummary): Promise<void> {
+    await selectServer("local");
+    selectBot(bot.id);
+    setSkillsMarketplaceOpen(false);
+  }
+
   async function reorderServers(serverIds: string[]): Promise<void> {
     const previous = servers();
     const serversById = new Map(previous.map((server) => [server.id, server]));
@@ -2389,6 +2395,7 @@ export function createAppController(props: AppProps = {}) {
     setPermissionsOpen,
     skillsMarketplaceOpen,
     setSkillsMarketplaceOpen,
+    openInstalledMarketplaceAgent,
     LEFT_PANEL_DEFAULT,
     LEFT_PANEL_MIN,
     LEFT_PANEL_MAX,

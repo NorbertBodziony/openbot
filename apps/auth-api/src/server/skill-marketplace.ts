@@ -125,6 +125,22 @@ export class SkillMarketplace {
     };
   }
 
+  async getVersion(skillId: string, versionId: string) {
+    const row = await this.approvedVersionRow(skillId, versionId);
+    if (!row)
+      throw new SkillMarketplaceError(404, "skill_version_not_found", "The approved skill version was not found.");
+    const object = await this.bindings.SKILLS.get(row.bundle_key);
+    if (!object) throw new SkillMarketplaceError(404, "bundle_not_found", "The skill bundle is unavailable.");
+    const preview = inspectSkillArchive(new Uint8Array(await object.arrayBuffer()));
+    return {
+      ...publicSummary(row),
+      versionId: row.version_id,
+      bundleSha256: row.bundle_sha256,
+      files: parseFiles(row.files_json),
+      instructions: preview.instructions,
+    };
+  }
+
   async mine(userId: string) {
     const result = await this.bindings.DB.prepare(
       `SELECT versions.id, versions.skill_id, skills.slug, versions.name, versions.description,
@@ -274,6 +290,15 @@ export class SkillMarketplace {
     return object;
   }
 
+  async versionContent(skillId: string, versionId: string) {
+    const row = await this.approvedVersionRow(skillId, versionId);
+    if (!row)
+      throw new SkillMarketplaceError(404, "skill_version_not_found", "The approved skill version was not found.");
+    const object = await this.bindings.SKILLS.get(row.bundle_key);
+    if (!object) throw new SkillMarketplaceError(404, "bundle_not_found", "The skill bundle is unavailable.");
+    return object;
+  }
+
   async icon(skillId: string) {
     const row = await this.approvedRow(skillId);
     if (!row?.icon_key) return null;
@@ -357,6 +382,21 @@ export class SkillMarketplace {
        WHERE skills.id = ?`,
     )
       .bind(skillId)
+      .first<ApprovedRow>();
+  }
+
+  private async approvedVersionRow(skillId: string, versionId: string): Promise<ApprovedRow | null> {
+    return this.bindings.DB.prepare(
+      `SELECT skills.id, skills.slug, skills.installs, skills.featured, skills.updated_at,
+              versions.name, versions.description, versions.category, versions.version,
+              versions.id AS version_id, versions.bundle_key, versions.bundle_sha256,
+              versions.files_json, versions.icon_key, users.name AS creator_name, users.email AS creator_email
+       FROM marketplace_skills skills
+       JOIN marketplace_skill_versions versions ON versions.skill_id = skills.id
+       JOIN users ON users.id = skills.owner_user_id
+       WHERE skills.id = ? AND versions.id = ? AND versions.status = 'approved'`,
+    )
+      .bind(skillId, versionId)
       .first<ApprovedRow>();
   }
 }

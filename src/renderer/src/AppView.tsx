@@ -475,6 +475,7 @@ function WorkspaceOverlays(props: {
     permissionsOpen,
     skillsMarketplaceOpen,
     setSkillsMarketplaceOpen,
+    openInstalledMarketplaceAgent,
     setupState,
     agentStatus,
     appInfo,
@@ -548,6 +549,7 @@ function WorkspaceOverlays(props: {
             bots={activeServer()?.kind === "local" ? botList() : []}
             activeBotId={activeServer()?.kind === "local" ? (activeBot()?.id ?? "") : ""}
             onOpenChange={setSkillsMarketplaceOpen}
+            onAgentInstalled={openInstalledMarketplaceAgent}
           />
         </Loading>
       </Show>

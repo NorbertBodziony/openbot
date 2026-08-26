@@ -457,6 +457,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  async createBotProfile(input: Omit<CreateBotInput, "initialMessage"> & { title?: string }): Promise<BotSummary> {
+    let bot = await this.#store.createBot(input);
+    if (input.title) bot = await this.#store.updateBot({ botId: bot.id, title: input.title });
+    this.#emit({ type: "bots-changed", bots: this.#store.list() });
+    return bot;
+  }
+
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
     const previous = this.#store.list().find((bot) => bot.id === input.botId);
     if (input.model && previous && providerForModel(input.model) !== providerForBot(previous)) {

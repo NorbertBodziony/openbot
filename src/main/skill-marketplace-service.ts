@@ -5,6 +5,7 @@ import type {
   BotSummary,
   InstalledSkill,
   InstallSkillInput,
+  MarketplaceAgentSkill,
   MarketplaceSkillDetail,
   MarketplaceSkillPage,
   MarketplaceSkillQuery,
@@ -31,6 +32,7 @@ interface Draft {
 }
 interface LockEntry {
   skillId: string;
+  versionId?: string;
   slug: string;
   name: string;
   version: number;
@@ -142,6 +144,60 @@ export class SkillMarketplaceService {
     const bot = this.requireBot(input.botId);
     const detail = await this.get(input.skillId);
     const bundle = await this.auth.downloadAuthorized(`/v1/skills/${encodeURIComponent(input.skillId)}/content`);
+    return this.installResolved(bot, detail, bundle, input.replaceModified);
+  }
+
+  async installVersion(input: {
+    botId: string;
+    skillId: string;
+    versionId: string;
+    replaceModified?: boolean;
+  }): Promise<InstalledSkill> {
+    const bot = this.requireBot(input.botId);
+    const detail = await this.auth.requestAuthorized(
+      `/v1/skills/${encodeURIComponent(input.skillId)}/versions/${encodeURIComponent(input.versionId)}`,
+      { method: "GET" },
+      decodeSkillDetail,
+    );
+    const bundle = await this.auth.downloadAuthorized(
+      `/v1/skills/${encodeURIComponent(input.skillId)}/versions/${encodeURIComponent(input.versionId)}/content`,
+    );
+    return this.installResolved(bot, detail, bundle, input.replaceModified);
+  }
+
+  async listPublishable(botId: string): Promise<MarketplaceAgentSkill[]> {
+    const bot = this.requireBot(botId);
+    const lock = await readLock(bot.workspacePath);
+    const result: MarketplaceAgentSkill[] = [];
+    for (const entry of Object.values(lock.skills)) {
+      const state = await installedState(bot.workspacePath, entry);
+      if (state !== "installed") throw new Error(`${entry.name} has local changes or needs repair before publishing.`);
+      let versionId = entry.versionId;
+      if (!versionId) {
+        const detail = await this.get(entry.skillId);
+        if (detail.version !== entry.version)
+          throw new Error(
+            `${entry.name} was installed before exact-version tracking. Update or repair it before publishing.`,
+          );
+        versionId = detail.versionId;
+      }
+      result.push({
+        skillId: entry.skillId,
+        versionId,
+        slug: entry.slug,
+        name: entry.name,
+        version: entry.version,
+      });
+    }
+    return result.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private async installResolved(
+    bot: BotSummary,
+    detail: MarketplaceSkillDetail,
+    bundle: Uint8Array,
+    replaceModified = false,
+  ): Promise<InstalledSkill> {
     if (sha256(bundle) !== detail.bundleSha256)
       throw new Error("The downloaded skill did not match its signed catalog record.");
     const archive = inspectArchive(bundle);
@@ -151,7 +207,7 @@ export class SkillMarketplaceService {
     const existing = lock.skills[detail.id];
     if (existing) {
       const state = await installedState(bot.workspacePath, existing);
-      if (state === "modified" && !input.replaceModified)
+      if (state === "modified" && !replaceModified)
         throw new Error("This skill has local changes. Confirm replacement to continue.");
     }
     for (const target of targetDirectories(bot.workspacePath, detail.slug)) {
@@ -164,6 +220,7 @@ export class SkillMarketplaceService {
     await replaceTargets(bot.workspacePath, detail.slug, files);
     const entry: LockEntry = {
       skillId: detail.id,
+      versionId: detail.versionId,
       slug: detail.slug,
       name: detail.name,
       version: detail.version,
@@ -178,7 +235,7 @@ export class SkillMarketplaceService {
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ receiptId }) },
       decodeInstalledReceipt,
     );
-    await this.refreshBotRuntime(input.botId);
+    await this.refreshBotRuntime(bot.id);
     return {
       skillId: detail.id,
       slug: detail.slug,
@@ -479,6 +536,7 @@ function isLockEntry(value: unknown): value is LockEntry {
   return (
     isDynamicRecord(value) &&
     isString(value.skillId) &&
+    (value.versionId === undefined || isString(value.versionId)) &&
     isString(value.slug) &&
     isString(value.name) &&
     isNumber(value.version) &&

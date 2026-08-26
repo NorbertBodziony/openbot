@@ -31,12 +31,22 @@ import { Route as V1TeamInvitationsEmailRouteImport } from './routes/v1/team-inv
 import { Route as V1TeamTunnelsProvisionRouteImport } from './routes/v1/team-tunnels/provision'
 import { Route as V1AuthEmailStartRouteImport } from './routes/v1/auth/email/start'
 import { Route as V1AuthEmailVerifyRouteImport } from './routes/v1/auth/email/verify'
+import { Route as V1MarketplaceAgentsIndexRouteImport } from './routes/v1/marketplace/agents/index'
+import { Route as V1MarketplaceAgentsAgentIdRouteImport } from './routes/v1/marketplace/agents/$agentId'
+import { Route as V1MarketplaceAgentsMineRouteImport } from './routes/v1/marketplace/agents/mine'
 import { Route as V1SkillsSkillIdContentRouteImport } from './routes/v1/skills/$skillId/content'
 import { Route as V1SkillsSkillIdIconRouteImport } from './routes/v1/skills/$skillId/icon'
 import { Route as V1SkillsSkillIdInstallRouteImport } from './routes/v1/skills/$skillId/install'
 import { Route as V1SkillsAdminSubmissionsRouteImport } from './routes/v1/skills/admin/submissions'
+import { Route as V1MarketplaceAgentsAgentIdAvatarRouteImport } from './routes/v1/marketplace/agents/$agentId/avatar'
+import { Route as V1MarketplaceAgentsAgentIdInstallRouteImport } from './routes/v1/marketplace/agents/$agentId/install'
+import { Route as V1MarketplaceAgentsAdminSubmissionsRouteImport } from './routes/v1/marketplace/agents/admin/submissions'
+import { Route as V1SkillsSkillIdVersionsVersionIdRouteImport } from './routes/v1/skills/$skillId/versions/$versionId'
 import { Route as V1SkillsAdminFeaturedSkillIdRouteImport } from './routes/v1/skills/admin/featured/$skillId'
 import { Route as V1SkillsAdminSubmissionsVersionIdRouteImport } from './routes/v1/skills/admin/submissions/$versionId'
+import { Route as V1MarketplaceAgentsAdminFeaturedAgentIdRouteImport } from './routes/v1/marketplace/agents/admin/featured/$agentId'
+import { Route as V1MarketplaceAgentsAdminSubmissionsVersionIdRouteImport } from './routes/v1/marketplace/agents/admin/submissions/$versionId'
+import { Route as V1SkillsSkillIdVersionsVersionIdContentRouteImport } from './routes/v1/skills/$skillId/versions/$versionId/content'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -149,6 +159,23 @@ const V1AuthEmailVerifyRoute = V1AuthEmailVerifyRouteImport.update({
   path: '/v1/auth/email/verify',
   getParentRoute: () => rootRouteImport,
 } as any)
+const V1MarketplaceAgentsIndexRoute =
+  V1MarketplaceAgentsIndexRouteImport.update({
+    id: '/v1/marketplace/agents/',
+    path: '/v1/marketplace/agents/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const V1MarketplaceAgentsAgentIdRoute =
+  V1MarketplaceAgentsAgentIdRouteImport.update({
+    id: '/v1/marketplace/agents/$agentId',
+    path: '/v1/marketplace/agents/$agentId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const V1MarketplaceAgentsMineRoute = V1MarketplaceAgentsMineRouteImport.update({
+  id: '/v1/marketplace/agents/mine',
+  path: '/v1/marketplace/agents/mine',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const V1SkillsSkillIdContentRoute = V1SkillsSkillIdContentRouteImport.update({
   id: '/content',
   path: '/content',
@@ -170,6 +197,30 @@ const V1SkillsAdminSubmissionsRoute =
     path: '/v1/skills/admin/submissions',
     getParentRoute: () => rootRouteImport,
   } as any)
+const V1MarketplaceAgentsAgentIdAvatarRoute =
+  V1MarketplaceAgentsAgentIdAvatarRouteImport.update({
+    id: '/avatar',
+    path: '/avatar',
+    getParentRoute: () => V1MarketplaceAgentsAgentIdRoute,
+  } as any)
+const V1MarketplaceAgentsAgentIdInstallRoute =
+  V1MarketplaceAgentsAgentIdInstallRouteImport.update({
+    id: '/install',
+    path: '/install',
+    getParentRoute: () => V1MarketplaceAgentsAgentIdRoute,
+  } as any)
+const V1MarketplaceAgentsAdminSubmissionsRoute =
+  V1MarketplaceAgentsAdminSubmissionsRouteImport.update({
+    id: '/v1/marketplace/agents/admin/submissions',
+    path: '/v1/marketplace/agents/admin/submissions',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const V1SkillsSkillIdVersionsVersionIdRoute =
+  V1SkillsSkillIdVersionsVersionIdRouteImport.update({
+    id: '/versions/$versionId',
+    path: '/versions/$versionId',
+    getParentRoute: () => V1SkillsSkillIdRoute,
+  } as any)
 const V1SkillsAdminFeaturedSkillIdRoute =
   V1SkillsAdminFeaturedSkillIdRouteImport.update({
     id: '/v1/skills/admin/featured/$skillId',
@@ -181,6 +232,24 @@ const V1SkillsAdminSubmissionsVersionIdRoute =
     id: '/$versionId',
     path: '/$versionId',
     getParentRoute: () => V1SkillsAdminSubmissionsRoute,
+  } as any)
+const V1MarketplaceAgentsAdminFeaturedAgentIdRoute =
+  V1MarketplaceAgentsAdminFeaturedAgentIdRouteImport.update({
+    id: '/v1/marketplace/agents/admin/featured/$agentId',
+    path: '/v1/marketplace/agents/admin/featured/$agentId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const V1MarketplaceAgentsAdminSubmissionsVersionIdRoute =
+  V1MarketplaceAgentsAdminSubmissionsVersionIdRouteImport.update({
+    id: '/$versionId',
+    path: '/$versionId',
+    getParentRoute: () => V1MarketplaceAgentsAdminSubmissionsRoute,
+  } as any)
+const V1SkillsSkillIdVersionsVersionIdContentRoute =
+  V1SkillsSkillIdVersionsVersionIdContentRouteImport.update({
+    id: '/content',
+    path: '/content',
+    getParentRoute: () => V1SkillsSkillIdVersionsVersionIdRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -206,12 +275,22 @@ export interface FileRoutesByFullPath {
   '/v1/skills/': typeof V1SkillsIndexRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
+  '/v1/marketplace/agents/$agentId': typeof V1MarketplaceAgentsAgentIdRouteWithChildren
+  '/v1/marketplace/agents/mine': typeof V1MarketplaceAgentsMineRoute
   '/v1/skills/$skillId/content': typeof V1SkillsSkillIdContentRoute
   '/v1/skills/$skillId/icon': typeof V1SkillsSkillIdIconRoute
   '/v1/skills/$skillId/install': typeof V1SkillsSkillIdInstallRoute
   '/v1/skills/admin/submissions': typeof V1SkillsAdminSubmissionsRouteWithChildren
+  '/v1/marketplace/agents/': typeof V1MarketplaceAgentsIndexRoute
+  '/v1/marketplace/agents/$agentId/avatar': typeof V1MarketplaceAgentsAgentIdAvatarRoute
+  '/v1/marketplace/agents/$agentId/install': typeof V1MarketplaceAgentsAgentIdInstallRoute
+  '/v1/marketplace/agents/admin/submissions': typeof V1MarketplaceAgentsAdminSubmissionsRouteWithChildren
+  '/v1/skills/$skillId/versions/$versionId': typeof V1SkillsSkillIdVersionsVersionIdRouteWithChildren
   '/v1/skills/admin/featured/$skillId': typeof V1SkillsAdminFeaturedSkillIdRoute
   '/v1/skills/admin/submissions/$versionId': typeof V1SkillsAdminSubmissionsVersionIdRoute
+  '/v1/marketplace/agents/admin/featured/$agentId': typeof V1MarketplaceAgentsAdminFeaturedAgentIdRoute
+  '/v1/marketplace/agents/admin/submissions/$versionId': typeof V1MarketplaceAgentsAdminSubmissionsVersionIdRoute
+  '/v1/skills/$skillId/versions/$versionId/content': typeof V1SkillsSkillIdVersionsVersionIdContentRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -236,12 +315,22 @@ export interface FileRoutesByTo {
   '/v1/skills': typeof V1SkillsIndexRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
+  '/v1/marketplace/agents/$agentId': typeof V1MarketplaceAgentsAgentIdRouteWithChildren
+  '/v1/marketplace/agents/mine': typeof V1MarketplaceAgentsMineRoute
   '/v1/skills/$skillId/content': typeof V1SkillsSkillIdContentRoute
   '/v1/skills/$skillId/icon': typeof V1SkillsSkillIdIconRoute
   '/v1/skills/$skillId/install': typeof V1SkillsSkillIdInstallRoute
   '/v1/skills/admin/submissions': typeof V1SkillsAdminSubmissionsRouteWithChildren
+  '/v1/marketplace/agents': typeof V1MarketplaceAgentsIndexRoute
+  '/v1/marketplace/agents/$agentId/avatar': typeof V1MarketplaceAgentsAgentIdAvatarRoute
+  '/v1/marketplace/agents/$agentId/install': typeof V1MarketplaceAgentsAgentIdInstallRoute
+  '/v1/marketplace/agents/admin/submissions': typeof V1MarketplaceAgentsAdminSubmissionsRouteWithChildren
+  '/v1/skills/$skillId/versions/$versionId': typeof V1SkillsSkillIdVersionsVersionIdRouteWithChildren
   '/v1/skills/admin/featured/$skillId': typeof V1SkillsAdminFeaturedSkillIdRoute
   '/v1/skills/admin/submissions/$versionId': typeof V1SkillsAdminSubmissionsVersionIdRoute
+  '/v1/marketplace/agents/admin/featured/$agentId': typeof V1MarketplaceAgentsAdminFeaturedAgentIdRoute
+  '/v1/marketplace/agents/admin/submissions/$versionId': typeof V1MarketplaceAgentsAdminSubmissionsVersionIdRoute
+  '/v1/skills/$skillId/versions/$versionId/content': typeof V1SkillsSkillIdVersionsVersionIdContentRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -267,12 +356,22 @@ export interface FileRoutesById {
   '/v1/skills/': typeof V1SkillsIndexRoute
   '/v1/auth/email/start': typeof V1AuthEmailStartRoute
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
+  '/v1/marketplace/agents/$agentId': typeof V1MarketplaceAgentsAgentIdRouteWithChildren
+  '/v1/marketplace/agents/mine': typeof V1MarketplaceAgentsMineRoute
   '/v1/skills/$skillId/content': typeof V1SkillsSkillIdContentRoute
   '/v1/skills/$skillId/icon': typeof V1SkillsSkillIdIconRoute
   '/v1/skills/$skillId/install': typeof V1SkillsSkillIdInstallRoute
   '/v1/skills/admin/submissions': typeof V1SkillsAdminSubmissionsRouteWithChildren
+  '/v1/marketplace/agents/': typeof V1MarketplaceAgentsIndexRoute
+  '/v1/marketplace/agents/$agentId/avatar': typeof V1MarketplaceAgentsAgentIdAvatarRoute
+  '/v1/marketplace/agents/$agentId/install': typeof V1MarketplaceAgentsAgentIdInstallRoute
+  '/v1/marketplace/agents/admin/submissions': typeof V1MarketplaceAgentsAdminSubmissionsRouteWithChildren
+  '/v1/skills/$skillId/versions/$versionId': typeof V1SkillsSkillIdVersionsVersionIdRouteWithChildren
   '/v1/skills/admin/featured/$skillId': typeof V1SkillsAdminFeaturedSkillIdRoute
   '/v1/skills/admin/submissions/$versionId': typeof V1SkillsAdminSubmissionsVersionIdRoute
+  '/v1/marketplace/agents/admin/featured/$agentId': typeof V1MarketplaceAgentsAdminFeaturedAgentIdRoute
+  '/v1/marketplace/agents/admin/submissions/$versionId': typeof V1MarketplaceAgentsAdminSubmissionsVersionIdRoute
+  '/v1/skills/$skillId/versions/$versionId/content': typeof V1SkillsSkillIdVersionsVersionIdContentRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -299,12 +398,22 @@ export interface FileRouteTypes {
     | '/v1/skills/'
     | '/v1/auth/email/start'
     | '/v1/auth/email/verify'
+    | '/v1/marketplace/agents/$agentId'
+    | '/v1/marketplace/agents/mine'
     | '/v1/skills/$skillId/content'
     | '/v1/skills/$skillId/icon'
     | '/v1/skills/$skillId/install'
     | '/v1/skills/admin/submissions'
+    | '/v1/marketplace/agents/'
+    | '/v1/marketplace/agents/$agentId/avatar'
+    | '/v1/marketplace/agents/$agentId/install'
+    | '/v1/marketplace/agents/admin/submissions'
+    | '/v1/skills/$skillId/versions/$versionId'
     | '/v1/skills/admin/featured/$skillId'
     | '/v1/skills/admin/submissions/$versionId'
+    | '/v1/marketplace/agents/admin/featured/$agentId'
+    | '/v1/marketplace/agents/admin/submissions/$versionId'
+    | '/v1/skills/$skillId/versions/$versionId/content'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -329,12 +438,22 @@ export interface FileRouteTypes {
     | '/v1/skills'
     | '/v1/auth/email/start'
     | '/v1/auth/email/verify'
+    | '/v1/marketplace/agents/$agentId'
+    | '/v1/marketplace/agents/mine'
     | '/v1/skills/$skillId/content'
     | '/v1/skills/$skillId/icon'
     | '/v1/skills/$skillId/install'
     | '/v1/skills/admin/submissions'
+    | '/v1/marketplace/agents'
+    | '/v1/marketplace/agents/$agentId/avatar'
+    | '/v1/marketplace/agents/$agentId/install'
+    | '/v1/marketplace/agents/admin/submissions'
+    | '/v1/skills/$skillId/versions/$versionId'
     | '/v1/skills/admin/featured/$skillId'
     | '/v1/skills/admin/submissions/$versionId'
+    | '/v1/marketplace/agents/admin/featured/$agentId'
+    | '/v1/marketplace/agents/admin/submissions/$versionId'
+    | '/v1/skills/$skillId/versions/$versionId/content'
   id:
     | '__root__'
     | '/'
@@ -359,12 +478,22 @@ export interface FileRouteTypes {
     | '/v1/skills/'
     | '/v1/auth/email/start'
     | '/v1/auth/email/verify'
+    | '/v1/marketplace/agents/$agentId'
+    | '/v1/marketplace/agents/mine'
     | '/v1/skills/$skillId/content'
     | '/v1/skills/$skillId/icon'
     | '/v1/skills/$skillId/install'
     | '/v1/skills/admin/submissions'
+    | '/v1/marketplace/agents/'
+    | '/v1/marketplace/agents/$agentId/avatar'
+    | '/v1/marketplace/agents/$agentId/install'
+    | '/v1/marketplace/agents/admin/submissions'
+    | '/v1/skills/$skillId/versions/$versionId'
     | '/v1/skills/admin/featured/$skillId'
     | '/v1/skills/admin/submissions/$versionId'
+    | '/v1/marketplace/agents/admin/featured/$agentId'
+    | '/v1/marketplace/agents/admin/submissions/$versionId'
+    | '/v1/skills/$skillId/versions/$versionId/content'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -389,8 +518,13 @@ export interface RootRouteChildren {
   V1SkillsIndexRoute: typeof V1SkillsIndexRoute
   V1AuthEmailStartRoute: typeof V1AuthEmailStartRoute
   V1AuthEmailVerifyRoute: typeof V1AuthEmailVerifyRoute
+  V1MarketplaceAgentsAgentIdRoute: typeof V1MarketplaceAgentsAgentIdRouteWithChildren
+  V1MarketplaceAgentsMineRoute: typeof V1MarketplaceAgentsMineRoute
   V1SkillsAdminSubmissionsRoute: typeof V1SkillsAdminSubmissionsRouteWithChildren
+  V1MarketplaceAgentsIndexRoute: typeof V1MarketplaceAgentsIndexRoute
+  V1MarketplaceAgentsAdminSubmissionsRoute: typeof V1MarketplaceAgentsAdminSubmissionsRouteWithChildren
   V1SkillsAdminFeaturedSkillIdRoute: typeof V1SkillsAdminFeaturedSkillIdRoute
+  V1MarketplaceAgentsAdminFeaturedAgentIdRoute: typeof V1MarketplaceAgentsAdminFeaturedAgentIdRoute
 }
 
 declare module '@tanstack/solid-router' {
@@ -549,6 +683,27 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1AuthEmailVerifyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/v1/marketplace/agents/': {
+      id: '/v1/marketplace/agents/'
+      path: '/v1/marketplace/agents'
+      fullPath: '/v1/marketplace/agents/'
+      preLoaderRoute: typeof V1MarketplaceAgentsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/marketplace/agents/$agentId': {
+      id: '/v1/marketplace/agents/$agentId'
+      path: '/v1/marketplace/agents/$agentId'
+      fullPath: '/v1/marketplace/agents/$agentId'
+      preLoaderRoute: typeof V1MarketplaceAgentsAgentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/marketplace/agents/mine': {
+      id: '/v1/marketplace/agents/mine'
+      path: '/v1/marketplace/agents/mine'
+      fullPath: '/v1/marketplace/agents/mine'
+      preLoaderRoute: typeof V1MarketplaceAgentsMineRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/v1/skills/$skillId/content': {
       id: '/v1/skills/$skillId/content'
       path: '/content'
@@ -577,6 +732,34 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1SkillsAdminSubmissionsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/v1/marketplace/agents/$agentId/avatar': {
+      id: '/v1/marketplace/agents/$agentId/avatar'
+      path: '/avatar'
+      fullPath: '/v1/marketplace/agents/$agentId/avatar'
+      preLoaderRoute: typeof V1MarketplaceAgentsAgentIdAvatarRouteImport
+      parentRoute: typeof V1MarketplaceAgentsAgentIdRoute
+    }
+    '/v1/marketplace/agents/$agentId/install': {
+      id: '/v1/marketplace/agents/$agentId/install'
+      path: '/install'
+      fullPath: '/v1/marketplace/agents/$agentId/install'
+      preLoaderRoute: typeof V1MarketplaceAgentsAgentIdInstallRouteImport
+      parentRoute: typeof V1MarketplaceAgentsAgentIdRoute
+    }
+    '/v1/marketplace/agents/admin/submissions': {
+      id: '/v1/marketplace/agents/admin/submissions'
+      path: '/v1/marketplace/agents/admin/submissions'
+      fullPath: '/v1/marketplace/agents/admin/submissions'
+      preLoaderRoute: typeof V1MarketplaceAgentsAdminSubmissionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/skills/$skillId/versions/$versionId': {
+      id: '/v1/skills/$skillId/versions/$versionId'
+      path: '/versions/$versionId'
+      fullPath: '/v1/skills/$skillId/versions/$versionId'
+      preLoaderRoute: typeof V1SkillsSkillIdVersionsVersionIdRouteImport
+      parentRoute: typeof V1SkillsSkillIdRoute
+    }
     '/v1/skills/admin/featured/$skillId': {
       id: '/v1/skills/admin/featured/$skillId'
       path: '/v1/skills/admin/featured/$skillId'
@@ -591,6 +774,27 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1SkillsAdminSubmissionsVersionIdRouteImport
       parentRoute: typeof V1SkillsAdminSubmissionsRoute
     }
+    '/v1/marketplace/agents/admin/featured/$agentId': {
+      id: '/v1/marketplace/agents/admin/featured/$agentId'
+      path: '/v1/marketplace/agents/admin/featured/$agentId'
+      fullPath: '/v1/marketplace/agents/admin/featured/$agentId'
+      preLoaderRoute: typeof V1MarketplaceAgentsAdminFeaturedAgentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/marketplace/agents/admin/submissions/$versionId': {
+      id: '/v1/marketplace/agents/admin/submissions/$versionId'
+      path: '/$versionId'
+      fullPath: '/v1/marketplace/agents/admin/submissions/$versionId'
+      preLoaderRoute: typeof V1MarketplaceAgentsAdminSubmissionsVersionIdRouteImport
+      parentRoute: typeof V1MarketplaceAgentsAdminSubmissionsRoute
+    }
+    '/v1/skills/$skillId/versions/$versionId/content': {
+      id: '/v1/skills/$skillId/versions/$versionId/content'
+      path: '/content'
+      fullPath: '/v1/skills/$skillId/versions/$versionId/content'
+      preLoaderRoute: typeof V1SkillsSkillIdVersionsVersionIdContentRouteImport
+      parentRoute: typeof V1SkillsSkillIdVersionsVersionIdRoute
+    }
   }
 }
 
@@ -604,21 +808,57 @@ const V1MeRouteChildren: V1MeRouteChildren = {
 
 const V1MeRouteWithChildren = V1MeRoute._addFileChildren(V1MeRouteChildren)
 
+interface V1SkillsSkillIdVersionsVersionIdRouteChildren {
+  V1SkillsSkillIdVersionsVersionIdContentRoute: typeof V1SkillsSkillIdVersionsVersionIdContentRoute
+}
+
+const V1SkillsSkillIdVersionsVersionIdRouteChildren: V1SkillsSkillIdVersionsVersionIdRouteChildren =
+  {
+    V1SkillsSkillIdVersionsVersionIdContentRoute:
+      V1SkillsSkillIdVersionsVersionIdContentRoute,
+  }
+
+const V1SkillsSkillIdVersionsVersionIdRouteWithChildren =
+  V1SkillsSkillIdVersionsVersionIdRoute._addFileChildren(
+    V1SkillsSkillIdVersionsVersionIdRouteChildren,
+  )
+
 interface V1SkillsSkillIdRouteChildren {
   V1SkillsSkillIdContentRoute: typeof V1SkillsSkillIdContentRoute
   V1SkillsSkillIdIconRoute: typeof V1SkillsSkillIdIconRoute
   V1SkillsSkillIdInstallRoute: typeof V1SkillsSkillIdInstallRoute
+  V1SkillsSkillIdVersionsVersionIdRoute: typeof V1SkillsSkillIdVersionsVersionIdRouteWithChildren
 }
 
 const V1SkillsSkillIdRouteChildren: V1SkillsSkillIdRouteChildren = {
   V1SkillsSkillIdContentRoute: V1SkillsSkillIdContentRoute,
   V1SkillsSkillIdIconRoute: V1SkillsSkillIdIconRoute,
   V1SkillsSkillIdInstallRoute: V1SkillsSkillIdInstallRoute,
+  V1SkillsSkillIdVersionsVersionIdRoute:
+    V1SkillsSkillIdVersionsVersionIdRouteWithChildren,
 }
 
 const V1SkillsSkillIdRouteWithChildren = V1SkillsSkillIdRoute._addFileChildren(
   V1SkillsSkillIdRouteChildren,
 )
+
+interface V1MarketplaceAgentsAgentIdRouteChildren {
+  V1MarketplaceAgentsAgentIdAvatarRoute: typeof V1MarketplaceAgentsAgentIdAvatarRoute
+  V1MarketplaceAgentsAgentIdInstallRoute: typeof V1MarketplaceAgentsAgentIdInstallRoute
+}
+
+const V1MarketplaceAgentsAgentIdRouteChildren: V1MarketplaceAgentsAgentIdRouteChildren =
+  {
+    V1MarketplaceAgentsAgentIdAvatarRoute:
+      V1MarketplaceAgentsAgentIdAvatarRoute,
+    V1MarketplaceAgentsAgentIdInstallRoute:
+      V1MarketplaceAgentsAgentIdInstallRoute,
+  }
+
+const V1MarketplaceAgentsAgentIdRouteWithChildren =
+  V1MarketplaceAgentsAgentIdRoute._addFileChildren(
+    V1MarketplaceAgentsAgentIdRouteChildren,
+  )
 
 interface V1SkillsAdminSubmissionsRouteChildren {
   V1SkillsAdminSubmissionsVersionIdRoute: typeof V1SkillsAdminSubmissionsVersionIdRoute
@@ -633,6 +873,21 @@ const V1SkillsAdminSubmissionsRouteChildren: V1SkillsAdminSubmissionsRouteChildr
 const V1SkillsAdminSubmissionsRouteWithChildren =
   V1SkillsAdminSubmissionsRoute._addFileChildren(
     V1SkillsAdminSubmissionsRouteChildren,
+  )
+
+interface V1MarketplaceAgentsAdminSubmissionsRouteChildren {
+  V1MarketplaceAgentsAdminSubmissionsVersionIdRoute: typeof V1MarketplaceAgentsAdminSubmissionsVersionIdRoute
+}
+
+const V1MarketplaceAgentsAdminSubmissionsRouteChildren: V1MarketplaceAgentsAdminSubmissionsRouteChildren =
+  {
+    V1MarketplaceAgentsAdminSubmissionsVersionIdRoute:
+      V1MarketplaceAgentsAdminSubmissionsVersionIdRoute,
+  }
+
+const V1MarketplaceAgentsAdminSubmissionsRouteWithChildren =
+  V1MarketplaceAgentsAdminSubmissionsRoute._addFileChildren(
+    V1MarketplaceAgentsAdminSubmissionsRouteChildren,
   )
 
 const rootRouteChildren: RootRouteChildren = {
@@ -658,8 +913,15 @@ const rootRouteChildren: RootRouteChildren = {
   V1SkillsIndexRoute: V1SkillsIndexRoute,
   V1AuthEmailStartRoute: V1AuthEmailStartRoute,
   V1AuthEmailVerifyRoute: V1AuthEmailVerifyRoute,
+  V1MarketplaceAgentsAgentIdRoute: V1MarketplaceAgentsAgentIdRouteWithChildren,
+  V1MarketplaceAgentsMineRoute: V1MarketplaceAgentsMineRoute,
   V1SkillsAdminSubmissionsRoute: V1SkillsAdminSubmissionsRouteWithChildren,
+  V1MarketplaceAgentsIndexRoute: V1MarketplaceAgentsIndexRoute,
+  V1MarketplaceAgentsAdminSubmissionsRoute:
+    V1MarketplaceAgentsAdminSubmissionsRouteWithChildren,
   V1SkillsAdminFeaturedSkillIdRoute: V1SkillsAdminFeaturedSkillIdRoute,
+  V1MarketplaceAgentsAdminFeaturedAgentIdRoute:
+    V1MarketplaceAgentsAdminFeaturedAgentIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

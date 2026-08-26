@@ -59,6 +59,12 @@ describe("development service runner", () => {
     expect(app.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT).toBe("9340");
   });
 
+  it("keeps an explicit development remote role override", () => {
+    const app = createDevelopmentServiceSpec("app", { OPENBOT_DEV_REMOTE_ROLE: "none" });
+
+    expect(app.env.OPENBOT_DEV_REMOTE_ROLE).toBe("none");
+  });
+
   it("rejects unknown targets and options", () => {
     expect(() => parseDevelopmentTarget(["other"])).toThrow("Unknown development target");
     expect(() => parseDevelopmentTarget(["all", "--watch"])).toThrow("Unknown option");

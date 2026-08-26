@@ -99,6 +99,9 @@
   margin: 0 auto;
   padding: 42px 0 64px;
 }
+.agent-marketplace-panel {
+  padding-top: 56px;
+}
 .skills-marketplace-heading {
   display: flex;
   align-items: flex-end;
@@ -132,6 +135,7 @@
 }
 .skills-agent-select-control select {
   appearance: none;
+  padding-right: 30px;
 }
 .skills-agent-select-control > svg {
   position: absolute;
@@ -173,6 +177,9 @@
   border-color: var(--openbot-border-strong);
   background: var(--openbot-bg-surface);
 }
+.agent-marketplace-panel .skills-marketplace-search + .skills-marketplace-category-section {
+  margin-top: var(--openbot-space-4);
+}
 .skills-marketplace-categories {
   display: flex;
   flex-wrap: wrap;
@@ -182,11 +189,18 @@
 .skills-marketplace-categories button {
   border: 1px solid var(--openbot-border-strong);
   background: transparent;
+  color: var(--openbot-text-secondary);
 }
 .skills-marketplace-categories button[data-active] {
   border-color: var(--openbot-accent-strong);
   background: var(--openbot-accent-soft);
   color: var(--openbot-accent-text);
+}
+@media (hover: hover) and (pointer: fine) {
+  .skills-marketplace-categories button:hover:not([data-active]) {
+    background: var(--openbot-bg-control-hover);
+    color: var(--openbot-text-primary);
+  }
 }
 .skills-marketplace-section-title {
   display: flex;
@@ -227,10 +241,14 @@
   position: absolute;
   z-index: 1;
   inset: 0;
+  width: auto;
+  height: auto;
   padding: 0;
   border: 0;
+  border-radius: 0;
   background: transparent;
   cursor: pointer;
+  transition: none;
 }
 .skills-marketplace-card-hitarea:focus-visible {
   border-radius: var(--openbot-radius-sm);
@@ -308,6 +326,99 @@
   justify-content: center;
   gap: var(--openbot-space-2);
   color: var(--openbot-text-muted);
+}
+
+.agent-marketplace-card {
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+}
+.agent-marketplace-card .bot-avatar,
+.agent-submission-row .bot-avatar,
+.agent-publish-card .bot-avatar {
+  width: 42px;
+  height: 42px;
+}
+.agent-marketplace-detail .skills-marketplace-detail-hero > .bot-avatar {
+  width: 64px;
+  height: 64px;
+}
+.agent-marketplace-publish-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-2);
+}
+.agent-marketplace-publish-picker select {
+  min-width: 160px;
+}
+.agent-marketplace-dependency-list,
+.agent-marketplace-routine-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.agent-marketplace-dependency-list li,
+.agent-marketplace-routine-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--openbot-space-3);
+  min-height: 44px;
+  padding-block: var(--openbot-space-2);
+  border-bottom: 1px solid var(--openbot-border);
+}
+.agent-marketplace-dependency-list li:last-child,
+.agent-marketplace-routine-list li:last-child {
+  border-bottom: 0;
+}
+.agent-marketplace-routine-list li > span {
+  display: grid;
+  gap: 2px;
+}
+.agent-marketplace-dependency-list small,
+.agent-marketplace-routine-list small {
+  color: var(--openbot-text-muted);
+}
+.skills-marketplace-detail-content.agent-marketplace-detail-content {
+  grid-template-columns: 1fr;
+  gap: var(--openbot-space-6);
+}
+.agent-marketplace-detail-remit {
+  display: grid;
+  gap: var(--openbot-space-3);
+}
+.agent-marketplace-detail-remit p,
+.agent-marketplace-detail-section > p {
+  margin: 0;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-lg);
+}
+.agent-marketplace-detail-columns {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  align-items: start;
+}
+.agent-marketplace-detail-section {
+  padding: var(--openbot-space-6) 0;
+  border-top: 1px solid var(--openbot-border);
+}
+.agent-marketplace-detail-section > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--openbot-space-3);
+  padding-block: var(--openbot-space-2);
+  margin-bottom: var(--openbot-space-4);
+}
+.agent-publish-card > p {
+  margin: 0;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+}
+.agent-submission-row {
+  cursor: default;
 }
 .skills-marketplace-skeleton-section-label {
   width: 92px;
@@ -536,6 +647,13 @@
   .skills-marketplace-card:hover {
     background: var(--openbot-bg-surface);
   }
+  .skills-marketplace-card-hitarea:hover:not(:disabled):not([data-disabled]) {
+    background: transparent;
+  }
+  .skills-installed-row > .skills-marketplace-row-hitarea:hover:not(:disabled):not([data-disabled]),
+  .skills-submission-row > .skills-marketplace-row-hitarea:hover:not(:disabled):not([data-disabled]) {
+    background: transparent;
+  }
   .skills-installed-row:hover,
   .skills-submission-row:hover {
     background: var(--openbot-bg-surface);
@@ -558,22 +676,28 @@
   border-bottom: 1px solid var(--openbot-border);
   cursor: pointer;
 }
-.skills-marketplace-row-hitarea {
+.skills-installed-row > button:first-child,
+.skills-submission-row > button:first-child {
   position: absolute;
   z-index: 1;
   inset: 0;
+  width: auto;
+  height: auto;
   padding: 0;
   border: 0;
+  border-radius: 0;
   background: transparent;
   cursor: pointer;
+  transition: none;
 }
-.skills-marketplace-row-hitarea:focus-visible {
+.skills-installed-row > button:first-child:focus-visible,
+.skills-submission-row > button:first-child:focus-visible {
   border-radius: var(--openbot-radius-lg);
   outline: 2px solid var(--openbot-accent-strong);
   outline-offset: -2px;
 }
-.skills-installed-row > .ui-button,
-.skills-submission-row > .ui-button {
+.skills-installed-row > .ui-button:not(:first-child),
+.skills-submission-row > .ui-button:not(:first-child) {
   position: relative;
   z-index: 2;
 }
@@ -812,7 +936,8 @@
   }
   .skills-submission-guide-grid,
   .skills-submission-example,
-  .skills-marketplace-detail-content {
+  .skills-marketplace-detail-content,
+  .agent-marketplace-detail-columns {
     grid-template-columns: 1fr;
   }
   .skills-marketplace-detail {

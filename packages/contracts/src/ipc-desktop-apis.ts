@@ -59,6 +59,16 @@ import type {
   UpdateRoutineInput,
 } from "./ipc-conversation";
 import type {
+  AgentPublicationPreview,
+  AgentSubmission,
+  InstallMarketplaceAgentInput,
+  InstallMarketplaceAgentResult,
+  MarketplaceAgentDetail,
+  MarketplaceAgentPage,
+  MarketplaceAgentQuery,
+  SubmitMarketplaceAgentInput,
+} from "./ipc-marketplace-agents";
+import type {
   InstalledSkill,
   InstallSkillInput,
   MarketplaceSkillDetail,
@@ -149,6 +159,15 @@ export interface AgentDesktopApi {
   respondToPrompt: (input: RespondToPromptInput) => Promise<void>;
   respondToApproval: (input: RespondToApprovalInput) => Promise<void>;
   onEvent: (listener: (event: AgentEvent) => void) => () => void;
+}
+
+export interface MarketplaceAgentsDesktopApi {
+  list: (query?: MarketplaceAgentQuery) => Promise<MarketplaceAgentPage>;
+  get: (agentId: string) => Promise<MarketplaceAgentDetail>;
+  listMine: () => Promise<AgentSubmission[]>;
+  preview: (botId: string) => Promise<AgentPublicationPreview>;
+  submit: (input: SubmitMarketplaceAgentInput) => Promise<AgentSubmission>;
+  install: (input: InstallMarketplaceAgentInput) => Promise<InstallMarketplaceAgentResult>;
 }
 
 export interface BrowserDesktopApi {
@@ -257,6 +276,7 @@ export interface OpenBotDesktopApi {
   openUrl: (url: string) => Promise<void>;
   voice: VoiceDesktopApi;
   skills: SkillsDesktopApi;
+  marketplaceAgents: MarketplaceAgentsDesktopApi;
   auth: CentralAuthDesktopApi;
   agent: AgentDesktopApi;
   browser: BrowserDesktopApi;

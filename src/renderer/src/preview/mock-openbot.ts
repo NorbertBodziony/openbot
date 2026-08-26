@@ -407,6 +407,22 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       },
       uninstall: async () => undefined,
     },
+    marketplaceAgents: {
+      list: async () => ({ agents: [], nextCursor: null }),
+      get: async () => {
+        throw new Error("Agent not found");
+      },
+      listMine: async () => [],
+      preview: async () => {
+        throw new Error("Agent publishing is unavailable in preview mode.");
+      },
+      submit: async () => {
+        throw new Error("Agent publishing is unavailable in preview mode.");
+      },
+      install: async () => {
+        throw new Error("Agent installation is unavailable in preview mode.");
+      },
+    },
     agent: {
       getStatus: async () => clone(agentStatus),
       getUsage: async () => clone(usage),
