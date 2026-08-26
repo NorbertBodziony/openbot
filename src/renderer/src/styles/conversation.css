@@ -3460,6 +3460,11 @@
   padding: 2px 6px;
 }
 
+.ui-bubble-reactions.message-reaction-anchor:has(> .message-reaction-pill:only-child) {
+  width: var(--openbot-control-xs);
+  padding-inline: 2px;
+}
+
 .message-reaction-anchor .ui-bubble-reaction-overflow {
   padding-right: 6px;
 }
