@@ -172,7 +172,7 @@
 
 .server-settings-name-input.ui-input {
   width: 100%;
-  transition: border-color 150ms ease-out;
+  transition: border-color var(--openbot-duration-normal) ease-out;
   will-change: transform;
 }
 
