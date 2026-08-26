@@ -11,7 +11,7 @@ import {
 } from "./conversation/UnreadMessages";
 import { TeamPersonAvatar, teamMemberName } from "./TeamPersonAvatar";
 import { TypingDots } from "./TypingDots";
-import { Button, Textarea } from "./ui";
+import { Bubble, BubbleContent, Button, Message, MessageContent, MessageFooter, MessageGroup, Textarea } from "./ui";
 
 interface DirectConversationProps {
   member: TeamPresenceMember;
@@ -280,7 +280,7 @@ export function DirectConversation(props: DirectConversationProps) {
                   </Show>
                 </div>
               </Show>
-              <div
+              <MessageGroup
                 ref={(element) => {
                   virtualRoot = element;
                   updateVirtualScrollMargin();
@@ -316,20 +316,31 @@ export function DirectConversation(props: DirectConversationProps) {
                             }}
                           />
                         </Show>
-                        <article
+                        <Message
+                          role="article"
+                          align={own() ? "end" : "start"}
                           class={["direct-message", { own: own(), grouped: grouped() }]}
+                          data-author={own() ? "user" : "member"}
                           aria-label={`${own() ? "You" : teamMemberName(props.member)} at ${messageTime(message.createdAt)}`}
                         >
-                          <div>
-                            <p>{message.text}</p>
-                            <time datetime={message.createdAt}>{messageTime(message.createdAt)}</time>
-                          </div>
-                        </article>
+                          <MessageContent>
+                            <Bubble
+                              align={own() ? "end" : "start"}
+                              variant={own() ? "secondary" : "muted"}
+                              data-author={own() ? "user" : "member"}
+                            >
+                              <BubbleContent>{message.text}</BubbleContent>
+                            </Bubble>
+                            <MessageFooter>
+                              <time datetime={message.createdAt}>{messageTime(message.createdAt)}</time>
+                            </MessageFooter>
+                          </MessageContent>
+                        </Message>
                       </div>
                     );
                   }}
                 </For>
-              </div>
+              </MessageGroup>
             </Show>
           </Show>
         </Show>

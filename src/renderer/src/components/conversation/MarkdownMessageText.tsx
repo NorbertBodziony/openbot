@@ -450,7 +450,7 @@ function LocalFileLink(props: {
     <Button
       variant="ghost"
       type="button"
-      class="inline-file-reference"
+      class="message-file-reference"
       data-file-tone={attachmentReferenceTone(name)}
       aria-label={`Open ${props.kind} file ${name}`}
       title={props.path}

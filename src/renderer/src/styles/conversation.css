@@ -139,9 +139,6 @@
 }
 
 .direct-message {
-  display: flex;
-  align-items: end;
-  justify-content: start;
   margin-top: 9px;
 }
 
@@ -149,45 +146,31 @@
   margin-top: 3px;
 }
 
-.direct-message > div {
-  display: flex;
-  max-width: min(560px, 78%);
-  align-items: flex-end;
-  gap: 7px;
+.direct-message-list .ui-message-group {
+  gap: 0;
 }
 
-.direct-message p {
-  margin: 0;
-  border: 1px solid var(--openbot-hover);
-  border-radius: var(--openbot-radius-xs) var(--openbot-radius-lg) var(--openbot-radius-lg);
-  background: var(--openbot-bg-control);
-  padding: 8px 11px;
-  color: var(--openbot-text-primary);
+.direct-message > .ui-message-content {
+  max-width: min(560px, 78%);
+}
+
+.direct-message .ui-bubble {
+  max-width: 100%;
+}
+
+.direct-message .ui-bubble-content {
   font-size: var(--openbot-text-md);
   line-height: 19px;
-  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
 .direct-message time {
-  flex: 0 0 auto;
-  padding-bottom: 2px;
   color: var(--openbot-text-readable);
   font-size: var(--openbot-text-2xs);
 }
 
-.direct-message.own {
-  justify-content: flex-end;
-}
-
-.direct-message.own > div {
-  flex-direction: row-reverse;
-}
-
-.direct-message.own p {
-  border-color: var(--openbot-success-soft);
-  border-radius: var(--openbot-radius-lg) var(--openbot-radius-xs) var(--openbot-radius-lg) var(--openbot-radius-lg);
-  background: var(--openbot-success);
+.direct-message .ui-message-footer {
+  padding: 0 2px;
 }
 
 .direct-composer-wrap {
@@ -354,7 +337,7 @@
   height: var(--openbot-control-md);
   flex: 0 0 auto;
   border: 0;
-  border-radius: var(--openbot-radius-sm);
+  border-radius: inherit;
   padding: 0;
 }
 
@@ -3273,6 +3256,10 @@
   margin: 12px 0 0;
 }
 
+.message-entry > .ui-message-content {
+  max-width: 100%;
+}
+
 .message-entry-animated {
   opacity: 0;
   animation: message-in var(--openbot-duration-normal) cubic-bezier(0.23, 1, 0.32, 1) forwards;
@@ -3282,14 +3269,12 @@
   width: 100%;
 }
 
-.message-entry-user {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-}
-
 .message-shell {
+  --message-actions-inline-size: 76px;
+
   display: flex;
+  width: 100%;
+  min-width: 0;
   max-width: 100%;
   align-items: center;
   gap: 5px;
@@ -3321,6 +3306,13 @@
 .message-actions-open {
   opacity: 1;
   pointer-events: auto;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .message-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .message-action-button {
@@ -3389,6 +3381,19 @@
   padding-top: 4px;
 }
 
+.reaction-picker-more .reaction-picker-options {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
+.reaction-picker-more .reaction-picker-options [role="menuitemradio"] {
+  width: 100%;
+  min-width: 0;
+}
+
 .reaction-picker-row :is([role="menuitem"], [role="menuitemradio"]) {
   display: grid;
   width: 31px;
@@ -3426,33 +3431,47 @@
 }
 
 .message-reaction-pill {
-  display: grid;
-  min-width: 31px;
-  height: 25px;
-  place-items: center;
-  margin-top: 4px;
-  border: 1px solid var(--openbot-border);
-  border-radius: var(--openbot-radius-pill);
-  background: var(--openbot-bg-control);
-  padding: 0 8px;
+  display: flex;
+  min-width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--openbot-radius-sm);
+  background: transparent;
+  padding: 0 6px;
+  color: inherit;
   font-size: var(--openbot-text-lg);
   line-height: 1;
-  transition:
-    background var(--openbot-duration-hover) ease,
-    border-color var(--openbot-duration-hover) ease;
+  transition: background var(--openbot-duration-hover) ease;
+}
+
+.message-entry:has(.message-reaction-anchor) > .ui-message-content {
+  padding-bottom: var(--openbot-space-3);
+}
+
+.message-reaction-anchor .message-reaction-pill {
+  gap: 2px;
+  margin: 0;
+  border-radius: inherit;
+}
+
+.message-reaction-anchor .ui-bubble-reaction-overflow {
+  padding-right: 6px;
 }
 
 .message-reaction-pill:hover {
-  border-color: var(--openbot-border-strong);
-  background: var(--openbot-bg-surface);
+  background: var(--openbot-hover);
 }
 
-.message-entry-bot .message-reaction-pill {
-  margin-left: 8px;
+.message-reaction-anchor:has(.message-reaction-pill:focus-visible) {
+  box-shadow:
+    0 0 0 3px var(--openbot-bg-canvas),
+    0 0 0 5px var(--openbot-border-focus);
 }
 
-.message-entry-user .message-reaction-pill {
-  margin-right: 8px;
+.message-reaction-pill:focus-visible {
+  outline: none;
 }
 
 .thinking-entry {
@@ -3804,34 +3823,28 @@
   margin: 11px auto 0;
 }
 
-.bot-bubble,
-.user-bubble {
-  border-radius: var(--openbot-radius-lg);
-  padding: 8px 12px;
-  font-size: var(--openbot-text-lg);
-  line-height: 20px;
+.message-entry .ui-bubble {
   letter-spacing: -0.15px;
 }
 
-.bot-bubble {
-  width: fit-content;
-  max-width: min(720px, 82%);
-  background: var(--openbot-border);
-  color: var(--openbot-white);
+.message-entry-bot .ui-bubble {
+  max-width: min(720px, calc(100% - var(--message-actions-inline-size) - 5px));
 }
 
-.bot-bubble:has(.choice-card) {
-  width: min(500px, 92%);
-  max-width: min(500px, 92%);
-  background: transparent;
-  padding: 0;
+.message-entry-bot .ui-bubble:has(.choice-card) {
+  width: min(500px, calc(100% - var(--message-actions-inline-size) - 5px));
+  max-width: min(500px, calc(100% - var(--message-actions-inline-size) - 5px));
 }
 
-.bot-bubble:has(.image-generation) {
-  width: min(620px, calc(100vw - 48px));
-  max-width: min(620px, calc(100vw - 48px));
-  background: transparent;
-  padding: 0;
+.message-entry-bot .ui-bubble:has(.image-generation) {
+  width: min(420px, calc(100% - var(--message-actions-inline-size) - 5px));
+  max-width: min(420px, calc(100% - var(--message-actions-inline-size) - 5px));
+}
+
+.message-entry-bot
+  .ui-bubble-variant-ghost:has(:is(.choice-card, .image-generation, .message-code-block, .message-data-table-scroll))
+  > .ui-bubble-content {
+  width: 100%;
 }
 
 .image-generation {
@@ -4158,11 +4171,8 @@
   }
 }
 
-.user-bubble {
-  width: fit-content;
-  max-width: min(420px, 85%);
-  background: var(--openbot-text-primary);
-  color: var(--openbot-bg-sidebar);
+.message-entry-user .ui-bubble {
+  max-width: min(420px, calc(100% - var(--message-actions-inline-size) - 5px));
 }
 
 .message-copy {
@@ -4746,47 +4756,36 @@
   }
 }
 
-.bot-bubble:has(:is(.message-data-table-scroll, .message-code-block)) {
-  width: min(720px, 92%);
-  max-width: min(720px, 92%);
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-}
-
-.bot-bubble:has(:is(.message-data-table-scroll, .message-code-block)) .message-copy {
-  width: fit-content;
-  max-width: 100%;
-  border-radius: var(--openbot-radius-lg);
-  background: var(--openbot-bg-surface);
-  padding: 8px 12px;
+.message-entry-bot .ui-bubble:has(:is(.message-data-table-scroll, .message-code-block)) {
+  width: min(720px, calc(100% - var(--message-actions-inline-size) - 5px));
+  max-width: min(720px, calc(100% - var(--message-actions-inline-size) - 5px));
 }
 
 .message-code-block {
   width: 100%;
   min-width: 0;
   overflow: hidden;
-  border-radius: var(--openbot-radius-lg);
-  background: var(--openbot-bg-canvas);
-  box-shadow: 0 0 0 1px var(--openbot-border);
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-bg-control);
 }
 
 .message-code-header {
-  min-height: 40px;
+  min-height: 34px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--openbot-space-3);
+  gap: var(--openbot-space-2);
   border-bottom: 1px solid var(--openbot-border);
-  background: var(--openbot-bg-surface-raised);
-  padding: var(--openbot-space-1-5) 10px var(--openbot-space-1-5) var(--openbot-space-3);
+  background: var(--openbot-bg-control);
+  padding: 4px 6px 4px 10px;
 }
 
 .message-code-heading {
   min-width: 0;
   display: flex;
   align-items: baseline;
-  gap: var(--openbot-space-2);
+  gap: 6px;
 }
 
 .message-code-filename {
@@ -4802,23 +4801,29 @@
 
 .message-code-language {
   flex: none;
-  color: var(--openbot-text-secondary);
-  font-size: var(--openbot-text-sm);
-  line-height: var(--openbot-leading-sm);
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-border);
+  padding: 1px 6px;
+  color: var(--openbot-text-readable);
+  font-size: var(--openbot-text-2xs);
+  font-weight: var(--openbot-weight-medium);
+  line-height: 16px;
 }
 
 .message-code-language:only-child {
-  color: var(--openbot-text-secondary);
   font-family: var(--openbot-font-mono);
-  font-size: var(--openbot-text-sm);
-  font-weight: var(--openbot-weight-medium);
 }
 
 :where(.ui-button).message-code-copy {
   position: relative;
+  height: 26px;
   flex: none;
   gap: var(--openbot-space-1);
-  color: var(--openbot-text-secondary);
+  border-radius: var(--openbot-radius-sm);
+  padding-inline: 7px;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+  line-height: 16px;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -4884,8 +4889,8 @@
   max-height: 420px;
   overflow: auto;
   margin: 0;
-  background: var(--openbot-bg-canvas);
-  padding-block: 10px 12px;
+  background: var(--openbot-bg-sidebar);
+  padding-block: 8px 10px;
   color: var(--openbot-text-secondary);
   font-family: var(--openbot-font-mono);
   font-size: var(--openbot-text-sm);
@@ -4913,9 +4918,9 @@
 }
 
 .message-code-line-number {
-  width: 38px;
+  width: 34px;
   flex: none;
-  padding-right: 10px;
+  padding-right: 8px;
   color: var(--openbot-text-dim);
   font-size: var(--openbot-text-2xs);
   text-align: right;
@@ -4924,7 +4929,7 @@
 
 .message-code-line-source {
   min-width: 0;
-  padding-right: 14px;
+  padding-right: 12px;
   white-space: pre;
 }
 
@@ -5024,9 +5029,7 @@
 .message-data-table tbody {
   display: flex;
   flex-direction: column;
-  margin: 0 -1px -1px;
-  border: 1px solid var(--openbot-data-table-border);
-  border-radius: var(--openbot-radius-lg) var(--openbot-radius-lg) 0 0;
+  border-top: 1px solid var(--openbot-data-table-border);
   background: var(--openbot-data-table-body-bg);
 }
 
@@ -5305,42 +5308,42 @@
   outline-offset: 3px;
 }
 
-.user-bubble .message-link {
+[data-slot="bubble"][data-author="user"] .message-link {
   text-decoration-color: var(--openbot-shadow-popover-ambient);
 }
 
-.user-bubble .message-link:hover {
+[data-slot="bubble"][data-author="user"] .message-link:hover {
   color: var(--openbot-bg-canvas);
 }
 
-.user-bubble .message-link:focus-visible {
+[data-slot="bubble"][data-author="user"] .message-link:focus-visible {
   outline-color: var(--openbot-bg-overlay);
 }
 
-.user-bubble .message-citation-mark {
+[data-slot="bubble"][data-author="user"] .message-citation-mark {
   background: var(--openbot-surface-light);
   color: var(--openbot-text-muted-on-light);
 }
 
-.user-bubble .message-citation-mark:hover,
-.user-bubble .message-citation-mark:focus-visible {
+[data-slot="bubble"][data-author="user"] .message-citation-mark:hover,
+[data-slot="bubble"][data-author="user"] .message-citation-mark:focus-visible {
   background: var(--openbot-accent-soft);
   color: var(--openbot-accent);
 }
 
-.user-bubble .message-citation-footer {
+[data-slot="bubble"][data-author="user"] .message-citation-footer {
   border-top-color: var(--openbot-border-on-light);
 }
 
-.user-bubble .message-citation-ref-label {
+[data-slot="bubble"][data-author="user"] .message-citation-ref-label {
   color: var(--openbot-text-on-light);
 }
 
-.user-bubble .message-citation-ref-host {
+[data-slot="bubble"][data-author="user"] .message-citation-ref-host {
   color: var(--openbot-text-muted-on-light);
 }
 
-.user-bubble .message-citation-separator {
+[data-slot="bubble"][data-author="user"] .message-citation-separator {
   color: var(--openbot-text-dim-on-light);
 }
 
@@ -5369,12 +5372,12 @@
   white-space: nowrap;
 }
 
-.user-bubble .message-reply-context {
+[data-slot="bubble"][data-author="user"] .message-reply-context {
   border-left-color: var(--openbot-border-strong);
   color: var(--openbot-text-readable);
 }
 
-.user-bubble .message-copy {
+[data-slot="bubble"][data-author="user"] .message-copy {
   font-size: var(--openbot-text-lg);
 }
 
@@ -5450,11 +5453,11 @@
   background: var(--openbot-border-strong);
 }
 
-.user-bubble .message-agent-tag {
+[data-slot="bubble"][data-author="user"] .message-agent-tag {
   background: var(--openbot-shadow-popover-ambient);
 }
 
-.user-bubble .message-agent-tag:hover {
+[data-slot="bubble"][data-author="user"] .message-agent-tag:hover {
   background: var(--openbot-shadow-popover-ambient);
 }
 
@@ -5621,7 +5624,7 @@
   stroke-width: 1.35;
 }
 
-.user-bubble .message-file-reference {
+[data-slot="bubble"][data-author="user"] .message-file-reference {
   color: var(--file-reference-color);
 }
 
@@ -5653,7 +5656,7 @@
   margin-top: 8px;
 }
 
-.user-bubble .message-status {
+[data-slot="bubble"][data-author="user"] .message-status {
   color: var(--openbot-bg-overlay);
 }
 
@@ -5867,9 +5870,9 @@
 }
 
 @media (max-width: 620px) {
-  .bot-bubble:has(.image-generation) {
-    width: min(100%, calc(100vw - 32px));
-    max-width: min(100%, calc(100vw - 32px));
+  .message-entry-bot .ui-bubble:has(.image-generation) {
+    width: calc(100% - var(--message-actions-inline-size) - 5px);
+    max-width: calc(100% - var(--message-actions-inline-size) - 5px);
   }
 
   .image-generation-stage,
@@ -6569,6 +6572,17 @@
   transition:
     background-color var(--openbot-duration-hover) ease,
     border-color var(--openbot-duration-hover) ease;
+}
+
+[data-slot="bubble"]:not([data-variant="ghost"]) > [data-slot="bubble-content"] > .message-attachments:last-child {
+  margin-bottom: var(--openbot-space-1);
+}
+
+[data-slot="bubble"]:not([data-variant="ghost"])
+  > [data-slot="bubble-content"]
+  > .message-attachments:last-child
+  .message-attachment {
+  border-radius: calc(var(--openbot-radius-bubble) - var(--openbot-space-3) - 1px);
 }
 
 .ui-button.attachment-preview-button {
@@ -7751,7 +7765,7 @@
     padding-left: 14px;
   }
 
-  .direct-message > div {
+  .direct-message > .ui-message-content {
     max-width: 88%;
   }
 }
@@ -7773,19 +7787,10 @@
   background: var(--openbot-bg-canvas);
 }
 
-.bot-bubble,
-.direct-message p,
 .message-reaction-pill,
 .composer-reply-preview {
   border-color: var(--openbot-border);
   background: var(--openbot-bg-surface);
-  color: var(--openbot-text-primary);
-}
-
-.user-bubble,
-.direct-message.own p {
-  border-color: var(--openbot-border-strong);
-  background: var(--openbot-bg-surface-raised);
   color: var(--openbot-text-primary);
 }
 
