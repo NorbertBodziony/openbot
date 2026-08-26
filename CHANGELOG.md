@@ -5,6 +5,12 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-26
+
+### Fixed
+
+- Stage Claude and Grok runtimes on the destination volume before the atomic Windows install switch.
+
 ## [0.3.1] - 2026-08-26
 
 ### Fixed
