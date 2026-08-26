@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseAgentRequest,
   parseApprovalResponse,
+  parseBrowserTakeoverResponse,
   parseCancelQueuedMessage,
   parseChooseAttachments,
   parseCreateBot,
@@ -272,6 +273,10 @@ describe("agent IPC input parsing", () => {
       requestId: "approval-1",
       decision: "accept",
     });
+    expect(parseBrowserTakeoverResponse({ requestId: "takeover-1", decision: "complete" })).toEqual({
+      requestId: "takeover-1",
+      decision: "complete",
+    });
   });
 
   it("keeps agent input error messages", () => {
@@ -339,6 +344,9 @@ describe("agent IPC input parsing", () => {
     );
     expect(() => parseApprovalResponse({ requestId: 1.5, decision: "accept" })).toThrowError(
       "Invalid approval response.",
+    );
+    expect(() => parseBrowserTakeoverResponse({ requestId: "takeover-1", decision: "maybe" })).toThrowError(
+      "Invalid browser takeover response.",
     );
   });
 });

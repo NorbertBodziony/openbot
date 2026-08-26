@@ -370,6 +370,7 @@ describe("OpenBot connected desktop shell", () => {
           interrupt: vi.fn().mockResolvedValue(undefined),
           respondToPrompt: vi.fn().mockResolvedValue(undefined),
           respondToApproval: vi.fn().mockResolvedValue(undefined),
+          respondToBrowserTakeover: vi.fn().mockResolvedValue(undefined),
           onEvent: vi.fn((listener) => {
             emitAgentEvent = listener;
             return () => undefined;
@@ -2508,6 +2509,62 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
     expect(controlledTab.closest(".browser-tab-wrap")).not.toHaveClass("browser-tab-controlled");
     expect(await screen.findByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-controlled");
+  });
+
+  it("reveals the requested browser tab and resumes the agent from the takeover card", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitAgentEvent).toBeDefined());
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-public",
+          title: "Public page",
+          url: "https://example.com",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+        {
+          id: "tab-login",
+          title: "Sign in",
+          url: "https://example.com/login",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-public",
+    });
+    emitAgentEvent?.({
+      type: "browser-takeover-requested",
+      request: {
+        requestId: "takeover-1",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-1",
+        tabId: "tab-login",
+      },
+    });
+
+    expect(await screen.findByRole("region", { name: "Browser takeover" })).toHaveTextContent("Take over");
+    expect(
+      screen.getByText("Complete the authorization in the open browser, then let the agent continue."),
+    ).toBeVisible();
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeVisible();
+    await waitFor(() => expect(window.openbot.browser.activate).toHaveBeenCalledWith("tab-login"));
+    expect(screen.queryByRole("textbox", { name: "Message Chief" })).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() =>
+      expect(window.openbot.agent.respondToBrowserTakeover).toHaveBeenCalledWith({
+        requestId: "takeover-1",
+        decision: "complete",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Browser takeover" })).not.toBeInTheDocument());
   });
 
   it("closes browser tabs with the middle mouse button and Control W, then closes the panel", async () => {

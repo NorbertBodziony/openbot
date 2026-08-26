@@ -90,6 +90,16 @@ export const BROWSER_DYNAMIC_TOOLS = [
         required: ["tabId"],
         additionalProperties: false,
       }),
+      functionTool(
+        "request_takeover",
+        "Pause and ask the user to take over the current browser tab for login, consent, CAPTCHA, passkey, two-factor authentication, or another authorization step. The call waits until the user finishes or cancels.",
+        {
+          type: "object",
+          properties: { tabId: { type: "string", maxLength: INPUT_LIMITS.identifier } },
+          required: ["tabId"],
+          additionalProperties: false,
+        },
+      ),
       functionTool("act", "Click, type, press a key, scroll, navigate back/forward, or reload.", {
         type: "object",
         properties: {

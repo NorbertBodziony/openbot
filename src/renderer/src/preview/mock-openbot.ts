@@ -783,6 +783,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       },
       respondToPrompt: async (_input: RespondToPromptInput) => undefined,
       respondToApproval: async () => undefined,
+      respondToBrowserTakeover: async () => undefined,
       onEvent: (listener) => {
         agentListeners.add(listener);
         return () => agentListeners.delete(listener);

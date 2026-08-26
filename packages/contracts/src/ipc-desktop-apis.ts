@@ -42,6 +42,7 @@ import type {
   ReadConversationPageInput,
   ReorderQueueInput,
   RespondToApprovalInput,
+  RespondToBrowserTakeoverInput,
   RespondToPromptInput,
   Routine,
   RoutineRun,
@@ -148,6 +149,7 @@ export interface AgentDesktopApi {
   interrupt: (input: InterruptTurnInput) => Promise<void>;
   respondToPrompt: (input: RespondToPromptInput) => Promise<void>;
   respondToApproval: (input: RespondToApprovalInput) => Promise<void>;
+  respondToBrowserTakeover: (input: RespondToBrowserTakeoverInput) => Promise<void>;
   onEvent: (listener: (event: AgentEvent) => void) => () => void;
 }
 

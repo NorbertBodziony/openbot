@@ -139,6 +139,7 @@ const EMPTY_TEAM_PRESENCE: TeamPresenceSnapshot = {
 };
 
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
+type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-requested" }>;
 
 const LEFT_PANEL_STORAGE_KEY = "openbot:left-panel-width";
 const LEFT_PANEL_COLLAPSED_STORAGE_KEY = "openbot:left-panel-collapsed";
@@ -239,7 +240,9 @@ export function createAppController(props: AppProps = {}) {
     botId: string;
     nonce: number;
   } | null>(null);
-  const [pendingPrompts, setPendingPrompts] = createSignal<Record<string, PromptEvent | undefined>>({});
+  const [pendingPrompts, setPendingPrompts] = createSignal<
+    Record<string, PromptEvent | BrowserTakeoverEvent | undefined>
+  >({});
   const [pendingApprovals, setPendingApprovals] = createSignal<Record<string, AgentApproval | undefined>>({});
   const [appInfo, setAppInfo] = createSignal<AppInfo | null>(null);
   const [agentStatus, setAgentStatus] = createSignal<AgentStatus>(FALLBACK_STATUS);
@@ -767,6 +770,20 @@ export function createAppController(props: AppProps = {}) {
           ...current,
           [event.approval.botId]: event.approval,
         }));
+        return;
+      case "browser-takeover-requested":
+        setPendingPrompts((current) => ({
+          ...current,
+          [event.request.botId]: event,
+        }));
+        return;
+      case "browser-takeover-resolved":
+        setPendingPrompts((current) => {
+          const pending = current[event.botId];
+          return pending?.type === "browser-takeover-requested" && pending.request.requestId === event.requestId
+            ? { ...current, [event.botId]: undefined }
+            : current;
+        });
         return;
       case "error":
         desktopAnalytics.track("operation_failed", {
@@ -1567,7 +1584,7 @@ export function createAppController(props: AppProps = {}) {
   async function answerPrompt(answers: Record<string, string[]>): Promise<boolean> {
     const bot = activeBot();
     const prompt = bot ? pendingPrompts()[bot.id] : undefined;
-    if (!bot || !prompt) return false;
+    if (!bot || prompt?.type !== "prompt") return false;
     try {
       await window.openbot.agent.respondToPrompt({
         requestId: prompt.requestId,
@@ -1596,6 +1613,20 @@ export function createAppController(props: AppProps = {}) {
       return true;
     } catch (error) {
       appendUiError(bot.id, error, "Approval failed");
+      return false;
+    }
+  }
+
+  async function respondToBrowserTakeover(decision: "complete" | "cancel"): Promise<boolean> {
+    const bot = activeBot();
+    const event = bot ? pendingPrompts()[bot.id] : undefined;
+    if (!bot || event?.type !== "browser-takeover-requested") return false;
+    try {
+      await window.openbot.agent.respondToBrowserTakeover({ requestId: event.request.requestId, decision });
+      setPendingPrompts((current) => ({ ...current, [bot.id]: undefined }));
+      return true;
+    } catch (error) {
+      appendUiError(bot.id, error, "Browser takeover failed");
       return false;
     }
   }
@@ -2466,6 +2497,7 @@ export function createAppController(props: AppProps = {}) {
     setTeamTyping,
     answerPrompt,
     respondToApproval,
+    respondToBrowserTakeover,
     cancelQueuedMessage,
     steerQueuedMessage,
     updateQueuedMessage,

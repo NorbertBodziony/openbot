@@ -283,6 +283,7 @@ function createSmokeAgents(events: EventEmitter): SmokeAgents {
     interrupt: unimplemented,
     respondToPrompt: unimplemented,
     respondToApproval: unimplemented,
+    respondToBrowserTakeover: unimplemented,
   };
 }
 

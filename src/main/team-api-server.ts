@@ -25,6 +25,7 @@ import {
   isReasoningEffort,
   type ReorderQueueInput,
   type RespondToApprovalInput,
+  type RespondToBrowserTakeoverInput,
   type SidebarLayoutSnapshot,
   type SteerQueuedMessageInput,
   type TeamMemberSummary,
@@ -100,6 +101,7 @@ type TeamApiAgentMethods = Pick<
   | "interrupt"
   | "respondToPrompt"
   | "respondToApproval"
+  | "respondToBrowserTakeover"
 >;
 
 type TeamApiAgents = TeamApiAgentMethods & {
@@ -1041,6 +1043,14 @@ export class TeamApiServer {
         });
         return this.#empty(response, 204);
       }
+      if (method === "POST" && url.pathname === "/v1/browser-takeovers/respond") {
+        const body = await readJson(request);
+        await this.#options.agents.respondToBrowserTakeover({
+          requestId: promptRequestId(body.requestId),
+          decision: browserTakeoverDecision(body.decision),
+        });
+        return this.#empty(response, 204);
+      }
 
       return this.#json(response, 404, { error: "Route not found." });
     } catch (error) {
@@ -1472,6 +1482,11 @@ function promptAnswers(value: unknown): Record<string, string[]> {
 function approvalDecision(value: unknown): RespondToApprovalInput["decision"] {
   if (value === "accept" || value === "decline") return value;
   throw new HttpError(400, "approval decision is invalid.");
+}
+
+function browserTakeoverDecision(value: unknown): RespondToBrowserTakeoverInput["decision"] {
+  if (value === "complete" || value === "cancel") return value;
+  throw new HttpError(400, "browser takeover decision is invalid.");
 }
 
 function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {

@@ -1,4 +1,4 @@
-import { Loading, lazy, Show } from "solid-js";
+import { createMemo, Loading, lazy, Show } from "solid-js";
 import { useAppController } from "./App";
 import { Conversation } from "./components/Conversation";
 import { FIRST_BOT_SUGGESTIONS, FirstBotSetup } from "./components/FirstBotSetup";
@@ -230,6 +230,7 @@ function WorkspaceShell(props: {
     setTeamTyping,
     answerPrompt,
     respondToApproval,
+    respondToBrowserTakeover,
     cancelQueuedMessage,
     steerQueuedMessage,
     updateQueuedMessage,
@@ -239,6 +240,18 @@ function WorkspaceShell(props: {
     openRemoteDesktopWorkspace,
     stopActiveTurn,
   } = useAppController();
+
+  const activePrompt = createMemo(() => {
+    const bot = activeBot();
+    const event = bot ? pendingPrompts()[bot.id] : undefined;
+    return event?.type === "prompt" ? event : undefined;
+  });
+
+  const activeBrowserTakeover = createMemo(() => {
+    const bot = activeBot();
+    const event = bot ? pendingPrompts()[bot.id] : undefined;
+    return event?.type === "browser-takeover-requested" ? event.request : undefined;
+  });
 
   return (
     <div
@@ -437,8 +450,9 @@ function WorkspaceShell(props: {
           remoteDesktopSessionActive={Boolean(activeRemoteDesktopSession())}
           remoteDesktopVisible={remoteDesktopWorkspaceVisible()}
           remoteDesktopEnabled={!appProps.landingPreview}
-          prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
+          prompt={activePrompt()}
           approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
+          browserTakeover={activeBrowserTakeover()}
           activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
           globalOverlayOpen={globalSearchOpen() || joinServerOpen() || serverSettingsOpen() || appSettingsOpen()}
           settingsRequest={settingsRequest()}
@@ -461,6 +475,7 @@ function WorkspaceShell(props: {
           onTypingChange={setTeamTyping}
           onAnswerPrompt={answerPrompt}
           onRespondToApproval={respondToApproval}
+          onRespondToBrowserTakeover={respondToBrowserTakeover}
           onCancelQueuedMessage={cancelQueuedMessage}
           onSteerQueuedMessage={steerQueuedMessage}
           onUpdateQueuedMessage={updateQueuedMessage}

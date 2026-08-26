@@ -779,6 +779,19 @@ export interface RespondToPromptInput {
   answers: Record<string, string[]>;
 }
 
+export interface BrowserTakeoverRequest {
+  requestId: string | number;
+  botId: string;
+  threadId: string;
+  turnId: string;
+  tabId: string;
+}
+
+export interface RespondToBrowserTakeoverInput {
+  requestId: string | number;
+  decision: "complete" | "cancel";
+}
+
 export type AgentApprovalKind = "command" | "file-change" | "permissions";
 
 export interface AgentApprovalPermissions {
@@ -842,6 +855,8 @@ export type AgentEvent =
       turnId: string;
       questions: AgentPromptQuestion[];
     }
+  | { type: "browser-takeover-requested"; request: BrowserTakeoverRequest }
+  | { type: "browser-takeover-resolved"; requestId: string | number; botId: string }
   | { type: "approval"; approval: AgentApproval }
   | { type: "browser-changed"; tabs: BrowserTab[]; activeTabId: string | null }
   | { type: "browser-control-changed"; state: BrowserControlState }
@@ -887,6 +902,10 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
         isString(value.turnId) &&
         Array.isArray(value.questions)
       );
+    case "browser-takeover-requested":
+      return isDynamicRecord(value.request);
+    case "browser-takeover-resolved":
+      return (isString(value.requestId) || isNumber(value.requestId)) && isString(value.botId);
     case "approval":
       return isDynamicRecord(value.approval);
     case "browser-changed":

@@ -59,6 +59,7 @@ import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service"
 import {
   parseAgentRequest,
   parseApprovalResponse,
+  parseBrowserTakeoverResponse,
   parseCancelQueuedMessage,
   parseChooseAttachments,
   parseCreateBot,
@@ -866,6 +867,18 @@ function registerIpcHandlers(
     return scoped.serverId === "local"
       ? service.respondToApproval(parsed)
       : remoteServers.request("/v1/approvals/respond", { method: "POST", body: parsed }, scoped.serverId, decodeVoid);
+  });
+  handleTrusted(IPC_CHANNELS.agentRespondToBrowserTakeover, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseBrowserTakeoverResponse(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.respondToBrowserTakeover(parsed)
+      : remoteServers.request(
+          "/v1/browser-takeovers/respond",
+          { method: "POST", body: parsed },
+          scoped.serverId,
+          decodeVoid,
+        );
   });
 
   handleTrusted(IPC_CHANNELS.browserOpen, (input: unknown) => {
