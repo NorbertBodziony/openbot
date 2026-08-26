@@ -3,7 +3,7 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
-import { loadNativeRuntimeLock, type NativeRuntimeLock } from "./native-runtime-lock";
+import { type AgentRuntimeLock, loadAgentRuntimeLock } from "./agent-runtime-lock";
 import { sha256 } from "./remote-desktop-runtime-release";
 
 export type GrokRuntimeTarget = "darwin-arm64" | "win32-x64";
@@ -21,14 +21,14 @@ export async function installGrokRuntime(
     outputRoot?: string;
     target?: GrokRuntimeTarget;
     fetchImpl?: typeof fetch;
-    lock?: NativeRuntimeLock;
+    lock?: AgentRuntimeLock;
   } = {},
 ): Promise<"installed" | "current"> {
   const sourceRoot = input.sourceRoot ?? process.cwd();
   const outputRoot = input.outputRoot ?? resolve(sourceRoot, "build/grok");
   const target = input.target ?? grokRuntimeTarget();
   const fetchImpl = input.fetchImpl ?? fetch;
-  const lock = input.lock ?? (await loadNativeRuntimeLock(sourceRoot));
+  const lock = input.lock ?? (await loadAgentRuntimeLock(sourceRoot));
   const artifact = lock.grok.artifacts[target];
   const targetRoot = grokRuntimePath(outputRoot, target);
 
@@ -100,7 +100,7 @@ export function grokRuntimePath(root: string, target: GrokRuntimeTarget): string
 export async function verifyGrokRuntime(
   root: string,
   target: GrokRuntimeTarget,
-  lock: NativeRuntimeLock,
+  lock: AgentRuntimeLock,
 ): Promise<void> {
   const artifact = lock.grok.artifacts[target];
   const manifest = installedManifestSchema.parse(JSON.parse(await readFile(join(root, "grok-package.json"), "utf8")));
@@ -144,7 +144,7 @@ function verifyChecksum(value: Buffer, expected: string, label: string): void {
 async function isCurrentInstallation(
   root: string,
   target: GrokRuntimeTarget,
-  lock: NativeRuntimeLock,
+  lock: AgentRuntimeLock,
 ): Promise<boolean> {
   try {
     await verifyGrokRuntime(root, target, lock);
@@ -163,7 +163,7 @@ async function installValidatedTree(source: string, destination: string): Promis
   await rename(temporaryTarget, destination);
 }
 
-async function writeMetadata(outputRoot: string, targetRoot: string, lock: NativeRuntimeLock): Promise<void> {
+async function writeMetadata(outputRoot: string, targetRoot: string, lock: AgentRuntimeLock): Promise<void> {
   const licenseRoot = join(outputRoot, "licenses");
   await mkdir(licenseRoot, { recursive: true });
   await Promise.all([

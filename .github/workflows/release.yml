@@ -323,7 +323,7 @@ jobs:
             "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/streamer.exe",
             "dist/win-unpacked/resources/codex/win/x64/bin/codex.exe",
             "dist/win-unpacked/resources/codex/win/x64/bin/codex-code-mode-host.exe",
-            "dist/win-unpacked/resources/claude/win/x64/bin/claude.exe"
+            "dist/win-unpacked/resources/claude/win/x64/bin/claude.exe",
             "dist/win-unpacked/resources/grok/win/x64/bin/grok.exe"
           )
           foreach ($runtimeExecutable in $runtimeExecutables) {

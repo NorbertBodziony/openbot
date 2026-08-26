@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
-import { loadNativeRuntimeLock, type NativeRuntimeLock } from "./native-runtime-lock";
+import { type AgentRuntimeLock, loadAgentRuntimeLock } from "./agent-runtime-lock";
 import { rejectNonRegularFiles, sha256 } from "./remote-desktop-runtime-release";
 
 export type CodexRuntimeTarget = "darwin-arm64" | "win32-x64";
@@ -24,14 +24,14 @@ export async function installCodexRuntime(
     outputRoot?: string;
     target?: CodexRuntimeTarget;
     fetchImpl?: typeof fetch;
-    lock?: NativeRuntimeLock;
+    lock?: AgentRuntimeLock;
   } = {},
 ): Promise<"installed" | "current"> {
   const sourceRoot = input.sourceRoot ?? process.cwd();
   const outputRoot = input.outputRoot ?? resolve(sourceRoot, "build/codex");
   const target = input.target ?? codexRuntimeTarget();
   const fetchImpl = input.fetchImpl ?? fetch;
-  const lock = input.lock ?? (await loadNativeRuntimeLock(sourceRoot));
+  const lock = input.lock ?? (await loadAgentRuntimeLock(sourceRoot));
   const artifact = lock.codex.artifacts[target];
   const targetRoot = codexRuntimePath(outputRoot, target);
 
@@ -88,7 +88,7 @@ export function codexRuntimePath(root: string, target: CodexRuntimeTarget): stri
 export async function verifyCodexRuntime(
   root: string,
   target: CodexRuntimeTarget,
-  lock: NativeRuntimeLock,
+  lock: AgentRuntimeLock,
 ): Promise<void> {
   const artifact = lock.codex.artifacts[target];
   const manifest = packageManifestSchema.parse(JSON.parse(await readFile(join(root, "codex-package.json"), "utf8")));
@@ -140,7 +140,7 @@ function validateArchivePath(name: string): void {
 async function isCurrentInstallation(
   root: string,
   target: CodexRuntimeTarget,
-  lock: NativeRuntimeLock,
+  lock: AgentRuntimeLock,
 ): Promise<boolean> {
   try {
     await verifyCodexRuntime(root, target, lock);
@@ -159,7 +159,7 @@ async function installValidatedTree(source: string, destination: string): Promis
   await rename(temporaryTarget, destination);
 }
 
-async function writeMetadata(root: string, lock: NativeRuntimeLock, fetchImpl: typeof fetch): Promise<void> {
+async function writeMetadata(root: string, lock: AgentRuntimeLock, fetchImpl: typeof fetch): Promise<void> {
   const licenseRoot = join(root, "licenses");
   const licensePath = join(licenseRoot, "Codex-Apache-2.0.txt");
   await mkdir(licenseRoot, { recursive: true });

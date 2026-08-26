@@ -4,8 +4,8 @@ import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadAgentRuntimeLock } from "./agent-runtime-lock";
 import { installGrokRuntime } from "./install-grok-runtime";
-import { loadNativeRuntimeLock } from "./native-runtime-lock";
 import { sha256 } from "./remote-desktop-runtime-release";
 
 const temporaryPaths: string[] = [];
@@ -22,7 +22,7 @@ describe.runIf(process.platform !== "win32")("bundled Grok installer", () => {
     const executable = Buffer.from("#!/bin/sh\nprintf 'grok 1.0.5\\n'\n");
     const license = Buffer.from("Apache license fixture\n");
     const notices = Buffer.from("Third-party notices fixture\n");
-    const lock = structuredClone(await loadNativeRuntimeLock());
+    const lock = structuredClone(await loadAgentRuntimeLock());
     lock.grok.artifacts["darwin-arm64"].assetSha256 = sha256(executable);
     lock.grok.licenseSha256 = sha256(license);
     lock.grok.noticesSha256 = sha256(notices);
@@ -50,7 +50,7 @@ describe.runIf(process.platform !== "win32")("bundled Grok installer", () => {
   it("rejects a binary with the wrong checksum", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-grok-runtime-test-"));
     temporaryPaths.push(root);
-    const lock = structuredClone(await loadNativeRuntimeLock());
+    const lock = structuredClone(await loadAgentRuntimeLock());
     const fetchImpl = async () => new Response("unexpected", { status: 200 });
     await expect(
       installGrokRuntime({ outputRoot: join(root, "output"), target: "darwin-arm64", fetchImpl, lock }),

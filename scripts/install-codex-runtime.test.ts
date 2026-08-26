@@ -5,8 +5,8 @@ import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadAgentRuntimeLock } from "./agent-runtime-lock";
 import { installCodexRuntime, validateCodexArchive } from "./install-codex-runtime";
-import { loadNativeRuntimeLock } from "./native-runtime-lock";
 import { sha256 } from "./remote-desktop-runtime-release";
 
 const temporaryPaths: string[] = [];
@@ -25,7 +25,7 @@ describe.runIf(process.platform !== "win32")("bundled Codex installer", () => {
     createArchive(fixture, archive);
     const archiveBytes = await readFile(archive);
     const license = Buffer.from("Apache License fixture\n");
-    const lock = structuredClone(await loadNativeRuntimeLock());
+    const lock = structuredClone(await loadAgentRuntimeLock());
     lock.codex.artifacts["darwin-arm64"].assetSha256 = sha256(archiveBytes);
     lock.codex.licenseSha256 = sha256(license);
     const fetchImpl = async (input: string | URL | Request) =>

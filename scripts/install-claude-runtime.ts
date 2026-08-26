@@ -3,7 +3,7 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
-import { loadNativeRuntimeLock, type NativeRuntimeLock } from "./native-runtime-lock";
+import { type AgentRuntimeLock, loadAgentRuntimeLock } from "./agent-runtime-lock";
 import { rejectNonRegularFiles, sha256 } from "./remote-desktop-runtime-release";
 
 export type ClaudeRuntimeTarget = "darwin-arm64" | "win32-x64";
@@ -27,14 +27,14 @@ export async function installClaudeRuntime(
     outputRoot?: string;
     target?: ClaudeRuntimeTarget;
     fetchImpl?: typeof fetch;
-    lock?: NativeRuntimeLock;
+    lock?: AgentRuntimeLock;
   } = {},
 ): Promise<"installed" | "current"> {
   const sourceRoot = input.sourceRoot ?? process.cwd();
   const outputRoot = input.outputRoot ?? resolve(sourceRoot, "build/claude");
   const target = input.target ?? claudeRuntimeTarget();
   const fetchImpl = input.fetchImpl ?? fetch;
-  const lock = input.lock ?? (await loadNativeRuntimeLock(sourceRoot));
+  const lock = input.lock ?? (await loadAgentRuntimeLock(sourceRoot));
   const artifact = lock.claude.artifacts[target];
   const targetRoot = claudeRuntimePath(outputRoot, target);
 
@@ -94,7 +94,7 @@ export function claudeRuntimePath(root: string, target: ClaudeRuntimeTarget): st
 export async function verifyClaudeRuntime(
   root: string,
   target: ClaudeRuntimeTarget,
-  lock: NativeRuntimeLock,
+  lock: AgentRuntimeLock,
 ): Promise<void> {
   const artifact = lock.claude.artifacts[target];
   const manifest = installedManifestSchema.parse(JSON.parse(await readFile(join(root, "claude-package.json"), "utf8")));
@@ -139,7 +139,7 @@ async function stageClaudeRuntime(
   packageRoot: string,
   destination: string,
   target: ClaudeRuntimeTarget,
-  lock: NativeRuntimeLock,
+  lock: AgentRuntimeLock,
 ): Promise<void> {
   const artifact = lock.claude.artifacts[target];
   const packageManifest = packageManifestSchema.parse(
@@ -185,7 +185,7 @@ function validateArchivePath(name: string): void {
 async function isCurrentInstallation(
   root: string,
   target: ClaudeRuntimeTarget,
-  lock: NativeRuntimeLock,
+  lock: AgentRuntimeLock,
 ): Promise<boolean> {
   try {
     await verifyClaudeRuntime(root, target, lock);
@@ -204,7 +204,7 @@ async function installValidatedTree(source: string, destination: string): Promis
   await rename(temporaryTarget, destination);
 }
 
-async function writeMetadata(outputRoot: string, targetRoot: string, lock: NativeRuntimeLock): Promise<void> {
+async function writeMetadata(outputRoot: string, targetRoot: string, lock: AgentRuntimeLock): Promise<void> {
   const licenseRoot = join(outputRoot, "licenses");
   await mkdir(licenseRoot, { recursive: true });
   await Promise.all([

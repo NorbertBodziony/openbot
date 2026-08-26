@@ -13,13 +13,6 @@ describe("native runtime lock", () => {
   it("loads pinned native dependencies", async () => {
     const lock = await loadNativeRuntimeLock();
 
-    expect(lock.codex.version).toBe("0.149.1");
-    expect(lock.codex.artifacts["darwin-arm64"].assetSha256).toHaveLength(64);
-    expect(lock.codex.artifacts["win32-x64"].assetSha256).toHaveLength(64);
-    expect(lock.claude.sdkVersion).toBe("0.3.246");
-    expect(lock.claude.version).toBe("2.1.246");
-    expect(lock.claude.artifacts["darwin-arm64"].binarySha256).toHaveLength(64);
-    expect(lock.claude.artifacts["win32-x64"].binarySha256).toHaveLength(64);
     expect(lock.cloudflared.version).toBe("2026.5.2");
     expect(lock.remoteDesktop.sunshine.version).toBe("v2026.516.143833");
     expect(lock.remoteDesktop.moonlightWeb.version).toBe("v2.10.0");

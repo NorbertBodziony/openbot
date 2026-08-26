@@ -5,8 +5,8 @@ import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadAgentRuntimeLock } from "./agent-runtime-lock";
 import { installClaudeRuntime, validateClaudeArchive } from "./install-claude-runtime";
-import { loadNativeRuntimeLock } from "./native-runtime-lock";
 import { sha256 } from "./remote-desktop-runtime-release";
 
 const temporaryPaths: string[] = [];
@@ -26,7 +26,7 @@ describe.runIf(process.platform !== "win32")("bundled Claude installer", () => {
     const archiveBytes = await readFile(archive);
     const binary = await readFile(join(fixture, "package/claude"));
     const license = await readFile(join(fixture, "package/LICENSE.md"));
-    const lock = structuredClone(await loadNativeRuntimeLock());
+    const lock = structuredClone(await loadAgentRuntimeLock());
     lock.claude.artifacts["darwin-arm64"].assetSha256 = sha256(archiveBytes);
     lock.claude.artifacts["darwin-arm64"].binarySha256 = sha256(binary);
     lock.claude.licenseSha256 = sha256(license);
