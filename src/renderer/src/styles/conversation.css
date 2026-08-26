@@ -6198,17 +6198,17 @@
 
 .composer-mention-token {
   display: inline-flex;
-  height: 22px;
+  height: 20px;
   align-items: center;
   gap: 4px;
   margin: 0 1px;
   border-radius: var(--openbot-radius-sm);
   background: var(--openbot-border);
-  padding: 1px 6px 1px 3px;
+  padding: 0 6px 0 3px;
   color: var(--openbot-text-primary);
   font-size: var(--openbot-text-sm);
   line-height: 18px;
-  vertical-align: middle;
+  vertical-align: top;
   white-space: nowrap;
 }
 

@@ -94,6 +94,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
     const option = matchingOptions()[activeOption()];
     return option ? new Set([pickerOptionKey(option)]) : new Set<string>();
   });
+  const pickerOptionElements = new Map<string, HTMLElement>();
   let editor: HTMLDivElement | undefined;
   let lastBotId: string | undefined;
   let lastAttachmentKey = "";
@@ -249,15 +250,16 @@ export function ComposerEditor(props: ComposerEditorProps) {
     editor.focus();
   }
 
-  function ensureEditorSelection() {
+  function ensureEditorSelection(normalize = false) {
     if (!editor) return;
     const selection = window.getSelection();
     const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
     if (!range || !editor.contains(range.commonAncestorContainer)) {
-      editor.normalize();
+      if (normalize) editor.normalize();
       placeCaretAtEnd(editor);
       return;
     }
+    if (!normalize) return;
     const startPrefix = range.cloneRange();
     startPrefix.selectNodeContents(editor);
     startPrefix.setEnd(range.startContainer, range.startOffset);
@@ -273,8 +275,95 @@ export function ComposerEditor(props: ComposerEditorProps) {
     selection?.addRange(normalizedRange);
   }
 
+  function moveActiveOption(delta: number, optionCount: number) {
+    setActiveOption((current) => {
+      const next = (current + delta + optionCount) % optionCount;
+      const option = matchingOptions()[next];
+      if (option) {
+        queueMicrotask(() => pickerOptionElements.get(pickerOptionKey(option))?.scrollIntoView?.({ block: "nearest" }));
+      }
+      return next;
+    });
+  }
+
+  function handleMentionPickerKeyDown(event: KeyboardEvent): boolean {
+    if (!mention()) return false;
+    const options = matchingOptions();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setMention(null);
+      return true;
+    }
+    if (options.length === 0) return false;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveActiveOption(1, options.length);
+      return true;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveActiveOption(-1, options.length);
+      return true;
+    }
+    if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
+      event.preventDefault();
+      const option = options[activeOption()];
+      if (option) insertOption(option);
+      return true;
+    }
+    return false;
+  }
+
+  function removeAdjacentMention(key: "Backspace" | "Delete"): boolean {
+    if (!editor) return false;
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (!range?.collapsed || !editor.contains(range.commonAncestorContainer)) return false;
+    const token = mentionTokenAtCaretBoundary(editor, range, key);
+    if (!token) return false;
+
+    const tokenParent = token.parentNode;
+    if (!tokenParent) return false;
+    const caretOffset = Array.from(tokenParent.childNodes).indexOf(token);
+    token.remove();
+    setMention(null);
+    emitValue();
+    editor.focus();
+    placeCaretAtChildOffset(tokenParent, Math.min(caretOffset, tokenParent.childNodes.length));
+    return true;
+  }
+
+  function removeAutomaticMentionSpace(): boolean {
+    if (!editor) return false;
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (!range?.collapsed || !editor.contains(range.commonAncestorContainer)) return false;
+    const boundary = automaticMentionSpaceAtCaretBoundary(editor, range);
+    if (!boundary) return false;
+
+    boundary.text.deleteData(boundary.offset - 1, 1);
+    if (!boundary.text.data) boundary.text.remove();
+    const tokenParent = boundary.token.parentNode;
+    if (!tokenParent) return false;
+    const caretOffset = Array.from(tokenParent.childNodes).indexOf(boundary.token) + 1;
+    setMention(null);
+    emitValue();
+    editor.focus();
+    placeCaretAtChildOffset(tokenParent, caretOffset);
+    return true;
+  }
+
   function handleKeyDown(event: KeyboardEvent) {
     if (event.key === "Enter" && (isComposing || event.isComposing)) return;
+    if (handleMentionPickerKeyDown(event)) return;
+    if (event.key === "Backspace" && removeAutomaticMentionSpace()) {
+      event.preventDefault();
+      return;
+    }
+    if ((event.key === "Backspace" || event.key === "Delete") && removeAdjacentMention(event.key)) {
+      event.preventDefault();
+      return;
+    }
     ensureEditorSelection();
 
     if (event.key === "Backspace" && removeTrailingLineBreak()) {
@@ -304,30 +393,6 @@ export function ComposerEditor(props: ComposerEditorProps) {
       return;
     }
 
-    const options = matchingOptions();
-    if (mention() && options.length > 0) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setActiveOption((current) => (current + 1) % options.length);
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setActiveOption((current) => (current - 1 + options.length) % options.length);
-        return;
-      }
-      if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
-        event.preventDefault();
-        const bot = options[activeOption()];
-        if (bot) insertOption(bot);
-        return;
-      }
-    }
-    if (event.key === "Escape" && mention()) {
-      event.preventDefault();
-      setMention(null);
-      return;
-    }
     if (event.key === "Enter" && event.shiftKey) {
       event.preventDefault();
       if (!editor) return;
@@ -397,7 +462,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
         aria-disabled={props.disabled ? "true" : "false"}
         aria-multiline="true"
         spellcheck="true"
-        onFocus={ensureEditorSelection}
+        onFocus={() => ensureEditorSelection(true)}
         onInput={(event) => {
           acknowledgeNativePrintableInput(event);
           emitValue();
@@ -454,9 +519,16 @@ export function ComposerEditor(props: ComposerEditorProps) {
                     <div class="mention-picker-section">Files</div>
                   </Show>
                   <Listbox.Item
+                    ref={(element) => pickerOptionElements.set(pickerOptionKey(option), element)}
                     item={item}
                     aria-label={pickerOptionText(option)}
-                    class={["mention-picker-option", { "mention-picker-file-option": option.type === "attachment" }]}
+                    class={[
+                      "mention-picker-option",
+                      {
+                        "mention-picker-file-option": option.type === "attachment",
+                        "mention-picker-option-active": activeOption() === optionIndex(),
+                      },
+                    ]}
                     onPointerDown={(event) => event.preventDefault()}
                     onMouseEnter={() => setActiveOption(optionIndex())}
                   >
@@ -720,6 +792,97 @@ function placeCaretAtEnd(editor: HTMLDivElement): void {
   const selection = window.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(range);
+}
+
+function placeCaretAtChildOffset(container: Node, offset: number): void {
+  const range = document.createRange();
+  range.setStart(container, offset);
+  range.collapse(true);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function mentionTokenAtCaretBoundary(
+  editor: HTMLDivElement,
+  range: Range,
+  key: "Backspace" | "Delete",
+): HTMLElement | null {
+  const tokenAtCaret = closestMentionToken(range.startContainer, editor);
+  if (tokenAtCaret) return tokenAtCaret;
+
+  let candidate: Node | null = null;
+  const container = range.startContainer;
+  if (container === editor) {
+    candidate = editor.childNodes[key === "Backspace" ? range.startOffset - 1 : range.startOffset] ?? null;
+  } else if (container.nodeType === Node.TEXT_NODE) {
+    const length = container.textContent?.length ?? 0;
+    const atBoundary = key === "Backspace" ? range.startOffset === 0 : range.startOffset === length;
+    if (!atBoundary) return null;
+    const directChild = directChildOf(editor, container);
+    candidate = key === "Backspace" ? (directChild?.previousSibling ?? null) : (directChild?.nextSibling ?? null);
+  } else if (container instanceof HTMLElement) {
+    candidate =
+      container.childNodes[key === "Backspace" ? range.startOffset - 1 : range.startOffset] ??
+      (key === "Backspace" ? container.previousSibling : container.nextSibling);
+  }
+
+  while (candidate?.nodeType === Node.TEXT_NODE && !candidate.textContent) {
+    candidate = key === "Backspace" ? candidate.previousSibling : candidate.nextSibling;
+  }
+  return candidate ? closestMentionToken(candidate, editor) : null;
+}
+
+function closestMentionToken(node: Node, editor: HTMLDivElement): HTMLElement | null {
+  const element = node instanceof HTMLElement ? node : node.parentElement;
+  const token = element?.closest<HTMLElement>("[data-mention-id]") ?? null;
+  return token && editor.contains(token) ? token : null;
+}
+
+function directChildOf(editor: HTMLDivElement, node: Node): Node | null {
+  let current: Node | null = node;
+  while (current?.parentNode && current.parentNode !== editor) current = current.parentNode;
+  return current?.parentNode === editor ? current : null;
+}
+
+function automaticMentionSpaceAtCaretBoundary(
+  editor: HTMLDivElement,
+  range: Range,
+): { text: Text; offset: number; token: HTMLElement } | null {
+  const container = range.startContainer;
+  let text: Text | null = null;
+  let offset = 0;
+  if (isTextNode(container)) {
+    text = container;
+    offset = range.startOffset;
+    if (!offset && !text.data) {
+      const candidate = previousNonemptySibling(text.previousSibling);
+      if (!candidate || !isTextNode(candidate)) return null;
+      text = candidate;
+      offset = candidate.data.length;
+    }
+  } else if (container === editor) {
+    const candidate = previousNonemptySibling(editor.childNodes[range.startOffset - 1] ?? null);
+    if (!candidate || !isTextNode(candidate)) return null;
+    text = candidate;
+    offset = candidate.data.length;
+  }
+
+  if (!text || offset !== 1 || text.data[0] !== " ") return null;
+  let previous = text.previousSibling;
+  while (previous && isTextNode(previous) && !previous.data) previous = previous.previousSibling;
+  const token = previous ? closestMentionToken(previous, editor) : null;
+  return token ? { text, offset, token } : null;
+}
+
+function isTextNode(node: Node): node is Text {
+  return node.nodeType === Node.TEXT_NODE;
+}
+
+function previousNonemptySibling(node: Node | null): Node | null {
+  let candidate = node;
+  while (candidate?.nodeType === Node.TEXT_NODE && !candidate.textContent) candidate = candidate.previousSibling;
+  return candidate;
 }
 
 function rangeFromTextOffsets(root: HTMLElement, start: number, end: number): Range | null {
