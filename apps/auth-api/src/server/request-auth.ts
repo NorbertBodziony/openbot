@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { AgentMarketplace, AgentMarketplaceError } from "./agent-marketplace";
 import { AuthService, AuthServiceError } from "./auth-service";
 import { CloudflareTunnelProvider } from "./cloudflare-tunnel-provider";
 import { D1AuthRepository } from "./d1-auth-repository";
@@ -27,6 +28,15 @@ export function requestAvatarBucket(): R2Bucket {
 export function requestSkillMarketplace(): SkillMarketplace {
   const bindings = requireWorkerBindings(env);
   return new SkillMarketplace(bindings);
+}
+
+export function requestAgentMarketplace(): AgentMarketplace {
+  return new AgentMarketplace(requireWorkerBindings(env));
+}
+
+export function marketplaceErrorResponse(error: unknown): Response {
+  if (error instanceof AgentMarketplaceError) return apiError(error.status, error.code, error.message);
+  return skillErrorResponse(error);
 }
 
 export async function requestUser(request: Request) {

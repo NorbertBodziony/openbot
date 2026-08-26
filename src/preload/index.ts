@@ -2,7 +2,9 @@ import {
   type AccountUsage,
   type AgentIpcRequest,
   type AgentModelOption,
+  type AgentPublicationPreview,
   type AgentStatus,
+  type AgentSubmission,
   type AttachmentImportEvent,
   type BotMemory,
   type BotSummary,
@@ -17,13 +19,19 @@ import {
   type InstalledSkill,
   IPC_CHANNELS,
   isAgentModel,
+  isAvatarHue,
+  isAvatarSeed,
   isBotMemory,
   isConversationMessage,
   isReasoningEffort,
   isRoutine,
   isRoutineRun,
+  isRoutineSchedule,
   isSidebarLayoutSnapshot,
   isSkillCategory,
+  type MarketplaceAgentDetail,
+  type MarketplaceAgentPage,
+  type MarketplaceAgentSummary,
   type MarketplaceSkillDetail,
   type MarketplaceSkillPage,
   type OpenBotDesktopApi,
@@ -239,7 +247,17 @@ function isBotSummary(value: unknown): value is BotSummary {
     nullableString(value.updatedAt, "updated at") &&
     isString(value.avatarSeed) &&
     (value.avatarHue === null || isNumber(value.avatarHue)) &&
-    nullableString(value.avatarUrl, "avatar URL")
+    nullableString(value.avatarUrl, "avatar URL") &&
+    (value.marketplaceSource === undefined ||
+      (isDynamicRecord(value.marketplaceSource) &&
+        isString(value.marketplaceSource.agentId) &&
+        isString(value.marketplaceSource.versionId) &&
+        isNumber(value.marketplaceSource.version) &&
+        Number.isInteger(value.marketplaceSource.version) &&
+        Array.isArray(value.marketplaceSource.skillIds) &&
+        value.marketplaceSource.skillIds.every(isString) &&
+        Array.isArray(value.marketplaceSource.routineIds) &&
+        value.marketplaceSource.routineIds.every(isString)))
   );
 }
 
@@ -513,6 +531,126 @@ function decodeInstalledSkills(value: unknown): InstalledSkill[] {
   return value.map(decodeInstalledSkill);
 }
 
+function decodeMarketplaceAgentSummary(value: unknown): MarketplaceAgentSummary {
+  const item = record(value, "marketplace agent");
+  if (!isAvatarSeed(item.avatarSeed) || (item.avatarHue !== null && !isAvatarHue(item.avatarHue)))
+    throw new Error("Invalid marketplace agent avatar.");
+  return {
+    id: requiredString(item, "id"),
+    name: requiredString(item, "name"),
+    title: requiredString(item, "title"),
+    description: requiredString(item, "description"),
+    creatorName: requiredString(item, "creatorName"),
+    version: requiredNumber(item, "version"),
+    installs: requiredNumber(item, "installs"),
+    featured: requiredBoolean(item, "featured"),
+    avatarSeed: item.avatarSeed,
+    avatarHue: item.avatarHue,
+    avatarUrl: requiredNullableString(item, "avatarUrl"),
+    skillCount: requiredNumber(item, "skillCount"),
+    routineCount: requiredNumber(item, "routineCount"),
+    activeRoutineCount: requiredNumber(item, "activeRoutineCount"),
+    updatedAt: requiredString(item, "updatedAt"),
+  };
+}
+
+function decodeMarketplaceAgentPage(value: unknown): MarketplaceAgentPage {
+  const page = record(value, "marketplace agent page");
+  if (!Array.isArray(page.agents)) throw new Error("Invalid marketplace agents.");
+  return {
+    agents: page.agents.map(decodeMarketplaceAgentSummary),
+    nextCursor: requiredNullableString(page, "nextCursor"),
+  };
+}
+
+function decodeMarketplaceAgentDetail(value: unknown): MarketplaceAgentDetail {
+  const item = record(value, "marketplace agent detail");
+  const summary = decodeMarketplaceAgentSummary(item);
+  if (
+    !Array.isArray(item.skills) ||
+    !item.skills.every((skill) => {
+      if (!isDynamicRecord(skill)) return false;
+      return [skill.skillId, skill.versionId, skill.slug, skill.name].every(isString) && isNumber(skill.version);
+    })
+  )
+    throw new Error("Invalid marketplace agent skills.");
+  if (
+    !Array.isArray(item.routines) ||
+    !item.routines.every(
+      (routine) =>
+        isDynamicRecord(routine) &&
+        isString(routine.name) &&
+        isString(routine.instruction) &&
+        isBoolean(routine.active) &&
+        isRoutineSchedule(routine.schedule),
+    )
+  )
+    throw new Error("Invalid marketplace agent routines.");
+  return { ...summary, versionId: requiredString(item, "versionId"), skills: item.skills, routines: item.routines };
+}
+
+function decodeAgentSubmission(value: unknown): AgentSubmission {
+  const item = record(value, "agent submission");
+  if (
+    !isOneOf(["pending", "approved", "rejected"], item.status) ||
+    !isAvatarSeed(item.avatarSeed) ||
+    (item.avatarHue !== null && !isAvatarHue(item.avatarHue))
+  )
+    throw new Error("Invalid agent submission.");
+  return {
+    id: requiredString(item, "id"),
+    agentId: requiredString(item, "agentId"),
+    name: requiredString(item, "name"),
+    title: requiredString(item, "title"),
+    description: requiredString(item, "description"),
+    version: requiredNumber(item, "version"),
+    status: item.status,
+    rejectionNote: requiredNullableString(item, "rejectionNote"),
+    avatarSeed: item.avatarSeed,
+    avatarHue: item.avatarHue,
+    avatarUrl: requiredNullableString(item, "avatarUrl"),
+    skillCount: requiredNumber(item, "skillCount"),
+    routineCount: requiredNumber(item, "routineCount"),
+    activeRoutineCount: requiredNumber(item, "activeRoutineCount"),
+    createdAt: requiredString(item, "createdAt"),
+  };
+}
+
+function decodeAgentSubmissions(value: unknown): AgentSubmission[] {
+  if (!Array.isArray(value)) throw new Error("Invalid agent submissions.");
+  return value.map(decodeAgentSubmission);
+}
+
+function decodeAgentPublicationPreview(value: unknown): AgentPublicationPreview {
+  const item = record(value, "agent publication preview");
+  const detail = decodeMarketplaceAgentDetail({
+    ...item,
+    id: item.botId,
+    creatorName: "",
+    version: 1,
+    installs: 0,
+    featured: false,
+    skillCount: Array.isArray(item.skills) ? item.skills.length : -1,
+    routineCount: Array.isArray(item.routines) ? item.routines.length : -1,
+    activeRoutineCount: Array.isArray(item.routines)
+      ? item.routines.filter((routine) => isDynamicRecord(routine) && routine.active === true).length
+      : -1,
+    updatedAt: "",
+    versionId: "preview",
+  });
+  return {
+    botId: requiredString(item, "botId"),
+    name: detail.name,
+    title: detail.title,
+    description: detail.description,
+    avatarSeed: detail.avatarSeed,
+    avatarHue: detail.avatarHue,
+    avatarUrl: detail.avatarUrl,
+    skills: detail.skills,
+    routines: detail.routines,
+  };
+}
+
 function isConversationDropTarget(target: EventTarget | null): boolean {
   const conversation = document.querySelector(".conversation-panel");
   return target instanceof Node && Boolean(conversation?.contains(target));
@@ -577,6 +715,20 @@ const openbotApi: OpenBotDesktopApi = {
     listInstalled: (botId) => ipcRenderer.invoke(IPC_CHANNELS.skillsListInstalled, botId).then(decodeInstalledSkills),
     install: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsInstall, input).then(decodeInstalledSkill),
     uninstall: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsUninstall, input).then(decodeVoid),
+  },
+  marketplaceAgents: {
+    list: (query) =>
+      ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsList, query ?? null).then(decodeMarketplaceAgentPage),
+    get: (agentId) => ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsGet, agentId).then(decodeMarketplaceAgentDetail),
+    listMine: () => ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsListMine).then(decodeAgentSubmissions),
+    preview: (botId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsPreview, botId).then(decodeAgentPublicationPreview),
+    submit: (input) => ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsSubmit, input).then(decodeAgentSubmission),
+    install: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsInstall, input).then((value) => {
+        const item = record(value, "agent installation");
+        return { bot: decodeBot(item.bot) };
+      }),
   },
   agent: {
     getStatus: () => invokeAgent(IPC_CHANNELS.agentGetStatus, null, decodeAgentStatus),

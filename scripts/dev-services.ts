@@ -82,7 +82,7 @@ export function createDevelopmentServiceSpec(
       OPENBOT_DEV_REMOTE_DEBUGGING_PORT:
         environment.OPENBOT_DEV_REMOTE_DEBUGGING_PORT ??
         String(isTestClient ? DEFAULT_REMOTE_DEBUGGING_PORTS["test-client"] : DEFAULT_REMOTE_DEBUGGING_PORTS.app),
-      OPENBOT_DEV_REMOTE_ROLE: isTestClient ? "client" : "host",
+      OPENBOT_DEV_REMOTE_ROLE: environment.OPENBOT_DEV_REMOTE_ROLE ?? (isTestClient ? "client" : "host"),
     },
   };
 }

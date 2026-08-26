@@ -48,6 +48,7 @@ import { MailboxStore } from "../backend/mailbox-store";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import { TeamChatStore } from "../backend/team-chat-store";
 import { AgentInitializationGate } from "./agent-initialization";
+import { AgentMarketplaceService } from "./agent-marketplace-service";
 import { notificationForAgentEvent } from "./agent-notifications";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
@@ -246,6 +247,7 @@ function registerIpcHandlers(
   remoteServers: RemoteServerManager,
   centralAuth: CentralAuthManager,
   skills: SkillMarketplaceService,
+  marketplaceAgents: AgentMarketplaceService,
   voice: VoiceTranscriptionService,
 ): void {
   handleTrusted(IPC_CHANNELS.getAppInfo, (): AppInfo => {
@@ -350,6 +352,41 @@ function registerIpcHandlers(
       botId: requireString(input.botId, "botId"),
       skillId: requireString(input.skillId, "skillId"),
       ...(input.removeModified === true ? { removeModified: true } : {}),
+    });
+  });
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsList, (input: unknown) => {
+    if (input === null || input === undefined) return marketplaceAgents.list();
+    if (!isObject(input)) throw new Error("Invalid agent marketplace query.");
+    if (input.sort !== undefined && input.sort !== "installs") throw new Error("Unknown agent sort order.");
+    return marketplaceAgents.list({
+      ...(isString(input.query) ? { query: input.query.slice(0, 100) } : {}),
+      ...(input.featured === true ? { featured: true } : {}),
+      ...(input.sort === "installs" ? { sort: "installs" as const } : {}),
+      ...(isString(input.cursor) ? { cursor: input.cursor } : {}),
+      ...(isNumber(input.limit) ? { limit: input.limit } : {}),
+    });
+  });
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsGet, (input: unknown) =>
+    marketplaceAgents.get(requireString(input, "agentId")),
+  );
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsListMine, () => marketplaceAgents.listMine());
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsPreview, (input: unknown) =>
+    marketplaceAgents.preview(requireString(input, "botId")),
+  );
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsSubmit, (input: unknown) => {
+    if (!isObject(input)) throw new Error("Invalid agent submission.");
+    return marketplaceAgents.submit({
+      botId: requireString(input.botId, "botId"),
+      ...(input.agentId === undefined ? {} : { agentId: requireString(input.agentId, "agentId") }),
+    });
+  });
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsInstall, (input: unknown) => {
+    if (!isObject(input)) throw new Error("Invalid agent installation.");
+    return marketplaceAgents.install({
+      agentId: requireString(input.agentId, "agentId"),
+      ...(input.botId === undefined ? {} : { botId: requireString(input.botId, "botId", INPUT_LIMITS.identifier) }),
+      timezone: requireString(input.timezone, "timezone", 255),
+      receiptId: requireString(input.receiptId, "receiptId", INPUT_LIMITS.identifier),
     });
   });
   handleTrusted(IPC_CHANNELS.updateGetStatus, () => updater.getStatus());
@@ -1246,6 +1283,7 @@ if (!hasSingleInstanceLock) {
         () => service.listBots(),
         async (botId) => service.refreshBotRuntime(botId),
       );
+      const agentMarketplace = new AgentMarketplaceService(centralAuthManager, service, skillMarketplace);
       configureAttachmentProtocol(mailboxStore, service);
       const teamStore = new TeamStore(join(app.getPath("userData"), TEAM_FILE));
       await teamStore.initialize();
@@ -1430,6 +1468,7 @@ if (!hasSingleInstanceLock) {
         remoteServers,
         centralAuthManager,
         skillMarketplace,
+        agentMarketplace,
         voiceTranscriptionService,
       );
       configureApplicationMenu(service, updateService);

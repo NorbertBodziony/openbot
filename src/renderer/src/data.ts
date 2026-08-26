@@ -5,6 +5,7 @@ import type {
   AgentReasoningEffort,
   AttachmentSummary,
   BotAvatarHue,
+  BotSummary,
   ImageGenerationInfo,
   MessageReaction,
 } from "@openbot/contracts/ipc";
@@ -58,6 +59,7 @@ export interface BotProfile {
   avatarSeed: string;
   avatarHue: BotAvatarHue | null;
   avatarUrl: string | null;
+  marketplaceSource?: BotSummary["marketplaceSource"];
   time: string;
   preview: string;
 }
