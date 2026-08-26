@@ -92,6 +92,7 @@ fi
           "update_routine",
           "delete_routine",
           "test_routine",
+          "react_to_user_message",
         ]),
       );
       return generator;

@@ -3432,14 +3432,14 @@
 
 .message-reaction-pill {
   display: flex;
-  min-width: 24px;
-  height: 24px;
+  min-width: 0;
+  height: var(--openbot-leading-lg);
   align-items: center;
   justify-content: center;
   border: 0;
   border-radius: var(--openbot-radius-sm);
   background: transparent;
-  padding: 0 6px;
+  padding: 0;
   color: inherit;
   font-size: var(--openbot-text-lg);
   line-height: 1;
@@ -3456,12 +3456,20 @@
   border-radius: inherit;
 }
 
+.ui-bubble-reactions.message-reaction-anchor {
+  padding: 2px 6px;
+}
+
 .message-reaction-anchor .ui-bubble-reaction-overflow {
   padding-right: 6px;
 }
 
 .message-reaction-pill:hover {
   background: var(--openbot-hover);
+}
+
+.message-reaction-pill-readonly:hover {
+  background: transparent;
 }
 
 .message-reaction-anchor:has(.message-reaction-pill:focus-visible) {
@@ -6420,7 +6428,7 @@
 .composer-attachment[data-kind="image"] .composer-attachment-preview {
   width: 100%;
   height: 100%;
-  border-radius: calc(var(--openbot-radius-lg) - 1px);
+  border-radius: var(--openbot-radius-media-preview);
 }
 
 .composer-attachment-preview img {
@@ -6526,7 +6534,7 @@
   > [data-slot="bubble-content"]
   > .message-attachments:last-child
   .message-attachment {
-  border-radius: calc(var(--openbot-radius-bubble) - var(--openbot-space-3) - 1px);
+  border-radius: var(--openbot-radius-bubble-inset);
 }
 
 .ui-button.attachment-preview-button {
@@ -7731,11 +7739,22 @@
   background: var(--openbot-bg-canvas);
 }
 
-.message-reaction-pill,
 .composer-reply-preview {
   border-color: var(--openbot-border);
   background: var(--openbot-bg-surface);
   color: var(--openbot-text-primary);
+}
+
+.message-reaction-pill {
+  border-color: var(--openbot-border);
+  background: transparent;
+  color: var(--openbot-text-primary);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .message-reaction-pill:not(.message-reaction-pill-readonly):hover {
+    background: var(--openbot-hover);
+  }
 }
 
 .composer,

@@ -112,6 +112,7 @@ interface MailboxProjectionReaction {
   botId: string;
   messageId: string;
   emoji: string;
+  actor: { kind: "user" } | { kind: "bot"; botId: string };
   updatedAt: string;
 }
 
@@ -1228,13 +1229,16 @@ export class OpenBotDatabase {
         for (const botId of value.pausedBotIds) queueInsert.run(botId, 1, "{}", sequence);
         const reactionInsert = db.prepare(`
           INSERT INTO projection_reactions
-            (agent_id, message_id, emoji, updated_at, last_event_sequence) VALUES (?, ?, ?, ?, ?)
+            (agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
         for (const reaction of value.reactions) {
           reactionInsert.run(
             String(reaction.botId),
             String(reaction.messageId),
             String(reaction.emoji),
+            reaction.actor.kind,
+            reaction.actor.kind === "bot" ? reaction.actor.botId : "",
             String(reaction.updatedAt),
             sequence,
           );
@@ -1321,11 +1325,17 @@ export class OpenBotDatabase {
       db.prepare("SELECT agent_id FROM projection_queue_state WHERE paused = 1").all(),
     ).map((row) => requiredStringColumn(row, "agent_id"));
     const reactions = databaseRows(
-      db.prepare("SELECT agent_id, message_id, emoji, updated_at FROM projection_reactions").all(),
+      db
+        .prepare("SELECT agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at FROM projection_reactions")
+        .all(),
     ).map((row) => ({
       botId: requiredStringColumn(row, "agent_id"),
       messageId: requiredStringColumn(row, "message_id"),
       emoji: requiredStringColumn(row, "emoji"),
+      actor:
+        requiredStringColumn(row, "actor_kind") === "bot"
+          ? { kind: "bot" as const, botId: requiredStringColumn(row, "actor_bot_id") }
+          : { kind: "user" as const },
       updatedAt: requiredStringColumn(row, "updated_at"),
     }));
     return {

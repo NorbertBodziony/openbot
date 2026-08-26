@@ -151,6 +151,9 @@ const developmentRemoteRole =
     ? process.env.OPENBOT_DEV_REMOTE_ROLE
     : null;
 const developmentTestClientEnabled = !app.isPackaged && process.env.OPENBOT_DEV_TEST_CLIENT_ENABLED === "1";
+const developmentInviteLinkOptions = {
+  allowLocalDevelopmentApiUrl: developmentRemoteRole !== null,
+};
 if (!app.isPackaged && /^\d{4,5}$/u.test(process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT ?? "")) {
   app.commandLine.appendSwitch("remote-debugging-port", process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT);
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
@@ -1208,7 +1211,7 @@ function forwardCentralAuth(state: CentralAuthState): void {
 
 function acceptInviteUrl(value: string): void {
   try {
-    parseInviteUrl(value);
+    parseInviteUrl(value, developmentInviteLinkOptions);
   } catch {
     return;
   }
@@ -1228,7 +1231,7 @@ function acceptOpenbotUrl(value: string): void {
 function findInviteUrl(values: string[]): string | null {
   for (const value of values) {
     try {
-      parseInviteUrl(value);
+      parseInviteUrl(value, developmentInviteLinkOptions);
       return value;
     } catch {
       // Most command-line arguments are not invitations.
@@ -1239,7 +1242,7 @@ function findInviteUrl(values: string[]): string | null {
 
 app.on("open-url", (event, url) => {
   try {
-    parseInviteUrl(url);
+    parseInviteUrl(url, developmentInviteLinkOptions);
   } catch {
     return;
   }
@@ -1250,7 +1253,7 @@ app.on("open-url", (event, url) => {
 app.on("continue-activity", (event, type, _userInfo, details) => {
   if (type !== "NSUserActivityTypeBrowsingWeb" || !details.webpageURL) return;
   try {
-    parseInviteUrl(details.webpageURL);
+    parseInviteUrl(details.webpageURL, developmentInviteLinkOptions);
   } catch {
     return;
   }
@@ -1367,6 +1370,7 @@ if (!hasSingleInstanceLock) {
         mailbox: mailboxStore,
         browser: browserHost,
         chat: teamChatStore,
+        allowLocalDevelopmentInvites: developmentRemoteRole === "host",
         logDirectory: join(app.getPath("userData"), "logs", "remote"),
         removeLegacyRemoteDesktopCredential: async () => {
           const credentialPath = join(app.getPath("userData"), LEGACY_REMOTE_DESKTOP_CREDENTIAL_FILE);
@@ -1451,6 +1455,7 @@ if (!hasSingleInstanceLock) {
             return centralAuthManager.getSignedInUser().email;
           },
         },
+        { allowLocalDevelopmentInvites: developmentRemoteRole !== null },
       );
       await remoteServerManager.initialize();
       if (developmentRemoteRole === "host") {

@@ -282,7 +282,7 @@
 
 .server-settings-invite-composer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 112px auto;
+  grid-template-columns: minmax(0, 1fr) 112px 104px;
   align-items: start;
   gap: var(--openbot-space-2);
 }
@@ -308,11 +308,20 @@
   white-space: nowrap;
 }
 
-.server-settings-invite-mode-panel .ui-text {
-  min-height: var(--openbot-control-md);
-  display: flex;
-  align-items: center;
-  padding-inline: var(--openbot-space-1);
+.server-settings-invite-link-input.ui-input {
+  font-family: var(--openbot-font-mono);
+  cursor: text;
+}
+
+.server-settings-invite-link-input.ui-input::placeholder {
+  font-family: var(--openbot-font-sans);
+}
+
+.server-settings-invite-copy > svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  flex: 0 0 auto;
+  stroke-width: 1.75;
 }
 
 .server-settings-role-select {

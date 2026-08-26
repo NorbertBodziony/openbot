@@ -16,6 +16,11 @@ const payload = {
 };
 const missingTokenUrl = new URL(createInviteUrl(payload));
 missingTokenUrl.searchParams.delete("invite");
+const localDevelopmentPayload = {
+  ...payload,
+  apiUrl: "http://localhost:43123/",
+};
+const localDevelopmentOptions = { allowLocalDevelopmentApiUrl: true };
 
 describe("OpenBot invite links", () => {
   it("creates and parses the canonical HTTPS invitation", () => {
@@ -38,6 +43,24 @@ describe("OpenBot invite links", () => {
     expect(isValidRemoteApiUrl("https://example.com/")).toBe(false);
     expect(isValidRemoteApiUrl(`${payload.apiUrl}path`)).toBe(false);
   });
+
+  it("supports localhost invitations only when local development is explicitly enabled", () => {
+    expect(() => createInviteUrl(localDevelopmentPayload)).toThrow("invalid");
+    expect(isValidRemoteApiUrl(localDevelopmentPayload.apiUrl)).toBe(false);
+
+    const url = createInviteUrl(localDevelopmentPayload, localDevelopmentOptions);
+    expect(parseInviteUrl(url, localDevelopmentOptions)).toEqual(localDevelopmentPayload);
+    expect(isCanonicalInviteUrl(url, localDevelopmentOptions)).toBe(true);
+    expect(() => parseInviteUrl(url)).toThrow("invalid");
+    expect(isValidRemoteApiUrl(localDevelopmentPayload.apiUrl, localDevelopmentOptions)).toBe(true);
+  });
+
+  it.each(["http://localhost/", "https://localhost:43123/", "http://127.0.0.1:43123/", "http://localhost:43123/path"])(
+    "rejects an unsafe local development API URL: %s",
+    (apiUrl) => {
+      expect(isValidRemoteApiUrl(apiUrl, localDevelopmentOptions)).toBe(false);
+    },
+  );
 
   it.each([
     "https://evil.example/join",

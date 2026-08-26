@@ -182,6 +182,25 @@ export const OPENBOT_DYNAMIC_TOOLS = {
     },
     {
       type: "function",
+      name: "react_to_user_message",
+      description:
+        "Add one emoji reaction to the current user message for an obvious positive or negative emotional moment, including wins, affection, gratitude, humor, sadness, disappointment, frustration, empathy, or strong approval. An emoji in the written answer does not count as a reaction. Skip neutral messages and never use the reaction instead of the normal answer.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          emoji: {
+            type: "string",
+            minLength: 1,
+            maxLength: 64,
+            description: "Exactly one complete Unicode emoji.",
+          },
+        },
+        required: ["emoji"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
       name: "send_message",
       description:
         "Queue an asynchronous message and optional local files for one or more OpenBot agents. When replying, pass the original message id as replyToMessageId.",

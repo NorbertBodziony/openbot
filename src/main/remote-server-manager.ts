@@ -114,6 +114,10 @@ interface CentralAccountSession {
   getEmail: () => string;
 }
 
+interface RemoteServerManagerOptions {
+  allowLocalDevelopmentInvites?: boolean;
+}
+
 export interface DevelopmentRemoteServerConnection {
   serverId: string;
   serverName: string;
@@ -142,6 +146,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #path: string;
   readonly #cipher: TokenCipher;
   readonly #centralAccount: CentralAccountSession;
+  readonly #allowLocalDevelopmentInvites: boolean;
   #state: StoredRemoteServers = { version: 2, activeServerId: "local", servers: [] };
   #states = new Map<string, ServerSummary["state"]>();
   #eventControllers = new Map<string, AbortController>();
@@ -149,11 +154,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #presence = new Map<string, TeamPresenceSnapshot>();
   #writeChain = Promise.resolve();
 
-  constructor(path: string, cipher: TokenCipher, centralAccount: CentralAccountSession) {
+  constructor(
+    path: string,
+    cipher: TokenCipher,
+    centralAccount: CentralAccountSession,
+    options: RemoteServerManagerOptions = {},
+  ) {
     super();
     this.#path = path;
     this.#cipher = cipher;
     this.#centralAccount = centralAccount;
+    this.#allowLocalDevelopmentInvites = options.allowLocalDevelopmentInvites ?? false;
   }
 
   async initialize(): Promise<void> {
@@ -239,7 +250,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async join(input: JoinServerInput): Promise<ServerSummary> {
-    const invite = parseInviteUrl(input.inviteUrl);
+    const invite = parseInviteUrl(input.inviteUrl, {
+      allowLocalDevelopmentApiUrl: this.#allowLocalDevelopmentInvites,
+    });
     const verifiedIdentity = await this.#verifyIdentity(invite.apiUrl, invite.serverId, invite.fingerprint);
     const accountTicket = await this.#centralAccount.createTeamAuthTicket(invite.serverId);
     const result = await requestJson(invite.apiUrl, "/v1/join/account", decodeJoinResult, {
@@ -299,7 +312,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async previewInvite(input: JoinServerInput): Promise<InvitePreview> {
-    const invite = parseInviteUrl(input.inviteUrl);
+    const invite = parseInviteUrl(input.inviteUrl, {
+      allowLocalDevelopmentApiUrl: this.#allowLocalDevelopmentInvites,
+    });
     const identity = await this.#verifyIdentity(invite.apiUrl, invite.serverId, invite.fingerprint);
     const preview = await requestJson(invite.apiUrl, "/v1/invitations/preview", decodeInvitePreview, {
       method: "POST",

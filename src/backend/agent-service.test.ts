@@ -331,6 +331,8 @@ describe.sequential("AgentService", () => {
         "You may list, read, create, edit, move, and delete files and run local commands in both directories.",
       );
       expect(params.developerInstructions).toContain("openbot.create_routine");
+      expect(params.developerInstructions).toContain("sadness, disappointment, frustration, loneliness");
+      expect(params.developerInstructions).toContain("An emoji written inside your answer does not count");
       expect(params.developerInstructions).toContain("Omit botId to target yourself");
       expect(params.dynamicTools).toEqual(
         expect.arrayContaining([
@@ -347,6 +349,7 @@ describe.sequential("AgentService", () => {
               expect.objectContaining({ name: "update_routine" }),
               expect.objectContaining({ name: "delete_routine" }),
               expect.objectContaining({ name: "test_routine" }),
+              expect.objectContaining({ name: "react_to_user_message" }),
             ]),
           }),
         ]),
@@ -2102,6 +2105,82 @@ describe.sequential("AgentService", () => {
     );
   });
 
+  it("lets an agent react to the current user message without replacing the user's reaction", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    const receipt = await service.sendMessage({ botId: "chief", text: "The launch is approved." });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    const messageId = receipt.deliveries[0]?.id;
+    if (!client || !threadId || !turnId || !messageId) throw new Error("The reaction test turn did not start.");
+
+    await service.setMessageReaction({ botId: "chief", messageId, emoji: "❤️" });
+    const first = await callOpenBotTool(client, threadId, "react_to_user_message", { emoji: "🎉" }, turnId);
+    expect(openBotToolPayload(first.result)).toMatchObject({ status: "reacted", messageId, emoji: "🎉" });
+    const second = await callOpenBotTool(client, threadId, "react_to_user_message", { emoji: "👨‍👩‍👧‍👦" }, turnId);
+    expect(openBotToolPayload(second.result)).toMatchObject({ emoji: "👨‍👩‍👧‍👦" });
+
+    const message = (await service.readConversation("chief")).messages.find((candidate) => candidate.id === messageId);
+    expect(message).toMatchObject({
+      reaction: "❤️",
+      reactions: [
+        { emoji: "❤️", actor: { kind: "user" } },
+        { emoji: "👨‍👩‍👧‍👦", actor: { kind: "bot", botId: "chief" } },
+      ],
+    });
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "react_to_user_message",
+      { emoji: "🎉🎉" },
+      "exactly one complete Unicode emoji",
+      turnId,
+    );
+  });
+
+  it("rejects an agent reaction when the current turn was not started by the user", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    await store.initialize();
+    await mailbox.initialize();
+    await store.getOrCreate("chief");
+    await store.getOrCreate("research");
+    await mailbox.enqueue({
+      sender: { kind: "bot", botId: "research" },
+      recipientBotIds: ["chief"],
+      text: "Teammate update.",
+    });
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The teammate reaction test turn did not start.");
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "react_to_user_message",
+      { emoji: "👍" },
+      "Only the current user message",
+      turnId,
+    );
+  });
+
   it("sends a teammate request only to the selected profile match", async () => {
     process.env.OPENBOT_FAKE_AGENT_TOOL_CALLS = JSON.stringify([
       { tool: "list_agents", arguments: {} },
@@ -2674,6 +2753,7 @@ async function callOpenBotTool(
   threadId: string,
   tool: string,
   args: unknown,
+  turnId = "routine-tool-turn",
 ): Promise<{ result?: unknown; error?: RpcError }> {
   const id = `openbot-tool-${randomUUID()}`;
   client.emit("request", {
@@ -2681,7 +2761,7 @@ async function callOpenBotTool(
     method: "item/tool/call",
     params: {
       threadId,
-      turnId: "routine-tool-turn",
+      turnId,
       callId: randomUUID(),
       namespace: "openbot",
       tool,
@@ -2712,8 +2792,9 @@ async function expectOpenBotToolError(
   tool: string,
   args: unknown,
   message: string,
+  turnId?: string,
 ): Promise<void> {
-  const result = await callOpenBotTool(client, threadId, tool, args);
+  const result = await callOpenBotTool(client, threadId, tool, args, turnId);
   expect(result.result).toBeUndefined();
   expect(result.error?.message).toContain(message);
 }

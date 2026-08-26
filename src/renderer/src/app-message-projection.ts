@@ -38,6 +38,8 @@ export function toBotMessage(message: ConversationMessage): BotMessage {
     imageGeneration: message.imageGeneration,
     exchange: message.exchange,
     reaction: message.reaction,
+    reactions:
+      message.reactions ?? (message.reaction ? [{ emoji: message.reaction, actor: { kind: "user" as const } }] : []),
     routine: message.routine,
     status: message.exchange
       ? undefined
@@ -156,6 +158,7 @@ export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
     left.senderBotId === right.senderBotId &&
     left.replyToMessageId === right.replyToMessageId &&
     left.reaction === right.reaction &&
+    JSON.stringify(left.reactions) === JSON.stringify(right.reactions) &&
     JSON.stringify(left.reactionSummary) === JSON.stringify(right.reactionSummary) &&
     JSON.stringify(left.attachments) === JSON.stringify(right.attachments) &&
     JSON.stringify(left.exchange) === JSON.stringify(right.exchange) &&
