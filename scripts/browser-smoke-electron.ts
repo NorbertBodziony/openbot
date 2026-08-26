@@ -7,8 +7,6 @@ import { app, BrowserWindow } from "electron";
 import { BrowserHost } from "../src/backend/browser-host";
 import { getString } from "../src/backend/protocol";
 
-app.commandLine.appendSwitch("disable-logging");
-
 let cachedPageVersion = 1;
 
 const server = createServer((request, response) => {

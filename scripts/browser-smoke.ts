@@ -26,10 +26,10 @@ try {
   await rm(outputRoot, { recursive: true, force: true });
 }
 
-function run(executable: string, arguments_: string[], filterExpectedAbortWarning = false): Promise<number> {
+function run(executable: string, arguments_: string[], filterExpectedElectronNoise = false): Promise<number> {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, arguments_, {
-      stdio: filterExpectedAbortWarning ? ["inherit", "inherit", "pipe"] : "inherit",
+      stdio: filterExpectedElectronNoise ? ["inherit", "inherit", "pipe"] : "inherit",
       env: process.env,
     });
     if (child.stderr) {
@@ -44,6 +44,11 @@ function run(executable: string, arguments_: string[], filterExpectedAbortWarnin
           suppressTraceHint = true;
           return;
         }
+        const isMacOsBackupServiceNoise =
+          /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ Electron Helper\[\d+:\d+\] XPC error for connection com\.apple\.backupd\.sandbox\.xpc: Connection invalid$/.test(
+            line,
+          );
+        if (isMacOsBackupServiceNoise) return;
         if (suppressTraceHint && line.startsWith("(Use `Electron --trace-warnings")) {
           suppressTraceHint = false;
           return;
