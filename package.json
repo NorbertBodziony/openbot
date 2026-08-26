@@ -94,6 +94,8 @@
     "test:remote-desktop-runtime": "bun scripts/remote-desktop-runtime-smoke.ts",
     "codex:doctor": "bun scripts/codex-doctor.ts",
     "skills:review": "bun scripts/review-skills.ts",
+    "marketplace:build": "bun scripts/build-production-catalog.ts",
+    "marketplace:publish:production": "bun scripts/publish-production-catalog.ts",
     "agents:review": "bun scripts/review-agents.ts",
     "agents:seed": "bun scripts/seed-marketplace-agents.ts",
     "skills:seed": "bun scripts/seed-marketplace-skills.ts",

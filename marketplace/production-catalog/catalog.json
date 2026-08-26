@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "v1",
+  "sources": {
+    "openai": {
+      "repository": "https://github.com/openai/skills",
+      "commit": "49f948faa9258a0c61caceaf225e179651397431"
+    },
+    "anthropic": {
+      "repository": "https://github.com/anthropics/skills",
+      "commit": "3b3fad96af16a10759d930941b4520ba0c40edae"
+    }
+  },
+  "skills": [
+    {
+      "slug": "secure-code-guidance",
+      "category": "coding",
+      "source": "openai",
+      "upstreamSkill": "security-best-practices"
+    },
+    {
+      "slug": "repository-threat-model",
+      "category": "coding",
+      "source": "openai",
+      "upstreamSkill": "security-threat-model"
+    },
+    {
+      "slug": "distinctive-frontend-design",
+      "category": "design",
+      "source": "anthropic",
+      "upstreamSkill": "frontend-design"
+    },
+    {
+      "slug": "internal-communications",
+      "category": "documents",
+      "source": "anthropic",
+      "upstreamSkill": "internal-comms"
+    },
+    {
+      "slug": "decision-quality-check",
+      "category": "productivity",
+      "source": "anthropic",
+      "upstreamSkill": "discernment-nudge"
+    }
+  ],
+  "agents": [
+    {
+      "slug": "application-security-reviewer",
+      "name": "Application Security Reviewer",
+      "title": "Finds concrete risks and builds actionable threat models",
+      "description": "Reviews supported codebases for security weaknesses and maps realistic abuse paths to prioritized mitigations.",
+      "avatarHue": 12,
+      "skills": ["secure-code-guidance", "repository-threat-model"]
+    },
+    {
+      "slug": "product-design-lead",
+      "name": "Product Design Lead",
+      "title": "Turns product intent into distinctive, usable interfaces",
+      "description": "Shapes clear product briefs and carries their intent through deliberate visual direction, interaction, and interface copy.",
+      "avatarHue": 276,
+      "skills": ["distinctive-frontend-design"]
+    },
+    {
+      "slug": "communications-partner",
+      "name": "Communications Partner",
+      "title": "Makes important writing clear, useful, and decision-ready",
+      "description": "Coauthors structured documents and internal updates while surfacing assumptions that deserve a final check.",
+      "avatarHue": 192,
+      "skills": ["internal-communications", "decision-quality-check"]
+    }
+  ]
+}
