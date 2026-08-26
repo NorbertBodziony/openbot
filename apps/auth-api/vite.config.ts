@@ -24,7 +24,10 @@ export default defineConfig(({ command }) => {
       }),
       tanstackStart(),
       solidPlugin({ ssr: true }),
-      tailwindcss(),
+      // Lightning CSS currently reports valid named highlight selectors as
+      // unsupported. Let Vite handle the final CSS bundle until that upstream
+      // parser false positive is fixed.
+      tailwindcss({ optimize: false }),
     ],
   };
 });

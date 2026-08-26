@@ -20,15 +20,48 @@ try {
   if (buildCode !== 0) throw new Error("Unable to build browser smoke test.");
 
   const electron = join(projectRoot, "node_modules", ".bin", "electron");
-  const exitCode = await run(electron, [outputPath]);
+  const exitCode = await run(electron, [outputPath], true);
   if (exitCode !== 0) process.exitCode = exitCode;
 } finally {
   await rm(outputRoot, { recursive: true, force: true });
 }
 
-function run(executable: string, arguments_: string[]): Promise<number> {
+function run(executable: string, arguments_: string[], filterExpectedAbortWarning = false): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, arguments_, { stdio: "inherit", env: process.env });
+    const child = spawn(executable, arguments_, {
+      stdio: filterExpectedAbortWarning ? ["inherit", "inherit", "pipe"] : "inherit",
+      env: process.env,
+    });
+    if (child.stderr) {
+      let pending = "";
+      let suppressTraceHint = false;
+      const flushLine = (line: string): void => {
+        const isExpectedAbort =
+          /^\(node:\d+\) electron: Failed to load URL: http:\/\/127\.0\.0\.1:\d+\/abort with error: ERR_EMPTY_RESPONSE$/.test(
+            line,
+          );
+        if (isExpectedAbort) {
+          suppressTraceHint = true;
+          return;
+        }
+        if (suppressTraceHint && line.startsWith("(Use `Electron --trace-warnings")) {
+          suppressTraceHint = false;
+          return;
+        }
+        suppressTraceHint = false;
+        process.stderr.write(`${line}\n`);
+      };
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk: string) => {
+        pending += chunk;
+        const lines = pending.split("\n");
+        pending = lines.pop() ?? "";
+        for (const line of lines) flushLine(line);
+      });
+      child.stderr.once("end", () => {
+        if (pending.length > 0) flushLine(pending);
+      });
+    }
     child.once("error", reject);
     child.once("exit", (code) => resolve(code ?? 1));
   });

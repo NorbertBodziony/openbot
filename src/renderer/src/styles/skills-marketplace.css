@@ -173,9 +173,6 @@
   border-color: var(--openbot-border-strong);
   background: var(--openbot-bg-surface);
 }
-.agent-marketplace-panel .skills-marketplace-search + .skills-marketplace-category-section {
-  margin-top: var(--openbot-space-4);
-}
 .skills-marketplace-categories {
   display: flex;
   flex-wrap: wrap;
@@ -215,6 +212,9 @@
 }
 .skills-marketplace-category-section + .skills-marketplace-category-section {
   margin-top: var(--openbot-space-8);
+}
+.agent-marketplace-panel .skills-marketplace-search + .skills-marketplace-category-section {
+  margin-top: var(--openbot-space-4);
 }
 .skills-marketplace-grid {
   display: grid;
