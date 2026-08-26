@@ -2370,11 +2370,16 @@ export function ConversationTimeline() {
                 const message = createMemo(() => props.messages[virtualRow.index]);
                 const initialMessage = untrack(message);
                 if (!initialMessage) return null;
-                const reactionSummary = createMemo(() => {
+                const displayedReactions = createMemo(() => {
                   const currentMessage = message();
-                  if (currentMessage?.reactionSummary) return currentMessage.reactionSummary;
-                  const reaction = currentMessage?.reaction;
-                  return reaction ? { emojis: [reaction] } : undefined;
+                  if (currentMessage?.reactions?.length) return currentMessage.reactions;
+                  if (currentMessage?.reaction) {
+                    return [{ emoji: currentMessage.reaction, actor: { kind: "user" as const } }];
+                  }
+                  return (currentMessage?.reactionSummary?.emojis ?? []).map((emoji) => ({
+                    emoji,
+                    actor: { kind: "user" as const },
+                  }));
                 });
                 const animateEntrance = initialMessage.animate === true && markMessageSeen(initialMessage.id);
                 return (
@@ -2446,33 +2451,52 @@ export function ConversationTimeline() {
                                         onOpenRoutine={openRoutineSettings}
                                       />
                                     </BubbleContent>
-                                    <Show when={reactionSummary()}>
-                                      {(summary) => (
-                                        <BubbleReactions
-                                          class="message-reaction-anchor"
-                                          align={message()?.author === "you" ? "start" : "end"}
-                                          overflowCount={summary().overflowCount}
-                                          role="group"
-                                          aria-label={`Reactions: ${summary().emojis.join(", ")}${
-                                            summary().overflowCount ? ` and ${summary().overflowCount} more` : ""
-                                          }`}
-                                        >
-                                          <Button
-                                            variant="ghost"
-                                            type="button"
-                                            class="message-reaction-pill"
-                                            aria-label={`Remove reaction ${message()?.reaction ?? summary().emojis[0]}`}
-                                            onClick={() => {
-                                              const currentMessage = message();
-                                              if (currentMessage) void reactToMessage(currentMessage, null);
-                                            }}
-                                          >
-                                            <For each={summary().emojis}>
-                                              {(emoji) => <span aria-hidden="true">{emoji}</span>}
-                                            </For>
-                                          </Button>
-                                        </BubbleReactions>
-                                      )}
+                                    <Show when={displayedReactions().length > 0}>
+                                      <BubbleReactions
+                                        class="message-reaction-anchor"
+                                        align={message()?.author === "you" ? "start" : "end"}
+                                        overflowCount={message()?.reactionSummary?.overflowCount}
+                                        role="group"
+                                        aria-label={`Reactions: ${displayedReactions()
+                                          .map((reaction) => reaction.emoji)
+                                          .join(", ")}`}
+                                      >
+                                        <For each={displayedReactions()}>
+                                          {(reaction) => (
+                                            <Show
+                                              when={reaction.actor.kind === "user"}
+                                              fallback={
+                                                <span
+                                                  class="message-reaction-pill message-reaction-pill-readonly"
+                                                  role="img"
+                                                  aria-label={`${
+                                                    props.bots.find(
+                                                      (bot) =>
+                                                        reaction.actor.kind === "bot" &&
+                                                        bot.id === reaction.actor.botId,
+                                                    )?.name ?? "Agent"
+                                                  } reacted with ${reaction.emoji}`}
+                                                >
+                                                  <span aria-hidden="true">{reaction.emoji}</span>
+                                                </span>
+                                              }
+                                            >
+                                              <Button
+                                                variant="ghost"
+                                                type="button"
+                                                class="message-reaction-pill"
+                                                aria-label={`Remove your reaction ${reaction.emoji}`}
+                                                onClick={() => {
+                                                  const currentMessage = message();
+                                                  if (currentMessage) void reactToMessage(currentMessage, null);
+                                                }}
+                                              >
+                                                <span aria-hidden="true">{reaction.emoji}</span>
+                                              </Button>
+                                            </Show>
+                                          )}
+                                        </For>
+                                      </BubbleReactions>
                                     </Show>
                                   </Bubble>
                                   <MessageActions

@@ -3584,6 +3584,43 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("Ready to ship."));
   });
 
+  it("lets the user remove only their own reaction while keeping the agent reaction read-only", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "user-reactions",
+            author: "user",
+            text: "The launch is approved.",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+            reaction: "❤️",
+            reactions: [
+              { emoji: "❤️", actor: { kind: "user" } },
+              { emoji: "🎉", actor: { kind: "bot", botId: "chief" } },
+            ],
+          },
+        ],
+      },
+    });
+
+    await screen.findByRole("img", { name: "Chief reacted with 🎉" });
+    await fireEvent.click(screen.getByRole("button", { name: "Remove your reaction ❤️" }));
+    expect(window.openbot.agent.setMessageReaction).toHaveBeenCalledWith({
+      botId: "chief",
+      messageId: "user-reactions",
+      emoji: null,
+    });
+    expect(screen.getByRole("img", { name: "Chief reacted with 🎉" })).toBeInTheDocument();
+  });
+
   it("keeps agent activity at the conversation bottom without replaying existing message entrances", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });

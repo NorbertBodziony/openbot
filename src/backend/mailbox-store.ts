@@ -14,6 +14,8 @@ import type {
   AttachmentPreviewKind,
   AttachmentSummary,
   ConversationMessage,
+  ConversationReaction,
+  ConversationReactionActor,
   DraftAttachment,
   MessageReaction,
   QueueDelivery,
@@ -83,6 +85,7 @@ interface StoredReaction {
   botId: string;
   messageId: string;
   emoji: MessageReaction;
+  actor: ConversationReactionActor;
   updatedAt: string;
 }
 
@@ -492,24 +495,40 @@ export class MailboxStore {
     return messages;
   }
 
-  reactionFor(botId: string, messageId: string): MessageReaction | null {
+  reactionFor(
+    botId: string,
+    messageId: string,
+    actor: ConversationReactionActor = { kind: "user" },
+  ): MessageReaction | null {
     return (
-      this.#state.reactions.find((reaction) => reaction.botId === botId && reaction.messageId === messageId)?.emoji ??
-      null
+      this.#state.reactions.find(
+        (reaction) =>
+          reaction.botId === botId && reaction.messageId === messageId && reactionActorsEqual(reaction.actor, actor),
+      )?.emoji ?? null
     );
   }
 
-  reactionsFor(botId: string): Map<string, MessageReaction> {
-    return new Map(
-      this.#state.reactions
-        .filter((reaction) => reaction.botId === botId)
-        .map((reaction) => [reaction.messageId, reaction.emoji]),
-    );
+  reactionsFor(botId: string): Map<string, ConversationReaction[]> {
+    const result = new Map<string, ConversationReaction[]>();
+    for (const reaction of this.#state.reactions) {
+      if (reaction.botId !== botId) continue;
+      const reactions = result.get(reaction.messageId) ?? [];
+      reactions.push({ emoji: reaction.emoji, actor: reaction.actor });
+      result.set(reaction.messageId, reactions);
+    }
+    for (const reactions of result.values()) reactions.sort(compareReactionActors);
+    return result;
   }
 
-  async setReaction(botId: string, messageId: string, emoji: MessageReaction | null): Promise<void> {
+  async setReaction(
+    botId: string,
+    messageId: string,
+    actor: ConversationReactionActor,
+    emoji: MessageReaction | null,
+  ): Promise<void> {
     const index = this.#state.reactions.findIndex(
-      (reaction) => reaction.botId === botId && reaction.messageId === messageId,
+      (reaction) =>
+        reaction.botId === botId && reaction.messageId === messageId && reactionActorsEqual(reaction.actor, actor),
     );
     if (emoji === null) {
       if (index < 0) return;
@@ -519,6 +538,7 @@ export class MailboxStore {
         botId,
         messageId,
         emoji,
+        actor,
         updatedAt: new Date().toISOString(),
       };
     } else {
@@ -526,6 +546,7 @@ export class MailboxStore {
         botId,
         messageId,
         emoji,
+        actor,
         updatedAt: new Date().toISOString(),
       });
     }
@@ -1262,6 +1283,10 @@ function normalizeStoredState(value: StoredState): StoredState {
     version: 3,
     generatedAttachments: value.generatedAttachments ?? [],
     deliveries,
+    reactions: value.reactions.map((reaction) => ({
+      ...reaction,
+      actor: reaction.actor ?? { kind: "user" },
+    })),
   };
 }
 
@@ -1371,8 +1396,26 @@ function isStoredReaction(value: unknown): value is StoredReaction {
     isString(value.botId) &&
     isString(value.messageId) &&
     isMessageReaction(value.emoji) &&
+    (value.actor === undefined || isStoredReactionActor(value.actor)) &&
     isString(value.updatedAt)
   );
+}
+
+function isStoredReactionActor(value: unknown): value is ConversationReactionActor {
+  return (
+    isRecord(value) &&
+    (value.kind === "user" || (value.kind === "bot" && isString(value.botId) && value.botId.length > 0))
+  );
+}
+
+function reactionActorsEqual(left: ConversationReactionActor, right: ConversationReactionActor): boolean {
+  return left.kind === right.kind && (left.kind === "user" || (right.kind === "bot" && left.botId === right.botId));
+}
+
+function compareReactionActors(left: ConversationReaction, right: ConversationReaction): number {
+  if (left.actor.kind !== right.actor.kind) return left.actor.kind === "user" ? -1 : 1;
+  if (left.actor.kind === "user" || right.actor.kind === "user") return 0;
+  return left.actor.botId.localeCompare(right.actor.botId);
 }
 
 function isWithin(root: string, path: string): boolean {

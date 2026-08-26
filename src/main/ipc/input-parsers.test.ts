@@ -166,6 +166,11 @@ describe("agent IPC input parsing", () => {
       messageId: "message-1",
       emoji: "👍",
     });
+    expect(parseMessageReaction({ botId: "bot-1", messageId: "message-1", emoji: "👨‍👩‍👧‍👦" })).toEqual({
+      botId: "bot-1",
+      messageId: "message-1",
+      emoji: "👨‍👩‍👧‍👦",
+    });
     expect(parseInterrupt({ botId: "bot-1", turnId: "turn-1" })).toEqual({
       botId: "bot-1",
       turnId: "turn-1",

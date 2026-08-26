@@ -57,7 +57,12 @@ import type {
   UpdateQueuedMessageInput,
   UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
-import { isImageGenerationAspectRatio, isReasoningEffort, isRoutineSchedule } from "@openbot/contracts/ipc";
+import {
+  isImageGenerationAspectRatio,
+  isMessageReaction,
+  isReasoningEffort,
+  isRoutineSchedule,
+} from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentMemoryStore } from "./agent-memory-store";
@@ -980,7 +985,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!current.messages.some((message) => message.id === input.messageId)) {
       throw new Error("The message is no longer available.");
     }
-    await this.#mailbox.setReaction(bot.id, input.messageId, input.emoji);
+    await this.#mailbox.setReaction(bot.id, input.messageId, { kind: "user" }, input.emoji);
     this.#syncMailboxMessages(current);
     this.#emitConversation(current);
   }
@@ -2198,6 +2203,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       };
     }
 
+    if (params.tool === "react_to_user_message") {
+      const args = params.arguments;
+      if (!isRecord(args) || !isMessageReaction(args.emoji)) {
+        throw new Error("emoji must be exactly one complete Unicode emoji.");
+      }
+      const delivery = this.#mailbox
+        .findDeliveriesByTurn(senderBotId, params.turnId)
+        .find((candidate) => candidate.delivery.sender.kind === "user");
+      if (!delivery) throw new Error("Only the current user message can receive an agent reaction.");
+      await this.#mailbox.setReaction(
+        senderBotId,
+        delivery.delivery.id,
+        { kind: "bot", botId: senderBotId },
+        args.emoji,
+      );
+      const snapshot = this.#ensureSnapshot(senderBotId, params.threadId);
+      this.#syncMailboxMessages(snapshot);
+      this.#emitConversation(snapshot);
+      return openBotToolResult({ status: "reacted", messageId: delivery.delivery.id, emoji: args.emoji });
+    }
+
     if (params.tool !== "send_message" || !isRecord(params.arguments)) {
       throw new Error(`Unsupported OpenBot tool: ${params.tool}`);
     }
@@ -2650,7 +2676,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const reactions = this.#mailbox.reactionsFor(snapshot.botId);
     for (const message of snapshot.messages) {
-      message.reaction = reactions.get(message.id) ?? null;
+      message.reactions = reactions.get(message.id) ?? [];
+      message.reaction = message.reactions.find((reaction) => reaction.actor.kind === "user")?.emoji ?? null;
     }
     sortConversationMessages(snapshot.messages);
   }
@@ -3908,6 +3935,7 @@ function developerInstructions(bot: BotSummary, sharedRoot: string, memories: Bo
     "Use openbot.update_profile with the target bot id to change a local agent's name, title, or description. The target id is required and may refer to any local agent.",
     "Use openbot.list_routines, openbot.create_routine, openbot.update_routine, openbot.delete_routine, and openbot.test_routine to manage scheduled work for yourself or another local agent when the user's request calls for it. Omit botId to target yourself. Before changing another agent's routines, call openbot.list_agents and select its stable id. Before updating, deleting, or testing a routine, call openbot.list_routines to obtain its stable routine id.",
     "Memory tools always apply to your own agent profile. They cannot change another agent's memories.",
+    "Use openbot.react_to_user_message when the user's message contains an obvious positive or negative emotional moment where a reaction would feel natural. Clear wins or celebrations, affection, gratitude, playful humor, sadness, disappointment, frustration, loneliness, empathy, and strong approval should normally receive one fitting reaction; do not be so conservative that you skip these obvious cases. Negative emotions deserve an empathetic reaction such as ❤️, 😔, or 🫂 rather than being excluded as sensitive. An emoji written inside your answer does not count as a message reaction: when you use an inline emoji to acknowledge the user's emotion, that is a strong signal that you should also call the reaction tool. Skip neutral, purely informational, or routine messages, and never react on every turn. A reaction never replaces, shortens, or changes your normal answer: always provide the same complete response you would give without it, and do not mention the reaction in that response.",
     "Use openbot.send_message to send asynchronous messages or local files to one or more teammates. Always set replyToMessageId when answering a teammate. Replies are never forwarded automatically.",
     "When you need clarification or the user asks you to ask a question, use openbot.ask_user with 1–3 short questions instead of writing the question as a normal assistant message. Use options for choices and wait for the tool result before continuing. Claude should use AskUserQuestion for the same purpose.",
     "OpenBot renders GitHub-flavored Markdown tables in your final responses. Use a table when structured data or a comparison is clearer than prose; include a header row, a separator row with at least three dashes per column, and at least one data row. For a feature-by-option comparison, use at least three columns and put exactly ✓ or — in every option cell; OpenBot will render that Markdown as a comparison table. Example: | Feature | Personal | Enterprise | followed by | --- | --- | --- | and rows such as | Priority support | — | ✓ |.",

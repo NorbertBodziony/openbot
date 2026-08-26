@@ -58,6 +58,11 @@ describe("OpenBotDatabase", () => {
       journal_mode: "wal",
     });
     expect((await stat(database.path)).mode & 0o777).toBe(0o600);
+    expect(database.connection.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
+      { version: 8 },
+      { version: 9 },
+      { version: 10 },
+    ]);
     database.close();
   });
 
@@ -379,7 +384,7 @@ describe("OpenBotDatabase", () => {
 
     const legacy = new DatabaseSync(database.path);
     legacy.exec("PRAGMA journal_mode = WAL");
-    legacy.prepare("DELETE FROM schema_migrations WHERE version = 7").run();
+    legacy.prepare("DELETE FROM schema_migrations WHERE version IN (8, 9, 10)").run();
     legacy
       .prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)")
       .run("2026-08-20T10:00:00.000Z");
@@ -422,7 +427,13 @@ describe("OpenBotDatabase", () => {
     expect(snapshotEventCount(migrated, bot.threadId)).toBe(1);
     expect(migrated.readConversation(bot.id, bot.threadId).messages[0]?.text).toHaveLength(40_000);
     expect(migrated.connection.prepare("PRAGMA integrity_check").get()).toMatchObject({ integrity_check: "ok" });
-    expect(migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 7").get()).toEqual({
+    expect(migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 8").get()).toEqual({
+      applied: 1,
+    });
+    expect(migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 9").get()).toEqual({
+      applied: 1,
+    });
+    expect(migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 10").get()).toEqual({
       applied: 1,
     });
     migrated.close();
@@ -431,6 +442,177 @@ describe("OpenBotDatabase", () => {
     await reopened.initialize();
     expect(snapshotEventCount(reopened, bot.threadId)).toBe(1);
     reopened.close();
+  });
+
+  it("adds post-v4 agent memory and routine projections", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-v4-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    legacy.exec(`
+      DROP TABLE projection_routine_runs;
+      DROP TABLE projection_routine_triggers;
+      DROP TABLE projection_agent_routines;
+      DROP TABLE projection_agent_memories;
+      DELETE FROM schema_migrations WHERE version IN (8, 9, 10);
+      INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+        VALUES (4, '2026-08-20T10:00:00.000Z');
+    `);
+    legacy.close();
+
+    const migrated = new OpenBotDatabase(root);
+    await migrated.initialize();
+    const tables = migrated.connection
+      .prepare(
+        `SELECT name FROM sqlite_master
+         WHERE type = 'table' AND name IN (
+           'projection_agent_memories', 'projection_agent_routines',
+           'projection_routine_triggers', 'projection_routine_runs'
+         ) ORDER BY name`,
+      )
+      .all();
+    expect(tables).toEqual([
+      { name: "projection_agent_memories" },
+      { name: "projection_agent_routines" },
+      { name: "projection_routine_runs" },
+      { name: "projection_routine_triggers" },
+    ]);
+    expect(migrated.connection.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
+      { version: 4 },
+      { version: 8 },
+      { version: 9 },
+      { version: 10 },
+    ]);
+    migrated.close();
+  });
+
+  it("migrates legacy reactions to user-owned rows and permits another actor", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-reactions-v7-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    downgradeReactionsToV7(legacy);
+    legacy.close();
+
+    const migrated = new OpenBotDatabase(root);
+    await migrated.initialize();
+    expect(
+      migrated.connection
+        .prepare(
+          "SELECT actor_kind, actor_bot_id FROM projection_reactions WHERE agent_id = 'chief' AND message_id = 'message-1'",
+        )
+        .get(),
+    ).toEqual({ actor_kind: "user", actor_bot_id: "" });
+    expect(() =>
+      migrated.connection
+        .prepare(
+          `INSERT INTO projection_reactions (
+             agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence
+           ) VALUES ('chief', 'message-1', '🎉', 'bot', 'chief', '2026-08-20T10:01:00.000Z', 2)`,
+        )
+        .run(),
+    ).not.toThrow();
+    migrated.close();
+  });
+
+  it("rolls back a failed baseline migration and succeeds on retry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-rollback-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    downgradeReactionsToV7(legacy);
+    legacy.exec("CREATE TABLE projection_reactions_v8 (blocker TEXT)");
+    legacy.close();
+
+    const failed = new OpenBotDatabase(root);
+    await expect(failed.initialize()).rejects.toThrow("migration to version 8 failed");
+
+    const rolledBack = new DatabaseSync(database.path);
+    expect(rolledBack.prepare("SELECT 1 FROM schema_migrations WHERE version = 8").get()).toBeUndefined();
+    expect(rolledBack.prepare("PRAGMA table_info(projection_reactions)").all()).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "actor_kind" })]),
+    );
+    rolledBack.exec("DROP TABLE projection_reactions_v8");
+    rolledBack.close();
+
+    const retried = new OpenBotDatabase(root);
+    await retried.initialize();
+    expect(retried.connection.prepare("SELECT version FROM schema_migrations ORDER BY version").all()).toEqual([
+      { version: 7 },
+      { version: 8 },
+      { version: 9 },
+      { version: 10 },
+    ]);
+    retried.close();
+  });
+
+  it("deactivates existing provider sessions when reaction guidance changes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-runtime-v9-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    const bot = testBot();
+    if (!bot.threadId) throw new Error("The test bot has no thread.");
+    database.replaceAgents("agents-import", [bot], "agents.imported");
+    database.bindProviderSession({
+      threadId: bot.threadId,
+      provider: "codex",
+      externalSessionId: "legacy-tool-session",
+      model: "gpt-5.6-luna",
+      effort: "medium",
+    });
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    legacy.prepare("DELETE FROM schema_migrations WHERE version = 10").run();
+    legacy.close();
+
+    const migrated = new OpenBotDatabase(root);
+    await migrated.initialize();
+    expect(migrated.activeProviderSession(bot.threadId, "codex")).toBeNull();
+    expect(migrated.listProviderSessions(bot.threadId)).toEqual([
+      expect.objectContaining({ externalSessionId: "legacy-tool-session", state: "inactive" }),
+    ]);
+    migrated.close();
+  });
+
+  it("rejects a database created by a newer application", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-newer-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const newer = new DatabaseSync(database.path);
+    newer.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (11, ?)").run("2026-08-20T10:00:00.000Z");
+    newer.close();
+
+    const downgradedApp = new OpenBotDatabase(root);
+    await expect(downgradedApp.initialize()).rejects.toThrow("newer than this application supports");
+  });
+
+  it("rejects modern migration history with a missing baseline", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-gap-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const incomplete = new DatabaseSync(database.path);
+    incomplete.prepare("DELETE FROM schema_migrations WHERE version = 8").run();
+    incomplete.close();
+
+    const reopened = new OpenBotDatabase(root);
+    await expect(reopened.initialize()).rejects.toThrow("migration history is missing version 8");
   });
 
   it("widens the provider-session constraint for Grok without losing Codex or Claude sessions", async () => {
@@ -480,7 +662,7 @@ describe("OpenBotDatabase", () => {
       ALTER TABLE projection_provider_sessions_v6 RENAME TO projection_provider_sessions;
       CREATE INDEX provider_sessions_thread
         ON projection_provider_sessions(thread_id, provider, state);
-      DELETE FROM schema_migrations WHERE version = 7;
+      DELETE FROM schema_migrations WHERE version IN (8, 9, 10);
       INSERT OR IGNORE INTO schema_migrations(version, applied_at)
         VALUES (6, '2026-08-20T10:00:00.000Z');
       PRAGMA foreign_keys = ON;
@@ -506,6 +688,27 @@ describe("OpenBotDatabase", () => {
     migrated.close();
   });
 });
+
+function downgradeReactionsToV7(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE projection_reactions_v7 (
+      agent_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_event_sequence INTEGER NOT NULL,
+      PRIMARY KEY(agent_id, message_id)
+    );
+    INSERT INTO projection_reactions_v7 VALUES (
+      'chief', 'message-1', '❤️', '2026-08-20T10:00:00.000Z', 1
+    );
+    DROP TABLE projection_reactions;
+    ALTER TABLE projection_reactions_v7 RENAME TO projection_reactions;
+    DELETE FROM schema_migrations WHERE version IN (8, 9, 10);
+    INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+      VALUES (7, '2026-08-20T10:00:00.000Z');
+  `);
+}
 
 async function createDatabase(): Promise<OpenBotDatabase> {
   const root = await mkdtemp(join(tmpdir(), "openbot-db-"));

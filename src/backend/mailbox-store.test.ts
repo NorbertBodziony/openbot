@@ -223,7 +223,7 @@ describe("MailboxStore", () => {
     await expect(readFile(statePath, "utf8")).resolves.toBe(unsupported);
   });
 
-  it("persists reply metadata and one local reaction per conversation message", async () => {
+  it("persists one reaction per actor without overwriting other actors", async () => {
     const receipt = await store.enqueue({
       sender: { kind: "user" },
       recipientBotIds: ["chief"],
@@ -236,12 +236,19 @@ describe("MailboxStore", () => {
       replyToMessageId: "assistant-1",
     });
 
-    await store.setReaction("chief", "assistant-1", "❤️");
+    await store.setReaction("chief", "assistant-1", { kind: "user" }, "❤️");
+    await store.setReaction("chief", "assistant-1", { kind: "bot", botId: "chief" }, "🎉");
     const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
     await restored.initialize();
     expect(restored.reactionFor("chief", "assistant-1")).toBe("❤️");
-    await restored.setReaction("chief", "assistant-1", null);
+    expect(restored.reactionFor("chief", "assistant-1", { kind: "bot", botId: "chief" })).toBe("🎉");
+    expect(restored.reactionsFor("chief").get("assistant-1")).toEqual([
+      { emoji: "❤️", actor: { kind: "user" } },
+      { emoji: "🎉", actor: { kind: "bot", botId: "chief" } },
+    ]);
+    await restored.setReaction("chief", "assistant-1", { kind: "user" }, null);
     expect(restored.reactionFor("chief", "assistant-1")).toBeNull();
+    expect(restored.reactionFor("chief", "assistant-1", { kind: "bot", botId: "chief" })).toBe("🎉");
   });
 
   it("tracks the initiating bot through a reply chain and detects explicit replies", async () => {

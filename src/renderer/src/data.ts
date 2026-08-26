@@ -6,6 +6,7 @@ import type {
   AttachmentSummary,
   BotAvatarHue,
   BotSummary,
+  ConversationReaction,
   ImageGenerationInfo,
   MessageReaction,
 } from "@openbot/contracts/ipc";
@@ -42,6 +43,7 @@ export interface BotMessage {
   citations?: MessageCitation[];
   exchange?: AgentExchangeSummary;
   reaction?: MessageReaction | null;
+  reactions?: ConversationReaction[];
   reactionSummary?: MessageReactionSummary;
   routine?: {
     routineId: string;

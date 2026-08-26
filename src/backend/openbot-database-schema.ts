@@ -1,9 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 
-const SCHEMA_VERSION = 7;
+const BASELINE_SCHEMA_VERSION = 8;
 
-const SCHEMA_SQL = `
+// This is the frozen compatibility schema for every database that predates v8.
+// Future schema changes must update LATEST_SCHEMA_SQL and append a migration without editing this SQL.
+const BASELINE_V8_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
@@ -203,9 +205,11 @@ const SCHEMA_SQL = `
     agent_id TEXT NOT NULL,
     message_id TEXT NOT NULL,
     emoji TEXT NOT NULL,
+    actor_kind TEXT NOT NULL CHECK(actor_kind IN ('user', 'bot')),
+    actor_bot_id TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_event_sequence INTEGER NOT NULL,
-    PRIMARY KEY(agent_id, message_id)
+    PRIMARY KEY(agent_id, message_id, actor_kind, actor_bot_id)
   );
   CREATE TABLE IF NOT EXISTS projection_attachments (
     attachment_id TEXT PRIMARY KEY,
@@ -269,59 +273,250 @@ const SCHEMA_SQL = `
   );
 `;
 
-export function migrateOpenBotDatabase(db: DatabaseSync, appliedAt = new Date().toISOString()): void {
-  db.exec(SCHEMA_SQL);
-  const applied = db.prepare("SELECT version FROM schema_migrations WHERE version = ?").get(SCHEMA_VERSION);
-  if (applied) return;
-  const upgradingExistingDatabase = Boolean(db.prepare("SELECT 1 FROM schema_migrations LIMIT 1").get());
+// v9 and v10 change runtime state but not the schema, so the fresh schema still matches the v8 baseline.
+// Keep this separate once a later migration changes tables or indexes.
+const LATEST_SCHEMA_SQL = BASELINE_V8_SCHEMA_SQL;
 
+export interface OpenBotMigrationOptions {
+  appliedAt?: string;
+  warn?: (message: string, error: unknown) => void;
+}
+
+interface OpenBotMigration {
+  version: number;
+  disableForeignKeys?: boolean;
+  vacuumAfterCommit?: boolean;
+  up: (db: DatabaseSync, appliedAt: string) => void;
+}
+
+const MIGRATIONS: readonly OpenBotMigration[] = [
+  {
+    version: BASELINE_SCHEMA_VERSION,
+    disableForeignKeys: true,
+    vacuumAfterCommit: true,
+    up: migrateToBaselineV8,
+  },
+  {
+    version: 9,
+    up: refreshProviderSessionsForReactionTools,
+  },
+  {
+    version: 10,
+    up: refreshProviderSessionsForReactionTools,
+  },
+];
+
+const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? BASELINE_SCHEMA_VERSION;
+
+export function migrateOpenBotDatabase(db: DatabaseSync, options: OpenBotMigrationOptions = {}): void {
+  validateMigrationRegistry();
+  const appliedAt = options.appliedAt ?? new Date().toISOString();
+  if (!hasExistingSchema(db)) {
+    createLatestDatabase(db, appliedAt);
+    assertQuickCheck(db);
+    return;
+  }
+
+  const appliedVersions = readAppliedVersions(db);
+  validateAppliedVersions(appliedVersions);
+  const currentVersion = latestAppliedVersion(appliedVersions);
+  const pending = MIGRATIONS.filter((migration) => migration.version > currentVersion);
+
+  for (const migration of pending) {
+    try {
+      runMigration(db, migration, appliedAt);
+    } catch (error) {
+      throw new Error(`OpenBot database migration to version ${migration.version} failed.`, {
+        cause: error,
+      });
+    }
+
+    if (migration.vacuumAfterCommit) {
+      try {
+        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        db.exec("VACUUM");
+        db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      } catch (error) {
+        (options.warn ?? console.warn)(
+          `OpenBot database migration to version ${migration.version} succeeded, but VACUUM failed.`,
+          error,
+        );
+      }
+    }
+  }
+
+  assertQuickCheck(db);
+}
+
+function migrateToBaselineV8(db: DatabaseSync, appliedAt: string): void {
+  db.exec(BASELINE_V8_SCHEMA_SQL);
+  db.prepare(
+    `INSERT OR IGNORE INTO projection_thread_read_baselines (
+       thread_id, through_message_id, initialized_at
+     )
+     SELECT thread.thread_id,
+       (
+         SELECT message.message_id
+         FROM projection_thread_messages message
+         WHERE message.thread_id = thread.thread_id
+         ORDER BY message.created_at DESC, message.ordinal DESC, message.message_id DESC
+         LIMIT 1
+       ),
+       ?
+     FROM projection_threads thread`,
+  ).run(appliedAt);
+  db.prepare(
+    `INSERT OR IGNORE INTO projection_direct_reads (
+       thread_id, member_id, last_read_sequence, updated_at
+     )
+     SELECT thread_id, member_a_id, last_event_sequence, ?
+     FROM projection_direct_threads`,
+  ).run(appliedAt);
+  db.prepare(
+    `INSERT OR IGNORE INTO projection_direct_reads (
+       thread_id, member_id, last_read_sequence, updated_at
+     )
+     SELECT thread_id, member_b_id, last_event_sequence, ?
+     FROM projection_direct_threads`,
+  ).run(appliedAt);
+  compactConversationHistory(db);
+  compactMailboxHistory(db);
+  migrateProviderSessionsForGrok(db);
+  migrateReactionsForActors(db);
+}
+
+function refreshProviderSessionsForReactionTools(db: DatabaseSync, appliedAt: string): void {
+  db.prepare(
+    `UPDATE projection_provider_sessions
+     SET state = 'inactive', updated_at = ?
+     WHERE state = 'active'`,
+  ).run(appliedAt);
+}
+
+function validateMigrationRegistry(): void {
+  let expectedVersion = BASELINE_SCHEMA_VERSION;
+  for (const migration of MIGRATIONS) {
+    if (!Number.isInteger(migration.version) || migration.version !== expectedVersion) {
+      throw new Error(
+        `OpenBot database migrations must be contiguous from version ${BASELINE_SCHEMA_VERSION}; expected ${expectedVersion}.`,
+      );
+    }
+    expectedVersion += 1;
+  }
+}
+
+function hasExistingSchema(db: DatabaseSync): boolean {
+  return Boolean(
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1").get(),
+  );
+}
+
+function createLatestDatabase(db: DatabaseSync, appliedAt: string): void {
   db.exec("BEGIN IMMEDIATE");
   try {
-    db.prepare(
-      `INSERT OR IGNORE INTO projection_thread_read_baselines (
-         thread_id, through_message_id, initialized_at
-       )
-       SELECT thread.thread_id,
-         (
-           SELECT message.message_id
-           FROM projection_thread_messages message
-           WHERE message.thread_id = thread.thread_id
-           ORDER BY message.created_at DESC, message.ordinal DESC, message.message_id DESC
-           LIMIT 1
-         ),
-         ?
-       FROM projection_threads thread`,
-    ).run(appliedAt);
-    db.prepare(
-      `INSERT OR IGNORE INTO projection_direct_reads (
-         thread_id, member_id, last_read_sequence, updated_at
-       )
-       SELECT thread_id, member_a_id, last_event_sequence, ?
-       FROM projection_direct_threads`,
-    ).run(appliedAt);
-    db.prepare(
-      `INSERT OR IGNORE INTO projection_direct_reads (
-         thread_id, member_id, last_read_sequence, updated_at
-       )
-       SELECT thread_id, member_b_id, last_event_sequence, ?
-       FROM projection_direct_threads`,
-    ).run(appliedAt);
-    compactConversationHistory(db);
-    compactMailboxHistory(db);
+    db.exec(LATEST_SCHEMA_SQL);
+    const insertMigration = db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)");
+    for (const migration of MIGRATIONS) insertMigration.run(migration.version, appliedAt);
+    assertForeignKeys(db);
     db.exec("COMMIT");
   } catch (error) {
-    db.exec("ROLLBACK");
+    if (db.isTransaction) db.exec("ROLLBACK");
     throw error;
   }
+}
 
-  if (upgradingExistingDatabase) migrateProviderSessionsForGrok(db);
+function readAppliedVersions(db: DatabaseSync): number[] {
+  const hasMigrationTable = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
+    .get();
+  if (!hasMigrationTable) return [];
+  return db
+    .prepare("SELECT version FROM schema_migrations ORDER BY version")
+    .all()
+    .map((row) => {
+      if (!isDynamicRecord(row) || !isNumber(row.version) || !Number.isInteger(row.version)) {
+        throw new Error("OpenBot database contains an invalid schema migration version.");
+      }
+      return row.version;
+    });
+}
 
-  if (upgradingExistingDatabase) {
-    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    db.exec("VACUUM");
-    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+function validateAppliedVersions(versions: number[]): void {
+  const newestVersion = versions.at(-1) ?? 0;
+  if (newestVersion > LATEST_SCHEMA_VERSION) {
+    throw new Error(
+      `OpenBot database version ${newestVersion} is newer than this application supports (${LATEST_SCHEMA_VERSION}).`,
+    );
   }
-  db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(SCHEMA_VERSION, appliedAt);
+
+  const baselineAndLater = versions.filter((version) => version >= BASELINE_SCHEMA_VERSION);
+  if (baselineAndLater.length === 0) return;
+  const applied = new Set(baselineAndLater);
+  for (let version = BASELINE_SCHEMA_VERSION; version <= newestVersion; version += 1) {
+    if (!applied.has(version)) {
+      throw new Error(`OpenBot database migration history is missing version ${version}.`);
+    }
+  }
+}
+
+function latestAppliedVersion(versions: number[]): number {
+  const baselineAndLater = versions.filter((version) => version >= BASELINE_SCHEMA_VERSION);
+  return baselineAndLater.at(-1) ?? BASELINE_SCHEMA_VERSION - 1;
+}
+
+function runMigration(db: DatabaseSync, migration: OpenBotMigration, appliedAt: string): void {
+  if (migration.disableForeignKeys) db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    migration.up(db, appliedAt);
+    db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(migration.version, appliedAt);
+    assertForeignKeys(db);
+    db.exec("COMMIT");
+  } catch (error) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    if (migration.disableForeignKeys) db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
+function assertForeignKeys(db: DatabaseSync): void {
+  const violations = db.prepare("PRAGMA foreign_key_check").all();
+  if (violations.length > 0) {
+    throw new Error(`OpenBot database migration produced ${violations.length} foreign-key violation(s).`);
+  }
+}
+
+function assertQuickCheck(db: DatabaseSync): void {
+  const result = db.prepare("PRAGMA quick_check").get();
+  if (isDynamicRecord(result) && result.quick_check === "ok") return;
+  throw new Error("OpenBot database failed its integrity check.");
+}
+
+function migrateReactionsForActors(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(projection_reactions)").all();
+  if (columns.some((column) => isDynamicRecord(column) && isString(column.name) && column.name === "actor_kind")) {
+    return;
+  }
+  db.exec(`
+    CREATE TABLE projection_reactions_v8 (
+      agent_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      actor_kind TEXT NOT NULL CHECK(actor_kind IN ('user', 'bot')),
+      actor_bot_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_event_sequence INTEGER NOT NULL,
+      PRIMARY KEY(agent_id, message_id, actor_kind, actor_bot_id)
+    );
+    INSERT INTO projection_reactions_v8 (
+      agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence
+    )
+    SELECT agent_id, message_id, emoji, 'user', '', updated_at, last_event_sequence
+    FROM projection_reactions;
+    DROP TABLE projection_reactions;
+    ALTER TABLE projection_reactions_v8 RENAME TO projection_reactions;
+  `);
 }
 
 function migrateProviderSessionsForGrok(db: DatabaseSync): void {
@@ -330,43 +525,33 @@ function migrateProviderSessionsForGrok(db: DatabaseSync): void {
     .get();
   if (!isDynamicRecord(row) || !isString(row.sql) || row.sql.includes("'grok'")) return;
 
-  db.exec("PRAGMA foreign_keys = OFF");
-  try {
-    db.exec(`
-      BEGIN IMMEDIATE;
-      CREATE TABLE projection_provider_sessions_v7 (
-        id TEXT PRIMARY KEY,
-        thread_id TEXT NOT NULL REFERENCES projection_threads(thread_id) ON DELETE CASCADE,
-        provider TEXT NOT NULL CHECK(provider IN ('codex', 'claude', 'grok')),
-        external_session_id TEXT NOT NULL,
-        model TEXT NOT NULL,
-        effort TEXT NOT NULL,
-        state TEXT NOT NULL CHECK(state IN ('active', 'inactive', 'failed')),
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        resume_cursor TEXT,
-        last_event_sequence INTEGER NOT NULL,
-        UNIQUE(provider, external_session_id)
-      );
-      INSERT INTO projection_provider_sessions_v7 (
-        id, thread_id, provider, external_session_id, model, effort, state,
-        created_at, updated_at, resume_cursor, last_event_sequence
-      ) SELECT
-        id, thread_id, provider, external_session_id, model, effort, state,
-        created_at, updated_at, resume_cursor, last_event_sequence
-      FROM projection_provider_sessions;
-      DROP TABLE projection_provider_sessions;
-      ALTER TABLE projection_provider_sessions_v7 RENAME TO projection_provider_sessions;
-      CREATE INDEX provider_sessions_thread
-        ON projection_provider_sessions(thread_id, provider, state);
-      COMMIT;
-    `);
-  } catch (error) {
-    if (db.isTransaction) db.exec("ROLLBACK");
-    throw error;
-  } finally {
-    db.exec("PRAGMA foreign_keys = ON");
-  }
+  db.exec(`
+    CREATE TABLE projection_provider_sessions_v7 (
+      id TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL REFERENCES projection_threads(thread_id) ON DELETE CASCADE,
+      provider TEXT NOT NULL CHECK(provider IN ('codex', 'claude', 'grok')),
+      external_session_id TEXT NOT NULL,
+      model TEXT NOT NULL,
+      effort TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('active', 'inactive', 'failed')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      resume_cursor TEXT,
+      last_event_sequence INTEGER NOT NULL,
+      UNIQUE(provider, external_session_id)
+    );
+    INSERT INTO projection_provider_sessions_v7 (
+      id, thread_id, provider, external_session_id, model, effort, state,
+      created_at, updated_at, resume_cursor, last_event_sequence
+    ) SELECT
+      id, thread_id, provider, external_session_id, model, effort, state,
+      created_at, updated_at, resume_cursor, last_event_sequence
+    FROM projection_provider_sessions;
+    DROP TABLE projection_provider_sessions;
+    ALTER TABLE projection_provider_sessions_v7 RENAME TO projection_provider_sessions;
+    CREATE INDEX provider_sessions_thread
+      ON projection_provider_sessions(thread_id, provider, state);
+  `);
 }
 
 interface SnapshotEventRow {

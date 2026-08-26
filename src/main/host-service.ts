@@ -66,6 +66,7 @@ interface HostServiceOptions {
   spawnProcess?: typeof spawn;
   tunnelTimeoutMs?: number;
   publicReadyTimeoutMs?: number;
+  allowLocalDevelopmentInvites?: boolean;
   logDirectory?: string;
   removeLegacyRemoteDesktopCredential?: () => Promise<void>;
   getSignedInUser: () => CentralAuthUser;
@@ -99,8 +100,16 @@ export function buildNamedTunnelEnvironment(token: string, base: NodeJS.ProcessE
 }
 
 export class HostService extends EventEmitter<HostEvents> {
-  readonly #options: Required<Pick<HostServiceOptions, "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs">> &
-    Omit<HostServiceOptions, "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs">;
+  readonly #options: Required<
+    Pick<
+      HostServiceOptions,
+      "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs" | "allowLocalDevelopmentInvites"
+    >
+  > &
+    Omit<
+      HostServiceOptions,
+      "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs" | "allowLocalDevelopmentInvites"
+    >;
   readonly #api: TeamApiServer;
   readonly #remoteScreen: RemoteScreenGateway;
   #tunnel: ChildProcess | null = null;
@@ -114,6 +123,7 @@ export class HostService extends EventEmitter<HostEvents> {
       spawnProcess: options.spawnProcess ?? spawn,
       tunnelTimeoutMs: options.tunnelTimeoutMs ?? 30_000,
       publicReadyTimeoutMs: options.publicReadyTimeoutMs ?? 30_000,
+      allowLocalDevelopmentInvites: options.allowLocalDevelopmentInvites ?? false,
     };
     const identity = options.store.getIdentity();
     this.#status = {
@@ -468,12 +478,15 @@ export class HostService extends EventEmitter<HostEvents> {
     const identity = this.#options.store.getIdentity();
     if (!identity) throw new Error("Name this OpenBot before publishing it.");
     const invite = await this.#options.store.createInvite(input.role, input.email);
-    const inviteUrl = createInviteUrl({
-      apiUrl: this.#status.apiUrl,
-      serverId: identity.serverId,
-      fingerprint: identity.fingerprint,
-      token: invite.token,
-    });
+    const inviteUrl = createInviteUrl(
+      {
+        apiUrl: this.#status.apiUrl,
+        serverId: identity.serverId,
+        fingerprint: identity.fingerprint,
+        token: invite.token,
+      },
+      { allowLocalDevelopmentApiUrl: this.#options.allowLocalDevelopmentInvites },
+    );
     const result: InviteSummary = {
       id: invite.id,
       role: input.role,

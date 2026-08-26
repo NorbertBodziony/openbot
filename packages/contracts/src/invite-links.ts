@@ -15,27 +15,31 @@ export interface InviteLinkPayload {
   token: string;
 }
 
-export function createInviteUrl(payload: InviteLinkPayload): string {
-  validatePayload(payload);
+export interface InviteLinkOptions {
+  allowLocalDevelopmentApiUrl?: boolean;
+}
+
+export function createInviteUrl(payload: InviteLinkPayload, options: InviteLinkOptions = {}): string {
+  validatePayload(payload, options);
   const url = new URL(OPENBOT_INVITE_PATH, OPENBOT_INVITE_ORIGIN);
   writePayload(url, payload);
   return url.toString();
 }
 
-export function createOpenBotInviteUrl(payload: InviteLinkPayload): string {
-  validatePayload(payload);
+export function createOpenBotInviteUrl(payload: InviteLinkPayload, options: InviteLinkOptions = {}): string {
+  validatePayload(payload, options);
   const url = new URL("openbot://join");
   writePayload(url, payload);
   return url.toString();
 }
 
-export function toOpenBotInviteUrl(value: string): string {
-  return createOpenBotInviteUrl(parseInviteUrl(value));
+export function toOpenBotInviteUrl(value: string, options: InviteLinkOptions = {}): string {
+  return createOpenBotInviteUrl(parseInviteUrl(value, options), options);
 }
 
-export function isCanonicalInviteUrl(value: string): boolean {
+export function isCanonicalInviteUrl(value: string, options: InviteLinkOptions = {}): boolean {
   try {
-    parseInviteUrl(value);
+    parseInviteUrl(value, options);
     const url = new URL(value);
     return url.origin === OPENBOT_INVITE_ORIGIN && url.pathname === OPENBOT_INVITE_PATH;
   } catch {
@@ -43,7 +47,7 @@ export function isCanonicalInviteUrl(value: string): boolean {
   }
 }
 
-export function parseInviteUrl(value: string): InviteLinkPayload {
+export function parseInviteUrl(value: string, options: InviteLinkOptions = {}): InviteLinkPayload {
   let url: URL;
   try {
     url = new URL(value);
@@ -72,31 +76,37 @@ export function parseInviteUrl(value: string): InviteLinkPayload {
     fingerprint: url.searchParams.get("fingerprint") ?? "",
     token: url.searchParams.get("invite") ?? "",
   };
-  validatePayload(payload);
+  validatePayload(payload, options);
   return payload;
 }
 
-export function isValidRemoteApiUrl(value: string): boolean {
+export function isValidRemoteApiUrl(value: string, options: InviteLinkOptions = {}): boolean {
   try {
     const url = new URL(value);
+    const localDevelopmentApi =
+      options.allowLocalDevelopmentApiUrl === true &&
+      url.protocol === "http:" &&
+      url.hostname === "localhost" &&
+      url.port !== "";
     return (
-      url.protocol === "https:" &&
       url.username === "" &&
       url.password === "" &&
-      url.port === "" &&
       url.pathname === "/" &&
       url.search === "" &&
       url.hash === "" &&
-      (TRY_CLOUDFLARE_HOST_PATTERN.test(url.hostname) || isOpenBotTeamApiHostname(url.hostname))
+      (localDevelopmentApi ||
+        (url.protocol === "https:" &&
+          url.port === "" &&
+          (TRY_CLOUDFLARE_HOST_PATTERN.test(url.hostname) || isOpenBotTeamApiHostname(url.hostname))))
     );
   } catch {
     return false;
   }
 }
 
-function validatePayload(payload: InviteLinkPayload): void {
+function validatePayload(payload: InviteLinkPayload, options: InviteLinkOptions): void {
   if (
-    !isValidRemoteApiUrl(payload.apiUrl) ||
+    !isValidRemoteApiUrl(payload.apiUrl, options) ||
     !UUID_PATTERN.test(payload.serverId) ||
     !BASE64URL_SECRET_PATTERN.test(payload.fingerprint) ||
     !BASE64URL_SECRET_PATTERN.test(payload.token)

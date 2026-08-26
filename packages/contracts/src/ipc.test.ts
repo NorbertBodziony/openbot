@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { isAgentEvent, isAvatarHue, isAvatarSeed, isBotMemory } from "./ipc";
+import { isAgentEvent, isAvatarHue, isAvatarSeed, isBotMemory, isMessageReaction } from "./ipc";
+
+describe("message reaction validation", () => {
+  it("accepts one complete Unicode emoji sequence", () => {
+    expect(isMessageReaction("😀")).toBe(true);
+    expect(isMessageReaction("👋🏽")).toBe(true);
+    expect(isMessageReaction("👨‍👩‍👧‍👦")).toBe(true);
+    expect(isMessageReaction("🇵🇱")).toBe(true);
+    expect(isMessageReaction("1️⃣")).toBe(true);
+  });
+
+  it("rejects text, whitespace, and multiple emoji", () => {
+    expect(isMessageReaction("hello")).toBe(false);
+    expect(isMessageReaction(" 😀 ")).toBe(false);
+    expect(isMessageReaction("😀😀")).toBe(false);
+    expect(isMessageReaction("")).toBe(false);
+  });
+});
 
 describe("avatar IPC validation", () => {
   it("accepts generated avatar seeds and rejects unsafe or oversized values", () => {

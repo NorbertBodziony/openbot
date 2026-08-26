@@ -2,6 +2,7 @@ import type { HostStatus, ServerSummary, TeamPresenceMember } from "@openbot/con
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
 import { ServerSettingsModal, type ServerSettingsModalProps } from "./ServerSettingsModal";
+import { Toaster } from "./ui";
 
 const localServer: ServerSummary = {
   id: "local",
@@ -133,13 +134,19 @@ describe("ServerSettingsModal", () => {
     const onSaveIdentity = vi.fn(async () => {
       throw new Error("The identity could not save.");
     });
-    render(() => <ServerSettingsModal {...props({ onSaveIdentity })} />);
+    render(() => (
+      <>
+        <ServerSettingsModal {...props({ onSaveIdentity })} />
+        <Toaster />
+      </>
+    ));
 
     const name = screen.getByRole("textbox", { name: "Server name" });
     await fireEvent.input(name, { target: { value: "Studio Team" } });
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("The identity could not save.");
+    expect(await screen.findByText("Server action failed")).toBeInTheDocument();
+    expect(screen.getByText("The identity could not save.")).toBeInTheDocument();
     expect(name).toHaveValue("Studio Team");
   });
 
@@ -333,9 +340,13 @@ describe("ServerSettingsModal", () => {
 
     await fireEvent.click(screen.getByRole("tab", { name: "Invite link" }));
     expect(screen.queryByText("Enter a valid email address.")).not.toBeInTheDocument();
+    const inviteLink = screen.getByRole("textbox", { name: "Invitation link" });
+    expect(inviteLink).toHaveValue("");
+    expect(inviteLink).toHaveAttribute("placeholder", "Create a private one-time link.");
     await fireEvent.click(screen.getByRole("button", { name: "Create link" }));
 
     await waitFor(() => expect(onCreateInvite).toHaveBeenCalledWith({ role: "member" }));
     expect(await screen.findByRole("button", { name: "Copy link" })).toBeInTheDocument();
+    await waitFor(() => expect(inviteLink).toHaveValue("https://studio.example.com/invite/new"));
   });
 });
