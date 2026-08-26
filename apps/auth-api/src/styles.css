@@ -140,8 +140,9 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .t-stagger-line {
-    transition: none !important;
+  .t-stagger .t-stagger-line,
+  .t-stagger.is-hiding .t-stagger-line {
+    transition: none;
   }
 }
 
@@ -187,7 +188,7 @@ a {
    after a forced reflow and the next reveal animates again. */
 .t-skel.is-resetting .t-skel-skeleton,
 .t-skel.is-resetting .t-skel-content {
-  transition: none !important;
+  transition: none;
 }
 
 /* Pulse: place the animation on the bar/avatar children, not
@@ -209,10 +210,10 @@ a {
 @media (prefers-reduced-motion: reduce) {
   .t-skel-skeleton,
   .t-skel-content {
-    transition: none !important;
+    transition: none;
   }
   .t-skel-skeleton.is-pulsing > * {
-    animation: none !important;
+    animation: none;
   }
 }
 

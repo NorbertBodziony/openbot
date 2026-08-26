@@ -11,6 +11,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    execArgv: ["--disable-warning=ExperimentalWarning"],
     include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
     exclude: [
       "test/analytics.test.ts",
