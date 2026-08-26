@@ -319,6 +319,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     const id = input.id ?? `mock-agent-${botCounter}`;
     return {
       id,
+      provider: input.provider ?? "codex",
       name: input.name ?? "New agent",
       title: input.title ?? "Generalist agent",
       description: input.description ?? "A new agent ready to help with focused work.",

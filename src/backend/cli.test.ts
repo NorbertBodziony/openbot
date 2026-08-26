@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,20 +8,25 @@ import {
   CodexCliError,
   parseClaudeVersion,
   parseCodexVersion,
+  parseGrokVersion,
+  posixFallbackPaths,
   resolveClaudeCli,
   resolveCodexCli,
+  resolveGrokCli,
   windowsFallbackPaths,
 } from "./cli";
 
 const originalAppData = process.env.APPDATA;
 const originalLocalAppData = process.env.LOCALAPPDATA;
 const originalPath = process.env.PATH;
+const originalGrokPath = process.env.OPENBOT_GROK_PATH;
 const temporaryPaths: string[] = [];
 
 afterEach(async () => {
   restoreEnvironment("APPDATA", originalAppData);
   restoreEnvironment("LOCALAPPDATA", originalLocalAppData);
   restoreEnvironment("PATH", originalPath);
+  restoreEnvironment("OPENBOT_GROK_PATH", originalGrokPath);
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true })));
 });
 
@@ -42,6 +47,39 @@ describe("Claude CLI version parsing", () => {
 
   it("fails closed on an unknown format", () => {
     expect(() => parseClaudeVersion("Claude development build")).toThrow(CodexCliError);
+  });
+});
+
+describe("Grok CLI discovery", () => {
+  it("reads Grok versions and includes documented macOS and Windows locations", () => {
+    expect(parseGrokVersion("grok 1.0.5\n")).toBe("1.0.5");
+    expect(posixFallbackPaths("grok", "/Users/jane")).toContain("/Users/jane/.grok/bin/grok");
+    expect(
+      windowsFallbackPaths("grok", "C:\\Users\\Jane", {
+        LOCALAPPDATA: "C:\\Users\\Jane\\AppData\\Local",
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        "C:\\Users\\Jane\\.grok\\bin\\grok.exe",
+        "C:\\Users\\Jane\\AppData\\Local\\Microsoft\\WinGet\\Links\\grok.exe",
+      ]),
+    );
+  });
+
+  it.runIf(process.platform !== "win32")("honors OPENBOT_GROK_PATH and probes --version", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-grok-cli-test-"));
+    temporaryPaths.push(root);
+    const executable = join(root, "grok");
+    await writeFile(executable, "#!/bin/sh\nprintf 'grok 1.0.5\\n'\n");
+    await chmod(executable, 0o700);
+    process.env.OPENBOT_GROK_PATH = executable;
+
+    await expect(resolveGrokCli()).resolves.toEqual({ executable, version: "1.0.5" });
+  });
+
+  it("does not fabricate an installed Grok CLI when the configured executable is missing", async () => {
+    process.env.OPENBOT_GROK_PATH = join(tmpdir(), `missing-grok-${Date.now()}`);
+    await expect(resolveGrokCli()).rejects.toMatchObject({ code: "missing" });
   });
 });
 

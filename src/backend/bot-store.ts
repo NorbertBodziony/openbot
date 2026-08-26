@@ -4,7 +4,9 @@ import { basename, dirname, join } from "node:path";
 import { avatarFileExtension, isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
+  AGENT_PROVIDERS,
   type AgentModelId,
+  type AgentProviderId,
   type AgentReasoningEffort,
   type AvatarImageInput,
   type BotSummary,
@@ -13,15 +15,19 @@ import {
   isAvatarHue,
   isAvatarSeed,
   isReasoningEffort,
+  providerForLegacyModel,
   type UpdateBotInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { isUuidV4 } from "@openbot/contracts/validation";
-import { OpenBotDatabase, type ProviderSession, providerForStoredModel, stableThreadId } from "./openbot-database";
+import { OpenBotDatabase, type ProviderSession, stableThreadId } from "./openbot-database";
 import { isRecord } from "./protocol";
 
 type StoredBot = BotSummary;
-type PersistedStoredBot = Omit<StoredBot, "avatarUrl"> & { avatarUrl?: string | null };
+type PersistedStoredBot = Omit<StoredBot, "avatarUrl" | "provider"> & {
+  avatarUrl?: string | null;
+  provider?: AgentProviderId;
+};
 type StoredBotBase = Omit<PersistedStoredBot, "avatarSeed" | "avatarHue"> & DynamicRecord;
 
 interface StoredState {
@@ -51,6 +57,7 @@ const LEGACY_AVATAR_COLORS = [
 ] as const;
 
 export const DEFAULT_AGENT_MODEL: AgentModelId = "gpt-5.6-luna";
+export const DEFAULT_AGENT_PROVIDER: AgentProviderId = "codex";
 export const DEFAULT_REASONING_EFFORT: AgentReasoningEffort = "medium";
 
 export class BotStore {
@@ -122,7 +129,7 @@ export class BotStore {
     for (const { bot, externalSessionId } of sessions) {
       this.#database.bindProviderSession({
         threadId: stableThreadId(bot.id),
-        provider: providerForStoredModel(bot.model),
+        provider: bot.provider,
         externalSessionId,
         model: bot.model,
         effort: bot.reasoningEffort,
@@ -169,6 +176,7 @@ export class BotStore {
       bot.description = limitedText(input.description, "Agent description", INPUT_LIMITS.agentDescription);
     }
     if (input.notifications !== undefined) bot.notifications = input.notifications;
+    if (input.provider !== undefined) bot.provider = input.provider;
     if (input.model !== undefined) {
       bot.model = input.model;
     }
@@ -283,7 +291,7 @@ export class BotStore {
   activeProviderSession(id: string): ProviderSession | null {
     const bot = this.#requireBot(id);
     if (!bot.threadId) return null;
-    return this.#database.activeProviderSession(bot.threadId, providerForStoredModel(bot.model));
+    return this.#database.activeProviderSession(bot.threadId, bot.provider);
   }
 
   bindProviderSession(id: string, externalSessionId: string): ProviderSession {
@@ -291,7 +299,7 @@ export class BotStore {
     if (!bot.threadId) throw new Error(`Agent ${id} does not have an OpenBot thread.`);
     return this.#database.bindProviderSession({
       threadId: bot.threadId,
-      provider: providerForStoredModel(bot.model),
+      provider: bot.provider,
       externalSessionId,
       model: bot.model,
       effort: bot.reasoningEffort,
@@ -347,6 +355,7 @@ export class BotStore {
       title,
       description,
       notifications: true,
+      provider: DEFAULT_AGENT_PROVIDER,
       model: DEFAULT_AGENT_MODEL,
       reasoningEffort: DEFAULT_REASONING_EFFORT,
       threadId: null,
@@ -417,7 +426,11 @@ function isStoredBotBase(value: unknown): value is StoredBotBase {
 function isStoredBot(value: unknown): value is PersistedStoredBot {
   if (!isRecord(value) || !isStoredBotBase(value)) return false;
   const record = value;
-  return isAvatarSeed(record.avatarSeed) && (record.avatarHue === null || isAvatarHue(record.avatarHue));
+  return (
+    (record.provider === undefined || isOneOf(AGENT_PROVIDERS, record.provider)) &&
+    isAvatarSeed(record.avatarSeed) &&
+    (record.avatarHue === null || isAvatarHue(record.avatarHue))
+  );
 }
 
 function isLegacyStoredBot(value: unknown): value is LegacyStoredBot {
@@ -438,6 +451,7 @@ function migrateLegacyBot(bot: LegacyStoredBot): StoredBot {
     title: bot.title,
     description: bot.description,
     notifications: bot.notifications,
+    provider: providerForLegacyModel(bot.model),
     model: bot.model,
     reasoningEffort: bot.reasoningEffort,
     threadId: bot.threadId,
@@ -453,6 +467,7 @@ function migrateLegacyBot(bot: LegacyStoredBot): StoredBot {
 function normalizeStoredBot(bot: PersistedStoredBot): StoredBot {
   return {
     ...bot,
+    provider: bot.provider ?? providerForLegacyModel(bot.model),
     avatarUrl: isString(bot.avatarUrl) && parseAgentAvatarUrl(bot.avatarUrl, bot.id) ? bot.avatarUrl : null,
   };
 }

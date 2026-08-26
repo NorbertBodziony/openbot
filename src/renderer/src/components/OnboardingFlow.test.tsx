@@ -43,6 +43,7 @@ describe("OnboardingFlow", () => {
   it("supports provider selection and forward/back navigation", async () => {
     const view = renderFlow();
     const providers = view.getByRole("radiogroup", { name: "Default provider" });
+    expect(within(providers).getByRole("radio", { name: /Grok/ })).toBeInTheDocument();
     const claude = within(providers).getByRole("radio", { name: /Claude/ });
     await fireEvent.click(claude);
     await fireEvent.click(view.getByRole("button", { name: "Next" }));
@@ -51,6 +52,18 @@ describe("OnboardingFlow", () => {
     await fireEvent.click(view.getByRole("button", { name: "Back" }));
     expect(await view.findByRole("heading", { name: "Meet OpenBot" })).toBeInTheDocument();
     expect(claude).toBeChecked();
+  });
+
+  it("persists Grok as the default provider", async () => {
+    const onSave = vi.fn(async (_provider: AgentProviderId) => undefined);
+    const view = renderFlow({ onSave });
+    const providers = view.getByRole("radiogroup", { name: "Default provider" });
+    await fireEvent.click(within(providers).getByRole("radio", { name: /Grok/ }));
+    await fireEvent.click(view.getByRole("button", { name: "Next" }));
+    await fireEvent.click(view.getByRole("button", { name: "Next" }));
+    await fireEvent.click(view.getByRole("button", { name: "Open OpenBot" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith("grok"));
   });
 
   it("requests optional macOS permissions before continuing", async () => {

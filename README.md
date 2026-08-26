@@ -5,7 +5,8 @@
 
 OpenBot is a local-first desktop workspace for persistent AI teammates. It supports the local
 [Codex App Server](https://learn.chatgpt.com/docs/app-server) and
-[Claude Code](https://code.claude.com/docs/en/overview). It gives every agent its own workspace and
+[Claude Code](https://code.claude.com/docs/en/overview), plus [Grok CLI](https://docs.x.ai/build/overview)
+through ACP. It gives every agent its own workspace and
 conversation, and provides local queues, file transfers, an embedded browser, and agent-to-agent
 messaging in one desktop app.
 
@@ -17,7 +18,7 @@ messaging in one desktop app.
 
 ## What works
 
-- Persistent agents backed by independent Codex or Claude threads and local workspaces.
+- Persistent agents backed by independent Codex, Claude, or Grok sessions and local workspaces.
 - Per-agent context monitoring with automatic compaction before long threads exhaust the model window.
 - FIFO message queues with pause, resume, cancellation, and crash-safe persistence.
 - Agent-to-agent messages, replies, reactions, images, and managed file transfers.
@@ -28,6 +29,7 @@ messaging in one desktop app.
 - Optional OpenBot accounts through one-time email codes. The account API runs on Cloudflare Workers and D1.
 
 OpenBot is local-first, not offline-only. Codex connects to OpenAI, Claude connects to Anthropic,
+Grok connects to xAI,
 visited pages use the network, and installed plugins may connect to their own services.
 
 ## Install
@@ -50,7 +52,7 @@ OpenBot supports macOS 12 or newer on Apple Silicon and Windows 10 or newer on x
 
 ### Agent setup
 
-Install at least one supported CLI. You can install both.
+Install at least one supported CLI.
 
 Codex CLI on macOS:
 
@@ -64,15 +66,18 @@ Claude CLI on macOS:
 curl -fsSL https://claude.ai/install.sh | bash
 ```
 
-On Windows, install the native CLI and make sure `codex` or `claude` is available in PowerShell.
-Claude Code also requires Git for Windows. Then run `codex login` or `claude auth login` and restart
+Install Grok CLI following the [Grok Build documentation](https://docs.x.ai/build/overview), then
+authenticate with `grok login` or set `XAI_API_KEY` in the environment used to launch OpenBot.
+
+On Windows, install the native CLI and make sure `codex`, `claude`, or `grok` is available in PowerShell.
+Claude Code also requires Git for Windows. Then authenticate the installed CLI and restart
 OpenBot. Each available provider appears in the agent model list.
 
 Bun and Node.js are not required when using an installed release. Screen Recording and Accessibility
 permissions are needed only for the optional Computer Use plugin.
 
-OpenBot uses the existing local CLI login. It does not copy tokens from `~/.codex` or `~/.claude`.
-See the official Codex and Claude authentication documentation for account setup.
+OpenBot uses the existing local CLI login. It does not copy provider credentials. Grok's
+`XAI_API_KEY` and per-session MCP bearer tokens are never persisted or logged.
 
 For setup problems, data reset, and uninstall instructions, see
 [Troubleshooting](docs/TROUBLESHOOTING.md). OpenBot's data and network behavior is documented in
@@ -203,11 +208,12 @@ rules for new modules.
   `mailbox.json` files, when these files existed before the SQLite migration.
 - `~/.codex` — login and thread history managed exclusively by Codex CLI.
 - `~/.claude` — login and session history managed exclusively by Claude CLI.
+- `~/.grok` — login and session history managed exclusively by Grok CLI.
 
 Deleting an agent removes its workspace, owned generated attachments, and deliveries addressed only
 to that agent. A transfer remains when another agent still uses the same message.
 
-OpenBot keeps one stable local conversation when an agent changes between Codex and Claude. Native
+OpenBot keeps one stable local conversation when an agent changes between Codex, Grok, and Claude. Native
 provider session identifiers stay private and are used only to resume provider runtime state.
 
 The Electron renderer is never exposed as a public website. It communicates with local CLI processes

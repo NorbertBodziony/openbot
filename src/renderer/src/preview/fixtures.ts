@@ -26,6 +26,7 @@ export const STORY_NOW = "2026-08-19T10:00:00.000Z";
 export const STORY_BOT_SUMMARIES: BotSummary[] = [
   {
     id: "chief",
+    provider: "codex",
     name: "Chief",
     title: "Chief of staff",
     description: "Coordinates projects, priorities, and next steps across the workspace.",
@@ -42,6 +43,7 @@ export const STORY_BOT_SUMMARIES: BotSummary[] = [
   },
   {
     id: "research",
+    provider: "claude",
     name: "Research",
     title: "Research partner",
     description: "Finds reliable sources and turns them into concise, useful briefs.",
@@ -58,6 +60,7 @@ export const STORY_BOT_SUMMARIES: BotSummary[] = [
   },
   {
     id: "sales",
+    provider: "codex",
     name: "Sales Outbound",
     title: "Outbound specialist",
     description: "Prepares thoughtful prospect research and personalized outreach.",
@@ -76,6 +79,7 @@ export const STORY_BOT_SUMMARIES: BotSummary[] = [
 
 export const STORY_BOTS: BotProfile[] = STORY_BOT_SUMMARIES.map((bot, index) => ({
   id: bot.id,
+  provider: bot.provider,
   name: bot.name,
   title: bot.title,
   description: bot.description,
@@ -92,6 +96,7 @@ export const STORY_BOTS: BotProfile[] = STORY_BOT_SUMMARIES.map((bot, index) => 
 
 export const STORY_MODELS: AgentModelOption[] = [
   {
+    provider: "codex",
     id: "gpt-5.6-luna",
     name: "Luna",
     description: "Fast and efficient for everyday agent work.",
@@ -99,6 +104,7 @@ export const STORY_MODELS: AgentModelOption[] = [
     supportedReasoningEfforts: ["low", "medium", "high"],
   },
   {
+    provider: "codex",
     id: "gpt-5.6-terra",
     name: "Terra",
     description: "Balanced speed and capability for involved tasks.",
@@ -106,6 +112,7 @@ export const STORY_MODELS: AgentModelOption[] = [
     supportedReasoningEfforts: ["medium", "high"],
   },
   {
+    provider: "codex",
     id: "gpt-5.6-sol",
     name: "Sol",
     description: "Most capable for complex, long-running work.",
@@ -113,6 +120,7 @@ export const STORY_MODELS: AgentModelOption[] = [
     supportedReasoningEfforts: ["medium", "high", "xhigh"],
   },
   {
+    provider: "claude",
     id: "claude-opus-5",
     name: "Claude Opus 5",
     description: "Most capable Claude model for complex work.",
@@ -120,10 +128,19 @@ export const STORY_MODELS: AgentModelOption[] = [
     supportedReasoningEfforts: ["low", "medium", "high"],
   },
   {
+    provider: "claude",
     id: "claude-sonnet-5",
     name: "Claude Sonnet 5",
     description: "Balanced Claude model for general agent work.",
     defaultReasoningEffort: "high",
+    supportedReasoningEfforts: ["low", "medium", "high"],
+  },
+  {
+    provider: "grok",
+    id: "grok-code-fast-1",
+    name: "Grok Code Fast 1",
+    description: "Discovered from Grok CLI over ACP.",
+    defaultReasoningEffort: "medium",
     supportedReasoningEfforts: ["low", "medium", "high"],
   },
 ];
@@ -146,6 +163,13 @@ export const STORY_AGENT_STATUS: AgentStatus = {
       version: "2.1.231",
       message: null,
       email: "person@example.com",
+    },
+    {
+      id: "grok",
+      state: "available",
+      version: "0.1.0",
+      message: null,
+      email: null,
     },
   ],
   capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },

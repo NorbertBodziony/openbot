@@ -16,6 +16,12 @@ const options: ProviderPickerOption[] = [
     email: "person@example.com",
     message: "Sign in to Claude to use this provider.",
   },
+  {
+    id: "grok",
+    name: "Grok",
+    state: "available",
+    email: null,
+  },
 ];
 
 const args: Parameters<typeof ProviderPicker>[0] = {

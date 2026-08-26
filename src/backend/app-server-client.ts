@@ -70,6 +70,7 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
     });
     this.#process = child;
 
+    child.stdin.on("error", (error) => this.#fail(error, child));
     child.stdout.on("data", (chunk: Buffer) => {
       try {
         for (const message of this.#decoder.push(chunk)) this.#handleMessage(message);

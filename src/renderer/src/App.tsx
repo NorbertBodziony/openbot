@@ -36,7 +36,6 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
-import { isClaudeModel } from "@openbot/contracts/ipc";
 import {
   createContext,
   createEffect,
@@ -96,6 +95,7 @@ const FALLBACK_STATUS: AgentStatus = {
   providers: [
     { id: "codex", state: "not-started", version: null, message: null },
     { id: "claude", state: "not-started", version: null, message: null },
+    { id: "grok", state: "not-started", version: null, message: null },
   ],
   capabilities: {
     chat: "unavailable",
@@ -329,7 +329,7 @@ export function createAppController(props: AppProps = {}) {
     if (!bot) return null;
     const server = servers().find((candidate) => candidate.active);
     return {
-      provider: isClaudeModel(bot.model) ? ("claude" as const) : ("codex" as const),
+      provider: bot.provider,
       model: bot.model,
       reasoning_effort: bot.reasoningEffort,
       server_kind: server?.kind ?? ("unknown" as const),

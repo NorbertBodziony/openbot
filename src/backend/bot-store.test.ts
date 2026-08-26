@@ -352,10 +352,10 @@ describe("BotStore", () => {
     await store.getOrCreate("chief");
     const threadId = await store.ensureThreadId("chief");
 
-    const claude = await store.updateBot({ botId: "chief", model: "claude-sonnet-5" });
+    const claude = await store.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });
     expect(claude.threadId).toBe(threadId);
 
-    const opus = await store.updateBot({ botId: "chief", model: "claude-opus-5" });
+    const opus = await store.updateBot({ botId: "chief", provider: "claude", model: "claude-opus-5" });
     expect(opus.threadId).toBe(threadId);
   });
 
@@ -369,10 +369,10 @@ describe("BotStore", () => {
     store.bindProviderSession("chief", "codex-native-1");
     store.database.deactivateProviderSessions(publicThreadId);
 
-    await store.updateBot({ botId: "chief", model: "claude-sonnet-5" });
+    await store.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });
     store.bindProviderSession("chief", "claude-native-1");
     store.database.deactivateProviderSessions(publicThreadId);
-    await store.updateBot({ botId: "chief", model: "gpt-5.6-sol" });
+    await store.updateBot({ botId: "chief", provider: "codex", model: "gpt-5.6-sol" });
     expect(store.activeProviderSession("chief")).toBeNull();
     store.bindProviderSession("chief", "codex-native-2");
 

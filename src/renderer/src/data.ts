@@ -1,6 +1,7 @@
 import type {
   AgentExchangeSummary,
   AgentModelId,
+  AgentProviderId,
   AgentReasoningEffort,
   AttachmentSummary,
   BotAvatarHue,
@@ -50,6 +51,7 @@ export interface BotProfile {
   title: string;
   description: string;
   notifications: boolean;
+  provider: AgentProviderId;
   model: AgentModelId;
   reasoningEffort: AgentReasoningEffort;
   threadId: string | null;

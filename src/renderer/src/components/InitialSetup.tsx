@@ -34,6 +34,7 @@ type SetupRoute = "local" | "remote";
 const PROVIDERS: Array<{ id: AgentProviderId; name: string }> = [
   { id: "codex", name: "Codex" },
   { id: "claude", name: "Claude" },
+  { id: "grok", name: "Grok" },
 ];
 
 const PERMISSIONS: Array<{
@@ -278,7 +279,7 @@ export function InitialSetup(props: InitialSetupProps) {
                   </span>
                   <span class="setup-route-copy">
                     <strong>Use this computer</strong>
-                    <small>Run Codex or Claude locally. Keep all OpenBot data here.</small>
+                    <small>Run Codex, Claude, or Grok locally. Keep all OpenBot data here.</small>
                   </span>
                   <RouteArrow />
                 </Button>
@@ -482,8 +483,10 @@ function permissionLabel(
   return "Allow";
 }
 
-function providerName(provider: AgentProviderId | null): "Claude" | "Codex" {
-  return provider === "claude" ? "Claude" : "Codex";
+function providerName(provider: AgentProviderId | null): "Claude" | "Codex" | "Grok" {
+  if (provider === "claude") return "Claude";
+  if (provider === "grok") return "Grok";
+  return "Codex";
 }
 
 function fallbackProviderState(status: AgentStatus): AgentProviderState {

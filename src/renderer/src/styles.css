@@ -76,6 +76,7 @@
   --openbot-settings-danger-border: rgba(235, 65, 69, 0.5);
   --openbot-provider-codex: var(--openbot-text-primary);
   --openbot-provider-claude: #d97757;
+  --openbot-provider-grok: var(--openbot-text-primary);
   --openbot-logo-production: #d6adf2;
   --openbot-logo-eye: #040007;
   --openbot-logo-dev: var(--openbot-warning);

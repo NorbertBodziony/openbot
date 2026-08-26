@@ -44,7 +44,7 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
 
 - `openbot.db` is the source of truth for OpenBot agents, conversations, queues, reactions,
   attachments, and provider-session bindings.
-- `~/.codex` and `~/.claude` are provider-owned login and resume state. They are not OpenBot
+- `~/.codex`, `~/.claude`, and `~/.grok` are provider-owned login and resume state. They are not OpenBot
   conversation storage.
 - D1 is the source of truth for central accounts and the one-server-per-owner rule.
 - A local team host owns team membership, invitations, and host sessions.

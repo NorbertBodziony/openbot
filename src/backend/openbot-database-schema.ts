@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -112,7 +112,7 @@ const SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS projection_provider_sessions (
     id TEXT PRIMARY KEY,
     thread_id TEXT NOT NULL REFERENCES projection_threads(thread_id) ON DELETE CASCADE,
-    provider TEXT NOT NULL CHECK(provider IN ('codex', 'claude')),
+    provider TEXT NOT NULL CHECK(provider IN ('codex', 'claude', 'grok')),
     external_session_id TEXT NOT NULL,
     model TEXT NOT NULL,
     effort TEXT NOT NULL,
@@ -314,12 +314,59 @@ export function migrateOpenBotDatabase(db: DatabaseSync, appliedAt = new Date().
     throw error;
   }
 
+  if (upgradingExistingDatabase) migrateProviderSessionsForGrok(db);
+
   if (upgradingExistingDatabase) {
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     db.exec("VACUUM");
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   }
   db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(SCHEMA_VERSION, appliedAt);
+}
+
+function migrateProviderSessionsForGrok(db: DatabaseSync): void {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projection_provider_sessions'")
+    .get();
+  if (!isDynamicRecord(row) || !isString(row.sql) || row.sql.includes("'grok'")) return;
+
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec(`
+      BEGIN IMMEDIATE;
+      CREATE TABLE projection_provider_sessions_v7 (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL REFERENCES projection_threads(thread_id) ON DELETE CASCADE,
+        provider TEXT NOT NULL CHECK(provider IN ('codex', 'claude', 'grok')),
+        external_session_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        effort TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('active', 'inactive', 'failed')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        resume_cursor TEXT,
+        last_event_sequence INTEGER NOT NULL,
+        UNIQUE(provider, external_session_id)
+      );
+      INSERT INTO projection_provider_sessions_v7 (
+        id, thread_id, provider, external_session_id, model, effort, state,
+        created_at, updated_at, resume_cursor, last_event_sequence
+      ) SELECT
+        id, thread_id, provider, external_session_id, model, effort, state,
+        created_at, updated_at, resume_cursor, last_event_sequence
+      FROM projection_provider_sessions;
+      DROP TABLE projection_provider_sessions;
+      ALTER TABLE projection_provider_sessions_v7 RENAME TO projection_provider_sessions;
+      CREATE INDEX provider_sessions_thread
+        ON projection_provider_sessions(thread_id, provider, state);
+      COMMIT;
+    `);
+  } catch (error) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
 }
 
 interface SnapshotEventRow {
