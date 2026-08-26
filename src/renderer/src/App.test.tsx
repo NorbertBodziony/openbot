@@ -3686,7 +3686,9 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
     expect(screen.getByText("Do the work").closest(".message-entry")).toBe(firstMessageEntry);
-    expect(screen.getByText("Do the work").closest(".user-bubble")).not.toHaveTextContent("Working");
+    expect(screen.getByText("Do the work").closest('[data-slot="bubble"][data-author="user"]')).not.toHaveTextContent(
+      "Working",
+    );
     expect(workingIndicator.querySelector(".agent-activity-avatar")).toHaveAttribute(
       "data-animation-state",
       firstAnimation,
@@ -3727,9 +3729,9 @@ describe("OpenBot connected desktop shell", () => {
       if (!entry) throw new Error("The streaming message did not render.");
       return entry;
     });
-    const streamingBubble = streamingMessageEntry.querySelector(".bot-bubble");
+    const streamingBubble = streamingMessageEntry.querySelector('[data-slot="bubble"][data-author="assistant"]');
     expect(streamingMessageEntry).toHaveClass("message-entry-animated");
-    expect(streamingBubble).toHaveClass("bot-bubble-streaming");
+    expect(streamingBubble).toHaveAttribute("data-streaming");
     expect(screen.queryByText("Typing…")).not.toBeInTheDocument();
     expect(screen.getByRole("status", { name: "Chief is working" })).toBe(workingIndicator);
     expect(virtualChatList?.nextElementSibling).toBe(workingIndicator.parentElement);
@@ -3748,7 +3750,7 @@ describe("OpenBot connected desktop shell", () => {
       revision: 4,
     });
     await waitFor(() => expect(streamingMessageEntry).toHaveTextContent("I am on it"));
-    expect(streamingMessageEntry.querySelector(".bot-bubble")).toBe(streamingBubble);
+    expect(streamingMessageEntry.querySelector('[data-slot="bubble"][data-author="assistant"]')).toBe(streamingBubble);
     expect(screen.getByText("Do the work").closest(".message-entry")).toBe(firstMessageEntry);
     expect(screen.getByRole("status", { name: "Chief is working" })).toBe(workingIndicator);
 
@@ -3786,7 +3788,7 @@ describe("OpenBot connected desktop shell", () => {
       });
     }
     await waitFor(() => expect(streamingMessageEntry).toHaveTextContent("Final buffered"));
-    expect(streamingMessageEntry.querySelector(".bot-bubble")).toBe(streamingBubble);
+    expect(streamingMessageEntry.querySelector('[data-slot="bubble"][data-author="assistant"]')).toBe(streamingBubble);
     expect(screen.queryByText("First buffered line")).not.toBeInTheDocument();
 
     emitAgentEvent?.({
@@ -3827,7 +3829,7 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-    await waitFor(() => expect(streamingBubble).not.toHaveClass("bot-bubble-streaming"));
+    await waitFor(() => expect(streamingBubble).not.toHaveAttribute("data-streaming"));
     expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "active");
     await new Promise((resolve) => window.setTimeout(resolve, 420));
     expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "active");

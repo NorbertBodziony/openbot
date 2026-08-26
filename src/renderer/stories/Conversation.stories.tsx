@@ -148,6 +148,191 @@ const completedImageGenerationPresence = {
   ),
 };
 
+const botMessageGalleryMessages: RendererBotMessage[] = [
+  {
+    id: "bot-gallery-user",
+    author: "you",
+    body: "Show every message surface and interaction in one thread.",
+    time: "10:00",
+    kind: "text",
+  },
+  {
+    id: "bot-gallery-plain",
+    author: "bot",
+    body: "Plain assistant text uses the muted Bubble surface and keeps its actions aligned with the bottom edge.",
+    time: "10:01",
+    kind: "text",
+    reaction: "👍",
+    reactionSummary: { emojis: ["👍", "🚀"], overflowCount: 2 },
+  },
+  {
+    id: "bot-gallery-links",
+    author: "bot",
+    body: [
+      "## Links and references",
+      "",
+      "Review [OpenBot documentation](https://openbot.run/docs), the [Kobalte guide](https://kobalte.dev/docs/core/overview/introduction), and https://zaidan.carere.dev/docs/components/kobalte/bubble.",
+      "",
+      "You can also open [ConversationView.tsx](/Users/test/OpenBot/src/renderer/src/components/ConversationView.tsx), ask @Research, or inspect the attached source file below.",
+      "",
+      `Attachment reference: ${serializeAttachmentReference(STORY_ATTACHMENTS[0].name, STORY_ATTACHMENTS[0].id)}.`,
+      "",
+      "The implementation follows the component source [1] and the accessibility guidance [2].",
+    ].join("\n"),
+    time: "10:02",
+    kind: "text",
+    attachments: [STORY_ATTACHMENTS[0]],
+    citations: [
+      {
+        number: 1,
+        label: "Zaidan Bubble",
+        url: "https://zaidan.carere.dev/docs/components/kobalte/bubble",
+        host: "zaidan.carere.dev",
+      },
+      {
+        number: 2,
+        label: "Kobalte accessibility",
+        url: "https://kobalte.dev/docs/core/overview/accessibility",
+        host: "kobalte.dev",
+      },
+    ],
+    reaction: "👀",
+    reactionSummary: { emojis: ["👀", "🔥", "✅"], overflowCount: 1 },
+  },
+  {
+    id: "bot-gallery-reply",
+    author: "bot",
+    body: "This Bubble includes a reply context without changing how reactions or message actions are positioned.",
+    time: "10:03",
+    kind: "text",
+    replyToMessageId: "bot-gallery-user",
+    reaction: "❤️",
+  },
+  {
+    id: "bot-gallery-markdown",
+    author: "bot",
+    body: [
+      "## Markdown response",
+      "",
+      "- **Bold**, *emphasis*, and `inline code`",
+      "- [x] Completed task",
+      "- [ ] Pending task",
+      "",
+      "> Rich text remains inside one assistant Bubble.",
+    ].join("\n"),
+    time: "10:04",
+    kind: "text",
+    reaction: "🎉",
+  },
+  {
+    id: "bot-gallery-code",
+    author: "bot",
+    body: [
+      "Run the focused verification:",
+      "",
+      "```bash verify-chat.sh",
+      "bun run typecheck:renderer",
+      "bunx vitest run src/renderer/src/components/conversation/MessageRendering.test.tsx",
+      "```",
+    ].join("\n"),
+    time: "10:05",
+    kind: "text",
+    reaction: "✅",
+    reactionSummary: { emojis: ["✅", "🚀"] },
+  },
+  {
+    id: "bot-gallery-data-table",
+    author: "bot",
+    body: [
+      "Current message surfaces:",
+      "",
+      "| Content | Surface | Actions |",
+      "| --- | --- | --- |",
+      "| Plain text | Muted | Reply + react |",
+      "| Code | Ghost | Reply + react |",
+      "| Image | Ghost | Reply + react |",
+    ].join("\n"),
+    time: "10:06",
+    kind: "text",
+    reaction: "🚀",
+  },
+  {
+    id: "bot-gallery-comparison-table",
+    author: "bot",
+    body: [
+      "Feature matrix:",
+      "",
+      "| Capability | Text | Rich content |",
+      "| --- | --- | --- |",
+      "| Reactions | ✓ | ✓ |",
+      "| Reply | ✓ | ✓ |",
+      "| Keyboard actions | ✓ | ✓ |",
+      "| Nested frame | — | — |",
+    ].join("\n"),
+    time: "10:07",
+    kind: "text",
+    reaction: "💯",
+  },
+  {
+    id: "bot-gallery-attachment-with-text",
+    author: "bot",
+    body: "The supporting files are ready. This example keeps an attachment inside a regular text Bubble.",
+    time: "10:08",
+    kind: "text",
+    attachments: STORY_ATTACHMENTS.slice(0, 2),
+    reaction: "👏",
+  },
+  {
+    id: "bot-gallery-attachment-only",
+    author: "bot",
+    body: "",
+    time: "10:09",
+    kind: "text",
+    attachments: [STORY_ATTACHMENTS[0]],
+    reaction: "🔥",
+  },
+  {
+    id: "bot-gallery-image",
+    author: "bot",
+    body: "",
+    time: "10:10",
+    kind: "text",
+    status: "completed",
+    attachments: [generatedImageAttachment],
+    imageGeneration: {
+      prompt: "A quiet observatory above the clouds at blue hour",
+      resolution: "1024 × 1024",
+      aspectRatio: "square",
+    },
+    reaction: "😮",
+    reactionSummary: { emojis: ["😮", "🎉"], overflowCount: 3 },
+  },
+  {
+    id: "bot-gallery-failed",
+    author: "bot",
+    body: "I could not finish the remote verification. The message still exposes reply, copy, and reaction actions.",
+    time: "10:11",
+    kind: "text",
+    status: "Failed",
+    reaction: "🤔",
+  },
+  {
+    id: "bot-gallery-streaming",
+    author: "bot",
+    body: [
+      "Streaming response with an open code fence:",
+      "",
+      "```ts stream.ts",
+      "const message = await renderNextChunk();",
+    ].join("\n"),
+    time: "10:12",
+    kind: "text",
+    turnId: "bot-gallery-stream",
+    status: "streaming",
+    streaming: true,
+  },
+];
+
 const dataTableMessages: RendererBotMessage[] = [
   {
     id: "data-table-user",
@@ -625,6 +810,15 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const RichConversation: Story = {};
+
+export const AllBotMessageTypes: Story = {
+  name: "All bot message types",
+  args: {
+    messages: botMessageGalleryMessages,
+    activeTurnId: "bot-gallery-stream",
+    presence: completedImageGenerationPresence,
+  },
+};
 
 export const VoiceRecording: Story = {
   name: "Voice recording",

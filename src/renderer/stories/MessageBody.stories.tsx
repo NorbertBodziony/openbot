@@ -1,6 +1,7 @@
 import { expect, fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { MessageBody } from "../src/components/conversation/MessageRendering";
+import { Bubble, BubbleContent, type BubbleVariant } from "../src/components/ui";
 import type { BotMessage } from "../src/data";
 import { STORY_ATTACHMENTS, STORY_BOTS } from "./fixtures";
 
@@ -33,6 +34,27 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+function MessageBodySurface(props: {
+  args: Parameters<typeof MessageBody>[0];
+  author?: "assistant" | "user";
+  variant?: BubbleVariant;
+  width: string;
+}) {
+  const author = () => props.author ?? "assistant";
+  return (
+    <Bubble
+      align={author() === "user" ? "end" : "start"}
+      variant={props.variant ?? (author() === "user" ? "default" : "muted")}
+      data-author={author()}
+      style={{ width: props.width, "max-width": "calc(100vw - 32px)" }}
+    >
+      <BubbleContent>
+        <MessageBody {...props.args} />
+      </BubbleContent>
+    </Bubble>
+  );
+}
+
 export const RichMessage: Story = {};
 
 export const WithReplyContext: Story = {
@@ -64,11 +86,7 @@ export const WithSelectedTextInstruction: Story = {
       time: "09:55",
     },
   },
-  render: (storyArgs) => (
-    <div class="user-bubble" style={{ width: "360px", "max-width": "calc(100vw - 32px)" }}>
-      <MessageBody {...storyArgs} />
-    </div>
-  ),
+  render: (storyArgs) => <MessageBodySurface args={storyArgs} author="user" width="360px" />,
 };
 
 export const AttachmentOnly: Story = {
@@ -97,11 +115,7 @@ export const Markdown: Story = {
       attachments: [],
     },
   },
-  render: (storyArgs) => (
-    <div class="bot-bubble" style={{ width: "460px", "max-width": "calc(100vw - 32px)" }}>
-      <MessageBody {...storyArgs} />
-    </div>
-  ),
+  render: (storyArgs) => <MessageBodySurface args={storyArgs} width="460px" />,
   play: async ({ canvas }) => {
     await expect(canvas.getByRole("heading", { level: 2, name: "Recommendation" })).toBeInTheDocument();
     await expect(canvas.getByText("Kobalte").tagName).toBe("STRONG");
@@ -127,11 +141,7 @@ export const WorkspaceFileLinks: Story = {
     },
     onOpenWorkspaceFile: fn(),
   },
-  render: (storyArgs) => (
-    <div class="bot-bubble" style={{ width: "620px", "max-width": "calc(100vw - 32px)" }}>
-      <MessageBody {...storyArgs} />
-    </div>
-  ),
+  render: (storyArgs) => <MessageBodySurface args={storyArgs} width="620px" />,
   play: async ({ args: storyArgs, canvas }) => {
     const pageLink = canvas.getByRole("button", { name: "Open workspace file page.tsx" });
     const cssLink = canvas.getByRole("button", { name: "Open workspace file globals.css" });
@@ -172,11 +182,7 @@ export const CodeBlock: Story = {
       attachments: [],
     },
   },
-  render: (storyArgs) => (
-    <div class="bot-bubble" style={{ width: "460px", "max-width": "calc(100vw - 32px)" }}>
-      <MessageBody {...storyArgs} />
-    </div>
-  ),
+  render: (storyArgs) => <MessageBodySurface args={storyArgs} variant="ghost" width="460px" />,
   play: async ({ canvas }) => {
     await expect(canvas.getByText("The helper is ready:")).toBeInTheDocument();
     await expect(canvas.getByRole("region", { name: "TypeScript code block" })).toBeInTheDocument();
@@ -203,11 +209,7 @@ export const StreamingCodeBlock: Story = {
       attachments: [],
     },
   },
-  render: (storyArgs) => (
-    <div class="bot-bubble" style={{ width: "460px", "max-width": "calc(100vw - 32px)" }}>
-      <MessageBody {...storyArgs} />
-    </div>
-  ),
+  render: (storyArgs) => <MessageBodySurface args={storyArgs} variant="ghost" width="460px" />,
   play: async ({ canvas }) => {
     await expect(canvas.getByRole("region", { name: "TypeScript code block" })).toBeInTheDocument();
     await expect(canvas.getByText("AgentCard.tsx")).toBeInTheDocument();
@@ -232,11 +234,7 @@ export const DataTable: Story = {
       attachments: [],
     },
   },
-  render: (storyArgs) => (
-    <div class="bot-bubble" style={{ width: "460px", "max-width": "calc(100vw - 32px)" }}>
-      <MessageBody {...storyArgs} />
-    </div>
-  ),
+  render: (storyArgs) => <MessageBodySurface args={storyArgs} variant="ghost" width="460px" />,
   play: async ({ canvas }) => {
     await expect(canvas.getByRole("table")).toBeInTheDocument();
     await expect(canvas.getAllByRole("columnheader")).toHaveLength(3);
@@ -259,11 +257,7 @@ export const DataTableNarrow: Story = {
       attachments: [],
     },
   },
-  render: (storyArgs) => (
-    <div class="bot-bubble" style={{ width: "320px", "max-width": "calc(100vw - 32px)" }}>
-      <MessageBody {...storyArgs} />
-    </div>
-  ),
+  render: (storyArgs) => <MessageBodySurface args={storyArgs} variant="ghost" width="320px" />,
   play: async ({ canvas }) => {
     const region = canvas.getByRole("region", { name: "Data table" });
     await expect(region.scrollWidth).toBeGreaterThan(region.clientWidth);
@@ -287,11 +281,7 @@ export const ComparisonTable: Story = {
       attachments: [],
     },
   },
-  render: (storyArgs) => (
-    <div class="bot-bubble" style={{ width: "460px", "max-width": "calc(100vw - 32px)" }}>
-      <MessageBody {...storyArgs} />
-    </div>
-  ),
+  render: (storyArgs) => <MessageBodySurface args={storyArgs} variant="ghost" width="460px" />,
   play: async ({ canvas }) => {
     await expect(canvas.getByRole("region", { name: "Comparison table" })).toBeInTheDocument();
     await expect(canvas.getAllByRole("columnheader")).toHaveLength(3);
@@ -316,11 +306,7 @@ export const ComparisonTableNarrow: Story = {
       attachments: [],
     },
   },
-  render: (storyArgs) => (
-    <div class="bot-bubble" style={{ width: "320px", "max-width": "calc(100vw - 32px)" }}>
-      <MessageBody {...storyArgs} />
-    </div>
-  ),
+  render: (storyArgs) => <MessageBodySurface args={storyArgs} variant="ghost" width="320px" />,
   play: async ({ canvas }) => {
     const region = canvas.getByRole("region", { name: "Comparison table" });
     await expect(region.scrollWidth).toBeGreaterThan(region.clientWidth);

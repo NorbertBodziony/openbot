@@ -19,6 +19,11 @@ export interface MessageCitation {
   host?: string;
 }
 
+export interface MessageReactionSummary {
+  emojis: MessageReaction[];
+  overflowCount?: number;
+}
+
 export interface BotMessage {
   id: string;
   turnId?: string;
@@ -37,6 +42,7 @@ export interface BotMessage {
   citations?: MessageCitation[];
   exchange?: AgentExchangeSummary;
   reaction?: MessageReaction | null;
+  reactionSummary?: MessageReactionSummary;
   routine?: {
     routineId: string;
     runId: string;
