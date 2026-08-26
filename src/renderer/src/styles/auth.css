@@ -131,8 +131,8 @@
   font-size: var(--openbot-text-md);
   font-weight: 650;
   transition:
-    background-color var(--openbot-duration-normal) ease,
-    border-color var(--openbot-duration-normal) ease,
+    background-color var(--openbot-duration-hover) ease,
+    border-color var(--openbot-duration-hover) ease,
     transform var(--openbot-duration-fast) cubic-bezier(0.23, 1, 0.32, 1);
 }
 
@@ -169,9 +169,9 @@
   color: var(--openbot-text-primary);
   font-size: var(--openbot-text-lg);
   transition:
-    border-color var(--openbot-duration-normal) ease,
-    background-color var(--openbot-duration-normal) ease,
-    box-shadow var(--openbot-duration-normal) ease;
+    border-color var(--openbot-duration-hover) ease,
+    background-color var(--openbot-duration-hover) ease,
+    box-shadow var(--openbot-duration-hover) ease;
 }
 
 .account-login-form input:not(.otp-input-native):focus {
@@ -205,7 +205,7 @@
    only owns the interpolation. Use a constant border-width
    across states so the tween never shifts inner content. */
 .t-input {
-  transition: border-color var(--openbot-duration-normal) ease-out;
+  transition: border-color var(--openbot-duration-hover) ease-out;
   will-change: transform;
 }
 .t-input.is-error {
@@ -380,9 +380,9 @@
   font-weight: var(--openbot-weight-semibold);
   line-height: 1;
   transition:
-    border-color var(--openbot-duration-normal) ease,
-    background-color var(--openbot-duration-normal) ease,
-    color var(--openbot-duration-normal) ease;
+    border-color var(--openbot-duration-hover) ease,
+    background-color var(--openbot-duration-hover) ease,
+    color var(--openbot-duration-hover) ease;
 }
 
 .otp-input-slot[data-otp-index="4"] {
@@ -402,8 +402,8 @@
     calc(var(--otp-active-index) * (var(--otp-slot-size) + var(--otp-slot-gap)) + var(--otp-group-offset))
   );
   transition:
-    transform var(--openbot-duration-normal) var(--openbot-ease-out),
-    opacity var(--openbot-duration-normal) ease;
+    transform var(--openbot-duration-hover) var(--openbot-ease-out),
+    opacity var(--openbot-duration-hover) ease;
 }
 
 .otp-input-focus-ring[data-visible="true"] {
@@ -658,9 +658,9 @@
   color: var(--openbot-white);
   text-align: left;
   transition:
-    border-color var(--openbot-duration-normal) ease,
-    background-color var(--openbot-duration-normal) ease,
-    transform var(--openbot-duration-fast) ease;
+    border-color var(--openbot-duration-hover) ease,
+    background-color var(--openbot-duration-hover) ease,
+    transform var(--openbot-duration-hover) ease;
 }
 
 .setup-route-button:hover {
@@ -671,6 +671,7 @@
 
 .setup-route-button:active {
   transform: translateY(0);
+  transition-duration: var(--openbot-duration-hover), var(--openbot-duration-hover), var(--openbot-duration-fast);
 }
 
 .setup-route-icon {
@@ -732,7 +733,7 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.5;
-  transition: transform var(--openbot-duration-normal) ease;
+  transition: transform var(--openbot-duration-hover) ease;
 }
 
 .setup-route-button:hover .setup-route-arrow {
@@ -1102,7 +1103,7 @@
   color: var(--openbot-bg-sidebar);
   transition:
     transform var(--openbot-duration-normal) ease,
-    background var(--openbot-duration-normal) ease;
+    background var(--openbot-duration-hover) ease;
 }
 
 .initial-setup-save:hover:not(:disabled) {

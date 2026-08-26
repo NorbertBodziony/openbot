@@ -19,6 +19,7 @@
   color-scheme: dark;
   /* Grok Bot-inspired neutral system. Keep UI colors here, not in components. */
   --openbot-bg-canvas: #070707;
+  --openbot-bg-canvas-clear: rgba(7, 7, 7, 0);
   --openbot-bg-sidebar: #111111;
   --openbot-bg-surface: #262626;
   --openbot-bg-surface-clear: rgba(38, 38, 38, 0);
@@ -62,6 +63,17 @@
   --openbot-accent-text: #a49fff;
   --openbot-accent-soft: rgba(105, 96, 241, 0.16);
   --openbot-accent-strong: rgba(105, 96, 241, 0.34);
+  --openbot-settings-accent: #3c82f6;
+  --openbot-settings-accent-hover: #4b8df7;
+  --openbot-settings-accent-text: #91b9fa;
+  --openbot-settings-accent-soft: rgba(60, 130, 246, 0.16);
+  --openbot-settings-accent-strong: rgba(60, 130, 246, 0.34);
+  --openbot-settings-text-muted: rgba(255, 255, 255, 0.59);
+  --openbot-settings-danger: #eb4145;
+  --openbot-settings-danger-hover: #f05256;
+  --openbot-settings-danger-soft: rgba(235, 65, 69, 0.2);
+  --openbot-settings-danger-focus: rgba(235, 65, 69, 0.4);
+  --openbot-settings-danger-border: rgba(235, 65, 69, 0.5);
   --openbot-provider-codex: var(--openbot-text-primary);
   --openbot-provider-claude: #d97757;
   --openbot-logo-production: #d6adf2;
@@ -149,6 +161,7 @@
   --openbot-text-lg: 14px;
   --openbot-text-base: 15px;
   --openbot-text-xl: 16px;
+  --openbot-text-settings-title: 18px;
   --openbot-text-2xl: 20px;
   --openbot-text-3xl: 24px;
   --openbot-text-4xl: 28px;
@@ -159,6 +172,7 @@
   --openbot-leading-md: 18px;
   --openbot-leading-lg: 20px;
   --openbot-leading-xl: 22px;
+  --openbot-leading-settings-title: 24px;
   --openbot-leading-2xl: 26px;
   --openbot-leading-display: 38px;
   --openbot-weight-regular: 400;
@@ -195,7 +209,8 @@
   --openbot-icon-md: 16px;
   --openbot-icon-lg: 20px;
   --openbot-duration-fast: 120ms;
-  --openbot-duration-selectable-hover: 0ms;
+  --openbot-duration-hover: 0ms;
+  --openbot-duration-selectable-hover: var(--openbot-duration-hover);
   --openbot-duration-dialog: 100ms;
   --openbot-duration-normal: 160ms;
   --openbot-duration-slow: 200ms;

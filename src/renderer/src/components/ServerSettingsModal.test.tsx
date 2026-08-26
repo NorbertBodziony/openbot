@@ -43,6 +43,17 @@ const unconfiguredHost: HostStatus = {
   message: null,
 };
 
+const configuredHost: HostStatus = {
+  ...unconfiguredHost,
+  phase: "online",
+  configured: true,
+  enabledOnLaunch: true,
+  serverId: "local",
+  serverName: "Local",
+  apiUrl: "https://team.example.com",
+  apiOnline: true,
+};
+
 const members: TeamPresenceMember[] = [
   {
     id: "owner-1",
@@ -131,6 +142,22 @@ describe("ServerSettingsModal", () => {
     expect(name).toHaveValue("Studio Team");
   });
 
+  it("publishes a configured local server and keeps first setup disabled", async () => {
+    const onSetPublished = vi.fn(async () => undefined);
+    const { unmount } = render(() => (
+      <ServerSettingsModal {...props({ hostStatus: configuredHost, onSetPublished })} />
+    ));
+
+    const publishSwitch = screen.getByRole("switch", { name: "Publish this server" });
+    expect(publishSwitch).toBeEnabled();
+    await fireEvent.click(publishSwitch);
+    await waitFor(() => expect(onSetPublished).toHaveBeenCalledWith(false));
+
+    unmount();
+    render(() => <ServerSettingsModal {...props({ hostStatus: unconfiguredHost, onSetPublished })} />);
+    expect(screen.getByRole("switch", { name: "Publish this server" })).toBeDisabled();
+  });
+
   it("validates the server name without changing the field layout while typing", async () => {
     const onSaveIdentity = vi.fn(async () => undefined);
     render(() => <ServerSettingsModal {...props({ onSaveIdentity })} />);
@@ -161,10 +188,49 @@ describe("ServerSettingsModal", () => {
 
     expect(screen.queryByRole("textbox", { name: "Server name" })).not.toBeInTheDocument();
     expect(screen.getByText("Studio Team", { selector: ".server-settings-readonly-value" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Members" }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Members" }));
     expect(screen.getByText("Alice Chen")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Send invite" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Actions for Alice Chen" })).not.toBeInTheDocument();
+  });
+
+  it("moves through settings tabs with the keyboard", async () => {
+    render(() => <ServerSettingsModal {...props({ server: remoteServer, hostStatus: null, members })} />);
+
+    const generalTab = screen.getByRole("tab", { name: "General" });
+    generalTab.focus();
+    await fireEvent.keyDown(generalTab, { key: "ArrowDown" });
+
+    const membersTab = screen.getByRole("tab", { name: "Members" });
+    await waitFor(() => expect(membersTab).toHaveAttribute("aria-selected", "true"));
+    expect(membersTab).toHaveFocus();
+    expect(screen.getByRole("heading", { name: "Members" })).toBeInTheDocument();
+  });
+
+  it("confirms member removal and restores focus after cancellation", async () => {
+    const onRemoveMember = vi.fn(async () => undefined);
+    render(() => (
+      <ServerSettingsModal {...props({ server: remoteServer, hostStatus: null, members, onRemoveMember })} />
+    ));
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+    const memberActions = screen.getByRole("button", { name: "Actions for Alice Chen" });
+
+    await fireEvent.pointerDown(memberActions, { button: 0 });
+    await fireEvent.pointerUp(memberActions, { button: 0 });
+    await fireEvent.pointerUp(await screen.findByRole("menuitem", { name: "Remove member" }), { button: 0 });
+    expect(await screen.findByRole("alertdialog", { name: "Remove Alice Chen?" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(memberActions).toHaveFocus());
+    expect(onRemoveMember).not.toHaveBeenCalled();
+
+    await fireEvent.pointerDown(memberActions, { button: 0 });
+    await fireEvent.pointerUp(memberActions, { button: 0 });
+    await fireEvent.pointerUp(await screen.findByRole("menuitem", { name: "Remove member" }), { button: 0 });
+    await fireEvent.click(await screen.findByRole("button", { name: "Remove member" }));
+
+    await waitFor(() => expect(onRemoveMember).toHaveBeenCalledWith("alice-1"));
   });
 
   it("lets a remote administrator invite, search, revoke, and pause access", async () => {
@@ -200,7 +266,7 @@ describe("ServerSettingsModal", () => {
       />
     ));
 
-    await fireEvent.click(screen.getByRole("button", { name: "Members" }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Members" }));
     await fireEvent.input(screen.getByRole("textbox", { name: "Email address" }), {
       target: { value: "new@example.com" },
     });

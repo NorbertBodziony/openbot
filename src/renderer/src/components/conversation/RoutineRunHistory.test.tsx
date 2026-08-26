@@ -1,6 +1,6 @@
 import type { RoutineRun } from "@openbot/contracts/ipc";
-import { render, screen } from "@solidjs/testing-library";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@solidjs/testing-library";
+import { describe, expect, it, vi } from "vitest";
 import { RoutineRunHistory } from "./RoutineRunHistory";
 
 const statuses: RoutineRun["status"][] = [
@@ -22,6 +22,31 @@ describe("RoutineRunHistory", () => {
       expect(screen.getByRole("img", { name: label })).toBeInTheDocument();
     }
     expect(screen.getByText(/Manual ·/)).toBeInTheDocument();
+  });
+
+  it("shows only the latest ten runs and opens their chat messages", async () => {
+    const onOpenRun = vi.fn();
+    const runs = Array.from({ length: 11 }, (_, index) => ({
+      ...runForStatus("succeeded", index),
+      id: `run-${index}`,
+      deliveryId: `delivery-${index}`,
+    }));
+    render(() => <RoutineRunHistory runs={runs} onOpenRun={onOpenRun} />);
+
+    const links = screen.getAllByRole("button", { name: /^Open .* in chat$/ });
+    expect(links).toHaveLength(10);
+    expect(screen.getAllByRole("img", { name: "Succeeded" })).toHaveLength(10);
+    const firstLink = links[0];
+    if (!firstLink) throw new Error("Expected the latest routine run link.");
+    await fireEvent.click(firstLink);
+    expect(onOpenRun).toHaveBeenCalledWith("delivery-0");
+  });
+
+  it("keeps a run without a conversation message non-interactive", () => {
+    render(() => <RoutineRunHistory runs={[{ ...runForStatus("failed", 0), deliveryId: null }]} onOpenRun={vi.fn()} />);
+
+    expect(screen.queryByRole("button", { name: /in chat$/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Failed" })).toBeInTheDocument();
   });
 });
 

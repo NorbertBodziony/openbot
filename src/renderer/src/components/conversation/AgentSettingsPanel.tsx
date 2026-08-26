@@ -29,7 +29,7 @@ import {
   Textarea,
 } from "../ui";
 import { AgentMemoriesModal } from "./AgentMemoriesModal";
-import { AgentRoutinesSettings, type AgentRoutinesView } from "./AgentRoutinesSettings";
+import { AgentRoutinesSettings, type AgentRoutinesView, type RoutineSelectionRequest } from "./AgentRoutinesSettings";
 import { BackIcon, SettingsForwardIcon } from "./ConversationIcons";
 
 const SETTINGS_PANEL_STORAGE_KEY = "openbot:settings-panel-width";
@@ -47,6 +47,9 @@ interface AgentSettingsPanelProps {
   onWidthChange: (width: number) => void;
   onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
   onSetAgentAvatar: (botId: string, image: AvatarImageInput | null) => Promise<void>;
+  routineSelectionRequest?: RoutineSelectionRequest | null;
+  onRoutineSelectionRequestHandled?: (nonce: number) => void;
+  onOpenRoutineRun?: (messageId: string) => void;
 }
 
 export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
@@ -136,6 +139,13 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
           .then((items) => setRoutineCount(items.length))
           .catch(() => setRoutineCount(0));
       }
+    },
+  );
+
+  createEffect(
+    () => ({ request: props.routineSelectionRequest, botId: props.bot.id }),
+    ({ request }) => {
+      if (request) setRoutinesOpen(true);
     },
   );
 
@@ -576,6 +586,9 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
             onViewChange={setRoutineView}
             onBack={() => setRoutinesOpen(false)}
             onClose={props.onClose}
+            selectionRequest={props.routineSelectionRequest}
+            onSelectionRequestHandled={props.onRoutineSelectionRequestHandled}
+            onOpenRun={props.onOpenRoutineRun}
           />
         </div>
       </Show>

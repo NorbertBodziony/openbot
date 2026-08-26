@@ -262,6 +262,10 @@ function WorkspaceShell(props: {
       </Show>
       <Sidebar
         serverName={activeServer()?.name ?? "Local"}
+        onOpenServerSettings={(trigger) => {
+          const server = activeServer();
+          if (server) openServerSettings(server.id, trigger);
+        }}
         bots={botList()}
         activeBotId={activeDirectMemberId() ? "" : (activeBot()?.id ?? "")}
         people={directPeople()}

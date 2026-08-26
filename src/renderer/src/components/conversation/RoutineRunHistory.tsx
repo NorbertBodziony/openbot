@@ -1,28 +1,50 @@
 import type { RoutineRun } from "@openbot/contracts/ipc";
 import { For, Show } from "solid-js";
-import { Check, CirclePause, Clock3, TriangleAlert, X } from "../ui";
+import { Button, Check, CirclePause, Clock3, TriangleAlert, X } from "../ui";
 
 interface RoutineRunHistoryProps {
   runs: RoutineRun[];
+  onOpenRun?: (messageId: string) => void;
 }
 
 export function RoutineRunHistory(props: RoutineRunHistoryProps) {
+  const visibleRuns = () => props.runs.slice(0, 10);
   return (
     <section class="agent-routine-history" aria-labelledby="routine-history-heading">
       <h3 id="routine-history-heading">Run history</h3>
-      <Show when={props.runs.length > 0} fallback={<p class="agent-routines-empty">No runs yet.</p>}>
+      <Show when={visibleRuns().length > 0} fallback={<p class="agent-routines-empty">No runs yet.</p>}>
         <div class="agent-routine-run-list">
-          <For each={props.runs}>
-            {(run) => (
-              <div class="agent-routine-run-row">
-                <span>
-                  {run.kind === "manual"
-                    ? `Manual · ${formatRoutineRunTime(run.scheduledFor)}`
-                    : formatRoutineRunTime(run.scheduledFor)}
-                </span>
-                <RoutineRunStatus status={run.status} />
-              </div>
-            )}
+          <For each={visibleRuns()}>
+            {(run) => {
+              const label =
+                run.kind === "manual"
+                  ? `Manual · ${formatRoutineRunTime(run.scheduledFor)}`
+                  : formatRoutineRunTime(run.scheduledFor);
+              const content = (
+                <>
+                  <span>{label}</span>
+                  <RoutineRunStatus status={run.status} />
+                </>
+              );
+              return (
+                <Show
+                  when={run.deliveryId && props.onOpenRun ? run.deliveryId : null}
+                  fallback={<div class="agent-routine-run-row">{content}</div>}
+                >
+                  {(messageId) => (
+                    <Button
+                      variant="ghost"
+                      type="button"
+                      class="agent-routine-run-row agent-routine-run-link"
+                      aria-label={`Open ${label} in chat`}
+                      onClick={() => props.onOpenRun?.(messageId())}
+                    >
+                      {content}
+                    </Button>
+                  )}
+                </Show>
+              );
+            }}
           </For>
         </div>
       </Show>

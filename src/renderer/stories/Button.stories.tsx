@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { Button, Heading, IconButton, Plus, Search, Text, Trash2 } from "../src/components/ui";
+import { Button, CopyButton, Heading, IconButton, Plus, Search, Text, Trash2 } from "../src/components/ui";
 
 const meta = {
   title: "Foundations/Button",
@@ -92,6 +92,7 @@ export const Gallery: Story = {
           <Button variant="outline" aria-invalid="true">
             Invalid
           </Button>
+          <CopyButton value="https://openbot.example/invite" label="Copy link" variant="outline" />
         </div>
       </section>
     </main>

@@ -1,8 +1,9 @@
 import type { Routine, RoutineRun } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockOpenBot, type MockOpenBotControls } from "../../preview/mock-openbot";
-import { AgentRoutinesSettings } from "./AgentRoutinesSettings";
+import { AgentRoutinesSettings, type RoutineSelectionRequest } from "./AgentRoutinesSettings";
 
 const routine: Routine = {
   id: "routine-1",
@@ -72,6 +73,106 @@ describe("AgentRoutinesSettings", () => {
     await fireEvent.scroll(body);
     expect(body).toHaveClass("scroll-fade-top");
     expect(body).not.toHaveClass("scroll-fade-bottom");
+  });
+
+  it("opens the current routine from a message selection and can reopen it", async () => {
+    const renamedRoutine = { ...routine, name: "Renamed morning brief" };
+    mock.dispose();
+    mock = createMockOpenBot({ routines: { chief: [renamedRoutine] } });
+    window.openbot = mock.api;
+    const listRoutineRuns = vi.spyOn(mock.api.agent, "listRoutineRuns");
+    const onSelectionRequestHandled = vi.fn();
+    const [selectionRequest, setSelectionRequest] = createSignal<RoutineSelectionRequest | null>({
+      routineId: routine.id,
+      routineName: "Old morning brief",
+      nonce: 1,
+    });
+    render(() => (
+      <AgentRoutinesSettings
+        botId="chief"
+        onCountChange={vi.fn()}
+        selectionRequest={selectionRequest()}
+        onSelectionRequestHandled={onSelectionRequestHandled}
+      />
+    ));
+
+    expect(await screen.findByRole("textbox", { name: "Name" })).toHaveValue("Renamed morning brief");
+    await waitFor(() =>
+      expect(listRoutineRuns).toHaveBeenCalledWith({ botId: "chief", routineId: "routine-1", limit: 10 }),
+    );
+    expect(onSelectionRequestHandled).toHaveBeenCalledWith(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Back to Routines" }));
+    setSelectionRequest({ routineId: routine.id, routineName: routine.name, nonce: 2 });
+    expect(await screen.findByRole("textbox", { name: "Name" })).toHaveValue("Renamed morning brief");
+    expect(onSelectionRequestHandled).toHaveBeenCalledWith(2);
+  });
+
+  it("keeps the routine list open and reports a missing message selection", async () => {
+    const onSelectionRequestHandled = vi.fn();
+    render(() => (
+      <AgentRoutinesSettings
+        botId="chief"
+        onCountChange={vi.fn()}
+        selectionRequest={{ routineId: "deleted-routine", routineName: "Old brief", nonce: 1 }}
+        onSelectionRequestHandled={onSelectionRequestHandled}
+      />
+    ));
+
+    expect(await screen.findByText("No routines yet.")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent('Routine "Old brief" no longer exists.');
+    expect(screen.queryByRole("textbox", { name: "Name" })).not.toBeInTheDocument();
+    expect(onSelectionRequestHandled).toHaveBeenCalledWith(1);
+  });
+
+  it("protects unsaved changes before opening a different selected routine", async () => {
+    const eveningRoutine: Routine = {
+      ...routine,
+      id: "routine-2",
+      name: "Evening brief",
+      trigger: { ...routine.trigger, id: "trigger-2", routineId: "routine-2" },
+    };
+    mock.dispose();
+    mock = createMockOpenBot({ routines: { chief: [routine, eveningRoutine] } });
+    window.openbot = mock.api;
+    const [selectionRequest, setSelectionRequest] = createSignal<RoutineSelectionRequest | null>({
+      routineId: routine.id,
+      routineName: routine.name,
+      nonce: 1,
+    });
+    render(() => <AgentRoutinesSettings botId="chief" onCountChange={vi.fn()} selectionRequest={selectionRequest()} />);
+
+    const name = await screen.findByRole("textbox", { name: "Name" });
+    await fireEvent.input(name, { target: { value: "Unsaved morning brief" } });
+    setSelectionRequest({ routineId: eveningRoutine.id, routineName: eveningRoutine.name, nonce: 2 });
+    await fireEvent.click(await screen.findByRole("button", { name: "Keep editing" }));
+    expect(name).toHaveValue("Unsaved morning brief");
+
+    setSelectionRequest({ routineId: eveningRoutine.id, routineName: eveningRoutine.name, nonce: 3 });
+    await fireEvent.click(await screen.findByRole("button", { name: "Discard changes" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("Evening brief"));
+  });
+
+  it("protects unsaved changes before opening a run in chat", async () => {
+    mock.dispose();
+    mock = createMockOpenBot({ routines: { chief: [routine] } });
+    window.openbot = mock.api;
+    vi.spyOn(mock.api.agent, "listRoutineRuns").mockResolvedValue([run]);
+    const onOpenRun = vi.fn();
+    render(() => <AgentRoutinesSettings botId="chief" onCountChange={vi.fn()} onOpenRun={onOpenRun} />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: /Morning brief/ }));
+    await fireEvent.input(screen.getByRole("textbox", { name: "Name" }), {
+      target: { value: "Unsaved morning brief" },
+    });
+    const runLink = await screen.findByRole("button", { name: /^Open .* in chat$/ });
+    await fireEvent.click(runLink);
+    await fireEvent.click(await screen.findByRole("button", { name: "Keep editing" }));
+    expect(onOpenRun).not.toHaveBeenCalled();
+
+    await fireEvent.click(runLink);
+    await fireEvent.click(await screen.findByRole("button", { name: "Discard changes" }));
+    expect(onOpenRun).toHaveBeenCalledWith("delivery-1");
   });
 
   it("keeps an empty draft local and discards it on Back", async () => {

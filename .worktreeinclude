@@ -1,0 +1,2 @@
+# Local dotenvx decryption key used by the development Auth API.
+.env.keys

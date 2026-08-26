@@ -5,7 +5,6 @@
   display: grid;
   place-items: center;
   padding: var(--openbot-space-6);
-  background: var(--openbot-command-overlay);
   animation: join-server-backdrop-in var(--openbot-duration-normal) var(--openbot-ease-out) both;
 }
 
@@ -14,14 +13,9 @@
   width: min(400px, 100%);
   max-height: calc(100dvh - 48px);
   overflow: hidden;
-  border: 1px solid var(--openbot-border-strong);
-  border-radius: var(--openbot-radius-lg);
   outline: 0;
   background: var(--openbot-bg-surface);
   color: var(--openbot-text-primary);
-  box-shadow:
-    0 24px 80px var(--openbot-shadow-dialog),
-    0 0 0 1px var(--openbot-shadow-ring);
   animation: join-server-dialog-in var(--openbot-duration-overlay) var(--openbot-ease-out) both;
 }
 

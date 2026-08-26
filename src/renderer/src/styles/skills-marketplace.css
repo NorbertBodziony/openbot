@@ -5,17 +5,13 @@
   display: grid;
   place-items: center;
   padding: var(--openbot-space-4);
-  background: var(--openbot-bg-overlay);
 }
 
 .skills-marketplace {
   width: min(1062px, calc(90vw - 28.8px));
   height: min(738px, calc(90vh - 28.8px));
   overflow: hidden;
-  border: 1px solid var(--openbot-border-strong);
-  border-radius: var(--openbot-radius-xl);
   background: var(--openbot-bg-sidebar);
-  box-shadow: 0 24px 80px var(--openbot-shadow-dialog);
   color: var(--openbot-text-primary);
 }
 

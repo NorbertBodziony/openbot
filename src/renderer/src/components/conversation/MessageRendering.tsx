@@ -260,6 +260,7 @@ export function MessageBody(props: {
   onOpenSharedFile?: (path: string) => void;
   onOpenWorkspaceFile?: (path: string) => void;
   onDownload?: (attachment: AttachmentSummary) => void;
+  onOpenRoutine?: (routine: { routineId: string; name: string }) => void;
 }) {
   const streamingBody = createStreamingBody(() => props.message);
   const streamedBody = streamingBody.body;
@@ -326,10 +327,19 @@ export function MessageBody(props: {
       </Show>
       <Show when={props.message.routine}>
         {(routine) => (
-          <div class="routine-message-label" title={`Scheduled for ${routine().scheduledFor}`}>
-            <CalendarClock aria-hidden="true" />
-            <span>{routine().name}</span>
-          </div>
+          <Button
+            variant="ghost"
+            type="button"
+            class="routine-message-label"
+            aria-label={`Open routine ${routine().name}`}
+            title={`Scheduled for ${routine().scheduledFor}`}
+            onClick={() => props.onOpenRoutine?.({ routineId: routine().routineId, name: routine().name })}
+          >
+            <span class="routine-message-icon" aria-hidden="true">
+              <CalendarClock />
+            </span>
+            <span class="routine-message-name">{routine().name}</span>
+          </Button>
         )}
       </Show>
       <div class="message-content-resize" ref={(element) => (messageContentResize = element)}>

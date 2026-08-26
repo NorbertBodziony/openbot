@@ -98,6 +98,13 @@ interface RenderedAgentActivity {
   presentation: AgentActivityPresentation;
 }
 
+interface RoutineSettingsRequest {
+  botId: string;
+  routineId: string;
+  routineName: string;
+  nonce: number;
+}
+
 function rendererDuration(property: string, fallback: number): number {
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return 0;
   const value = getComputedStyle(document.documentElement).getPropertyValue(property).trim();
@@ -346,6 +353,8 @@ function createConversationViewScope(props: ConversationProps) {
     setBrowserPanelWidth,
     resources,
   } = controller;
+  const [routineSettingsRequest, setRoutineSettingsRequest] = createSignal<RoutineSettingsRequest | null>(null);
+  let routineSettingsRequestNonce = 0;
   let imageAttachmentPicker: HTMLInputElement | undefined;
   let contextAttachmentPicker: HTMLInputElement | undefined;
   const currentDraft = createMemo(() => {
@@ -1168,6 +1177,7 @@ function createConversationViewScope(props: ConversationProps) {
       if (botId === lastPanelBotId) return;
       const previousBotId = lastPanelBotId;
       lastPanelBotId = botId;
+      setRoutineSettingsRequest(null);
       resources.filePreviewRequestGeneration += 1;
       const preview = sidebarFilePreview();
       if (preview && preview.ownerBotId !== botId) {
@@ -1700,7 +1710,32 @@ function createConversationViewScope(props: ConversationProps) {
 
   function setActiveRightPanel(mode: RightPanelMode, botId = props.bot?.id) {
     if (!botId) return;
+    if (mode !== "settings") {
+      setRoutineSettingsRequest((current) => (current?.botId === botId ? null : current));
+    }
     setRightPanels((current) => (current[botId] === mode ? current : { ...current, [botId]: mode }));
+  }
+
+  function openRoutineSettings(routine: { routineId: string; name: string }): void {
+    const botId = props.bot?.id;
+    if (!botId) return;
+    routineSettingsRequestNonce += 1;
+    setRoutineSettingsRequest({
+      botId,
+      routineId: routine.routineId,
+      routineName: routine.name,
+      nonce: routineSettingsRequestNonce,
+    });
+    setActiveRightPanel("settings", botId);
+  }
+
+  function handleRoutineSettingsRequest(nonce: number): void {
+    setRoutineSettingsRequest((current) => (current?.nonce === nonce ? null : current));
+  }
+
+  function openRoutineRunMessage(messageId: string): void {
+    setActiveRightPanel("none");
+    void props.onOpenSearchMessage?.(messageId);
   }
 
   async function previewAttachment(attachment: AttachmentSummary) {
@@ -1926,6 +1961,8 @@ function createConversationViewScope(props: ConversationProps) {
     openExternalMessageUrl,
     openMoreMessageId,
     openReactionMessageId,
+    openRoutineSettings,
+    openRoutineRunMessage,
     openSharedFile,
     openSidebarFileExternally,
     openWorkspaceFile,
@@ -1946,6 +1983,7 @@ function createConversationViewScope(props: ConversationProps) {
     replyToMessage,
     resources,
     rightPanels,
+    routineSettingsRequest,
     saveBotPatch,
     saveQueuedMessageEdit,
     scheduleUnreadDividerVisibilityUpdate,
@@ -1986,6 +2024,7 @@ function createConversationViewScope(props: ConversationProps) {
     setRenderedAgentActivity,
     setRenderedQueueDeliveries,
     setRightPanels,
+    handleRoutineSettingsRequest,
     setSelectionSending,
     setSidebarFilePreview,
     setSettingsModel,
@@ -2063,6 +2102,7 @@ export function ConversationHeader() {
           {(bot) => (
             <Button
               variant="ghost"
+              size="sm"
               type="button"
               class="conversation-title no-drag"
               aria-label="View agent settings"
@@ -2174,6 +2214,7 @@ export function ConversationTimeline() {
     openExternalMessageUrl,
     openMoreMessageId,
     openReactionMessageId,
+    openRoutineSettings,
     openSharedFile,
     openWorkspaceFile,
     previewAttachment,
@@ -2360,6 +2401,7 @@ export function ConversationTimeline() {
                                     onOpenSharedFile={openSharedFile}
                                     onOpenWorkspaceFile={openWorkspaceFile}
                                     onDownload={(attachment) => attachmentAction(attachment, "download")}
+                                    onOpenRoutine={openRoutineSettings}
                                   />
                                 </div>
                                 <MessageActions
@@ -2838,6 +2880,7 @@ export function ConversationPanels() {
     filePreviewOpen,
     openBrowserAddress,
     openExternalMessageUrl,
+    openRoutineRunMessage,
     openSharedFile,
     openSidebarFileExternally,
     openWorkspaceFile,
@@ -2852,8 +2895,10 @@ export function ConversationPanels() {
     setSettingsPanelWidth,
     showBrowserPip,
     hideBrowserPanel,
+    handleRoutineSettingsRequest,
     sidebarFilePreview,
     settingsOpen,
+    routineSettingsRequest,
     updateBrowserPipBounds,
   } = useConversationViewScope();
   return (
@@ -2952,6 +2997,9 @@ export function ConversationPanels() {
               onWidthChange={setSettingsPanelWidth}
               onUpdateBot={props.onUpdateBot}
               onSetAgentAvatar={props.onSetAgentAvatar}
+              routineSelectionRequest={routineSettingsRequest()?.botId === bot().id ? routineSettingsRequest() : null}
+              onRoutineSelectionRequestHandled={handleRoutineSettingsRequest}
+              onOpenRoutineRun={props.onOpenSearchMessage ? openRoutineRunMessage : undefined}
             />
           </Loading>
         )}
@@ -2969,7 +3017,7 @@ export function ConversationOverlays() {
         {(preview) => (
           <Dialog.Portal>
             <Dialog.Overlay class="media-backdrop">
-              <Dialog.Content as="section" class="media-modal">
+              <Dialog.Content as="section" class="media-modal" data-dialog-surface="unstyled">
                 <Dialog.Title class="sr-only">{preview().attachment.name}</Dialog.Title>
                 <Button
                   variant="ghost"

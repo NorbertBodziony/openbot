@@ -89,6 +89,38 @@ describe.sequential("AgentService", () => {
     await expect(service.resolveSharedFile(link)).rejects.toThrow("inside the shared directory");
   });
 
+  it("opens a historical routine message that only exists in the mailbox", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+    await store.ensureThreadId("chief");
+    const receipt = await mailbox.enqueue({
+      sender: {
+        kind: "routine",
+        routineId: "routine-1",
+        runId: "run-1",
+        routineName: "Morning brief",
+        scheduledFor: "2026-08-25T07:00:00.000Z",
+      },
+      recipientBotIds: ["chief"],
+      text: "Prepare the morning brief.",
+      idempotencyKey: "test:routine-history:run-1",
+    });
+    const messageId = receipt.deliveries[0]?.id;
+    if (!messageId) throw new Error("The routine delivery was not created.");
+
+    const page = await service.readConversationPageFor("chief", "member-1", { type: "around", messageId }, 50);
+
+    expect(page.messages).toContainEqual(
+      expect.objectContaining({
+        id: messageId,
+        source: "routine",
+        routine: expect.objectContaining({ routineId: "routine-1", runId: "run-1" }),
+      }),
+    );
+  });
+
   it("resolves only regular files inside the selected agent workspace", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
@@ -225,6 +257,8 @@ describe.sequential("AgentService", () => {
       expect(params.developerInstructions).toContain(
         "You may list, read, create, edit, move, and delete files and run local commands in both directories.",
       );
+      expect(params.developerInstructions).toContain("openbot.create_routine");
+      expect(params.developerInstructions).toContain("Omit botId to target yourself");
       expect(params.dynamicTools).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ type: "namespace", name: "openbot_browser" }),
@@ -235,6 +269,11 @@ describe.sequential("AgentService", () => {
               expect.objectContaining({ name: "ask_user" }),
               expect.objectContaining({ name: "list_agents" }),
               expect.objectContaining({ name: "update_profile" }),
+              expect.objectContaining({ name: "list_routines" }),
+              expect.objectContaining({ name: "create_routine" }),
+              expect.objectContaining({ name: "update_routine" }),
+              expect.objectContaining({ name: "delete_routine" }),
+              expect.objectContaining({ name: "test_routine" }),
             ]),
           }),
         ]),
@@ -1407,6 +1446,11 @@ describe.sequential("AgentService", () => {
       ]),
     );
 
+    await waitFor(async () =>
+      (await protocolMessages()).some(
+        (message) => message.method === "turn/start" && getString(message.params, "cwd")?.endsWith("/sales-outbound"),
+      ),
+    );
     const starts = (await protocolMessages()).filter((message) => message.method === "turn/start");
     const salesStart = starts.find((message) => getString(message.params, "cwd")?.endsWith("/sales-outbound"));
     const salesInput = inputRecords(salesStart?.params);
@@ -1461,6 +1505,153 @@ describe.sequential("AgentService", () => {
     const listResponse = (await protocolMessages()).find((message) => message.id === "agent-tool-configured-0");
     expect(JSON.stringify(listResponse?.result)).toContain('\\"title\\":\\"Design\\"');
     expect(JSON.stringify(listResponse?.result)).toContain('\\"description\\":\\"\\"');
+  });
+
+  it("lets an agent manage routines for itself and another agent", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await store.getOrCreate("design", "Design Studio", "Product design");
+    await service.sendMessage({ botId: "chief", text: "Manage our routines." });
+    await waitFor(() => Boolean(store.activeProviderSession("chief")));
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    if (!client || !threadId) throw new Error("The routine tool test thread did not start.");
+
+    const ownCreate = await callOpenBotTool(client, threadId, "create_routine", {
+      name: "Morning brief",
+      instruction: "Prepare the daily brief.",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    expect(ownCreate.error).toBeUndefined();
+    const ownRoutine = openBotToolPayload(ownCreate.result);
+    expect(ownRoutine).toMatchObject({
+      botId: "chief",
+      name: "Morning brief",
+      active: true,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    });
+
+    const otherCreate = await callOpenBotTool(client, threadId, "create_routine", {
+      botId: "design",
+      name: "Weekly review",
+      instruction: "Review the current design work.",
+      active: false,
+      timezone: "UTC",
+      schedule: { kind: "weekly", weekday: 1, time: "10:30" },
+    });
+    expect(otherCreate.error).toBeUndefined();
+    const otherRoutine = openBotToolPayload(otherCreate.result);
+    expect(otherRoutine).toMatchObject({ botId: "design", active: false, timezone: "UTC" });
+
+    const listResult = await callOpenBotTool(client, threadId, "list_routines", { botId: "design" });
+    expect(openBotToolPayload(listResult.result).routines).toEqual([
+      expect.objectContaining({ id: otherRoutine.id, name: "Weekly review" }),
+    ]);
+
+    const updated = await callOpenBotTool(client, threadId, "update_routine", {
+      botId: "design",
+      routineId: otherRoutine.id,
+      active: true,
+      schedule: { kind: "weekdays", time: "08:15" },
+    });
+    expect(openBotToolPayload(updated.result)).toMatchObject({
+      id: otherRoutine.id,
+      active: true,
+      trigger: { schedule: { kind: "weekdays", time: "08:15" } },
+    });
+
+    const testRun = await callOpenBotTool(client, threadId, "test_routine", {
+      botId: "design",
+      routineId: otherRoutine.id,
+    });
+    expect(openBotToolPayload(testRun.result)).toMatchObject({
+      routineId: otherRoutine.id,
+      botId: "design",
+      kind: "manual",
+      status: "queued",
+    });
+
+    const deleted = await callOpenBotTool(client, threadId, "delete_routine", { routineId: ownRoutine.id });
+    expect(openBotToolPayload(deleted.result)).toEqual({
+      deleted: true,
+      botId: "chief",
+      routineId: ownRoutine.id,
+    });
+    expect(service.listRoutines("chief")).toEqual([]);
+    expect(service.listRoutines("design")).toEqual([expect.objectContaining({ id: otherRoutine.id, active: true })]);
+  });
+
+  it("rejects invalid or cross-agent routine tool mutations", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await store.getOrCreate("design", "Design Studio", "Product design");
+    await service.sendMessage({ botId: "chief", text: "Validate routine requests." });
+    await waitFor(() => Boolean(store.activeProviderSession("chief")));
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    if (!client || !threadId) throw new Error("The routine validation test thread did not start.");
+
+    await expectOpenBotToolError(client, threadId, "list_routines", { botId: "missing" }, "Unknown bot");
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "create_routine",
+      {
+        name: "Invalid",
+        instruction: "This must not be saved.",
+        schedule: { kind: "daily", time: "25:00" },
+      },
+      "schedule is invalid",
+    );
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "create_routine",
+      {
+        name: "Invalid active state",
+        instruction: "This must not be saved.",
+        active: null,
+        schedule: { kind: "daily", time: "09:00" },
+      },
+      "active must be a boolean",
+    );
+
+    const routine = service.createRoutine({
+      botId: "chief",
+      name: "Owned routine",
+      instruction: "Remain owned by Chief.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "update_routine",
+      { routineId: routine.id },
+      "At least one routine update is required",
+    );
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "update_routine",
+      { botId: "design", routineId: routine.id, active: false },
+      "routine no longer exists",
+    );
   });
 
   it("sends a teammate request only to the selected profile match", async () => {
@@ -2008,6 +2199,55 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
   }
 }
 
+async function callOpenBotTool(
+  client: FakeAgentClient,
+  threadId: string,
+  tool: string,
+  args: unknown,
+): Promise<{ result?: unknown; error?: RpcError }> {
+  const id = `openbot-tool-${randomUUID()}`;
+  client.emit("request", {
+    id,
+    method: "item/tool/call",
+    params: {
+      threadId,
+      turnId: "routine-tool-turn",
+      callId: randomUUID(),
+      namespace: "openbot",
+      tool,
+      arguments: args,
+    },
+  });
+  await waitFor(
+    () =>
+      client.responses.some((response) => response.id === id) || client.errors.some((response) => response.id === id),
+  );
+  const response = client.responses.find((item) => item.id === id);
+  if (response) return { result: response.result };
+  return { error: client.errors.find((item) => item.id === id)?.error };
+}
+
+function openBotToolPayload(result: unknown): DynamicRecord {
+  const contentItems = paramsRecord(result)?.contentItems;
+  const text = Array.isArray(contentItems) ? getString(contentItems[0], "text") : null;
+  if (!text) throw new Error("The OpenBot tool response has no text payload.");
+  const payload = JSON.parse(text);
+  if (!isDynamicRecord(payload)) throw new Error("The OpenBot tool response payload is invalid.");
+  return payload;
+}
+
+async function expectOpenBotToolError(
+  client: FakeAgentClient,
+  threadId: string,
+  tool: string,
+  args: unknown,
+  message: string,
+): Promise<void> {
+  const result = await callOpenBotTool(client, threadId, tool, args);
+  expect(result.result).toBeUndefined();
+  expect(result.error?.message).toContain(message);
+}
+
 function notification(method: string, params: unknown): AppServerNotification {
   return { method, params };
 }
@@ -2098,6 +2338,10 @@ let threadCounter = 0;
 let turnCounter = 0;
 const turns = new Map();
 let archivedThread = process.env.OPENBOT_FAKE_ARCHIVED_THREAD === "1";
+process.stdout.on("error", (error) => {
+  if (error.code === "EPIPE") process.exit(0);
+  throw error;
+});
 const write = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {

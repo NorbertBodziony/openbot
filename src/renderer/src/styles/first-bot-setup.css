@@ -255,8 +255,8 @@
   text-align: left;
   white-space: normal;
   transition:
-    border-color var(--openbot-duration-normal) var(--openbot-ease-out),
-    background-color var(--openbot-duration-normal) var(--openbot-ease-out);
+    border-color var(--openbot-duration-hover) var(--openbot-ease-out),
+    background-color var(--openbot-duration-hover) var(--openbot-ease-out);
 }
 
 .ui-button.first-bot-suggestion-card:hover:not(:disabled) {

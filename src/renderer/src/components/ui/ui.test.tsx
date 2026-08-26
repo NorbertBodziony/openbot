@@ -1,9 +1,10 @@
-import { fireEvent, render, screen } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal, flush } from "solid-js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Button,
   buttonVariants,
+  CopyButton,
   Field,
   IconButton,
   Input,
@@ -15,9 +16,37 @@ import {
   Switch,
   SwitchField,
   Textarea,
+  Toaster,
+  toast,
 } from ".";
 
+const originalClipboard = navigator.clipboard;
+
+afterEach(() => {
+  toast.dismiss();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: originalClipboard });
+});
+
 describe("UI primitives", () => {
+  it("announces a toast and runs its action", async () => {
+    const onUndo = vi.fn();
+    render(() => <Toaster />);
+
+    toast.success("Event created", {
+      description: "The agent is ready.",
+      action: { label: "Undo", onClick: onUndo },
+    });
+
+    expect(await screen.findByRole("region", { name: /Notifications/ })).toHaveAttribute("aria-live", "polite");
+    expect(await screen.findByText("Event created")).toBeInTheDocument();
+    expect(screen.getByText("The agent is ready.")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(onUndo).toHaveBeenCalledOnce();
+  });
+
   it("forwards button events and exposes disabled and loading states", async () => {
     const onClick = vi.fn();
     const { unmount } = render(() => <Button onClick={onClick}>Continue</Button>);
@@ -36,6 +65,37 @@ describe("UI primitives", () => {
     expect(loading).toHaveAttribute("aria-busy", "true");
     await fireEvent.click(loading);
     expect(loadingClick).not.toHaveBeenCalled();
+  });
+
+  it("copies a value and resets its success state after 1.5 seconds", async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(() => <CopyButton value="https://openbot.example/invite" label="Copy link" />);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Copy link" }));
+    await vi.runAllTicks();
+
+    expect(writeText).toHaveBeenCalledWith("https://openbot.example/invite");
+    expect(screen.getByRole("button", { name: "Copied" })).toHaveAttribute("data-copied");
+
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(screen.getByRole("button", { name: "Copy link" })).not.toHaveAttribute("data-copied");
+  });
+
+  it("reports clipboard failures without showing a stale success state", async () => {
+    const clipboardError = new Error("Clipboard unavailable");
+    const onCopyError = vi.fn();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn(async () => Promise.reject(clipboardError)) },
+    });
+    render(() => <CopyButton value="server-address" label="Copy address" onCopyError={onCopyError} />);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Copy address" }));
+
+    await waitFor(() => expect(onCopyError).toHaveBeenCalledWith(clipboardError));
+    expect(screen.getByRole("button", { name: "Copy address" })).not.toHaveAttribute("data-copied");
   });
 
   it("supports polymorphic links, refs, expanded state, and the shared variant helper", () => {

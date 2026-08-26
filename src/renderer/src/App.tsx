@@ -65,6 +65,7 @@ import { playCompletionSoundForAgentEvent } from "./completion-sound";
 import { createFirstBotDraft, type FirstBotDraft } from "./components/FirstBotSetup";
 import { readPanelWidth } from "./components/PanelResizer";
 import type { SidebarAgentState } from "./components/Sidebar";
+import { Toaster } from "./components/ui";
 import type { BotMessage, BotProfile } from "./data";
 import {
   normalizeSidebarPeopleOrder,
@@ -1101,6 +1102,9 @@ export function createAppController(props: AppProps = {}) {
         limit: 50,
       });
       if (conversationPageRequests.get(botId) !== request) return;
+      if (!page.messages.some((message) => message.id === messageId)) {
+        throw new Error("This message is no longer available.");
+      }
       applyConversationPage(page, true, "around");
       setMessageFocusRequest({ botId, messageId, nonce: Date.now() });
     } catch (error) {
@@ -2518,8 +2522,11 @@ export function AppControllerProvider(props: ParentProps<{ controller: AppContro
 export function App(props: AppProps = {}) {
   const controller = createAppController(props);
   return (
-    <AppControllerProvider controller={controller}>
-      <AppAccessGate />
-    </AppControllerProvider>
+    <>
+      <AppControllerProvider controller={controller}>
+        <AppAccessGate />
+      </AppControllerProvider>
+      <Toaster />
+    </>
   );
 }

@@ -228,7 +228,7 @@ export function InitialSetup(props: InitialSetupProps) {
   return (
     <Dialog.Root open onOpenChange={(open) => !open && props.onClose?.()}>
       <main class="initial-setup-screen">
-        <Dialog.Content as="section" class="initial-setup">
+        <Dialog.Content as="section" class="initial-setup" data-dialog-surface="unstyled">
           <header class="initial-setup-header">
             <div class="initial-setup-account-row">
               <Show when={!props.reviewing && route()}>

@@ -9,7 +9,18 @@ import { RoutineScheduleEditor } from "./RoutineScheduleEditor";
 import { defaultRoutineSchedule, routineScheduleSummary } from "./routine-schedule-ui";
 
 export type AgentRoutinesView = "list" | "editor";
-type PendingRoutineExit = "list" | "close";
+
+export interface RoutineSelectionRequest {
+  routineId: string;
+  routineName: string;
+  nonce: number;
+}
+
+type PendingRoutineExit =
+  | "list"
+  | "close"
+  | { kind: "routine-selection"; routine: Routine | null; routineName: string }
+  | { kind: "conversation-message"; messageId: string };
 
 interface RoutineDraft {
   id: string | null;
@@ -25,6 +36,9 @@ interface AgentRoutinesSettingsProps {
   onViewChange?: (view: AgentRoutinesView) => void;
   onBack?: () => void;
   onClose?: () => void;
+  selectionRequest?: RoutineSelectionRequest | null;
+  onSelectionRequestHandled?: (nonce: number) => void;
+  onOpenRun?: (messageId: string) => void;
 }
 
 export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
@@ -32,6 +46,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
   const [draft, setDraft] = createSignal<RoutineDraft | null>(null);
   const [runs, setRuns] = createSignal<RoutineRun[]>([]);
   const [loading, setLoading] = createSignal(true);
+  const [routinesLoaded, setRoutinesLoaded] = createSignal(false);
   const [saving, setSaving] = createSignal(false);
   const [dirty, setDirty] = createSignal(false);
   const [testing, setTesting] = createSignal(false);
@@ -73,10 +88,12 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
     try {
       const next = await window.openbot.agent.listRoutines(props.botId);
       setRoutines(next);
+      setRoutinesLoaded(true);
       props.onCountChange(next.length);
       const selected = draft();
       if (selected?.id && !next.some((routine) => routine.id === selected.id)) closeEditor();
     } catch (caught) {
+      setRoutinesLoaded(false);
       setError(messageForError(caught, "Could not load routines."));
     } finally {
       setLoading(false);
@@ -89,7 +106,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
         await window.openbot.agent.listRoutineRuns({
           botId: props.botId,
           routineId,
-          limit: 50,
+          limit: 10,
         }),
       );
     } catch (caught) {
@@ -112,7 +129,25 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
     () => {
       closeEditor();
       setLoading(true);
+      setRoutinesLoaded(false);
       void loadRoutines();
+    },
+  );
+
+  let lastSelectionRequestNonce: number | undefined;
+  createEffect(
+    () => ({
+      request: props.selectionRequest,
+      loading: loading(),
+      loaded: routinesLoaded(),
+      routines: routines(),
+    }),
+    ({ request, loading: isLoading, loaded, routines: currentRoutines }) => {
+      if (!request || isLoading || request.nonce === lastSelectionRequestNonce) return;
+      lastSelectionRequestNonce = request.nonce;
+      props.onSelectionRequestHandled?.(request.nonce);
+      if (!loaded) return;
+      requestRoutineSelection(request, currentRoutines.find((routine) => routine.id === request.routineId) ?? null);
     },
   );
 
@@ -166,6 +201,24 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
     setPendingExit(null);
   }
 
+  function requestRoutineSelection(request: RoutineSelectionRequest, routine: Routine | null): void {
+    const current = draft();
+    if (routine && current?.id === routine.id) {
+      if (!dirty()) openRoutine(routine);
+      return;
+    }
+    const target: PendingRoutineExit = {
+      kind: "routine-selection",
+      routine,
+      routineName: request.routineName,
+    };
+    if (current && dirty() && !isBlankNewDraft(current)) {
+      setPendingExit(target);
+      return;
+    }
+    performExit(target);
+  }
+
   function requestExit(target: PendingRoutineExit): void {
     if (saving()) return;
     const current = draft();
@@ -176,13 +229,30 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
     performExit(target);
   }
 
+  function requestOpenRun(messageId: string): void {
+    requestExit({ kind: "conversation-message", messageId });
+  }
+
   function performExit(target: PendingRoutineExit): void {
     setPendingExit(null);
     if (target === "list") {
       closeEditor();
       return;
     }
-    props.onClose?.();
+    if (target === "close") {
+      props.onClose?.();
+      return;
+    }
+    if (target.kind === "conversation-message") {
+      props.onOpenRun?.(target.messageId);
+      return;
+    }
+    closeEditor();
+    if (target.routine) {
+      openRoutine(target.routine);
+      return;
+    }
+    setError(`Routine "${target.routineName}" no longer exists.`);
   }
 
   function discardChanges(): void {
@@ -463,7 +533,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
                 onChange={(schedule) => changeDraft((value) => ({ ...value, schedule }))}
               />
 
-              <RoutineRunHistory runs={runs()} />
+              <RoutineRunHistory runs={runs()} onOpenRun={props.onOpenRun ? requestOpenRun : undefined} />
             </div>
           )}
         </Show>

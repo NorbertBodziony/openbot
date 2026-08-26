@@ -14,8 +14,8 @@ import type { ValidComponent } from "@solidjs/web";
 
 type OpenChangeHandler = (open: boolean) => void;
 
-function actionMenuClass(className: string | undefined): string {
-  return className ? `ui-action-menu ${className}` : "ui-action-menu";
+function withBaseClass(baseClass: string, className: string | undefined): string {
+  return className ? `${baseClass} ${className}` : baseClass;
 }
 
 function focusRestoreHandler(upstream: () => OpenChangeHandler | undefined): OpenChangeHandler {
@@ -76,8 +76,8 @@ export const Dialog: DialogApi = {
   Root: (props) => <DialogPrimitive.Root {...props} onOpenChange={focusRestoreHandler(() => props.onOpenChange)} />,
   Portal: (props) => <DialogPrimitive.Portal {...props} />,
   Trigger: (props) => <DialogPrimitive.Trigger {...props} />,
-  Overlay: (props) => <DialogPrimitive.Overlay {...props} />,
-  Content: (props) => <DialogPrimitive.Content {...props} />,
+  Overlay: (props) => <DialogPrimitive.Overlay {...props} class={withBaseClass("ui-dialog-overlay", props.class)} />,
+  Content: (props) => <DialogPrimitive.Content {...props} class={withBaseClass("ui-dialog-content", props.class)} />,
   Title: (props) => <DialogPrimitive.Title {...props} />,
   Description: (props) => <DialogPrimitive.Description {...props} />,
   CloseButton: (props) => <DialogPrimitive.CloseButton {...props} />,
@@ -100,8 +100,12 @@ export const AlertDialog: AlertDialogApi = {
   ),
   Portal: (props) => <AlertDialogPrimitive.Portal {...props} />,
   Trigger: (props) => <AlertDialogPrimitive.Trigger {...props} />,
-  Overlay: (props) => <AlertDialogPrimitive.Overlay {...props} />,
-  Content: (props) => <AlertDialogPrimitive.Content {...props} />,
+  Overlay: (props) => (
+    <AlertDialogPrimitive.Overlay {...props} class={withBaseClass("ui-dialog-overlay", props.class)} />
+  ),
+  Content: (props) => (
+    <AlertDialogPrimitive.Content {...props} class={withBaseClass("ui-dialog-content", props.class)} />
+  ),
   Title: (props) => <AlertDialogPrimitive.Title {...props} />,
   Description: (props) => <AlertDialogPrimitive.Description {...props} />,
   CloseButton: (props) => <AlertDialogPrimitive.CloseButton {...props} />,
@@ -125,7 +129,7 @@ export const DropdownMenu: DropdownMenuApi = {
   ),
   Portal: (props) => <DropdownMenuPrimitive.Portal {...props} />,
   Trigger: (props) => <DropdownMenuPrimitive.Trigger {...props} />,
-  Content: (props) => <DropdownMenuPrimitive.Content {...props} class={actionMenuClass(props.class)} />,
+  Content: (props) => <DropdownMenuPrimitive.Content {...props} class={withBaseClass("ui-action-menu", props.class)} />,
   Item: (props) => <DropdownMenuPrimitive.Item {...props} />,
   CheckboxItem: (props) => <DropdownMenuPrimitive.CheckboxItem {...props} />,
   RadioGroup: (props) => <DropdownMenuPrimitive.RadioGroup {...props} />,
@@ -151,7 +155,7 @@ export const ContextMenu: ContextMenuApi = {
   ),
   Portal: (props) => <ContextMenuPrimitive.Portal {...props} />,
   Trigger: (props) => <ContextMenuPrimitive.Trigger {...props} />,
-  Content: (props) => <ContextMenuPrimitive.Content {...props} class={actionMenuClass(props.class)} />,
+  Content: (props) => <ContextMenuPrimitive.Content {...props} class={withBaseClass("ui-action-menu", props.class)} />,
   Sub: ContextMenuPrimitive.Sub,
   SubTrigger: ContextMenuPrimitive.SubTrigger,
   SubContent: ContextMenuPrimitive.SubContent,

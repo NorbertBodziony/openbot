@@ -2,7 +2,8 @@ import { type ButtonRootProps, Root } from "@kobalte/core/button";
 import type { PolymorphicProps } from "@kobalte/core/polymorphic";
 import type { ComponentProps, JSX, ValidComponent } from "@solidjs/web";
 import { cva, type VariantProps } from "class-variance-authority";
-import { omit, Show } from "solid-js";
+import { createEffect, createSignal, omit, onCleanup, Show } from "solid-js";
+import { Check, Copy } from "./icons";
 import { Spinner } from "./surface";
 import { cx } from "./utils";
 
@@ -106,6 +107,69 @@ export function IconButton(props: IconButtonProps): JSX.Element {
       {...others}
     >
       {props.children}
+    </Button>
+  );
+}
+
+export interface CopyButtonProps extends Omit<ButtonProps, "children" | "onClick" | "type" | "value"> {
+  value: string | null | undefined;
+  label?: string;
+  copiedLabel?: string;
+  onCopyError?: (error: unknown) => void;
+}
+
+export function CopyButton(props: CopyButtonProps): JSX.Element {
+  const [copied, setCopied] = createSignal(false);
+  let resetTimer: number | undefined;
+  const others = omit(props, "value", "label", "copiedLabel", "onCopyError", "disabled");
+
+  function clearResetTimer(): void {
+    if (resetTimer === undefined) return;
+    window.clearTimeout(resetTimer);
+    resetTimer = undefined;
+  }
+
+  createEffect(
+    () => props.value,
+    () => {
+      clearResetTimer();
+      setCopied(false);
+    },
+  );
+
+  onCleanup(clearResetTimer);
+
+  async function copyValue(): Promise<void> {
+    if (!props.value) return;
+    try {
+      await navigator.clipboard.writeText(props.value);
+      clearResetTimer();
+      setCopied(true);
+      resetTimer = window.setTimeout(() => {
+        resetTimer = undefined;
+        setCopied(false);
+      }, 1_500);
+    } catch (error) {
+      clearResetTimer();
+      setCopied(false);
+      props.onCopyError?.(error);
+    }
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      disabled={Boolean(props.disabled || !props.value)}
+      data-copied={copied() ? "" : undefined}
+      {...others}
+      onClick={() => void copyValue()}
+    >
+      <Show when={copied()} fallback={<Copy aria-hidden="true" />}>
+        <Check aria-hidden="true" />
+      </Show>
+      <span aria-live="polite">{copied() ? (props.copiedLabel ?? "Copied") : (props.label ?? "Copy")}</span>
     </Button>
   );
 }

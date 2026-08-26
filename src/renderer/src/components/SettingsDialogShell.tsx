@@ -12,6 +12,7 @@ interface SettingsDialogShellProps {
   contentKey: string;
   children: JSX.Element;
   class?: string;
+  footer?: JSX.Element;
   floatingContent?: JSX.Element;
   closeLabel?: string;
   onContentElement?: (element: HTMLElement) => void;
@@ -82,13 +83,13 @@ export function SettingsDialogShell(props: SettingsDialogShellProps) {
   );
 
   createEffect(
-    () => props.open,
-    (open) => {
+    () => ({ open: props.open, restoreFocusTarget: props.restoreFocusTarget }),
+    ({ open, restoreFocusTarget }) => {
       clearCloseTimer();
       const isRendered = untrack(rendered);
 
       if (open) {
-        const explicitTarget = props.restoreFocusTarget;
+        const explicitTarget = restoreFocusTarget;
         if (explicitTarget) restoreTarget = explicitTarget;
         if (!isRendered) {
           restoreTarget ??= document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -169,6 +170,7 @@ export function SettingsDialogShell(props: SettingsDialogShellProps) {
                   {props.children}
                 </div>
               </div>
+              <div class="settings-modal-footer">{props.footer}</div>
               {props.floatingContent}
             </div>
           </Dialog.Content>
