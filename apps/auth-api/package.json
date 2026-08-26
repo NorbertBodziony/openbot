@@ -34,13 +34,13 @@
     "@tanstack/solid-router": "2.0.0-rc.0",
     "@tanstack/solid-start": "2.0.0-rc.0",
     "class-variance-authority": "0.7.1",
-    "fflate": "0.8.2",
+    "fflate": "0.8.3",
     "solid-js": "2.0.0-rc.0",
-    "yaml": "2.8.3"
+    "yaml": "2.9.0"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.52.1",
-    "@cloudflare/workers-types": "5.20260815.1",
+    "@cloudflare/vite-plugin": "1.53.1",
+    "@cloudflare/workers-types": "5.20260823.1",
     "@solidjs/testing-library": "1.0.0-beta.2",
     "@solidjs/vite-plugin": "3.0.0-next.28",
     "@tailwindcss/vite": "4.3.3",
@@ -49,7 +49,7 @@
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
     "vite": "7.3.6",
-    "vitest": "4.1.10",
-    "wrangler": "4.123.0"
+    "vitest": "4.1.11",
+    "wrangler": "4.125.0"
   }
 }
