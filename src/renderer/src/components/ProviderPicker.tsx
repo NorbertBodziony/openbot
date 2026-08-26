@@ -86,44 +86,44 @@ export function ProviderPicker(props: ProviderPickerProps) {
         </div>
       </Show>
       <div class="provider-picker-list" role="radiogroup" aria-label={props.ariaLabel}>
-        <For each={props.options}>
+        <For each={props.options} keyed={false}>
           {(option) => {
-            const state = () => option.state;
-            const connecting = () => option.connectionState === "connecting";
+            const state = () => option().state;
+            const connecting = () => option().connectionState === "connecting";
             const available = () => state() === "available";
             const visualState = () => (connecting() && !available() ? "checking" : state());
-            const inputId = `${pickerId}-${option.id}`;
+            const inputId = () => `${pickerId}-${option().id}`;
             return (
               <div
                 class={[
                   "provider-picker-option",
                   {
-                    "provider-picker-option-selected": props.value === option.id,
+                    "provider-picker-option-selected": props.value === option().id,
                     "provider-picker-option-unavailable": !available(),
                     "provider-picker-option-selectable-unavailable":
                       !available() && Boolean(props.allowUnavailableSelection),
                   },
                 ]}
-                title={option.message ?? undefined}
+                title={option().message ?? undefined}
               >
-                <label for={inputId} class="provider-picker-option-selection">
+                <label for={inputId()} class="provider-picker-option-selection">
                   <Input
-                    id={inputId}
-                    ref={(element) => inputs.set(option.id, element)}
+                    id={inputId()}
+                    ref={(element) => inputs.set(option().id, element)}
                     type="radio"
                     name={props.ariaLabel}
-                    value={option.id}
-                    checked={props.value === option.id}
+                    value={option().id}
+                    checked={props.value === option().id}
                     disabled={props.disabled || (!props.allowUnavailableSelection && !available())}
-                    onChange={() => props.onChange(option.id)}
+                    onChange={() => props.onChange(option().id)}
                   />
-                  <ProviderLogo provider={option.id} class="provider-picker-logo" />
+                  <ProviderLogo provider={option().id} class="provider-picker-logo" />
                   <span class="provider-picker-identity">
-                    <span class="provider-picker-name">{option.name}</span>
-                    <Show when={option.email ?? option.description}>
+                    <span class="provider-picker-name">{option().name}</span>
+                    <Show when={option().email ?? option().description}>
                       {(detail) => <small class="provider-picker-email">{detail()}</small>}
                     </Show>
-                    <Show when={option.checkError}>
+                    <Show when={option().checkError}>
                       {(checkError) => <small class="provider-picker-check-error">{checkError()}</small>}
                     </Show>
                   </span>
@@ -138,7 +138,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
                 </label>
                 <Show
                   when={
-                    option.id === "claude" &&
+                    option().id === "claude" &&
                     state() === "not-installed" &&
                     !props.onConnectProvider &&
                     props.onInstallProvider
@@ -149,9 +149,9 @@ export function ProviderPicker(props: ProviderPickerProps) {
                     variant="outline"
                     size="xs"
                     class="provider-picker-install"
-                    aria-label={`Install ${option.name}`}
+                    aria-label={`Install ${option().name}`}
                     disabled={props.disabled || props.refreshingProviders}
-                    onClick={() => void props.onInstallProvider?.(option.id)}
+                    onClick={() => void props.onInstallProvider?.(option().id)}
                   >
                     Install
                   </Button>
@@ -162,10 +162,10 @@ export function ProviderPicker(props: ProviderPickerProps) {
                     variant="outline"
                     size="xs"
                     class="provider-picker-install"
-                    aria-label={`${providerActionLabel(state(), connecting())} ${option.name}`}
+                    aria-label={`${providerActionLabel(state(), connecting())} ${option().name}`}
                     aria-busy={connecting() ? "true" : undefined}
                     disabled={props.disabled || props.refreshingProviders}
-                    onClick={() => void props.onConnectProvider?.(option.id)}
+                    onClick={() => void props.onConnectProvider?.(option().id)}
                   >
                     <Show when={connecting()}>
                       <Spinner size="sm" />
@@ -175,7 +175,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
                 </Show>
                 <Show
                   when={
-                    option.id === "claude" &&
+                    option().id === "claude" &&
                     state() === "sign-in-required" &&
                     !props.onConnectProvider &&
                     props.onSignInProvider
@@ -186,9 +186,9 @@ export function ProviderPicker(props: ProviderPickerProps) {
                     variant="outline"
                     size="xs"
                     class="provider-picker-install"
-                    aria-label={`Sign in to ${option.name}`}
+                    aria-label={`Sign in to ${option().name}`}
                     disabled={props.disabled || props.refreshingProviders}
-                    onClick={() => void props.onSignInProvider?.(option.id)}
+                    onClick={() => void props.onSignInProvider?.(option().id)}
                   >
                     Sign in
                   </Button>

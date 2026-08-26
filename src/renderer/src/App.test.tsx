@@ -708,6 +708,48 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.servers.onPresence).toHaveBeenCalledTimes(presenceSubscriptionCount);
   });
 
+  it("restores the active server before loading its workspace data", async () => {
+    let resolveServers: ((servers: ServerSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockReturnValueOnce(
+      new Promise<ServerSummary[]>((resolve) => {
+        resolveServers = resolve;
+      }),
+    );
+    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([{ ...BOTS[0], name: "Remote Chief" }]);
+
+    render(() => <App />);
+    await waitFor(() => expect(window.openbot.servers.list).toHaveBeenCalledOnce());
+    expect(window.openbot.agent.listBots).not.toHaveBeenCalled();
+
+    resolveServers?.([
+      {
+        id: "local",
+        name: "Local",
+        logoUrl: null,
+        kind: "local",
+        state: "online",
+        apiUrl: null,
+        remoteDesktopAvailable: false,
+        role: null,
+        active: false,
+      },
+      {
+        id: "remote-1",
+        name: "Studio Mac",
+        logoUrl: null,
+        kind: "remote",
+        state: "online",
+        apiUrl: "https://studio.example.com",
+        remoteDesktopAvailable: false,
+        role: "member",
+        active: true,
+      },
+    ]);
+
+    expect(await screen.findByRole("heading", { name: "Remote Chief" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("shows the first-run onboarding before starting agents", async () => {
     vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
       completed: false,
