@@ -471,6 +471,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return bot;
   }
 
+  setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary {
+    const bot = this.#store.setMarketplaceSource(botId, source);
+    this.#emit({ type: "bots-changed", bots: this.#store.list() });
+    return bot;
+  }
+
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
     const previous = this.#store.list().find((bot) => bot.id === input.botId);
     if (input.model && previous && providerForModel(input.model) !== providerForBot(previous)) {

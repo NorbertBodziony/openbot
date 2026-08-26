@@ -23,12 +23,12 @@ const bot: BotSummary = {
 
 const detail: MarketplaceAgentDetail = {
   id: "market-writer",
-  versionId: "market-writer-v1",
+  versionId: "market-writer-v2",
   name: bot.name,
   title: bot.title,
   description: bot.description,
   creatorName: "Ada",
-  version: 1,
+  version: 2,
   installs: 0,
   featured: false,
   avatarSeed: bot.avatarSeed,
@@ -67,12 +67,16 @@ function service(overrides: { failSkill?: boolean } = {}) {
     ]),
     resolveAvatar: vi.fn(() => null),
     createBotProfile: vi.fn(async () => bot),
-    setAvatar: vi.fn(),
-    createRoutine: vi.fn(),
+    updateBot: vi.fn(async () => bot),
+    setAvatar: vi.fn(async () => bot),
+    createRoutine: vi.fn(() => ({ id: "routine-marketplace-id" })),
+    deleteRoutine: vi.fn(async () => undefined),
+    setMarketplaceSource: vi.fn((_botId, source) => ({ ...bot, marketplaceSource: source })),
     deleteBot: vi.fn(async () => undefined),
   };
   const skills = {
     listPublishable: vi.fn(async () => detail.skills),
+    uninstall: vi.fn(async () => undefined),
     installVersion: overrides.failSkill
       ? vi.fn(async () => {
           throw new Error("skill failed");
@@ -152,5 +156,37 @@ describe("AgentMarketplaceService", () => {
     ).rejects.toThrow("skill failed");
     expect(agents.deleteBot).toHaveBeenCalledWith(bot.id);
     expect(agents.createRoutine).not.toHaveBeenCalled();
+  });
+
+  it("updates an installed marketplace agent in place", async () => {
+    const installed = {
+      ...bot,
+      marketplaceSource: {
+        agentId: detail.id,
+        versionId: "market-writer-v1",
+        version: 1,
+        skillIds: ["retired-skill"],
+        routineIds: ["routine-old-id"],
+      },
+    };
+    const { marketplace, agents, skills } = service();
+    agents.listBots.mockReturnValue([installed]);
+
+    const result = await marketplace.install({
+      agentId: detail.id,
+      botId: bot.id,
+      timezone: "Europe/Warsaw",
+      receiptId: "receipt-update",
+    });
+
+    expect(agents.createBotProfile).not.toHaveBeenCalled();
+    expect(agents.updateBot).toHaveBeenCalledWith(expect.objectContaining({ botId: bot.id, name: detail.name }));
+    expect(agents.deleteRoutine).toHaveBeenCalledWith({ botId: bot.id, routineId: "routine-old-id" });
+    expect(skills.uninstall).toHaveBeenCalledWith({ botId: bot.id, skillId: "retired-skill" });
+    expect(agents.setMarketplaceSource).toHaveBeenCalledWith(
+      bot.id,
+      expect.objectContaining({ agentId: detail.id, versionId: detail.versionId, version: detail.version }),
+    );
+    expect(result.bot.id).toBe(bot.id);
   });
 });

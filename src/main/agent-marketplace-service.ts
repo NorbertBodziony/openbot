@@ -27,6 +27,7 @@ interface AgentMarketplaceAuth {
 interface AgentMarketplaceAgents {
   listBots(): BotSummary[];
   listRoutines(botId: string): Array<{
+    id: string;
     name: string;
     instruction: string;
     active: boolean;
@@ -40,7 +41,15 @@ interface AgentMarketplaceAgents {
     avatarSeed: string;
     avatarHue: MarketplaceAgentDetail["avatarHue"];
   }): Promise<BotSummary>;
-  setAvatar(botId: string, image: AvatarImageInput): Promise<BotSummary>;
+  updateBot(input: {
+    botId: string;
+    name: string;
+    title: string;
+    description: string;
+    avatarSeed: string;
+    avatarHue: MarketplaceAgentDetail["avatarHue"];
+  }): Promise<BotSummary>;
+  setAvatar(botId: string, image: AvatarImageInput | null): Promise<BotSummary>;
   createRoutine(input: {
     botId: string;
     name: string;
@@ -48,13 +57,16 @@ interface AgentMarketplaceAgents {
     active: boolean;
     timezone: string;
     schedule: RoutineSchedule;
-  }): unknown;
+  }): { id: string };
+  deleteRoutine(input: { botId: string; routineId: string }): Promise<void>;
+  setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary;
   deleteBot(botId: string): Promise<void>;
 }
 
 interface AgentMarketplaceSkills {
   listPublishable(botId: string): Promise<MarketplaceAgentSkill[]>;
   installVersion(input: { botId: string; skillId: string; versionId: string }): Promise<unknown>;
+  uninstall(input: { botId: string; skillId: string }): Promise<void>;
 }
 
 export class AgentMarketplaceService {
@@ -142,25 +154,36 @@ export class AgentMarketplaceService {
   async install(input: InstallMarketplaceAgentInput): Promise<InstallMarketplaceAgentResult> {
     if (!validTimezone(input.timezone)) throw new Error("The local timezone is invalid.");
     const detail = await this.get(input.agentId);
-    let bot = await this.agents.createBotProfile({
-      name: detail.name,
-      title: detail.title,
-      description: detail.description,
-      avatarSeed: detail.avatarSeed,
-      avatarHue: detail.avatarHue,
-    });
+    const existing = input.botId ? this.agents.listBots().find((candidate) => candidate.id === input.botId) : undefined;
+    if (input.botId && !existing) throw new Error("The installed agent no longer exists.");
+    if (existing?.marketplaceSource?.agentId !== detail.id) {
+      if (existing) throw new Error("This local agent was installed from a different marketplace agent.");
+    }
+    if (existing?.marketplaceSource?.versionId === detail.versionId) return { bot: existing };
+
+    let avatar: AvatarImageInput | null = null;
+    if (detail.avatarUrl) {
+      const bytes = await this.auth.downloadAuthorized(detail.avatarUrl);
+      const mimeType = imageMimeType(bytes);
+      if (!mimeType) throw new Error("The marketplace agent avatar is invalid.");
+      avatar = { mimeType, bytes };
+    }
+    let bot =
+      existing ??
+      (await this.agents.createBotProfile({
+        name: detail.name,
+        title: detail.title,
+        description: detail.description,
+        avatarSeed: detail.avatarSeed,
+        avatarHue: detail.avatarHue,
+      }));
+    const createdRoutineIds: string[] = [];
     try {
-      if (detail.avatarUrl) {
-        const bytes = await this.auth.downloadAuthorized(detail.avatarUrl);
-        const mimeType = imageMimeType(bytes);
-        if (!mimeType) throw new Error("The marketplace agent avatar is invalid.");
-        bot = await this.agents.setAvatar(bot.id, { mimeType, bytes });
-      }
       for (const skill of detail.skills) {
         await this.skills.installVersion({ botId: bot.id, skillId: skill.skillId, versionId: skill.versionId });
       }
       for (const routine of detail.routines) {
-        this.agents.createRoutine({
+        const created = this.agents.createRoutine({
           botId: bot.id,
           name: routine.name,
           instruction: routine.instruction,
@@ -168,20 +191,56 @@ export class AgentMarketplaceService {
           timezone: input.timezone,
           schedule: localSchedule(routine.schedule),
         });
+        createdRoutineIds.push(created.id);
+      }
+      if (existing) {
+        bot = await this.agents.updateBot({
+          botId: bot.id,
+          name: detail.name,
+          title: detail.title,
+          description: detail.description,
+          avatarSeed: detail.avatarSeed,
+          avatarHue: detail.avatarHue,
+        });
+      }
+      bot = await this.agents.setAvatar(bot.id, avatar);
+      const nextSkillIds = new Set(detail.skills.map((skill) => skill.skillId));
+      for (const skillId of existing?.marketplaceSource?.skillIds ?? []) {
+        if (!nextSkillIds.has(skillId)) await this.skills.uninstall({ botId: bot.id, skillId });
+      }
+      bot = this.agents.setMarketplaceSource(bot.id, {
+        agentId: detail.id,
+        versionId: detail.versionId,
+        version: detail.version,
+        skillIds: [...nextSkillIds],
+        routineIds: createdRoutineIds,
+      });
+      for (const routineId of existing?.marketplaceSource?.routineIds ?? []) {
+        await this.agents.deleteRoutine({ botId: bot.id, routineId }).catch(() => undefined);
       }
     } catch (error) {
-      await this.agents.deleteBot(bot.id).catch(() => undefined);
+      if (existing) {
+        await Promise.all(
+          createdRoutineIds.map((routineId) =>
+            this.agents.deleteRoutine({ botId: bot.id, routineId }).catch(() => undefined),
+          ),
+        );
+      } else {
+        await this.agents.deleteBot(bot.id).catch(() => undefined);
+      }
       throw error;
     }
-    await this.auth.requestAuthorized(
-      `/v1/marketplace/agents/${encodeURIComponent(detail.id)}/install`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ receiptId: input.receiptId }),
-      },
-      decodeInstallReceipt,
-    );
+    if (!existing) {
+      await this.auth.requestAuthorized(
+        `/v1/marketplace/agents/${encodeURIComponent(detail.id)}/install`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ receiptId: input.receiptId }),
+        },
+        decodeInstallReceipt,
+      );
+    }
     return { bot };
   }
 

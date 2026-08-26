@@ -91,6 +91,7 @@ export interface SubmitMarketplaceAgentInput {
 
 export interface InstallMarketplaceAgentInput {
   agentId: string;
+  botId?: string;
   timezone: string;
   receiptId: string;
 }

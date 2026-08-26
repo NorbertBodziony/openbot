@@ -195,6 +195,69 @@ describe("SkillsMarketplaceModal", () => {
     await waitFor(() => expect(onInstalled).toHaveBeenCalledWith(installedBot));
   });
 
+  it("offers updates and disables agents that are already current", async () => {
+    const baseAgent = {
+      name: "Research Agent",
+      title: "Finds evidence quickly",
+      description: "Searches sources and produces concise cited findings.",
+      creatorName: "Ada",
+      installs: 42,
+      featured: true,
+      avatarSeed: "research-agent",
+      avatarHue: 215,
+      avatarUrl: null,
+      skillCount: 1,
+      routineCount: 0,
+      activeRoutineCount: 0,
+      updatedAt: "2026-08-25T00:00:00.000Z",
+    } as const;
+    window.openbot.marketplaceAgents.list = vi.fn(async () => ({
+      agents: [
+        { ...baseAgent, id: "research-agent", version: 2 },
+        { ...baseAgent, id: "writer-agent", name: "Writer Agent", version: 1 },
+      ],
+      nextCursor: null,
+    }));
+
+    render(() => (
+      <SkillsMarketplaceModal
+        open
+        bots={[
+          {
+            id: "research-local",
+            name: "Research Agent",
+            marketplaceSource: {
+              agentId: "research-agent",
+              versionId: "research-v1",
+              version: 1,
+              skillIds: [],
+              routineIds: [],
+            },
+          },
+          {
+            id: "writer-local",
+            name: "Writer Agent",
+            marketplaceSource: {
+              agentId: "writer-agent",
+              versionId: "writer-v1",
+              version: 1,
+              skillIds: [],
+              routineIds: [],
+            },
+          },
+        ]}
+        activeBotId="research-local"
+        onOpenChange={() => undefined}
+      />
+    ));
+
+    screen.getByRole("button", { name: "Agents" }).click();
+    expect(await screen.findByRole("button", { name: "Update" })).toBeEnabled();
+    expect(
+      screen.getAllByRole("button", { name: "Installed" }).find((button) => button.hasAttribute("disabled")),
+    ).toBeDefined();
+  });
+
   it("keeps the shared marketplace navigation when browsing installed agents", async () => {
     render(() => (
       <SkillsMarketplaceModal

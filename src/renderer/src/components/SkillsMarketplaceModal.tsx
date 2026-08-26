@@ -38,7 +38,7 @@ import {
 
 interface SkillsMarketplaceModalProps {
   open: boolean;
-  bots: Array<{ id: string; name: string }>;
+  bots: Array<Pick<BotSummary, "id" | "name" | "marketplaceSource">>;
   activeBotId: string;
   onOpenChange: (open: boolean) => void;
   onAgentInstalled?: (bot: BotSummary) => void | Promise<void>;
@@ -841,7 +841,7 @@ description: Turn merged work into clear, consistent release notes.
 }
 
 function AgentMarketplacePanel(props: {
-  bots: Array<{ id: string; name: string }>;
+  bots: Array<Pick<BotSummary, "id" | "name" | "marketplaceSource">>;
   view: Tab;
   refreshVersion: number;
   addVersion: number;
@@ -859,6 +859,9 @@ function AgentMarketplacePanel(props: {
   const [loading, setLoading] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const installedAgents = createMemo(
+    () => new Map(props.bots.flatMap((bot) => (bot.marketplaceSource ? [[bot.marketplaceSource.agentId, bot]] : []))),
+  );
   let searchTimer: number | undefined;
   let initialized = false;
   let handledAddVersion = 0;
@@ -941,12 +944,15 @@ function AgentMarketplacePanel(props: {
   }
 
   async function installAgent(agent: MarketplaceAgentDetail) {
+    const installation = installedAgent(agent);
+    if (installation?.marketplaceSource?.versionId === agent.versionId) return;
+    const updating = Boolean(installation);
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (
       agent.activeRoutineCount > 0 &&
       !window.confirm(
         `${agent.name} includes ${agent.activeRoutineCount} active ${agent.activeRoutineCount === 1 ? "routine" : "routines"}. ` +
-          `They will run automatically in ${timezone}. Install this agent?`,
+          `They will run automatically in ${timezone}. ${updating ? "Update" : "Install"} this agent?`,
       )
     )
       return;
@@ -954,12 +960,26 @@ function AgentMarketplacePanel(props: {
     const value = await run(() =>
       window.openbot.marketplaceAgents.install({
         agentId: agent.id,
+        ...(installation ? { botId: installation.id } : {}),
         timezone,
         receiptId: crypto.randomUUID(),
       }),
     );
     if (value) await props.onInstalled?.(value.bot);
     setBusy(false);
+  }
+
+  function installedAgent(agent: MarketplaceAgentSummary) {
+    return installedAgents().get(agent.id);
+  }
+
+  function agentAction(agent: MarketplaceAgentSummary): "Install" | "Update" | "Installed" {
+    const installed = installedAgent(agent);
+    if (!installed) return "Install";
+    return installed.marketplaceSource?.versionId === ("versionId" in agent ? agent.versionId : undefined) ||
+      (installed.marketplaceSource?.version ?? 0) >= agent.version
+      ? "Installed"
+      : "Update";
   }
 
   async function preparePublication(agentId?: string) {
@@ -1024,6 +1044,7 @@ function AgentMarketplacePanel(props: {
                   <AgentCardSection
                     agents={agents()}
                     busy={busy()}
+                    action={agentAction}
                     onOpen={openAgent}
                     onInstall={installAgentSummary}
                   />
@@ -1049,8 +1070,13 @@ function AgentMarketplacePanel(props: {
                     <span>{agent.installs.toLocaleString()} installs</span>
                   </div>
                 </div>
-                <Button loading={busy()} loadingLabel="Installing…" onClick={() => void installAgent(agent)}>
-                  Install agent
+                <Button
+                  disabled={agentAction(agent) === "Installed"}
+                  loading={busy()}
+                  loadingLabel={agentAction(agent) === "Update" ? "Updating…" : "Installing…"}
+                  onClick={() => void installAgent(agent)}
+                >
+                  {agentAction(agent) === "Installed" ? "Installed" : `${agentAction(agent)} agent`}
                 </Button>
               </div>
               <div class="skills-marketplace-detail-content agent-marketplace-detail-content">
@@ -1236,6 +1262,7 @@ function AgentMarketplacePanel(props: {
 function AgentCardSection(props: {
   agents: MarketplaceAgentSummary[];
   busy: boolean;
+  action: (agent: MarketplaceAgentSummary) => "Install" | "Update" | "Installed";
   onOpen: (agent: MarketplaceAgentSummary) => void | Promise<void>;
   onInstall: (agent: MarketplaceAgentSummary) => void | Promise<void>;
 }) {
@@ -1277,13 +1304,14 @@ function AgentCardSection(props: {
               <Button
                 class="skills-marketplace-card-action"
                 size="sm"
+                disabled={props.action(agent) === "Installed"}
                 loading={props.busy}
                 onClick={(event) => {
                   event.stopPropagation();
                   void props.onInstall(agent);
                 }}
               >
-                Install
+                {props.action(agent)}
               </Button>
             </article>
           )}

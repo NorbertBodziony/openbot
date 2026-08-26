@@ -76,6 +76,13 @@ export interface BotSummary {
   avatarSeed: string;
   avatarHue: BotAvatarHue | null;
   avatarUrl: string | null;
+  marketplaceSource?: {
+    agentId: string;
+    versionId: string;
+    version: number;
+    skillIds: string[];
+    routineIds: string[];
+  };
 }
 
 export type BotMemoryOrigin = "automatic" | "manual";

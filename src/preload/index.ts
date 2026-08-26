@@ -247,7 +247,17 @@ function isBotSummary(value: unknown): value is BotSummary {
     nullableString(value.updatedAt, "updated at") &&
     isString(value.avatarSeed) &&
     (value.avatarHue === null || isNumber(value.avatarHue)) &&
-    nullableString(value.avatarUrl, "avatar URL")
+    nullableString(value.avatarUrl, "avatar URL") &&
+    (value.marketplaceSource === undefined ||
+      (isDynamicRecord(value.marketplaceSource) &&
+        isString(value.marketplaceSource.agentId) &&
+        isString(value.marketplaceSource.versionId) &&
+        isNumber(value.marketplaceSource.version) &&
+        Number.isInteger(value.marketplaceSource.version) &&
+        Array.isArray(value.marketplaceSource.skillIds) &&
+        value.marketplaceSource.skillIds.every(isString) &&
+        Array.isArray(value.marketplaceSource.routineIds) &&
+        value.marketplaceSource.routineIds.every(isString)))
   );
 }
 

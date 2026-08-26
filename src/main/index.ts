@@ -384,6 +384,7 @@ function registerIpcHandlers(
     if (!isObject(input)) throw new Error("Invalid agent installation.");
     return marketplaceAgents.install({
       agentId: requireString(input.agentId, "agentId"),
+      ...(input.botId === undefined ? {} : { botId: requireString(input.botId, "botId", INPUT_LIMITS.identifier) }),
       timezone: requireString(input.timezone, "timezone", 255),
       receiptId: requireString(input.receiptId, "receiptId", INPUT_LIMITS.identifier),
     });

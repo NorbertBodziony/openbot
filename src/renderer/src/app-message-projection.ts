@@ -14,6 +14,7 @@ export function toBotProfile(stored: BotSummary): BotProfile {
     avatarSeed: stored.avatarSeed,
     avatarHue: stored.avatarHue,
     avatarUrl: stored.avatarUrl,
+    marketplaceSource: stored.marketplaceSource,
     time: stored.updatedAt ? formatTime(stored.updatedAt) : "now",
     preview: cleanPreview(stored.preview),
   };
@@ -115,9 +116,28 @@ export function botProfilesEqual(left: BotProfile, right: BotProfile): boolean {
     left.threadId === right.threadId &&
     left.avatarSeed === right.avatarSeed &&
     left.avatarHue === right.avatarHue &&
+    marketplaceSourcesEqual(left.marketplaceSource, right.marketplaceSource) &&
     left.time === right.time &&
     left.preview === right.preview
   );
+}
+
+function marketplaceSourcesEqual(
+  left: BotProfile["marketplaceSource"],
+  right: BotProfile["marketplaceSource"],
+): boolean {
+  if (!left || !right) return left === right;
+  return (
+    left.agentId === right.agentId &&
+    left.versionId === right.versionId &&
+    left.version === right.version &&
+    stringArraysEqual(left.skillIds, right.skillIds) &&
+    stringArraysEqual(left.routineIds, right.routineIds)
+  );
+}
+
+function stringArraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
