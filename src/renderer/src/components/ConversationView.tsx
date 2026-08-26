@@ -2744,9 +2744,8 @@ export function ConversationComposer() {
                 <PlusIcon />
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content class="attachment-menu composer-action-menu" aria-label="Add to prompt">
+                <DropdownMenu.Content aria-label="Add to prompt">
                   <DropdownMenu.Item
-                    class="composer-action-item"
                     disabled={attachmentBusy()}
                     onPointerDown={(event) => {
                       if (event.button === 0) openAttachmentPicker("images");
@@ -2754,24 +2753,13 @@ export function ConversationComposer() {
                     onKeyDown={(event) => openAttachmentPickerFromKey(event, "images")}
                   >
                     <Image aria-hidden="true" />
-                    <span>
-                      <strong>Attach image</strong>
-                      <small>Add a screenshot or visual reference.</small>
-                    </span>
+                    <span>Attach image</span>
                   </DropdownMenu.Item>
-                  <DropdownMenu.Item
-                    class="composer-action-item"
-                    disabled
-                    title="Skill selection is not available yet."
-                  >
+                  <DropdownMenu.Item disabled title="Skill selection is not available yet.">
                     <Puzzle aria-hidden="true" />
-                    <span>
-                      <strong>Use a skill</strong>
-                      <small>Skill selection is not available yet.</small>
-                    </span>
+                    <span>Use a skill</span>
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
-                    class="composer-action-item"
                     disabled={attachmentBusy()}
                     onPointerDown={(event) => {
                       if (event.button === 0) openAttachmentPicker("all");
@@ -2779,10 +2767,7 @@ export function ConversationComposer() {
                     onKeyDown={(event) => openAttachmentPickerFromKey(event, "all")}
                   >
                     <File aria-hidden="true" />
-                    <span>
-                      <strong>Add context</strong>
-                      <small>PDF, Office, text, Markdown, data, or source files.</small>
-                    </span>
+                    <span>Add context</span>
                   </DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>

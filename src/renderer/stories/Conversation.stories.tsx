@@ -791,7 +791,7 @@ export const ComposerActionMenu: Story = {
     const useSkill = within(menu).getByRole("menuitem", { name: /Use a skill/ });
     const addContext = within(menu).getByRole("menuitem", { name: /Add context/ });
     await expect(menu).toHaveClass("ui-action-menu");
-    await expect(attachImage.getBoundingClientRect().height).toBeGreaterThanOrEqual(52);
+    await waitFor(() => expect(attachImage).toHaveFocus());
     await expect(useSkill).toHaveAttribute("data-disabled");
     await expect(addContext).toBeVisible();
   },

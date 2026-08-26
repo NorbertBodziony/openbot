@@ -6332,51 +6332,6 @@
   line-height: 18px;
 }
 
-.attachment-menu {
-  translate: 0;
-}
-
-.composer-action-menu {
-  width: min(300px, calc(100vw - var(--openbot-space-6)));
-  max-width: min(300px, calc(100vw - var(--openbot-space-6)));
-}
-
-.ui-action-menu:not([data-menu-layout="grid"]) .composer-action-item {
-  height: auto;
-  min-height: 52px;
-  align-items: flex-start;
-  padding: 8px;
-  white-space: normal;
-}
-
-.composer-action-item > svg {
-  margin-top: 2px;
-}
-
-.composer-action-item > span {
-  display: grid;
-  min-width: 0;
-  gap: 1px;
-}
-
-.composer-action-item strong,
-.composer-action-item small {
-  display: block;
-}
-
-.composer-action-item strong {
-  color: inherit;
-  font-size: var(--openbot-text-md);
-  font-weight: var(--openbot-weight-medium);
-  line-height: var(--openbot-leading-md);
-}
-
-.composer-action-item small {
-  color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-xs);
-  line-height: var(--openbot-leading-sm);
-}
-
 .composer-attachments {
   position: relative;
   z-index: 11;
