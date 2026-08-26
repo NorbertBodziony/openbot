@@ -143,7 +143,7 @@
     "solid-js": "2.0.0-rc.0",
     "solid-sonner": "0.3.2",
     "ws": "8.21.3",
-    "yaml": "2.8.1",
+    "yaml": "2.8.3",
     "zod": "4.4.3"
   },
   "devDependencies": {
