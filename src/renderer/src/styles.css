@@ -3,6 +3,7 @@
 @import "tailwindcss";
 @import "@openbot/brand/logo.css";
 @import "./styles/primitives.css";
+@import "./styles/transitions.css";
 @import "./styles/sliding-tabs.css";
 @import "./styles/action-menu.css";
 @import "./styles/base.css";
@@ -228,6 +229,19 @@
   --openbot-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --openbot-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --openbot-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --modal-open-dur: 250ms;
+  --modal-close-dur: 150ms;
+  --modal-scale: 0.96;
+  --modal-scale-close: 0.96;
+  --modal-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --page-slide-dur: 250ms;
+  --page-fade-dur: 250ms;
+  --page-slide-distance: 8px;
+  --page-blur: 3px;
+  --page-stagger: 0ms;
+  --page-exit-enabled: 1;
+  --page-slide-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --page-fade-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --shake-distance: 6px;
   --shake-overshoot: 4px;
   --shake-dur-a: 80ms;

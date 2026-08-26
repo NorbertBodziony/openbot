@@ -53,7 +53,7 @@ export const InviteReady: Story = {
   play: async ({ args: storyArgs, userEvent }) => {
     const body = within(document.body);
     await expect(body.findByText("Studio host")).resolves.toBeTruthy();
-    await userEvent.click(body.getByRole("button", { name: "Connect to host" }));
+    await userEvent.click(body.getByRole("button", { name: "Connect" }));
     await expect(storyArgs.onJoin).toHaveBeenCalledWith({ inviteUrl: args.inviteUrl });
   },
 };
@@ -84,7 +84,7 @@ export const Joining: Story = {
   play: async ({ userEvent }) => {
     const body = within(document.body);
     await expect(body.findByText("Studio host")).resolves.toBeTruthy();
-    await userEvent.click(body.getByRole("button", { name: "Connect to host" }));
+    await userEvent.click(body.getByRole("button", { name: "Connect" }));
     await expect(body.getByRole("button", { name: "Connecting…" })).toBeDisabled();
   },
 };
@@ -98,7 +98,7 @@ export const JoinError: Story = {
   play: async ({ userEvent }) => {
     const body = within(document.body);
     await expect(body.findByText("Studio host")).resolves.toBeTruthy();
-    await userEvent.click(body.getByRole("button", { name: "Connect to host" }));
+    await userEvent.click(body.getByRole("button", { name: "Connect" }));
     await expect(body.getByRole("alert")).toHaveTextContent("OpenBot could not connect to this host.");
   },
 };
