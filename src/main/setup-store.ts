@@ -17,7 +17,7 @@ export async function readSetupState(path: string): Promise<AppSetupState> {
       !isDynamicRecord(parsed) ||
       !isNumber(parsed.version) ||
       parsed.version !== 2 ||
-      !isOneOf(["codex", "claude"] as const, parsed.preferredProvider) ||
+      !isOneOf(["codex", "claude", "grok"] as const, parsed.preferredProvider) ||
       !isString(parsed.completedAt)
     ) {
       return { ...EMPTY_SETUP };

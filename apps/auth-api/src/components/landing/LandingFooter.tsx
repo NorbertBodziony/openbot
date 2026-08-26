@@ -5,7 +5,7 @@ import { createLandingReveal } from "./createLandingReveal";
 import { LandingIcon } from "./LandingIcon";
 
 const FOOTER_DESCRIPTION =
-  "Persistent AI teammates for real work. Run Codex and Claude side by side, each with its own workspace, queue, and context.";
+  "Persistent AI teammates for real work. Run Codex, Claude, and Grok side by side, each with its own workspace, queue, and context.";
 
 const SOCIALS = [
   {

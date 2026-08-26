@@ -37,6 +37,7 @@ let emitInvite: ((inviteUrl: string) => void) | undefined;
 const BOTS: BotSummary[] = [
   {
     id: "chief",
+    provider: "codex",
     name: "Chief",
     title: "Chief of staff",
     description: "Coordinates work",
@@ -53,6 +54,7 @@ const BOTS: BotSummary[] = [
   },
   {
     id: "sales-outbound",
+    provider: "codex",
     name: "Sales Outbound",
     title: "Outbound specialist",
     description: "",
@@ -212,6 +214,7 @@ describe("OpenBot connected desktop shell", () => {
           }),
           listModels: vi.fn().mockResolvedValue([
             {
+              provider: "codex",
               id: "gpt-5.6-luna",
               name: "Luna",
               description: "Fast and efficient for everyday agent work.",
@@ -219,6 +222,7 @@ describe("OpenBot connected desktop shell", () => {
               supportedReasoningEfforts: ["low", "medium", "high"],
             },
             {
+              provider: "codex",
               id: "gpt-5.6-terra",
               name: "Terra",
               description: "Balanced speed and capability for involved tasks.",
@@ -226,6 +230,7 @@ describe("OpenBot connected desktop shell", () => {
               supportedReasoningEfforts: ["medium", "high"],
             },
             {
+              provider: "codex",
               id: "gpt-5.6-sol",
               name: "Sol",
               description: "Most capable for complex, long-running work.",
@@ -233,6 +238,7 @@ describe("OpenBot connected desktop shell", () => {
               supportedReasoningEfforts: ["medium", "high", "xhigh"],
             },
             {
+              provider: "claude",
               id: "claude-opus-5",
               name: "Claude Opus 5",
               description: "Most capable Claude model for complex work.",
@@ -240,6 +246,7 @@ describe("OpenBot connected desktop shell", () => {
               supportedReasoningEfforts: ["low", "medium", "high"],
             },
             {
+              provider: "claude",
               id: "claude-sonnet-5",
               name: "Claude Sonnet 5",
               description: "Balanced Claude model for general agent work.",
@@ -1191,6 +1198,37 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("message"));
   });
 
+  it("opens global settings from the account menu and restores focus after every close path", async () => {
+    render(() => <App />);
+    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
+
+    await fireEvent.click(accountButton);
+    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    let dialog = await screen.findByRole("dialog", { name: "General" });
+    const launchSwitch = within(dialog).getByRole("switch", { name: "Launch OpenBot at login" });
+    await fireEvent.click(launchSwitch);
+    expect(launchSwitch).not.toBeChecked();
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Close settings" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(accountButton).toHaveFocus());
+
+    await fireEvent.click(accountButton);
+    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    dialog = await screen.findByRole("dialog", { name: "General" });
+    expect(within(dialog).getByRole("switch", { name: "Launch OpenBot at login" })).not.toBeChecked();
+    await fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(accountButton).toHaveFocus());
+
+    await fireEvent.click(accountButton);
+    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await screen.findByRole("dialog", { name: "General" });
+    await fireEvent.pointerDown(screen.getByTestId("settings-modal-backdrop"), { button: 0 });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(accountButton).toHaveFocus());
+  });
+
   it("removes a custom account avatar from the account menu", async () => {
     vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({
       status: "signed_in",
@@ -1573,6 +1611,7 @@ describe("OpenBot connected desktop shell", () => {
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
         model: "claude-opus-5",
+        provider: "claude",
         reasoningEffort: "medium",
       }),
     );
@@ -1670,7 +1709,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(trigger);
     const picker = screen.getByRole("dialog", { name: "Choose agent model" });
-    const codex = within(picker).getByRole("tab", { name: /^Codex:/ });
+    const codex = within(picker).getByRole("tab", { name: /^ChatGPT:/ });
     await fireEvent.keyDown(codex, { key: "ArrowUp" });
     const claude = within(picker).getByRole("tab", { name: /^Claude:/ });
     expect(claude).toHaveFocus();
@@ -1702,6 +1741,7 @@ describe("OpenBot connected desktop shell", () => {
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
         model: "claude-opus-5",
+        provider: "claude",
         reasoningEffort: "medium",
       }),
     );
@@ -1709,7 +1749,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(within(settings).getByRole("button", { name: "Agent model: Claude Opus 5" }));
     picker = within(settings).getByRole("dialog", { name: "Choose agent model" });
-    await fireEvent.click(within(picker).getByRole("tab", { name: /^Codex:/ }));
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^ChatGPT:/ }));
     await fireEvent.click(within(picker).getByRole("option", { name: "Sol" }));
     await fireEvent.pointerDown(thinking, { pointerType: "mouse", button: 0 });
     await fireEvent.click(screen.getByRole("option", { name: "Extra high" }));
@@ -1846,6 +1886,7 @@ describe("OpenBot connected desktop shell", () => {
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "sales-outbound",
         model: "claude-opus-5",
+        provider: "claude",
         reasoningEffort: "medium",
       }),
     );
@@ -1874,7 +1915,7 @@ describe("OpenBot connected desktop shell", () => {
     const trigger = await screen.findByRole("button", { name: "Agent model: Luna" });
     await fireEvent.click(trigger);
     const picker = screen.getByRole("dialog", { name: "Choose agent model" });
-    expect(within(picker).getByRole("tab", { name: /^Codex: 0.144.1/ })).toBeEnabled();
+    expect(within(picker).getByRole("tab", { name: /^ChatGPT: 0.144.1/ })).toBeEnabled();
     const claude = within(picker).getByRole("tab", {
       name: "Claude: Claude CLI was not found.",
     });
@@ -4598,10 +4639,10 @@ describe("OpenBot connected desktop shell", () => {
       clientY: 80,
     });
     await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Server settings" }), { button: 0 });
-    await fireEvent.input(screen.getByRole("textbox", { name: "Server name" }), {
+    await fireEvent.input(await screen.findByRole("textbox", { name: "Server name" }), {
       target: { value: "Design studio" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(window.openbot.host.configure).toHaveBeenCalledWith({ serverName: "Design studio" }));
     expect(window.openbot.host.start).not.toHaveBeenCalled();

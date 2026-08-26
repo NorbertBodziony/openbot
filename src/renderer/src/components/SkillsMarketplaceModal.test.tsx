@@ -158,6 +158,7 @@ describe("SkillsMarketplaceModal", () => {
       title: detail.title,
       description: detail.description,
       notifications: true,
+      provider: "codex",
       model: "gpt-5.6-luna",
       reasoningEffort: "medium",
       threadId: null,

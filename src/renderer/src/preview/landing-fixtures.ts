@@ -17,6 +17,7 @@ const LANDING_PREVIEW_NOW = "2026-08-21T10:00:00.000Z";
 const LANDING_PREVIEW_BOTS: BotSummary[] = [
   {
     id: "chief",
+    provider: "codex",
     name: "Chief",
     title: "Chief of staff",
     description: "Coordinates priorities, decisions, and handoffs across the team.",
@@ -33,6 +34,7 @@ const LANDING_PREVIEW_BOTS: BotSummary[] = [
   },
   {
     id: "research",
+    provider: "codex",
     name: "Research",
     title: "Research partner",
     description: "Finds reliable sources and turns them into concise briefs.",
@@ -49,6 +51,7 @@ const LANDING_PREVIEW_BOTS: BotSummary[] = [
   },
   {
     id: "builder",
+    provider: "codex",
     name: "Builder",
     title: "Product engineer",
     description: "Builds product changes and records clear technical decisions.",
@@ -65,6 +68,7 @@ const LANDING_PREVIEW_BOTS: BotSummary[] = [
   },
   {
     id: "launch",
+    provider: "codex",
     name: "Launch",
     title: "Go-to-market lead",
     description: "Prepares launch assets, messaging, and release checklists.",

@@ -90,11 +90,16 @@ export function LandingPage() {
               <span class="landing-provider">
                 <ProviderLogo provider="codex" class="landing-provider-logo" />
                 Codex
-              </span>{" "}
-              and{" "}
+              </span>
+              ,{" "}
               <span class="landing-provider">
                 <ProviderLogo provider="claude" class="landing-provider-logo" />
                 Claude
+              </span>{" "}
+              and{" "}
+              <span class="landing-provider">
+                <ProviderLogo provider="grok" class="landing-provider-logo" />
+                Grok
               </span>{" "}
               side by side, each with its own workspace, queue, and context.
             </p>

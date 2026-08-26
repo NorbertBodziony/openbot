@@ -128,6 +128,9 @@ export function SettingsDialogShell(props: SettingsDialogShellProps) {
           class="settings-modal-backdrop"
           data-motion={closing() ? "closing" : "open"}
           data-testid="settings-modal-backdrop"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) requestOpenChange(false);
+          }}
         >
           <Dialog.Content
             as="section"

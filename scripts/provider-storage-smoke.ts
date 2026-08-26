@@ -6,9 +6,12 @@ import type { BotSummary, ConversationMessage } from "@openbot/contracts/ipc";
 import type { AgentClient, AgentProvider } from "../src/backend/agent-client";
 import { CodexAppServerClient } from "../src/backend/app-server-client";
 import { ClaudeAgentClient } from "../src/backend/claude-client";
-import { resolveClaudeCli, resolveCodexCli } from "../src/backend/cli";
+import { type GrokCliInfo, resolveClaudeCli, resolveCodexCli, resolveGrokCli } from "../src/backend/cli";
+import { GrokAgentClient } from "../src/backend/grok-client";
 import { OpenBotDatabase } from "../src/backend/openbot-database";
 import {
+  decodeAccountReadResult,
+  decodeModelListResponse,
   decodeRecordResponse,
   decodeThreadResponse,
   decodeTurnResponse,
@@ -22,14 +25,51 @@ const root = await mkdtemp(join(tmpdir(), "openbot-provider-storage-smoke-"));
 try {
   const database = new OpenBotDatabase(join(root, "user-data"));
   await database.initialize();
-  const codex = await resolveCodexCli();
-  const claude = await resolveClaudeCli();
-  await runProvider(database, "codex", new CodexAppServerClient(codex.executable, 60_000), "gpt-5.6-luna");
-  await runProvider(database, "claude", new ClaudeAgentClient(claude), "claude-opus-5");
+  const grokOnly = process.argv.includes("--grok-only");
+  if (!grokOnly) {
+    const codex = await resolveCodexCli();
+    const claude = await resolveClaudeCli();
+    await runProvider(database, "codex", new CodexAppServerClient(codex.executable, 60_000), "gpt-5.6-luna");
+    await runProvider(database, "claude", new ClaudeAgentClient(claude), "claude-opus-5");
+  }
+  const grokRan = await runOptionalGrok(database);
   database.close();
-  process.stdout.write("Codex and Claude stored a completed live turn in the temporary SQLite database.\n");
+  if (!grokOnly) {
+    process.stdout.write(
+      `Codex and Claude${grokRan ? ", plus Grok," : ""} stored a completed live turn in the temporary SQLite database.\n`,
+    );
+  }
 } finally {
   await rm(root, { recursive: true, force: true });
+}
+
+async function runOptionalGrok(database: OpenBotDatabase): Promise<boolean> {
+  let cli: GrokCliInfo;
+  try {
+    cli = await resolveGrokCli();
+  } catch {
+    process.stdout.write("Skipping optional Grok live smoke: Grok CLI is not installed.\n");
+    return false;
+  }
+  const client = new GrokAgentClient(cli, 60_000);
+  client.start();
+  let model: string | null = null;
+  try {
+    await client.request("initialize", {}, decodeRecordResponse);
+    const account = await client.request("account/read", {}, decodeAccountReadResult);
+    const models = await client.request("model/list", { limit: 100, includeHidden: false }, decodeModelListResponse);
+    model = account.account ? (models.data.find((candidate) => candidate.model)?.model ?? null) : null;
+  } catch {
+    // This is an optional smoke and an unauthenticated local Grok installation is a valid skip.
+  }
+  if (!model) {
+    await client.stop();
+    process.stdout.write("Skipping optional Grok live smoke: Grok CLI is not authenticated or advertised no models.\n");
+    return false;
+  }
+  await runProvider(database, "grok", client, model);
+  process.stdout.write("Grok stored a completed live turn in the temporary SQLite database.\n");
+  return true;
 }
 
 async function runProvider(
@@ -44,6 +84,7 @@ async function runProvider(
   await mkdir(workspace, { recursive: true, mode: 0o700 });
   const bot: BotSummary = {
     id: botId,
+    provider,
     name: `${provider} smoke`,
     title: "Storage verification",
     description: "",

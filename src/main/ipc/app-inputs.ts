@@ -4,7 +4,7 @@ import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 export function parseProvider(input: unknown): AgentProviderId {
   if (!isDynamicRecord(input)) throw new Error("Setup input is required.");
   const provider = input.preferredProvider;
-  if (provider !== "codex" && provider !== "claude") throw new Error("Unknown provider.");
+  if (provider !== "codex" && provider !== "claude" && provider !== "grok") throw new Error("Unknown provider.");
   return provider;
 }
 

@@ -32,6 +32,9 @@ const RemoteDesktopWorkspace = lazy(() =>
 const ServerSettingsModal = lazy(() =>
   import("./components/ServerSettingsModal").then((module) => ({ default: module.ServerSettingsModal })),
 );
+const SettingsModal = lazy(() =>
+  import("./components/SettingsModal").then((module) => ({ default: module.SettingsModal })),
+);
 const SkillsMarketplaceModal = lazy(() =>
   import("./components/SkillsMarketplaceModal").then((module) => ({ default: module.SkillsMarketplaceModal })),
 );
@@ -163,6 +166,8 @@ function WorkspaceShell(props: {
     updateAccountAvatar,
     logoutCentralAccount,
     setPermissionsOpen,
+    appSettingsOpen,
+    openAppSettings,
     setSkillsMarketplaceOpen,
     LEFT_PANEL_DEFAULT,
     LEFT_PANEL_MIN,
@@ -335,6 +340,7 @@ function WorkspaceShell(props: {
             onLogout={logoutCentralAccount}
             onOpenExternal={(destination) => window.openbot.openExternal(destination)}
             onOpenPermissions={() => setPermissionsOpen(true)}
+            onOpenSettings={openAppSettings}
             onOpenSkills={() => setSkillsMarketplaceOpen(true)}
           />
         </Loading>
@@ -434,7 +440,7 @@ function WorkspaceShell(props: {
           prompt={activeBot() ? pendingPrompts()[activeBot()?.id ?? ""] : undefined}
           approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
           activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
-          globalOverlayOpen={globalSearchOpen() || joinServerOpen() || serverSettingsOpen()}
+          globalOverlayOpen={globalSearchOpen() || joinServerOpen() || serverSettingsOpen() || appSettingsOpen()}
           settingsRequest={settingsRequest()}
           messageFocusRequest={messageFocusRequest()}
           onSelectAgent={selectBot}
@@ -477,6 +483,11 @@ function WorkspaceOverlays(props: {
   const {
     props: appProps,
     permissionsOpen,
+    appSettingsOpen,
+    setAppSettingsOpen,
+    generalSettings,
+    setGeneralSettings,
+    appSettingsRestoreTarget,
     skillsMarketplaceOpen,
     setSkillsMarketplaceOpen,
     openInstalledMarketplaceAgent,
@@ -509,6 +520,8 @@ function WorkspaceOverlays(props: {
     updateServerMember,
     removeServerMember,
     revokeServerInvite,
+    updateStatus,
+    runUpdateAction,
     globalSearchOpen,
     botList,
     activeBot,
@@ -596,6 +609,18 @@ function WorkspaceOverlays(props: {
           </Loading>
         )}
       </Show>
+      <Loading>
+        <SettingsModal
+          open={appSettingsOpen()}
+          onOpenChange={setAppSettingsOpen}
+          value={generalSettings()}
+          onValueChange={setGeneralSettings}
+          appInfo={appInfo()}
+          updateStatus={updateStatus()}
+          onUpdateAction={runUpdateAction}
+          restoreFocusTarget={appSettingsRestoreTarget()}
+        />
+      </Loading>
       <Show when={globalSearchOpen()}>
         <Loading>
           <GlobalSearch

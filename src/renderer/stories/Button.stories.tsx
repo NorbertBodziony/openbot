@@ -93,6 +93,7 @@ export const Gallery: Story = {
             Invalid
           </Button>
           <CopyButton value="https://openbot.example/invite" label="Copy link" variant="outline" />
+          <CopyButton value="https://openbot.example/invite" label="Copy link" iconOnly title="Copy link" />
         </div>
       </section>
     </main>

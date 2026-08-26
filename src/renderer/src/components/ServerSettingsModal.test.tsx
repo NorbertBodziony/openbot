@@ -116,13 +116,14 @@ describe("ServerSettingsModal", () => {
 
     const name = screen.getByRole("textbox", { name: "Server name" });
     expect(name).toHaveValue("");
+    expect(name).toHaveAttribute("placeholder", "e.g. Design studio");
     expect(screen.getByRole("switch", { name: "Publish this server" })).toBeDisabled();
 
     await fireEvent.input(name, { target: { value: "Draft Team" } });
     await fireEvent.click(screen.getByRole("button", { name: "Reset" }));
     expect(name).toHaveValue("");
     await fireEvent.input(name, { target: { value: "Studio Team" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(onSaveIdentity).toHaveBeenCalledWith({ serverName: "Studio Team" }));
     expect(onSetPublished).not.toHaveBeenCalled();
@@ -136,7 +137,7 @@ describe("ServerSettingsModal", () => {
 
     const name = screen.getByRole("textbox", { name: "Server name" });
     await fireEvent.input(name, { target: { value: "Studio Team" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("The identity could not save.");
     expect(name).toHaveValue("Studio Team");
@@ -174,11 +175,30 @@ describe("ServerSettingsModal", () => {
     expect(name).toHaveAttribute("aria-invalid", "true");
     expect(name).toHaveAttribute("aria-describedby", error.id);
 
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(name).toHaveFocus();
+
     await fireEvent.input(name, { target: { value: "Studio Team" } });
     expect(screen.queryByText("Enter at least 6 characters.")).not.toBeInTheDocument();
     expect(name).not.toHaveAttribute("aria-invalid");
     await fireEvent.keyDown(name, { key: "Enter" });
     await waitFor(() => expect(onSaveIdentity).toHaveBeenCalledWith({ serverName: "Studio Team" }));
+  });
+
+  it("returns an erased first setup name to its pristine state", async () => {
+    render(() => <ServerSettingsModal {...props()} />);
+
+    const name = screen.getByRole("textbox", { name: "Server name" });
+    await fireEvent.input(name, { target: { value: "Tiny" } });
+    await fireEvent.blur(name);
+    expect(screen.getByText("Enter at least 6 characters.")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Unsaved changes" })).toBeInTheDocument();
+
+    await fireEvent.input(name, { target: { value: "" } });
+
+    expect(screen.queryByText("Enter at least 6 characters.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Unsaved changes" })).not.toBeInTheDocument();
+    expect(name).not.toHaveAttribute("aria-invalid");
   });
 
   it("keeps remote member settings read-only", async () => {
@@ -286,5 +306,36 @@ describe("ServerSettingsModal", () => {
     await fireEvent.pointerUp(memberActions, { button: 0 });
     await fireEvent.pointerUp(await screen.findByRole("menuitem", { name: "Pause access" }), { button: 0 });
     await waitFor(() => expect(onUpdateMember).toHaveBeenCalledWith({ memberId: "alice-1", disabled: true }));
+  });
+
+  it("associates invite validation with the email field and creates invite links", async () => {
+    const onCreateInvite = vi.fn(async (input: { role: "admin" | "member"; email?: string }) => ({
+      id: "invite-new",
+      role: input.role,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      usedAt: null,
+      inviteUrl: "https://studio.example.com/invite/new",
+      email: input.email ?? null,
+    }));
+    render(() => (
+      <ServerSettingsModal {...props({ server: remoteServer, hostStatus: null, members, onCreateInvite })} />
+    ));
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Members" }));
+    const email = screen.getByRole("textbox", { name: "Email address" });
+    await fireEvent.input(email, { target: { value: "invalid" } });
+    await fireEvent.blur(email);
+
+    const error = screen.getByRole("alert");
+    expect(error).toHaveTextContent("Enter a valid email address.");
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    expect(email).toHaveAttribute("aria-describedby", error.id);
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Invite link" }));
+    expect(screen.queryByText("Enter a valid email address.")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Create link" }));
+
+    await waitFor(() => expect(onCreateInvite).toHaveBeenCalledWith({ role: "member" }));
+    expect(await screen.findByRole("button", { name: "Copy link" })).toBeInTheDocument();
   });
 });

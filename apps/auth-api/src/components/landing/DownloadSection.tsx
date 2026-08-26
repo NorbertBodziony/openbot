@@ -46,7 +46,7 @@ export function DownloadSection() {
       <div class="landing-download-inner">
         <header class="landing-download-heading" data-revealed={revealState()}>
           <h2 id="download-title">Download OpenBot</h2>
-          <p>Choose your platform. Run Codex and Claude side by side from one desktop app.</p>
+          <p>Choose your platform. Run Codex, Claude, and Grok side by side from one desktop app.</p>
         </header>
 
         <div class="landing-download-grid">

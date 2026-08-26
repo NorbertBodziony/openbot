@@ -329,6 +329,12 @@ export function parseUpdateBot(value: unknown): UpdateBotInput {
     if (!isBoolean(value.notifications)) throw new Error("Invalid notifications value.");
     result.notifications = value.notifications;
   }
+  if (value.provider !== undefined) {
+    if (value.provider !== "codex" && value.provider !== "claude" && value.provider !== "grok") {
+      throw new Error("Invalid agent provider.");
+    }
+    result.provider = value.provider;
+  }
   if (value.model !== undefined) {
     if (!isAgentModel(value.model)) throw new Error("Invalid agent model.");
     result.model = value.model;

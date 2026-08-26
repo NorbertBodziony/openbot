@@ -2815,6 +2815,10 @@
   fill: var(--openbot-provider-codex);
 }
 
+.provider-model-mark-grok {
+  fill: var(--openbot-provider-grok);
+}
+
 .provider-model-chevron {
   width: 13px;
   height: 13px;
@@ -2834,7 +2838,7 @@
 .provider-model-popover {
   position: relative;
   z-index: 40;
-  width: min(320px, calc(100vw - 24px));
+  width: min(360px, calc(100vw - 24px));
   min-height: 226px;
   overflow: hidden;
   border: 1px solid var(--openbot-border);
@@ -2878,7 +2882,7 @@
   border: 0;
   border-radius: var(--openbot-radius-md);
   background: transparent;
-  color: var(--openbot-text-primary);
+  padding: 0;
   cursor: pointer;
   transition:
     background-color var(--openbot-duration-hover) ease,
@@ -2890,13 +2894,13 @@
   background: var(--openbot-bg-surface);
 }
 
-.provider-model-rail-button-unavailable {
-  opacity: 0.4;
+.provider-model-rail-button .provider-model-mark {
+  opacity: 0.48;
 }
 
-.provider-model-rail-button-unavailable:hover,
-.provider-model-rail-button-unavailable.provider-model-rail-button-selected {
-  background: var(--openbot-bg-overlay);
+.provider-model-rail-button-selected .provider-model-mark {
+  fill: var(--openbot-white);
+  opacity: 1;
 }
 
 .provider-model-panel {
@@ -2920,6 +2924,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.provider-model-empty {
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-bg-sidebar);
+  padding: 10px 11px;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  line-height: 18px;
 }
 
 .provider-model-heading strong {
@@ -4048,24 +4062,6 @@
   border-color: var(--openbot-border-focus);
   background: var(--openbot-bg-glass);
   color: var(--openbot-text-primary);
-}
-
-.image-generation-capability-note {
-  display: grid;
-  gap: 3px;
-  margin: 0 12px 8px;
-  border: 1px solid var(--openbot-border);
-  border-radius: var(--openbot-radius-md);
-  background: var(--openbot-bg-surface);
-  padding: 8px 10px;
-  color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-xs);
-  line-height: 15px;
-}
-
-.image-generation-capability-note strong {
-  color: var(--openbot-text-secondary);
-  font-weight: 650;
 }
 
 @keyframes image-generation-morph {

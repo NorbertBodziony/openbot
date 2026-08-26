@@ -119,10 +119,12 @@ describe("OpenBotDatabase", () => {
     const database = new OpenBotDatabase(root);
     await database.initialize();
     const bot = testBot();
+    if (!bot.threadId) throw new Error("The test bot has no thread.");
+    const threadId = bot.threadId;
     database.replaceAgents("agents-import", [bot], "agents.imported");
     const snapshot: ConversationSnapshot = {
       botId: bot.id,
-      threadId: bot.threadId,
+      threadId,
       activeTurnId: null,
       revision: 0,
       messages: [
@@ -377,7 +379,7 @@ describe("OpenBotDatabase", () => {
 
     const legacy = new DatabaseSync(database.path);
     legacy.exec("PRAGMA journal_mode = WAL");
-    legacy.prepare("DELETE FROM schema_migrations WHERE version = 6").run();
+    legacy.prepare("DELETE FROM schema_migrations WHERE version = 7").run();
     legacy
       .prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)")
       .run("2026-08-20T10:00:00.000Z");
@@ -420,7 +422,7 @@ describe("OpenBotDatabase", () => {
     expect(snapshotEventCount(migrated, bot.threadId)).toBe(1);
     expect(migrated.readConversation(bot.id, bot.threadId).messages[0]?.text).toHaveLength(40_000);
     expect(migrated.connection.prepare("PRAGMA integrity_check").get()).toMatchObject({ integrity_check: "ok" });
-    expect(migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 6").get()).toEqual({
+    expect(migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 7").get()).toEqual({
       applied: 1,
     });
     migrated.close();
@@ -429,6 +431,79 @@ describe("OpenBotDatabase", () => {
     await reopened.initialize();
     expect(snapshotEventCount(reopened, bot.threadId)).toBe(1);
     reopened.close();
+  });
+
+  it("widens the provider-session constraint for Grok without losing Codex or Claude sessions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-provider-v6-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    const bot = testBot();
+    if (!bot.threadId) throw new Error("The test bot has no thread.");
+    const threadId = bot.threadId;
+    database.replaceAgents("agents-import", [bot], "agents.imported");
+    database.bindProviderSession({
+      threadId,
+      provider: "codex",
+      externalSessionId: "codex-session",
+      model: "gpt-5.4",
+      effort: "medium",
+    });
+    database.bindProviderSession({
+      threadId,
+      provider: "claude",
+      externalSessionId: "claude-session",
+      model: "claude-opus-5",
+      effort: "high",
+    });
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    legacy.exec(`
+      PRAGMA foreign_keys = OFF;
+      CREATE TABLE projection_provider_sessions_v6 (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL REFERENCES projection_threads(thread_id) ON DELETE CASCADE,
+        provider TEXT NOT NULL CHECK(provider IN ('codex', 'claude')),
+        external_session_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        effort TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('active', 'inactive', 'failed')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        resume_cursor TEXT,
+        last_event_sequence INTEGER NOT NULL,
+        UNIQUE(provider, external_session_id)
+      );
+      INSERT INTO projection_provider_sessions_v6 SELECT * FROM projection_provider_sessions;
+      DROP TABLE projection_provider_sessions;
+      ALTER TABLE projection_provider_sessions_v6 RENAME TO projection_provider_sessions;
+      CREATE INDEX provider_sessions_thread
+        ON projection_provider_sessions(thread_id, provider, state);
+      DELETE FROM schema_migrations WHERE version = 7;
+      INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+        VALUES (6, '2026-08-20T10:00:00.000Z');
+      PRAGMA foreign_keys = ON;
+    `);
+    legacy.close();
+
+    const migrated = new OpenBotDatabase(root);
+    await migrated.initialize();
+    expect(migrated.listProviderSessions(threadId).map((session) => session.provider)).toEqual(["codex", "claude"]);
+    const table = migrated.connection
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'projection_provider_sessions'")
+      .get();
+    expect(table).toMatchObject({ sql: expect.stringContaining("'grok'") });
+    expect(() =>
+      migrated.bindProviderSession({
+        threadId,
+        provider: "grok",
+        externalSessionId: "grok-session",
+        model: "grok-4.5",
+        effort: "xhigh",
+      }),
+    ).not.toThrow();
+    migrated.close();
   });
 });
 
@@ -443,6 +518,7 @@ async function createDatabase(): Promise<OpenBotDatabase> {
 function testBot(): BotSummary {
   return {
     id: "chief",
+    provider: "codex",
     name: "Chief",
     title: "Coordinator",
     description: "",

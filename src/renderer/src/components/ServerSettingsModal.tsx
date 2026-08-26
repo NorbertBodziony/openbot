@@ -13,7 +13,7 @@ import { normalizeEmailAddress } from "@openbot/contracts/validation";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { normalizeAvatarFile } from "../avatar-image";
 import { SettingsDialogShell } from "./SettingsDialogShell";
-import { TeamPersonAvatar, teamMemberName } from "./TeamPersonAvatar";
+import { teamMemberName } from "./TeamPersonAvatar";
 import {
   Alert,
   AlertActions,
@@ -31,7 +31,7 @@ import {
   DropdownMenu,
   Ellipsis,
   Field,
-  Heading,
+  Image,
   Input,
   Item,
   ItemActions,
@@ -51,14 +51,18 @@ import {
   SelectTrigger,
   SelectValue,
   Settings,
+  SettingsSection,
   ShieldCheck,
+  SlidingTabs,
   SwitchField,
   Tabs,
   Text,
   Trash2,
   UserRound,
   UsersRound,
+  X,
 } from "./ui";
+import { truncateMiddle } from "./ui/utils";
 
 export interface ServerSettingsModalProps {
   open: boolean;
@@ -100,6 +104,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   const [draftLogo, setDraftLogo] = createSignal<AvatarImageInput | null | undefined>(undefined);
   const [identityEditing, setIdentityEditing] = createSignal(false);
   const [nameTouched, setNameTouched] = createSignal(false);
+  const [nameShaking, setNameShaking] = createSignal(false);
   const [logoError, setLogoError] = createSignal<string | null>(null);
   const [actionError, setActionError] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
@@ -113,6 +118,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   const [now, setNow] = createSignal(Date.now());
   let modalElement: HTMLElement | undefined;
   let logoInput: HTMLInputElement | undefined;
+  let nameInput: HTMLInputElement | undefined;
   let removeMemberTrigger: HTMLElement | undefined;
   let syncedServerId = "";
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -134,7 +140,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
       return `Use no more than ${INPUT_LIMITS.serverName} characters.`;
     return null;
   };
-  const visibleNameError = () => (identityEditing() && nameTouched() ? nameError() : null);
+  const visibleNameError = () => (nameTouched() ? nameError() : null);
   const identityDirty = () =>
     canEditIdentity() &&
     (trimmedName() !== savedName() || draftLogo() !== undefined || draftLogoUrl() !== savedLogoUrl());
@@ -148,7 +154,6 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
       [teamMemberName(member), member.email, member.username].some((value) => value?.toLowerCase().includes(query)),
     );
   });
-  const onlineCount = createMemo(() => props.members.filter((member) => member.online && !member.disabled).length);
   const removeMember = createMemo(() => props.members.find((member) => member.id === removeMemberId()) ?? null);
   const canInvite = createMemo(
     () =>
@@ -173,6 +178,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
         setSection("general");
         setIdentityEditing(false);
         setNameTouched(false);
+        setNameShaking(false);
         setMemberSearch("");
         setActionError(null);
         setInviteResult(null);
@@ -184,6 +190,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
         setDraftLogoUrl(logoUrl);
         setDraftLogo(undefined);
         setNameTouched(false);
+        setNameShaking(false);
       }
     },
   );
@@ -244,13 +251,42 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
     setDraftLogo(undefined);
     setIdentityEditing(false);
     setNameTouched(false);
+    setNameShaking(false);
     setLogoError(null);
     setActionError(null);
   }
 
+  function updateDraftName(value: string): void {
+    const namePristine = value.trim() === savedName();
+    const logoPristine = draftLogo() === undefined && draftLogoUrl() === savedLogoUrl();
+    setDraftName(value);
+    setIdentityEditing(!(namePristine && logoPristine));
+    if (namePristine) {
+      setNameTouched(false);
+      setNameShaking(false);
+    } else if (!nameError()) {
+      setNameShaking(false);
+    }
+    setActionError(null);
+  }
+
+  function restartNameShake(): void {
+    setNameShaking(false);
+    queueMicrotask(() => {
+      if (!nameInput || !nameError()) return;
+      void nameInput.offsetWidth;
+      setNameShaking(true);
+    });
+  }
+
   async function saveIdentity(): Promise<void> {
     setNameTouched(true);
-    if (!identityDirty() || nameError()) return;
+    if (nameError()) {
+      restartNameShake();
+      queueMicrotask(() => nameInput?.focus({ preventScroll: true }));
+      return;
+    }
+    if (!identityDirty()) return;
     const logo = draftLogo();
     const saved = await run("identity", () =>
       props.onSaveIdentity({
@@ -264,6 +300,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
     setDraftLogo(undefined);
     setIdentityEditing(false);
     setNameTouched(false);
+    setNameShaking(false);
   }
 
   function showCopyError(): void {
@@ -355,13 +392,10 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
         }
         footer={
           <Show when={section() === "general" && identityDirty()}>
-            <section class="server-settings-save-bar" aria-label="Unsaved identity changes">
-              <div class="server-settings-save-copy">
-                <span class="server-settings-save-dot" aria-hidden="true" />
-                <Text variant="caption" tone="secondary">
-                  Unsaved identity changes
-                </Text>
-              </div>
+            <section class="server-settings-save-bar" aria-label="Unsaved changes">
+              <Text variant="caption" tone="muted">
+                Changes not saved
+              </Text>
               <div class="server-settings-save-actions">
                 <Button type="button" size="sm" variant="ghost" disabled={Boolean(busy())} onClick={resetIdentity}>
                   Reset
@@ -375,7 +409,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   disabled={Boolean(busy())}
                   onClick={() => void saveIdentity()}
                 >
-                  Save changes
+                  Save
                 </Button>
               </div>
             </section>
@@ -471,13 +505,10 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   function GeneralPanel() {
     return (
       <>
-        <section class="server-settings-general-section" aria-labelledby="server-identity-heading">
-          <Heading id="server-identity-heading" class="server-settings-section-heading" as="h3" size="sm">
-            Identity
-          </Heading>
+        <SettingsSection title="Identity">
           <Input
             ref={(element) => (logoInput = element)}
-            class="sr-only"
+            hidden
             type="file"
             aria-label="Server logo"
             accept="image/png,image/jpeg,image/webp"
@@ -488,49 +519,6 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
             }}
           />
           <ItemGroup class="server-settings-general-card">
-            <Item class="server-settings-logo-row">
-              <ItemContent>
-                <ItemTitle>Server logo</ItemTitle>
-                <ItemDescription class={logoError() ? "server-settings-item-error" : undefined}>
-                  {logoError() ??
-                    (canEditIdentity()
-                      ? "Shown to everyone who connects."
-                      : "Only the server owner can change this logo.")}
-                </ItemDescription>
-              </ItemContent>
-              <ItemActions class="server-settings-logo-control">
-                <ServerLogo name={draftName() || props.server.name} url={draftLogoUrl()} />
-                <Show when={canEditIdentity()}>
-                  <div class="server-settings-logo-actions">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      aria-label="Change server logo"
-                      onClick={() => logoInput?.click()}
-                    >
-                      Change
-                    </Button>
-                    <Show when={draftLogoUrl()}>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        aria-label="Remove server logo"
-                        onClick={() => {
-                          setIdentityEditing(true);
-                          setDraftLogoUrl(null);
-                          setDraftLogo(null);
-                          setLogoError(null);
-                        }}
-                      >
-                        Remove
-                      </Button>
-                    </Show>
-                  </div>
-                </Show>
-              </ItemActions>
-            </Item>
             <Show
               when={canEditIdentity()}
               fallback={
@@ -547,38 +535,107 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 </Item>
               }
             >
-              <Field
-                class="server-settings-name-field"
-                label="Server name"
-                description="Shown in invitations and shared spaces."
-                error={visibleNameError() ?? undefined}
-                htmlFor="server-settings-name"
-              >
-                <Input
-                  id="server-settings-name"
-                  size="md"
-                  maxlength={INPUT_LIMITS.serverName}
-                  value={draftName()}
-                  onValueChange={(value) => {
-                    setIdentityEditing(true);
-                    setDraftName(value);
-                    setActionError(null);
-                  }}
-                  onBlur={() => setNameTouched(true)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter" || event.isComposing) return;
-                    event.preventDefault();
-                    void saveIdentity();
-                  }}
-                />
-              </Field>
+              <Item class="server-settings-name-row">
+                <ItemContent>
+                  <ItemTitle id="server-settings-name-label">Server name</ItemTitle>
+                  <ItemDescription id="server-settings-name-description">
+                    Shown in invitations and shared spaces.
+                  </ItemDescription>
+                </ItemContent>
+                <ItemActions class="server-settings-name-control" data-invalid={visibleNameError() ? "" : undefined}>
+                  <Input
+                    ref={(element) => (nameInput = element)}
+                    class={nameShaking() ? "server-settings-name-input is-shaking" : "server-settings-name-input"}
+                    id="server-settings-name"
+                    size="md"
+                    maxlength={INPUT_LIMITS.serverName}
+                    placeholder="e.g. Design studio"
+                    value={draftName()}
+                    aria-labelledby="server-settings-name-label"
+                    aria-describedby={
+                      visibleNameError() ? "server-settings-name-error" : "server-settings-name-description"
+                    }
+                    aria-invalid={visibleNameError() ? "true" : undefined}
+                    onValueChange={updateDraftName}
+                    onBlur={() => {
+                      if (trimmedName() === savedName()) return;
+                      setNameTouched(true);
+                      if (nameError()) restartNameShake();
+                    }}
+                    onAnimationEnd={() => setNameShaking(false)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" || event.isComposing) return;
+                      event.preventDefault();
+                      void saveIdentity();
+                    }}
+                  />
+                  <span
+                    id="server-settings-name-error"
+                    class="ui-field-error server-settings-name-error"
+                    role="alert"
+                    aria-hidden={visibleNameError() ? undefined : "true"}
+                  >
+                    {visibleNameError() ?? ""}
+                  </span>
+                </ItemActions>
+              </Item>
             </Show>
+            <Item class="server-settings-logo-row">
+              <ItemContent>
+                <ItemTitle>Server logo</ItemTitle>
+                <ItemDescription class={logoError() ? "server-settings-item-error" : undefined}>
+                  {logoError() ??
+                    (canEditIdentity()
+                      ? "Shown to everyone who connects."
+                      : "Only the server owner can change this logo.")}
+                </ItemDescription>
+              </ItemContent>
+              <ItemActions class="server-settings-logo-control">
+                <Show
+                  when={canEditIdentity()}
+                  fallback={<ServerLogo name={draftName() || props.server.name} url={draftLogoUrl()} />}
+                >
+                  <div class="server-settings-logo-picker">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon-lg"
+                      class="server-settings-logo-trigger"
+                      aria-label={draftLogoUrl() ? "Edit server logo" : "Add server logo"}
+                      onClick={() => logoInput?.click()}
+                    >
+                      <Show
+                        when={draftLogoUrl()}
+                        fallback={<Image class="server-settings-logo-placeholder" aria-hidden="true" />}
+                      >
+                        {(logoUrl) => <ServerLogo name={draftName() || props.server.name} url={logoUrl()} />}
+                      </Show>
+                    </Button>
+                    <Show when={draftLogoUrl()}>
+                      <Button
+                        type="button"
+                        variant="destructive-ghost"
+                        size="icon-xs"
+                        class="server-settings-logo-remove"
+                        aria-label="Remove server logo"
+                        title="Remove server logo"
+                        onClick={() => {
+                          setIdentityEditing(true);
+                          setDraftLogoUrl(null);
+                          setDraftLogo(null);
+                          setLogoError(null);
+                        }}
+                      >
+                        <X aria-hidden="true" />
+                      </Button>
+                    </Show>
+                  </div>
+                </Show>
+              </ItemActions>
+            </Item>
           </ItemGroup>
-        </section>
-        <section class="server-settings-general-section" aria-labelledby="server-access-heading">
-          <Heading id="server-access-heading" class="server-settings-section-heading" as="h3" size="sm">
-            Access
-          </Heading>
+        </SettingsSection>
+        <SettingsSection title="Access">
           <ItemGroup class="server-settings-general-card">
             <SwitchField
               class="server-settings-publish-setting"
@@ -594,19 +651,29 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 <ItemTitle>Server address</ItemTitle>
                 <ItemDescription>Use this address to connect to the server.</ItemDescription>
               </ItemContent>
-              <ItemActions class="server-settings-address-control">
-                <code>{address() ?? "Not available while private"}</code>
-                <CopyButton
-                  value={address()}
-                  label="Copy"
-                  aria-label="Copy server address"
-                  onCopyError={showCopyError}
-                  class="server-settings-copy-button"
-                />
-              </ItemActions>
+              <Show
+                when={address()}
+                fallback={
+                  <Badge tone="neutral" size="md" shape="pill">
+                    Private
+                  </Badge>
+                }
+              >
+                {(serverAddress) => (
+                  <CopyButton
+                    value={serverAddress()}
+                    label={truncateMiddle(serverAddress(), 31)}
+                    copiedLabel="Copied"
+                    aria-label="Copy server address"
+                    title={serverAddress()}
+                    onCopyError={showCopyError}
+                    class="server-settings-address-control"
+                  />
+                )}
+              </Show>
             </Item>
           </ItemGroup>
-        </section>
+        </SettingsSection>
       </>
     );
   }
@@ -615,7 +682,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
     return (
       <>
         <Show when={!configured() || !published()}>
-          <Alert tone="warning" role="status">
+          <Alert class="server-settings-members-alert" tone="warning" role="status">
             <AlertIcon>
               <ShieldCheck />
             </AlertIcon>
@@ -630,36 +697,42 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
           </Alert>
         </Show>
         <Show when={canManage()}>{inviteComposer()}</Show>
-        <section class="settings-modal-group" aria-labelledby="server-members-heading">
-          <div class="server-settings-section-title server-settings-members-heading">
-            <div>
-              <Heading id="server-members-heading" as="h3" size="sm" tone="secondary">
-                Server members
-              </Heading>
-              <Text variant="caption" tone="muted">
-                {props.members.length} members · {onlineCount()} online
-              </Text>
-            </div>
+        <SettingsSection
+          class="server-settings-members-section"
+          title="Server members"
+          description={<>{props.members.length} members</>}
+          actions={
             <label class="server-settings-search">
               <Search aria-hidden="true" />
               <span class="sr-only">Search members</span>
               <Input
+                size="sm"
                 type="search"
                 placeholder="Search members"
                 value={memberSearch()}
                 onValueChange={setMemberSearch}
               />
             </label>
-          </div>
-          <ItemGroup class="server-settings-people-card server-settings-members-list" data-testid="server-members-list">
+          }
+        >
+          <ItemGroup
+            class="server-settings-general-card server-settings-members-list"
+            data-testid="server-members-list"
+          >
             <Show
               when={filteredMembers().length > 0}
-              fallback={<p class="server-settings-empty">No members match this search.</p>}
+              fallback={
+                <Item class="server-settings-empty-row">
+                  <ItemContent>
+                    <ItemDescription>No members match this search.</ItemDescription>
+                  </ItemContent>
+                </Item>
+              }
             >
               <For each={filteredMembers()}>{(member) => memberRow(member)}</For>
             </Show>
           </ItemGroup>
-        </section>
+        </SettingsSection>
         <Show when={canManage()}>{pendingInvites()}</Show>
       </>
     );
@@ -667,46 +740,49 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
 
   function inviteComposer() {
     return (
-      <section class="settings-modal-group" aria-labelledby="invite-people-heading">
-        <Heading id="invite-people-heading" as="h3" size="sm" tone="secondary">
-          Invite people
-        </Heading>
-        <Card class="server-settings-people-card server-settings-invite-card">
-          <Tabs.Root {...inviteTabsProps}>
-            <Tabs.List class="server-settings-invite-tabs" aria-label="Invitation method">
-              <Tabs.Trigger value="email">Email</Tabs.Trigger>
-              <Tabs.Trigger value="link">Invite link</Tabs.Trigger>
-            </Tabs.List>
+      <SlidingTabs.Root {...inviteTabsProps}>
+        <SettingsSection
+          class="server-settings-invite-section"
+          title="Invite people"
+          description="Invitations can be used once and expire after 24 hours."
+          actions={
+            <SlidingTabs.List aria-label="Invitation method">
+              <SlidingTabs.Trigger value="email">Email</SlidingTabs.Trigger>
+              <SlidingTabs.Trigger value="link">Invite link</SlidingTabs.Trigger>
+            </SlidingTabs.List>
+          }
+        >
+          <Card class="server-settings-invite-card">
             <div class="server-settings-invite-composer">
-              <Tabs.Content value="email" class="server-settings-invite-mode-panel">
-                <label class="server-settings-invite-email-control">
-                  <span class="sr-only">Email address</span>
-                  <Input
-                    size="lg"
-                    type="email"
-                    autocomplete="email"
-                    maxlength={INPUT_LIMITS.email}
-                    disabled={!published()}
-                    aria-invalid={inviteEmailError() ? "true" : undefined}
-                    placeholder="person@company.com"
-                    value={inviteEmail()}
-                    onValueChange={(value) => {
-                      setInviteEmail(value);
-                      setInviteEmailError(null);
-                    }}
-                    onBlur={() =>
-                      inviteEmail() &&
-                      !normalizeEmailAddress(inviteEmail()) &&
-                      setInviteEmailError("Enter a valid email address.")
-                    }
-                  />
-                </label>
-              </Tabs.Content>
-              <Tabs.Content value="link" class="server-settings-invite-mode-panel">
-                <Text variant="body-sm" tone="secondary">
-                  Create a private one-time link.
-                </Text>
-              </Tabs.Content>
+              <SlidingTabs.ContentSlot>
+                <SlidingTabs.Content value="email" class="server-settings-invite-mode-panel">
+                  <Field class="server-settings-invite-email-field" label="Email address" error={inviteEmailError()}>
+                    <Input
+                      size="md"
+                      type="email"
+                      autocomplete="email"
+                      maxlength={INPUT_LIMITS.email}
+                      disabled={!published()}
+                      placeholder="person@company.com"
+                      value={inviteEmail()}
+                      onValueChange={(value) => {
+                        setInviteEmail(value);
+                        setInviteEmailError(null);
+                      }}
+                      onBlur={() =>
+                        inviteEmail() &&
+                        !normalizeEmailAddress(inviteEmail()) &&
+                        setInviteEmailError("Enter a valid email address.")
+                      }
+                    />
+                  </Field>
+                </SlidingTabs.Content>
+                <SlidingTabs.Content value="link" class="server-settings-invite-mode-panel">
+                  <Text variant="body-sm" tone="secondary">
+                    Create a private one-time link.
+                  </Text>
+                </SlidingTabs.Content>
+              </SlidingTabs.ContentSlot>
               <Select<string>
                 options={ROLE_OPTIONS}
                 value={roleLabel(inviteRole())}
@@ -715,14 +791,14 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 onChange={(value) => value && setInviteRole(value === "Admin" ? "admin" : "member")}
                 itemComponent={(item) => <SelectItem item={item.item}>{item.item.rawValue}</SelectItem>}
               >
-                <SelectTrigger class="server-settings-role-select" aria-label="Invitation role">
+                <SelectTrigger class="server-settings-role-select" size="sm" aria-label="Invitation role">
                   <SelectValue<string>>{(state) => state.selectedOption()}</SelectValue>
                 </SelectTrigger>
                 <SelectContent />
               </Select>
               <Button
                 type="button"
-                size="default"
+                size="sm"
                 variant="default"
                 loading={busy() === "invite"}
                 disabled={!canInvite()}
@@ -731,16 +807,6 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 {inviteMode() === "email" ? "Send invite" : "Create link"}
               </Button>
             </div>
-            <Show when={inviteEmailError()}>
-              {(message) => (
-                <Text variant="caption" tone="danger" role="alert">
-                  {message()}
-                </Text>
-              )}
-            </Show>
-            <Text class="server-settings-invite-help" variant="caption" tone="muted">
-              Invitations can be used once and expire after 24 hours.
-            </Text>
             <Show when={inviteResult()}>
               {(result) => (
                 <Alert class="server-settings-invite-result" tone="success" role="status">
@@ -759,31 +825,18 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 </Alert>
               )}
             </Show>
-          </Tabs.Root>
-        </Card>
-      </section>
+          </Card>
+        </SettingsSection>
+      </SlidingTabs.Root>
     );
   }
 
   function memberRow(member: TeamPresenceMember) {
     return (
       <Item class="server-settings-member-row" data-disabled={member.disabled ? "" : undefined}>
-        <ItemMedia>
-          <TeamPersonAvatar member={member} />
-        </ItemMedia>
         <ItemContent>
           <ItemTitle>{teamMemberName(member)}</ItemTitle>
-          <ItemDescription class="server-settings-member-meta">
-            <span>{member.email ?? member.username}</span>
-            <span aria-hidden="true">·</span>
-            <span
-              class="server-settings-member-status"
-              data-state={member.disabled ? "paused" : member.online ? "online" : "offline"}
-            >
-              <span aria-hidden="true" />
-              {member.disabled ? "Paused" : member.online ? "Online" : "Offline"}
-            </span>
-          </ItemDescription>
+          <ItemDescription class="server-settings-member-meta">{member.email ?? member.username}</ItemDescription>
         </ItemContent>
         <ItemActions class="server-settings-member-actions">
           <Show when={member.role !== "owner"} fallback={<Badge tone="accent">Owner</Badge>}>
@@ -814,23 +867,28 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
 
   function pendingInvites() {
     return (
-      <section class="settings-modal-group" aria-labelledby="pending-invitations-heading">
-        <div class="server-settings-section-title">
-          <Heading id="pending-invitations-heading" as="h3" size="sm" tone="secondary">
-            Pending invitations
-          </Heading>
+      <SettingsSection
+        title="Pending invitations"
+        actions={
           <Text variant="caption" tone="muted">
             {activeInvites().length} pending
           </Text>
-        </div>
-        <ItemGroup class="server-settings-people-card server-settings-invites-list">
+        }
+      >
+        <ItemGroup class="server-settings-general-card server-settings-invites-list">
           <Show
             when={activeInvites().length > 0}
-            fallback={<p class="server-settings-empty">No pending invitations.</p>}
+            fallback={
+              <Item class="server-settings-empty-row">
+                <ItemContent>
+                  <ItemDescription>No pending invitations.</ItemDescription>
+                </ItemContent>
+              </Item>
+            }
           >
             <For each={activeInvites()}>
               {(invite) => (
-                <Item class="server-settings-invite-row" size="compact">
+                <Item class="server-settings-invite-row">
                   <ItemContent>
                     <ItemTitle>{invite.email ?? "Private invitation link"}</ItemTitle>
                     <ItemDescription>
@@ -841,7 +899,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                     <Button
                       type="button"
                       size="sm"
-                      variant="ghost"
+                      variant="destructive-ghost"
                       disabled={!actionsAvailable() || Boolean(busy())}
                       onClick={() => void run(`invite:${invite.id}`, () => props.onRevokeInvite(invite.id))}
                     >
@@ -853,16 +911,13 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
             </For>
           </Show>
         </ItemGroup>
-      </section>
+      </SettingsSection>
     );
   }
 
   function DesktopPanel() {
     return (
-      <section class="server-settings-general-section" aria-labelledby="remote-desktop-heading">
-        <Heading id="remote-desktop-heading" class="server-settings-section-heading" as="h3" size="sm">
-          Remote desktop access
-        </Heading>
+      <SettingsSection title="Remote desktop access">
         <ItemGroup class="server-settings-general-card server-settings-desktop-card">
           <Show when={local()} fallback={remoteDesktopConnection()}>
             <Item size="spacious">
@@ -888,7 +943,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
             </Item>
           </Show>
         </ItemGroup>
-      </section>
+      </SettingsSection>
     );
   }
 

@@ -18,6 +18,13 @@ export interface ClaudeCliInfo {
   version: string;
 }
 
+export interface GrokCliInfo {
+  executable: string;
+  version: string;
+}
+
+export type AgentCliInfo = CodexCliInfo | ClaudeCliInfo | GrokCliInfo;
+
 export class CodexCliError extends Error {
   constructor(
     message: string,
@@ -96,6 +103,35 @@ export async function resolveClaudeCli(): Promise<ClaudeCliInfo> {
   );
 }
 
+export async function resolveGrokCli(): Promise<GrokCliInfo> {
+  const candidates = await collectCandidates("grok", process.env.OPENBOT_GROK_PATH);
+  let foundCandidate = false;
+
+  for (const candidate of candidates) {
+    if (!(await isExecutable(candidate))) continue;
+    foundCandidate = true;
+
+    try {
+      const stdout = await readCliVersion(candidate);
+      return { executable: candidate, version: parseGrokVersion(stdout) };
+    } catch {
+      // Try the next executable candidate.
+    }
+  }
+
+  if (foundCandidate) {
+    throw new CodexCliError(
+      "Grok CLI was found but could not be started. Run `grok --version` in a new terminal.",
+      "invalid",
+    );
+  }
+
+  throw new CodexCliError(
+    "Grok CLI was not found. Install Grok CLI, run `grok login`, then restart OpenBot.",
+    "missing",
+  );
+}
+
 export function parseCodexVersion(output: string): string {
   const match = output.match(/(?:codex-cli\s+)?(\d+)\.(\d+)\.(\d+)/i);
   if (!match) throw new CodexCliError("Unable to read the Codex CLI version.", "invalid");
@@ -108,6 +144,12 @@ export function parseClaudeVersion(output: string): string {
   return `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`;
 }
 
+export function parseGrokVersion(output: string): string {
+  const match = output.match(/(?:grok(?:-cli)?\s+)?v?(\d+)\.(\d+)\.(\d+)/i);
+  if (!match) throw new CodexCliError("Unable to read the Grok CLI version.", "invalid");
+  return `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`;
+}
+
 function isMinimumVersion(version: string): boolean {
   const parts = version.split(".").map(Number);
   for (let index = 0; index < MINIMUM_CODEX_VERSION.length; index += 1) {
@@ -117,7 +159,10 @@ function isMinimumVersion(version: string): boolean {
   return true;
 }
 
-async function collectCandidates(command: "codex" | "claude", configuredPath: string | undefined): Promise<string[]> {
+async function collectCandidates(
+  command: "codex" | "claude" | "grok",
+  configuredPath: string | undefined,
+): Promise<string[]> {
   const candidates: string[] = [];
   const override = configuredPath?.trim();
   if (override) return [override];
@@ -155,7 +200,7 @@ async function collectCandidates(command: "codex" | "claude", configuredPath: st
 }
 
 export function windowsFallbackPaths(
-  command: "codex" | "claude",
+  command: "codex" | "claude" | "grok",
   userHome = homedir(),
   environment: NodeJS.ProcessEnv = process.env,
 ): string[] {
@@ -168,6 +213,10 @@ export function windowsFallbackPaths(
   }
   if (command === "claude" && localAppData) {
     paths.push(win32.join(localAppData, "Microsoft", "WinGet", "Links", "claude.exe"));
+  }
+  if (command === "grok") {
+    paths.push(win32.join(userHome, ".grok", "bin", "grok.exe"));
+    if (localAppData) paths.push(win32.join(localAppData, "Microsoft", "WinGet", "Links", "grok.exe"));
   }
   if (appData) paths.push(win32.join(appData, "npm", `${command}.cmd`));
   paths.push(
@@ -182,9 +231,10 @@ export function windowsFallbackPaths(
   return paths;
 }
 
-function posixFallbackPaths(command: "codex" | "claude"): string[] {
-  const paths = [join(homedir(), ".local", "bin", command)];
-  if (command === "claude") paths.push(join(homedir(), ".claude", "local", "claude"));
+export function posixFallbackPaths(command: "codex" | "claude" | "grok", userHome = homedir()): string[] {
+  const paths = [join(userHome, ".local", "bin", command)];
+  if (command === "claude") paths.push(join(userHome, ".claude", "local", "claude"));
+  if (command === "grok") paths.push(join(userHome, ".grok", "bin", "grok"));
   paths.push(`/opt/homebrew/bin/${command}`, `/usr/local/bin/${command}`);
   return paths;
 }

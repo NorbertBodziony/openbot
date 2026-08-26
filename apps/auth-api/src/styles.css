@@ -27,6 +27,7 @@
   --openbot-download-card-focus: rgba(242, 242, 242, 0.86);
   --openbot-provider-codex: var(--openbot-text-primary);
   --openbot-provider-claude: #d97757;
+  --openbot-provider-grok: var(--openbot-text-primary);
   --openbot-focus: rgba(214, 173, 242, 0.34);
   --openbot-hero-grid-line: rgba(214, 173, 242, 0.09);
   --openbot-glass-surface: rgba(255, 255, 255, 0.07);
@@ -625,6 +626,10 @@ a {
 
 .landing-provider-logo[data-provider="claude"] {
   fill: var(--openbot-provider-claude);
+}
+
+.landing-provider-logo[data-provider="grok"] {
+  fill: var(--openbot-provider-grok);
 }
 
 .landing-actions {

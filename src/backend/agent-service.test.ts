@@ -27,6 +27,7 @@ let logPath: string;
 let service: AgentService | null = null;
 const originalCodexPath = process.env.OPENBOT_CODEX_PATH;
 const originalClaudePath = process.env.OPENBOT_CLAUDE_PATH;
+const originalGrokPath = process.env.OPENBOT_GROK_PATH;
 const CREATE_BOT_INPUT = {
   name: "Planning Bot",
   description: "Builds clear plans for everyday tasks.",
@@ -41,6 +42,7 @@ beforeEach(async () => {
   process.env.OPENBOT_FAKE_CODEX_LOG = logPath;
   process.env.OPENBOT_CODEX_PATH = await createFakeCodex(root);
   process.env.OPENBOT_CLAUDE_PATH = join(root, "missing-claude");
+  process.env.OPENBOT_GROK_PATH = join(root, "missing-grok");
 });
 
 afterEach(async () => {
@@ -51,6 +53,8 @@ afterEach(async () => {
   else process.env.OPENBOT_CODEX_PATH = originalCodexPath;
   if (originalClaudePath === undefined) delete process.env.OPENBOT_CLAUDE_PATH;
   else process.env.OPENBOT_CLAUDE_PATH = originalClaudePath;
+  if (originalGrokPath === undefined) delete process.env.OPENBOT_GROK_PATH;
+  else process.env.OPENBOT_GROK_PATH = originalGrokPath;
   delete process.env.OPENBOT_FAKE_CODEX_LOG;
   delete process.env.OPENBOT_FAKE_AGENT_TOOL;
   delete process.env.OPENBOT_FAKE_AGENT_TOOL_PATHS;
@@ -66,6 +70,19 @@ afterEach(async () => {
 });
 
 describe.sequential("AgentService", () => {
+  it("only exposes the curated Codex models from the CLI catalog", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    expect(
+      service
+        .listModels()
+        .filter((model) => model.provider === "codex")
+        .map((model) => model.id),
+    ).toEqual(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
+  });
+
   it("resolves only regular files inside the shared directory", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
@@ -221,6 +238,7 @@ describe.sequential("AgentService", () => {
           email: "codex@example.com",
         },
         { id: "claude", state: "not-installed", version: null },
+        { id: "grok", state: "not-installed", version: null },
       ],
       capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
     });
@@ -717,6 +735,7 @@ describe.sequential("AgentService", () => {
           version: "2.1.231",
           email: "claude@example.com",
         },
+        { id: "grok", state: "not-installed", version: null },
       ],
     });
     await expect(
@@ -760,7 +779,7 @@ describe.sequential("AgentService", () => {
     await store.getOrCreate("chief");
     const threadId = await store.ensureThreadId("chief");
 
-    await expect(service.updateBot({ botId: "chief", model: "claude-sonnet-5" })).rejects.toThrow(
+    await expect(service.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" })).rejects.toThrow(
       "Claude CLI was not found",
     );
     expect(service.listBots().find((bot) => bot.id === "chief")).toMatchObject({
@@ -777,7 +796,12 @@ describe.sequential("AgentService", () => {
     await store.getOrCreate("chief");
 
     await expect(
-      service.updateBot({ botId: "chief", model: "claude-sonnet-5", reasoningEffort: "high" }),
+      service.updateBot({
+        botId: "chief",
+        provider: "claude",
+        model: "claude-sonnet-5",
+        reasoningEffort: "high",
+      }),
     ).resolves.toMatchObject({ model: "claude-sonnet-5", reasoningEffort: "high" });
     expect(service.getStatus().providers).toEqual(
       expect.arrayContaining([
@@ -787,8 +811,9 @@ describe.sequential("AgentService", () => {
     );
   });
 
-  it("hands one SQLite conversation across Codex, Claude, and a new Codex session", async () => {
+  it("hands one SQLite conversation across Codex, Grok, and Claude provider sessions", async () => {
     process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    process.env.OPENBOT_GROK_PATH = await createFakeGrok(root);
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
@@ -802,34 +827,31 @@ describe.sequential("AgentService", () => {
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
     const publicThreadId = service.listBots().find((bot) => bot.id === "chief")?.threadId;
 
-    await service.updateBot({ botId: "chief", model: "claude-sonnet-5" });
+    await service.updateBot({ botId: "chief", provider: "grok", model: "grok-4.5" });
     expect(service.listBots().find((bot) => bot.id === "chief")?.threadId).toBe(publicThreadId);
     await service.sendMessage({ botId: "chief", text: "Second request" });
     await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "completed");
 
-    const claudeInput = clients.get("claude")?.requests.find((request) => request.method === "turn/start")?.params;
-    expect(firstInputText(claudeInput)).toContain("CODEX_DONE");
-    expect(firstInputText(claudeInput)).toContain("Second request");
+    const grokInput = clients.get("grok")?.requests.find((request) => request.method === "turn/start")?.params;
+    expect(firstInputText(grokInput)).toContain("CODEX_DONE");
+    expect(firstInputText(grokInput)).toContain("Second request");
 
-    await service.updateBot({ botId: "chief", model: "gpt-5.6-sol" });
+    await service.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });
     await service.sendMessage({ botId: "chief", text: "Third request" });
     await waitFor(() => service?.listQueue("chief").deliveries[2]?.status === "completed");
-    const codexStarts = clients.get("codex")?.requests.filter((request) => request.method === "thread/start");
-    expect(codexStarts).toHaveLength(2);
-    const codexTurns = clients.get("codex")?.requests.filter((request) => request.method === "turn/start");
-    const latestCodexTurn = codexTurns?.at(-1)?.params;
-    expect(firstInputText(latestCodexTurn)).toContain("CLAUDE_DONE");
+    const claudeInput = clients.get("claude")?.requests.find((request) => request.method === "turn/start")?.params;
+    expect(firstInputText(claudeInput)).toContain("GROK_DONE");
 
     const conversation = await service.readConversation("chief");
     expect(conversation.threadId).toBe(publicThreadId);
     expect(conversation.messages.map((message) => message.text)).toEqual(
-      expect.arrayContaining(["CODEX_DONE", "CLAUDE_DONE"]),
+      expect.arrayContaining(["CODEX_DONE", "GROK_DONE", "CLAUDE_DONE"]),
     );
     if (!publicThreadId) throw new Error("The public thread was not created.");
     expect(store.database.listProviderSessions(publicThreadId)).toMatchObject([
       { provider: "codex", state: "inactive" },
-      { provider: "claude", state: "inactive" },
-      { provider: "codex", state: "active" },
+      { provider: "grok", state: "inactive" },
+      { provider: "claude", state: "active" },
     ]);
   });
 
@@ -848,7 +870,7 @@ describe.sequential("AgentService", () => {
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
     const publicThreadId = service.listBots().find((bot) => bot.id === "chief")?.threadId;
 
-    await service.updateBot({ botId: "chief", model: "claude-sonnet-5" });
+    await service.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });
     await service.sendMessage({ botId: "chief", text: "Continue from the result" });
     await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "completed");
 
@@ -1822,7 +1844,7 @@ describe.sequential("AgentService", () => {
     for (let restart = 0; restart < 2; restart += 1) {
       service = createService();
       await service.initialize();
-      const client = clients.at(-1);
+      const client = clients.filter((candidate) => candidate.provider === "codex").at(-1);
       await waitFor(() => client?.requests.some((request) => request.method === "thread/read"));
       await service.stop();
     }
@@ -2095,7 +2117,7 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
 
   constructor(
     readonly provider: AgentProvider,
-    readonly output = provider === "codex" ? "CODEX_DONE" : "CLAUDE_DONE",
+    readonly output = provider === "codex" ? "CODEX_DONE" : provider === "grok" ? "GROK_DONE" : "CLAUDE_DONE",
     readonly autoComplete = true,
   ) {
     super();
@@ -2116,7 +2138,7 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
     if (method === "account/read") {
       result = {
         account: {
-          type: this.provider === "codex" ? "chatgpt" : "claude",
+          type: this.provider === "codex" ? "chatgpt" : this.provider,
           email: `${this.provider}@example.com`,
         },
         requiresOpenaiAuth: false,
@@ -2130,7 +2152,9 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
         data:
           this.provider === "codex"
             ? ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"].map((model) => ({ model }))
-            : ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"].map((model) => ({ model })),
+            : this.provider === "grok"
+              ? ["grok-4.5", "grok-fast"].map((model) => ({ model }))
+              : ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"].map((model) => ({ model })),
       };
     }
     if (method === "plugin/list") result = { marketplaces: [] };
@@ -2359,7 +2383,11 @@ process.stdin.on("data", (chunk) => {
       if (message.method === "model/list") write({ id: message.id, result: { data: [
         { model: "gpt-5.6-luna", displayName: "GPT-5.6 Luna", defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "medium" }, { reasoningEffort: "high" }] },
         { model: "gpt-5.6-terra", displayName: "GPT-5.6 Terra", defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }] },
-        { model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", defaultReasoningEffort: "high", supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }, { reasoningEffort: "xhigh" }] }
+        { model: "gpt-5.6-sol", displayName: "GPT-5.6 Sol", defaultReasoningEffort: "high", supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }, { reasoningEffort: "xhigh" }] },
+        { model: "gpt-5.5", displayName: "GPT-5.5" },
+        { model: "gpt-5.4", displayName: "GPT-5.4" },
+        { model: "gpt-5.4-mini", displayName: "GPT-5.4-Mini" },
+        { model: "gpt-5.3-codex-spark", displayName: "GPT-5.3-Codex-Spark" }
       ] } });
       if (message.method === "plugin/list") write({ id: message.id, result: { marketplaces: [{ plugins: [{ id: "computer-use@openai-bundled", name: "computer-use", installed: true, enabled: true }] }] } });
       if (message.method === "thread/start") {
@@ -2469,6 +2497,20 @@ if [ "$1" = "--version" ]; then
   printf '%s\\n' '2.1.231 (Claude Code)'
 elif [ "$1" = "auth" ]; then
   printf '%s' '{"loggedIn":true,"email":"claude@example.com","subscriptionType":"max"}'
+fi
+`,
+  );
+  await chmod(executable, 0o755);
+  return executable;
+}
+
+async function createFakeGrok(directory: string): Promise<string> {
+  const executable = join(directory, "grok");
+  await writeFile(
+    executable,
+    `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s\\n' 'grok 1.0.5'
 fi
 `,
   );

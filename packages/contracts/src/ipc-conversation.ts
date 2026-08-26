@@ -6,7 +6,12 @@ export type AgentPhase = "idle" | "starting" | "ready" | "restarting" | "blocked
 
 export type CapabilityState = "ready" | "setup-required" | "unavailable";
 
-export type AgentProviderId = "codex" | "claude";
+export const AGENT_PROVIDERS = ["codex", "claude", "grok"] as const;
+export type AgentProviderId = (typeof AGENT_PROVIDERS)[number];
+
+export function isAgentProvider(value: unknown): value is AgentProviderId {
+  return isOneOf(AGENT_PROVIDERS, value);
+}
 export type AgentProviderState =
   | "not-started"
   | "checking"
@@ -29,7 +34,8 @@ export type AgentAuthState =
   | { kind: "signed-out" }
   | { kind: "unsupported"; accountType: string }
   | { kind: "chatgpt"; email: string | null }
-  | { kind: "claude"; email: string | null };
+  | { kind: "claude"; email: string | null }
+  | { kind: "grok"; email: string | null };
 
 export interface AccountUsageWindow {
   usedPercent: number;
@@ -67,6 +73,7 @@ export interface BotSummary {
   title: string;
   description: string;
   notifications: boolean;
+  provider: AgentProviderId;
   model: AgentModelId;
   reasoningEffort: AgentReasoningEffort;
   threadId: string | null;
@@ -383,12 +390,13 @@ export const AGENT_MODELS = [
   "claude-opus-5",
   "claude-sonnet-5",
 ] as const;
-export type AgentModelId = (typeof AGENT_MODELS)[number];
+export type AgentModelId = string;
 
 export const AGENT_REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type AgentReasoningEffort = (typeof AGENT_REASONING_EFFORTS)[number];
 
 export interface AgentModelOption {
+  provider: AgentProviderId;
   id: AgentModelId;
   name: string;
   description: string;
@@ -400,11 +408,17 @@ export const BOT_AVATAR_HUES = [0, 30, 55, 100, 150, 185, 215, 245, 280, 320] as
 export type BotAvatarHue = (typeof BOT_AVATAR_HUES)[number];
 
 export function isAgentModel(value: unknown): value is AgentModelId {
-  return isOneOf(AGENT_MODELS, value);
+  return isString(value) && value.length > 0 && value.length <= 160 && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value);
 }
 
 export function isClaudeModel(model: AgentModelId): boolean {
   return model.startsWith("claude-");
+}
+
+export function providerForLegacyModel(model: AgentModelId): AgentProviderId {
+  if (isClaudeModel(model)) return "claude";
+  if (model.startsWith("grok-")) return "grok";
+  return "codex";
 }
 
 export function isReasoningEffort(value: unknown): value is AgentReasoningEffort {
@@ -433,6 +447,7 @@ export interface UpdateBotInput {
   title?: string;
   description?: string;
   notifications?: boolean;
+  provider?: AgentProviderId;
   model?: AgentModelId;
   reasoningEffort?: AgentReasoningEffort;
   avatarSeed?: string;

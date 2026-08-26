@@ -56,21 +56,15 @@ import type {
   UpdateQueuedMessageInput,
   UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
-import {
-  isClaudeModel,
-  isImageGenerationAspectRatio,
-  isReasoningEffort,
-  isRoutineSchedule,
-} from "@openbot/contracts/ipc";
+import { isImageGenerationAspectRatio, isReasoningEffort, isRoutineSchedule } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentMemoryStore } from "./agent-memory-store";
 import { AgentRoutineStore } from "./agent-routine-store";
-import { AppServerError, CodexAppServerClient } from "./app-server-client";
+import { AppServerError } from "./app-server-client";
 import type { BotStore } from "./bot-store";
 import { BROWSER_DYNAMIC_TOOLS, OPENBOT_BROWSER_NAMESPACE } from "./browser-host";
-import { ClaudeAgentClient } from "./claude-client";
-import { type ClaudeCliInfo, CodexCliError, type CodexCliInfo, resolveClaudeCli, resolveCodexCli } from "./cli";
+import { type AgentCliInfo, CodexCliError } from "./cli";
 import { ConversationReadStore } from "./conversation-read-store";
 import {
   mergeConversationSnapshots,
@@ -81,6 +75,7 @@ import {
   sortConversationMessages,
 } from "./conversation-snapshots";
 import type { DeliveryContext, MailboxStore } from "./mailbox-store";
+import { OPENBOT_DYNAMIC_TOOLS } from "./openbot-tools";
 import {
   type AccountRateLimitResult,
   type AccountRateLimitsReadResult,
@@ -91,6 +86,7 @@ import {
   type DynamicToolResult,
   decodeAccountRateLimitsReadResult,
   decodeAccountReadResult,
+  decodeModelListResponse,
   decodeRecordResponse,
   decodeThreadResponse,
   decodeTurnResponse,
@@ -98,13 +94,12 @@ import {
   getRecord,
   getString,
   isRecord,
-  type ModelListResponse,
   type RequestId,
   type ResponseDecoder,
   type ThreadItem,
 } from "./protocol";
+import { BUILT_IN_PROVIDER_DRIVERS, requireProviderDriver } from "./provider-drivers";
 import { nextRoutineOccurrence } from "./routine-schedule";
-import { ROUTINE_SCHEDULE_JSON_SCHEMA } from "./routine-tool-schema";
 import { isWithin, sharedPathFromInput, workspacePathFromInput } from "./workspace-paths";
 
 interface AgentServiceEvents {
@@ -200,6 +195,7 @@ const INITIAL_STATUS: AgentStatus = {
   providers: [
     { id: "codex", state: "not-started", version: null, message: null },
     { id: "claude", state: "not-started", version: null, message: null },
+    { id: "grok", state: "not-started", version: null, message: null },
   ],
   capabilities: {
     chat: "unavailable",
@@ -212,6 +208,7 @@ const INITIAL_STATUS: AgentStatus = {
 
 const FALLBACK_MODELS: AgentModelOption[] = [
   {
+    provider: "codex",
     id: "gpt-5.6-luna",
     name: "Luna",
     description: "Fast and efficient for everyday agent work.",
@@ -219,6 +216,7 @@ const FALLBACK_MODELS: AgentModelOption[] = [
     supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
   },
   {
+    provider: "codex",
     id: "gpt-5.6-terra",
     name: "Terra",
     description: "Balanced speed and capability for involved tasks.",
@@ -226,6 +224,7 @@ const FALLBACK_MODELS: AgentModelOption[] = [
     supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
   },
   {
+    provider: "codex",
     id: "gpt-5.6-sol",
     name: "Sol",
     description: "Most capable for complex, long-running work.",
@@ -233,6 +232,7 @@ const FALLBACK_MODELS: AgentModelOption[] = [
     supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
   },
   {
+    provider: "claude",
     id: "claude-fable-5",
     name: "Claude Fable 5",
     description: "Fast Claude model for everyday agent work.",
@@ -240,6 +240,7 @@ const FALLBACK_MODELS: AgentModelOption[] = [
     supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
   },
   {
+    provider: "claude",
     id: "claude-opus-5",
     name: "Claude Opus 5",
     description: "Most capable Claude model for complex work.",
@@ -247,6 +248,7 @@ const FALLBACK_MODELS: AgentModelOption[] = [
     supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
   },
   {
+    provider: "claude",
     id: "claude-sonnet-5",
     name: "Claude Sonnet 5",
     description: "Balanced Claude model for general agent work.",
@@ -255,7 +257,11 @@ const FALLBACK_MODELS: AgentModelOption[] = [
   },
 ];
 
-export type AgentClientFactory = (provider: AgentProvider, cli: CodexCliInfo | ClaudeCliInfo) => AgentClient;
+const CURATED_CODEX_MODEL_IDS = new Set(
+  FALLBACK_MODELS.filter((model) => model.provider === "codex").map((model) => model.id),
+);
+
+export type AgentClientFactory = (provider: AgentProvider, cli: AgentCliInfo) => AgentClient;
 
 export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #store: BotStore;
@@ -291,7 +297,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #routineTimer: NodeJS.Timeout | null = null;
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
   readonly #clients = new Map<AgentProvider, AgentClient>();
-  readonly #cli = new Map<AgentProvider, CodexCliInfo | ClaudeCliInfo>();
+  readonly #cli = new Map<AgentProvider, AgentCliInfo>();
   readonly #accounts = new Map<AgentProvider, AccountReadResult["account"]>();
   readonly #providerStarts = new Map<AgentProvider, Promise<void>>();
   #preferredProvider: AgentProvider;
@@ -437,11 +443,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (input.initialMessage.length > INPUT_LIMITS.messageText) throw new Error("Initial message is too long.");
     let bot = await this.#store.createBot(input);
     try {
-      if (this.#preferredProvider === "claude") {
+      if (this.#preferredProvider !== bot.provider) {
+        const preferredDefault =
+          this.#preferredProvider === "codex"
+            ? "gpt-5.6-luna"
+            : this.#preferredProvider === "claude"
+              ? "claude-opus-5"
+              : null;
+        const preferredModel =
+          this.#models.find((model) => model.provider === this.#preferredProvider && model.id === preferredDefault) ??
+          this.#models.find((model) => model.provider === this.#preferredProvider);
+        if (!preferredModel) throw new Error(`${providerLabel(this.#preferredProvider)} has no available model.`);
         bot = await this.#store.updateBot({
           botId: bot.id,
-          model: "claude-opus-5",
-          reasoningEffort: "high",
+          provider: this.#preferredProvider,
+          model: preferredModel.id,
+          reasoningEffort: preferredModel.defaultReasoningEffort,
         });
       }
       await this.sendMessage({ botId: bot.id, text: initialMessage, attachmentDraftIds: [] });
@@ -479,7 +496,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
     const previous = this.#store.list().find((bot) => bot.id === input.botId);
-    if (input.model && previous && providerForModel(input.model) !== providerForBot(previous)) {
+    const requestedModel = input.model
+      ? this.#models.find((model) => model.id === input.model && (!input.provider || model.provider === input.provider))
+      : undefined;
+    if (input.model && !requestedModel) throw new Error("The selected agent model is unavailable.");
+    const requestedProvider = input.provider ?? requestedModel?.provider ?? previous?.provider;
+    if (input.provider && requestedModel && requestedModel.provider !== input.provider) {
+      throw new Error("The selected model does not belong to that provider.");
+    }
+    if (requestedProvider && previous && requestedProvider !== providerForBot(previous)) {
+      if (!input.model || !input.provider) {
+        throw new Error("Changing provider requires an atomic provider and model selection.");
+      }
       const hasPendingWork = this.#mailbox
         .listQueue(input.botId)
         .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
@@ -489,7 +517,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (hasPendingWork || activeTurn) {
         throw new Error("Wait for the active turn and queue to finish before changing provider.");
       }
-      await this.ensureProvider(providerForModel(input.model));
+      await this.ensureProvider(requestedProvider);
     }
     const profileChanged =
       input.name !== undefined ||
@@ -497,9 +525,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       input.description !== undefined ||
       input.model !== undefined ||
       input.reasoningEffort !== undefined;
-    const bot = await this.#store.updateBot(input);
+    const bot = await this.#store.updateBot({
+      ...input,
+      ...(requestedModel && !input.provider ? { provider: requestedModel.provider } : {}),
+    });
     const activeSession = this.#store.activeProviderSession(bot.id);
-    if (previous?.threadId && input.model && providerForModel(input.model) !== providerForBot(previous)) {
+    if (previous?.threadId && requestedProvider && requestedProvider !== providerForBot(previous)) {
       this.#store.database.deactivateProviderSessions(previous.threadId);
     } else if (activeSession && (input.model || input.reasoningEffort)) {
       this.#store.database.updateProviderSessionConfig(
@@ -611,7 +642,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#recoverPersistedTurns();
     this.#routines.skipMissed(new Date());
     this.#initialized = true;
-    await this.#connect("starting", ["codex", "claude"]);
+    await this.#connect(
+      "starting",
+      BUILT_IN_PROVIDER_DRIVERS.map((driver) => driver.id),
+    );
     await this.#resumePendingRoutineRuns();
     this.#armRoutineTimer();
   }
@@ -624,10 +658,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!this.#clients.has(provider) || !account) return;
     this.#setStatus({
       cliVersion: this.#cli.get(provider)?.version ?? null,
-      auth:
-        provider === "codex"
-          ? { kind: "chatgpt", email: account.email ?? null }
-          : { kind: "claude", email: account.email ?? null },
+      auth: requireProviderDriver(provider).authState(account),
     });
   }
 
@@ -958,15 +989,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const failures: string[] = [];
     for (const provider of requestedProviders) {
       if (this.#clients.has(provider)) continue;
+      const driver = requireProviderDriver(provider);
       let client: AgentClient | null = null;
-      let cli: CodexCliInfo | ClaudeCliInfo | null = null;
+      let cli: AgentCliInfo | null = null;
       try {
-        cli = provider === "codex" ? await resolveCodexCli() : await resolveClaudeCli();
+        cli = await driver.resolveCli();
         client = this.#clientFactory
           ? this.#clientFactory(provider, cli)
-          : provider === "codex"
-            ? new CodexAppServerClient(cli.executable, this.#requestTimeoutMs)
-            : new ClaudeAgentClient(cli);
+          : driver.createClient(cli, this.#requestTimeoutMs);
         this.#bindClient(client);
         client.start();
         await client.request(
@@ -980,8 +1010,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         client.notify("initialized");
         const account = await client.request("account/read", { refreshToken: false }, decodeAccountReadResult);
         if (!account.account) {
-          const message =
-            provider === "codex" ? "Run `codex login` to use Codex." : "Run `claude auth login` to use Claude.";
+          const message = driver.signInMessage;
           setProviderStatus(providerStatuses, provider, {
             state: "sign-in-required",
             version: cli.version,
@@ -992,9 +1021,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           await client.stop().catch(() => undefined);
           continue;
         }
-        if (provider === "codex" && account.account.type !== "chatgpt") {
-          throw new Error("Codex requires a ChatGPT subscription login. Run `codex login`.");
-        }
+        driver.validateAccount(account.account);
         this.#cli.set(provider, cli);
         this.#clients.set(provider, client);
         this.#accounts.set(provider, account.account);
@@ -1026,11 +1053,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     await this.#refreshModelCatalog();
-    const primaryProvider: AgentProvider = this.#clients.has(this.#preferredProvider)
+    const primaryProvider = this.#clients.has(this.#preferredProvider)
       ? this.#preferredProvider
       : this.#clients.has("codex")
         ? "codex"
-        : "claude";
+        : this.#clients.keys().next().value;
+    if (!primaryProvider) throw new Error("No agent provider is ready.");
     const primaryAccount = this.#accounts.get(primaryProvider);
     const codexClient = this.#clients.get("codex");
     const computerUse = codexClient ? await this.#probeComputerUse(codexClient) : "unavailable";
@@ -1038,10 +1066,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#setStatus({
       phase: "ready",
       cliVersion: this.#cli.get(primaryProvider)?.version ?? null,
-      auth:
-        primaryProvider === "codex"
-          ? { kind: "chatgpt", email: primaryAccount?.email ?? null }
-          : { kind: "claude", email: primaryAccount?.email ?? null },
+      auth: requireProviderDriver(primaryProvider).authState(primaryAccount ?? null),
       providers: providerStatuses,
       capabilities: { chat: "ready", browser: "ready", computerUse },
       message: null,
@@ -1774,29 +1799,44 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             .filter((item): item is typeof item & { model: string } => !item.hidden && isString(item.model))
             .map((item) => [item.model, item] as const),
         );
-        for (const fallback of FALLBACK_MODELS) {
-          if (providerForModel(fallback.id) !== client.provider || !serverModels.has(fallback.id)) {
-            continue;
-          }
-          const server = serverModels.get(fallback.id);
+        for (const server of serverModels.values()) {
+          if (!server.model) continue;
+          if (client.provider === "codex" && !CURATED_CODEX_MODEL_IDS.has(server.model)) continue;
+          const fallback = FALLBACK_MODELS.find(
+            (candidate) => candidate.provider === client.provider && candidate.id === server.model,
+          );
           const efforts = (server?.supportedReasoningEfforts ?? [])
             .map((item) => item.reasoningEffort)
             .filter(isReasoningEffort);
           discovered.push({
-            ...fallback,
-            name: cleanModelName(server?.displayName, fallback.name),
+            provider: client.provider,
+            id: server.model,
+            name: cleanModelName(server.displayName, fallback?.name ?? server.model),
+            description:
+              fallback?.description ?? `${providerLabel(client.provider)} model discovered from the local CLI.`,
             defaultReasoningEffort: isReasoningEffort(server?.defaultReasoningEffort)
               ? server.defaultReasoningEffort
-              : fallback.defaultReasoningEffort,
-            supportedReasoningEfforts: efforts.length ? efforts : fallback.supportedReasoningEfforts,
+              : (fallback?.defaultReasoningEffort ?? "medium"),
+            supportedReasoningEfforts: efforts.length ? efforts : (fallback?.supportedReasoningEfforts ?? ["medium"]),
           });
         }
       } catch {
-        discovered.push(...FALLBACK_MODELS.filter((model) => providerForModel(model.id) === client.provider));
+        if (client.provider !== "grok") {
+          discovered.push(...FALLBACK_MODELS.filter((model) => model.provider === client.provider));
+        }
       }
     }
-    const discoveredById = new Map(discovered.map((model) => [model.id, model]));
-    this.#models = FALLBACK_MODELS.map((fallback) => discoveredById.get(fallback.id) ?? fallback);
+    const discoveredById = new Map(discovered.map((model) => [`${model.provider}:${model.id}`, model]));
+    const staticModels = FALLBACK_MODELS.map(
+      (fallback) => discoveredById.get(`${fallback.provider}:${fallback.id}`) ?? fallback,
+    );
+    this.#models = [
+      ...staticModels,
+      ...discovered.filter(
+        (model) =>
+          !FALLBACK_MODELS.some((fallback) => fallback.provider === model.provider && fallback.id === model.id),
+      ),
+    ];
   }
 
   async #reconcileUnresolvedDeliveries(): Promise<void> {
@@ -3115,27 +3155,6 @@ function normalizeAccountUsage(rateLimits: AccountRateLimitsReadResult | null): 
   return { limits };
 }
 
-function decodeModelListResponse(value: unknown): ModelListResponse {
-  const data = getArray(value, "data");
-  return {
-    data: data.filter(isRecord).map((item) => ({
-      ...(isString(item.model) ? { model: item.model } : {}),
-      ...(isString(item.displayName) ? { displayName: item.displayName } : {}),
-      ...(isString(item.defaultReasoningEffort) ? { defaultReasoningEffort: item.defaultReasoningEffort } : {}),
-      ...(isBoolean(item.hidden) ? { hidden: item.hidden } : {}),
-      ...(Array.isArray(item.supportedReasoningEfforts)
-        ? {
-            supportedReasoningEfforts: item.supportedReasoningEfforts
-              .filter(isRecord)
-              .flatMap((effort) =>
-                isString(effort.reasoningEffort) ? [{ reasoningEffort: effort.reasoningEffort }] : [],
-              ),
-          }
-        : {}),
-    })),
-  };
-}
-
 function normalizeAccountLimit(id: string, limit: AccountRateLimitResult): AccountUsageLimit {
   return {
     id: limit.limitId ?? id,
@@ -3157,210 +3176,6 @@ function normalizeUsageWindow(window: AccountRateLimitResult["primary"]): Accoun
 function finiteNumberOrNull(value: unknown): number | null {
   return isNumber(value) && Number.isFinite(value) ? value : null;
 }
-
-const OPENBOT_DYNAMIC_TOOLS = {
-  type: "namespace",
-  name: "openbot",
-  description: "Discover and asynchronously message persistent OpenBot teammates.",
-  tools: [
-    {
-      type: "function",
-      name: "list_agents",
-      description: "List local OpenBot agents with their name, title, description, and current status.",
-      inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    },
-    {
-      type: "function",
-      name: "update_profile",
-      description: "Update the name, title, and/or description of a local OpenBot agent.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          botId: { type: "string", minLength: 1 },
-          name: { type: "string", maxLength: 80 },
-          title: { type: "string", maxLength: 120 },
-          description: { type: "string", maxLength: 2_000 },
-        },
-        required: ["botId"],
-        additionalProperties: false,
-      },
-    },
-    {
-      type: "function",
-      name: "list_routines",
-      description:
-        "List routines for this agent, or for another local agent when botId is provided. Use this before updating or deleting a routine.",
-      inputSchema: {
-        type: "object",
-        properties: { botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier } },
-        additionalProperties: false,
-      },
-    },
-    {
-      type: "function",
-      name: "create_routine",
-      description:
-        "Create a scheduled routine for this agent, or for another local agent when botId is provided. It is active by default and uses the host timezone by default.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
-          name: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.routineName },
-          instruction: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.routineInstruction },
-          schedule: ROUTINE_SCHEDULE_JSON_SCHEMA,
-          active: { type: "boolean" },
-          timezone: {
-            type: "string",
-            minLength: 1,
-            maxLength: 128,
-            description: "IANA timezone such as Europe/Warsaw.",
-          },
-        },
-        required: ["name", "instruction", "schedule"],
-        additionalProperties: false,
-      },
-    },
-    {
-      type: "function",
-      name: "update_routine",
-      description:
-        "Update, pause, or resume an existing routine for this agent, or for another local agent when botId is provided.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
-          routineId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
-          name: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.routineName },
-          instruction: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.routineInstruction },
-          schedule: ROUTINE_SCHEDULE_JSON_SCHEMA,
-          active: { type: "boolean" },
-        },
-        required: ["routineId"],
-        additionalProperties: false,
-      },
-    },
-    {
-      type: "function",
-      name: "delete_routine",
-      description: "Delete an existing routine for this agent, or for another local agent when botId is provided.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
-          routineId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
-        },
-        required: ["routineId"],
-        additionalProperties: false,
-      },
-    },
-    {
-      type: "function",
-      name: "test_routine",
-      description:
-        "Queue one manual test run of an existing routine for this agent, or for another local agent when botId is provided.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
-          routineId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
-        },
-        required: ["routineId"],
-        additionalProperties: false,
-      },
-    },
-    {
-      type: "function",
-      name: "remember",
-      description:
-        "Stage one short, durable memory for this agent. Use memoryId to correct or consolidate an existing memory. The change commits only if the current turn completes.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          text: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.agentMemoryText },
-          memoryId: { type: "string" },
-        },
-        required: ["text"],
-        additionalProperties: false,
-      },
-    },
-    {
-      type: "function",
-      name: "forget_memory",
-      description:
-        "Stage deletion of one saved memory when the user asks you to forget it. The change commits only if the current turn completes.",
-      inputSchema: {
-        type: "object",
-        properties: { memoryId: { type: "string", minLength: 1 } },
-        required: ["memoryId"],
-        additionalProperties: false,
-      },
-    },
-    {
-      type: "function",
-      name: "ask_user",
-      description:
-        "Ask the user 1–3 short questions and wait for structured answers. Use this instead of asking questions in a normal assistant message whenever clarification or a choice is needed.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          questions: {
-            type: "array",
-            minItems: 1,
-            maxItems: 3,
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string" },
-                header: { type: "string" },
-                question: { type: "string" },
-                isSecret: { type: "boolean" },
-                options: {
-                  type: "array",
-                  maxItems: 5,
-                  items: {
-                    type: "object",
-                    properties: {
-                      label: { type: "string" },
-                      description: { type: "string" },
-                    },
-                    required: ["label"],
-                    additionalProperties: false,
-                  },
-                },
-              },
-              required: ["question"],
-              additionalProperties: false,
-            },
-          },
-        },
-        required: ["questions"],
-        additionalProperties: false,
-      },
-    },
-    {
-      type: "function",
-      name: "send_message",
-      description:
-        "Queue an asynchronous message and optional local files for one or more OpenBot agents. When replying, pass the original message id as replyToMessageId.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          recipientBotIds: {
-            type: "array",
-            items: { type: "string" },
-            minItems: 1,
-            maxItems: 32,
-          },
-          text: { type: "string", minLength: 1, maxLength: 100_000 },
-          paths: { type: "array", items: { type: "string" }, maxItems: 10 },
-          replyToMessageId: { type: ["string", "null"] },
-        },
-        required: ["recipientBotIds", "text"],
-        additionalProperties: false,
-      },
-    },
-  ],
-} as const;
 
 function developerInstructions(bot: BotSummary, sharedRoot: string, memories: BotMemory[]): string {
   const profile = JSON.stringify(
@@ -3523,16 +3338,14 @@ function cleanModelName(value: string | undefined, fallback: string): string {
   return value.replace(/^GPT-5\.6[\s:–—-]*/i, "").trim() || fallback;
 }
 
-function providerForModel(model: BotSummary["model"]): AgentProvider {
-  return isClaudeModel(model) ? "claude" : "codex";
-}
-
 function providerForBot(bot: BotSummary): AgentProvider {
-  return providerForModel(bot.model);
+  return bot.provider;
 }
 
-function providerLabel(provider: AgentProvider): "Claude" | "Codex" {
-  return provider === "claude" ? "Claude" : "Codex";
+function providerLabel(provider: AgentProvider): "Claude" | "Codex" | "Grok" {
+  if (provider === "claude") return "Claude";
+  if (provider === "grok") return "Grok";
+  return "Codex";
 }
 
 function toThreadItem(value: DynamicRecord): ThreadItem | null {

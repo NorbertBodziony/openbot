@@ -73,6 +73,7 @@ describe("SkillMarketplaceService", () => {
     await auth.initialize();
     const bot: BotSummary = {
       id: "writer",
+      provider: "codex",
       name: "Writer",
       title: "",
       description: "",
