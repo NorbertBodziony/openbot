@@ -27,6 +27,7 @@
 
 ## Test value policy
 
+- Keep verification minimal and proportional to the change. Run the narrowest relevant automated test and, when needed, one manual UI check; do not repeat equivalent checks across Vitest, Storybook, and the integrated app unless they cover genuinely different runtime behavior.
 - Write tests only when they protect user behavior, accessibility, data integrity, security or permission boundaries, IPC contracts, persistence, error recovery, asynchronous ordering, or a reproduced regression.
 - Do not add tests that only check static text, CSS classes, visual-only data attributes, DOM structure, component variants, sizes, layout, animation timing, hover appearance, or Storybook states. Verify visual details in Storybook or with `bun run dev`.
 - Tests can use accessible roles and names to find controls. Assert the action and its result, not the exact wording. Assert exact text only when the text is a product contract, an error or security message, serialized output, or a localization key.
