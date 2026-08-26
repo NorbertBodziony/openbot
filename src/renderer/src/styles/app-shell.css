@@ -30,7 +30,6 @@
   position: fixed;
   z-index: var(--openbot-layer-dialog);
   inset: 0;
-  background: var(--openbot-command-overlay);
 }
 
 .global-search-dialog {
@@ -41,11 +40,8 @@
   width: min(560px, calc(100vw - 48px));
   max-height: calc(100vh - 68px);
   overflow: hidden;
-  border: 1px solid var(--openbot-border-strong);
-  border-radius: var(--openbot-radius-lg);
   outline: 0;
   background: var(--openbot-bg-control);
-  box-shadow: 0 28px 90px var(--openbot-shadow-dialog);
   color: var(--openbot-text-primary);
   transform: translate(-50%, -50%);
 }
@@ -113,8 +109,8 @@
   font-size: var(--openbot-text-lg);
   line-height: var(--openbot-leading-lg);
   transition:
-    background-color var(--openbot-duration-selectable-hover) ease,
-    color var(--openbot-duration-selectable-hover) ease,
+    background-color var(--openbot-duration-hover) ease,
+    color var(--openbot-duration-hover) ease,
     transform var(--openbot-duration-fast) var(--openbot-ease-out);
 }
 
@@ -443,8 +439,8 @@
   opacity: 0;
   transform: translateY(-50%);
   transition:
-    height var(--openbot-duration-normal) var(--openbot-ease-out),
-    opacity var(--openbot-duration-normal) ease;
+    height var(--openbot-duration-hover) var(--openbot-ease-out),
+    opacity var(--openbot-duration-hover) ease;
 }
 
 .server-rail-button[aria-pressed="true"] .server-rail-mark {
@@ -923,8 +919,8 @@
   font-weight: 570;
   text-align: left;
   transition:
-    background-color var(--openbot-duration-selectable-hover) ease,
-    color var(--openbot-duration-selectable-hover) ease,
+    background-color var(--openbot-duration-hover) ease,
+    color var(--openbot-duration-hover) ease,
     transform var(--openbot-duration-fast) ease;
 }
 
@@ -1555,16 +1551,34 @@ textarea {
 
 .sidebar-server-name {
   min-width: 0;
+  max-width: 100%;
+  height: var(--openbot-control-sm);
   overflow: hidden;
-  flex: 1;
+  flex: 0 1 auto;
+  justify-content: flex-start;
+  margin-right: auto;
+  border-radius: var(--openbot-radius-sm);
+  padding: 0 var(--openbot-space-1-5);
   color: var(--openbot-text-primary);
+  cursor: pointer;
   font-size: var(--openbot-text-md);
   font-weight: var(--openbot-weight-semibold);
   line-height: var(--openbot-leading-md);
   opacity: 1;
+  text-align: left;
+  transition:
+    background-color var(--openbot-duration-hover) ease,
+    border-color var(--openbot-duration-hover) ease,
+    color var(--openbot-duration-hover) ease,
+    box-shadow var(--openbot-duration-hover) ease,
+    opacity var(--openbot-duration-fast) ease;
+}
+
+.sidebar-server-name-label {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: opacity var(--openbot-duration-fast) ease;
 }
 
 .sidebar-topbar-actions {
@@ -1590,8 +1604,8 @@ textarea {
   cursor: pointer;
   -webkit-app-region: no-drag;
   transition:
-    background-color var(--openbot-duration-normal) ease,
-    color var(--openbot-duration-normal) ease,
+    background-color var(--openbot-duration-hover) ease,
+    color var(--openbot-duration-hover) ease,
     opacity var(--openbot-duration-normal) ease,
     transform var(--openbot-duration-normal) cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -1626,9 +1640,9 @@ textarea {
   cursor: pointer;
   -webkit-app-region: no-drag;
   transition:
-    border-color var(--openbot-duration-normal) ease,
-    background-color var(--openbot-duration-normal) ease,
-    color var(--openbot-duration-normal) ease,
+    border-color var(--openbot-duration-hover) ease,
+    background-color var(--openbot-duration-hover) ease,
+    color var(--openbot-duration-hover) ease,
     transform var(--openbot-duration-fast) cubic-bezier(0.23, 1, 0.32, 1);
 }
 
@@ -1678,8 +1692,8 @@ textarea {
   transform: translateX(6px) scale(0.96);
   cursor: pointer;
   transition:
-    background-color var(--openbot-duration-normal) ease,
-    color var(--openbot-duration-normal) ease,
+    background-color var(--openbot-duration-hover) ease,
+    color var(--openbot-duration-hover) ease,
     opacity var(--openbot-duration-fast) ease,
     transform var(--openbot-duration-slow) cubic-bezier(0.32, 0.72, 0, 1);
 }
@@ -1706,8 +1720,8 @@ textarea {
   opacity: 1;
   transform: translateX(0);
   transition:
-    border-color var(--openbot-duration-normal) ease,
-    background-color var(--openbot-duration-normal) ease,
+    border-color var(--openbot-duration-hover) ease,
+    background-color var(--openbot-duration-hover) ease,
     opacity var(--openbot-duration-fast) ease,
     transform var(--openbot-duration-slow) cubic-bezier(0.32, 0.72, 0, 1);
 }
@@ -1868,7 +1882,7 @@ textarea {
   background: transparent;
   color: var(--openbot-text-readable);
   transition-property: color;
-  transition-duration: var(--openbot-duration-fast);
+  transition-duration: var(--openbot-duration-hover);
   transition-timing-function: ease-out;
 }
 
@@ -1901,7 +1915,7 @@ textarea {
   opacity: 0;
   transform: rotate(0deg);
   transition:
-    opacity var(--openbot-duration-fast) ease-out,
+    opacity var(--openbot-duration-hover) ease-out,
     transform var(--openbot-duration-fast) var(--openbot-ease-out);
 }
 
@@ -2358,8 +2372,8 @@ textarea {
   color: inherit;
   text-align: left;
   transition:
-    background-color var(--openbot-duration-selectable-hover) ease,
-    border-color var(--openbot-duration-selectable-hover) ease,
+    background-color var(--openbot-duration-hover) ease,
+    border-color var(--openbot-duration-hover) ease,
     transform var(--openbot-duration-normal) ease;
 }
 
@@ -2501,8 +2515,6 @@ textarea {
   inset: 0;
   display: grid;
   place-items: center;
-  background: var(--openbot-bg-overlay);
-  backdrop-filter: blur(5px);
   animation: bot-backdrop-in var(--openbot-duration-normal) ease-out;
 }
 
@@ -2511,12 +2523,9 @@ textarea {
   width: min(390px, calc(100vw - 40px));
   flex-direction: column;
   align-items: center;
-  border: 0.5px solid var(--openbot-border-strong);
-  border-radius: var(--openbot-radius-lg);
   background: var(--openbot-bg-control);
   padding: 26px 26px 20px;
   text-align: center;
-  box-shadow: 0 26px 80px var(--openbot-bg-overlay);
   animation: bot-dialog-in var(--openbot-duration-slow) cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
@@ -2584,8 +2593,8 @@ textarea {
   font-size: var(--openbot-text-md);
   font-weight: 500;
   transition:
-    background var(--openbot-duration-fast) ease,
-    opacity var(--openbot-duration-fast) ease;
+    background var(--openbot-duration-hover) ease,
+    opacity var(--openbot-duration-hover) ease;
 }
 
 .bot-delete-actions button:hover {
@@ -2738,7 +2747,7 @@ textarea {
   font-size: var(--openbot-text-xs);
   font-weight: 540;
   transition-property: scale, background-color, color;
-  transition-duration: var(--openbot-duration-normal);
+  transition-duration: var(--openbot-duration-normal), var(--openbot-duration-hover), var(--openbot-duration-hover);
   transition-timing-function: ease-out;
 }
 
@@ -2768,8 +2777,8 @@ textarea {
   color: var(--openbot-text-primary);
   text-align: left;
   transition:
-    border-color var(--openbot-duration-normal) ease,
-    background-color var(--openbot-duration-normal) ease,
+    border-color var(--openbot-duration-hover) ease,
+    background-color var(--openbot-duration-hover) ease,
     transform var(--openbot-duration-normal) ease;
 }
 
@@ -2854,7 +2863,7 @@ textarea {
   background: transparent;
   color: var(--openbot-text-secondary);
   transition-property: scale, background-color, box-shadow;
-  transition-duration: var(--openbot-duration-normal);
+  transition-duration: var(--openbot-duration-normal), var(--openbot-duration-hover), var(--openbot-duration-hover);
   transition-timing-function: ease-out;
 }
 
@@ -3075,7 +3084,7 @@ textarea {
   color: var(--openbot-text-primary);
   text-align: left;
   transition:
-    background-color var(--openbot-duration-fast) ease,
+    background-color var(--openbot-duration-hover) ease,
     transform var(--openbot-duration-fast) var(--openbot-ease-out);
 }
 
@@ -3467,8 +3476,8 @@ textarea {
   letter-spacing: -0.01em;
   text-align: left;
   transition:
-    background-color var(--openbot-duration-fast) ease,
-    color var(--openbot-duration-fast) ease;
+    background-color var(--openbot-duration-hover) ease,
+    color var(--openbot-duration-hover) ease;
 }
 
 .account-menu-row:hover:not(:disabled) {
@@ -3695,7 +3704,6 @@ textarea {
 }
 
 .remote-dialog-backdrop,
-.bot-delete-backdrop,
 .media-backdrop {
   background: var(--openbot-bg-overlay);
 }

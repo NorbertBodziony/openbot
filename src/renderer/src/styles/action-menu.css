@@ -40,8 +40,8 @@
   text-align: left;
   white-space: nowrap;
   transition:
-    background-color var(--openbot-duration-selectable-hover) var(--openbot-ease-out),
-    color var(--openbot-duration-selectable-hover) var(--openbot-ease-out);
+    background-color var(--openbot-duration-hover) var(--openbot-ease-out),
+    color var(--openbot-duration-hover) var(--openbot-ease-out);
 }
 
 .ui-action-menu:not([data-menu-layout="grid"])

@@ -9,6 +9,7 @@ import { Sidebar } from "./Sidebar";
 function sidebarProps(pinnedItems: SidebarPinnedItem[] = []) {
   return {
     serverName: "Local",
+    onOpenServerSettings: vi.fn(),
     bots: STORY_BOTS,
     activeBotId: "chief",
     people: STORY_PRESENCE.members,
@@ -110,6 +111,15 @@ function nativeDragEvent(
 }
 
 describe("Sidebar pinned chats", () => {
+  it("opens the active server settings from the server title", async () => {
+    const props = sidebarProps();
+    render(() => <Sidebar {...props} />);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open settings for Local" }));
+
+    expect(props.onOpenServerSettings).toHaveBeenCalledWith(expect.any(HTMLElement));
+  });
+
   it("shows agent pins, ignores legacy person pins, and filters with search", async () => {
     const props = sidebarProps([
       { kind: "agent", id: "chief" },

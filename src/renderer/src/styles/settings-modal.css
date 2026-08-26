@@ -5,7 +5,6 @@
   display: grid;
   place-items: center;
   padding: var(--openbot-space-6);
-  background: var(--openbot-command-overlay);
   animation: settings-modal-backdrop-in var(--openbot-duration-normal) var(--openbot-ease-out) both;
   will-change: opacity;
 }
@@ -15,6 +14,20 @@
 }
 
 .settings-modal {
+  --settings-divider-inset: var(--openbot-space-6);
+  --openbot-bg-surface: var(--openbot-bg-control);
+  --openbot-accent: var(--openbot-settings-accent);
+  --openbot-accent-hover: var(--openbot-settings-accent-hover);
+  --openbot-accent-text: var(--openbot-settings-accent-text);
+  --openbot-accent-soft: var(--openbot-settings-accent-soft);
+  --openbot-accent-strong: var(--openbot-settings-accent-strong);
+  --openbot-text-muted: var(--openbot-settings-text-muted);
+  --openbot-border-focus: var(--openbot-settings-accent);
+  --openbot-button-destructive: var(--openbot-settings-danger);
+  --openbot-button-destructive-soft: var(--openbot-settings-danger-soft);
+  --openbot-button-destructive-hover: var(--openbot-settings-danger-hover);
+  --openbot-button-destructive-focus: var(--openbot-settings-danger-focus);
+  --openbot-button-destructive-border: var(--openbot-settings-danger-border);
   width: min(880px, calc(100vw - 48px));
   height: min(600px, calc(100dvh - 48px));
   min-width: 0;
@@ -22,13 +35,8 @@
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
   overflow: hidden;
-  border: 1px solid var(--openbot-border-strong);
-  border-radius: var(--openbot-radius-lg);
   outline: none;
-  background: var(--openbot-bg-surface);
-  box-shadow:
-    0 24px 80px var(--openbot-shadow-dialog),
-    0 0 0 1px var(--openbot-shadow-ring);
+  background: var(--openbot-bg-canvas);
   color: var(--openbot-text-primary);
   transform-origin: center;
   animation: settings-modal-in var(--openbot-duration-overlay) var(--openbot-ease-out) both;
@@ -76,8 +84,8 @@
   font-size: var(--openbot-text-md);
   text-align: left;
   transition:
-    background-color var(--openbot-duration-selectable-hover) ease,
-    color var(--openbot-duration-selectable-hover) ease;
+    background-color var(--openbot-duration-hover) ease,
+    color var(--openbot-duration-hover) ease;
 }
 
 .settings-modal-nav-item svg {
@@ -125,8 +133,12 @@
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  background: var(--openbot-bg-surface);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--openbot-bg-canvas);
+}
+
+.settings-modal-footer {
+  display: contents;
 }
 
 .settings-modal-header {
@@ -139,17 +151,17 @@
 
 .settings-modal-title {
   margin: 0;
-  font-size: var(--openbot-text-2xl);
+  font-size: var(--openbot-text-settings-title);
   font-weight: var(--openbot-weight-semibold);
-  line-height: var(--openbot-leading-2xl);
+  line-height: var(--openbot-leading-settings-title);
   letter-spacing: var(--openbot-tracking-tight);
 }
 
 .settings-modal-description {
   margin: var(--openbot-space-1) 0 0;
   color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-sm);
-  line-height: var(--openbot-leading-sm);
+  font-size: var(--openbot-text-md);
+  line-height: var(--openbot-leading-md);
 }
 
 .settings-modal-scroll-frame {
@@ -175,9 +187,9 @@
   top: 0;
   background: linear-gradient(
     to bottom,
-    var(--openbot-bg-surface) 0%,
-    var(--openbot-bg-surface) 28%,
-    var(--openbot-bg-surface-clear) 100%
+    var(--openbot-bg-canvas) 0%,
+    var(--openbot-bg-canvas) 28%,
+    var(--openbot-bg-canvas-clear) 100%
   );
 }
 
@@ -185,9 +197,9 @@
   bottom: 0;
   background: linear-gradient(
     to top,
-    var(--openbot-bg-surface) 0%,
-    var(--openbot-bg-surface) 28%,
-    var(--openbot-bg-surface-clear) 100%
+    var(--openbot-bg-canvas) 0%,
+    var(--openbot-bg-canvas) 28%,
+    var(--openbot-bg-canvas-clear) 100%
   );
 }
 
@@ -238,7 +250,33 @@
 }
 
 .settings-modal-card > :not(:first-child) {
-  border-top: 1px solid var(--openbot-border);
+  position: relative;
+  border-top: 0;
+}
+
+.settings-modal-card > :not(:first-child)::before,
+.settings-modal .ui-item-group > :not(:first-child)::before {
+  position: absolute;
+  top: 0;
+  height: 1px;
+  background: var(--openbot-border);
+  pointer-events: none;
+  content: "";
+}
+
+.settings-modal-card > :not(:first-child)::before {
+  right: calc(var(--settings-divider-inset) - var(--openbot-space-4));
+  left: calc(var(--settings-divider-inset) - var(--openbot-space-4));
+}
+
+.settings-modal .ui-item-group > :not(:first-child) {
+  position: relative;
+  border-top: 0;
+}
+
+.settings-modal .ui-item-group > :not(:first-child)::before {
+  right: var(--settings-divider-inset);
+  left: var(--settings-divider-inset);
 }
 
 .settings-modal-row {
@@ -256,9 +294,35 @@
 
 .settings-modal-row-title {
   color: var(--openbot-text-primary);
-  font-size: var(--openbot-text-md);
+  font-size: var(--openbot-text-lg);
   font-weight: var(--openbot-weight-medium);
+  line-height: var(--openbot-leading-lg);
+}
+
+.settings-modal :where(.ui-item-title, .ui-switch-label) {
+  font-size: var(--openbot-text-lg);
+  line-height: var(--openbot-leading-lg);
+}
+
+.settings-modal :where(.ui-item-description, .ui-switch-description),
+.settings-modal :where(.ui-text)[data-variant="caption"] {
+  font-size: var(--openbot-text-md);
   line-height: var(--openbot-leading-md);
+}
+
+.settings-modal .ui-item-description {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.settings-modal :where(.ui-item-content, .ui-switch-copy) {
+  gap: var(--openbot-space-0-5);
+}
+
+.settings-modal :where(.ui-button, .ui-input, .ui-textarea, .ui-native-select, .ui-select-trigger) {
+  font-size: var(--openbot-text-lg);
+  line-height: var(--openbot-leading-lg);
 }
 
 .settings-modal-version {
@@ -278,15 +342,16 @@
   border: 1px solid var(--openbot-border-strong);
   border-radius: var(--openbot-radius-md);
   outline: 0;
-  background: var(--openbot-bg-control);
+  background: var(--openbot-bg-surface-raised);
   padding: 0 var(--openbot-space-2);
   color: var(--openbot-text-secondary);
   font: inherit;
-  font-size: var(--openbot-text-sm);
+  font-size: var(--openbot-text-lg);
+  line-height: var(--openbot-leading-lg);
   transition:
-    background-color var(--openbot-duration-normal) ease,
-    border-color var(--openbot-duration-normal) ease,
-    box-shadow var(--openbot-duration-normal) ease;
+    background-color var(--openbot-duration-hover) ease,
+    border-color var(--openbot-duration-hover) ease,
+    box-shadow var(--openbot-duration-hover) ease;
 }
 
 .settings-modal-select-trigger svg {
@@ -362,6 +427,39 @@
 .settings-modal-select-indicator {
   display: inline-flex;
   color: var(--openbot-accent-hover);
+}
+
+.settings-modal :where(.ui-button-variant-default) {
+  background: var(--openbot-settings-accent);
+  color: var(--openbot-text-primary);
+}
+
+.settings-modal :where(.ui-button-variant-outline, .ui-button-variant-secondary) {
+  background: var(--openbot-bg-surface-raised);
+}
+
+.settings-modal :where(.ui-button-variant-destructive) {
+  background: var(--openbot-settings-danger);
+  color: var(--openbot-text-primary);
+}
+
+.settings-modal .ui-switch[data-checked] {
+  background: var(--openbot-settings-accent);
+}
+
+.settings-modal .ui-switch-thumb[data-checked] {
+  background: var(--openbot-text-primary);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .settings-modal :where(.ui-button-variant-default):hover:not(:disabled):not([data-disabled]) {
+    background: var(--openbot-settings-accent-hover);
+  }
+
+  .settings-modal :where(.ui-button-variant-destructive):hover:not(:disabled):not([data-disabled]) {
+    background: var(--openbot-settings-danger-hover);
+    color: var(--openbot-text-primary);
+  }
 }
 
 .settings-modal-select-indicator svg {

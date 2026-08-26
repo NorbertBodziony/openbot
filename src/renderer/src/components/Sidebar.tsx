@@ -36,6 +36,7 @@ import {
 
 interface SidebarProps {
   serverName: string;
+  onOpenServerSettings: (trigger: HTMLElement) => void;
   bots: BotProfile[];
   activeBotId: string;
   people: TeamPresenceMember[];
@@ -1700,9 +1701,19 @@ export function Sidebar(props: SidebarProps) {
       class={["sidebar panel-edge", { "sidebar-compact": props.compact }]}
     >
       <div class="window-drag sidebar-topbar">
-        <span class="sidebar-server-name" title={props.serverName} aria-hidden={props.compact ? "true" : undefined}>
-          {props.serverName}
-        </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          type="button"
+          class="sidebar-server-name no-drag"
+          aria-label={`Open settings for ${props.serverName}`}
+          aria-hidden={props.compact ? "true" : undefined}
+          tabindex={props.compact ? -1 : 0}
+          title={props.serverName}
+          onClick={(event) => props.onOpenServerSettings(event.currentTarget)}
+        >
+          <span class="sidebar-server-name-label">{props.serverName}</span>
+        </Button>
         <div class="sidebar-topbar-actions">
           <Button
             variant="ghost"

@@ -46,6 +46,7 @@ import type {
   RespondToPromptInput,
   Routine,
   RoutineRun,
+  RoutineSchedule,
   SendMessageInput,
   SetMessageReactionInput,
   SteerQueuedMessageInput,
@@ -55,7 +56,12 @@ import type {
   UpdateQueuedMessageInput,
   UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
-import { isClaudeModel, isImageGenerationAspectRatio, isReasoningEffort } from "@openbot/contracts/ipc";
+import {
+  isClaudeModel,
+  isImageGenerationAspectRatio,
+  isReasoningEffort,
+  isRoutineSchedule,
+} from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentMemoryStore } from "./agent-memory-store";
@@ -98,6 +104,7 @@ import {
   type ThreadItem,
 } from "./protocol";
 import { nextRoutineOccurrence } from "./routine-schedule";
+import { ROUTINE_SCHEDULE_JSON_SCHEMA } from "./routine-tool-schema";
 import { isWithin, sharedPathFromInput, workspacePathFromInput } from "./workspace-paths";
 
 interface AgentServiceEvents {
@@ -690,6 +697,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     limit = 50,
   ): Promise<ConversationPage> {
     const bot = await this.#store.getOrCreate(botId);
+    this.#reconcilePersistedMailboxMessages(bot);
     const page = this.#store.database.readConversationPage(botId, bot.threadId, anchor, limit);
     return {
       ...page,
@@ -1315,6 +1323,109 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       };
     }
 
+    if (params.tool === "list_routines") {
+      const args = routineToolArguments(params.arguments, ["botId"]);
+      const botId = routineToolBotId(args, senderBotId);
+      return openBotToolResult({ routines: this.listRoutines(botId) });
+    }
+
+    if (params.tool === "create_routine") {
+      const args = routineToolArguments(params.arguments, [
+        "botId",
+        "name",
+        "instruction",
+        "schedule",
+        "active",
+        "timezone",
+      ]);
+      const botId = routineToolBotId(args, senderBotId);
+      const active = args.active === undefined ? true : args.active;
+      if (!isBoolean(active)) throw new Error("active must be a boolean.");
+      const timezone =
+        args.timezone === undefined
+          ? localTimezone()
+          : routineToolString(args.timezone, "timezone", 128, "A routine timezone is required.");
+      const routine = this.createRoutine({
+        botId,
+        name: routineToolString(args.name, "name", INPUT_LIMITS.routineName, "A routine name is required."),
+        instruction: routineToolString(
+          args.instruction,
+          "instruction",
+          INPUT_LIMITS.routineInstruction,
+          "A routine instruction is required.",
+        ),
+        active,
+        timezone,
+        schedule: routineToolSchedule(args.schedule),
+      });
+      return openBotToolResult(routine);
+    }
+
+    if (params.tool === "update_routine") {
+      const args = routineToolArguments(params.arguments, [
+        "botId",
+        "routineId",
+        "name",
+        "instruction",
+        "schedule",
+        "active",
+      ]);
+      const input: UpdateRoutineInput = {
+        botId: routineToolBotId(args, senderBotId),
+        routineId: routineToolString(args.routineId, "routineId", INPUT_LIMITS.identifier, "routineId is required."),
+      };
+      let hasUpdate = false;
+      if (args.name !== undefined) {
+        input.name = routineToolString(args.name, "name", INPUT_LIMITS.routineName, "A routine name is required.");
+        hasUpdate = true;
+      }
+      if (args.instruction !== undefined) {
+        input.instruction = routineToolString(
+          args.instruction,
+          "instruction",
+          INPUT_LIMITS.routineInstruction,
+          "A routine instruction is required.",
+        );
+        hasUpdate = true;
+      }
+      if (args.active !== undefined) {
+        if (!isBoolean(args.active)) throw new Error("active must be a boolean.");
+        input.active = args.active;
+        hasUpdate = true;
+      }
+      if (args.schedule !== undefined) {
+        input.schedule = routineToolSchedule(args.schedule);
+        hasUpdate = true;
+      }
+      if (!hasUpdate) throw new Error("At least one routine update is required.");
+      return openBotToolResult(this.updateRoutine(input));
+    }
+
+    if (params.tool === "delete_routine") {
+      const args = routineToolArguments(params.arguments, ["botId", "routineId"]);
+      const botId = routineToolBotId(args, senderBotId);
+      const routineId = routineToolString(
+        args.routineId,
+        "routineId",
+        INPUT_LIMITS.identifier,
+        "routineId is required.",
+      );
+      await this.deleteRoutine({ botId, routineId });
+      return openBotToolResult({ deleted: true, botId, routineId });
+    }
+
+    if (params.tool === "test_routine") {
+      const args = routineToolArguments(params.arguments, ["botId", "routineId"]);
+      const botId = routineToolBotId(args, senderBotId);
+      const routineId = routineToolString(
+        args.routineId,
+        "routineId",
+        INPUT_LIMITS.identifier,
+        "routineId is required.",
+      );
+      return openBotToolResult(await this.testRoutine({ botId, routineId }));
+    }
+
     if (params.tool === "remember") {
       const args = params.arguments;
       if (!isRecord(args) || !isString(args.text)) throw new Error("Memory text is required.");
@@ -1810,6 +1921,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       message.reaction = reactions.get(message.id) ?? null;
     }
     sortConversationMessages(snapshot.messages);
+  }
+
+  #reconcilePersistedMailboxMessages(bot: BotSummary): void {
+    if (!bot.threadId) return;
+    const persisted = this.#store.database.readConversation(bot.id, bot.threadId);
+    const previousSignature = conversationContentSignature(persisted);
+    this.#syncMailboxMessages(persisted);
+    if (conversationContentSignature(persisted) === previousSignature) return;
+    this.#store.database.persistConversation(persisted, "conversation.mailbox-reconciled", {
+      messageCount: persisted.messages.length,
+    });
+    const live = this.#snapshots.get(bot.id);
+    if (live) this.#syncMailboxMessages(live);
   }
 
   #emitQueue(botId: string): void {
@@ -2863,6 +2987,48 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 }
 
+function routineToolArguments(value: unknown, allowedKeys: readonly string[]): DynamicRecord {
+  if (!isRecord(value)) throw new Error("Routine tool arguments are required.");
+  const allowed = new Set(allowedKeys);
+  const unexpected = Object.keys(value).find((key) => !allowed.has(key));
+  if (unexpected) throw new Error(`Unexpected routine argument: ${unexpected}.`);
+  return value;
+}
+
+function routineToolBotId(args: DynamicRecord, senderBotId: string): string {
+  if (args.botId === undefined) return senderBotId;
+  return routineToolString(args.botId, "botId", INPUT_LIMITS.identifier, "botId is required.");
+}
+
+function routineToolString(value: unknown, field: string, limit: number, requiredMessage: string): string {
+  if (!isString(value) || !value.trim()) throw new Error(requiredMessage);
+  if (value.length > limit) throw new Error(`${field} is too long.`);
+  return value;
+}
+
+function routineToolSchedule(value: unknown): RoutineSchedule {
+  if (!isRoutineSchedule(value)) throw new Error("The routine schedule is invalid.");
+  return structuredClone(value);
+}
+
+function localTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+function openBotToolResult(value: unknown): {
+  success: boolean;
+  contentItems: Array<{ type: "inputText"; text: string }>;
+} {
+  return {
+    success: true,
+    contentItems: [{ type: "inputText", text: JSON.stringify(value) }],
+  };
+}
+
 function conversationContentSignature(snapshot: ConversationSnapshot): string {
   return JSON.stringify({
     botId: snapshot.botId,
@@ -3008,6 +3174,89 @@ const OPENBOT_DYNAMIC_TOOLS = {
     },
     {
       type: "function",
+      name: "list_routines",
+      description:
+        "List routines for this agent, or for another local agent when botId is provided. Use this before updating or deleting a routine.",
+      inputSchema: {
+        type: "object",
+        properties: { botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier } },
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "create_routine",
+      description:
+        "Create a scheduled routine for this agent, or for another local agent when botId is provided. It is active by default and uses the host timezone by default.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
+          name: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.routineName },
+          instruction: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.routineInstruction },
+          schedule: ROUTINE_SCHEDULE_JSON_SCHEMA,
+          active: { type: "boolean" },
+          timezone: {
+            type: "string",
+            minLength: 1,
+            maxLength: 128,
+            description: "IANA timezone such as Europe/Warsaw.",
+          },
+        },
+        required: ["name", "instruction", "schedule"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "update_routine",
+      description:
+        "Update, pause, or resume an existing routine for this agent, or for another local agent when botId is provided.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
+          routineId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
+          name: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.routineName },
+          instruction: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.routineInstruction },
+          schedule: ROUTINE_SCHEDULE_JSON_SCHEMA,
+          active: { type: "boolean" },
+        },
+        required: ["routineId"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "delete_routine",
+      description: "Delete an existing routine for this agent, or for another local agent when botId is provided.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
+          routineId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
+        },
+        required: ["routineId"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "test_routine",
+      description:
+        "Queue one manual test run of an existing routine for this agent, or for another local agent when botId is provided.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          botId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
+          routineId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
+        },
+        required: ["routineId"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
       name: "remember",
       description:
         "Stage one short, durable memory for this agent. Use memoryId to correct or consolidate an existing memory. The change commits only if the current turn completes.",
@@ -3136,6 +3385,7 @@ function developerInstructions(bot: BotSummary, sharedRoot: string, memories: Bo
     "Use openbot.list_agents to discover other persistent OpenBot teammates.",
     "When routing work, call openbot.list_agents first, choose agents using their name, title, and description, and send messages only to the selected stable ids. Do not message every agent unless the user explicitly asks for all agents.",
     "Use openbot.update_profile with the target bot id to change a local agent's name, title, or description. The target id is required and may refer to any local agent.",
+    "Use openbot.list_routines, openbot.create_routine, openbot.update_routine, openbot.delete_routine, and openbot.test_routine to manage scheduled work for yourself or another local agent when the user's request calls for it. Omit botId to target yourself. Before changing another agent's routines, call openbot.list_agents and select its stable id. Before updating, deleting, or testing a routine, call openbot.list_routines to obtain its stable routine id.",
     "Memory tools always apply to your own agent profile. They cannot change another agent's memories.",
     "Use openbot.send_message to send asynchronous messages or local files to one or more teammates. Always set replyToMessageId when answering a teammate. Replies are never forwarded automatically.",
     "When you need clarification or the user asks you to ask a question, use openbot.ask_user with 1–3 short questions instead of writing the question as a normal assistant message. Use options for choices and wait for the tool result before continuing. Claude should use AskUserQuestion for the same purpose.",

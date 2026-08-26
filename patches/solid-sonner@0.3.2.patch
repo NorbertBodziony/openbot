@@ -1,0 +1,407 @@
+diff --git a/dist/index.js b/dist/index.js
+index 897e18978b1cca852872afcf42c698a0766311d4..85be9ab3e5be71712f21968385ba3f615a245b50 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1,6 +1,5 @@
+-import { className, createComponent, delegateEvents, effect, insert, memo, setAttribute, style, template, use } from "solid-js/web";
+-import { For, Show, createEffect, createMemo, createSignal, mergeProps, on, onCleanup, onMount } from "solid-js";
+-import { createStore, produce, reconcile } from "solid-js/store";
++import { className, createComponent, delegateEvents, effect, insert, memo, setAttribute, style, template, use } from "@solidjs/web";
++import { For, Show, createEffect, createMemo, createSignal, createStore, merge, onCleanup, onSettled, reconcile } from "solid-js";
+ //#region src/styles.css?inline
+ var styles_default = "html[dir=\"ltr\"], [data-sonner-toaster][dir=\"ltr\"] {\n  --toast-icon-margin-start: -3px;\n  --toast-icon-margin-end: 4px;\n  --toast-svg-margin-start: -1px;\n  --toast-svg-margin-end: 0px;\n  --toast-button-margin-start: auto;\n  --toast-button-margin-end: 0;\n  --toast-close-button-start: 0;\n  --toast-close-button-end: unset;\n  --toast-close-button-transform: translate(-35%, -35%);\n}\n\nhtml[dir=\"rtl\"], [data-sonner-toaster][dir=\"rtl\"] {\n  --toast-icon-margin-start: 4px;\n  --toast-icon-margin-end: -3px;\n  --toast-svg-margin-start: 0px;\n  --toast-svg-margin-end: -1px;\n  --toast-button-margin-start: 0;\n  --toast-button-margin-end: auto;\n  --toast-close-button-start: unset;\n  --toast-close-button-end: 0;\n  --toast-close-button-transform: translate(35%, -35%);\n}\n\n[data-sonner-toaster] {\n  width: var(--width);\n  --gray1: #fcfcfc;\n  --gray2: #f8f8f8;\n  --gray3: #f3f3f3;\n  --gray4: #ededed;\n  --gray5: #e8e8e8;\n  --gray6: #e2e2e2;\n  --gray7: #dbdbdb;\n  --gray8: #c7c7c7;\n  --gray9: #8f8f8f;\n  --gray10: #858585;\n  --gray11: #6f6f6f;\n  --gray12: #171717;\n  --border-radius: 8px;\n  box-sizing: border-box;\n  z-index: 999999999;\n  outline: none;\n  margin: 0;\n  padding: 0;\n  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, Noto Sans, sans-serif, Apple Color Emoji, Segoe UI Emoji, Segoe UI Symbol, Noto Color Emoji;\n  list-style: none;\n  transition: transform .4s;\n  position: fixed;\n}\n\n@media (hover: none) and (pointer: coarse) {\n  [data-sonner-toaster][data-lifted=\"true\"] {\n    transform: none;\n  }\n}\n\n[data-sonner-toaster][data-x-position=\"right\"] {\n  right: var(--offset-right);\n}\n\n[data-sonner-toaster][data-x-position=\"left\"] {\n  left: var(--offset-left);\n}\n\n[data-sonner-toaster][data-x-position=\"center\"] {\n  left: 50%;\n  transform: translateX(-50%);\n}\n\n[data-sonner-toaster][data-y-position=\"top\"] {\n  top: var(--offset-top);\n}\n\n[data-sonner-toaster][data-y-position=\"bottom\"] {\n  bottom: var(--offset-bottom);\n}\n\n[data-sonner-toast] {\n  --y: translateY(100%);\n  --lift-amount: calc(var(--lift) * var(--gap));\n  z-index: var(--z-index);\n  opacity: 0;\n  transform: var(--y);\n  touch-action: none;\n  box-sizing: border-box;\n  overflow-wrap: anywhere;\n  outline: none;\n  transition: transform .4s, opacity .4s, height .4s, box-shadow .2s;\n  position: absolute;\n}\n\n[data-sonner-toast][data-styled=\"true\"] {\n  background: var(--normal-bg);\n  border: 1px solid var(--normal-border);\n  color: var(--normal-text);\n  border-radius: var(--border-radius);\n  width: var(--width);\n  align-items: center;\n  gap: 6px;\n  padding: 16px;\n  font-size: 13px;\n  display: flex;\n  box-shadow: 0 4px 12px #0000001a;\n}\n\n[data-sonner-toast]:focus-visible {\n  box-shadow: 0 4px 12px #0000001a, 0 0 0 2px #0003;\n}\n\n[data-sonner-toast][data-y-position=\"top\"] {\n  --y: translateY(-100%);\n  --lift: 1;\n  --lift-amount: calc(1 * var(--gap));\n  top: 0;\n}\n\n[data-sonner-toast][data-y-position=\"bottom\"] {\n  --y: translateY(100%);\n  --lift: -1;\n  --lift-amount: calc(var(--lift) * var(--gap));\n  bottom: 0;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-description] {\n  color: #3f3f3f;\n  font-weight: 400;\n  line-height: 1.4;\n}\n\n[data-rich-colors=\"true\"][data-sonner-toast][data-styled=\"true\"] [data-description] {\n  color: inherit;\n}\n\n[data-sonner-toaster][data-sonner-theme=\"dark\"] [data-description] {\n  color: #e8e8e8;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-title] {\n  color: inherit;\n  font-weight: 500;\n  line-height: 1.5;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-icon] {\n  width: 16px;\n  height: 16px;\n  margin-left: var(--toast-icon-margin-start);\n  margin-right: var(--toast-icon-margin-end);\n  flex-shrink: 0;\n  justify-content: flex-start;\n  align-items: center;\n  display: flex;\n  position: relative;\n}\n\n[data-sonner-toast][data-promise=\"true\"] [data-icon] > svg {\n  opacity: 0;\n  transform-origin: center;\n  animation: .3s forwards sonner-fade-in;\n  transform: scale(.8);\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-icon] > * {\n  flex-shrink: 0;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-icon] svg {\n  margin-left: var(--toast-svg-margin-start);\n  margin-right: var(--toast-svg-margin-end);\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-content] {\n  flex-direction: column;\n  flex: 1;\n  gap: 2px;\n  min-width: 0;\n  display: flex;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-button] {\n  height: 24px;\n  color: var(--normal-bg);\n  background: var(--normal-text);\n  margin-left: var(--toast-button-margin-start);\n  margin-right: var(--toast-button-margin-end);\n  cursor: pointer;\n  border: none;\n  border-radius: 4px;\n  outline: none;\n  flex-shrink: 0;\n  align-items: center;\n  padding-left: 8px;\n  padding-right: 8px;\n  font-size: 12px;\n  font-weight: 500;\n  transition: opacity .4s, box-shadow .2s;\n  display: flex;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-button]:focus-visible {\n  box-shadow: 0 0 0 2px #0006;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-button]:first-of-type {\n  margin-left: var(--toast-button-margin-start);\n  margin-right: var(--toast-button-margin-end);\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-cancel] {\n  color: var(--normal-text);\n  background: #00000014;\n}\n\n[data-sonner-toaster][data-sonner-theme=\"dark\"] [data-sonner-toast][data-styled=\"true\"] [data-cancel] {\n  background: #ffffff4d;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-close-button] {\n  left: var(--toast-close-button-start);\n  right: var(--toast-close-button-end);\n  width: 20px;\n  height: 20px;\n  color: var(--normal-text);\n  background: var(--normal-bg);\n  border: 1px solid var(--normal-border);\n  transform: var(--toast-close-button-transform);\n  cursor: pointer;\n  z-index: 1;\n  border-radius: 50%;\n  justify-content: center;\n  align-items: center;\n  padding: 0;\n  transition: opacity .1s, background .2s, border-color .2s;\n  display: flex;\n  position: absolute;\n  top: 0;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-close-button]:focus-visible {\n  box-shadow: 0 4px 12px #0000001a, 0 0 0 2px #0003;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-disabled=\"true\"] {\n  cursor: not-allowed;\n}\n\n[data-sonner-toast][data-styled=\"true\"]:hover [data-close-button]:hover {\n  background: var(--gray2);\n  border-color: var(--gray5);\n}\n\n[data-sonner-toast][data-swiping=\"true\"]:before {\n  content: \"\";\n  z-index: -1;\n  height: 100%;\n  position: absolute;\n  left: -100%;\n  right: -100%;\n}\n\n[data-sonner-toast][data-y-position=\"top\"][data-swiping=\"true\"]:before {\n  bottom: 50%;\n  transform: scaleY(3) translateY(50%);\n}\n\n[data-sonner-toast][data-y-position=\"bottom\"][data-swiping=\"true\"]:before {\n  top: 50%;\n  transform: scaleY(3) translateY(-50%);\n}\n\n[data-sonner-toast][data-swiping=\"false\"][data-removed=\"true\"]:before {\n  content: \"\";\n  position: absolute;\n  inset: 0;\n  transform: scaleY(2);\n}\n\n[data-sonner-toast][data-expanded=\"true\"]:after {\n  content: \"\";\n  height: calc(var(--gap) + 1px);\n  width: 100%;\n  position: absolute;\n  bottom: 100%;\n  left: 0;\n}\n\n[data-sonner-toast][data-mounted=\"true\"] {\n  --y: translateY(0);\n  opacity: 1;\n}\n\n[data-sonner-toast][data-expanded=\"false\"][data-front=\"false\"] {\n  --scale: var(--toasts-before) * .05 + 1;\n  --y: translateY(calc(var(--lift-amount) * var(--toasts-before))) scale(calc(-1 * var(--scale)));\n  height: var(--front-toast-height);\n}\n\n[data-sonner-toast] > * {\n  transition: opacity .4s;\n}\n\n[data-sonner-toast][data-x-position=\"right\"] {\n  right: 0;\n}\n\n[data-sonner-toast][data-x-position=\"left\"] {\n  left: 0;\n}\n\n[data-sonner-toast][data-expanded=\"false\"][data-front=\"false\"][data-styled=\"true\"] > * {\n  opacity: 0;\n}\n\n[data-sonner-toast][data-visible=\"false\"] {\n  opacity: 0;\n  pointer-events: none;\n}\n\n[data-sonner-toast][data-mounted=\"true\"][data-expanded=\"true\"] {\n  --y: translateY(calc(var(--lift) * var(--offset)));\n  height: var(--initial-height);\n}\n\n[data-sonner-toast][data-removed=\"true\"][data-front=\"true\"][data-swipe-out=\"false\"] {\n  --y: translateY(calc(var(--lift) * -100%));\n  opacity: 0;\n}\n\n[data-sonner-toast][data-removed=\"true\"][data-front=\"false\"][data-swipe-out=\"false\"][data-expanded=\"true\"] {\n  --y: translateY(calc(var(--lift) * var(--offset) + var(--lift) * -100%));\n  opacity: 0;\n}\n\n[data-sonner-toast][data-removed=\"true\"][data-front=\"false\"][data-swipe-out=\"false\"][data-expanded=\"false\"] {\n  --y: translateY(40%);\n  opacity: 0;\n  transition: transform .5s, opacity .2s;\n}\n\n[data-sonner-toast][data-removed=\"true\"][data-front=\"false\"]:before {\n  height: calc(var(--initial-height) + 20%);\n}\n\n[data-sonner-toast][data-swiping=\"true\"] {\n  transform: var(--y) translateY(var(--swipe-amount-y, 0px)) translateX(var(--swipe-amount-x, 0px));\n  transition: none;\n}\n\n[data-sonner-toast][data-swiped=\"true\"] {\n  -webkit-user-select: none;\n  user-select: none;\n}\n\n[data-sonner-toast][data-swipe-out=\"true\"][data-y-position=\"bottom\"], [data-sonner-toast][data-swipe-out=\"true\"][data-y-position=\"top\"] {\n  animation-duration: .2s;\n  animation-timing-function: ease-out;\n  animation-fill-mode: forwards;\n}\n\n[data-sonner-toast][data-swipe-out=\"true\"][data-swipe-direction=\"left\"] {\n  animation-name: swipe-out-left;\n}\n\n[data-sonner-toast][data-swipe-out=\"true\"][data-swipe-direction=\"right\"] {\n  animation-name: swipe-out-right;\n}\n\n[data-sonner-toast][data-swipe-out=\"true\"][data-swipe-direction=\"up\"] {\n  animation-name: swipe-out-up;\n}\n\n[data-sonner-toast][data-swipe-out=\"true\"][data-swipe-direction=\"down\"] {\n  animation-name: swipe-out-down;\n}\n\n@keyframes swipe-out-left {\n  from {\n    transform: var(--y) translateX(var(--swipe-amount-x));\n    opacity: 1;\n  }\n\n  to {\n    transform: var(--y) translateX(calc(var(--swipe-amount-x) - 100%));\n    opacity: 0;\n  }\n}\n\n@keyframes swipe-out-right {\n  from {\n    transform: var(--y) translateX(var(--swipe-amount-x));\n    opacity: 1;\n  }\n\n  to {\n    transform: var(--y) translateX(calc(var(--swipe-amount-x) + 100%));\n    opacity: 0;\n  }\n}\n\n@keyframes swipe-out-up {\n  from {\n    transform: var(--y) translateY(var(--swipe-amount-y));\n    opacity: 1;\n  }\n\n  to {\n    transform: var(--y) translateY(calc(var(--swipe-amount-y) - 100%));\n    opacity: 0;\n  }\n}\n\n@keyframes swipe-out-down {\n  from {\n    transform: var(--y) translateY(var(--swipe-amount-y));\n    opacity: 1;\n  }\n\n  to {\n    transform: var(--y) translateY(calc(var(--swipe-amount-y) + 100%));\n    opacity: 0;\n  }\n}\n\n@media (width <= 600px) {\n  [data-sonner-toaster] {\n    right: var(--mobile-offset-right);\n    left: var(--mobile-offset-left);\n    width: 100%;\n    position: fixed;\n  }\n\n  [data-sonner-toaster][dir=\"rtl\"] {\n    left: calc(var(--mobile-offset-left) * -1);\n  }\n\n  [data-sonner-toaster] [data-sonner-toast] {\n    width: calc(100% - var(--mobile-offset-left) * 2);\n    left: 0;\n    right: 0;\n  }\n\n  [data-sonner-toaster][data-x-position=\"left\"] {\n    left: var(--mobile-offset-left);\n  }\n\n  [data-sonner-toaster][data-y-position=\"bottom\"] {\n    bottom: var(--mobile-offset-bottom);\n  }\n\n  [data-sonner-toaster][data-y-position=\"top\"] {\n    top: var(--mobile-offset-top);\n  }\n\n  [data-sonner-toaster][data-x-position=\"center\"] {\n    left: var(--mobile-offset-left);\n    right: var(--mobile-offset-right);\n    transform: none;\n  }\n}\n\n[data-sonner-toaster][data-sonner-theme=\"light\"] {\n  --normal-bg: #fff;\n  --normal-border: var(--gray4);\n  --normal-text: var(--gray12);\n  --success-bg: #ecfdf3;\n  --success-border: #bffcd9;\n  --success-text: #008a2e;\n  --info-bg: #f0f8ff;\n  --info-border: #dde7fd;\n  --info-text: #0973dc;\n  --warning-bg: #fffcf0;\n  --warning-border: #fbeeb1;\n  --warning-text: #dc7609;\n  --error-bg: #fff0f0;\n  --error-border: #ffe0e1;\n  --error-text: #e60000;\n}\n\n[data-sonner-toaster][data-sonner-theme=\"light\"] [data-sonner-toast][data-invert=\"true\"] {\n  --normal-bg: #000;\n  --normal-border: #333;\n  --normal-text: var(--gray1);\n}\n\n[data-sonner-toaster][data-sonner-theme=\"dark\"] [data-sonner-toast][data-invert=\"true\"] {\n  --normal-bg: #fff;\n  --normal-border: var(--gray3);\n  --normal-text: var(--gray12);\n}\n\n[data-sonner-toaster][data-sonner-theme=\"dark\"] {\n  --normal-bg: #000;\n  --normal-bg-hover: #1f1f1f;\n  --normal-border: #333;\n  --normal-border-hover: #404040;\n  --normal-text: var(--gray1);\n  --success-bg: #001f0f;\n  --success-border: #003d1c;\n  --success-text: #59f3a6;\n  --info-bg: #000d1f;\n  --info-border: #19233e;\n  --info-text: #5896f3;\n  --warning-bg: #1d1f00;\n  --warning-border: #2e2e00;\n  --warning-text: #f3cf58;\n  --error-bg: #2d0607;\n  --error-border: #4d0408;\n  --error-text: #ff9ea1;\n}\n\n[data-sonner-toaster][data-sonner-theme=\"dark\"] [data-sonner-toast] [data-close-button] {\n  background: var(--normal-bg);\n  border-color: var(--normal-border);\n  color: var(--normal-text);\n}\n\n[data-sonner-toaster][data-sonner-theme=\"dark\"] [data-sonner-toast] [data-close-button]:hover {\n  background: var(--normal-bg-hover);\n  border-color: var(--normal-border-hover);\n}\n\n[data-rich-colors=\"true\"][data-sonner-toast][data-type=\"success\"], [data-rich-colors=\"true\"][data-sonner-toast][data-type=\"success\"] [data-close-button] {\n  background: var(--success-bg);\n  border-color: var(--success-border);\n  color: var(--success-text);\n}\n\n[data-rich-colors=\"true\"][data-sonner-toast][data-type=\"info\"], [data-rich-colors=\"true\"][data-sonner-toast][data-type=\"info\"] [data-close-button] {\n  background: var(--info-bg);\n  border-color: var(--info-border);\n  color: var(--info-text);\n}\n\n[data-rich-colors=\"true\"][data-sonner-toast][data-type=\"warning\"], [data-rich-colors=\"true\"][data-sonner-toast][data-type=\"warning\"] [data-close-button] {\n  background: var(--warning-bg);\n  border-color: var(--warning-border);\n  color: var(--warning-text);\n}\n\n[data-rich-colors=\"true\"][data-sonner-toast][data-type=\"error\"], [data-rich-colors=\"true\"][data-sonner-toast][data-type=\"error\"] [data-close-button] {\n  background: var(--error-bg);\n  border-color: var(--error-border);\n  color: var(--error-text);\n}\n\n.sonner-loading-wrapper {\n  --size: 16px;\n  height: var(--size);\n  width: var(--size);\n  z-index: 10;\n  position: absolute;\n  inset: 0;\n}\n\n.sonner-loading-wrapper[data-visible=\"false\"] {\n  transform-origin: center;\n  animation: .2s forwards sonner-fade-out;\n}\n\n.sonner-spinner {\n  height: var(--size);\n  width: var(--size);\n  position: relative;\n  top: 50%;\n  left: 50%;\n}\n\n.sonner-loading-bar {\n  background: var(--gray11);\n  border-radius: 6px;\n  width: 24%;\n  height: 8%;\n  animation: 1.2s linear infinite sonner-spin;\n  position: absolute;\n  top: -3.9%;\n  left: -10%;\n}\n\n.sonner-loading-bar:first-child {\n  animation-delay: -1.2s;\n  transform: rotate(.0001deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(2) {\n  animation-delay: -1.1s;\n  transform: rotate(30deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(3) {\n  animation-delay: -1s;\n  transform: rotate(60deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(4) {\n  animation-delay: -.9s;\n  transform: rotate(90deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(5) {\n  animation-delay: -.8s;\n  transform: rotate(120deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(6) {\n  animation-delay: -.7s;\n  transform: rotate(150deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(7) {\n  animation-delay: -.6s;\n  transform: rotate(180deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(8) {\n  animation-delay: -.5s;\n  transform: rotate(210deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(9) {\n  animation-delay: -.4s;\n  transform: rotate(240deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(10) {\n  animation-delay: -.3s;\n  transform: rotate(270deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(11) {\n  animation-delay: -.2s;\n  transform: rotate(300deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(12) {\n  animation-delay: -.1s;\n  transform: rotate(330deg) translate(146%);\n}\n\n@keyframes sonner-fade-in {\n  0% {\n    opacity: 0;\n    transform: scale(.8);\n  }\n\n  100% {\n    opacity: 1;\n    transform: scale(1);\n  }\n}\n\n@keyframes sonner-fade-out {\n  0% {\n    opacity: 1;\n    transform: scale(1);\n  }\n\n  100% {\n    opacity: 0;\n    transform: scale(.8);\n  }\n}\n\n@keyframes sonner-spin {\n  0% {\n    opacity: 1;\n  }\n\n  100% {\n    opacity: .15;\n  }\n}\n\n@media (prefers-reduced-motion) {\n  [data-sonner-toast], [data-sonner-toast] > *, .sonner-loading-bar {\n    transition: none !important;\n    animation: none !important;\n  }\n}\n\n.sonner-loader {\n  transform-origin: center;\n  transition: opacity .2s, transform .2s;\n  position: absolute;\n  top: 50%;\n  left: 50%;\n  transform: translate(-50%, -50%);\n}\n\n.sonner-loader[data-visible=\"false\"] {\n  opacity: 0;\n  transform: scale(.8) translate(-50%, -50%);\n}\n";
+ //#endregion
+@@ -64,7 +63,7 @@ function CloseIcon() {
+ //#region src/primitives.ts
+ function useIsDocumentHidden() {
+ 	const [isDocumentHidden, setIsDocumentHidden] = createSignal(typeof document !== "undefined" ? document.hidden : false);
+-	onMount(() => {
++	onSettled(() => {
+ 		const callback = () => {
+ 			setIsDocumentHidden(document.hidden);
+ 		};
+@@ -460,7 +459,7 @@ function mergeClassName(className, legacy) {
+ }
+ function useSonner() {
+ 	const [activeToasts, setActiveToasts] = createSignal([]);
+-	onMount(() => {
++	onSettled(() => {
+ 		const unsubscribe = ToastState.subscribe((toastItem) => {
+ 			if (toastItem.dismiss) {
+ 				requestAnimationFrame(() => {
+@@ -532,8 +531,8 @@ function Toast(props) {
+ 	});
+ 	const offset = createMemo(() => heightIndex() * (props.gap ?? GAP) + toastsHeightBefore());
+ 	const isDocumentHidden = useIsDocumentHidden();
+-	createEffect(() => {
+-		remainingTime = duration();
++	createEffect(() => duration(), (nextDuration) => {
++		remainingTime = nextDuration;
+ 	});
+ 	function deleteToast() {
+ 		setRemoved(true);
+@@ -568,7 +567,7 @@ function Toast(props) {
+ 		});
+ 	}
+ 	const icon = () => props.toast.icon ?? props.icons?.[toastType()] ?? getAsset(toastType());
+-	onMount(() => {
++	onSettled(() => {
+ 		setMounted(true);
+ 		if (!toastRef) return;
+ 		const height = toastRef.getBoundingClientRect().height;
+@@ -583,10 +582,8 @@ function Toast(props) {
+ 			props.setHeights((h) => h.filter((height) => height.toastId !== props.toast.id));
+ 		});
+ 	});
+-	createEffect(() => {
+-		if (!mounted() || !toastRef) return;
+-		resolveContent(props.toast.title);
+-		resolveContent(props.toast.description);
++	createEffect(() => [mounted(), resolveContent(props.toast.title), resolveContent(props.toast.description)], ([isMounted]) => {
++		if (!isMounted || !toastRef) return;
+ 		const originalHeight = toastRef.style.height;
+ 		toastRef.style.height = "auto";
+ 		const nextHeight = toastRef.getBoundingClientRect().height;
+@@ -605,7 +602,7 @@ function Toast(props) {
+ 			} : height);
+ 		});
+ 	});
+-	createEffect(on(() => [
++	createEffect(() => [
+ 		props.expanded,
+ 		props.interacting,
+ 		props.toast,
+@@ -635,13 +632,13 @@ function Toast(props) {
+ 		onCleanup(() => {
+ 			if (timeoutId) clearTimeout(timeoutId);
+ 		});
+-	}));
+-	createEffect(on(() => props.toast.delete, (shouldDelete) => {
++	});
++	createEffect(() => props.toast.delete, (shouldDelete) => {
+ 		if (shouldDelete) {
+ 			deleteToast();
+ 			props.toast.onDismiss?.(props.toast);
+ 		}
+-	}));
++	});
+ 	return (() => {
+ 		var _el$2 = _tmpl$5(), _el$5 = _el$2.firstChild, _el$6 = _el$5.firstChild;
+ 		_el$2.$$pointermove = (event) => {
+@@ -914,7 +911,7 @@ function Toast(props) {
+ 	})();
+ }
+ function Toaster(props) {
+-	const propsWithDefaults = mergeProps({
++	const propsWithDefaults = merge({
+ 		position: "bottom-right",
+ 		hotkey: ["altKey", "KeyT"],
+ 		theme: "light",
+@@ -952,15 +949,15 @@ function Toaster(props) {
+ 			return toasts.filter(({ id }) => id !== toastToRemove.id);
+ 		});
+ 	};
+-	onMount(() => {
++	onSettled(() => {
+ 		const unsubscribe = ToastState.subscribe((toastItem) => {
+ 			if (toastItem.dismiss) {
+ 				requestAnimationFrame(() => {
+-					setToastsStore("toasts", produce((toasts) => {
++					setToastsStore("toasts", (toasts) => {
+ 						toasts.forEach((toast) => {
+ 							if (toast.id === toastItem.id) toast.delete = true;
+ 						});
+-					}));
++					});
+ 				});
+ 				return;
+ 			}
+@@ -970,14 +967,13 @@ function Toaster(props) {
+ 				setToastsStore("toasts", indexOfExistingToast, reconcile(nextToast));
+ 				return;
+ 			}
+-			setToastsStore("toasts", produce((toasts) => {
++			setToastsStore("toasts", (toasts) => {
+ 				toasts.unshift(nextToast);
+-			}));
++			});
+ 		});
+ 		onCleanup(unsubscribe);
+ 	});
+-	createEffect(() => {
+-		const theme = propsWithDefaults.theme;
++	createEffect(() => propsWithDefaults.theme, (theme) => {
+ 		if (theme !== "system") {
+ 			setActualTheme(theme);
+ 			return;
+@@ -996,10 +992,10 @@ function Toaster(props) {
+ 			onCleanup(() => darkMediaQuery.removeListener(updateTheme));
+ 		}
+ 	});
+-	createEffect(() => {
+-		if (filteredToasts().length <= 1) setExpanded(false);
++	createEffect(() => filteredToasts().length, (toastCount) => {
++		if (toastCount <= 1) setExpanded(false);
+ 	});
+-	onMount(() => {
++	onSettled(() => {
+ 		const handleKeyDown = (event) => {
+ 			if (propsWithDefaults.hotkey.length > 0 && propsWithDefaults.hotkey.every((key) => event[key] || event.code === key)) {
+ 				setExpanded(true);
+diff --git a/dist/index.jsx b/dist/index.jsx
+index 182e62e6b58b336cb75f31b92e30012d9a9f6f67..dc8b5032465498bcd086799a3f49da8a9ae16ce3 100644
+--- a/dist/index.jsx
++++ b/dist/index.jsx
+@@ -1,12 +1,11 @@
+-import { For, Show, createEffect, createMemo, createSignal, mergeProps, on, onCleanup, onMount } from "solid-js";
+-import { createStore, produce, reconcile } from "solid-js/store";
++import { For, Show, createEffect, createMemo, createSignal, createStore, merge, onCleanup, onSettled } from "solid-js";
+ //#region src/styles.css?inline
+ var styles_default = "html[dir=\"ltr\"], [data-sonner-toaster][dir=\"ltr\"] {\n  --toast-icon-margin-start: -3px;\n  --toast-icon-margin-end: 4px;\n  --toast-svg-margin-start: -1px;\n  --toast-svg-margin-end: 0px;\n  --toast-button-margin-start: auto;\n  --toast-button-margin-end: 0;\n  --toast-close-button-start: 0;\n  --toast-close-button-end: unset;\n  --toast-close-button-transform: translate(-35%, -35%);\n}\n\nhtml[dir=\"rtl\"], [data-sonner-toaster][dir=\"rtl\"] {\n  --toast-icon-margin-start: 4px;\n  --toast-icon-margin-end: -3px;\n  --toast-svg-margin-start: 0px;\n  --toast-svg-margin-end: -1px;\n  --toast-button-margin-start: 0;\n  --toast-button-margin-end: auto;\n  --toast-close-button-start: unset;\n  --toast-close-button-end: 0;\n  --toast-close-button-transform: translate(35%, -35%);\n}\n\n[data-sonner-toaster] {\n  width: var(--width);\n  --gray1: #fcfcfc;\n  --gray2: #f8f8f8;\n  --gray3: #f3f3f3;\n  --gray4: #ededed;\n  --gray5: #e8e8e8;\n  --gray6: #e2e2e2;\n  --gray7: #dbdbdb;\n  --gray8: #c7c7c7;\n  --gray9: #8f8f8f;\n  --gray10: #858585;\n  --gray11: #6f6f6f;\n  --gray12: #171717;\n  --border-radius: 8px;\n  box-sizing: border-box;\n  z-index: 999999999;\n  outline: none;\n  margin: 0;\n  padding: 0;\n  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, Noto Sans, sans-serif, Apple Color Emoji, Segoe UI Emoji, Segoe UI Symbol, Noto Color Emoji;\n  list-style: none;\n  transition: transform .4s;\n  position: fixed;\n}\n\n@media (hover: none) and (pointer: coarse) {\n  [data-sonner-toaster][data-lifted=\"true\"] {\n    transform: none;\n  }\n}\n\n[data-sonner-toaster][data-x-position=\"right\"] {\n  right: var(--offset-right);\n}\n\n[data-sonner-toaster][data-x-position=\"left\"] {\n  left: var(--offset-left);\n}\n\n[data-sonner-toaster][data-x-position=\"center\"] {\n  left: 50%;\n  transform: translateX(-50%);\n}\n\n[data-sonner-toaster][data-y-position=\"top\"] {\n  top: var(--offset-top);\n}\n\n[data-sonner-toaster][data-y-position=\"bottom\"] {\n  bottom: var(--offset-bottom);\n}\n\n[data-sonner-toast] {\n  --y: translateY(100%);\n  --lift-amount: calc(var(--lift) * var(--gap));\n  z-index: var(--z-index);\n  opacity: 0;\n  transform: var(--y);\n  touch-action: none;\n  box-sizing: border-box;\n  overflow-wrap: anywhere;\n  outline: none;\n  transition: transform .4s, opacity .4s, height .4s, box-shadow .2s;\n  position: absolute;\n}\n\n[data-sonner-toast][data-styled=\"true\"] {\n  background: var(--normal-bg);\n  border: 1px solid var(--normal-border);\n  color: var(--normal-text);\n  border-radius: var(--border-radius);\n  width: var(--width);\n  align-items: center;\n  gap: 6px;\n  padding: 16px;\n  font-size: 13px;\n  display: flex;\n  box-shadow: 0 4px 12px #0000001a;\n}\n\n[data-sonner-toast]:focus-visible {\n  box-shadow: 0 4px 12px #0000001a, 0 0 0 2px #0003;\n}\n\n[data-sonner-toast][data-y-position=\"top\"] {\n  --y: translateY(-100%);\n  --lift: 1;\n  --lift-amount: calc(1 * var(--gap));\n  top: 0;\n}\n\n[data-sonner-toast][data-y-position=\"bottom\"] {\n  --y: translateY(100%);\n  --lift: -1;\n  --lift-amount: calc(var(--lift) * var(--gap));\n  bottom: 0;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-description] {\n  color: #3f3f3f;\n  font-weight: 400;\n  line-height: 1.4;\n}\n\n[data-rich-colors=\"true\"][data-sonner-toast][data-styled=\"true\"] [data-description] {\n  color: inherit;\n}\n\n[data-sonner-toaster][data-sonner-theme=\"dark\"] [data-description] {\n  color: #e8e8e8;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-title] {\n  color: inherit;\n  font-weight: 500;\n  line-height: 1.5;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-icon] {\n  width: 16px;\n  height: 16px;\n  margin-left: var(--toast-icon-margin-start);\n  margin-right: var(--toast-icon-margin-end);\n  flex-shrink: 0;\n  justify-content: flex-start;\n  align-items: center;\n  display: flex;\n  position: relative;\n}\n\n[data-sonner-toast][data-promise=\"true\"] [data-icon] > svg {\n  opacity: 0;\n  transform-origin: center;\n  animation: .3s forwards sonner-fade-in;\n  transform: scale(.8);\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-icon] > * {\n  flex-shrink: 0;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-icon] svg {\n  margin-left: var(--toast-svg-margin-start);\n  margin-right: var(--toast-svg-margin-end);\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-content] {\n  flex-direction: column;\n  flex: 1;\n  gap: 2px;\n  min-width: 0;\n  display: flex;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-button] {\n  height: 24px;\n  color: var(--normal-bg);\n  background: var(--normal-text);\n  margin-left: var(--toast-button-margin-start);\n  margin-right: var(--toast-button-margin-end);\n  cursor: pointer;\n  border: none;\n  border-radius: 4px;\n  outline: none;\n  flex-shrink: 0;\n  align-items: center;\n  padding-left: 8px;\n  padding-right: 8px;\n  font-size: 12px;\n  font-weight: 500;\n  transition: opacity .4s, box-shadow .2s;\n  display: flex;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-button]:focus-visible {\n  box-shadow: 0 0 0 2px #0006;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-button]:first-of-type {\n  margin-left: var(--toast-button-margin-start);\n  margin-right: var(--toast-button-margin-end);\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-cancel] {\n  color: var(--normal-text);\n  background: #00000014;\n}\n\n[data-sonner-toaster][data-sonner-theme=\"dark\"] [data-sonner-toast][data-styled=\"true\"] [data-cancel] {\n  background: #ffffff4d;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-close-button] {\n  left: var(--toast-close-button-start);\n  right: var(--toast-close-button-end);\n  width: 20px;\n  height: 20px;\n  color: var(--normal-text);\n  background: var(--normal-bg);\n  border: 1px solid var(--normal-border);\n  transform: var(--toast-close-button-transform);\n  cursor: pointer;\n  z-index: 1;\n  border-radius: 50%;\n  justify-content: center;\n  align-items: center;\n  padding: 0;\n  transition: opacity .1s, background .2s, border-color .2s;\n  display: flex;\n  position: absolute;\n  top: 0;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-close-button]:focus-visible {\n  box-shadow: 0 4px 12px #0000001a, 0 0 0 2px #0003;\n}\n\n[data-sonner-toast][data-styled=\"true\"] [data-disabled=\"true\"] {\n  cursor: not-allowed;\n}\n\n[data-sonner-toast][data-styled=\"true\"]:hover [data-close-button]:hover {\n  background: var(--gray2);\n  border-color: var(--gray5);\n}\n\n[data-sonner-toast][data-swiping=\"true\"]:before {\n  content: \"\";\n  z-index: -1;\n  height: 100%;\n  position: absolute;\n  left: -100%;\n  right: -100%;\n}\n\n[data-sonner-toast][data-y-position=\"top\"][data-swiping=\"true\"]:before {\n  bottom: 50%;\n  transform: scaleY(3) translateY(50%);\n}\n\n[data-sonner-toast][data-y-position=\"bottom\"][data-swiping=\"true\"]:before {\n  top: 50%;\n  transform: scaleY(3) translateY(-50%);\n}\n\n[data-sonner-toast][data-swiping=\"false\"][data-removed=\"true\"]:before {\n  content: \"\";\n  position: absolute;\n  inset: 0;\n  transform: scaleY(2);\n}\n\n[data-sonner-toast][data-expanded=\"true\"]:after {\n  content: \"\";\n  height: calc(var(--gap) + 1px);\n  width: 100%;\n  position: absolute;\n  bottom: 100%;\n  left: 0;\n}\n\n[data-sonner-toast][data-mounted=\"true\"] {\n  --y: translateY(0);\n  opacity: 1;\n}\n\n[data-sonner-toast][data-expanded=\"false\"][data-front=\"false\"] {\n  --scale: var(--toasts-before) * .05 + 1;\n  --y: translateY(calc(var(--lift-amount) * var(--toasts-before))) scale(calc(-1 * var(--scale)));\n  height: var(--front-toast-height);\n}\n\n[data-sonner-toast] > * {\n  transition: opacity .4s;\n}\n\n[data-sonner-toast][data-x-position=\"right\"] {\n  right: 0;\n}\n\n[data-sonner-toast][data-x-position=\"left\"] {\n  left: 0;\n}\n\n[data-sonner-toast][data-expanded=\"false\"][data-front=\"false\"][data-styled=\"true\"] > * {\n  opacity: 0;\n}\n\n[data-sonner-toast][data-visible=\"false\"] {\n  opacity: 0;\n  pointer-events: none;\n}\n\n[data-sonner-toast][data-mounted=\"true\"][data-expanded=\"true\"] {\n  --y: translateY(calc(var(--lift) * var(--offset)));\n  height: var(--initial-height);\n}\n\n[data-sonner-toast][data-removed=\"true\"][data-front=\"true\"][data-swipe-out=\"false\"] {\n  --y: translateY(calc(var(--lift) * -100%));\n  opacity: 0;\n}\n\n[data-sonner-toast][data-removed=\"true\"][data-front=\"false\"][data-swipe-out=\"false\"][data-expanded=\"true\"] {\n  --y: translateY(calc(var(--lift) * var(--offset) + var(--lift) * -100%));\n  opacity: 0;\n}\n\n[data-sonner-toast][data-removed=\"true\"][data-front=\"false\"][data-swipe-out=\"false\"][data-expanded=\"false\"] {\n  --y: translateY(40%);\n  opacity: 0;\n  transition: transform .5s, opacity .2s;\n}\n\n[data-sonner-toast][data-removed=\"true\"][data-front=\"false\"]:before {\n  height: calc(var(--initial-height) + 20%);\n}\n\n[data-sonner-toast][data-swiping=\"true\"] {\n  transform: var(--y) translateY(var(--swipe-amount-y, 0px)) translateX(var(--swipe-amount-x, 0px));\n  transition: none;\n}\n\n[data-sonner-toast][data-swiped=\"true\"] {\n  -webkit-user-select: none;\n  user-select: none;\n}\n\n[data-sonner-toast][data-swipe-out=\"true\"][data-y-position=\"bottom\"], [data-sonner-toast][data-swipe-out=\"true\"][data-y-position=\"top\"] {\n  animation-duration: .2s;\n  animation-timing-function: ease-out;\n  animation-fill-mode: forwards;\n}\n\n[data-sonner-toast][data-swipe-out=\"true\"][data-swipe-direction=\"left\"] {\n  animation-name: swipe-out-left;\n}\n\n[data-sonner-toast][data-swipe-out=\"true\"][data-swipe-direction=\"right\"] {\n  animation-name: swipe-out-right;\n}\n\n[data-sonner-toast][data-swipe-out=\"true\"][data-swipe-direction=\"up\"] {\n  animation-name: swipe-out-up;\n}\n\n[data-sonner-toast][data-swipe-out=\"true\"][data-swipe-direction=\"down\"] {\n  animation-name: swipe-out-down;\n}\n\n@keyframes swipe-out-left {\n  from {\n    transform: var(--y) translateX(var(--swipe-amount-x));\n    opacity: 1;\n  }\n\n  to {\n    transform: var(--y) translateX(calc(var(--swipe-amount-x) - 100%));\n    opacity: 0;\n  }\n}\n\n@keyframes swipe-out-right {\n  from {\n    transform: var(--y) translateX(var(--swipe-amount-x));\n    opacity: 1;\n  }\n\n  to {\n    transform: var(--y) translateX(calc(var(--swipe-amount-x) + 100%));\n    opacity: 0;\n  }\n}\n\n@keyframes swipe-out-up {\n  from {\n    transform: var(--y) translateY(var(--swipe-amount-y));\n    opacity: 1;\n  }\n\n  to {\n    transform: var(--y) translateY(calc(var(--swipe-amount-y) - 100%));\n    opacity: 0;\n  }\n}\n\n@keyframes swipe-out-down {\n  from {\n    transform: var(--y) translateY(var(--swipe-amount-y));\n    opacity: 1;\n  }\n\n  to {\n    transform: var(--y) translateY(calc(var(--swipe-amount-y) + 100%));\n    opacity: 0;\n  }\n}\n\n@media (width <= 600px) {\n  [data-sonner-toaster] {\n    right: var(--mobile-offset-right);\n    left: var(--mobile-offset-left);\n    width: 100%;\n    position: fixed;\n  }\n\n  [data-sonner-toaster][dir=\"rtl\"] {\n    left: calc(var(--mobile-offset-left) * -1);\n  }\n\n  [data-sonner-toaster] [data-sonner-toast] {\n    width: calc(100% - var(--mobile-offset-left) * 2);\n    left: 0;\n    right: 0;\n  }\n\n  [data-sonner-toaster][data-x-position=\"left\"] {\n    left: var(--mobile-offset-left);\n  }\n\n  [data-sonner-toaster][data-y-position=\"bottom\"] {\n    bottom: var(--mobile-offset-bottom);\n  }\n\n  [data-sonner-toaster][data-y-position=\"top\"] {\n    top: var(--mobile-offset-top);\n  }\n\n  [data-sonner-toaster][data-x-position=\"center\"] {\n    left: var(--mobile-offset-left);\n    right: var(--mobile-offset-right);\n    transform: none;\n  }\n}\n\n[data-sonner-toaster][data-sonner-theme=\"light\"] {\n  --normal-bg: #fff;\n  --normal-border: var(--gray4);\n  --normal-text: var(--gray12);\n  --success-bg: #ecfdf3;\n  --success-border: #bffcd9;\n  --success-text: #008a2e;\n  --info-bg: #f0f8ff;\n  --info-border: #dde7fd;\n  --info-text: #0973dc;\n  --warning-bg: #fffcf0;\n  --warning-border: #fbeeb1;\n  --warning-text: #dc7609;\n  --error-bg: #fff0f0;\n  --error-border: #ffe0e1;\n  --error-text: #e60000;\n}\n\n[data-sonner-toaster][data-sonner-theme=\"light\"] [data-sonner-toast][data-invert=\"true\"] {\n  --normal-bg: #000;\n  --normal-border: #333;\n  --normal-text: var(--gray1);\n}\n\n[data-sonner-toaster][data-sonner-theme=\"dark\"] [data-sonner-toast][data-invert=\"true\"] {\n  --normal-bg: #fff;\n  --normal-border: var(--gray3);\n  --normal-text: var(--gray12);\n}\n\n[data-sonner-toaster][data-sonner-theme=\"dark\"] {\n  --normal-bg: #000;\n  --normal-bg-hover: #1f1f1f;\n  --normal-border: #333;\n  --normal-border-hover: #404040;\n  --normal-text: var(--gray1);\n  --success-bg: #001f0f;\n  --success-border: #003d1c;\n  --success-text: #59f3a6;\n  --info-bg: #000d1f;\n  --info-border: #19233e;\n  --info-text: #5896f3;\n  --warning-bg: #1d1f00;\n  --warning-border: #2e2e00;\n  --warning-text: #f3cf58;\n  --error-bg: #2d0607;\n  --error-border: #4d0408;\n  --error-text: #ff9ea1;\n}\n\n[data-sonner-toaster][data-sonner-theme=\"dark\"] [data-sonner-toast] [data-close-button] {\n  background: var(--normal-bg);\n  border-color: var(--normal-border);\n  color: var(--normal-text);\n}\n\n[data-sonner-toaster][data-sonner-theme=\"dark\"] [data-sonner-toast] [data-close-button]:hover {\n  background: var(--normal-bg-hover);\n  border-color: var(--normal-border-hover);\n}\n\n[data-rich-colors=\"true\"][data-sonner-toast][data-type=\"success\"], [data-rich-colors=\"true\"][data-sonner-toast][data-type=\"success\"] [data-close-button] {\n  background: var(--success-bg);\n  border-color: var(--success-border);\n  color: var(--success-text);\n}\n\n[data-rich-colors=\"true\"][data-sonner-toast][data-type=\"info\"], [data-rich-colors=\"true\"][data-sonner-toast][data-type=\"info\"] [data-close-button] {\n  background: var(--info-bg);\n  border-color: var(--info-border);\n  color: var(--info-text);\n}\n\n[data-rich-colors=\"true\"][data-sonner-toast][data-type=\"warning\"], [data-rich-colors=\"true\"][data-sonner-toast][data-type=\"warning\"] [data-close-button] {\n  background: var(--warning-bg);\n  border-color: var(--warning-border);\n  color: var(--warning-text);\n}\n\n[data-rich-colors=\"true\"][data-sonner-toast][data-type=\"error\"], [data-rich-colors=\"true\"][data-sonner-toast][data-type=\"error\"] [data-close-button] {\n  background: var(--error-bg);\n  border-color: var(--error-border);\n  color: var(--error-text);\n}\n\n.sonner-loading-wrapper {\n  --size: 16px;\n  height: var(--size);\n  width: var(--size);\n  z-index: 10;\n  position: absolute;\n  inset: 0;\n}\n\n.sonner-loading-wrapper[data-visible=\"false\"] {\n  transform-origin: center;\n  animation: .2s forwards sonner-fade-out;\n}\n\n.sonner-spinner {\n  height: var(--size);\n  width: var(--size);\n  position: relative;\n  top: 50%;\n  left: 50%;\n}\n\n.sonner-loading-bar {\n  background: var(--gray11);\n  border-radius: 6px;\n  width: 24%;\n  height: 8%;\n  animation: 1.2s linear infinite sonner-spin;\n  position: absolute;\n  top: -3.9%;\n  left: -10%;\n}\n\n.sonner-loading-bar:first-child {\n  animation-delay: -1.2s;\n  transform: rotate(.0001deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(2) {\n  animation-delay: -1.1s;\n  transform: rotate(30deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(3) {\n  animation-delay: -1s;\n  transform: rotate(60deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(4) {\n  animation-delay: -.9s;\n  transform: rotate(90deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(5) {\n  animation-delay: -.8s;\n  transform: rotate(120deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(6) {\n  animation-delay: -.7s;\n  transform: rotate(150deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(7) {\n  animation-delay: -.6s;\n  transform: rotate(180deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(8) {\n  animation-delay: -.5s;\n  transform: rotate(210deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(9) {\n  animation-delay: -.4s;\n  transform: rotate(240deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(10) {\n  animation-delay: -.3s;\n  transform: rotate(270deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(11) {\n  animation-delay: -.2s;\n  transform: rotate(300deg) translate(146%);\n}\n\n.sonner-loading-bar:nth-child(12) {\n  animation-delay: -.1s;\n  transform: rotate(330deg) translate(146%);\n}\n\n@keyframes sonner-fade-in {\n  0% {\n    opacity: 0;\n    transform: scale(.8);\n  }\n\n  100% {\n    opacity: 1;\n    transform: scale(1);\n  }\n}\n\n@keyframes sonner-fade-out {\n  0% {\n    opacity: 1;\n    transform: scale(1);\n  }\n\n  100% {\n    opacity: 0;\n    transform: scale(.8);\n  }\n}\n\n@keyframes sonner-spin {\n  0% {\n    opacity: 1;\n  }\n\n  100% {\n    opacity: .15;\n  }\n}\n\n@media (prefers-reduced-motion) {\n  [data-sonner-toast], [data-sonner-toast] > *, .sonner-loading-bar {\n    transition: none !important;\n    animation: none !important;\n  }\n}\n\n.sonner-loader {\n  transform-origin: center;\n  transition: opacity .2s, transform .2s;\n  position: absolute;\n  top: 50%;\n  left: 50%;\n  transform: translate(-50%, -50%);\n}\n\n.sonner-loader[data-visible=\"false\"] {\n  opacity: 0;\n  transform: scale(.8) translate(-50%, -50%);\n}\n";
+ //#endregion
+ //#region src/assets.tsx
+ const bars = Array(12).fill(0);
+ function Loader(props) {
+-	return <div class={["sonner-loading-wrapper", props.class ?? props.className].filter(Boolean).join(" ")} data-visible={props.visible}>
++	return <div class={["sonner-loading-wrapper", props.class ?? props.className].filter(Boolean).join(" ")} data-visible={String(props.visible)}>
+       <div class="sonner-spinner">
+         <For each={bars}>{(_, i) => <div class="sonner-loading-bar" data-index={i()} />}</For>
+       </div>
+@@ -51,14 +50,14 @@ function CloseIcon() {
+ //#region src/primitives.ts
+ function useIsDocumentHidden() {
+ 	const [isDocumentHidden, setIsDocumentHidden] = createSignal(typeof document !== "undefined" ? document.hidden : false);
+-	onMount(() => {
++	onSettled(() => {
+ 		const callback = () => {
+ 			setIsDocumentHidden(document.hidden);
+ 		};
+ 		document.addEventListener("visibilitychange", callback);
+-		onCleanup(() => {
++		return () => {
+ 			document.removeEventListener("visibilitychange", callback);
+-		});
++		};
+ 	});
+ 	return isDocumentHidden;
+ }
+@@ -439,7 +438,7 @@ function mergeClassName(className, legacy) {
+ }
+ function useSonner() {
+ 	const [activeToasts, setActiveToasts] = createSignal([]);
+-	onMount(() => {
++	onSettled(() => {
+ 		const unsubscribe = ToastState.subscribe((toastItem) => {
+ 			if (toastItem.dismiss) {
+ 				requestAnimationFrame(() => {
+@@ -461,7 +460,7 @@ function useSonner() {
+ 				return [nextToast, ...toasts];
+ 			});
+ 		});
+-		onCleanup(unsubscribe);
++		return unsubscribe;
+ 	});
+ 	return { toasts: activeToasts };
+ }
+@@ -511,8 +510,8 @@ function Toast(props) {
+ 	});
+ 	const offset = createMemo(() => heightIndex() * (props.gap ?? GAP) + toastsHeightBefore());
+ 	const isDocumentHidden = useIsDocumentHidden();
+-	createEffect(() => {
+-		remainingTime = duration();
++	createEffect(() => duration(), (nextDuration) => {
++		remainingTime = nextDuration;
+ 	});
+ 	function deleteToast() {
+ 		setRemoved(true);
+@@ -523,19 +522,29 @@ function Toast(props) {
+ 		}, TIME_BEFORE_UNMOUNT);
+ 	}
+ 	function getLoadingIcon() {
+-		if (props.icons?.loading) return <div class={cn(classNames()?.loader, toastClassNames()?.loader, "sonner-loader")} data-visible={toastType() === "loading"}>
++		if (props.icons?.loading) return <div class={cn(classNames()?.loader, toastClassNames()?.loader, "sonner-loader")} data-visible={String(toastType() === "loading")}>
+           {props.icons.loading}
+         </div>;
+ 		return <Loader class={cn(classNames()?.loader, toastClassNames()?.loader)} visible={toastType() === "loading"} />;
+ 	}
+ 	const icon = () => props.toast.icon ?? props.icons?.[toastType()] ?? getAsset(toastType());
+-	onMount(() => {
++	onSettled(() => {
+ 		setMounted(true);
++		if (!toastRef) return;
++		const height = toastRef.getBoundingClientRect().height;
++		setInitialHeight(height);
++		props.setHeights((h) => [{
++			toastId: props.toast.id,
++			toasterId: props.toast.toasterId,
++			height,
++			position: props.toast.position
++		}, ...h]);
++		return () => {
++			props.setHeights((h) => h.filter((height) => height.toastId !== props.toast.id));
++		};
+ 	});
+-	createEffect(() => {
+-		if (!mounted() || true) return;
+-		resolveContent(props.toast.title);
+-		resolveContent(props.toast.description);
++	createEffect(() => [mounted(), resolveContent(props.toast.title), resolveContent(props.toast.description)], ([isMounted]) => {
++		if (!isMounted || !toastRef) return;
+ 		const originalHeight = toastRef.style.height;
+ 		toastRef.style.height = "auto";
+ 		const nextHeight = toastRef.getBoundingClientRect().height;
+@@ -554,7 +563,7 @@ function Toast(props) {
+ 			} : height);
+ 		});
+ 	});
+-	createEffect(on(() => [
++	createEffect(() => [
+ 		props.expanded,
+ 		props.interacting,
+ 		props.toast,
+@@ -581,17 +590,19 @@ function Toast(props) {
+ 		};
+ 		if (expanded || interacting || (props.pauseWhenPageIsHidden ?? true) && isDocumentHidden()) pauseTimer();
+ 		else startTimer();
+-		onCleanup(() => {
++		return () => {
+ 			if (timeoutId) clearTimeout(timeoutId);
+-		});
+-	}));
+-	createEffect(on(() => props.toast.delete, (shouldDelete) => {
++		};
++	});
++	createEffect(() => props.toast.delete, (shouldDelete) => {
+ 		if (shouldDelete) {
+ 			deleteToast();
+ 			props.toast.onDismiss?.(props.toast);
+ 		}
+-	}));
+-	return <li tabIndex={0} ref={toastRef} class={cn(className(), toastClassName(), classNames()?.toast, toastClassNames()?.toast, classNames()?.[toastTypeKey()], toastClassNames()?.[toastTypeKey()])} data-sonner-toast="" data-rich-colors={props.toast.richColors ?? props.defaultRichColors} data-styled={!(props.toast.jsx || props.toast.unstyled || props.unstyled)} data-mounted={mounted()} data-promise={Boolean(props.toast.promise)} data-swiped={isSwiped()} data-removed={removed()} data-visible={isVisible()} data-y-position={y()} data-x-position={x()} data-index={props.index} data-front={isFront()} data-swiping={swiping()} data-dismissible={dismissible()} data-type={toastType()} data-invert={invert()} data-swipe-out={swipeOut()} data-swipe-direction={swipeOutDirection()} data-expanded={Boolean(props.expanded || props.expandByDefault && mounted())} data-testid={props.toast.testId} style={{
++	});
++	return <li tabIndex={0} ref={(element) => {
++		toastRef = element;
++	}} class={cn(className(), toastClassName(), classNames()?.toast, toastClassNames()?.toast, classNames()?.[toastTypeKey()], toastClassNames()?.[toastTypeKey()])} data-sonner-toast="" data-rich-colors={String(props.toast.richColors ?? props.defaultRichColors)} data-styled={String(!(props.toast.jsx || props.toast.unstyled || props.unstyled))} data-mounted={String(mounted())} data-promise={String(Boolean(props.toast.promise))} data-swiped={String(isSwiped())} data-removed={String(removed())} data-visible={String(isVisible())} data-y-position={y()} data-x-position={x()} data-index={props.index} data-front={String(isFront())} data-swiping={String(swiping())} data-dismissible={String(dismissible())} data-type={toastType()} data-invert={String(invert())} data-swipe-out={String(swipeOut())} data-swipe-direction={swipeOutDirection()} data-expanded={String(Boolean(props.expanded || props.expandByDefault && mounted()))} data-testid={props.toast.testId} style={{
+ 		"--index": props.index,
+ 		"--toasts-before": props.index,
+ 		"--z-index": props.toasts.length - props.index,
+@@ -668,7 +679,7 @@ function Toast(props) {
+ 		if (Math.abs(swipeAmount.x) > 0 || Math.abs(swipeAmount.y) > 0) setIsSwiped(true);
+ 	}}>
+       <Show when={closeButton() && !props.toast.jsx && toastType() !== "loading"}>
+-        <button aria-label={props.closeButtonAriaLabel ?? "Close toast"} data-disabled={disabled()} data-close-button onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onClick={() => {
++        <button aria-label={props.closeButtonAriaLabel ?? "Close toast"} data-disabled={String(disabled())} data-close-button onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onClick={() => {
+ 		if (disabled() || !dismissible()) return;
+ 		deleteToast();
+ 		props.toast.onDismiss?.(props.toast);
+@@ -723,7 +734,7 @@ function Toast(props) {
+     </li>;
+ }
+ function Toaster(props) {
+-	const propsWithDefaults = mergeProps({
++	const propsWithDefaults = merge({
+ 		position: "bottom-right",
+ 		hotkey: ["altKey", "KeyT"],
+ 		theme: "light",
+@@ -742,7 +753,7 @@ function Toaster(props) {
+ 	const possiblePositions = createMemo(() => {
+ 		return Array.from(/* @__PURE__ */ new Set([propsWithDefaults.position, ...filteredToasts().filter((toast) => toast.position).map((toast) => toast.position)]));
+ 	});
+-	const [heights, setHeights] = createSignal([]);
++	const [heights, setHeights] = createSignal([], { ownedWrite: true });
+ 	const [expanded, setExpanded] = createSignal(false);
+ 	const [interacting, setInteracting] = createSignal(false);
+ 	const [actualTheme, setActualTheme] = createSignal(initialTheme);
+@@ -756,37 +767,38 @@ function Toaster(props) {
+ 	const toastDescriptionClassName = () => mergeDescriptionClassName(toastOptions()?.descriptionClassName, toastOptions()?.descriptionClass);
+ 	const toastClassName = () => mergeClassName(toastOptions()?.className, toastOptions()?.class);
+ 	const removeToast = (toastToRemove) => {
+-		setToastsStore("toasts", (toasts) => {
+-			if (!toasts.find((toast) => toast.id === toastToRemove.id)?.delete) ToastState.dismiss(toastToRemove.id);
+-			return toasts.filter(({ id }) => id !== toastToRemove.id);
++		setToastsStore((store) => {
++			if (!store.toasts.find((toast) => toast.id === toastToRemove.id)?.delete) ToastState.dismiss(toastToRemove.id);
++			store.toasts = store.toasts.filter(({ id }) => id !== toastToRemove.id);
+ 		});
+ 	};
+-	onMount(() => {
++	onSettled(() => {
+ 		const unsubscribe = ToastState.subscribe((toastItem) => {
+ 			if (toastItem.dismiss) {
+ 				requestAnimationFrame(() => {
+-					setToastsStore("toasts", produce((toasts) => {
+-						toasts.forEach((toast) => {
++					setToastsStore((store) => {
++						store.toasts.forEach((toast) => {
+ 							if (toast.id === toastItem.id) toast.delete = true;
+ 						});
+-					}));
++					});
+ 				});
+ 				return;
+ 			}
+ 			const nextToast = toastItem;
+ 			const indexOfExistingToast = toastsStore.toasts.findIndex((t) => t.id === nextToast.id);
+ 			if (indexOfExistingToast !== -1) {
+-				setToastsStore("toasts", indexOfExistingToast, reconcile(nextToast));
++				setToastsStore((store) => {
++					store.toasts[indexOfExistingToast] = nextToast;
++				});
+ 				return;
+ 			}
+-			setToastsStore("toasts", produce((toasts) => {
+-				toasts.unshift(nextToast);
+-			}));
++			setToastsStore((store) => {
++				store.toasts.unshift(nextToast);
++			});
+ 		});
+-		onCleanup(unsubscribe);
++		return unsubscribe;
+ 	});
+-	createEffect(() => {
+-		const theme = propsWithDefaults.theme;
++	createEffect(() => propsWithDefaults.theme, (theme) => {
+ 		if (theme !== "system") {
+ 			setActualTheme(theme);
+ 			return;
+@@ -799,22 +811,22 @@ function Toaster(props) {
+ 		updateTheme(darkMediaQuery);
+ 		try {
+ 			darkMediaQuery.addEventListener("change", updateTheme);
+-			onCleanup(() => darkMediaQuery.removeEventListener("change", updateTheme));
++			return () => darkMediaQuery.removeEventListener("change", updateTheme);
+ 		} catch {
+ 			darkMediaQuery.addListener(updateTheme);
+-			onCleanup(() => darkMediaQuery.removeListener(updateTheme));
++			return () => darkMediaQuery.removeListener(updateTheme);
+ 		}
+ 	});
+-	createEffect(() => {
+-		if (filteredToasts().length <= 1) setExpanded(false);
++	createEffect(() => filteredToasts().length, (toastCount) => {
++		if (toastCount <= 1) setExpanded(false);
+ 	});
+-	onMount(() => {
++	onSettled(() => {
+ 		const handleKeyDown = (event) => {
+ 			if (propsWithDefaults.hotkey.length > 0 && propsWithDefaults.hotkey.every((key) => event[key] || event.code === key)) setExpanded(true);
+ 			if (event.code === "Escape" && (document.activeElement === listRef || void 0)) setExpanded(false);
+ 		};
+ 		document.addEventListener("keydown", handleKeyDown);
+-		onCleanup(() => document.removeEventListener("keydown", handleKeyDown));
++		return () => document.removeEventListener("keydown", handleKeyDown);
+ 	});
+ 	onCleanup(() => {
+ 		if (lastFocusedElementRef()) {
+@@ -830,7 +842,9 @@ function Toaster(props) {
+ 		const toastsByPosition = createMemo(() => filteredToasts().filter((toast) => !toast.position && index() === 0 || toast.position === position));
+ 		const heightsByPosition = createMemo(() => heights().filter((height) => index() === 0 && !height.position || height.position === position));
+ 		return <Show when={filteredToasts().length > 0}>
+-              <ol tabIndex={-1} ref={listRef} dir={propsWithDefaults.dir === "auto" ? getDocumentDirection() : propsWithDefaults.dir} class={className()} data-sonner-toaster data-sonner-theme={actualTheme()} data-y-position={y} data-x-position={x} style={{
++              <ol tabIndex={-1} ref={(element) => {
++                listRef = element;
++              }} dir={propsWithDefaults.dir === "auto" ? getDocumentDirection() : propsWithDefaults.dir} class={className()} data-sonner-toaster data-sonner-theme={actualTheme()} data-y-position={y} data-x-position={x} style={{
+ 			"--front-toast-height": `${heightsByPosition()[0]?.height ?? 0}px`,
+ 			"--width": `${TOAST_WIDTH}px`,
+ 			"--gap": `${propsWithDefaults.gap}px`,

@@ -57,8 +57,8 @@
     "dev:test-client": "bun scripts/dev-services.ts test-client",
     "dev:all": "bun scripts/dev-services.ts all",
     "all": "bun run dev:all",
-    "dev:seed": "bun scripts/seed-dev-state.ts",
-    "dev:reset": "bun scripts/reset-dev-state.ts",
+    "dev:seed": "tsx scripts/seed-dev-state.ts",
+    "dev:reset": "tsx scripts/reset-dev-state.ts",
     "build": "electron-vite build",
     "voice:prepare": "bun scripts/prepare-whisper.ts",
     "build:remote-desktop-runtime": "bun scripts/build-remote-desktop-runtime.ts",
@@ -131,6 +131,7 @@
     "lucide-solid": "^1.33.0",
     "marked": "18.0.10",
     "solid-js": "2.0.0-rc.0",
+    "solid-sonner": "0.3.2",
     "ws": "8.21.3",
     "yaml": "2.8.1",
     "zod": "4.4.3"
@@ -153,6 +154,7 @@
     "storybook": "^10.5.9",
     "storybook-solidjs-vite": "^10.6.0",
     "tailwindcss": "4.3.3",
+    "tsx": "^4.23.12",
     "typescript": "5.9.3",
     "vite": "7.3.6",
     "vitest": "4.1.10"
@@ -160,6 +162,7 @@
   "patchedDependencies": {
     "lucide-solid@1.33.0": "patches/lucide-solid@1.33.0.patch",
     "@kobalte/core@2.0.0-alpha.0": "patches/@kobalte%2Fcore@2.0.0-alpha.0.patch",
-    "dmg-builder@26.15.3": "patches/dmg-builder@26.15.3.patch"
+    "dmg-builder@26.15.3": "patches/dmg-builder@26.15.3.patch",
+    "solid-sonner@0.3.2": "patches/solid-sonner@0.3.2.patch"
   }
 }

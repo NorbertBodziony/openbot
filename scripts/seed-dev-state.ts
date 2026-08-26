@@ -4,9 +4,12 @@ import { homedir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
-import type { AttachmentSummary, BotSummary, ConversationMessage } from "@openbot/contracts/ipc";
+import type { AttachmentSummary, BotSummary, ConversationMessage, Routine } from "@openbot/contracts/ipc";
 import { z } from "zod";
+import { AgentMemoryStore } from "../src/backend/agent-memory-store";
+import { AgentRoutineStore } from "../src/backend/agent-routine-store";
 import { BotStore } from "../src/backend/bot-store";
+import { sortConversationMessages } from "../src/backend/conversation-snapshots";
 import { MailboxStore } from "../src/backend/mailbox-store";
 import { TeamChatStore } from "../src/backend/team-chat-store";
 import { developmentUserDataName } from "../src/main/development-profile";
@@ -56,6 +59,9 @@ export interface DevelopmentSeedSummary {
   sessions: number;
   directThreads: number;
   queuedDeliveries: number;
+  memories: number;
+  routines: number;
+  routineRuns: number;
 }
 
 const SEED_SUMMARY = {
@@ -67,6 +73,9 @@ const SEED_SUMMARY = {
   sessions: 4,
   directThreads: 3,
   queuedDeliveries: 0,
+  memories: 7,
+  routines: 5,
+  routineRuns: 3,
 } as const;
 
 const AGENTS = [
@@ -197,14 +206,177 @@ async function buildSeedProfile(
   try {
     const bots = await seedAgents(botStore);
     const attachments = await seedAttachments(mailbox, bots, transferDirectories);
-    await seedConversations(botStore, mailbox, bots, attachments);
+    seedMemories(botStore);
+    await seedRoutines(botStore, mailbox);
     await seedAgentExchanges(mailbox);
+    await seedConversations(botStore, mailbox, bots, attachments);
     await seedTeam(profilePath, botStore);
     await writeSetupState(join(profilePath, SETUP_FILE), "codex");
     await writeSeedManifest(profilePath, transferDirectories);
   } finally {
     botStore.database.close();
   }
+}
+
+function seedMemories(botStore: BotStore): void {
+  const memories = new AgentMemoryStore(botStore.database);
+  for (const fixture of [
+    {
+      botId: "chief",
+      text: "The user prefers concise status updates with clear owners and next steps.",
+      origin: "manual" as const,
+    },
+    {
+      botId: "chief",
+      text: "Use Europe/Warsaw when presenting launch dates and times.",
+      origin: "manual" as const,
+    },
+    {
+      botId: "chief",
+      text: "The current priority is a traceable OpenBot launch plan.",
+      origin: "automatic" as const,
+      sourceTurnId: "dev-seed-turn-chief-plan",
+    },
+    {
+      botId: "research",
+      text: "Prioritize primary sources and call out claims that still need verification.",
+      origin: "manual" as const,
+    },
+    {
+      botId: "research",
+      text: "The launch evidence map contains one claim that still needs a primary source.",
+      origin: "automatic" as const,
+      sourceTurnId: "dev-seed-turn-research-evidence",
+    },
+    {
+      botId: "builder",
+      text: "Implementation plans should include typecheck, tests, and a rollback step.",
+      origin: "manual" as const,
+    },
+    {
+      botId: "launch",
+      text: "Use calm, evidence-based release messaging and review final assets before publication.",
+      origin: "manual" as const,
+    },
+  ]) {
+    if (fixture.origin === "automatic") {
+      memories.saveAutomatic({
+        botId: fixture.botId,
+        text: fixture.text,
+        sourceTurnId: fixture.sourceTurnId,
+      });
+    } else {
+      memories.createManual(fixture.botId, fixture.text);
+    }
+  }
+}
+
+async function seedRoutines(botStore: BotStore, mailbox: MailboxStore): Promise<void> {
+  const routines = new AgentRoutineStore(botStore.database);
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const now = new Date();
+  const morningBrief = routines.create(
+    {
+      botId: "chief",
+      name: "Morning launch brief",
+      instruction: "Summarize launch progress, blockers, owners, and the next decision in five bullets.",
+      active: true,
+      timezone,
+      schedule: { kind: "weekdays", time: "09:00" },
+    },
+    now,
+  );
+  routines.create(
+    {
+      botId: "chief",
+      name: "Friday launch review",
+      instruction: "Prepare the weekly launch review with decisions, risks, and unresolved ownership gaps.",
+      active: true,
+      timezone,
+      schedule: { kind: "weekly", weekday: 5, time: "16:00" },
+    },
+    now,
+  );
+  const sourceCheck = routines.create(
+    {
+      botId: "research",
+      name: "Daily source check",
+      instruction: "Recheck open launch claims against primary sources and report only material changes.",
+      active: true,
+      timezone,
+      schedule: { kind: "daily", time: "08:30" },
+    },
+    now,
+  );
+  routines.create(
+    {
+      botId: "builder",
+      name: "Dependency health check",
+      instruction: "Review dependency health and prepare a short risk report without changing the codebase.",
+      active: false,
+      timezone,
+      schedule: { kind: "weekly", weekday: 1, time: "10:00" },
+    },
+    now,
+  );
+  routines.create(
+    {
+      botId: "launch",
+      name: "Release readiness pulse",
+      instruction: "Check release assets, messaging, and approvals, then list anything blocking publication.",
+      active: true,
+      timezone,
+      schedule: { kind: "weekdays", time: "15:30" },
+    },
+    now,
+  );
+
+  await seedRoutineRun(routines, mailbox, morningBrief, "scheduled", hoursBefore(now, 26), "succeeded");
+  await seedRoutineRun(routines, mailbox, morningBrief, "manual", hoursBefore(now, 2), "succeeded");
+  await seedRoutineRun(
+    routines,
+    mailbox,
+    sourceCheck,
+    "scheduled",
+    hoursBefore(now, 25),
+    "failed",
+    "One source was temporarily unavailable.",
+  );
+}
+
+async function seedRoutineRun(
+  routines: AgentRoutineStore,
+  mailbox: MailboxStore,
+  routine: Routine,
+  kind: "scheduled" | "manual",
+  scheduledFor: string,
+  status: "succeeded" | "failed",
+  error: string | null = null,
+): Promise<void> {
+  const run = routines.createRun(routine, kind === "scheduled" ? routine.trigger.id : null, kind, scheduledFor);
+  const receipt = await mailbox.enqueue({
+    sender: {
+      kind: "routine",
+      routineId: routine.id,
+      runId: run.id,
+      routineName: routine.name,
+      scheduledFor,
+    },
+    recipientBotIds: [routine.botId],
+    text: routine.instruction,
+    idempotencyKey: `dev-seed:routine-run:${run.id}`,
+  });
+  const delivery = receipt.deliveries[0];
+  if (!delivery) throw new Error("The seeded routine run did not create a delivery.");
+  routines.attachDelivery(run.id, delivery.id);
+  await mailbox.markStarting(delivery.id);
+  await mailbox.markRunning(delivery.id, `dev-seed-routine-turn-${run.id}`);
+  await mailbox.markTerminal(delivery.id, status === "succeeded" ? "completed" : "failed", error);
+  routines.updateRunStatus(run.id, status, error);
+}
+
+function hoursBefore(date: Date, hours: number): string {
+  return new Date(date.getTime() - hours * 60 * 60 * 1_000).toISOString();
 }
 
 async function seedAgents(botStore: BotStore): Promise<Map<string, BotSummary>> {
@@ -313,6 +485,7 @@ async function seedConversations(
           ].join("\n"),
           1,
         ),
+        turnId: "dev-seed-turn-chief-plan",
         attachments: [attachments.brief, attachments.metrics],
       },
       {
@@ -358,6 +531,7 @@ async function seedConversations(
           `Seven of eight claims are verified. One claim still needs a primary source. See ${serializeAttachmentReference(attachments.evidence.name, attachments.evidence.id)}.`,
           11,
         ),
+        turnId: "dev-seed-turn-research-evidence",
         attachments: [attachments.evidence],
       },
     ],
@@ -386,8 +560,10 @@ async function seedConversations(
 
   for (const [botId, messages] of Object.entries(conversations)) {
     const bot = requireBot(bots, botId);
+    const persistedMessages = [...messages, ...mailbox.conversationMessages(botId)];
+    sortConversationMessages(persistedMessages);
     botStore.database.persistConversation(
-      { botId, threadId: bot.threadId, activeTurnId: null, revision: 0, messages },
+      { botId, threadId: bot.threadId, activeTurnId: null, revision: 0, messages: persistedMessages },
       "dev-seed.created",
       { seedVersion: SEED_VERSION },
       `dev-seed:conversation:${botId}`,
@@ -621,6 +797,9 @@ async function main(): Promise<void> {
   console.log(`- active invites: ${summary.activeInvites}`);
   console.log(`- direct threads: ${summary.directThreads}`);
   console.log(`- queued deliveries: ${summary.queuedDeliveries}`);
+  console.log(`- memories: ${summary.memories}`);
+  console.log(`- routines: ${summary.routines}`);
+  console.log(`- routine runs: ${summary.routineRuns}`);
   if (dryRun) console.log("No files were changed.");
   else console.log("Run `bun run dev` to open the seeded showcase.");
 }

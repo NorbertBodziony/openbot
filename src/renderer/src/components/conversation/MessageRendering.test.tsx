@@ -513,7 +513,8 @@ describe("MessageBody", () => {
     expect(screen.getByText(/\| --- \| --- \|/u)).toBeInTheDocument();
   });
 
-  it("labels a routine prompt and keeps the full instruction", () => {
+  it("opens a routine from its message tag and keeps the full instruction", async () => {
+    const onOpenRoutine = vi.fn();
     render(() => (
       <MessageBody
         message={{
@@ -534,10 +535,13 @@ describe("MessageBody", () => {
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
         onAttachmentAction={vi.fn()}
+        onOpenRoutine={onOpenRoutine}
       />
     ));
 
-    expect(screen.getByText("Morning brief", { selector: ".routine-message-label span" })).toBeInTheDocument();
+    const routineTag = screen.getByRole("button", { name: "Open routine Morning brief" });
+    await fireEvent.click(routineTag);
+    expect(onOpenRoutine).toHaveBeenCalledWith({ routineId: "routine-1", name: "Morning brief" });
     expect(screen.getByText("Prepare the full morning brief with every required section.")).toBeInTheDocument();
     expect(screen.getByText("Queued #1")).toBeInTheDocument();
   });

@@ -1,5 +1,30 @@
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { Card, Heading, Kbd, Separator, Skeleton, Spinner, Text } from "../src/components/ui";
+import {
+  Alert,
+  AlertActions,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
+  Button,
+  Card,
+  Check,
+  Heading,
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+  Kbd,
+  Separator,
+  ShieldCheck,
+  Skeleton,
+  Spinner,
+  Text,
+  UserRound,
+} from "../src/components/ui";
 
 const meta = {
   title: "Foundations/Surface",
@@ -39,6 +64,77 @@ export const Gallery: Story = {
           </div>
         </Card>
       </div>
+
+      <section class="foundation-story-section" aria-labelledby="item-primitives">
+        <Heading id="item-primitives" as="h2" size="sm">
+          Items
+        </Heading>
+        <ItemGroup>
+          <Item>
+            <ItemMedia>
+              <UserRound aria-hidden="true" />
+            </ItemMedia>
+            <ItemContent>
+              <ItemTitle>Design team</ItemTitle>
+              <ItemDescription>8 members · 5 online</ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <Button size="sm" variant="ghost">
+                Manage
+              </Button>
+            </ItemActions>
+          </Item>
+          <Item size="compact">
+            <ItemContent>
+              <ItemTitle>Private invitation link</ItemTitle>
+              <ItemDescription>Expires tomorrow at 10:00</ItemDescription>
+            </ItemContent>
+          </Item>
+        </ItemGroup>
+      </section>
+
+      <section class="foundation-story-section" aria-labelledby="alert-primitives">
+        <Heading id="alert-primitives" as="h2" size="sm">
+          Alerts
+        </Heading>
+        <div class="foundation-skeleton-stack">
+          <Alert tone="neutral">
+            <AlertIcon>
+              <ShieldCheck />
+            </AlertIcon>
+            <AlertContent>
+              <AlertTitle>Server is private</AlertTitle>
+              <AlertDescription>Publish it when you are ready to invite people.</AlertDescription>
+            </AlertContent>
+          </Alert>
+          <Alert tone="success">
+            <AlertIcon>
+              <Check />
+            </AlertIcon>
+            <AlertContent>
+              <AlertTitle>Invitation ready</AlertTitle>
+              <AlertDescription>The private link can now be shared.</AlertDescription>
+            </AlertContent>
+            <AlertActions>
+              <Button size="sm" variant="ghost">
+                Copy link
+              </Button>
+            </AlertActions>
+          </Alert>
+          <Alert tone="warning">
+            <AlertContent>
+              <AlertTitle>Setup required</AlertTitle>
+              <AlertDescription>Save the server identity before publishing.</AlertDescription>
+            </AlertContent>
+          </Alert>
+          <Alert tone="danger" role="alert">
+            <AlertContent>
+              <AlertTitle>Connection failed</AlertTitle>
+              <AlertDescription>The server did not respond.</AlertDescription>
+            </AlertContent>
+          </Alert>
+        </div>
+      </section>
     </main>
   ),
 };

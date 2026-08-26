@@ -84,7 +84,15 @@ fi
       const serverInstance = isDynamicRecord(openbotServer) ? openbotServer.instance : null;
       const registeredTools = isDynamicRecord(serverInstance) ? serverInstance._registeredTools : null;
       expect(isDynamicRecord(registeredTools) ? Object.keys(registeredTools) : []).toEqual(
-        expect.arrayContaining(["remember", "forget_memory"]),
+        expect.arrayContaining([
+          "remember",
+          "forget_memory",
+          "list_routines",
+          "create_routine",
+          "update_routine",
+          "delete_routine",
+          "test_routine",
+        ]),
       );
       return generator;
     });

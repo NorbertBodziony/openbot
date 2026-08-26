@@ -12,6 +12,7 @@ import {
   tool,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { type DynamicRecord, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { z } from "zod";
 import type { AgentProvider } from "./agent-client";
@@ -28,6 +29,7 @@ import {
   type ThreadResponse,
   type TurnResponse,
 } from "./protocol";
+import { routineScheduleZodSchema } from "./routine-tool-schema";
 
 const execFileAsync = promisify(execFile);
 const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -518,6 +520,56 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         tools: [
           tool("list_agents", "List OpenBot agents that can receive local messages.", {}, (args) =>
             call("openbot", "list_agents", args),
+          ),
+          tool(
+            "list_routines",
+            "List routines for this agent, or for another local agent when botId is provided.",
+            { botId: z.string().min(1).max(INPUT_LIMITS.identifier).optional() },
+            (args) => call("openbot", "list_routines", args),
+          ),
+          tool(
+            "create_routine",
+            "Create a scheduled routine for this agent, or for another local agent when botId is provided.",
+            {
+              botId: z.string().min(1).max(INPUT_LIMITS.identifier).optional(),
+              name: z.string().min(1).max(INPUT_LIMITS.routineName),
+              instruction: z.string().min(1).max(INPUT_LIMITS.routineInstruction),
+              schedule: routineScheduleZodSchema,
+              active: z.boolean().optional(),
+              timezone: z.string().min(1).max(128).optional(),
+            },
+            (args) => call("openbot", "create_routine", args),
+          ),
+          tool(
+            "update_routine",
+            "Update, pause, or resume an existing routine for this agent, or for another local agent when botId is provided.",
+            {
+              botId: z.string().min(1).max(INPUT_LIMITS.identifier).optional(),
+              routineId: z.string().min(1).max(INPUT_LIMITS.identifier),
+              name: z.string().min(1).max(INPUT_LIMITS.routineName).optional(),
+              instruction: z.string().min(1).max(INPUT_LIMITS.routineInstruction).optional(),
+              schedule: routineScheduleZodSchema.optional(),
+              active: z.boolean().optional(),
+            },
+            (args) => call("openbot", "update_routine", args),
+          ),
+          tool(
+            "delete_routine",
+            "Delete an existing routine for this agent, or for another local agent when botId is provided.",
+            {
+              botId: z.string().min(1).max(INPUT_LIMITS.identifier).optional(),
+              routineId: z.string().min(1).max(INPUT_LIMITS.identifier),
+            },
+            (args) => call("openbot", "delete_routine", args),
+          ),
+          tool(
+            "test_routine",
+            "Queue one manual test run of an existing routine for this agent, or for another local agent when botId is provided.",
+            {
+              botId: z.string().min(1).max(INPUT_LIMITS.identifier).optional(),
+              routineId: z.string().min(1).max(INPUT_LIMITS.identifier),
+            },
+            (args) => call("openbot", "test_routine", args),
           ),
           tool(
             "remember",

@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { attachmentReferenceIds } from "@openbot/contracts/attachment-references";
 import { afterEach, describe, expect, it } from "vitest";
+import { AgentMemoryStore } from "../src/backend/agent-memory-store";
+import { AgentRoutineStore } from "../src/backend/agent-routine-store";
 import { BotStore } from "../src/backend/bot-store";
 import { MailboxStore } from "../src/backend/mailbox-store";
 import { TeamChatStore } from "../src/backend/team-chat-store";
@@ -43,6 +45,9 @@ describe("development state seed", () => {
       sessions: 4,
       directThreads: 3,
       queuedDeliveries: 0,
+      memories: 7,
+      routines: 5,
+      routineRuns: 3,
     });
     await expect(readSetupState(join(profilePath, "openbot-setup-v2.json"))).resolves.toEqual({
       completed: true,
@@ -111,6 +116,41 @@ describe("development state seed", () => {
         .flatMap((bot) => mailbox.listQueue(bot.id).deliveries)
         .filter((delivery) => delivery.status === "queued"),
     ).toHaveLength(0);
+
+    const memoryStore = new AgentMemoryStore(bots.database);
+    const memories = summaries.flatMap((bot) => memoryStore.list(bot.id));
+    expect(memories).toHaveLength(7);
+    expect(memories.some((memory) => memory.origin === "manual")).toBe(true);
+    const automaticMemories = memories.filter((memory) => memory.origin === "automatic");
+    expect(automaticMemories).not.toHaveLength(0);
+    const conversationTurnIds = new Set(persistedMessages.map((message) => message.turnId).filter(Boolean));
+    expect(automaticMemories.every((memory) => conversationTurnIds.has(memory.sourceTurnId ?? undefined))).toBe(true);
+
+    const routineStore = new AgentRoutineStore(bots.database);
+    const routines = summaries.flatMap((bot) => routineStore.list(bot.id));
+    expect(routines).toHaveLength(5);
+    expect(routines.some((routine) => routine.active)).toBe(true);
+    expect(routines.some((routine) => !routine.active)).toBe(true);
+    const runs = routines.flatMap((routine) => routineStore.listRuns(routine.botId, routine.id, 10));
+    expect(runs).toHaveLength(3);
+    expect(runs.map((run) => run.status)).toEqual(expect.arrayContaining(["succeeded", "failed"]));
+    for (const run of runs) {
+      expect(run.deliveryId).not.toBeNull();
+      expect(mailbox.conversationMessages(run.botId)).toContainEqual(
+        expect.objectContaining({
+          id: run.deliveryId,
+          source: "routine",
+          routine: expect.objectContaining({ routineId: run.routineId, runId: run.id }),
+        }),
+      );
+      expect(persistedMessages).toContainEqual(
+        expect.objectContaining({
+          id: run.deliveryId,
+          source: "routine",
+          routine: expect.objectContaining({ routineId: run.routineId, runId: run.id }),
+        }),
+      );
+    }
 
     const team = new TeamStore(join(profilePath, "openbot-team-server-v1.json"));
     await team.initialize();

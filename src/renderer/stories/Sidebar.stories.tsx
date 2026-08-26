@@ -87,6 +87,7 @@ const stressLayout: SidebarLayoutSnapshot = {
 
 const args: Parameters<typeof Sidebar>[0] = {
   serverName: "Local",
+  onOpenServerSettings: fn(),
   bots: sidebarBots,
   activeBotId: "chief",
   people: STORY_PRESENCE.members,
