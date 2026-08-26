@@ -6,6 +6,24 @@
       "sourceType": "github",
       "skillPath": "skills/biome-anti-slop/SKILL.md",
       "computedHash": "19adc5a42b6b145741d2559321fcfa059e585af7354fed9750a7e0ed62496abc"
+    },
+    "react-to-solid": {
+      "source": "carere/zaidan",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/react-to-solid/SKILL.md",
+      "computedHash": "e31cb37cf08619045127c1b98e4662dee8b12a2ef056dafbf76553ace827c06b"
+    },
+    "shadcn-to-zaidan": {
+      "source": "carere/zaidan",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/shadcn-to-zaidan/SKILL.md",
+      "computedHash": "c4cfa0eb4037a95cd419c41f7e0a32f014643c04df1aacb1b6c00ac864133b6a"
+    },
+    "zaidan": {
+      "source": "carere/zaidan",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/zaidan/SKILL.md",
+      "computedHash": "b3f914c869fbca41f2d1d3dd508f18d88c4498d60900af119684e34bd78ed374"
     }
   }
 }
