@@ -2,10 +2,12 @@
 
 OpenBot updates are published through GitHub Releases and installed with `electron-updater`.
 macOS requires every auto-updatable build to be signed with a Developer ID Application certificate.
-The release workflow also notarizes and staples the application before publishing it. Windows x64
-application releases are temporarily paused and do not block macOS. A release also requires the pinned Sunshine and Moonlight Web
-runtime artifacts. GitHub Actions downloads those artifacts, checks SHA-256, and signs their native
-executables as part of the final OpenBot package. Release packages are not built on a developer machine.
+The release workflow also notarizes and staples the macOS application before publishing it. Windows
+x64 releases are currently unsigned, so Windows can show an Unknown publisher or SmartScreen warning.
+Both platforms must pass before one release is published. A release also requires the pinned Sunshine
+and Moonlight Web runtime artifacts. GitHub Actions downloads those artifacts, checks SHA-256, and
+verifies their native executables as part of the final OpenBot package. Release packages are not built
+on a developer machine.
 
 ## One-time GitHub setup
 
@@ -22,7 +24,9 @@ Create the `release` environment in `NorbertBodziony/openbot`, then add these en
 Do not use an Apple Development certificate. Direct distribution and native macOS updates require a
 Developer ID Application certificate. Never commit signing credentials to the repository.
 
-Windows signing credentials will be required before Windows application releases are enabled again.
+Windows signing credentials are not currently configured. The workflow explicitly verifies that the
+OpenBot executable and NSIS installer remain unsigned, while retaining package, runtime, updater,
+checksum, SBOM, and provenance checks.
 
 ## Build the remote desktop runtime
 
@@ -100,9 +104,11 @@ The workflow:
 2. installs and verifies the pinned remote desktop runtime without CMake or Cargo;
 3. runs the complete offline repository check;
 4. builds signed and notarized ARM64 DMG and ZIP artifacts on a GitHub macOS runner;
-5. verifies the unpacked application, update metadata, runtime, licenses, checksums, and signatures;
-6. generates a macOS SPDX SBOM and GitHub build-provenance attestation;
-7. publishes one non-draft GitHub Release after the macOS job passes.
+5. builds an unsigned Windows x64 NSIS installer on a GitHub Windows runner;
+6. verifies both unpacked applications, update metadata, runtimes, licenses, checksums, platform
+   signing contracts, and launch behavior;
+7. generates SPDX SBOMs and GitHub build-provenance attestations for both platforms;
+8. publishes one non-draft GitHub Release only after both platform jobs pass.
 
 Users can verify a downloaded artifact with
 `gh attestation verify <file> --repo NorbertBodziony/openbot`.
@@ -119,10 +125,11 @@ different binaries.
 Before creating the first tag or any later release:
 
 1. run `bun run release:preflight` and resolve every reported signing or repository gate;
-2. confirm the `release` environment contains all six macOS secrets above;
+2. confirm the `release` environment contains all six macOS secrets above; Windows remains unsigned;
 3. confirm the production `/join` page and Apple association file pass the deployment checks in CI;
 4. run `bun install --frozen-lockfile` and `bun run check` from a clean clone;
-5. run `bun run package:verify` and launch the generated `dist/mac-arm64/OpenBot.app`;
+5. run `bun run package:verify` on macOS; Windows packaging and launch verification run on the release
+   runner;
 6. confirm that the lock file contains both runtime artifacts and that their install checks pass;
 7. smoke-test sign-in/setup, chat streaming, queues, attachments, agent messaging, browser control,
    context compaction, and the update popover;
