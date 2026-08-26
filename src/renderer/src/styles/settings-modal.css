@@ -1,3 +1,7 @@
+.settings-modal-tabs-root {
+  display: contents;
+}
+
 .settings-modal-backdrop {
   position: fixed;
   inset: 0;
