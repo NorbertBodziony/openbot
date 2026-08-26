@@ -56,6 +56,33 @@ function placeCaretAtEnd(editor: HTMLElement): void {
   selection?.addRange(range);
 }
 
+function placeCaret(container: Node, offset: number): void {
+  const range = document.createRange();
+  range.setStart(container, offset);
+  range.collapse(true);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function testBot(id: string, name: string, description = ""): BotProfile {
+  return {
+    id,
+    name,
+    title: "Agent",
+    description,
+    notifications: true,
+    model: "gpt-5.6-luna",
+    reasoningEffort: "medium",
+    threadId: null,
+    avatarSeed: id,
+    avatarHue: null,
+    avatarUrl: null,
+    time: "",
+    preview: "",
+  };
+}
+
 describe("ComposerEditor", () => {
   it("focuses the editor and places the caret at the end for a focus request", async () => {
     const [focusRequest, setFocusRequest] = createSignal(0);
@@ -320,6 +347,102 @@ describe("ComposerEditor", () => {
 
     expect(await screen.findByRole("option", { name: "Studio Agent" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Research Agent" })).toBeNull();
+  });
+
+  it("navigates the mention picker with arrows and inserts the active agent with Enter", async () => {
+    const research = testBot("research", "Research");
+    const sales = testBot("sales", "Sales");
+    const { editor, onSubmit, onValueChange } = renderComposer([], "", [research, sales]);
+    editor.textContent = "@";
+    placeCaretAtEnd(editor);
+    await fireEvent.input(editor);
+
+    const researchOption = await screen.findByRole("option", { name: "Research Agent" });
+    const salesOption = screen.getByRole("option", { name: "Sales Agent" });
+    expect(researchOption).toHaveClass("mention-picker-option-active");
+
+    await fireEvent.keyDown(editor, { key: "ArrowDown" });
+    expect(salesOption).toHaveClass("mention-picker-option-active");
+    await fireEvent.keyDown(editor, { key: "ArrowUp" });
+    expect(researchOption).toHaveClass("mention-picker-option-active");
+    await fireEvent.keyDown(editor, { key: "ArrowUp" });
+    expect(salesOption).toHaveClass("mention-picker-option-active");
+    await fireEvent.keyDown(editor, { key: "Enter" });
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onValueChange).toHaveBeenLastCalledWith("@[Sales](sales) ");
+    expect(editor.querySelector('[data-mention-id="sales"]')).not.toBeNull();
+    expect(screen.queryByRole("listbox", { name: "Insert mention" })).toBeNull();
+    expect(editor).toHaveFocus();
+  });
+
+  it("removes a leading mention atomically with Backspace", async () => {
+    const research = testBot("research", "Research");
+    const { editor, onValueChange } = renderComposer([], "@[Research](research)after", [research]);
+    const trailingText = editor.lastChild;
+    if (!trailingText) throw new Error("Composer did not render trailing text");
+    editor.focus();
+    placeCaret(trailingText, 0);
+
+    await fireEvent.keyDown(editor, { key: "Backspace" });
+
+    expect(editor.querySelector('[data-mention-id="research"]')).toBeNull();
+    expect(editor).toHaveTextContent("after");
+    expect(onValueChange).toHaveBeenLastCalledWith("after");
+  });
+
+  it("removes a trailing mention atomically with Delete", async () => {
+    const research = testBot("research", "Research");
+    const { editor, onValueChange } = renderComposer([], "before@[Research](research)", [research]);
+    const leadingText = editor.firstChild;
+    if (!leadingText) throw new Error("Composer did not render leading text");
+    editor.focus();
+    placeCaret(leadingText, leadingText.textContent?.length ?? 0);
+
+    await fireEvent.keyDown(editor, { key: "Delete" });
+
+    expect(editor.querySelector('[data-mention-id="research"]')).toBeNull();
+    expect(editor).toHaveTextContent("before");
+    expect(onValueChange).toHaveBeenLastCalledWith("before");
+  });
+
+  it("removes the automatic mention space without creating a phantom line", async () => {
+    const research = testBot("research", "Research");
+    const { editor, onValueChange } = renderComposer([], "", [research]);
+    editor.textContent = "before @";
+    placeCaretAtEnd(editor);
+    await fireEvent.input(editor);
+    await fireEvent.keyDown(editor, { key: "Enter" });
+    placeCaretAtEnd(editor);
+
+    await fireEvent.keyDown(editor, { key: "Backspace" });
+
+    expect(editor.querySelector('[data-mention-id="research"]')).not.toBeNull();
+    expect(editor.querySelector("br, [data-composer-trailing-line]")).toBeNull();
+    expect(onValueChange).toHaveBeenLastCalledWith("before @[Research](research)");
+
+    await fireEvent.keyDown(editor, { key: "Backspace" });
+
+    expect(editor.querySelector('[data-mention-id="research"]')).toBeNull();
+    expect(editor.querySelector("br, [data-composer-trailing-line]")).toBeNull();
+    expect(onValueChange).toHaveBeenLastCalledWith("before ");
+  });
+
+  it("keeps the caret editable after removing a mention from the middle", async () => {
+    const research = testBot("research", "Research");
+    const { editor, onValueChange } = renderComposer([], "before@[Research](research)after", [research]);
+    const token = editor.querySelector<HTMLElement>('[data-mention-id="research"]');
+    if (!token) throw new Error("Composer did not render the mention");
+    editor.focus();
+    placeCaret(editor, Array.from(editor.childNodes).indexOf(token) + 1);
+
+    await fireEvent.keyDown(editor, { key: "Backspace" });
+    await fireEvent.keyDown(editor, { key: "x" });
+
+    await waitFor(() => expect(onValueChange).toHaveBeenLastCalledWith("beforexafter"));
+    expect(editor.querySelector('[data-mention-id="research"]')).toBeNull();
+    expect(editor).toHaveTextContent("beforexafter");
+    expect(editor.contains(window.getSelection()?.getRangeAt(0).commonAncestorContainer ?? null)).toBe(true);
   });
 
   it("inserts an attached file from the mention picker and opens the chip", async () => {

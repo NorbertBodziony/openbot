@@ -75,41 +75,29 @@ export const MentionPicker: Story = {
     const [value, setValue] = createSignal(storyArgs.value);
     return <ComposerEditor {...storyArgs} value={value()} onValueChange={setValue} onSubmit={storyArgs.onSubmit} />;
   },
-  play: async ({ canvas, userEvent }) => {
+  play: async ({ args: storyArgs, canvas, userEvent }) => {
     const editor = canvas.getByRole("textbox", { name: "Message Chief" });
     await userEvent.click(editor);
-    editor.textContent = "@Res";
+    editor.textContent = "@";
     const textNode = editor.firstChild;
     if (!textNode) throw new Error("Composer editor did not create a text node");
     const selectionRange = document.createRange();
     selectionRange.setStart(textNode, textNode.textContent?.length ?? 0);
     selectionRange.collapse(true);
-    const selection = {
-      anchorNode: textNode,
-      anchorOffset: textNode.textContent?.length ?? 0,
-      rangeCount: 1,
-      getRangeAt: () => selectionRange,
-      removeAllRanges: () => undefined,
-      addRange: () => undefined,
-      // biome-ignore lint/nursery/noUnsafeTypeAssertion: Storybook needs a minimal Selection double for contenteditable caret placement.
-    } as unknown as Selection;
-    const originalGetSelection = window.getSelection;
-    Object.defineProperty(window, "getSelection", {
-      configurable: true,
-      value: () => selection,
-    });
-    try {
-      editor.dispatchEvent(new Event("input", { bubbles: true }));
-      const picker = await within(document.body).findByRole("listbox", { name: "Insert mention" });
-      await expect(picker).toBeInTheDocument();
-      await userEvent.click(within(document.body).getByRole("option", { name: /Research/i }));
-      await expect(editor.querySelector('[data-mention-id="research"]')).not.toBeNull();
-    } finally {
-      Object.defineProperty(window, "getSelection", {
-        configurable: true,
-        value: originalGetSelection,
-      });
-    }
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(selectionRange);
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    const picker = await within(document.body).findByRole("listbox", { name: "Insert mention" });
+    await expect(picker).toBeInTheDocument();
+    const research = within(document.body).getByRole("option", { name: "Research Agent" });
+    const sales = within(document.body).getByRole("option", { name: "Sales Outbound Agent" });
+    await expect(research).toHaveClass("mention-picker-option-active");
+    await userEvent.keyboard("{ArrowDown}");
+    await expect(sales).toHaveClass("mention-picker-option-active");
+    await userEvent.keyboard("{Enter}");
+    await expect(editor.querySelector('[data-mention-id="sales"]')).not.toBeNull();
+    await expect(storyArgs.onSubmit).not.toHaveBeenCalled();
   },
 };
 

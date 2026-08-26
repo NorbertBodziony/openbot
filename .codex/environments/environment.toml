@@ -3,7 +3,14 @@ version = 1
 name = "openbot"
 
 [setup]
-script = "bun install --frozen-lockfile"
+script = """
+test -f .env.keys || {
+  echo "Missing .env.keys. Add it to the local checkout so Codex can copy it through .worktreeinclude."
+  exit 1
+}
+bun install --frozen-lockfile
+bun run api:migrate:local
+"""
 
 [[actions]]
 name = "Run"
@@ -14,3 +21,8 @@ command = "bun run dev"
 name = "Storybook"
 icon = "tool"
 command = "bun run storybook"
+
+[[actions]]
+name = "Test"
+icon = "test"
+command = "bun run test"
