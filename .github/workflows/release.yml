@@ -307,19 +307,28 @@ jobs:
           if ($applicationSignature.Status -ne "NotSigned") {
             Write-Error "The unsigned application contract changed: $($applicationSignature.Status)."
           }
-          $runtimeExecutables = @(
+          $sourceBuiltRuntimeExecutables = @(
             "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/sunshine.exe",
             "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/web-server.exe",
-            "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/streamer.exe",
+            "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/streamer.exe"
+          )
+          $vendorRuntimeExecutables = @(
+            "dist/win-unpacked/resources/cloudflared/win/x64/cloudflared.exe",
             "dist/win-unpacked/resources/codex/win/x64/bin/codex.exe",
             "dist/win-unpacked/resources/codex/win/x64/bin/codex-code-mode-host.exe",
             "dist/win-unpacked/resources/claude/win/x64/bin/claude.exe",
             "dist/win-unpacked/resources/grok/win/x64/bin/grok.exe"
           )
-          foreach ($runtimeExecutable in $runtimeExecutables) {
+          foreach ($runtimeExecutable in $sourceBuiltRuntimeExecutables) {
+            $runtimeSignature = Get-AuthenticodeSignature -LiteralPath $runtimeExecutable
+            if ($runtimeSignature.Status -ne "NotSigned") {
+              Write-Error "The source-built runtime signature contract changed for ${runtimeExecutable}: $($runtimeSignature.Status)."
+            }
+          }
+          foreach ($runtimeExecutable in $vendorRuntimeExecutables) {
             $runtimeSignature = Get-AuthenticodeSignature -LiteralPath $runtimeExecutable
             if ($runtimeSignature.Status -ne "Valid") {
-              Write-Error "The runtime signature is not valid for ${runtimeExecutable}: $($runtimeSignature.Status)."
+              Write-Error "The vendor runtime signature is not valid for ${runtimeExecutable}: $($runtimeSignature.Status)."
             }
           }
           $signature = Get-AuthenticodeSignature -LiteralPath $installers[0].FullName

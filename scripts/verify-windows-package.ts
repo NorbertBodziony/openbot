@@ -95,17 +95,17 @@ if (machine !== 0x8664) {
 }
 
 for (const name of ["sunshine.exe", "web-server.exe", "streamer.exe"]) {
-  verifyAuthenticode(resolve(resourcesPath, "remote-desktop-runtime/win32/x64", name));
+  verifyAuthenticode(resolve(resourcesPath, "remote-desktop-runtime/win32/x64", name), "NotSigned");
 }
-verifyAuthenticode(resolve(resourcesPath, "cloudflared/win/x64/cloudflared.exe"));
-verifyAuthenticode(codexExecutablePath);
-verifyAuthenticode(resolve(codexRuntimePath, "bin/codex-code-mode-host.exe"));
+verifyAuthenticode(resolve(resourcesPath, "cloudflared/win/x64/cloudflared.exe"), "Valid");
+verifyAuthenticode(codexExecutablePath, "Valid");
+verifyAuthenticode(resolve(codexRuntimePath, "bin/codex-code-mode-host.exe"), "Valid");
 await verifyCodexRuntimeProcess(codexExecutablePath, "0.149.1");
-verifyAuthenticode(claudeExecutablePath);
+verifyAuthenticode(claudeExecutablePath, "Valid");
 if (!run(claudeExecutablePath, ["--version"]).startsWith("2.1.246")) {
   throw new Error("The bundled Claude runtime returned an unexpected version.");
 }
-verifyAuthenticode(grokExecutablePath);
+verifyAuthenticode(grokExecutablePath, "Valid");
 if (!run(grokExecutablePath, ["--version"]).includes("1.0.5")) {
   throw new Error("The bundled Grok runtime returned an unexpected version.");
 }
@@ -185,11 +185,13 @@ function runWindowsPowerShell(command: string): string {
   }).trim();
 }
 
-function verifyAuthenticode(path: string): void {
+function verifyAuthenticode(path: string, expectedStatus: "NotSigned" | "Valid"): void {
   const status = runWindowsPowerShell(
     `(Get-AuthenticodeSignature -LiteralPath '${powerShellLiteral(path)}').Status.ToString()`,
   );
-  if (status !== "Valid") throw new Error(`The runtime signature is not valid for ${path}: ${status}`);
+  if (status !== expectedStatus) {
+    throw new Error(`Unexpected runtime signature status for ${path}: ${status} (expected ${expectedStatus})`);
+  }
 }
 
 async function verifyLaunch(executable: string): Promise<void> {
