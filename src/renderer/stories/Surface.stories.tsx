@@ -19,6 +19,7 @@ import {
   ItemTitle,
   Kbd,
   Separator,
+  SettingsSection,
   ShieldCheck,
   Skeleton,
   Spinner,
@@ -92,6 +93,31 @@ export const Gallery: Story = {
           </Item>
         </ItemGroup>
       </section>
+
+      <SettingsSection
+        class="foundation-story-section"
+        title="Workspace preferences"
+        description="Settings shared by this workspace."
+        actions={
+          <Button size="sm" variant="ghost">
+            Manage
+          </Button>
+        }
+      >
+        <ItemGroup surface="subtle">
+          <Item>
+            <ItemContent>
+              <ItemTitle>Restore recent workspace</ItemTitle>
+              <ItemDescription>Return to the workspace from your previous session.</ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <Button size="sm" variant="outline">
+                Configure
+              </Button>
+            </ItemActions>
+          </Item>
+        </ItemGroup>
+      </SettingsSection>
 
       <section class="foundation-story-section" aria-labelledby="alert-primitives">
         <Heading id="alert-primitives" as="h2" size="sm">

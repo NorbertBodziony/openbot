@@ -909,6 +909,41 @@
   gap: var(--openbot-space-2);
 }
 
+.ui-settings-section {
+  display: grid;
+  gap: var(--openbot-space-2);
+}
+
+.ui-settings-section-header {
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--openbot-space-3);
+  padding-inline: var(--openbot-space-1);
+}
+
+.ui-settings-section-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--openbot-space-1);
+}
+
+.ui-settings-section-heading {
+  font-weight: var(--openbot-weight-regular);
+}
+
+.ui-settings-section-description {
+  display: block;
+}
+
+.ui-settings-section-actions {
+  min-width: 0;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
 .ui-alert {
   min-width: 0;
   display: grid;

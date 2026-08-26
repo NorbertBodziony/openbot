@@ -1279,7 +1279,7 @@ textarea:focus-visible {
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
+  width: var(--openbot-scrollbar-size);
 }
 
 ::-webkit-scrollbar-track {

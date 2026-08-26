@@ -7,6 +7,8 @@ export * from "./form";
 export * from "./icons";
 export * from "./item";
 export * from "./select";
+export * from "./settings";
+export * from "./sliding-tabs";
 export * from "./surface";
 export * from "./switch";
 export * from "./toast";

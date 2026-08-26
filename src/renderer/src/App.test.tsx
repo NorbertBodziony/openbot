@@ -1198,6 +1198,37 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("message"));
   });
 
+  it("opens global settings from the account menu and restores focus after every close path", async () => {
+    render(() => <App />);
+    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
+
+    await fireEvent.click(accountButton);
+    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    let dialog = await screen.findByRole("dialog", { name: "General" });
+    const launchSwitch = within(dialog).getByRole("switch", { name: "Launch OpenBot at login" });
+    await fireEvent.click(launchSwitch);
+    expect(launchSwitch).not.toBeChecked();
+
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Close settings" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(accountButton).toHaveFocus());
+
+    await fireEvent.click(accountButton);
+    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    dialog = await screen.findByRole("dialog", { name: "General" });
+    expect(within(dialog).getByRole("switch", { name: "Launch OpenBot at login" })).not.toBeChecked();
+    await fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(accountButton).toHaveFocus());
+
+    await fireEvent.click(accountButton);
+    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await screen.findByRole("dialog", { name: "General" });
+    await fireEvent.pointerDown(screen.getByTestId("settings-modal-backdrop"), { button: 0 });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(accountButton).toHaveFocus());
+  });
+
   it("removes a custom account avatar from the account menu", async () => {
     vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({
       status: "signed_in",
@@ -4608,10 +4639,10 @@ describe("OpenBot connected desktop shell", () => {
       clientY: 80,
     });
     await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Server settings" }), { button: 0 });
-    await fireEvent.input(screen.getByRole("textbox", { name: "Server name" }), {
+    await fireEvent.input(await screen.findByRole("textbox", { name: "Server name" }), {
       target: { value: "Design studio" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(window.openbot.host.configure).toHaveBeenCalledWith({ serverName: "Design studio" }));
     expect(window.openbot.host.start).not.toHaveBeenCalled();

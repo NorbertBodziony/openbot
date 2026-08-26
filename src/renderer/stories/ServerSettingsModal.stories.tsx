@@ -62,6 +62,10 @@ const meta = {
           name: "Server settings — 640 × 720",
           styles: { width: "640px", height: "720px" },
         },
+        serverNarrow: {
+          name: "Server settings — 480 × 720",
+          styles: { width: "480px", height: "720px" },
+        },
       },
     },
   },
@@ -95,12 +99,47 @@ export const LocalFirstSetup: Story = {
     const dialog = await within(document.body).findByRole("dialog", { name: "General" });
     const name = within(dialog).getByRole("textbox", { name: "Server name" });
     await expect(name).toHaveValue("");
-    await fireEvent.input(name, { target: { value: "First server" } });
-    await expect(name).toHaveValue("First server");
+    await expect(name).toHaveAttribute("placeholder", "e.g. Design studio");
   },
 };
 
+export const FirstSetupInvalidName: Story = {
+  args: LocalFirstSetup.args,
+  play: async () => {
+    const dialog = await within(document.body).findByRole("dialog", { name: "General" });
+    const name = within(dialog).getByRole("textbox", { name: "Server name" });
+    await fireEvent.input(name, { target: { value: "Tiny" } });
+    await fireEvent.blur(name);
+    await expect(within(dialog).getByText("Enter at least 6 characters.")).toBeVisible();
+  },
+};
+
+export const FirstSetupValidFooter: Story = {
+  args: LocalFirstSetup.args,
+  play: async () => {
+    const dialog = await within(document.body).findByRole("dialog", { name: "General" });
+    await fireEvent.input(within(dialog).getByRole("textbox", { name: "Server name" }), {
+      target: { value: "First server" },
+    });
+    await expect(within(dialog).getByRole("button", { name: "Set up server" })).toBeVisible();
+  },
+};
+
+export const FirstSetupInvalidNameSmallViewport: Story = {
+  args: LocalFirstSetup.args,
+  parameters: {
+    viewport: { defaultViewport: "serverMobile" },
+  },
+  play: FirstSetupInvalidName.play,
+};
+
 export const LocalOnline: Story = {
+  args: {
+    hostStatus: {
+      ...STORY_HOST_STATUS,
+      apiUrl: "https://eu-west-1.gateway.example.com/openbot/servers/team_7f3c19a2",
+    },
+  },
   play: async ({ userEvent }) => {
     const dialog = await within(document.body).findByRole("dialog", { name: "General" });
     const name = within(dialog).getByRole("textbox", { name: "Server name" });
@@ -127,7 +166,7 @@ export const DirtyFooter: Story = {
     const dialog = await within(document.body).findByRole("dialog", { name: "General" });
     const name = within(dialog).getByRole("textbox", { name: "Server name" });
     await fireEvent.input(name, { target: { value: "OpenBot production" } });
-    await waitFor(() => expect(within(dialog).getByRole("region", { name: "Unsaved identity changes" })).toBeVisible());
+    await waitFor(() => expect(within(dialog).getByRole("region", { name: "Unsaved changes" })).toBeVisible());
   },
 };
 
@@ -142,6 +181,46 @@ export const RemoteAdministrator: Story = {
     server: { ...remoteServer, role: "admin" },
     hostStatus: null,
   },
+};
+
+export const Members: Story = {
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    await body.findByRole("dialog", { name: "General" });
+    await userEvent.click(body.getByRole("tab", { name: "Members" }));
+    await expect(body.getByTestId("server-members-list")).toBeVisible();
+  },
+};
+
+export const MembersEmptyResults: Story = {
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    await body.findByRole("dialog", { name: "General" });
+    await userEvent.click(body.getByRole("tab", { name: "Members" }));
+    await userEvent.type(body.getByRole("searchbox", { name: "Search members" }), "nobody");
+    await expect(body.getByText("No members match this search.")).toBeVisible();
+  },
+};
+
+export const MembersUnpublished: Story = {
+  args: {
+    server: { ...remoteServer, state: "offline", role: "admin" },
+    hostStatus: null,
+  },
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    await body.findByRole("dialog", { name: "General" });
+    await userEvent.click(body.getByRole("tab", { name: "Members" }));
+    await expect(body.getByRole("status")).toBeVisible();
+    await expect(body.getByRole("button", { name: "Send invite" })).toBeDisabled();
+  },
+};
+
+export const MembersSmallViewport: Story = {
+  parameters: {
+    viewport: { defaultViewport: "serverNarrow" },
+  },
+  play: Members.play,
 };
 
 export const DenseMemberList: Story = {

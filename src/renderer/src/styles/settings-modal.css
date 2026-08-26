@@ -215,8 +215,8 @@
   align-content: start;
   gap: var(--openbot-space-6);
   overflow-y: auto;
-  padding: 0 var(--openbot-space-6) var(--openbot-space-6);
-  scrollbar-gutter: stable;
+  padding: 0 calc(var(--openbot-space-6) - var(--openbot-scrollbar-size)) var(--openbot-space-6);
+  scrollbar-gutter: stable both-edges;
 }
 
 .settings-modal-tab-panel {
@@ -325,110 +325,6 @@
   line-height: var(--openbot-leading-lg);
 }
 
-.settings-modal-version {
-  display: flex;
-  align-items: center;
-  gap: var(--openbot-space-2);
-}
-
-.settings-modal-select-trigger {
-  width: 168px;
-  height: var(--openbot-control-sm);
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--openbot-space-2);
-  border: 1px solid var(--openbot-border-strong);
-  border-radius: var(--openbot-radius-md);
-  outline: 0;
-  background: var(--openbot-bg-surface-raised);
-  padding: 0 var(--openbot-space-2);
-  color: var(--openbot-text-secondary);
-  font: inherit;
-  font-size: var(--openbot-text-lg);
-  line-height: var(--openbot-leading-lg);
-  transition:
-    background-color var(--openbot-duration-hover) ease,
-    border-color var(--openbot-duration-hover) ease,
-    box-shadow var(--openbot-duration-hover) ease;
-}
-
-.settings-modal-select-trigger svg {
-  width: var(--openbot-icon-sm);
-  height: var(--openbot-icon-sm);
-  flex: 0 0 auto;
-  color: var(--openbot-text-muted);
-  transition: transform var(--openbot-duration-normal) var(--openbot-ease-out);
-}
-
-.settings-modal-select-trigger[data-expanded] {
-  border-color: var(--openbot-border-focus);
-  background: var(--openbot-bg-control-hover);
-}
-
-.settings-modal-select-trigger[data-expanded] svg {
-  transform: rotate(180deg);
-}
-
-.settings-modal-select-trigger:focus-visible {
-  border-color: var(--openbot-border-focus);
-  box-shadow: var(--openbot-focus-ring);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .settings-modal-select-trigger:hover {
-    background: var(--openbot-bg-control-hover);
-  }
-}
-
-.settings-modal-select-content {
-  z-index: var(--openbot-layer-popover);
-  min-width: 168px;
-  border: 1px solid var(--openbot-border-strong);
-  border-radius: var(--openbot-radius-md);
-  background: var(--openbot-bg-surface-raised);
-  padding: var(--openbot-space-1);
-  box-shadow: var(--openbot-shadow-raised);
-  color: var(--openbot-text-primary);
-  transform-origin: var(--kb-select-content-transform-origin);
-  animation: settings-modal-select-in var(--openbot-duration-normal) var(--openbot-ease-out) both;
-}
-
-.settings-modal-select-listbox {
-  display: grid;
-  gap: var(--openbot-space-0-5);
-  outline: 0;
-}
-
-.settings-modal-select-item {
-  min-height: var(--openbot-control-sm);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--openbot-space-3);
-  border-radius: var(--openbot-radius-sm);
-  outline: 0;
-  padding: 0 var(--openbot-space-2);
-  color: var(--openbot-text-secondary);
-  font-size: var(--openbot-text-sm);
-  cursor: default;
-}
-
-.settings-modal-select-item[data-highlighted] {
-  background: var(--openbot-bg-control-hover);
-  color: var(--openbot-text-primary);
-}
-
-.settings-modal-select-item[data-selected] {
-  color: var(--openbot-text-primary);
-}
-
-.settings-modal-select-indicator {
-  display: inline-flex;
-  color: var(--openbot-accent-hover);
-}
-
 .settings-modal :where(.ui-button-variant-default) {
   background: var(--openbot-settings-accent);
   color: var(--openbot-text-primary);
@@ -462,9 +358,120 @@
   }
 }
 
-.settings-modal-select-indicator svg {
-  width: var(--openbot-icon-sm);
-  height: var(--openbot-icon-sm);
+:is(.app-settings-modal-shell, .server-settings-modal-shell).settings-modal {
+  --settings-divider-inset: var(--openbot-space-4);
+  width: min(920px, calc(100vw - 48px));
+  height: min(640px, calc(100dvh - 48px));
+  grid-template-columns: 196px minmax(0, 1fr);
+  border-radius: var(--openbot-radius-dialog);
+  box-shadow:
+    var(--openbot-shadow-raised),
+    0 0 0 1px var(--openbot-dialog-ring);
+}
+
+:is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-sidebar {
+  gap: 0;
+  padding: var(--openbot-space-4) var(--openbot-space-3);
+}
+
+:is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-nav {
+  gap: var(--openbot-space-1);
+}
+
+:is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-nav-item {
+  min-height: var(--openbot-control-md);
+  padding-inline: var(--openbot-space-3);
+  font-size: var(--openbot-text-lg);
+}
+
+:is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-nav-item[data-selected] {
+  background: var(--openbot-bg-control-hover);
+  color: var(--openbot-text-primary);
+  font-weight: var(--openbot-weight-medium);
+}
+
+:is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-header {
+  align-items: center;
+  padding: var(--openbot-space-8);
+}
+
+:is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-title {
+  font-size: var(--openbot-text-2xl);
+  line-height: var(--openbot-leading-2xl);
+}
+
+:is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+:is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-content {
+  gap: var(--openbot-space-6);
+  padding: 0 calc(var(--openbot-space-8) - var(--openbot-scrollbar-size)) var(--openbot-space-8);
+}
+
+:is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-tab-panel {
+  gap: var(--openbot-space-6);
+  animation: none;
+  will-change: auto;
+}
+
+:is(.app-settings-modal-shell, .server-settings-modal-shell) .ui-settings-section {
+  gap: var(--openbot-space-2);
+}
+
+:is(.app-settings-modal-shell, .server-settings-modal-shell) .ui-settings-section-header {
+  padding-inline: 0;
+}
+
+:is(.app-settings-modal-shell, .server-settings-modal-shell) .ui-settings-section-heading {
+  font-size: var(--openbot-text-md);
+  line-height: var(--openbot-leading-md);
+}
+
+.app-settings-modal-shell .settings-modal-card.ui-item-group {
+  width: 100%;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-control);
+}
+
+.app-settings-modal-shell .settings-modal-card > .ui-switch-field {
+  min-height: 64px;
+  padding: var(--openbot-space-3) var(--openbot-space-4);
+}
+
+.app-settings-modal-shell .settings-modal-card > .ui-item {
+  min-height: 64px;
+}
+
+.app-settings-modal-shell .settings-modal-card > :not(:first-child)::before,
+.app-settings-modal-shell .ui-item-group > :not(:first-child)::before {
+  right: var(--openbot-space-4);
+  left: var(--openbot-space-4);
+}
+
+.app-settings-modal-shell .settings-modal-select {
+  width: 168px;
+}
+
+.app-settings-modal-shell .settings-modal-select .ui-select-trigger {
+  background: var(--openbot-bg-surface-raised);
+  color: var(--openbot-text-secondary);
+}
+
+.app-settings-modal-shell .settings-modal-update-actions {
+  flex-wrap: wrap;
+}
+
+.app-settings-modal-shell .settings-modal-error {
+  color: var(--openbot-danger);
 }
 
 .settings-modal-profile-card.ui-card {
@@ -504,18 +511,6 @@
 
 .settings-modal-profile-fields .ui-input {
   max-width: 320px;
-}
-
-@keyframes settings-modal-select-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px) scale(0.97);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
 }
 
 @keyframes settings-modal-tab-in {
@@ -574,7 +569,7 @@
   }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 720px) {
   .settings-modal-backdrop {
     padding: var(--openbot-space-3);
   }
@@ -613,7 +608,50 @@
 
   .settings-modal-content {
     gap: var(--openbot-space-4);
-    padding: 0 var(--openbot-space-4) var(--openbot-space-4);
+    padding: 0 calc(var(--openbot-space-4) - var(--openbot-scrollbar-size)) var(--openbot-space-4);
+  }
+
+  :is(.app-settings-modal-shell, .server-settings-modal-shell).settings-modal {
+    width: calc(100vw - 24px);
+    height: calc(100dvh - 24px);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  :is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-sidebar {
+    gap: var(--openbot-space-2);
+    border-right: 0;
+    border-bottom: 1px solid var(--openbot-border);
+    padding: var(--openbot-space-3);
+  }
+
+  :is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-header {
+    padding: var(--openbot-space-4);
+  }
+
+  :is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-content,
+  :is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-tab-panel {
+    gap: var(--openbot-space-6);
+  }
+
+  :is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-content {
+    padding: 0 calc(var(--openbot-space-4) - var(--openbot-scrollbar-size)) var(--openbot-space-4);
+  }
+}
+
+@media (max-width: 520px) {
+  .app-settings-modal-shell .settings-modal-row.ui-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .app-settings-modal-shell .settings-modal-row .ui-item-actions,
+  .app-settings-modal-shell .settings-modal-select {
+    width: 100%;
+  }
+
+  .app-settings-modal-shell .settings-modal-update-actions {
+    justify-content: space-between;
   }
 }
 
@@ -626,13 +664,8 @@
   }
 
   .settings-modal-scroll-frame::before,
-  .settings-modal-scroll-frame::after,
-  .settings-modal-select-trigger svg {
+  .settings-modal-scroll-frame::after {
     transition: none;
-  }
-
-  .settings-modal-select-content {
-    animation: none;
   }
 
   .settings-modal-tab-panel {

@@ -1,0 +1,108 @@
+.ui-sliding-tabs {
+  --sliding-tabs-duration: 250ms;
+  --sliding-tabs-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-tabs-bar-bg);
+  padding: 3px;
+}
+
+.ui-sliding-tabs-trigger {
+  position: relative;
+  z-index: 1;
+  height: 30px;
+  appearance: none;
+  border: 0;
+  border-radius: var(--openbot-radius-sm);
+  outline: 0;
+  background: transparent;
+  padding: 4px var(--openbot-space-3);
+  color: var(--openbot-text-muted);
+  font: inherit;
+  font-size: var(--openbot-text-sm);
+  cursor: pointer;
+  transition: color var(--sliding-tabs-duration) var(--sliding-tabs-ease);
+}
+
+.ui-sliding-tabs-trigger[aria-selected="true"],
+.ui-sliding-tabs-trigger:not([aria-selected="true"]):hover {
+  color: var(--openbot-text-primary);
+}
+
+.ui-sliding-tabs-trigger:focus-visible {
+  box-shadow: var(--openbot-focus-ring);
+}
+
+.ui-sliding-tabs-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.ui-sliding-tabs-pill {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  z-index: 0;
+  width: 0;
+  height: 30px;
+  border-radius: var(--openbot-radius-sm);
+  background: var(--openbot-tabs-pill-bg);
+  pointer-events: none;
+  transition:
+    transform var(--sliding-tabs-duration) var(--sliding-tabs-ease),
+    width var(--sliding-tabs-duration) var(--sliding-tabs-ease);
+  will-change: transform, width;
+}
+
+.ui-sliding-tabs-pill:is([data-initializing], [data-resizing]) {
+  transition: none;
+}
+
+.ui-sliding-tabs-content-slot {
+  --sliding-tabs-content-duration: 150ms;
+  --sliding-tabs-content-distance: 4px;
+  --sliding-tabs-content-blur: 2px;
+  min-width: 0;
+  display: grid;
+}
+
+.ui-sliding-tabs-content {
+  min-width: 0;
+  grid-area: 1 / 1;
+  opacity: 0;
+  visibility: hidden;
+  filter: blur(var(--sliding-tabs-content-blur));
+  transform: translateY(var(--sliding-tabs-content-distance));
+  pointer-events: none;
+  transition:
+    transform var(--sliding-tabs-content-duration) ease-in-out,
+    filter var(--sliding-tabs-content-duration) ease-in-out,
+    opacity var(--sliding-tabs-content-duration) ease-in-out,
+    visibility 0s linear var(--sliding-tabs-content-duration);
+  will-change: transform, filter, opacity;
+}
+
+.ui-sliding-tabs-content[data-selected] {
+  opacity: 1;
+  visibility: visible;
+  filter: blur(0);
+  transform: translateY(0);
+  pointer-events: auto;
+  transition:
+    transform var(--sliding-tabs-content-duration) ease-in-out,
+    filter var(--sliding-tabs-content-duration) ease-in-out,
+    opacity var(--sliding-tabs-content-duration) ease-in-out,
+    visibility 0s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-sliding-tabs-pill,
+  .ui-sliding-tabs-trigger,
+  .ui-sliding-tabs-content {
+    transition: none;
+  }
+}
