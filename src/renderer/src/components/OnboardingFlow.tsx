@@ -8,26 +8,31 @@ import type {
   MacPermissionId,
   MacPermissionsState,
 } from "@openbot/contracts/ipc";
-import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
 import { AgentAvatar } from "./AgentAvatar";
 import { PlusIcon } from "./conversation/ConversationIcons";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 import { Button } from "./ui";
 
-interface OnboardingFlowProps {
+export interface OnboardingFlowProps {
   state: AppSetupState;
   agentStatus: AgentStatus;
   platform: DesktopPlatform;
+  refreshingProviders?: boolean;
+  onConnectProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  onInstallProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  onSignInProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  onRefreshProviders?: () => void | Promise<void>;
   onSave: (provider: AgentProviderId) => Promise<void>;
 }
 
 type OnboardingStep = "meet" | "computer" | "jobs";
 type StepDirection = "forward" | "back";
 
-const PROVIDERS: Array<{ id: AgentProviderId; name: string }> = [
-  { id: "codex", name: "Codex" },
-  { id: "claude", name: "Claude" },
-  { id: "grok", name: "Grok" },
+const PROVIDERS: Array<{ id: AgentProviderId; name: string; description: string }> = [
+  { id: "codex", name: "ChatGPT", description: "Included with OpenBot" },
+  { id: "claude", name: "Claude", description: "Included with OpenBot" },
+  { id: "grok", name: "Grok", description: "Included with OpenBot" },
 ];
 
 const PERMISSIONS: Array<{
@@ -72,15 +77,24 @@ type OnboardingAvatarVariants = {
 export function OnboardingFlow(props: OnboardingFlowProps) {
   const [step, setStep] = createSignal<OnboardingStep>("meet");
   const [direction, setDirection] = createSignal<StepDirection>("forward");
-  const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(
-    untrack(() => props.state.preferredProvider),
-  );
+  const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(null);
+  const [providerSelectedByUser, setProviderSelectedByUser] = createSignal(false);
   const [permissions, setPermissions] = createSignal(EMPTY_PERMISSIONS);
   const [permissionBusy, setPermissionBusy] = createSignal<MacPermissionId | null>(null);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal("");
+  const [providerErrors, setProviderErrors] = createSignal<Partial<Record<AgentProviderId, string>>>({});
+  const visibleError = createMemo(
+    () => error() || PROVIDERS.map((provider) => providerErrors()[provider.id]).find(Boolean) || "",
+  );
   const avatarVariants = createOnboardingAvatarVariants();
   let permissionRevision = 0;
+  const previousConnectionStates = new Map<AgentProviderId, boolean>();
+  const connectionStartingMessages = new Map<AgentProviderId, string | null>();
+  const refreshedConnectionStates = new Set<AgentProviderId>();
+  const providersAwaitingFocusRefresh = new Set<AgentProviderId>();
+  let blurredAfterProviderConnect = false;
+  let focusRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   const providerOptions = createMemo<ProviderPickerOption[]>(() =>
     PROVIDERS.map((provider) => {
@@ -90,21 +104,31 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
         state: status?.state ?? fallbackProviderState(props.agentStatus),
         message: status?.message,
         email: status?.email,
+        connectionState: status?.connectionState,
+        checkError: status?.checkError,
       };
     }),
   );
+  const showsProviderSetup = () =>
+    Boolean(props.onConnectProvider || props.onInstallProvider || props.onSignInProvider || props.onRefreshProviders);
+  const selectedProviderConnected = createMemo(() => {
+    const selected = selectedProvider();
+    return Boolean(
+      selected && providerOptions().some((provider) => provider.id === selected && provider.state === "available"),
+    );
+  });
 
   createEffect(
     () => ({
       options: providerOptions(),
       selected: selectedProvider(),
-      preferredProvider: props.state.preferredProvider,
+      selectedByUser: providerSelectedByUser(),
     }),
-    ({ options, selected, preferredProvider }) => {
-      if (selected && options.some((provider) => provider.id === selected)) return;
-      const preferred = options.find((provider) => provider.id === preferredProvider);
+    ({ options, selected, selectedByUser }) => {
+      if (selectedByUser && selected && options.some((provider) => provider.id === selected)) return;
+      if (selected && options.some((provider) => provider.id === selected && provider.state === "available")) return;
       const available = options.find((provider) => provider.state === "available");
-      setSelectedProvider(preferred?.id ?? available?.id ?? options[0]?.id ?? null);
+      setSelectedProvider(available?.id ?? null);
     },
   );
 
@@ -115,8 +139,56 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
     },
   );
 
+  createEffect(
+    () => props.agentStatus.providers,
+    (providers) => {
+      for (const provider of PROVIDERS) {
+        const status = providers?.find((candidate) => candidate.id === provider.id);
+        const connecting = status?.connectionState === "connecting";
+        const wasConnecting = previousConnectionStates.get(provider.id) ?? false;
+        if (wasConnecting && !connecting) {
+          const startingMessage = connectionStartingMessages.get(provider.id) ?? null;
+          if (refreshedConnectionStates.delete(provider.id)) {
+            setProviderErrors((current) => ({ ...current, [provider.id]: undefined }));
+          } else {
+            setProviderErrors((current) => ({
+              ...current,
+              [provider.id]: status?.message && status.message !== startingMessage ? status.message : undefined,
+            }));
+          }
+          connectionStartingMessages.delete(provider.id);
+          if (status?.state === "available") providersAwaitingFocusRefresh.delete(provider.id);
+        }
+        previousConnectionStates.set(provider.id, connecting);
+      }
+    },
+  );
+
+  const handleWindowBlur = (): void => {
+    if (providersAwaitingFocusRefresh.size > 0) blurredAfterProviderConnect = true;
+  };
+  const handleWindowFocus = (): void => {
+    if (!blurredAfterProviderConnect || providersAwaitingFocusRefresh.size === 0 || focusRefreshTimer) return;
+    const synchronize = (): void => {
+      focusRefreshTimer = undefined;
+      if (props.refreshingProviders) {
+        focusRefreshTimer = setTimeout(synchronize, 250);
+        return;
+      }
+      providersAwaitingFocusRefresh.clear();
+      blurredAfterProviderConnect = false;
+      void refreshProviders();
+    };
+    focusRefreshTimer = setTimeout(synchronize, 250);
+  };
+  window.addEventListener("blur", handleWindowBlur);
+  window.addEventListener("focus", handleWindowFocus);
+
   onCleanup(() => {
     permissionRevision += 1;
+    window.removeEventListener("blur", handleWindowBlur);
+    window.removeEventListener("focus", handleWindowFocus);
+    if (focusRefreshTimer) clearTimeout(focusRefreshTimer);
   });
 
   async function loadPermissions(): Promise<void> {
@@ -144,18 +216,71 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
     }
   }
 
+  async function openProviderGuide(
+    provider: AgentProviderId,
+    action: ((provider: AgentProviderId) => void | Promise<void>) | undefined,
+    kind: "install" | "sign-in",
+  ): Promise<void> {
+    if (!action) return;
+    setError("");
+    try {
+      await action(provider);
+    } catch {
+      const providerName = PROVIDERS.find((candidate) => candidate.id === provider)?.name ?? "provider";
+      setError(
+        `OpenBot could not open the ${kind === "install" ? "installation" : "sign-in"} guide for ${providerName}.`,
+      );
+    }
+  }
+
+  async function connectProvider(provider: AgentProviderId): Promise<void> {
+    if (!props.onConnectProvider || props.refreshingProviders) return;
+    setError("");
+    setProviderErrors((current) => ({ ...current, [provider]: undefined }));
+    providersAwaitingFocusRefresh.add(provider);
+    refreshedConnectionStates.delete(provider);
+    connectionStartingMessages.set(
+      provider,
+      props.agentStatus.providers?.find((candidate) => candidate.id === provider)?.message ?? null,
+    );
+    try {
+      await props.onConnectProvider(provider);
+    } catch {
+      providersAwaitingFocusRefresh.delete(provider);
+      const providerName = PROVIDERS.find((candidate) => candidate.id === provider)?.name ?? "provider";
+      setError(`OpenBot could not connect ${providerName}. Try again.`);
+    }
+  }
+
+  async function refreshProviders(): Promise<void> {
+    if (!props.onRefreshProviders || props.refreshingProviders) return;
+    setError("");
+    setProviderErrors({});
+    for (const provider of PROVIDERS) {
+      if (previousConnectionStates.get(provider.id)) refreshedConnectionStates.add(provider.id);
+      previousConnectionStates.set(provider.id, false);
+      connectionStartingMessages.delete(provider.id);
+    }
+    try {
+      await props.onRefreshProviders();
+    } catch {
+      setError("OpenBot could not refresh your local AI providers. Try again.");
+    }
+  }
+
   function moveTo(nextStep: OnboardingStep, nextDirection: StepDirection): void {
     setError("");
+    setProviderErrors({});
     setDirection(nextDirection);
     setStep(nextStep);
   }
 
   function nextStep(): void {
+    if (!selectedProviderConnected()) {
+      setError("Connect and select a provider to continue.");
+      return;
+    }
     if (step() === "meet") {
-      if (!selectedProvider()) {
-        setError("Choose a provider to continue.");
-        return;
-      }
       moveTo("computer", "forward");
       return;
     }
@@ -173,7 +298,7 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
 
   async function finish(): Promise<void> {
     const provider = selectedProvider();
-    if (!provider || saving()) return;
+    if (!provider || !selectedProviderConnected() || saving()) return;
     setSaving(true);
     setError("");
     try {
@@ -250,11 +375,31 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
                     options={providerOptions()}
                     ariaLabel="Default provider"
                     label="Choose your AI provider"
-                    hint="You can change this for each bot later."
+                    hint={
+                      showsProviderSetup()
+                        ? "Connect and select a provider to continue. Use Refresh after external account changes."
+                        : "You can change this for each bot later."
+                    }
                     allowUnavailableSelection
                     focusFirst
                     disabled={saving()}
-                    onChange={setSelectedProvider}
+                    refreshingProviders={props.refreshingProviders}
+                    onConnectProvider={props.onConnectProvider ? connectProvider : undefined}
+                    onInstallProvider={
+                      props.onInstallProvider
+                        ? (provider) => openProviderGuide(provider, props.onInstallProvider, "install")
+                        : undefined
+                    }
+                    onSignInProvider={
+                      props.onSignInProvider
+                        ? (provider) => openProviderGuide(provider, props.onSignInProvider, "sign-in")
+                        : undefined
+                    }
+                    onRefreshProviders={props.onRefreshProviders ? refreshProviders : undefined}
+                    onChange={(provider) => {
+                      setProviderSelectedByUser(true);
+                      setSelectedProvider(provider);
+                    }}
                   />
                 </div>
               </section>
@@ -411,9 +556,9 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
           </Switch>
         </div>
 
-        <Show when={error()}>
+        <Show when={visibleError()}>
           <p class="onboarding-error" role="alert">
-            {error()}
+            {visibleError()}
           </p>
         </Show>
 
@@ -427,7 +572,7 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
             type="button"
             variant="default"
             class="onboarding-next"
-            disabled={saving()}
+            disabled={saving() || !selectedProviderConnected()}
             loading={saving()}
             loadingLabel="Opening OpenBot…"
             onClick={nextStep}
