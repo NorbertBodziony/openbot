@@ -111,13 +111,10 @@ if (!run(grokExecutablePath, ["--version"]).includes("1.0.5")) {
 }
 
 const versionInfo = JSON.parse(
-  run("powershell.exe", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
+  runWindowsPowerShell(
     `$value = (Get-Item -LiteralPath '${powerShellLiteral(executablePath)}').VersionInfo; ` +
       "[pscustomobject]@{ ProductName = $value.ProductName; FileDescription = $value.FileDescription; ProductVersion = $value.ProductVersion } | ConvertTo-Json -Compress",
-  ]),
+  ),
 );
 if (!isDynamicRecord(versionInfo)) throw new Error("Windows version metadata is invalid.");
 expectEqual(versionInfo.ProductName, "OpenBot", "product name");
@@ -177,13 +174,21 @@ function powerShellLiteral(value: string): string {
   return value.replaceAll("'", "''");
 }
 
+function runWindowsPowerShell(command: string): string {
+  const environment = { ...process.env };
+  // GitHub's pwsh runner exports its PowerShell 7 module path. Windows PowerShell
+  // must rebuild its own path so built-in modules such as Security can load.
+  delete environment.PSModulePath;
+  return execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
+    encoding: "utf8",
+    env: environment,
+  }).trim();
+}
+
 function verifyAuthenticode(path: string): void {
-  const status = run("powershell.exe", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
+  const status = runWindowsPowerShell(
     `(Get-AuthenticodeSignature -LiteralPath '${powerShellLiteral(path)}').Status.ToString()`,
-  ]);
+  );
   if (status !== "Valid") throw new Error(`The runtime signature is not valid for ${path}: ${status}`);
 }
 

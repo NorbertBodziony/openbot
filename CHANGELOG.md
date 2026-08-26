@@ -5,6 +5,12 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-26
+
+### Fixed
+
+- Isolate Windows package signature checks from the PowerShell 7 module path used by GitHub Actions.
+
 ## [0.3.2] - 2026-08-26
 
 ### Fixed
