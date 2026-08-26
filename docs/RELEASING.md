@@ -124,7 +124,7 @@ different binaries.
 
 Before creating the first tag or any later release:
 
-1. run `bun run release:preflight` and resolve every reported signing or repository gate;
+1. run `bun run release:preflight` and resolve every reported release-secret or repository gate;
 2. confirm the `release` environment contains all six macOS secrets above; Windows remains unsigned;
 3. confirm the production `/join` page and Apple association file pass the deployment checks in CI;
 4. run `bun install --frozen-lockfile` and `bun run check` from a clean clone;
