@@ -347,7 +347,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   };
 
   return (
-    <Tabs.Root {...sectionTabsProps}>
+    <Tabs.Root {...sectionTabsProps} class="settings-modal-tabs-root">
       <SettingsDialogShell
         class="server-settings-modal-shell"
         open={props.open}
