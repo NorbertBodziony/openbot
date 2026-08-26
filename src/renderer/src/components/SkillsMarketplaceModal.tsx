@@ -311,9 +311,18 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   }
 
   async function updateInstalled(item: InstalledSkill) {
+    const analytics = desktopAnalytics.scope();
     const listing =
       skills().find((skill) => skill.id === item.skillId) ?? (await run(() => window.openbot.skills.get(item.skillId)));
-    if (!listing) return;
+    if (!listing) {
+      analytics.track("marketplace_action", {
+        entity: "skill",
+        action: "update",
+        result: "failed",
+        failure_code: "load_failed",
+      });
+      return;
+    }
     const replace = item.state === "modified";
     if (replace && !window.confirm(`Replace local changes in ${item.name}?`)) return;
     await install(listing, replace, "update");
@@ -986,8 +995,19 @@ function AgentMarketplacePanel(props: {
   }
 
   async function installAgentSummary(agent: MarketplaceAgentSummary) {
+    const analytics = desktopAnalytics.scope();
+    const action = installedAgent(agent) ? "update" : "install";
     const value = await run(() => window.openbot.marketplaceAgents.get(agent.id));
-    if (value) await installAgent(value);
+    if (value) {
+      await installAgent(value);
+      return;
+    }
+    analytics.track("marketplace_action", {
+      entity: "agent",
+      action,
+      result: "failed",
+      failure_code: "load_failed",
+    });
   }
 
   async function installAgent(agent: MarketplaceAgentDetail) {

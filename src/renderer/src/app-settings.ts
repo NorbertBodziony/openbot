@@ -8,6 +8,7 @@ export interface GeneralSettingsValue {
   desktopNotifications: boolean;
   taskCompletionSound: boolean;
   autoDownloadUpdates: boolean;
+  productAnalytics: boolean;
 }
 
 export const DEFAULT_GENERAL_SETTINGS: GeneralSettingsValue = {
@@ -18,4 +19,5 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettingsValue = {
   desktopNotifications: true,
   taskCompletionSound: false,
   autoDownloadUpdates: true,
+  productAnalytics: true,
 };

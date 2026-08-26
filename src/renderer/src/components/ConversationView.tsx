@@ -1692,7 +1692,11 @@ function createConversationViewScope(props: ConversationProps) {
       analytics.track("browser_action", { action: "open", result: "succeeded" });
     } catch {
       setBrowserAddress(url);
-      analytics.track("browser_action", { action: "open", result: "failed" });
+      analytics.track("browser_action", {
+        action: "open",
+        result: "failed",
+        failure_code: "browser_open_failed",
+      });
     }
   }
 
@@ -1759,7 +1763,11 @@ function createConversationViewScope(props: ConversationProps) {
       analytics.track("browser_action", { action: "reload", result: "succeeded" });
     } catch {
       setComposerError("Could not reload the browser tab.");
-      analytics.track("browser_action", { action: "reload", result: "failed" });
+      analytics.track("browser_action", {
+        action: "reload",
+        result: "failed",
+        failure_code: "browser_reload_failed",
+      });
     }
   }
 

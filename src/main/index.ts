@@ -58,6 +58,7 @@ import { AgentInitializationGate } from "./agent-initialization";
 import { AgentMarketplaceService } from "./agent-marketplace-service";
 import { notificationForAgentEvent } from "./agent-notifications";
 import { HostAnalytics } from "./analytics";
+import { readAnalyticsPreference, writeAnalyticsPreference } from "./analytics-preference-store";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
 import { resolveOpenBotCloudflaredExecutable } from "./cloudflared-artifact";
@@ -103,7 +104,12 @@ import {
   parseUpdateQueuedMessage,
   parseUpdateRoutine,
 } from "./ipc/agent-inputs";
-import { parseExternalDestination, parseMacPermission, parseProvider } from "./ipc/app-inputs";
+import {
+  parseAnalyticsPreference,
+  parseExternalDestination,
+  parseMacPermission,
+  parseProvider,
+} from "./ipc/app-inputs";
 import { parseAvatarImage } from "./ipc/avatar-inputs";
 import { parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
 import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
@@ -231,6 +237,7 @@ let pendingInviteUrl: string | null = findInviteUrl(process.argv);
 let inviteReceiverReady = false;
 
 const SETUP_FILE = "openbot-setup-v2.json";
+const ANALYTICS_PREFERENCE_FILE = "openbot-analytics-preference-v1.json";
 const BROWSER_STATE_FILE = "openbot-browser-state-v1.json";
 const SIDEBAR_LAYOUT_FILE = "openbot-sidebar-layout-v1.json";
 const TEAM_FILE = "openbot-team-server-v1.json";
@@ -270,6 +277,7 @@ function registerIpcHandlers(
   browser: BrowserHost,
   updater: UpdateService,
   setupFile: string,
+  analyticsPreferenceFile: string,
   initializeAgent: () => Promise<void>,
   sidebarLayout: SidebarLayoutStore,
   host: HostService,
@@ -288,6 +296,12 @@ function registerIpcHandlers(
     return { name: app.getName(), version: app.getVersion(), platform, variant: appVariant };
   });
   handleTrusted(IPC_CHANNELS.getSetupState, () => readSetupState(setupFile));
+  handleTrusted(IPC_CHANNELS.getAnalyticsPreference, () => readAnalyticsPreference(analyticsPreferenceFile));
+  handleTrusted(IPC_CHANNELS.setAnalyticsPreference, async (input: unknown) => {
+    const preference = await writeAnalyticsPreference(analyticsPreferenceFile, parseAnalyticsPreference(input).enabled);
+    hostAnalytics?.setTrackingEnabled(preference.enabled);
+    return preference;
+  });
   handleTrusted(IPC_CHANNELS.saveSetup, async (input: unknown): Promise<AppSetupState> => {
     const preferredProvider = parseProvider(input);
     const state = await writeSetupState(setupFile, preferredProvider);
@@ -1314,7 +1328,9 @@ if (!hasSingleInstanceLock) {
       browserHost = new BrowserHost(mainWindow, store.downloadsRoot, join(app.getPath("userData"), BROWSER_STATE_FILE));
       await browserHost.restore();
       const setupFile = join(app.getPath("userData"), SETUP_FILE);
+      const analyticsPreferenceFile = join(app.getPath("userData"), ANALYTICS_PREFERENCE_FILE);
       const setupState = await readSetupState(setupFile);
+      const analyticsPreference = await readAnalyticsPreference(analyticsPreferenceFile);
       agentService = new AgentService(
         store,
         mailboxStore,
@@ -1444,6 +1460,7 @@ if (!hasSingleInstanceLock) {
       }
       hostAnalytics = new HostAnalytics({
         enabled: app.isPackaged && appVariant === "production",
+        trackingEnabled: analyticsPreference.enabled,
         appVersion: app.getVersion(),
         platform: analyticsPlatform,
         resolveOwner: () => {
@@ -1534,6 +1551,7 @@ if (!hasSingleInstanceLock) {
         browserHost,
         updateService,
         setupFile,
+        analyticsPreferenceFile,
         () => agentInitialization.start(),
         sidebarLayoutStore,
         host,

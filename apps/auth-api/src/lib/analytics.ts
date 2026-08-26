@@ -1,14 +1,21 @@
+import { isBoolean, isOneOf } from "@openbot/contracts/runtime-values";
 import { OpenPanel, type OpenPanelOptions } from "@openpanel/web";
 import { OPENBOT_DOWNLOAD_LINKS, OPENBOT_LINKS } from "./landing-links";
 
 export const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
 const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
+const ANALYTICS_SCHEMA_VERSION = 2;
+
+export type LandingAcquisitionSource = "direct" | "search" | "social" | "github" | "other";
 
 interface LandingAnalyticsEvents {
   landing_viewed: Record<string, never>;
   landing_download_clicked: { platform: "macos" | "windows"; placement: LandingPlacement };
   landing_link_clicked: { destination: LandingDestination; placement: LandingPlacement };
-  join_page_action: { action: "view" | "open_app" };
+  join_page_action:
+    | { action: "view"; valid_invite: boolean }
+    | { action: "open_app" }
+    | { action: "download"; platform: "macos" | "windows" };
 }
 
 type LandingEventName = keyof LandingAnalyticsEvents;
@@ -50,7 +57,7 @@ const EVENT_PROPERTY_ALLOWLIST = {
   landing_viewed: [],
   landing_download_clicked: ["platform", "placement"],
   landing_link_clicked: ["destination", "placement"],
-  join_page_action: ["action"],
+  join_page_action: ["action", "valid_invite", "platform"],
 } as const satisfies Record<LandingEventName, readonly string[]>;
 
 export function shouldEnableLandingAnalytics(hostname: string, productionBuild: boolean): boolean {
@@ -72,20 +79,36 @@ export class LandingAnalytics {
   }
 
   start(document: Document, hostname: string): () => void {
+    if (isLikelyAutomation(document.defaultView?.navigator)) return () => undefined;
     if (!this.#ensureClient(hostname)) return () => undefined;
+    this.#client?.setGlobalProperties({ acquisition_source: landingAcquisitionSource(document) });
     this.#track("landing_viewed", {});
     const handleClick = (event: MouseEvent) => this.#handleClick(event);
     return this.#replaceClickListener(document, handleClick);
   }
 
-  startJoin(document: Document, hostname: string): () => void {
+  startJoin(
+    document: Document,
+    hostname: string,
+    options: { validInvite: boolean; platform: "macos" | "windows" },
+  ): () => void {
+    if (isLikelyAutomation(document.defaultView?.navigator)) return () => undefined;
     if (!this.#ensureClient(hostname)) return () => undefined;
-    this.#track("join_page_action", { action: "view" });
+    this.#client?.setGlobalProperties({ acquisition_source: landingAcquisitionSource(document) });
+    this.#track("join_page_action", { action: "view", valid_invite: options.validInvite });
     const handleClick = (event: MouseEvent) => {
       const target = event.target;
       const link = target instanceof Element ? target.closest<HTMLAnchorElement>("a[href]") : null;
       if (link?.getAttribute("href")?.startsWith("openbot://")) {
         this.#track("join_page_action", { action: "open_app" });
+        return;
+      }
+      const href = link?.getAttribute("href");
+      if (href === OPENBOT_DOWNLOAD_LINKS.macos || href === OPENBOT_DOWNLOAD_LINKS.windows) {
+        this.#track("join_page_action", {
+          action: "download",
+          platform: href === OPENBOT_DOWNLOAD_LINKS.windows ? "windows" : "macos",
+        });
       }
     };
     return this.#replaceClickListener(document, handleClick);
@@ -114,7 +137,12 @@ export class LandingAnalytics {
         trackAttributes: false,
         sessionReplay: { enabled: false },
       });
-      client.setGlobalProperties({ __referrer: "", surface: "landing", environment: "production" });
+      client.setGlobalProperties({
+        __referrer: "",
+        surface: "landing",
+        environment: "production",
+        event_schema_version: ANALYTICS_SCHEMA_VERSION,
+      });
       this.#client = client;
       return true;
     } catch {
@@ -145,7 +173,8 @@ export class LandingAnalytics {
       const allowed = EVENT_PROPERTY_ALLOWLIST[name];
       const sanitized = Object.fromEntries(
         Object.entries(properties).filter(
-          ([key, value]) => value !== undefined && allowed.some((item) => item === key),
+          ([key, value]) =>
+            value !== undefined && allowed.some((item) => item === key) && isSafeLandingProperty(name, key, value),
         ),
       );
       const result = this.#client?.track(name, sanitized);
@@ -154,6 +183,37 @@ export class LandingAnalytics {
       // Analytics must never change landing-page behavior.
     }
   }
+}
+
+function isSafeLandingProperty(name: LandingEventName, key: string, value: unknown): boolean {
+  if (key === "action") return isOneOf(["view", "open_app", "download"] as const, value);
+  if (key === "valid_invite") return name === "join_page_action" && isBoolean(value);
+  if (key === "platform") return value === "macos" || value === "windows";
+  if (key === "placement") {
+    return isOneOf(["header", "hero", "download_section", "footer", "other"] as const, value);
+  }
+  if (key === "destination") return [...LINK_DESTINATIONS.values()].some((destination) => destination === value);
+  return false;
+}
+
+export function isLikelyAutomation(navigator: Pick<Navigator, "userAgent" | "webdriver"> | null | undefined): boolean {
+  if (!navigator) return false;
+  return navigator.webdriver || /(?:bot|crawler|spider|headless|lighthouse|preview)/iu.test(navigator.userAgent);
+}
+
+export function landingAcquisitionSource(document: Document): LandingAcquisitionSource {
+  let campaignSource = "";
+  try {
+    campaignSource = new URL(document.location.href).searchParams.get("utm_source")?.toLowerCase() ?? "";
+  } catch {
+    // Invalid locations are treated as direct traffic.
+  }
+  const referrer = document.referrer.toLowerCase();
+  const source = `${campaignSource} ${referrer}`;
+  if (/github/u.test(source)) return "github";
+  if (/(?:google|bing|duckduckgo|brave|yahoo)/u.test(source)) return "search";
+  if (/(?:twitter|x\.com|linkedin|facebook|reddit|discord|social)/u.test(source)) return "social";
+  return source.trim() ? "other" : "direct";
 }
 
 function landingPlacement(link: HTMLAnchorElement): LandingPlacement {

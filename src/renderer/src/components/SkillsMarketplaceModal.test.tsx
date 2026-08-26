@@ -217,6 +217,42 @@ describe("SkillsMarketplaceModal", () => {
     });
   });
 
+  it("reports an install failure when agent details cannot load", async () => {
+    const agent = {
+      id: "research-agent",
+      name: "Research Agent",
+      title: "Finds evidence quickly",
+      description: "Searches sources.",
+      creatorName: "Ada",
+      version: 1,
+      installs: 42,
+      featured: true,
+      avatarSeed: "research-agent",
+      avatarHue: 215,
+      avatarUrl: null,
+      skillCount: 1,
+      routineCount: 0,
+      activeRoutineCount: 0,
+      updatedAt: "2026-08-25T00:00:00.000Z",
+    } as const;
+    window.openbot.marketplaceAgents.list = vi.fn(async () => ({ agents: [agent], nextCursor: null }));
+    window.openbot.marketplaceAgents.get = vi.fn().mockRejectedValue(new Error("private response"));
+
+    render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
+    screen.getByRole("button", { name: "Agents" }).click();
+    (await screen.findByRole("button", { name: "Install" })).click();
+
+    await waitFor(() =>
+      expect(trackMarketplaceAnalytics).toHaveBeenCalledWith("marketplace_action", {
+        entity: "agent",
+        action: "install",
+        result: "failed",
+        failure_code: "load_failed",
+      }),
+    );
+    expect(window.openbot.marketplaceAgents.install).not.toHaveBeenCalled();
+  });
+
   it("offers updates and disables agents that are already current", async () => {
     const baseAgent = {
       name: "Research Agent",

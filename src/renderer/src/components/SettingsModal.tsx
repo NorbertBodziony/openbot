@@ -246,6 +246,17 @@ export function SettingsModal(props: SettingsModalProps) {
               </Item>
             </ItemGroup>
           </SettingsSection>
+
+          <SettingsSection title="Privacy">
+            <ItemGroup class="settings-modal-card" surface="subtle">
+              <SwitchField
+                checked={props.value.productAnalytics}
+                onChange={(checked) => updateSetting("productAnalytics", checked)}
+                label="Share product analytics"
+                description="Send privacy-safe usage and reliability metadata to OpenBot's self-hosted analytics."
+              />
+            </ItemGroup>
+          </SettingsSection>
         </Tabs.Content>
 
         <Tabs.Content value="profile" class="settings-modal-tab-panel" data-tab="profile">

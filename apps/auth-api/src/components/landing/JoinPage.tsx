@@ -12,17 +12,18 @@ export function JoinPage() {
   const [invalid, setInvalid] = createSignal(false);
 
   onSettled(() => {
-    const cleanup = landingAnalytics.startJoin(document, window.location.hostname);
+    const platform = detectDownloadPlatform(globalThis.navigator) === "windows" ? "windows" : "macos";
+    let validInvite = true;
     try {
       const pageUrl = new URL(window.location.href);
       const canonicalUrl = new URL(`${pageUrl.pathname}${pageUrl.search}`, OPENBOT_INVITE_ORIGIN);
       setOpenUrl(toOpenBotInviteUrl(canonicalUrl.toString()));
     } catch {
+      validInvite = false;
       setInvalid(true);
     }
-    if (detectDownloadPlatform(globalThis.navigator) === "windows") {
-      setDownloadUrl(OPENBOT_DOWNLOAD_LINKS.windows);
-    }
+    if (platform === "windows") setDownloadUrl(OPENBOT_DOWNLOAD_LINKS.windows);
+    const cleanup = landingAnalytics.startJoin(document, window.location.hostname, { validInvite, platform });
     return cleanup;
   });
 

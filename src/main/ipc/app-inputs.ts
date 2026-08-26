@@ -1,11 +1,21 @@
-import type { AgentProviderId, ExternalDestination, MacPermissionId } from "@openbot/contracts/ipc";
-import { isDynamicRecord } from "@openbot/contracts/runtime-values";
+import type {
+  AgentProviderId,
+  ExternalDestination,
+  MacPermissionId,
+  SetAnalyticsPreferenceInput,
+} from "@openbot/contracts/ipc";
+import { isBoolean, isDynamicRecord } from "@openbot/contracts/runtime-values";
 
 export function parseProvider(input: unknown): AgentProviderId {
   if (!isDynamicRecord(input)) throw new Error("Setup input is required.");
   const provider = input.preferredProvider;
   if (provider !== "codex" && provider !== "claude" && provider !== "grok") throw new Error("Unknown provider.");
   return provider;
+}
+
+export function parseAnalyticsPreference(input: unknown): SetAnalyticsPreferenceInput {
+  if (!isDynamicRecord(input) || !isBoolean(input.enabled)) throw new Error("Analytics preference is required.");
+  return { enabled: input.enabled };
 }
 
 export function parseMacPermission(input: unknown): MacPermissionId {

@@ -1,4 +1,6 @@
 import type { AppInfo } from "@openbot/contracts/ipc";
+import { isDynamicRecord } from "@openbot/contracts/runtime-values";
+import { OpenPanelBase } from "@openpanel/web";
 import { describe, expect, it, vi } from "vitest";
 import {
   DesktopAnalytics,
@@ -37,6 +39,7 @@ describe("desktop analytics", () => {
     const analytics = new DesktopAnalytics(createClient, true);
 
     expect(analytics.configure(PRODUCTION_APP)).toBe(true);
+    expect(createClient).toHaveBeenCalledTimes(2);
     expect(createClient).toHaveBeenCalledWith({
       apiUrl: OPENPANEL_API_URL,
       clientId: expect.any(String),
@@ -46,6 +49,7 @@ describe("desktop analytics", () => {
       __referrer: "",
       surface: "desktop",
       environment: "production",
+      event_schema_version: 2,
       app_version: "1.2.3",
       platform: "darwin",
     });
@@ -59,7 +63,7 @@ describe("desktop analytics", () => {
 
     analytics.configure(PRODUCTION_APP);
 
-    expect(client.identify).toHaveBeenCalledWith({ profileId: "account-1", email: "person@example.com" });
+    expect(client.identify).toHaveBeenCalledWith({ profileId: "account-1" });
     expect(client.track).toHaveBeenCalledWith("agent_action", {
       action: "delete",
       result: "succeeded",
@@ -85,7 +89,7 @@ describe("desktop analytics", () => {
     analytics.setUser({ id: "account-2", email: "two@example.com" });
 
     expect(order).toEqual(["clear", "identify"]);
-    expect(client.identify).toHaveBeenLastCalledWith({ profileId: "account-2", email: "two@example.com" });
+    expect(client.identify).toHaveBeenLastCalledWith({ profileId: "account-2" });
   });
 
   it("keeps the captured profile through a logout race", () => {
@@ -105,14 +109,45 @@ describe("desktop analytics", () => {
   });
 
   it("keeps pre-authentication events anonymous even when another identity exists", () => {
-    const client = fakeClient();
-    const analytics = new DesktopAnalytics(() => client, true);
+    const identifiedClient = fakeClient();
+    const anonymousClient = fakeClient();
+    const createClient = vi.fn().mockReturnValueOnce(identifiedClient).mockReturnValueOnce(anonymousClient);
+    const analytics = new DesktopAnalytics(createClient, true);
     analytics.configure(PRODUCTION_APP);
     analytics.setUser({ id: "account-1", email: "person@example.com" });
 
     analytics.anonymousScope().track("account_sign_in_started", { result: "code_sent" });
 
-    expect(client.track).toHaveBeenCalledWith("account_sign_in_started", { result: "code_sent" });
+    expect(identifiedClient.track).not.toHaveBeenCalled();
+    expect(anonymousClient.track).toHaveBeenCalledWith("account_sign_in_started", { result: "code_sent" });
+  });
+
+  it("keeps anonymous events unassigned in the real SDK transport", async () => {
+    const requests: unknown[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const analytics = new DesktopAnalytics((options) => new OpenPanelBase(options), true);
+      analytics.configure(PRODUCTION_APP);
+      analytics.setUser({ id: "account-1", email: "person@example.com" });
+      analytics.anonymousScope().track("account_sign_in_started", { result: "code_sent" });
+
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const request = requests.find(
+        (candidate) =>
+          isDynamicRecord(candidate) &&
+          isDynamicRecord(candidate.payload) &&
+          candidate.payload.name === "account_sign_in_started",
+      );
+      expect(isDynamicRecord(request) && isDynamicRecord(request.payload) ? request.payload.profileId : undefined).toBe(
+        undefined,
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("sanitizes runtime payloads independently of TypeScript types", () => {
@@ -131,6 +166,15 @@ describe("desktop analytics", () => {
         failure_code: "raw exception text",
       }),
     ).toEqual({ action: "delete", result: "failed", failure_code: "unknown" });
+    expect(
+      sanitizeDesktopAnalyticsEvent(
+        "routine_action",
+        Object.assign(
+          { action: "test" as const, trigger_type: "hourly", duration_ms: Number.NaN, result: "failed" as const },
+          { failure_code: "test_failed", provider: "private-provider", changed_fields: ["name", "private"] },
+        ),
+      ),
+    ).toEqual({ action: "test", trigger_type: "hourly", result: "failed", failure_code: "test_failed" });
   });
 
   it("keeps only the newest 100 events buffered before configuration", () => {
@@ -164,5 +208,26 @@ describe("desktop analytics", () => {
     }, true);
     expect(() => unavailable.configure(PRODUCTION_APP)).not.toThrow();
     expect(unavailable.configure(PRODUCTION_APP)).toBe(false);
+  });
+
+  it("disables both identified and anonymous tracking until re-enabled", () => {
+    const identifiedClient = fakeClient();
+    const anonymousClient = fakeClient();
+    const createClient = vi.fn().mockReturnValueOnce(identifiedClient).mockReturnValueOnce(anonymousClient);
+    const analytics = new DesktopAnalytics(createClient, true);
+    analytics.setTrackingEnabled(false);
+    analytics.setUser({ id: "account-1", email: "person@example.com" });
+    analytics.configure(PRODUCTION_APP);
+    analytics.track("agent_action", { action: "delete", result: "succeeded" });
+    analytics.anonymousScope().track("account_sign_in_started", { result: "code_sent" });
+
+    expect(identifiedClient.identify).not.toHaveBeenCalled();
+    expect(identifiedClient.track).not.toHaveBeenCalled();
+    expect(anonymousClient.track).not.toHaveBeenCalled();
+
+    analytics.setTrackingEnabled(true);
+    analytics.track("agent_action", { action: "delete", result: "succeeded" });
+    expect(identifiedClient.identify).toHaveBeenCalledWith({ profileId: "account-1" });
+    expect(identifiedClient.track).toHaveBeenCalledOnce();
   });
 });

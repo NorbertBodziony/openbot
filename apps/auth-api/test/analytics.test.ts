@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { LandingAnalytics, OPENPANEL_API_URL, shouldEnableLandingAnalytics } from "../src/lib/analytics";
+import {
+  isLikelyAutomation,
+  LandingAnalytics,
+  landingAcquisitionSource,
+  OPENPANEL_API_URL,
+  shouldEnableLandingAnalytics,
+} from "../src/lib/analytics";
 
 describe("landing analytics", () => {
   it("enables only the production landing hostname", () => {
@@ -40,6 +46,7 @@ describe("landing analytics", () => {
       __referrer: "",
       surface: "landing",
       environment: "production",
+      event_schema_version: 2,
     });
     expect(client.track).toHaveBeenNthCalledWith(1, "landing_viewed", {});
     expect(client.track).toHaveBeenNthCalledWith(2, "landing_link_clicked", {
@@ -61,18 +68,26 @@ describe("landing analytics", () => {
   });
 
   it("tracks the invitation page anonymously and removes its click listener", () => {
-    document.body.innerHTML = '<a id="open" href="openbot://join?invite=private">Open app</a>';
+    document.body.innerHTML = `
+      <a id="open" href="openbot://join?invite=private">Open app</a>
+      <a id="download" href="/download/macos">Download</a>
+    `;
     const client = { setGlobalProperties: vi.fn(), track: vi.fn() };
     const analytics = new LandingAnalytics(() => client, true);
-    const cleanup = analytics.startJoin(document, "openbot.run");
+    const cleanup = analytics.startJoin(document, "openbot.run", { validInvite: true, platform: "macos" });
 
     document.querySelector<HTMLElement>("#open")?.click();
+    document.querySelector<HTMLElement>("#download")?.click();
     cleanup();
     document.querySelector<HTMLElement>("#open")?.click();
 
-    expect(client.track).toHaveBeenNthCalledWith(1, "join_page_action", { action: "view" });
+    expect(client.track).toHaveBeenNthCalledWith(1, "join_page_action", { action: "view", valid_invite: true });
     expect(client.track).toHaveBeenNthCalledWith(2, "join_page_action", { action: "open_app" });
-    expect(client.track).toHaveBeenCalledTimes(2);
+    expect(client.track).toHaveBeenNthCalledWith(3, "join_page_action", {
+      action: "download",
+      platform: "macos",
+    });
+    expect(client.track).toHaveBeenCalledTimes(3);
     expect(JSON.stringify(client.track.mock.calls)).not.toContain("profileId");
     expect(JSON.stringify(client.track.mock.calls)).not.toContain("private");
   });
@@ -81,17 +96,24 @@ describe("landing analytics", () => {
     document.body.innerHTML = '<a id="open" href="openbot://join">Open app</a>';
     const client = { setGlobalProperties: vi.fn(), track: vi.fn() };
     const analytics = new LandingAnalytics(() => client, true);
-    analytics.startJoin(document, "openbot.run");
-    const cleanup = analytics.startJoin(document, "openbot.run");
+    analytics.startJoin(document, "openbot.run", { validInvite: false, platform: "windows" });
+    const cleanup = analytics.startJoin(document, "openbot.run", { validInvite: true, platform: "windows" });
 
     document.querySelector<HTMLElement>("#open")?.click();
     cleanup();
 
     expect(client.track.mock.calls.filter(([name]) => name === "join_page_action")).toEqual([
-      ["join_page_action", { action: "view" }],
-      ["join_page_action", { action: "view" }],
+      ["join_page_action", { action: "view", valid_invite: false }],
+      ["join_page_action", { action: "view", valid_invite: true }],
       ["join_page_action", { action: "open_app" }],
     ]);
+  });
+
+  it("derives only coarse acquisition sources and ignores automation", () => {
+    window.history.replaceState({}, "", "/?utm_source=github-campaign");
+    expect(landingAcquisitionSource(document)).toBe("github");
+    expect(isLikelyAutomation({ userAgent: "HeadlessChrome", webdriver: false })).toBe(true);
+    expect(isLikelyAutomation({ userAgent: "Mozilla/5.0", webdriver: false })).toBe(false);
   });
 
   it("does not let initialization failures escape", () => {

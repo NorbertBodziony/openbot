@@ -2,6 +2,7 @@ import type {
   AgentEvent,
   AgentModelOption,
   AgentStatus,
+  AnalyticsPreference,
   AppInfo,
   AppSetupState,
   AttachmentImportEvent,
@@ -81,6 +82,7 @@ type Listener<T> = (value: T) => void;
 
 export interface MockOpenBotOptions {
   appInfo?: AppInfo;
+  analyticsPreference?: AnalyticsPreference;
   authState?: CentralAuthState;
   setupState?: AppSetupState;
   agentStatus?: AgentStatus;
@@ -146,6 +148,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   };
   let authState = clone<CentralAuthState>(options.authState ?? defaultAuthState);
   let setupState = clone<AppSetupState>(options.setupState ?? { completed: true, preferredProvider: "codex" });
+  let analyticsPreference = clone<AnalyticsPreference>(options.analyticsPreference ?? { enabled: true });
   const agentStatus = clone(options.agentStatus ?? STORY_AGENT_STATUS);
   let bots = clone(options.bots ?? STORY_BOT_SUMMARIES);
   let sidebarLayout: SidebarLayoutSnapshot = {
@@ -342,6 +345,11 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     saveSetup: async ({ preferredProvider }) => {
       setupState = { completed: true, preferredProvider };
       return clone(setupState);
+    },
+    getAnalyticsPreference: async () => clone(analyticsPreference),
+    setAnalyticsPreference: async ({ enabled }) => {
+      analyticsPreference = { enabled };
+      return clone(analyticsPreference);
     },
     getMacPermissions: async (): Promise<MacPermissionsState> => ({
       screenRecording: "granted",
