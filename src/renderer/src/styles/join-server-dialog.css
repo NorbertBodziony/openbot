@@ -102,14 +102,6 @@
   line-height: var(--openbot-leading-sm);
 }
 
-.join-server-header strong {
-  color: var(--openbot-text-secondary);
-  font-family: var(--openbot-font-mono);
-  font-size: 0.92em;
-  font-weight: var(--openbot-weight-medium);
-  overflow-wrap: anywhere;
-}
-
 .join-server-entry-logo {
   --app-logo-background: var(--openbot-surface-light);
   width: 64px;
