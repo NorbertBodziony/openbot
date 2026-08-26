@@ -48,6 +48,9 @@ describe("bundled Codex resolution", () => {
     expect(bundledCodexExecutable("darwin", "arm64", "/Applications/OpenBot.app/Contents/Resources")).toBe(
       "/Applications/OpenBot.app/Contents/Resources/codex/mac/arm64/bin/codex",
     );
+    expect(bundledCodexExecutable("win32", "x64", "C:\\Program Files\\OpenBot\\resources")).toBe(
+      "C:\\Program Files\\OpenBot\\resources\\codex\\win\\x64\\bin\\codex.exe",
+    );
     expect(bundledCodexExecutable("linux", "x64", "/resources")).toBeNull();
   });
 
@@ -98,6 +101,9 @@ describe("bundled Claude resolution", () => {
     expect(bundledClaudeExecutable("darwin", "arm64", "/Applications/OpenBot.app/Contents/Resources")).toBe(
       "/Applications/OpenBot.app/Contents/Resources/claude/mac/arm64/bin/claude",
     );
+    expect(bundledClaudeExecutable("win32", "x64", "C:\\Program Files\\OpenBot\\resources")).toBe(
+      "C:\\Program Files\\OpenBot\\resources\\claude\\win\\x64\\bin\\claude.exe",
+    );
     expect(bundledClaudeExecutable("linux", "x64", "/resources")).toBeNull();
   });
 
@@ -146,6 +152,9 @@ describe("bundled Grok CLI resolution", () => {
   it("resolves the packaged runtime path for supported targets", () => {
     expect(bundledGrokExecutable("darwin", "arm64", "/Applications/OpenBot.app/Contents/Resources")).toBe(
       "/Applications/OpenBot.app/Contents/Resources/grok/mac/arm64/bin/grok",
+    );
+    expect(bundledGrokExecutable("win32", "x64", "C:\\Program Files\\OpenBot\\resources")).toBe(
+      "C:\\Program Files\\OpenBot\\resources\\grok\\win\\x64\\bin\\grok.exe",
     );
     expect(bundledGrokExecutable("linux", "x64", "/resources")).toBeNull();
   });

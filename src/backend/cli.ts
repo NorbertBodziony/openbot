@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
-import { extname, join, resolve, win32 } from "node:path";
+import { extname, posix, resolve, win32 } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -91,15 +91,7 @@ export function bundledCodexExecutable(
   architecture = process.arch,
   resourcesPath: string | null = process.resourcesPath,
 ): string | null {
-  const target =
-    platform === "darwin" && architecture === "arm64"
-      ? { platform: "mac", architecture: "arm64", executable: "codex" }
-      : platform === "win32" && architecture === "x64"
-        ? { platform: "win", architecture: "x64", executable: "codex.exe" }
-        : null;
-  if (!target) return null;
-  const root = resourcesPath ? join(resourcesPath, "codex") : resolve("build/codex");
-  return join(root, target.platform, target.architecture, "bin", target.executable);
+  return bundledProviderExecutable("codex", platform, architecture, resourcesPath);
 }
 
 export async function resolveClaudeCli(
@@ -150,15 +142,7 @@ export function bundledClaudeExecutable(
   architecture = process.arch,
   resourcesPath: string | null = process.resourcesPath,
 ): string | null {
-  const target =
-    platform === "darwin" && architecture === "arm64"
-      ? { platform: "mac", architecture: "arm64", executable: "claude" }
-      : platform === "win32" && architecture === "x64"
-        ? { platform: "win", architecture: "x64", executable: "claude.exe" }
-        : null;
-  if (!target) return null;
-  const root = resourcesPath ? join(resourcesPath, "claude") : resolve("build/claude");
-  return join(root, target.platform, target.architecture, "bin", target.executable);
+  return bundledProviderExecutable("claude", platform, architecture, resourcesPath);
 }
 
 export async function resolveGrokCli(
@@ -208,15 +192,30 @@ export function bundledGrokExecutable(
   architecture = process.arch,
   resourcesPath: string | null = process.resourcesPath,
 ): string | null {
-  const target =
+  return bundledProviderExecutable("grok", platform, architecture, resourcesPath);
+}
+
+function bundledProviderExecutable(
+  provider: "codex" | "claude" | "grok",
+  platform: NodeJS.Platform,
+  architecture: string,
+  resourcesPath: string | null,
+): string | null {
+  const targetPlatform =
     platform === "darwin" && architecture === "arm64"
-      ? { platform: "mac", architecture: "arm64", executable: "grok" }
+      ? "mac"
       : platform === "win32" && architecture === "x64"
-        ? { platform: "win", architecture: "x64", executable: "grok.exe" }
+        ? "win"
         : null;
-  if (!target) return null;
-  const root = resourcesPath ? join(resourcesPath, "grok") : resolve("build/grok");
-  return join(root, target.platform, target.architecture, "bin", target.executable);
+  if (!targetPlatform) return null;
+
+  const executable = platform === "win32" ? `${provider}.exe` : provider;
+  if (resourcesPath === null) {
+    return resolve("build", provider, targetPlatform, architecture, "bin", executable);
+  }
+
+  const targetPath = platform === "win32" ? win32 : posix;
+  return targetPath.join(resourcesPath, provider, targetPlatform, architecture, "bin", executable);
 }
 
 export function parseCodexVersion(output: string): string {
@@ -319,9 +318,9 @@ export function windowsFallbackPaths(
 }
 
 export function posixFallbackPaths(command: "codex" | "claude" | "grok", userHome = homedir()): string[] {
-  const paths = [join(userHome, ".local", "bin", command)];
-  if (command === "claude") paths.push(join(userHome, ".claude", "local", "claude"));
-  if (command === "grok") paths.push(join(userHome, ".grok", "bin", "grok"));
+  const paths = [posix.join(userHome, ".local", "bin", command)];
+  if (command === "claude") paths.push(posix.join(userHome, ".claude", "local", "claude"));
+  if (command === "grok") paths.push(posix.join(userHome, ".grok", "bin", "grok"));
   paths.push(`/opt/homebrew/bin/${command}`, `/usr/local/bin/${command}`);
   return paths;
 }

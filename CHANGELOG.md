@@ -5,6 +5,12 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-26
+
+### Fixed
+
+- Resolve bundled provider and fallback CLI paths with the target platform's path format.
+
 ## [0.3.0] - 2026-08-26
 
 ### Added
