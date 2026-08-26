@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
+import {
+  attachmentMimeTypeForName,
+  isSupportedAttachmentName,
+  SUPPORTED_ATTACHMENT_DESCRIPTION,
+} from "@openbot/contracts/attachment-files";
 import { rewriteAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
@@ -205,6 +210,7 @@ export class MailboxStore {
         const id = randomUUID();
         const targetDirectory = join(this.#draftsRoot, id);
         const name = sanitizeName(source.path);
+        assertSupportedAttachmentName(name);
         const targetPath = join(targetDirectory, name);
         await mkdir(targetDirectory, { recursive: true, mode: 0o700 });
         await copyFile(source.path, targetPath);
@@ -240,6 +246,7 @@ export class MailboxStore {
         const id = randomUUID();
         const targetDirectory = join(this.#draftsRoot, id);
         const name = sanitizeName(item.name || "pasted-image.png");
+        assertSupportedAttachmentName(name);
         const targetPath = join(targetDirectory, name);
         const metadata = attachmentMetadata(name, item.mimeType);
         await mkdir(targetDirectory, { recursive: true, mode: 0o700 });
@@ -1205,23 +1212,7 @@ function attachmentMetadata(
   name: string,
   explicitMimeType?: string,
 ): { kind: AttachmentKind; mimeType: string; previewKind: AttachmentPreviewKind } {
-  const extension = extname(name).toLowerCase();
-  const inferred =
-    extension === ".png"
-      ? "image/png"
-      : extension === ".jpg" || extension === ".jpeg"
-        ? "image/jpeg"
-        : extension === ".gif"
-          ? "image/gif"
-          : extension === ".webp"
-            ? "image/webp"
-            : extension === ".avif"
-              ? "image/avif"
-              : extension === ".pdf"
-                ? "application/pdf"
-                : /\.(txt|md|markdown|csv|json|log|xml|ya?ml|tsx?|jsx?|css|html?)$/i.test(name)
-                  ? "text/plain"
-                  : "application/octet-stream";
+  const inferred = attachmentMimeTypeForName(name);
   const mimeType = explicitMimeType?.trim() || inferred;
   const previewKind: AttachmentPreviewKind = mimeType.startsWith("image/")
     ? "image"
@@ -1231,6 +1222,11 @@ function attachmentMetadata(
         ? "text"
         : "none";
   return { kind: previewKind === "image" ? "image" : "file", mimeType, previewKind };
+}
+
+function assertSupportedAttachmentName(name: string): void {
+  if (isSupportedAttachmentName(name)) return;
+  throw new Error(`${name} is not supported. Attach ${SUPPORTED_ATTACHMENT_DESCRIPTION}.`);
 }
 
 function attachmentPreviewUrl(id: string): string {

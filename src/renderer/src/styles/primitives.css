@@ -285,6 +285,41 @@
   height: var(--openbot-icon-sm);
 }
 
+.ui-removable-image {
+  position: relative;
+}
+
+.ui-image-remove-button {
+  position: absolute;
+  z-index: 1;
+  top: -8px;
+  right: -8px;
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: var(--openbot-radius-pill);
+  background: color-mix(in srgb, var(--openbot-bg-surface-raised) 72%, transparent);
+  backdrop-filter: blur(8px) saturate(1.1);
+  -webkit-backdrop-filter: blur(8px) saturate(1.1);
+  opacity: 0;
+  scale: 0.9;
+  transition:
+    opacity var(--openbot-duration-hover) ease,
+    scale var(--openbot-duration-hover) ease,
+    background-color var(--openbot-duration-hover) ease;
+}
+
+.ui-removable-image:hover > .ui-image-remove-button,
+.ui-removable-image:focus-within > .ui-image-remove-button {
+  opacity: 1;
+  scale: 1;
+}
+
+@media (hover: none) {
+  .ui-image-remove-button {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
 :where(.ui-badge) {
   width: fit-content;
   min-width: 0;

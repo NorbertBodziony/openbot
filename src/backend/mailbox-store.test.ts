@@ -314,6 +314,32 @@ describe("MailboxStore", () => {
     ).rejects.toThrow("metadata is too long");
   });
 
+  it("accepts whitelisted context files and rejects unsupported binaries", async () => {
+    const paths = ["brief.pdf", "notes.txt", "README.md", "requirements.docx"].map((name) => join(root, name));
+    await Promise.all(paths.map((path) => writeFile(path, "fixture")));
+
+    await expect(store.prepareAttachments(paths)).resolves.toMatchObject([
+      { name: "brief.pdf", mimeType: "application/pdf", previewKind: "pdf" },
+      { name: "notes.txt", mimeType: "text/plain", previewKind: "text" },
+      { name: "README.md", mimeType: "text/markdown", previewKind: "text" },
+      {
+        name: "requirements.docx",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        previewKind: "none",
+      },
+    ]);
+
+    const archive = join(root, "bundle.zip");
+    await writeFile(archive, "fixture");
+    await expect(store.prepareAttachments([archive])).rejects.toThrow("bundle.zip is not supported");
+    await expect(
+      store.prepareImportedAttachments(
+        [],
+        [{ name: "installer.exe", mimeType: "application/octet-stream", bytes: new Uint8Array([1]) }],
+      ),
+    ).rejects.toThrow("installer.exe is not supported");
+  });
+
   it("imports pathless image bytes and accepts an attachment-only user message", async () => {
     const [draft] = await store.prepareImportedAttachments(
       [],
@@ -440,7 +466,7 @@ describe("MailboxStore", () => {
       [],
       [
         {
-          name: "clipboard.bin",
+          name: "clipboard.txt",
           mimeType: "image/png",
           bytes: new Uint8Array([137, 80, 78, 71]),
         },

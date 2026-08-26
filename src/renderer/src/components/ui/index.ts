@@ -5,6 +5,7 @@ export * from "./checkbox";
 export * from "./complex";
 export * from "./form";
 export * from "./icons";
+export * from "./image-remove-button";
 export * from "./item";
 export * from "./select";
 export * from "./settings";

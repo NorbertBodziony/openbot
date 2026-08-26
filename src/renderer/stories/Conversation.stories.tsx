@@ -3,13 +3,20 @@ import type {
   AgentEvent,
   AttachmentSummary,
   AvatarImageInput,
+  DraftAttachment,
   QueueSnapshot,
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
-import { createEffect, createSignal, onCleanup } from "solid-js";
+import { createEffect, createSignal, onCleanup, onSettled } from "solid-js";
 import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { Conversation } from "../src/components/Conversation";
+import { clipboardFiles } from "../../preload/clipboard-files";
+import {
+  Conversation,
+  ConversationControllerProvider,
+  createConversationController,
+} from "../src/components/Conversation";
+import { ConversationView } from "../src/components/ConversationView";
 import type { BotMessage as RendererBotMessage } from "../src/data";
 import {
   STORY_AGENT_STATUS,
@@ -128,6 +135,70 @@ const queuePreviewAttachments: AttachmentSummary[] = [
     id: "queue-preview-alternate",
     name: "message-search.png",
     previewUrl: generatedImagePreviewAlternate,
+  },
+];
+const supportedContextAttachments: AttachmentSummary[] = [
+  {
+    id: "composer-context-pdf",
+    name: "product-brief.pdf",
+    size: 842_752,
+    kind: "file",
+    mimeType: "application/pdf",
+    previewKind: "pdf",
+    previewUrl: null,
+  },
+  {
+    id: "composer-context-markdown",
+    name: "README.md",
+    size: 12_288,
+    kind: "file",
+    mimeType: "text/markdown",
+    previewKind: "text",
+    previewUrl: null,
+  },
+  {
+    id: "composer-context-text",
+    name: "meeting-notes.txt",
+    size: 4_096,
+    kind: "file",
+    mimeType: "text/plain",
+    previewKind: "text",
+    previewUrl: null,
+  },
+  {
+    id: "composer-context-json",
+    name: "sample-data.json",
+    size: 24_576,
+    kind: "file",
+    mimeType: "application/json",
+    previewKind: "text",
+    previewUrl: null,
+  },
+  {
+    id: "composer-context-docx",
+    name: "requirements.docx",
+    size: 126_976,
+    kind: "file",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    previewKind: "none",
+    previewUrl: null,
+  },
+];
+const sentContextFileMessages: RendererBotMessage[] = [
+  {
+    id: "sent-context-request",
+    author: "bot",
+    body: "Podeślij materiały, na których mam oprzeć podsumowanie.",
+    time: "10:04",
+    kind: "text",
+  },
+  {
+    id: "sent-context-files",
+    author: "you",
+    body: "Jasne — załączam brief, notatki, dane i wymagania. Przygotuj z nich krótkie podsumowanie.",
+    time: "10:05",
+    kind: "text",
+    attachments: supportedContextAttachments,
   },
 ];
 
@@ -504,9 +575,24 @@ const referenceQueue: QueueSnapshot = {
   })),
 };
 
-function MockedConversation(props: { args: Parameters<typeof Conversation>[0]; messages?: RendererBotMessage[] }) {
+function MockedConversation(props: {
+  args: Parameters<typeof Conversation>[0];
+  messages?: RendererBotMessage[];
+  initialAttachments?: DraftAttachment[];
+}) {
   const previousApi = window.openbot;
   const mock = createMockOpenBot();
+  const controller = createConversationController({ onTypingChange: props.args.onTypingChange });
+  const previewUrls = new Set<string>();
+  let storyFrameElement: HTMLDivElement | undefined;
+  const initialBotId = props.args.bot?.id;
+  if (initialBotId && props.initialAttachments?.length) {
+    onSettled(() => {
+      controller.setDrafts({
+        [initialBotId]: { text: "", attachments: props.initialAttachments ?? [], replyToMessageId: null },
+      });
+    });
+  }
   const [unreadCount, setUnreadCount] = createSignal(0);
   const [firstUnreadMessageId, setFirstUnreadMessageId] = createSignal<string | null>(null);
   createEffect(
@@ -517,23 +603,60 @@ function MockedConversation(props: { args: Parameters<typeof Conversation>[0]; m
     },
   );
   window.openbot = mock.api;
+  const handlePastedImages = (event: ClipboardEvent) => {
+    const files = clipboardFiles(event.clipboardData).filter((file) => file.type.startsWith("image/"));
+    if (files.length === 0) return;
+
+    const botId = props.args.bot?.id;
+    if (!botId) return;
+    event.preventDefault();
+    const requestId = crypto.randomUUID();
+    const currentDraft = controller.drafts()[botId] ?? { text: "", attachments: [], replyToMessageId: null };
+    const attachments: DraftAttachment[] = files
+      .slice(0, Math.max(0, 10 - currentDraft.attachments.length))
+      .map((file, index) => {
+        const previewUrl = URL.createObjectURL(file);
+        previewUrls.add(previewUrl);
+        return {
+          id: `${requestId}-${index}`,
+          name: file.name || `pasted-${index + 1}.png`,
+          size: file.size,
+          kind: "image",
+          mimeType: file.type || "image/png",
+          previewKind: "image",
+          previewUrl,
+        };
+      });
+    controller.setDrafts((current) => ({
+      ...current,
+      [botId]: { ...currentDraft, attachments: [...currentDraft.attachments, ...attachments] },
+    }));
+  };
+  const setStoryFrameElement = (element: HTMLDivElement) => {
+    storyFrameElement = element;
+    element.addEventListener("paste", handlePastedImages, true);
+  };
   onCleanup(() => {
+    storyFrameElement?.removeEventListener("paste", handlePastedImages, true);
+    for (const previewUrl of previewUrls) URL.revokeObjectURL(previewUrl);
     mock.dispose();
     window.openbot = previousApi;
   });
   return (
-    <div class="conversation-story-frame">
-      <Conversation
-        {...props.args}
-        messages={props.messages ?? props.args.messages}
-        unreadCount={unreadCount()}
-        firstUnreadMessageId={firstUnreadMessageId()}
-        onMarkRead={async () => {
-          await props.args.onMarkRead();
-          setUnreadCount(0);
-          setFirstUnreadMessageId(null);
-        }}
-      />
+    <div ref={setStoryFrameElement} class="conversation-story-frame">
+      <ConversationControllerProvider controller={controller}>
+        <ConversationView
+          {...props.args}
+          messages={props.messages ?? props.args.messages}
+          unreadCount={unreadCount()}
+          firstUnreadMessageId={firstUnreadMessageId()}
+          onMarkRead={async () => {
+            await props.args.onMarkRead();
+            setUnreadCount(0);
+            setFirstUnreadMessageId(null);
+          }}
+        />
+      </ConversationControllerProvider>
     </div>
   );
 }
@@ -672,6 +795,33 @@ export const ComposerActionMenu: Story = {
     await expect(useSkill).toHaveAttribute("data-disabled");
     await expect(addContext).toBeVisible();
   },
+};
+
+export const PastedImageInComposer: Story = {
+  name: "Pasted image in composer",
+  render: (storyArgs) => <MockedConversation args={storyArgs} initialAttachments={queuePreviewAttachments} />,
+};
+
+export const MixedAttachmentsInNarrowComposer: Story = {
+  name: "Mixed attachments in narrow composer",
+  render: (storyArgs) => (
+    <section
+      data-testid="narrow-composer-attachments-sample"
+      style={{ width: "360px", height: "820px", overflow: "hidden" }}
+    >
+      <MockedConversation args={storyArgs} initialAttachments={[...queuePreviewAttachments, STORY_ATTACHMENTS[0]]} />
+    </section>
+  ),
+};
+
+export const SupportedContextFilesInComposer: Story = {
+  name: "Supported context files in composer",
+  render: (storyArgs) => <MockedConversation args={storyArgs} initialAttachments={supportedContextAttachments} />,
+};
+
+export const SentMessageWithContextFiles: Story = {
+  name: "Sent message with context files",
+  render: (storyArgs) => <MockedConversation args={storyArgs} messages={sentContextFileMessages} />,
 };
 
 export const NarrowRichConversation: Story = {

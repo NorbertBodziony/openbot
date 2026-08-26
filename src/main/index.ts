@@ -3,6 +3,12 @@ import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
+import {
+  ATTACHMENT_FILE_EXTENSIONS,
+  IMAGE_ATTACHMENT_EXTENSIONS,
+  isSupportedAttachmentName,
+  SUPPORTED_ATTACHMENT_DESCRIPTION,
+} from "@openbot/contracts/attachment-files";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import {
@@ -664,8 +670,8 @@ function registerIpcHandlers(
       properties: ["openFile", "multiSelections"],
       filters:
         filter === "images"
-          ? [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "avif"] }]
-          : undefined,
+          ? [{ name: "Images", extensions: [...IMAGE_ATTACHMENT_EXTENSIONS] }]
+          : [{ name: "Supported files", extensions: [...ATTACHMENT_FILE_EXTENSIONS] }],
     };
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     if (result.canceled) return [];
@@ -1710,6 +1716,7 @@ async function uploadRemotePaths(remoteServers: RemoteServerManager, serverId: s
   if (paths.length > INPUT_LIMITS.attachments) {
     throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
   }
+  for (const path of paths) assertSupportedAttachmentName(basename(path));
   const files = await Promise.all(
     paths.map(async (path) => ({
       name: basename(path),
@@ -1751,6 +1758,7 @@ async function uploadRemoteImports(
       bytes: item.bytes,
     })),
   ];
+  for (const file of files) assertSupportedAttachmentName(file.name);
   if (files.some((file) => file.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes)) {
     throw new Error("A file exceeds the 100 MB limit.");
   }
@@ -1760,6 +1768,11 @@ async function uploadRemoteImports(
   return Promise.all(
     files.map((file) => remoteServers.uploadAttachment(file.name, file.mimeType, file.bytes, serverId)),
   );
+}
+
+function assertSupportedAttachmentName(name: string): void {
+  if (isSupportedAttachmentName(name)) return;
+  throw new Error(`${name} is not supported. Attach ${SUPPORTED_ATTACHMENT_DESCRIPTION}.`);
 }
 
 function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService): void {

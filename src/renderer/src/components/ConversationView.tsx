@@ -1,3 +1,4 @@
+import { ATTACHMENT_FILE_ACCEPT, IMAGE_ATTACHMENT_ACCEPT } from "@openbot/contracts/attachment-files";
 import {
   attachmentReferenceIds,
   expandAttachmentReferences,
@@ -83,7 +84,7 @@ import {
   voiceTranscriptionError,
 } from "./conversation/voice-status";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { Button, Dialog, DropdownMenu, File, Image, Input, LoaderCircle, Mic, Puzzle } from "./ui";
+import { Button, Dialog, DropdownMenu, File, Image, ImageRemoveButton, Input, LoaderCircle, Mic, Puzzle } from "./ui";
 
 const loadAgentSettingsPanel = () => import("./conversation/AgentSettingsPanel");
 const AgentSettingsPanel = lazy(loadAgentSettingsPanel);
@@ -2617,38 +2618,6 @@ export function ConversationComposer() {
             </Show>
           </div>
         </div>
-        <Show when={unreferencedDraftAttachments().length > 0}>
-          <div class="composer-attachments">
-            <For each={unreferencedDraftAttachments()}>
-              {(attachment) => (
-                <div class="composer-attachment" data-kind={attachment.kind}>
-                  <span
-                    class="composer-attachment-preview"
-                    data-file-tone={attachment.kind === "file" ? attachmentReferenceTone(attachment.name) : undefined}
-                  >
-                    <Show when={attachment.kind === "image"} fallback={fileBadge(attachment)}>
-                      <img src={attachment.previewUrl ?? ""} alt="" />
-                    </Show>
-                  </span>
-                  <Show when={attachment.kind === "file"}>
-                    <span class="composer-attachment-copy">
-                      <strong title={attachment.name}>{attachment.name}</strong>
-                      <small>{formatFileSize(attachment.size)}</small>
-                    </span>
-                  </Show>
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    aria-label={`Remove ${attachment.name}`}
-                    onClick={() => removeAttachment(attachment.id)}
-                  >
-                    <CloseIcon />
-                  </Button>
-                </div>
-              )}
-            </For>
-          </div>
-        </Show>
         <Show when={replyTarget()}>
           {(message) => (
             <div class="composer-reply-preview">
@@ -2674,7 +2643,10 @@ export function ConversationComposer() {
         </Show>
         <div
           class={`composer${voicePhase() === "recording" ? " composer-recording" : ""}`}
-          data-compact={currentDraft().text.includes("\n") ? undefined : ""}
+          data-compact={
+            currentDraft().text.includes("\n") || unreferencedDraftAttachments().length > 0 ? undefined : ""
+          }
+          data-has-attachments={unreferencedDraftAttachments().length > 0 ? "" : undefined}
           onPointerDown={(event) => {
             if (!(event.target instanceof Element)) return;
             if (event.target.closest("button, .composer-editor-surface")) return;
@@ -2682,6 +2654,51 @@ export function ConversationComposer() {
             setComposerFocusRequest((current) => current + 1);
           }}
         >
+          <Show when={unreferencedDraftAttachments().length > 0}>
+            <div class="composer-attachments">
+              <For each={unreferencedDraftAttachments()}>
+                {(attachment) => (
+                  <div
+                    class={`composer-attachment${attachment.kind === "image" ? " ui-removable-image" : ""}`}
+                    data-kind={attachment.kind}
+                  >
+                    <span
+                      class="composer-attachment-preview"
+                      data-file-tone={attachment.kind === "file" ? attachmentReferenceTone(attachment.name) : undefined}
+                    >
+                      <Show when={attachment.kind === "image"} fallback={fileBadge(attachment)}>
+                        <img src={attachment.previewUrl ?? ""} alt="" />
+                      </Show>
+                    </span>
+                    <Show when={attachment.kind === "file"}>
+                      <span class="composer-attachment-copy">
+                        <strong title={attachment.name}>{attachment.name}</strong>
+                        <small>{formatFileSize(attachment.size)}</small>
+                      </span>
+                    </Show>
+                    <Show
+                      when={attachment.kind === "image"}
+                      fallback={
+                        <Button
+                          variant="ghost"
+                          type="button"
+                          aria-label={`Remove ${attachment.name}`}
+                          onClick={() => removeAttachment(attachment.id)}
+                        >
+                          <CloseIcon />
+                        </Button>
+                      }
+                    >
+                      <ImageRemoveButton
+                        label={`Remove ${attachment.name}`}
+                        onClick={() => removeAttachment(attachment.id)}
+                      />
+                    </Show>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
           <div class="composer-input-label">
             <ComposerEditor
               botId={props.bot?.id}
@@ -2714,7 +2731,7 @@ export function ConversationComposer() {
             <Input
               ref={setImageAttachmentPickerElement}
               type="file"
-              accept=".png,.jpg,.jpeg,.gif,.webp,.avif"
+              accept={IMAGE_ATTACHMENT_ACCEPT}
               multiple
               hidden
               tabindex={-1}
@@ -2723,6 +2740,7 @@ export function ConversationComposer() {
             <Input
               ref={setContextAttachmentPickerElement}
               type="file"
+              accept={ATTACHMENT_FILE_ACCEPT}
               multiple
               hidden
               tabindex={-1}
@@ -2780,7 +2798,7 @@ export function ConversationComposer() {
                     <File aria-hidden="true" />
                     <span>
                       <strong>Add context</strong>
-                      <small>Include a file with supporting details.</small>
+                      <small>PDF, Office, text, Markdown, data, or source files.</small>
                     </span>
                   </DropdownMenu.Item>
                 </DropdownMenu.Content>
