@@ -134,6 +134,7 @@ import {
   decodeVoid,
   RemoteServerManager,
 } from "./remote-server-manager";
+import { canCheckRendererPermission, canRequestRendererPermission } from "./renderer-permissions";
 import { readSetupState, writeSetupState } from "./setup-store";
 import { SkillMarketplaceService } from "./skill-marketplace-service";
 import { TeamStore } from "./team-store";
@@ -1276,7 +1277,7 @@ if (!hasSingleInstanceLock) {
       if (process.platform === "darwin") app.setAsDefaultProtocolClient("openbot");
       if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
       configureContentSecurityPolicy();
-      configureMediaPermissions();
+      configureRendererPermissions();
       mainWindow = createWindow();
       centralAuthManager = new CentralAuthManager({
         apiUrl: readCentralAuthApiUrl(
@@ -1667,19 +1668,13 @@ async function prepareForShutdown(): Promise<void> {
   await (agentService?.stop() ?? Promise.resolve());
 }
 
-function configureMediaPermissions(): void {
-  session.defaultSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
-    if (permission !== "media" || !isTrustedRendererUrl(requestingOrigin)) return false;
-    return details.mediaType === "audio";
-  });
+function configureRendererPermissions(): void {
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) =>
+    canCheckRendererPermission(permission, requestingOrigin, details),
+  );
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     const mediaTypes = ("mediaTypes" in details ? details.mediaTypes : undefined) ?? [];
-    callback(
-      permission === "media" &&
-        isTrustedRendererUrl(webContents.getURL()) &&
-        mediaTypes.length > 0 &&
-        mediaTypes.every((mediaType) => mediaType === "audio"),
-    );
+    callback(canRequestRendererPermission(permission, webContents.getURL(), { mediaTypes }));
   });
 }
 
