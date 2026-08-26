@@ -57,6 +57,7 @@ import { TeamChatStore } from "../backend/team-chat-store";
 import { AgentInitializationGate } from "./agent-initialization";
 import { AgentMarketplaceService } from "./agent-marketplace-service";
 import { notificationForAgentEvent } from "./agent-notifications";
+import { HostAnalytics } from "./analytics";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
 import { resolveOpenBotCloudflaredExecutable } from "./cloudflared-artifact";
@@ -222,6 +223,7 @@ let hostService: HostService | null = null;
 let remoteDesktopManager: RemoteDesktopManager | null = null;
 let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
+let hostAnalytics: HostAnalytics | null = null;
 let voiceTranscriptionService: VoiceTranscriptionService | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
@@ -1127,6 +1129,7 @@ function configureApplicationMenu(service: AgentService, updater: UpdateService)
 }
 
 function forwardAgentEvent(serverId: string, event: AgentEvent): void {
+  if (serverId === "local") hostAnalytics?.handleAgentEvent(event);
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.agentEvent, { serverId, event });
   if (mainWindow.isFocused() || !Notification.isSupported()) return;
@@ -1197,6 +1200,7 @@ function forwardCentralAuth(state: CentralAuthState): void {
       void host
         .syncSignedInAccount(state.user)
         .then(async () => {
+          hostAnalytics?.flushPending();
           const status = host.getStatus();
           if (shouldAutoStartHost(status)) await host.start();
         })
@@ -1434,6 +1438,27 @@ if (!hasSingleInstanceLock) {
       if (signedInState.status === "signed_in") {
         await hostService.syncSignedInAccount(signedInState.user);
       }
+      const analyticsPlatform = process.platform;
+      if (analyticsPlatform !== "darwin" && analyticsPlatform !== "win32" && analyticsPlatform !== "linux") {
+        throw new Error(`Unsupported analytics platform: ${analyticsPlatform}`);
+      }
+      hostAnalytics = new HostAnalytics({
+        enabled: app.isPackaged && appVariant === "production",
+        appVersion: app.getVersion(),
+        platform: analyticsPlatform,
+        resolveOwner: () => {
+          const storedOwner = teamStore.getOwnerAnalyticsIdentity();
+          if (storedOwner) return storedOwner;
+          const state = centralAuthManager?.getState();
+          if (state?.status !== "signed_in") return null;
+          const ownerEmail = teamStore.getOwnerEmail();
+          return !teamStore.configured || ownerEmail?.trim().toLowerCase() === state.user.email.trim().toLowerCase()
+            ? state.user
+            : null;
+        },
+        resolveBot: (botId) => service.listBots().find((bot) => bot.id === botId) ?? null,
+      });
+      hostAnalytics.flushPending();
       remoteServerManager = new RemoteServerManager(
         join(app.getPath("userData"), REMOTE_SERVERS_FILE),
         {

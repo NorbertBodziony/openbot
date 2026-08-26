@@ -1,7 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { Routine, RoutineRun, RoutineSchedule } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
-import { desktopAnalytics } from "../../analytics";
+import { type DesktopAnalyticsScope, desktopAnalytics } from "../../analytics";
 import { Button, CirclePause, Clock3, Dialog, Input, Plus, Switch, Textarea } from "../ui";
 import { BackIcon, SettingsForwardIcon } from "./ConversationIcons";
 import { RoutineRunHistory } from "./RoutineRunHistory";
@@ -274,6 +274,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
     setError(null);
     const startedAt = performance.now();
     const action = current.id ? "update" : "create";
+    const analytics = desktopAnalytics.scope();
     try {
       const saved = current.id
         ? await window.openbot.agent.updateRoutine({
@@ -300,9 +301,9 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
       setDraft((latest) => (latest && latest.id === current.id ? { ...latest, id: saved.id } : latest));
       if (draftRevision === savingRevision) setDirty(false);
       if (!current.id) void loadRuns(saved.id);
-      trackRoutineAction(action, current.schedule, startedAt, "succeeded");
+      trackRoutineAction(analytics, action, current.schedule, startedAt, "succeeded");
     } catch (caught) {
-      trackRoutineAction(action, current.schedule, startedAt, "failed");
+      trackRoutineAction(analytics, action, current.schedule, startedAt, "failed");
       setError(messageForError(caught, "Could not save this routine."));
     } finally {
       setSaving(false);
@@ -316,6 +317,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
       return;
     }
     const startedAt = performance.now();
+    const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.agent.deleteRoutine({
         botId: props.botId,
@@ -327,9 +329,9 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
         return next;
       });
       closeEditor();
-      trackRoutineAction("delete", current.schedule, startedAt, "succeeded");
+      trackRoutineAction(analytics, "delete", current.schedule, startedAt, "succeeded");
     } catch (caught) {
-      trackRoutineAction("delete", current.schedule, startedAt, "failed");
+      trackRoutineAction(analytics, "delete", current.schedule, startedAt, "failed");
       setError(messageForError(caught, "Could not delete this routine."));
     }
   }
@@ -340,15 +342,16 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
     setTesting(true);
     setError(null);
     const startedAt = performance.now();
+    const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.agent.testRoutine({
         botId: props.botId,
         routineId: current.id,
       });
+      trackRoutineAction(analytics, "test", current.schedule, startedAt, "succeeded");
       await loadRuns(current.id);
-      trackRoutineAction("test", current.schedule, startedAt, "succeeded");
     } catch (caught) {
-      trackRoutineAction("test", current.schedule, startedAt, "failed");
+      trackRoutineAction(analytics, "test", current.schedule, startedAt, "failed");
       setError(messageForError(caught, "Could not start the test run."));
     } finally {
       setTesting(false);
@@ -585,15 +588,17 @@ function messageForError(error: unknown, fallback: string): string {
 }
 
 function trackRoutineAction(
+  analytics: DesktopAnalyticsScope,
   action: "create" | "update" | "delete" | "test",
   schedule: RoutineSchedule,
   startedAt: number,
   result: "succeeded" | "failed",
 ): void {
-  desktopAnalytics.track("routine_action", {
+  analytics.track("routine_action", {
     action,
     trigger_type: schedule.kind,
-    delay_ms: Math.max(0, Math.round(performance.now() - startedAt)),
+    duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
     result,
+    ...(result === "failed" ? { failure_code: `${action}_failed` } : {}),
   });
 }

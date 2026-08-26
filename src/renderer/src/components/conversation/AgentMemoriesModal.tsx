@@ -1,6 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { BotMemory } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onSettled, Show } from "solid-js";
+import { desktopAnalytics } from "../../analytics";
 import { Button, Dialog, IconButton, Plus, Textarea, Trash2, X } from "../ui";
 
 interface AgentMemoriesModalProps {
@@ -87,14 +88,21 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
   async function createMemory(): Promise<void> {
     const text = newText().trim();
     if (!text || memories().length >= INPUT_LIMITS.agentMemories) return;
+    const analytics = desktopAnalytics.scope();
+    let operationSucceeded = false;
     setSavingId("new");
     setError(null);
     try {
       await window.openbot.agent.createMemory({ botId: props.botId, text });
+      analytics.track("memory_action", { action: "create", result: "succeeded" });
+      operationSucceeded = true;
       setNewText("");
       setAddOpen(false);
       await loadMemories(false);
     } catch (caught) {
+      if (!operationSucceeded) {
+        analytics.track("memory_action", { action: "create", result: "failed", failure_code: "create_failed" });
+      }
       setError(caught instanceof Error ? caught.message : "Could not save the memory.");
     } finally {
       setSavingId(null);
@@ -132,13 +140,20 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
       setEditingId(null);
       return;
     }
+    const analytics = desktopAnalytics.scope();
+    let operationSucceeded = false;
     setSavingId(memory.id);
     setError(null);
     try {
       await window.openbot.agent.updateMemory({ botId: props.botId, memoryId: memory.id, text });
+      analytics.track("memory_action", { action: "update", result: "succeeded" });
+      operationSucceeded = true;
       setEditingId(null);
       await loadMemories(false);
     } catch (caught) {
+      if (!operationSucceeded) {
+        analytics.track("memory_action", { action: "update", result: "failed", failure_code: "update_failed" });
+      }
       setError(caught instanceof Error ? caught.message : "Could not update the memory.");
     } finally {
       setSavingId(null);
@@ -146,13 +161,20 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
   }
 
   async function deleteMemory(memory: BotMemory): Promise<void> {
+    const analytics = desktopAnalytics.scope();
+    let operationSucceeded = false;
     setSavingId(memory.id);
     setError(null);
     try {
       await window.openbot.agent.deleteMemory({ botId: props.botId, memoryId: memory.id });
+      analytics.track("memory_action", { action: "delete", result: "succeeded" });
+      operationSucceeded = true;
       if (editingId() === memory.id) setEditingId(null);
       await loadMemories(false);
     } catch (caught) {
+      if (!operationSucceeded) {
+        analytics.track("memory_action", { action: "delete", result: "failed", failure_code: "delete_failed" });
+      }
       setError(caught instanceof Error ? caught.message : "Could not delete the memory.");
     } finally {
       setSavingId(null);
@@ -160,14 +182,21 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
   }
 
   async function clearMemories(): Promise<void> {
+    const analytics = desktopAnalytics.scope();
+    let operationSucceeded = false;
     setSavingId("clear");
     setError(null);
     try {
       await window.openbot.agent.clearMemories(props.botId);
+      analytics.track("memory_action", { action: "clear", result: "succeeded" });
+      operationSucceeded = true;
       setClearConfirmation(false);
       setEditingId(null);
       await loadMemories(false);
     } catch (caught) {
+      if (!operationSucceeded) {
+        analytics.track("memory_action", { action: "clear", result: "failed", failure_code: "clear_failed" });
+      }
       setError(caught instanceof Error ? caught.message : "Could not clear the memories.");
     } finally {
       setSavingId(null);

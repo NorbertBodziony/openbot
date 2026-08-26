@@ -8,9 +8,18 @@ import type {
 } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type AnalyticsEventName, type DesktopAnalyticsEvents, desktopAnalytics } from "../analytics";
 import { SkillsMarketplaceModal } from "./SkillsMarketplaceModal";
 
 const nativeCanvasGetContext = HTMLCanvasElement.prototype.getContext;
+const trackMarketplaceAnalytics = vi.fn();
+
+function trackScopedMarketplaceAnalytics<Name extends AnalyticsEventName>(
+  name: Name,
+  properties: DesktopAnalyticsEvents[Name],
+) {
+  trackMarketplaceAnalytics(name, properties);
+}
 
 describe("SkillsMarketplaceModal", () => {
   afterEach(() => {
@@ -25,6 +34,8 @@ describe("SkillsMarketplaceModal", () => {
   });
 
   beforeEach(() => {
+    trackMarketplaceAnalytics.mockClear();
+    vi.spyOn(desktopAnalytics, "scope").mockImplementation(() => ({ track: trackScopedMarketplaceAnalytics }));
     const page: MarketplaceSkillPage = {
       skills: [
         {
@@ -94,6 +105,11 @@ describe("SkillsMarketplaceModal", () => {
     expect(within(details).getByText("What this skill does")).toBeInTheDocument();
     expect(within(details).getByText(/Group changes by customer impact/u)).toBeInTheDocument();
     expect(within(details).getByText("references/template.md")).toBeInTheDocument();
+    expect(trackMarketplaceAnalytics).toHaveBeenCalledWith("marketplace_action", {
+      entity: "skill",
+      action: "view",
+      result: "succeeded",
+    });
     within(details).getByRole("button", { name: "Back to skills" }).click();
     await waitFor(() =>
       expect(screen.queryByRole("region", { name: "Release Notes details" })).not.toBeInTheDocument(),
@@ -194,6 +210,11 @@ describe("SkillsMarketplaceModal", () => {
       expect.objectContaining({ agentId: detail.id }),
     );
     await waitFor(() => expect(onInstalled).toHaveBeenCalledWith(installedBot));
+    expect(trackMarketplaceAnalytics).toHaveBeenCalledWith("marketplace_action", {
+      entity: "agent",
+      action: "install",
+      result: "succeeded",
+    });
   });
 
   it("offers updates and disables agents that are already current", async () => {

@@ -10,22 +10,27 @@ analytics. Development builds, previews, tests, and Storybook do not send analyt
 
 ## Product analytics
 
-The production website records page visits, download clicks, and clicks on allowlisted public links.
-The production desktop app records application, sign-in, onboarding, agent, message, turn, prompt,
-approval, queue, team, browser, search, Remote Desktop, and update lifecycle events. Event properties
-are limited to metadata such as counts, result states, timing, provider, model, reasoning effort,
-application version, operating system, and coarse failure codes.
+The production website records page visits, download clicks, clicks on allowlisted public links, and
+anonymous views and open-app actions on invitation pages. The production desktop app records
+application, sign-in, onboarding, agent, message, turn, prompt, approval, queue, routine, team,
+browser, search, Remote Desktop, update, marketplace, memory, provider, voice transcription,
+reaction, and maintenance actions. Event properties are limited to metadata such as counts, result
+states, timing, provider, model, reasoning effort, application version, operating system, and coarse
+failure codes.
 
 Analytics events do not contain message or direct-message text, prompts, replies, generated content,
 search queries, browser URLs or page titles, file names, local paths, commands, raw error messages, or
 local identifiers for agents, threads, turns, messages, servers, and team members. Session replay and
 automatic interaction capture are disabled.
 
-When a user signs in, OpenPanel receives the OpenBot account ID and email address so events can be
-associated with that account. OpenPanel can also derive session, device, browser, operating-system,
-network, and approximate geographic metadata from a request. The analytics service runs on OpenBot's
-self-hosted infrastructure and receives events through `analytics.openbot.run`. Analytics is always
-enabled in production and has no in-product opt-out control.
+When a user signs in, OpenPanel receives the OpenBot account ID and email address so UI actions can be
+associated with the account that started them. Agent lifecycle events are emitted once by the local
+host and associated with the host owner's account; clients that observe a remote host do not emit the
+lifecycle again. Sign-in attempts and website activity remain anonymous until an account has been
+verified. OpenPanel can also derive session, device, browser, operating-system, network, and
+approximate geographic metadata from a request. The analytics service runs on OpenBot's self-hosted
+infrastructure and receives events through `analytics.openbot.run`. Analytics is always enabled in
+production and has no in-product opt-out control.
 
 OpenPanel event and profile data has no automatic retention limit. It remains stored until it is
 removed manually or the analytics project is deleted. OpenPanel analytics does not change where

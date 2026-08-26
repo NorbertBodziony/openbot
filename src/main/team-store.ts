@@ -30,6 +30,7 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1_000;
 export class TeamStoreError extends Error {}
 
 interface StoredMember extends TeamMemberSummary {
+  accountId?: string;
   passwordSalt?: string;
   passwordHash?: string;
 }
@@ -137,6 +138,11 @@ export class TeamStore {
     return this.#state?.members.find((member) => member.role === "owner")?.email ?? null;
   }
 
+  getOwnerAnalyticsIdentity(): Pick<CentralAuthUser, "id" | "email"> | null {
+    const owner = this.#state?.members.find((member) => member.role === "owner");
+    return owner?.accountId && owner.email ? { id: owner.accountId, email: owner.email } : null;
+  }
+
   assertOwnerAccount(user: CentralAuthUser): void {
     const owner = this.#state?.members.find((member) => member.role === "owner");
     if (!owner?.email) {
@@ -217,6 +223,7 @@ export class TeamStore {
       members: [
         {
           id: randomUUID(),
+          accountId: user.id,
           username: email,
           email,
           name: normalizeName(user.name),
@@ -383,6 +390,7 @@ export class TeamStore {
     if (existingMember) {
       if (existingMember.disabled) throw new TeamStoreError("This team member is disabled.");
       existingMember.email = email;
+      existingMember.accountId = user.id;
       existingMember.username = email;
       existingMember.name = normalizeName(user.name);
       existingMember.avatarUrl = normalizeAvatarUrl(user.avatarUrl);
@@ -396,6 +404,7 @@ export class TeamStore {
     }
     const member: StoredMember = {
       id: randomUUID(),
+      accountId: user.id,
       username: email,
       email,
       name: normalizeName(user.name),
@@ -419,6 +428,7 @@ export class TeamStore {
     );
     if (!member) throw new TeamStoreError("This OpenBot account is not a member of the team.");
     member.email = email;
+    member.accountId = user.id;
     member.username = email;
     member.name = normalizeName(user.name);
     member.avatarUrl = normalizeAvatarUrl(user.avatarUrl);
@@ -560,6 +570,7 @@ export class TeamStore {
     const avatarUrl = normalizeAvatarUrl(user.avatarUrl);
     if (
       member.email === email &&
+      member.accountId === user.id &&
       member.username === email &&
       member.name === name &&
       (member.avatarUrl ?? null) === avatarUrl
@@ -567,6 +578,7 @@ export class TeamStore {
       return false;
     }
     member.email = email;
+    member.accountId = user.id;
     member.username = email;
     member.name = name;
     member.avatarUrl = avatarUrl;

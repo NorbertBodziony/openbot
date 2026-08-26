@@ -870,12 +870,20 @@ function createConversationViewScope(props: ConversationProps) {
     resources.voiceBotId = undefined;
     resources.voiceChunks = [];
     if (!targetBotId || resources.voiceDisposed) return;
+    const analytics = desktopAnalytics.scope();
+    const audioDurationSeconds = voiceElapsedSeconds();
+    const startedAt = performance.now();
     try {
       if (chunks.length === 0) throw new Error("No speech was recorded.");
       const audio = await recordingToWav(new Blob(chunks, { type: mimeType }));
       const result = await window.openbot.voice.transcribe({ audio });
-      if (resources.voiceDisposed || !props.bots.some((bot) => bot.id === targetBotId)) return;
       if (!result.text.trim()) throw new Error("No speech was detected.");
+      analytics.track("voice_transcription", {
+        result: "succeeded",
+        audio_duration_seconds: audioDurationSeconds,
+        duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
+      });
+      if (resources.voiceDisposed || !props.bots.some((bot) => bot.id === targetBotId)) return;
       setDrafts((current) => {
         const draft = current[targetBotId] ?? EMPTY_DRAFT;
         return {
@@ -885,6 +893,12 @@ function createConversationViewScope(props: ConversationProps) {
       });
       if (props.bot?.id === targetBotId) setComposerFocusRequest((current) => current + 1);
     } catch (error) {
+      analytics.track("voice_transcription", {
+        result: "failed",
+        audio_duration_seconds: audioDurationSeconds,
+        duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
+        failure_code: "transcription_failed",
+      });
       if (!resources.voiceDisposed && props.bot?.id === targetBotId) setComposerError(voiceTranscriptionError(error));
     } finally {
       if (!resources.voiceDisposed) setVoicePhase("idle");
@@ -1608,6 +1622,7 @@ function createConversationViewScope(props: ConversationProps) {
   async function reactToMessage(message: BotMessage, emoji: MessageReaction | null) {
     const botId = props.bot?.id;
     if (!botId) return;
+    const analytics = desktopAnalytics.scope();
     setOpenReactionMessageId(null);
     setExpandedEmojiMessageId(null);
     try {
@@ -1616,7 +1631,13 @@ function createConversationViewScope(props: ConversationProps) {
         messageId: message.id,
         emoji,
       });
+      analytics.track("reaction_action", { action: emoji ? "add" : "remove", result: "succeeded" });
     } catch (error) {
+      analytics.track("reaction_action", {
+        action: emoji ? "add" : "remove",
+        result: "failed",
+        failure_code: "reaction_failed",
+      });
       setComposerError(error instanceof Error ? error.message : String(error));
     }
   }
@@ -1658,6 +1679,7 @@ function createConversationViewScope(props: ConversationProps) {
   async function openBrowserAddress(address = browserAddress()) {
     const value = address.trim();
     if (!value) return;
+    const analytics = desktopAnalytics.scope();
     const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
     try {
       const tab = await window.openbot.browser.open({
@@ -1667,10 +1689,10 @@ function createConversationViewScope(props: ConversationProps) {
       });
       setBrowserAddress(tab.url);
       if (!screenOpen()) setActiveRightPanel("browser");
-      desktopAnalytics.track("browser_action", { action: "open", result: "succeeded" });
+      analytics.track("browser_action", { action: "open", result: "succeeded" });
     } catch {
       setBrowserAddress(url);
-      desktopAnalytics.track("browser_action", { action: "open", result: "failed" });
+      analytics.track("browser_action", { action: "open", result: "failed" });
     }
   }
 
@@ -1731,12 +1753,13 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   async function reloadBrowserTab(tabId: string) {
+    const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.browser.reload(tabId);
-      desktopAnalytics.track("browser_action", { action: "reload", result: "succeeded" });
+      analytics.track("browser_action", { action: "reload", result: "succeeded" });
     } catch {
       setComposerError("Could not reload the browser tab.");
-      desktopAnalytics.track("browser_action", { action: "reload", result: "failed" });
+      analytics.track("browser_action", { action: "reload", result: "failed" });
     }
   }
 

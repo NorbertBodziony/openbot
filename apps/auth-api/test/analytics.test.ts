@@ -60,6 +60,40 @@ describe("landing analytics", () => {
     expect(createClient).not.toHaveBeenCalled();
   });
 
+  it("tracks the invitation page anonymously and removes its click listener", () => {
+    document.body.innerHTML = '<a id="open" href="openbot://join?invite=private">Open app</a>';
+    const client = { setGlobalProperties: vi.fn(), track: vi.fn() };
+    const analytics = new LandingAnalytics(() => client, true);
+    const cleanup = analytics.startJoin(document, "openbot.run");
+
+    document.querySelector<HTMLElement>("#open")?.click();
+    cleanup();
+    document.querySelector<HTMLElement>("#open")?.click();
+
+    expect(client.track).toHaveBeenNthCalledWith(1, "join_page_action", { action: "view" });
+    expect(client.track).toHaveBeenNthCalledWith(2, "join_page_action", { action: "open_app" });
+    expect(client.track).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(client.track.mock.calls)).not.toContain("profileId");
+    expect(JSON.stringify(client.track.mock.calls)).not.toContain("private");
+  });
+
+  it("replaces an existing document listener instead of double tracking clicks", () => {
+    document.body.innerHTML = '<a id="open" href="openbot://join">Open app</a>';
+    const client = { setGlobalProperties: vi.fn(), track: vi.fn() };
+    const analytics = new LandingAnalytics(() => client, true);
+    analytics.startJoin(document, "openbot.run");
+    const cleanup = analytics.startJoin(document, "openbot.run");
+
+    document.querySelector<HTMLElement>("#open")?.click();
+    cleanup();
+
+    expect(client.track.mock.calls.filter(([name]) => name === "join_page_action")).toEqual([
+      ["join_page_action", { action: "view" }],
+      ["join_page_action", { action: "view" }],
+      ["join_page_action", { action: "open_app" }],
+    ]);
+  });
+
   it("does not let initialization failures escape", () => {
     const analytics = new LandingAnalytics(() => {
       throw new Error("unavailable");

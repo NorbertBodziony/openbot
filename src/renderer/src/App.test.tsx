@@ -17,11 +17,20 @@ import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-lib
 import { createSignal, Show } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App, AppControllerProvider, createAppController, createBotInitialMessage, useAppController } from "./App";
-import { desktopAnalytics } from "./analytics";
+import { type AnalyticsEventName, type DesktopAnalyticsEvents, desktopAnalytics } from "./analytics";
 import { SIDEBAR_PINS_STORAGE_KEY } from "./sidebar-pins";
 import { SIDEBAR_COLLAPSED_STORAGE_KEY } from "./sidebar-sections";
 
 const trackAnalytics = vi.spyOn(desktopAnalytics, "track").mockImplementation(() => undefined);
+function trackScopedAnalytics<Name extends AnalyticsEventName>(name: Name, properties: DesktopAnalyticsEvents[Name]) {
+  trackAnalytics(name, properties);
+}
+vi.spyOn(desktopAnalytics, "scope").mockImplementation(() => ({
+  track: trackScopedAnalytics,
+}));
+vi.spyOn(desktopAnalytics, "anonymousScope").mockImplementation(() => ({
+  track: trackScopedAnalytics,
+}));
 const defaultMatchMedia = window.matchMedia;
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
@@ -839,6 +848,16 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("button", { name: "Restart Claude" })).toBeEnabled();
     expect(window.openbot.connectChatGPT).toHaveBeenCalledTimes(1);
     expect(window.openbot.connectClaude).toHaveBeenCalledTimes(1);
+    expect(trackAnalytics).toHaveBeenCalledWith("provider_action", {
+      provider: "codex",
+      action: "connect",
+      result: "succeeded",
+    });
+    expect(trackAnalytics).toHaveBeenCalledWith("provider_action", {
+      provider: "claude",
+      action: "connect",
+      result: "succeeded",
+    });
 
     await fireEvent.click(screen.getByRole("button", { name: "Restart ChatGPT" }));
     expect(window.openbot.connectChatGPT).toHaveBeenCalledTimes(2);
@@ -959,6 +978,7 @@ describe("OpenBot connected desktop shell", () => {
     window.dispatchEvent(new Event("focus"));
 
     await waitFor(() => expect(window.openbot.refreshAgentProviders).toHaveBeenCalledTimes(1));
+    expect(trackAnalytics).toHaveBeenCalledWith("provider_action", { action: "refresh", result: "succeeded" });
   });
 
   it("shows a provider-specific warning when Refresh cannot verify an existing connection", async () => {
@@ -1694,7 +1714,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     await waitFor(() => expect(window.openbot.auth.logout).toHaveBeenCalledOnce());
-    expect(trackAnalytics).toHaveBeenCalledWith("account_signed_out", {});
+    expect(trackAnalytics).toHaveBeenCalledWith("account_sign_out", { result: "succeeded" });
     expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
     expect(window.openbot.agent.deleteBot).not.toHaveBeenCalled();
   });
@@ -2112,14 +2132,8 @@ describe("OpenBot connected desktop shell", () => {
       status: "completed",
     });
     await waitFor(() => expect(trigger).toBeEnabled());
-    expect(trackAnalytics).toHaveBeenCalledWith(
-      "turn_started",
-      expect.objectContaining({ provider: "codex", model: "gpt-5.6-luna" }),
-    );
-    expect(trackAnalytics).toHaveBeenCalledWith(
-      "turn_completed",
-      expect.objectContaining({ provider: "codex", status: "completed", duration_ms: expect.any(Number) }),
-    );
+    expect(trackAnalytics).not.toHaveBeenCalledWith("system_turn_started", expect.anything());
+    expect(trackAnalytics).not.toHaveBeenCalledWith("system_turn_completed", expect.anything());
   });
 
   it("supports picker keyboard navigation and outside dismissal", async () => {
@@ -2988,7 +3002,7 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() => expect(composer).toHaveTextContent(""));
-    expect(trackAnalytics).toHaveBeenCalledWith("message_sent", {
+    expect(trackAnalytics).toHaveBeenCalledWith("message_send", {
       provider: "codex",
       model: "gpt-5.6-luna",
       reasoning_effort: "medium",
@@ -2996,6 +3010,7 @@ describe("OpenBot connected desktop shell", () => {
       channel: "agent",
       attachment_count: 0,
       is_reply: false,
+      result: "succeeded",
       delivery_count: 1,
     });
   });
@@ -3066,6 +3081,14 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("Hello Alice")).toBeInTheDocument();
     await waitFor(() => expect(input).toHaveValue(""));
     expect(await screen.findByText("Read state unavailable")).toBeInTheDocument();
+    expect(trackAnalytics).toHaveBeenCalledWith("message_send", {
+      channel: "direct",
+      attachment_count: 0,
+      is_reply: false,
+      result: "succeeded",
+      delivery_count: 1,
+      server_kind: "local",
+    });
 
     emitDirectTyping?.({
       type: "team-direct-typing",
@@ -3380,6 +3403,7 @@ describe("OpenBot connected desktop shell", () => {
       messageId: "assistant-actions",
       emoji: "❤️",
     });
+    expect(trackAnalytics).toHaveBeenCalledWith("reaction_action", { action: "add", result: "succeeded" });
 
     await fireEvent.pointerDown(screen.getByRole("button", { name: "More message actions" }), { button: 0 });
     await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Copy" }), { button: 0 });
@@ -3420,6 +3444,7 @@ describe("OpenBot connected desktop shell", () => {
       messageId: "user-reactions",
       emoji: null,
     });
+    expect(trackAnalytics).toHaveBeenCalledWith("reaction_action", { action: "remove", result: "succeeded" });
     expect(screen.getByRole("img", { name: "Chief reacted with 🎉" })).toBeInTheDocument();
   });
 

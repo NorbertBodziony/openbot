@@ -14,6 +14,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { isSkillCategory, SKILL_CATEGORIES } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { desktopAnalytics } from "../analytics";
 import { normalizeAvatarFile } from "../avatar-image";
 import { AgentAvatar } from "./AgentAvatar";
 import { routineScheduleSummary } from "./conversation/routine-schedule-ui";
@@ -236,11 +237,18 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   }
 
   async function openDetails(skill: MarketplaceSkillSummary) {
+    const analytics = desktopAnalytics.scope();
     enterDetails();
     setSubmissionDetail(null);
     setDetail(null);
     setDetailLoading(true);
     const value = await run(() => window.openbot.skills.get(skill.id));
+    analytics.track("marketplace_action", {
+      entity: "skill",
+      action: "view",
+      result: value ? "succeeded" : "failed",
+      ...(value ? {} : { failure_code: "load_failed" }),
+    });
     if (value) setDetail(value);
     setDetailLoading(false);
     if (!value) leaveDetails();
@@ -253,10 +261,17 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
       return;
     }
     enterDetails();
+    const analytics = desktopAnalytics.scope();
     setSubmissionDetail(null);
     setDetail(null);
     setDetailLoading(true);
     const value = await run(() => window.openbot.skills.get(skillId));
+    analytics.track("marketplace_action", {
+      entity: "skill",
+      action: "view",
+      result: value ? "succeeded" : "failed",
+      ...(value ? {} : { failure_code: "load_failed" }),
+    });
     if (value) setDetail(value);
     setDetailLoading(false);
     if (!value) leaveDetails();
@@ -272,14 +287,25 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
     setSubmissionDetail(submission);
   }
 
-  async function install(skill: MarketplaceSkillSummary, replaceModified = false) {
+  async function install(
+    skill: MarketplaceSkillSummary,
+    replaceModified = false,
+    action: "install" | "update" = "install",
+  ) {
     const botId = targetBotId();
     if (!botId) {
       setError("Switch to Local and create an agent before installing skills.");
       return;
     }
+    const analytics = desktopAnalytics.scope();
     setBusyId(skill.id);
     const result = await run(() => window.openbot.skills.install({ botId, skillId: skill.id, replaceModified }));
+    analytics.track("marketplace_action", {
+      entity: "skill",
+      action,
+      result: result ? "succeeded" : "failed",
+      ...(result ? {} : { failure_code: action === "update" ? "update_failed" : "install_failed" }),
+    });
     if (result) await loadInstalled(botId);
     setBusyId(null);
   }
@@ -290,12 +316,13 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
     if (!listing) return;
     const replace = item.state === "modified";
     if (replace && !window.confirm(`Replace local changes in ${item.name}?`)) return;
-    await install(listing, replace);
+    await install(listing, replace, "update");
   }
 
   async function uninstall(item: InstalledSkill) {
     const modified = item.state === "modified";
     if (!window.confirm(modified ? `Delete ${item.name} and its local changes?` : `Uninstall ${item.name}?`)) return;
+    const analytics = desktopAnalytics.scope();
     setBusyId(item.skillId);
     const removed = await run(async () => {
       await window.openbot.skills.uninstall({
@@ -304,6 +331,12 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
         ...(modified ? { removeModified: true } : {}),
       });
       return true;
+    });
+    analytics.track("marketplace_action", {
+      entity: "skill",
+      action: "uninstall",
+      result: removed ? "succeeded" : "failed",
+      ...(removed ? {} : { failure_code: "uninstall_failed" }),
     });
     if (removed) await loadInstalled();
     setBusyId(null);
@@ -323,6 +356,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   async function submit() {
     const value = preview();
     if (!value) return;
+    const analytics = desktopAnalytics.scope();
     setBusyId("publish");
     const created = await run(() =>
       window.openbot.skills.submit({
@@ -332,6 +366,12 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
         ...(publishSkillId() ? { skillId: publishSkillId() } : {}),
       }),
     );
+    analytics.track("marketplace_action", {
+      entity: "skill",
+      action: "publish",
+      result: created ? "succeeded" : "failed",
+      ...(created ? {} : { failure_code: "publish_failed" }),
+    });
     if (created) {
       setPreview(null);
       clearPublishIcon();
@@ -925,9 +965,16 @@ function AgentMarketplacePanel(props: {
   }
 
   async function openAgent(agent: MarketplaceAgentSummary) {
+    const analytics = desktopAnalytics.scope();
     props.onEnterDetail();
     setLoading(true);
     const value = await run(() => window.openbot.marketplaceAgents.get(agent.id));
+    analytics.track("marketplace_action", {
+      entity: "agent",
+      action: "view",
+      result: value ? "succeeded" : "failed",
+      ...(value ? {} : { failure_code: "load_failed" }),
+    });
     if (value) setDetail(value);
     else props.onLeaveDetail();
     setLoading(false);
@@ -956,6 +1003,7 @@ function AgentMarketplacePanel(props: {
       )
     )
       return;
+    const analytics = desktopAnalytics.scope();
     setBusy(true);
     const value = await run(() =>
       window.openbot.marketplaceAgents.install({
@@ -965,6 +1013,12 @@ function AgentMarketplacePanel(props: {
         receiptId: crypto.randomUUID(),
       }),
     );
+    analytics.track("marketplace_action", {
+      entity: "agent",
+      action: updating ? "update" : "install",
+      result: value ? "succeeded" : "failed",
+      ...(value ? {} : { failure_code: updating ? "update_failed" : "install_failed" }),
+    });
     if (value) await props.onInstalled?.(value.bot);
     setBusy(false);
   }
@@ -998,6 +1052,7 @@ function AgentMarketplacePanel(props: {
   async function submitPublication() {
     const value = preview();
     if (!value) return;
+    const analytics = desktopAnalytics.scope();
     setBusy(true);
     const result = await run(() =>
       window.openbot.marketplaceAgents.submit({
@@ -1005,6 +1060,12 @@ function AgentMarketplacePanel(props: {
         ...(updateAgentId() ? { agentId: updateAgentId() } : {}),
       }),
     );
+    analytics.track("marketplace_action", {
+      entity: "agent",
+      action: "publish",
+      result: result ? "succeeded" : "failed",
+      ...(result ? {} : { failure_code: "publish_failed" }),
+    });
     if (result) {
       setPreview(null);
       setUpdateAgentId(undefined);
