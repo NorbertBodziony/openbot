@@ -1,6 +1,6 @@
 import type { JSX } from "@solidjs/web";
 
-export type ProviderLogoVariant = "codex" | "claude";
+export type ProviderLogoVariant = "codex" | "claude" | "grok";
 
 export interface ProviderLogoProps {
   provider: ProviderLogoVariant;
@@ -15,15 +15,23 @@ const CLAUDE_PATH =
 
 export function ProviderLogo(props: ProviderLogoProps) {
   const isClaude = () => props.provider === "claude";
+  const isGrok = () => props.provider === "grok";
 
   return (
     <svg
       class={props.class}
-      viewBox={isClaude() ? "0 0 248 248" : "0 0 256 260"}
+      viewBox={isGrok() ? "0 0 24 24" : isClaude() ? "0 0 248 248" : "0 0 256 260"}
       aria-hidden="true"
       data-provider={props.provider}
     >
-      <path d={isClaude() ? CLAUDE_PATH : CODEX_PATH} />
+      {isGrok() ? (
+        <>
+          <path d="M9.26905 15.284 17.2479 9.36086c.3912-.29039.9502-.17712 1.1366.27392.981 2.37872.5427 5.23732-1.409 7.20012-1.9517 1.9627-4.6673 2.3931-7.1494 1.4128L7.1146 19.5102c3.8891 2.6732 8.6117 2.0121 11.5628-.9577 2.3408-2.354 3.0658-5.5628 2.3879-8.4564l.0061.0062c-.983-4.25087.2417-5.94997 2.7504-9.424387L24 .428711l-3.3013 3.319949v-.0103L9.267 15.2861" />
+          <path d="M7.62249 16.7237c-2.79136-2.6815-2.31009-6.8315.07168-9.22465 1.76124-1.77119 4.64683-2.49408 7.16583-1.43137l2.7053-1.2563c-.4874-.35424-1.112-.73525-1.8288-1.00299-3.2399-1.34075-7.1187-.67347-9.75237 1.97302-2.53332 2.54763-3.32998 6.46489-1.96194 9.80749 1.02193 2.4982-.6533 4.2652-2.34082 6.0488C1.08337 22.2699.483318 22.9022 0 23.5716l7.62045-6.8459" />
+        </>
+      ) : (
+        <path d={isClaude() ? CLAUDE_PATH : CODEX_PATH} />
+      )}
     </svg>
   );
 }

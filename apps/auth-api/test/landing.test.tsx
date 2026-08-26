@@ -13,6 +13,7 @@ describe("landing page", () => {
     expect(markup).toContain("Persistent AI teammates for real work.");
     expect(markup).toContain('data-provider="codex"');
     expect(markup).toContain('data-provider="claude"');
+    expect(markup).toContain('data-provider="grok"');
     expect(markup).toContain("NEW");
     expect(markup).toContain("Available on");
     expect(markup).toContain('data-platform="macos"');
@@ -73,7 +74,7 @@ describe("landing page", () => {
 
     expect(markup).toContain('id="download"');
     expect(markup).toContain("Download OpenBot");
-    expect(markup).toContain("Choose your platform. Run Codex and Claude side by side from one desktop app.");
+    expect(markup).toContain("Choose your platform. Run Codex, Claude, and Grok side by side from one desktop app.");
     expect(markup).toContain("macOS 12+ · Apple silicon");
     expect(markup).toContain("Windows 10+ · x64");
     expect(markup).toContain("Native Linux build in progress");

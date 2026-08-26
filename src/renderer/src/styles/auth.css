@@ -901,6 +901,10 @@
   fill: var(--openbot-provider-claude);
 }
 
+.provider-picker-logo[data-provider="grok"] {
+  fill: var(--openbot-provider-grok);
+}
+
 .provider-picker-option-unavailable .provider-picker-logo {
   opacity: 0.44;
 }

@@ -6,6 +6,7 @@ import { notificationForAgentEvent } from "./agent-notifications";
 
 const bot = {
   id: "chief",
+  provider: "codex",
   name: "Chief",
   notifications: true,
   title: "Lead",

@@ -8,6 +8,7 @@ export function toBotProfile(stored: BotSummary): BotProfile {
     title: stored.title,
     description: stored.description,
     notifications: stored.notifications,
+    provider: stored.provider,
     model: stored.model,
     reasoningEffort: stored.reasoningEffort,
     threadId: stored.threadId,
@@ -110,6 +111,7 @@ export function botProfilesEqual(left: BotProfile, right: BotProfile): boolean {
     left.title === right.title &&
     left.description === right.description &&
     left.notifications === right.notifications &&
+    left.provider === right.provider &&
     left.model === right.model &&
     left.reasoningEffort === right.reasoningEffort &&
     left.threadId === right.threadId &&

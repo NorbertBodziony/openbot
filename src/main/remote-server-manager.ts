@@ -54,6 +54,7 @@ import type {
 import {
   isAgentEvent,
   isAgentModel,
+  isAgentProvider,
   isAvatarHue,
   isAvatarSeed,
   isBotMemory,
@@ -969,7 +970,8 @@ export function decodeBotSummary(value: unknown): BotSummary {
   const reasoningEffort = record.reasoningEffort;
   const avatarSeed = record.avatarSeed;
   const avatarHue = record.avatarHue;
-  if (!isAgentModel(model) || !isReasoningEffort(reasoningEffort)) {
+  const provider = record.provider;
+  if (!isAgentProvider(provider) || !isAgentModel(model) || !isReasoningEffort(reasoningEffort)) {
     throw new Error("Invalid agent model configuration.");
   }
   if (!isAvatarSeed(avatarSeed) || (avatarHue !== null && !isAvatarHue(avatarHue))) {
@@ -977,6 +979,7 @@ export function decodeBotSummary(value: unknown): BotSummary {
   }
   return {
     id: requiredString(record, "id"),
+    provider,
     name: requiredString(record, "name"),
     title: requiredString(record, "title"),
     description: requiredString(record, "description"),

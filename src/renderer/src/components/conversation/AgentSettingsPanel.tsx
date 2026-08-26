@@ -2,6 +2,7 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AgentModelId,
   AgentModelOption,
+  AgentProviderId,
   AgentReasoningEffort,
   AgentStatus,
   AvatarImageInput,
@@ -62,6 +63,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   const [description, setDescription] = createSignal("");
   const [dirty, setDirty] = createSignal({ name: false, title: false, description: false });
   const [notifications, setNotifications] = createSignal(true);
+  const [provider, setProvider] = createSignal<AgentProviderId>(props.bot.provider);
   const [model, setModel] = createSignal<AgentModelId>("gpt-5.6-luna");
   const [reasoning, setReasoning] = createSignal<AgentReasoningEffort>("medium");
   const [avatarPickerOpen, setAvatarPickerOpen] = createSignal(false);
@@ -76,7 +78,9 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   const [, setRoutineView] = createSignal<AgentRoutinesView>("list");
   const [routineCount, setRoutineCount] = createSignal(0);
   const avatarUrl = () => props.bot.avatarUrl ?? null;
-  const selectedModel = createMemo(() => props.modelOptions.find((option) => option.id === model()));
+  const selectedModel = createMemo(() =>
+    props.modelOptions.find((option) => option.provider === provider() && option.id === model()),
+  );
   const reasoningOptions = createMemo(() => selectedModel()?.supportedReasoningEfforts ?? ["medium" as const]);
   const avatarCandidates = createMemo(() => avatarCandidateSeeds(props.bot.id, avatarCandidateSeed(), avatarBatch()));
   let avatarPickerRoot: HTMLDivElement | undefined;
@@ -102,6 +106,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
           bot.title,
           bot.description,
           String(bot.notifications),
+          bot.provider,
           bot.model,
           bot.reasoningEffort,
           bot.avatarSeed,
@@ -120,6 +125,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       if (!currentDirty.title) setTitle(bot.title);
       if (!currentDirty.description) setDescription(bot.description);
       setNotifications(bot.notifications);
+      setProvider(bot.provider);
       setModel(bot.model);
       setReasoning(bot.reasoningEffort);
       setAvatarSeed(bot.avatarSeed);
@@ -238,17 +244,22 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     await saveBotPatch({ avatarSeed: seed });
   }
 
-  async function selectModel(nextModel: AgentModelId): Promise<void> {
-    const option = props.modelOptions.find((candidate) => candidate.id === nextModel);
+  async function selectModel(nextModel: AgentModelId, nextProvider: AgentProviderId): Promise<void> {
+    const option = props.modelOptions.find(
+      (candidate) => candidate.provider === nextProvider && candidate.id === nextModel,
+    );
     if (!option) return;
     const nextReasoning = option.supportedReasoningEfforts.includes(reasoning())
       ? reasoning()
       : option.defaultReasoningEffort;
     const previousModel = model();
+    const previousProvider = provider();
     const previousReasoning = reasoning();
+    setProvider(nextProvider);
     setModel(nextModel);
     setReasoning(nextReasoning);
-    if (await saveBotPatch({ model: nextModel, reasoningEffort: nextReasoning })) return;
+    if (await saveBotPatch({ provider: nextProvider, model: nextModel, reasoningEffort: nextReasoning })) return;
+    setProvider(previousProvider);
     setModel(previousModel);
     setReasoning(previousReasoning);
   }
@@ -514,6 +525,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                 <ProviderModelPicker
                   variant="field"
                   ariaLabel="Agent model"
+                  provider={provider()}
                   value={model()}
                   agentStatus={props.agentStatus}
                   modelOptions={props.modelOptions}
@@ -523,7 +535,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                       ? "Wait for the current work to finish before changing models."
                       : "Models are available after an agent CLI connects."
                   }
-                  onChange={(nextModel) => void selectModel(nextModel)}
+                  onChange={(nextModel, provider) => void selectModel(nextModel, provider)}
                 />
               </div>
               <div class="agent-settings-model-row agent-settings-thinking-row">

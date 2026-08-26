@@ -7,6 +7,7 @@ import type {
   AgentEvent,
   AgentModelId,
   AgentModelOption,
+  AgentProviderId,
   AgentStatus,
   AttachmentSummary,
   AvatarImageInput,
@@ -21,7 +22,7 @@ import type {
   TeamPresenceSnapshot,
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
-import { isClaudeModel, VOICE_AUDIO_LIMITS } from "@openbot/contracts/ipc";
+import { VOICE_AUDIO_LIMITS } from "@openbot/contracts/ipc";
 import {
   createContext,
   createEffect,
@@ -281,7 +282,6 @@ function clampBrowserPipBounds(
 function createConversationViewScope(props: ConversationProps) {
   const controller = useConversationController();
   const agentReady = () => props.agentStatus.phase === "ready";
-  const imageGenerationUnavailable = () => Boolean(props.bot && isClaudeModel(props.bot.model));
   const {
     drafts,
     setDrafts,
@@ -720,8 +720,13 @@ function createConversationViewScope(props: ConversationProps) {
     }
   }
 
-  async function selectModel(model: AgentModelId, persist = true, reportComposerError = false): Promise<boolean> {
-    const option = props.modelOptions.find((candidate) => candidate.id === model);
+  async function selectModel(
+    model: AgentModelId,
+    provider: AgentProviderId,
+    persist = true,
+    reportComposerError = false,
+  ): Promise<boolean> {
+    const option = props.modelOptions.find((candidate) => candidate.provider === provider && candidate.id === model);
     if (!option) return false;
     const reasoningEffort = option.supportedReasoningEfforts.includes(settingsReasoning())
       ? settingsReasoning()
@@ -732,7 +737,7 @@ function createConversationViewScope(props: ConversationProps) {
     setSettingsReasoning(reasoningEffort);
     if (!persist) return true;
     if (reportComposerError) setComposerError(null);
-    const saved = await saveBotPatch({ model, reasoningEffort });
+    const saved = await saveBotPatch({ provider, model, reasoningEffort });
     if (saved) return true;
     setSettingsModel(previousModel);
     setSettingsReasoning(previousReasoning);
@@ -740,8 +745,8 @@ function createConversationViewScope(props: ConversationProps) {
     return false;
   }
 
-  async function selectAndConfirmModel(model: AgentModelId): Promise<void> {
-    await selectModel(model, true, true);
+  async function selectAndConfirmModel(model: AgentModelId, provider: AgentProviderId): Promise<void> {
+    await selectModel(model, provider, true, true);
   }
 
   function updateScrollFade(element = scrollElement) {
@@ -1937,7 +1942,6 @@ function createConversationViewScope(props: ConversationProps) {
     finishVoiceRecording,
     handleChatSearchShortcut,
     hideBrowserPanel,
-    imageGenerationUnavailable,
     jumpToLatestMessage,
     jumpToUnreadMessages,
     lastChatSearchQuery,
@@ -2119,6 +2123,7 @@ export function ConversationHeader() {
       <div class="conversation-header-actions no-drag">
         <Show when={props.bot}>
           <ProviderModelPicker
+            provider={props.bot?.provider ?? "codex"}
             value={settingsModel()}
             modelOptions={props.modelOptions}
             agentStatus={props.agentStatus}
@@ -2128,7 +2133,7 @@ export function ConversationHeader() {
                 ? "Wait for the current work to finish before changing models."
                 : "Models are available after an agent CLI connects."
             }
-            onChange={(model) => void selectAndConfirmModel(model)}
+            onChange={(model, provider) => void selectAndConfirmModel(model, provider)}
           />
         </Show>
         <Show when={props.remoteDesktopEnabled !== false && props.server?.kind === "remote" ? props.server : undefined}>
@@ -2294,7 +2299,8 @@ export function ConversationTimeline() {
                     : "Agent CLI setup required"}
                 </strong>
                 <p>
-                  {props.agentStatus.message ?? "Install and sign in to Codex CLI or Claude CLI, then restart OpenBot."}
+                  {props.agentStatus.message ??
+                    "Install and sign in to Codex CLI, Claude CLI, or Grok CLI, then restart OpenBot."}
                 </p>
               </div>
               <Show when={props.agentStatus.phase !== "starting" && props.agentStatus.phase !== "restarting"}>
@@ -2561,7 +2567,6 @@ export function ConversationComposer() {
     currentDraft,
     editQueuedMessage,
     editingDeliveryId,
-    imageGenerationUnavailable,
     openAttachmentPicker,
     openAttachmentPickerFromKey,
     presentedQueueDeliveries,
@@ -2666,12 +2671,6 @@ export function ConversationComposer() {
           <div class="composer-error" role="alert">
             {composerError()}
           </div>
-        </Show>
-        <Show when={agentReady() && imageGenerationUnavailable()}>
-          <aside class="image-generation-capability-note" role="note">
-            <strong>Image generation is currently available with Codex.</strong>
-            <span>Switch this agent to a Codex model in Settings to generate images.</span>
-          </aside>
         </Show>
         <div
           class={`composer${voicePhase() === "recording" ? " composer-recording" : ""}`}

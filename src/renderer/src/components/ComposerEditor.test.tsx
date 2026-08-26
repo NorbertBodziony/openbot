@@ -263,6 +263,7 @@ describe("ComposerEditor", () => {
   it("renders saved mentions with the static agent avatar", async () => {
     const sales: BotProfile = {
       id: "sales",
+      provider: "codex",
       name: "Sales",
       title: "Agent",
       description: "",
@@ -299,6 +300,7 @@ describe("ComposerEditor", () => {
   it("finds mention targets by title and description", async () => {
     const design: BotProfile = {
       id: "design",
+      provider: "codex",
       name: "Studio",
       title: "General teammate",
       description: "Owns product interface design.",

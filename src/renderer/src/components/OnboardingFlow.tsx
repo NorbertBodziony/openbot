@@ -27,6 +27,7 @@ type StepDirection = "forward" | "back";
 const PROVIDERS: Array<{ id: AgentProviderId; name: string }> = [
   { id: "codex", name: "Codex" },
   { id: "claude", name: "Claude" },
+  { id: "grok", name: "Grok" },
 ];
 
 const PERMISSIONS: Array<{

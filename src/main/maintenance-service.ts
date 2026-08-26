@@ -172,6 +172,7 @@ async function chooseExportDestination(
 function toBackupBot(bot: BotSummary): Omit<BotSummary, "workspacePath"> {
   return {
     id: bot.id,
+    provider: bot.provider,
     name: bot.name,
     title: bot.title,
     description: bot.description,

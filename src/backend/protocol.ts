@@ -123,6 +123,27 @@ export interface ModelListResponse {
   }>;
 }
 
+export function decodeModelListResponse(value: unknown): ModelListResponse {
+  const data = getArray(value, "data");
+  return {
+    data: data.filter(isRecord).map((item) => ({
+      ...(isString(item.model) ? { model: item.model } : {}),
+      ...(isString(item.displayName) ? { displayName: item.displayName } : {}),
+      ...(isString(item.defaultReasoningEffort) ? { defaultReasoningEffort: item.defaultReasoningEffort } : {}),
+      ...(isBoolean(item.hidden) ? { hidden: item.hidden } : {}),
+      ...(Array.isArray(item.supportedReasoningEfforts)
+        ? {
+            supportedReasoningEfforts: item.supportedReasoningEfforts
+              .filter(isRecord)
+              .flatMap((effort) =>
+                isString(effort.reasoningEffort) ? [{ reasoningEffort: effort.reasoningEffort }] : [],
+              ),
+          }
+        : {}),
+    })),
+  };
+}
+
 export function decodeRecordResponse(value: unknown): DynamicRecord {
   return requiredRecord(value, "response");
 }

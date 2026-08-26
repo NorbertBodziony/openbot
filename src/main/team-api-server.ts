@@ -1498,6 +1498,12 @@ function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {
     }
     result.notifications = value.notifications;
   }
+  if (value.provider !== undefined) {
+    if (value.provider !== "codex" && value.provider !== "claude" && value.provider !== "grok") {
+      throw new HttpError(400, "provider is invalid.");
+    }
+    result.provider = value.provider;
+  }
   if (value.model !== undefined) {
     if (!isAgentModel(value.model)) throw new HttpError(400, "model is invalid.");
     result.model = value.model;

@@ -6,11 +6,11 @@ import type {
   AgentProviderStatus,
   AgentStatus,
 } from "@openbot/contracts/ipc";
-import { isClaudeModel } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js";
 import { Listbox, Popover, Tabs } from "./ui";
 
 interface ProviderModelPickerProps {
+  provider: AgentProviderId;
   value: AgentModelId;
   modelOptions: AgentModelOption[];
   agentStatus: AgentStatus;
@@ -19,23 +19,25 @@ interface ProviderModelPickerProps {
   label?: string;
   disabled?: boolean;
   disabledReason?: string;
-  onChange: (model: AgentModelId) => void;
+  onChange: (model: AgentModelId, provider: AgentProviderId) => void;
 }
 
-const PROVIDERS: AgentProviderId[] = ["claude", "codex"];
-const DEFAULT_MODELS: Record<AgentProviderId, AgentModelId> = {
+const PROVIDERS: AgentProviderId[] = ["claude", "codex", "grok"];
+const DEFAULT_MODELS: Partial<Record<AgentProviderId, AgentModelId>> = {
   claude: "claude-opus-5",
   codex: "gpt-5.6-luna",
 };
 
 export function ProviderModelPicker(props: ProviderModelPickerProps) {
   const [open, setOpen] = createSignal(false);
-  const [railProvider, setRailProvider] = createSignal<AgentProviderId>(untrack(() => providerForModel(props.value)));
+  const [railProvider, setRailProvider] = createSignal<AgentProviderId>(untrack(() => props.provider));
   const providerButtons = new Map<AgentProviderId, HTMLButtonElement>();
   let root: HTMLDivElement | undefined;
 
-  const selectedModel = createMemo(() => props.modelOptions.find((option) => option.id === props.value));
-  const activeProvider = createMemo(() => providerForModel(props.value));
+  const selectedModel = createMemo(() =>
+    props.modelOptions.find((option) => option.provider === props.provider && option.id === props.value),
+  );
+  const activeProvider = () => props.provider;
 
   createEffect(
     () => ({ provider: activeProvider(), open: open() }),
@@ -70,7 +72,11 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
   function selectModel(model: AgentModelId, provider: AgentProviderId): void {
     if (providerAvailability(props.agentStatus, props.modelOptions, provider).state !== "available") return;
     setOpen(false);
-    props.onChange(model);
+    props.onChange(model, provider);
+  }
+
+  function selectRailProvider(provider: AgentProviderId): void {
+    setRailProvider(provider);
   }
 
   const triggerModelName = () => displayModelName(selectedModel()?.name, props.value);
@@ -116,7 +122,7 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
             value={railProvider()}
             onChange={(value) => {
               const provider = PROVIDERS.find((candidate) => candidate === value);
-              if (provider) setRailProvider(provider);
+              if (provider) selectRailProvider(provider);
             }}
             orientation="vertical"
             activationMode="automatic"
@@ -139,6 +145,11 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                       ]}
                       aria-label={`${providerName(provider)}: ${providerSummary(provider, status())}`}
                       title={`${providerName(provider)} · ${providerSummary(provider, status())}`}
+                      onClick={(event) => {
+                        const target = event.currentTarget;
+                        selectRailProvider(provider);
+                        queueMicrotask(() => target.focus({ preventScroll: true }));
+                      }}
                       onKeyDown={(event) => {
                         const delta =
                           event.key === "ArrowDown" || event.key === "ArrowRight"
@@ -162,7 +173,7 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
             <For each={PROVIDERS}>
               {(provider) => {
                 const status = () => providerAvailability(props.agentStatus, props.modelOptions, provider);
-                const models = () => props.modelOptions.filter((option) => providerForModel(option.id) === provider);
+                const models = () => props.modelOptions.filter((option) => option.provider === provider);
                 const available = () => status().state === "available";
                 return (
                   <Tabs.Content
@@ -172,47 +183,63 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                   >
                     <div class="provider-model-heading">
                       <strong>{providerName(provider)}</strong>
-                      <span>{providerSummary(provider, status())}</span>
+                      <span>{providerHeadingSummary(provider, status())}</span>
                     </div>
-                    <Listbox.Root
-                      class="provider-model-list"
-                      aria-label={`${providerName(provider)} models`}
-                      options={models()}
-                      optionValue="id"
-                      optionTextValue={(model) => displayModelName(model.name, model.id)}
-                      optionDisabled={() => !available()}
-                      value={[props.value]}
-                      selectionMode="single"
-                      disallowEmptySelection
-                      shouldFocusWrap
-                      renderItem={(item) => {
-                        const model = item.rawValue;
-                        const selected = () => props.value === model.id;
-                        return (
-                          <Listbox.Item
-                            as="button"
-                            item={item}
-                            type="button"
-                            class={["provider-model-option", { "provider-model-option-selected": selected() }]}
-                            aria-label={`${displayModelName(model.name, model.id)}${
-                              model.id === DEFAULT_MODELS[provider] ? ", default" : ""
-                            }`}
-                            disabled={!available()}
-                            onClick={() => selectModel(model.id, provider)}
-                          >
-                            <span class="provider-model-option-name">
-                              <span>{displayModelName(model.name, model.id)}</span>
-                              <Show when={model.id === DEFAULT_MODELS[provider]}>
-                                <small>default</small>
+                    <Show when={!available()}>
+                      <div class="provider-model-empty" role="status">
+                        {status().message ?? `${providerName(provider)} is unavailable.`}
+                      </div>
+                    </Show>
+                    <Show
+                      when={models().length > 0}
+                      fallback={
+                        <Show when={available()}>
+                          <div class="provider-model-empty" role="status">
+                            No models are available from {providerName(provider)}.
+                          </div>
+                        </Show>
+                      }
+                    >
+                      <Listbox.Root
+                        class="provider-model-list"
+                        aria-label={`${providerName(provider)} models`}
+                        options={models()}
+                        optionValue="id"
+                        optionTextValue={(model) => displayModelName(model.name, model.id)}
+                        optionDisabled={() => !available()}
+                        value={[props.value]}
+                        selectionMode="single"
+                        disallowEmptySelection
+                        shouldFocusWrap
+                        renderItem={(item) => {
+                          const model = item.rawValue;
+                          const selected = () => props.value === model.id;
+                          return (
+                            <Listbox.Item
+                              as="button"
+                              item={item}
+                              type="button"
+                              class={["provider-model-option", { "provider-model-option-selected": selected() }]}
+                              aria-label={`${displayModelName(model.name, model.id)}${
+                                model.id === DEFAULT_MODELS[provider] ? ", default" : ""
+                              }`}
+                              disabled={!available()}
+                              onClick={() => selectModel(model.id, provider)}
+                            >
+                              <span class="provider-model-option-name">
+                                <span>{displayModelName(model.name, model.id)}</span>
+                                <Show when={model.id === DEFAULT_MODELS[provider]}>
+                                  <small>default</small>
+                                </Show>
+                              </span>
+                              <Show when={selected()}>
+                                <CheckIcon />
                               </Show>
-                            </span>
-                            <Show when={selected()}>
-                              <CheckIcon />
-                            </Show>
-                          </Listbox.Item>
-                        );
-                      }}
-                    />
+                            </Listbox.Item>
+                          );
+                        }}
+                      />
+                    </Show>
                   </Tabs.Content>
                 );
               }}
@@ -234,7 +261,7 @@ function providerAvailability(
   if (status.phase === "starting" || status.phase === "restarting") {
     return { id: provider, state: "checking", version: null, message: null };
   }
-  const available = models.some((model) => providerForModel(model.id) === provider);
+  const available = models.some((model) => model.provider === provider);
   return {
     id: provider,
     state: available ? "available" : "error",
@@ -245,11 +272,14 @@ function providerAvailability(
 
 function providerSummary(provider: AgentProviderId, status: AgentProviderStatus): string {
   if (status.state === "available") {
-    return status.version
-      ? `${status.version} (${provider === "claude" ? "Claude Code" : "Codex CLI"})`
-      : `${provider === "claude" ? "Claude Code" : "Codex CLI"} ready`;
+    return status.version ? `${status.version} (${providerCliName(provider)})` : `${providerCliName(provider)} ready`;
   }
   return status.message ?? providerStatusLabel(status.state);
+}
+
+function providerHeadingSummary(provider: AgentProviderId, status: AgentProviderStatus): string {
+  if (status.state === "available") return providerSummary(provider, status);
+  return providerStatusLabel(status.state);
 }
 
 function providerStatusLabel(
@@ -262,12 +292,16 @@ function providerStatusLabel(
   return "Checking";
 }
 
-function providerName(provider: AgentProviderId): "Claude" | "Codex" {
-  return provider === "claude" ? "Claude" : "Codex";
+function providerName(provider: AgentProviderId): "Claude" | "ChatGPT" | "Grok" {
+  if (provider === "claude") return "Claude";
+  if (provider === "grok") return "Grok";
+  return "ChatGPT";
 }
 
-function providerForModel(model: AgentModelId): AgentProviderId {
-  return isClaudeModel(model) ? "claude" : "codex";
+function providerCliName(provider: AgentProviderId): "Claude Code" | "Codex CLI" | "Grok CLI" {
+  if (provider === "claude") return "Claude Code";
+  if (provider === "grok") return "Grok CLI";
+  return "Codex CLI";
 }
 
 function displayModelName(name: string | undefined, fallback: string): string {
@@ -283,6 +317,7 @@ function ProviderMark(props: { provider: AgentProviderId; large?: boolean }) {
         {
           "provider-model-mark-codex": props.provider === "codex",
           "provider-model-mark-claude": props.provider === "claude",
+          "provider-model-mark-grok": props.provider === "grok",
           "provider-model-mark-large": Boolean(props.large),
         },
       ]}

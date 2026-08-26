@@ -12,6 +12,7 @@ import { ExchangeSystemRow, MessageBody } from "./MessageRendering";
 const bots: BotProfile[] = [
   {
     id: "research",
+    provider: "codex",
     name: "Research",
     title: "Researcher",
     description: "",
@@ -27,6 +28,7 @@ const bots: BotProfile[] = [
   },
   {
     id: "sales",
+    provider: "codex",
     name: "Sales",
     title: "Sales",
     description: "",

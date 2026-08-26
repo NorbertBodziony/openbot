@@ -141,6 +141,7 @@ describe("TeamApiServer administration", () => {
       listBots: () => [
         {
           id: "chief",
+          provider: "codex",
           name: "Chief",
           title: "Lead",
           description: "",
@@ -951,6 +952,7 @@ describe("TeamApiServer administration", () => {
     const localBots: BotSummary[] = [
       {
         id: "chief",
+        provider: "codex",
         name: "Chief",
         title: "Lead",
         description: "",

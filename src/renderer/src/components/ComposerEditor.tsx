@@ -623,6 +623,7 @@ function renderEditorValue(
       createMentionToken(
         bot ?? {
           id,
+          provider: "codex",
           name,
           title: "Agent",
           description: "",
