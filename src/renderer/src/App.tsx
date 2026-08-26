@@ -312,6 +312,7 @@ export function createAppController(props: AppProps = {}) {
   const autoReadAgentMessageIds = new Map<string, string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const conversationPageRequests = new Map<string, number>();
+  const queueSnapshotRequests = new Map<string, number>();
   const turnStartedAt = new Map<string, number>();
   const completedTurnByBot = new Map<string, string>();
   let conversationFrame: number | undefined;
@@ -643,13 +644,17 @@ export function createAppController(props: AppProps = {}) {
       const markReadOnOpen = agentChatsToMarkRead.delete(botId);
       const pageRequest = (conversationPageRequests.get(botId) ?? 0) + 1;
       conversationPageRequests.set(botId, pageRequest);
+      const queueRequest = (queueSnapshotRequests.get(botId) ?? 0) + 1;
+      queueSnapshotRequests.set(botId, queueRequest);
       void Promise.all([
         window.openbot.agent.readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 }),
         window.openbot.agent.listQueue(botId),
       ])
         .then(([page, queue]) => {
           if (conversationPageRequests.get(botId) !== pageRequest) return;
-          setQueues((current) => ({ ...current, [botId]: queue }));
+          if (queueSnapshotRequests.get(botId) === queueRequest) {
+            setQueues((current) => ({ ...current, [botId]: queue }));
+          }
           applyConversationPage(page, true, "latest");
           if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
             void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null).catch((error) =>
@@ -688,6 +693,7 @@ export function createAppController(props: AppProps = {}) {
         applyConversationDelta(event);
         return;
       case "queue-changed":
+        queueSnapshotRequests.set(event.snapshot.botId, (queueSnapshotRequests.get(event.snapshot.botId) ?? 0) + 1);
         setQueues((current) => ({
           ...current,
           [event.snapshot.botId]: event.snapshot,

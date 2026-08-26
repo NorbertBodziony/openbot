@@ -60,46 +60,46 @@ export function ProviderPicker(props: ProviderPickerProps) {
     >
       <Show when={props.label}>{(label) => <div class="provider-picker-label">{label()}</div>}</Show>
       <div class="provider-picker-list">
-        <For each={props.options}>
+        <For each={props.options} keyed={false}>
           {(option) => {
-            const available = () => option.state === "available";
-            const inputId = `${pickerId}-${option.id}`;
+            const available = () => option().state === "available";
+            const inputId = () => `${pickerId}-${option().id}`;
             return (
               <label
-                for={inputId}
+                for={inputId()}
                 class={[
                   "provider-picker-option",
                   {
-                    "provider-picker-option-selected": props.value === option.id,
+                    "provider-picker-option-selected": props.value === option().id,
                     "provider-picker-option-unavailable": !available(),
                     "provider-picker-option-selectable-unavailable":
                       !available() && Boolean(props.allowUnavailableSelection),
                   },
                 ]}
-                title={option.message ?? undefined}
+                title={option().message ?? undefined}
               >
                 <Input
-                  id={inputId}
-                  ref={(element) => inputs.set(option.id, element)}
+                  id={inputId()}
+                  ref={(element) => inputs.set(option().id, element)}
                   type="radio"
                   name={props.ariaLabel}
-                  value={option.id}
-                  checked={props.value === option.id}
+                  value={option().id}
+                  checked={props.value === option().id}
                   disabled={props.disabled || (!props.allowUnavailableSelection && !available())}
-                  onChange={() => props.onChange(option.id)}
+                  onChange={() => props.onChange(option().id)}
                 />
-                <ProviderLogo provider={option.id} class="provider-picker-logo" />
+                <ProviderLogo provider={option().id} class="provider-picker-logo" />
                 <span class="provider-picker-identity">
-                  <span class="provider-picker-name">{option.name}</span>
-                  <Show when={option.email}>{(email) => <small class="provider-picker-email">{email()}</small>}</Show>
+                  <span class="provider-picker-name">{option().name}</span>
+                  <Show when={option().email}>{(email) => <small class="provider-picker-email">{email()}</small>}</Show>
                 </span>
                 <Badge
-                  class={`provider-picker-status provider-picker-status-${option.state}`}
-                  tone={providerStatusTone(option.state)}
+                  class={`provider-picker-status provider-picker-status-${option().state}`}
+                  tone={providerStatusTone(option().state)}
                   shape="pill"
                   dot
                 >
-                  {providerStatusLabel(option.state)}
+                  {providerStatusLabel(option().state)}
                 </Badge>
               </label>
             );
