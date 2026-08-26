@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
@@ -199,7 +199,7 @@ async function installValidatedTree(source: string, destination: string): Promis
   const temporaryTarget = join(dirname(destination), `.${destination.split(/[\\/]/u).at(-1)}.installing`);
   await mkdir(dirname(destination), { recursive: true });
   await rm(temporaryTarget, { recursive: true, force: true });
-  await rename(source, temporaryTarget);
+  await cp(source, temporaryTarget, { recursive: true });
   await rm(destination, { recursive: true, force: true });
   await rename(temporaryTarget, destination);
 }

@@ -89,7 +89,7 @@ export async function resolveCodexCli(
 export function bundledCodexExecutable(
   platform = process.platform,
   architecture = process.arch,
-  resourcesPath: string | null = process.resourcesPath,
+  resourcesPath: string | null | undefined = process.resourcesPath,
 ): string | null {
   return bundledProviderExecutable("codex", platform, architecture, resourcesPath);
 }
@@ -140,7 +140,7 @@ export async function resolveClaudeCli(
 export function bundledClaudeExecutable(
   platform = process.platform,
   architecture = process.arch,
-  resourcesPath: string | null = process.resourcesPath,
+  resourcesPath: string | null | undefined = process.resourcesPath,
 ): string | null {
   return bundledProviderExecutable("claude", platform, architecture, resourcesPath);
 }
@@ -190,7 +190,7 @@ export async function resolveGrokCli(
 export function bundledGrokExecutable(
   platform = process.platform,
   architecture = process.arch,
-  resourcesPath: string | null = process.resourcesPath,
+  resourcesPath: string | null | undefined = process.resourcesPath,
 ): string | null {
   return bundledProviderExecutable("grok", platform, architecture, resourcesPath);
 }
@@ -199,7 +199,7 @@ function bundledProviderExecutable(
   provider: "codex" | "claude" | "grok",
   platform: NodeJS.Platform,
   architecture: string,
-  resourcesPath: string | null,
+  resourcesPath: string | null | undefined,
 ): string | null {
   const targetPlatform =
     platform === "darwin" && architecture === "arm64"
@@ -210,7 +210,7 @@ function bundledProviderExecutable(
   if (!targetPlatform) return null;
 
   const executable = platform === "win32" ? `${provider}.exe` : provider;
-  if (resourcesPath === null) {
+  if (!resourcesPath) {
     return resolve("build", provider, targetPlatform, architecture, "bin", executable);
   }
 

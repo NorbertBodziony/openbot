@@ -5,6 +5,24 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-26
+
+### Fixed
+
+- Verify source-built Windows remote desktop binaries as intentionally unsigned while preserving strict vendor signature checks.
+
+## [0.3.3] - 2026-08-26
+
+### Fixed
+
+- Isolate Windows package signature checks from the PowerShell 7 module path used by GitHub Actions.
+
+## [0.3.2] - 2026-08-26
+
+### Fixed
+
+- Stage Claude and Grok runtimes on the destination volume before the atomic Windows install switch.
+
 ## [0.3.1] - 2026-08-26
 
 ### Fixed

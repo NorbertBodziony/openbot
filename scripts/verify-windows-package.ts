@@ -95,29 +95,26 @@ if (machine !== 0x8664) {
 }
 
 for (const name of ["sunshine.exe", "web-server.exe", "streamer.exe"]) {
-  verifyAuthenticode(resolve(resourcesPath, "remote-desktop-runtime/win32/x64", name));
+  verifyAuthenticode(resolve(resourcesPath, "remote-desktop-runtime/win32/x64", name), "NotSigned");
 }
-verifyAuthenticode(resolve(resourcesPath, "cloudflared/win/x64/cloudflared.exe"));
-verifyAuthenticode(codexExecutablePath);
-verifyAuthenticode(resolve(codexRuntimePath, "bin/codex-code-mode-host.exe"));
+verifyAuthenticode(resolve(resourcesPath, "cloudflared/win/x64/cloudflared.exe"), "Valid");
+verifyAuthenticode(codexExecutablePath, "Valid");
+verifyAuthenticode(resolve(codexRuntimePath, "bin/codex-code-mode-host.exe"), "Valid");
 await verifyCodexRuntimeProcess(codexExecutablePath, "0.149.1");
-verifyAuthenticode(claudeExecutablePath);
+verifyAuthenticode(claudeExecutablePath, "Valid");
 if (!run(claudeExecutablePath, ["--version"]).startsWith("2.1.246")) {
   throw new Error("The bundled Claude runtime returned an unexpected version.");
 }
-verifyAuthenticode(grokExecutablePath);
+verifyAuthenticode(grokExecutablePath, "Valid");
 if (!run(grokExecutablePath, ["--version"]).includes("1.0.5")) {
   throw new Error("The bundled Grok runtime returned an unexpected version.");
 }
 
 const versionInfo = JSON.parse(
-  run("powershell.exe", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
+  runWindowsPowerShell(
     `$value = (Get-Item -LiteralPath '${powerShellLiteral(executablePath)}').VersionInfo; ` +
       "[pscustomobject]@{ ProductName = $value.ProductName; FileDescription = $value.FileDescription; ProductVersion = $value.ProductVersion } | ConvertTo-Json -Compress",
-  ]),
+  ),
 );
 if (!isDynamicRecord(versionInfo)) throw new Error("Windows version metadata is invalid.");
 expectEqual(versionInfo.ProductName, "OpenBot", "product name");
@@ -177,14 +174,24 @@ function powerShellLiteral(value: string): string {
   return value.replaceAll("'", "''");
 }
 
-function verifyAuthenticode(path: string): void {
-  const status = run("powershell.exe", [
-    "-NoProfile",
-    "-NonInteractive",
-    "-Command",
+function runWindowsPowerShell(command: string): string {
+  const environment = { ...process.env };
+  // GitHub's pwsh runner exports its PowerShell 7 module path. Windows PowerShell
+  // must rebuild its own path so built-in modules such as Security can load.
+  delete environment.PSModulePath;
+  return execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
+    encoding: "utf8",
+    env: environment,
+  }).trim();
+}
+
+function verifyAuthenticode(path: string, expectedStatus: "NotSigned" | "Valid"): void {
+  const status = runWindowsPowerShell(
     `(Get-AuthenticodeSignature -LiteralPath '${powerShellLiteral(path)}').Status.ToString()`,
-  ]);
-  if (status !== "Valid") throw new Error(`The runtime signature is not valid for ${path}: ${status}`);
+  );
+  if (status !== expectedStatus) {
+    throw new Error(`Unexpected runtime signature status for ${path}: ${status} (expected ${expectedStatus})`);
+  }
 }
 
 async function verifyLaunch(executable: string): Promise<void> {

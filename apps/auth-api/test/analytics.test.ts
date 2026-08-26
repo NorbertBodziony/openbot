@@ -22,9 +22,9 @@ describe("landing analytics", () => {
     const analytics = new LandingAnalytics(createClient, true);
     const cleanup = analytics.start(document, "openbot.run");
 
-    document.querySelector<HTMLElement>("#contact")?.click();
-    document.querySelector<HTMLElement>("#mac")?.click();
-    document.querySelector<HTMLElement>("#private")?.click();
+    clickWithoutNavigation("#contact");
+    clickWithoutNavigation("#mac");
+    clickWithoutNavigation("#private");
     cleanup();
 
     expect(createClient).toHaveBeenCalledWith({
@@ -68,3 +68,10 @@ describe("landing analytics", () => {
     expect(() => analytics.start(document, "openbot.run")).not.toThrow();
   });
 });
+
+function clickWithoutNavigation(selector: string): void {
+  const link = document.querySelector<HTMLAnchorElement>(selector);
+  if (!link) throw new Error(`Missing test link: ${selector}`);
+  link.addEventListener("click", (event) => event.preventDefault(), { once: true });
+  link.click();
+}

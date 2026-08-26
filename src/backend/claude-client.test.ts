@@ -74,8 +74,7 @@ fi
       if (!isString(params.prompt)) prompt = params.prompt;
       expect(params.options).toMatchObject({
         cwd: root,
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        permissionMode: "default",
         additionalDirectories: [root, sharedRoot],
       });
       const options: DynamicRecord | null = isDynamicRecord(params.options) ? params.options : null;
