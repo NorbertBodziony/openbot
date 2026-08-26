@@ -1888,7 +1888,6 @@ export function createAppController(props: AppProps = {}) {
     try {
       await window.openbot.servers.join(input);
       setPendingInviteUrl("");
-      setJoinServerOpen(false);
       await selectServer(
         window.openbot ? ((await window.openbot.servers.list()).find((item) => item.active)?.id ?? "local") : "local",
       );
