@@ -2658,10 +2658,7 @@ export function ConversationComposer() {
             <div class="composer-attachments">
               <For each={unreferencedDraftAttachments()}>
                 {(attachment) => (
-                  <div
-                    class={`composer-attachment${attachment.kind === "image" ? " ui-removable-image" : ""}`}
-                    data-kind={attachment.kind}
-                  >
+                  <div class="composer-attachment ui-removable-image" data-kind={attachment.kind}>
                     <span
                       class="composer-attachment-preview"
                       data-file-tone={attachment.kind === "file" ? attachmentReferenceTone(attachment.name) : undefined}
@@ -2676,24 +2673,10 @@ export function ConversationComposer() {
                         <small>{formatFileSize(attachment.size)}</small>
                       </span>
                     </Show>
-                    <Show
-                      when={attachment.kind === "image"}
-                      fallback={
-                        <Button
-                          variant="ghost"
-                          type="button"
-                          aria-label={`Remove ${attachment.name}`}
-                          onClick={() => removeAttachment(attachment.id)}
-                        >
-                          <CloseIcon />
-                        </Button>
-                      }
-                    >
-                      <ImageRemoveButton
-                        label={`Remove ${attachment.name}`}
-                        onClick={() => removeAttachment(attachment.id)}
-                      />
-                    </Show>
+                    <ImageRemoveButton
+                      label={`Remove ${attachment.name}`}
+                      onClick={() => removeAttachment(attachment.id)}
+                    />
                   </div>
                 )}
               </For>
