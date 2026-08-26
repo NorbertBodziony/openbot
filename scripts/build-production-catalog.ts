@@ -13,7 +13,6 @@ const projectRoot = resolve(scriptRoot, "..");
 const sourceRoot = join(projectRoot, "marketplace", "production-catalog");
 const defaultOutput = join(projectRoot, "out", "marketplace-production", "v1");
 const zipTimestamp = new Date("1980-01-01T00:00:00.000Z");
-const encoder = new TextEncoder();
 const dependencyPattern =
   /(?:\bMCP\b|\bconnectors?\b|https?:\/\/|\b(?:npm|pnpm|yarn|bun|pipx?|uv|brew|apt(?:-get)?|cargo)\s+(?:add|install)\b)/iu;
 
@@ -87,9 +86,9 @@ export async function buildProductionCatalog(outputArgument = defaultOutput): Pr
       const notice = createSkillNotice(skill, upstream);
       const archive = zipSync(
         {
-          "LICENSE.txt": [encoder.encode(license), { mtime: zipTimestamp }],
-          "NOTICE.txt": [encoder.encode(notice), { mtime: zipTimestamp }],
-          "SKILL.md": [encoder.encode(markdown), { mtime: zipTimestamp }],
+          "LICENSE.txt": [utf8Bytes(license), { mtime: zipTimestamp }],
+          "NOTICE.txt": [utf8Bytes(notice), { mtime: zipTimestamp }],
+          "SKILL.md": [utf8Bytes(markdown), { mtime: zipTimestamp }],
         },
         { level: 9 },
       );
@@ -164,7 +163,9 @@ function inspectGeneratedArchive(archive: Uint8Array) {
   const entries = unzipSync(archive);
   const files = Object.keys(entries).sort();
   if (files.join("\n") !== "LICENSE.txt\nNOTICE.txt\nSKILL.md") {
-    throw new Error("Generated skill archive contains unexpected files.");
+    throw new Error(
+      `Generated skill archive contains ${files.length} unexpected files: ${files.slice(0, 10).join(", ")}.`,
+    );
   }
   const skillFile = entries["SKILL.md"];
   if (!skillFile) throw new Error("Generated skill archive is missing SKILL.md.");
@@ -334,6 +335,10 @@ function catalogVersionNumber(value: string): number {
 
 function sha256(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function utf8Bytes(value: string): Uint8Array {
+  return Uint8Array.from(Buffer.from(value, "utf8"));
 }
 
 function stableJson(value: unknown): string {
