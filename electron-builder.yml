@@ -53,6 +53,24 @@ extraResources:
     to: cloudflared/licenses
   - from: build/cloudflared/source-manifest.json
     to: cloudflared/source-manifest.json
+  - from: build/codex/${os}/${arch}
+    to: codex/${os}/${arch}
+  - from: build/codex/licenses
+    to: codex/licenses
+  - from: build/codex/source-manifest.json
+    to: codex/source-manifest.json
+  - from: build/claude/${os}/${arch}
+    to: claude/${os}/${arch}
+  - from: build/claude/licenses
+    to: claude/licenses
+  - from: build/claude/source-manifest.json
+    to: claude/source-manifest.json
+  - from: build/grok/${os}/${arch}
+    to: grok/${os}/${arch}
+  - from: build/grok/licenses
+    to: grok/licenses
+  - from: build/grok/source-manifest.json
+    to: grok/source-manifest.json
 directories:
   output: dist
 mac:

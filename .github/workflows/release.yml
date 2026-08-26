@@ -137,6 +137,9 @@ jobs:
 
       - name: Install and verify native runtimes
         run: |
+          bun run install:codex-runtime
+          bun run install:claude-runtime
+          bun run install:grok-runtime
           bun run install:cloudflared
           bun run install:remote-desktop-runtime
           bun run verify:remote-desktop-runtime
@@ -317,7 +320,11 @@ jobs:
           $runtimeExecutables = @(
             "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/sunshine.exe",
             "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/web-server.exe",
-            "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/streamer.exe"
+            "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/streamer.exe",
+            "dist/win-unpacked/resources/codex/win/x64/bin/codex.exe",
+            "dist/win-unpacked/resources/codex/win/x64/bin/codex-code-mode-host.exe",
+            "dist/win-unpacked/resources/claude/win/x64/bin/claude.exe",
+            "dist/win-unpacked/resources/grok/win/x64/bin/grok.exe"
           )
           foreach ($runtimeExecutable in $runtimeExecutables) {
             $runtimeSignature = Get-AuthenticodeSignature -LiteralPath $runtimeExecutable

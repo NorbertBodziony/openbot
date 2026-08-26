@@ -690,6 +690,10 @@ const openbotApi: OpenBotDesktopApi = {
   getMacPermissions: () => ipcRenderer.invoke(IPC_CHANNELS.getMacPermissions),
   requestMacPermission: (permission) => ipcRenderer.invoke(IPC_CHANNELS.requestMacPermission, permission),
   openExternal: (destination) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, destination),
+  connectChatGPT: () => ipcRenderer.invoke(IPC_CHANNELS.connectChatGPT),
+  connectClaude: () => ipcRenderer.invoke(IPC_CHANNELS.connectClaude),
+  connectGrok: () => ipcRenderer.invoke(IPC_CHANNELS.connectGrok),
+  refreshAgentProviders: () => ipcRenderer.invoke(IPC_CHANNELS.refreshAgentProviders),
   openUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.openUrl, url),
   voice: {
     transcribe: (input) => ipcRenderer.invoke(IPC_CHANNELS.voiceTranscribe, input),
