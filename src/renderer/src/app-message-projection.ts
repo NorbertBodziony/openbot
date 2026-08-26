@@ -156,6 +156,7 @@ export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
     left.senderBotId === right.senderBotId &&
     left.replyToMessageId === right.replyToMessageId &&
     left.reaction === right.reaction &&
+    JSON.stringify(left.reactionSummary) === JSON.stringify(right.reactionSummary) &&
     JSON.stringify(left.attachments) === JSON.stringify(right.attachments) &&
     JSON.stringify(left.exchange) === JSON.stringify(right.exchange) &&
     JSON.stringify(left.routine) === JSON.stringify(right.routine) &&

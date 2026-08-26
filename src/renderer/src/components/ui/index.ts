@@ -1,5 +1,6 @@
 export * from "./alert";
 export * from "./badge";
+export * from "./bubble";
 export * from "./button";
 export * from "./checkbox";
 export * from "./complex";
@@ -7,6 +8,7 @@ export * from "./form";
 export * from "./icons";
 export * from "./image-remove-button";
 export * from "./item";
+export * from "./message";
 export * from "./select";
 export * from "./settings";
 export * from "./sliding-tabs";

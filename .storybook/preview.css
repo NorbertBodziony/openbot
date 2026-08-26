@@ -271,6 +271,105 @@
   min-height: 0;
 }
 
+.chat-primitives-stage {
+  width: min(820px, 100%);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbot-space-6);
+  overflow: hidden;
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-xl);
+  background: var(--openbot-bg-sidebar);
+  box-shadow: var(--openbot-shadow-raised);
+  padding: var(--openbot-space-5);
+}
+
+.chat-primitives-stage-narrow {
+  width: 360px;
+  max-width: 100%;
+}
+
+.chat-primitives-stage-compact {
+  gap: var(--openbot-space-3);
+}
+
+.chat-primitives-stage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--openbot-space-3);
+  border-bottom: 1px solid var(--openbot-border);
+  padding-bottom: var(--openbot-space-4);
+}
+
+.chat-primitives-stage-header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.chat-primitives-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-success);
+  box-shadow: 0 0 0 4px var(--openbot-success-soft);
+}
+
+.chat-primitives-thread {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.chat-prototype-message.message-entry {
+  margin: 0;
+}
+
+.chat-prototype-message [data-slot="bubble"][data-streaming] {
+  border-color: var(--openbot-accent-strong);
+}
+
+.chat-prototype-message [data-slot="bubble-reactions"] button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.chat-prototype-rich-message .ui-message-content {
+  max-width: 100%;
+}
+
+.chat-primitives-gallery {
+  width: min(680px, 100%);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbot-space-8);
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-xl);
+  background: var(--openbot-bg-sidebar);
+  padding: var(--openbot-space-6);
+}
+
+.chat-primitives-ghost-sample {
+  border: 1px dashed var(--openbot-border-strong);
+  border-radius: var(--openbot-radius-lg);
+  padding: var(--openbot-space-4);
+  color: var(--openbot-text-secondary);
+}
+
+@media (max-width: 720px) {
+  .chat-primitives-stage,
+  .chat-primitives-gallery {
+    padding: var(--openbot-space-4);
+  }
+}
+
 .app-logo-gallery {
   display: grid;
   grid-template-columns: repeat(3, minmax(120px, 1fr));
