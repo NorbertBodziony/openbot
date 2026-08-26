@@ -1,3 +1,4 @@
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { realpath, stat } from "node:fs/promises";
@@ -61,10 +62,17 @@ import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/cont
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentMemoryStore } from "./agent-memory-store";
 import { AgentRoutineStore } from "./agent-routine-store";
-import { AppServerError } from "./app-server-client";
+import { AppServerError, CodexAppServerClient } from "./app-server-client";
 import type { BotStore } from "./bot-store";
 import { BROWSER_DYNAMIC_TOOLS, OPENBOT_BROWSER_NAMESPACE } from "./browser-host";
-import { type AgentCliInfo, CodexCliError } from "./cli";
+import {
+  type AgentCliInfo,
+  CodexCliError,
+  type CodexCliInfo,
+  resolveClaudeCli,
+  resolveCodexCli,
+  resolveGrokCli,
+} from "./cli";
 import { ConversationReadStore } from "./conversation-read-store";
 import {
   mergeConversationSnapshots,
@@ -77,6 +85,7 @@ import {
 import type { DeliveryContext, MailboxStore } from "./mailbox-store";
 import { OPENBOT_DYNAMIC_TOOLS } from "./openbot-tools";
 import {
+  type AccountLoginCompletedResult,
   type AccountRateLimitResult,
   type AccountRateLimitsReadResult,
   type AccountReadResult,
@@ -84,6 +93,8 @@ import {
   type AppServerRequest,
   type DynamicToolCallParams,
   type DynamicToolResult,
+  decodeAccountLoginCompletedResult,
+  decodeAccountLoginStartResult,
   decodeAccountRateLimitsReadResult,
   decodeAccountReadResult,
   decodeModelListResponse,
@@ -165,6 +176,20 @@ interface ImageGenerationOperation {
   promise: Promise<void> | null;
 }
 
+interface PendingCodexLogin {
+  client: AgentClient;
+  cli: CodexCliInfo;
+  loginId: string;
+  timer: NodeJS.Timeout;
+  completing: boolean;
+}
+
+interface PendingClaudeLogin {
+  child: ChildProcess;
+  cli: AgentCliInfo;
+  task: Promise<void> | null;
+}
+
 type PendingMemoryMutation =
   | {
       callId: string;
@@ -187,6 +212,9 @@ type PendingMemoryMutation =
 
 const CONTEXT_COMPACTION_THRESHOLD = 0.8;
 const CONTEXT_COMPACTION_TIMEOUT_MS = 120_000;
+const CODEX_LOGIN_TIMEOUT_MS = 10 * 60_000;
+const CLAUDE_LOGIN_TIMEOUT_MS = 10 * 60_000;
+const GROK_LOGIN_TIMEOUT_MS = 10 * 60_000;
 
 const INITIAL_STATUS: AgentStatus = {
   phase: "idle",
@@ -273,6 +301,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #routines: AgentRoutineStore;
   readonly #requestTimeoutMs: number;
   readonly #clientFactory: AgentClientFactory | null;
+  readonly #bundledCodexExecutable: string | null | undefined;
+  readonly #bundledClaudeExecutable: string | null | undefined;
+  readonly #bundledGrokExecutable: string | null | undefined;
   readonly #snapshots = new Map<string, ConversationSnapshot>();
   readonly #threadToBot = new Map<string, string>();
   readonly #loadedThreads = new Set<string>();
@@ -300,6 +331,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #cli = new Map<AgentProvider, AgentCliInfo>();
   readonly #accounts = new Map<AgentProvider, AccountReadResult["account"]>();
   readonly #providerStarts = new Map<AgentProvider, Promise<void>>();
+  readonly #providerConnectionCommands = new Map<AgentProvider, Promise<void>>();
+  #providerRefresh: Promise<AgentStatus> | null = null;
+  #codexLogin: PendingCodexLogin | null = null;
+  #claudeLogin: PendingClaudeLogin | null = null;
+  #grokLogin: PendingClaudeLogin | null = null;
+  #providerActivation = Promise.resolve();
   #preferredProvider: AgentProvider;
   #initialized = false;
   #stopping = false;
@@ -315,6 +352,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     requestTimeoutMs = 30_000,
     preferredProvider: AgentProvider = "codex",
     clientFactory: AgentClientFactory | null = null,
+    bundledCodexExecutable: string | null | undefined = undefined,
+    bundledClaudeExecutable: string | null | undefined = null,
+    bundledGrokExecutable: string | null | undefined = null,
   ) {
     super();
     this.#store = store;
@@ -326,6 +366,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#computerUsePrerequisites = computerUsePrerequisites;
     this.#requestTimeoutMs = requestTimeoutMs;
     this.#clientFactory = clientFactory;
+    this.#bundledCodexExecutable = bundledCodexExecutable;
+    this.#bundledClaudeExecutable = bundledClaudeExecutable;
+    this.#bundledGrokExecutable = bundledGrokExecutable;
     this.#preferredProvider = preferredProvider;
     this.#browser.onChanged((tabs, activeTabId) => {
       this.#emit({ type: "browser-changed", tabs, activeTabId });
@@ -677,6 +720,49 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     throw new Error(status?.message ?? `${providerLabel(provider)} CLI is not ready or signed in.`);
   }
 
+  refreshProviders(): Promise<AgentStatus> {
+    if (this.#providerRefresh) return this.#providerRefresh;
+    if (this.#status.phase === "starting" || this.#status.phase === "restarting") {
+      return Promise.resolve(this.getStatus());
+    }
+
+    const refresh = this.#refreshProviders().finally(() => {
+      if (this.#providerRefresh === refresh) this.#providerRefresh = null;
+    });
+    this.#providerRefresh = refresh;
+    return refresh;
+  }
+
+  connectChatGPT(openExternal: (url: string) => Promise<void>): Promise<AgentStatus> {
+    if (this.#providerRefresh || this.#status.phase === "starting" || this.#status.phase === "restarting") {
+      return Promise.resolve(this.getStatus());
+    }
+    return this.#runProviderConnectionCommand("codex", async () => {
+      await this.#cancelCodexLogin(null);
+      return this.#startCodexLogin(openExternal);
+    });
+  }
+
+  connectClaude(): Promise<AgentStatus> {
+    if (this.#providerRefresh || this.#status.phase === "starting" || this.#status.phase === "restarting") {
+      return Promise.resolve(this.getStatus());
+    }
+    return this.#runProviderConnectionCommand("claude", async () => {
+      await this.#cancelClaudeLogin(null);
+      return this.#startClaudeLogin();
+    });
+  }
+
+  connectGrok(): Promise<AgentStatus> {
+    if (this.#providerRefresh || this.#status.phase === "starting" || this.#status.phase === "restarting") {
+      return Promise.resolve(this.getStatus());
+    }
+    return this.#runProviderConnectionCommand("grok", async () => {
+      await this.#cancelGrokLogin(null);
+      return this.#startGrokLogin();
+    });
+  }
+
   async stop(): Promise<void> {
     this.#stopping = true;
     this.#initialized = false;
@@ -694,6 +780,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#pendingRuntimeRefreshes.clear();
     this.#clearPendingPrompts();
     this.#pendingApprovals.clear();
+    const pendingLogin = this.#codexLogin;
+    this.#codexLogin = null;
+    const claudeLogin = this.#claudeLogin;
+    this.#claudeLogin = null;
+    const grokLogin = this.#grokLogin;
+    this.#grokLogin = null;
+    this.#providerConnectionCommands.clear();
+    if (claudeLogin?.child.exitCode === null) claudeLogin.child.kill("SIGTERM");
+    if (grokLogin?.child.exitCode === null) grokLogin.child.kill("SIGTERM");
+    if (pendingLogin) clearTimeout(pendingLogin.timer);
     for (const [botId, snapshot] of this.#snapshots) {
       if (!snapshot.activeTurnId) continue;
       const session = this.#store.activeProviderSession(botId);
@@ -702,7 +798,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#turnAssociations.clear();
     this.#scheduledDrains.clear();
     this.#browser.clearControls();
-    const clients = [...this.#clients.values()];
+    const clients = [...this.#clients.values(), ...(pendingLogin ? [pendingLogin.client] : [])];
     this.#clients.clear();
     await Promise.all(clients.map((client) => client.stop().catch(() => undefined)));
     await Promise.allSettled([...this.#drainTasks.values()]);
@@ -961,17 +1057,557 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#pendingApprovals.delete(input.requestId);
   }
 
-  async #connect(phase: "starting" | "restarting", requestedProviders: readonly AgentProvider[]): Promise<void> {
+  async #runProviderConnectionCommand(
+    provider: AgentProvider,
+    command: () => Promise<AgentStatus>,
+  ): Promise<AgentStatus> {
+    const previous = this.#providerConnectionCommands.get(provider) ?? Promise.resolve();
+    let result = this.getStatus();
+    const current = previous
+      .catch(() => undefined)
+      .then(async () => {
+        result = await command();
+      });
+    this.#providerConnectionCommands.set(provider, current);
+    try {
+      await current;
+      return result;
+    } finally {
+      if (this.#providerConnectionCommands.get(provider) === current) {
+        this.#providerConnectionCommands.delete(provider);
+      }
+    }
+  }
+
+  async #refreshProviders(): Promise<AgentStatus> {
+    await Promise.all([
+      this.#runProviderConnectionCommand("codex", () => this.#settleCodexLoginForRefresh()),
+      this.#runProviderConnectionCommand("claude", async () => {
+        await this.#cancelClaudeLogin(null);
+        return this.getStatus();
+      }),
+      this.#runProviderConnectionCommand("grok", async () => {
+        await this.#cancelGrokLogin(null);
+        return this.getStatus();
+      }),
+    ]);
+
+    const activeClients = [...this.#clients];
+    if (activeClients.length > 0) {
+      let providers = this.#status.providers;
+      for (const [provider] of activeClients) {
+        providers = updateProviderStatus(providers, provider, {
+          state: "checking",
+          version: this.#cli.get(provider)?.version ?? null,
+          message: null,
+          email: this.#accounts.get(provider)?.email ?? null,
+          checkError: null,
+        });
+      }
+      this.#setStatus({ providers });
+    }
+
+    await Promise.all(
+      activeClients.map(async ([provider, client]) => {
+        try {
+          const account = await client.request("account/read", { refreshToken: true }, decodeAccountReadResult, 5_000);
+          if (account.account) {
+            requireProviderDriver(provider).validateAccount(account.account);
+            this.#accounts.set(provider, account.account);
+            this.#setStatus({
+              providers: updateProviderStatus(this.#status.providers, provider, {
+                state: "available",
+                version: this.#cli.get(provider)?.version ?? null,
+                message: null,
+                email: account.account.email ?? null,
+                checkError: null,
+              }),
+            });
+            return;
+          }
+          this.#clients.delete(provider);
+          this.#cli.delete(provider);
+          this.#accounts.delete(provider);
+          await client.stop().catch(() => undefined);
+        } catch {
+          // Keep a working client when an explicit account refresh is temporarily unavailable.
+          const label = provider === "codex" ? "ChatGPT" : providerLabel(provider);
+          this.#setStatus({
+            providers: updateProviderStatus(this.#status.providers, provider, {
+              state: "available",
+              version: this.#cli.get(provider)?.version ?? null,
+              message: null,
+              email: this.#accounts.get(provider)?.email ?? null,
+              checkError: `Could not verify ${label}. Keeping the existing connection.`,
+            }),
+          });
+        }
+      }),
+    );
+
+    await this.#connect(
+      "starting",
+      BUILT_IN_PROVIDER_DRIVERS.map((driver) => driver.id),
+      { preserveCheckErrors: true, refreshRuntimeInBackground: true },
+    );
+    return this.getStatus();
+  }
+
+  async #settleCodexLoginForRefresh(): Promise<AgentStatus> {
+    const pending = this.#codexLogin;
+    if (!pending) {
+      this.#clearProviderConnectionState("codex");
+      return this.getStatus();
+    }
+    this.#codexLogin = null;
+    clearTimeout(pending.timer);
+    try {
+      const account = await pending.client.request("account/read", { refreshToken: true }, decodeAccountReadResult);
+      if (account.account?.type === "chatgpt") {
+        await this.#activateProviderClient("codex", pending.client, pending.cli, account.account);
+        return this.getStatus();
+      }
+    } catch {
+      // Fall through to cancellation and a fresh provider probe.
+    }
+    await pending.client
+      .request("account/login/cancel", { loginId: pending.loginId }, decodeRecordResponse)
+      .catch(() => undefined);
+    await pending.client.stop().catch(() => undefined);
+    this.#clearProviderConnectionState("codex");
+    return this.getStatus();
+  }
+
+  async #createAuthenticatedProviderClient(
+    provider: AgentProvider,
+    cli: AgentCliInfo,
+  ): Promise<{ client: AgentClient; account: NonNullable<AccountReadResult["account"]> }> {
+    const driver = requireProviderDriver(provider);
+    const client = this.#clientFactory
+      ? this.#clientFactory(provider, cli)
+      : driver.createClient(cli, this.#requestTimeoutMs);
+    this.#bindClient(client);
+    client.start();
+    try {
+      await client.request(
+        "initialize",
+        {
+          clientInfo: { name: "openbot", title: "OpenBot", version: "0.1.0" },
+          capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
+        },
+        decodeRecordResponse,
+      );
+      client.notify("initialized");
+      const account = await client.request("account/read", { refreshToken: true }, decodeAccountReadResult);
+      if (!account.account) throw new Error(`${providerLabel(provider)} did not return an authenticated account.`);
+      driver.validateAccount(account.account);
+      return { client, account: account.account };
+    } catch (error) {
+      await client.stop().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async #activateProviderClient(
+    provider: AgentProvider,
+    client: AgentClient,
+    cli: AgentCliInfo,
+    account: NonNullable<AccountReadResult["account"]>,
+    isCurrent?: () => boolean,
+  ): Promise<void> {
+    const activation = this.#providerActivation
+      .catch(() => undefined)
+      .then(async () => {
+        if (isCurrent && !isCurrent()) {
+          await client.stop().catch(() => undefined);
+          return;
+        }
+        const previousClient = this.#clients.get(provider);
+        const previousCli = this.#cli.get(provider);
+        const previousAccount = this.#accounts.get(provider);
+        this.#clients.set(provider, client);
+        this.#cli.set(provider, cli);
+        this.#accounts.set(provider, account);
+        try {
+          await this.#refreshModelCatalog();
+          if (isCurrent && !isCurrent()) {
+            if (previousClient) this.#clients.set(provider, previousClient);
+            else this.#clients.delete(provider);
+            if (previousCli) this.#cli.set(provider, previousCli);
+            else this.#cli.delete(provider);
+            if (previousAccount) this.#accounts.set(provider, previousAccount);
+            else this.#accounts.delete(provider);
+            if (client !== previousClient) await client.stop().catch(() => undefined);
+            return;
+          }
+          const primaryProvider = this.#clients.has(this.#preferredProvider)
+            ? this.#preferredProvider
+            : this.#clients.has("codex")
+              ? "codex"
+              : provider;
+          const primaryAccount = this.#accounts.get(primaryProvider);
+          const codexClient = this.#clients.get("codex");
+          const computerUse = codexClient ? await this.#probeComputerUse(codexClient) : "unavailable";
+          this.#loadedThreads.clear();
+          this.#setStatus({
+            phase: "ready",
+            cliVersion: this.#cli.get(primaryProvider)?.version ?? null,
+            auth: requireProviderDriver(primaryProvider).authState(primaryAccount ?? null),
+            providers: updateProviderStatus(this.#status.providers, provider, {
+              state: "available",
+              version: cli.version,
+              message: null,
+              email: account.email ?? null,
+            }),
+            capabilities: { chat: "ready", browser: "ready", computerUse },
+            message: null,
+          });
+        } catch (error) {
+          if (previousClient) this.#clients.set(provider, previousClient);
+          else this.#clients.delete(provider);
+          if (previousCli) this.#cli.set(provider, previousCli);
+          else this.#cli.delete(provider);
+          if (previousAccount) this.#accounts.set(provider, previousAccount);
+          else this.#accounts.delete(provider);
+          if (client !== previousClient) await client.stop().catch(() => undefined);
+          throw error;
+        }
+
+        if (previousClient && previousClient !== client) await previousClient.stop().catch(() => undefined);
+        if (provider === "codex") void this.#refreshUsage(client).catch(() => undefined);
+        await this.#reconcileUnresolvedDeliveries();
+        void this.#backfillProviderHistory();
+        for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
+      });
+    this.#providerActivation = activation.catch(() => undefined);
+    await activation;
+  }
+
+  #setProviderConnectionState(provider: AgentProvider, connectionState: "connecting"): void {
+    const current = this.#status.providers?.find((candidate) => candidate.id === provider);
+    this.#setStatus({
+      providers: updateProviderStatus(this.#status.providers, provider, {
+        state: this.#clients.has(provider) ? "available" : (current?.state ?? "checking"),
+        version: this.#cli.get(provider)?.version ?? current?.version ?? null,
+        message: null,
+        email: this.#accounts.get(provider)?.email ?? current?.email ?? null,
+        connectionState,
+      }),
+    });
+  }
+
+  #clearProviderConnectionState(provider: AgentProvider): void {
+    const current = this.#status.providers?.find((candidate) => candidate.id === provider);
+    if (!current?.connectionState) return;
+    this.#setStatus({
+      providers: updateProviderStatus(this.#status.providers, provider, {
+        state: this.#clients.has(provider) ? "available" : current.state,
+        version: this.#cli.get(provider)?.version ?? current.version,
+        message: null,
+        email: this.#accounts.get(provider)?.email ?? current.email ?? null,
+      }),
+    });
+  }
+
+  #setProviderConnectionFailure(provider: AgentProvider, error: unknown, version?: string | null): void {
+    const hasActiveClient = this.#clients.has(provider);
+    const fallbackMessage = `OpenBot could not connect ${providerLabel(provider)}. Try again.`;
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const message = /^(ChatGPT connection|OpenBot)/u.test(rawMessage) ? rawMessage : fallbackMessage;
+    const status = hasActiveClient
+      ? {
+          state: "available" as const,
+          version: this.#cli.get(provider)?.version ?? version ?? null,
+          message,
+          email: this.#accounts.get(provider)?.email ?? null,
+        }
+      : error instanceof CodexCliError
+        ? providerFailureStatus(provider, error, version)
+        : {
+            state: "sign-in-required" as const,
+            version: version ?? null,
+            message,
+            email: null,
+          };
+    const hasProvider = this.#clients.size > 0;
+    this.#setStatus({
+      phase: hasProvider ? "ready" : "blocked",
+      providers: updateProviderStatus(this.#status.providers, provider, status),
+      capabilities: { ...this.#status.capabilities, chat: hasProvider ? "ready" : "unavailable" },
+      message: hasProvider ? null : message,
+    });
+  }
+
+  async #startClaudeLogin(): Promise<AgentStatus> {
+    let cli: AgentCliInfo | null = null;
+    this.#setProviderConnectionState("claude", "connecting");
+
+    try {
+      cli = await resolveClaudeCli({ bundledExecutable: this.#bundledClaudeExecutable });
+      const child = spawn(cli.executable, ["auth", "login", "--claudeai"], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          ...(cli.source === "bundled" ? { DISABLE_AUTOUPDATER: "1" } : {}),
+        },
+        stdio: "ignore",
+        shell: false,
+        windowsHide: process.platform === "win32",
+      });
+      const pending: PendingClaudeLogin = { child, cli, task: null };
+      this.#claudeLogin = pending;
+      pending.task = waitForSuccessfulProcess(child, CLAUDE_LOGIN_TIMEOUT_MS)
+        .then(() => this.#completeClaudeLogin(pending))
+        .catch((error) => this.#failClaudeLogin(pending, error));
+      return this.getStatus();
+    } catch (error) {
+      this.#setProviderConnectionFailure("claude", error, cli?.version);
+      throw error;
+    }
+  }
+
+  async #completeClaudeLogin(pending: PendingClaudeLogin): Promise<void> {
+    if (this.#claudeLogin !== pending) return;
+    try {
+      const candidate = await this.#createAuthenticatedProviderClient("claude", pending.cli);
+      if (this.#claudeLogin !== pending) {
+        await candidate.client.stop().catch(() => undefined);
+        return;
+      }
+      await this.#activateProviderClient(
+        "claude",
+        candidate.client,
+        pending.cli,
+        candidate.account,
+        () => this.#claudeLogin === pending,
+      );
+      if (this.#claudeLogin === pending) this.#claudeLogin = null;
+    } catch (error) {
+      await this.#failClaudeLogin(pending, error);
+    }
+  }
+
+  async #failClaudeLogin(pending: PendingClaudeLogin, error: unknown): Promise<void> {
+    if (this.#claudeLogin !== pending) return;
+    this.#claudeLogin = null;
+    if (pending.child.exitCode === null) pending.child.kill("SIGTERM");
+    this.#setProviderConnectionFailure("claude", error, pending.cli.version);
+  }
+
+  async #cancelClaudeLogin(message: string | null): Promise<void> {
+    const pending = this.#claudeLogin;
+    if (!pending) return;
+    this.#claudeLogin = null;
+    if (pending.child.exitCode === null) pending.child.kill("SIGTERM");
+    await pending.task?.catch(() => undefined);
+    if (message) this.#setProviderConnectionFailure("claude", new Error(message), pending.cli.version);
+    else this.#clearProviderConnectionState("claude");
+  }
+
+  async #startGrokLogin(): Promise<AgentStatus> {
+    let cli: AgentCliInfo | null = null;
+    this.#setProviderConnectionState("grok", "connecting");
+
+    try {
+      cli = await resolveGrokCli({ bundledExecutable: this.#bundledGrokExecutable });
+      const child = spawn(cli.executable, ["--no-auto-update", "login"], {
+        cwd: process.cwd(),
+        env: { ...process.env, GROK_OAUTH2_REFERRER: "openbot" },
+        stdio: "ignore",
+        shell: false,
+        windowsHide: process.platform === "win32",
+      });
+      const pending: PendingClaudeLogin = { child, cli, task: null };
+      this.#grokLogin = pending;
+      pending.task = waitForSuccessfulProcess(child, GROK_LOGIN_TIMEOUT_MS)
+        .then(() => this.#completeGrokLogin(pending))
+        .catch((error) => this.#failGrokLogin(pending, error));
+      return this.getStatus();
+    } catch (error) {
+      this.#setProviderConnectionFailure("grok", error, cli?.version);
+      throw error;
+    }
+  }
+
+  async #completeGrokLogin(pending: PendingClaudeLogin): Promise<void> {
+    if (this.#grokLogin !== pending) return;
+    try {
+      const candidate = await this.#createAuthenticatedProviderClient("grok", pending.cli);
+      if (this.#grokLogin !== pending) {
+        await candidate.client.stop().catch(() => undefined);
+        return;
+      }
+      await this.#activateProviderClient(
+        "grok",
+        candidate.client,
+        pending.cli,
+        candidate.account,
+        () => this.#grokLogin === pending,
+      );
+      if (this.#grokLogin === pending) this.#grokLogin = null;
+    } catch (error) {
+      await this.#failGrokLogin(pending, error);
+    }
+  }
+
+  async #failGrokLogin(pending: PendingClaudeLogin, error: unknown): Promise<void> {
+    if (this.#grokLogin !== pending) return;
+    this.#grokLogin = null;
+    if (pending.child.exitCode === null) pending.child.kill("SIGTERM");
+    this.#setProviderConnectionFailure("grok", error, pending.cli.version);
+  }
+
+  async #cancelGrokLogin(message: string | null): Promise<void> {
+    const pending = this.#grokLogin;
+    if (!pending) return;
+    this.#grokLogin = null;
+    if (pending.child.exitCode === null) pending.child.kill("SIGTERM");
+    await pending.task?.catch(() => undefined);
+    if (message) this.#setProviderConnectionFailure("grok", new Error(message), pending.cli.version);
+    else this.#clearProviderConnectionState("grok");
+  }
+
+  async #startCodexLogin(openExternal: (url: string) => Promise<void>): Promise<AgentStatus> {
+    let client: AgentClient | null = null;
+    let cli: CodexCliInfo | null = null;
+    this.#setProviderConnectionState("codex", "connecting");
+
+    try {
+      cli = await resolveCodexCli({ bundledExecutable: this.#bundledCodexExecutable });
+      client = this.#clientFactory
+        ? this.#clientFactory("codex", cli)
+        : new CodexAppServerClient(cli.executable, this.#requestTimeoutMs);
+      this.#bindClient(client);
+      client.start();
+      await client.request(
+        "initialize",
+        {
+          clientInfo: { name: "openbot", title: "OpenBot", version: "0.1.0" },
+          capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
+        },
+        decodeRecordResponse,
+      );
+      client.notify("initialized");
+
+      if (!this.#clients.has("codex")) {
+        const existingAccount = await client.request("account/read", { refreshToken: false }, decodeAccountReadResult);
+        if (existingAccount.account?.type === "chatgpt") {
+          await this.#activateProviderClient("codex", client, cli, existingAccount.account);
+          return this.getStatus();
+        }
+      }
+
+      const login = await client.request(
+        "account/login/start",
+        {
+          type: "chatgpt",
+          appBrand: "chatgpt",
+          codexStreamlinedLogin: true,
+          useHostedLoginSuccessPage: true,
+        },
+        decodeAccountLoginStartResult,
+      );
+      let pending: PendingCodexLogin;
+      const timer = setTimeout(() => {
+        void this.#cancelCodexLogin("ChatGPT connection timed out. Try again.", pending);
+      }, CODEX_LOGIN_TIMEOUT_MS);
+      timer.unref?.();
+      pending = { client, cli, loginId: login.loginId, timer, completing: false };
+      this.#codexLogin = pending;
+      client.once("exit", () => {
+        if (this.#codexLogin?.client === client) {
+          void this.#failCodexLogin(this.#codexLogin, "ChatGPT connection stopped. Try again.");
+        }
+      });
+      try {
+        await openExternal(login.authUrl);
+      } catch {
+        await this.#cancelCodexLogin("OpenBot could not open the ChatGPT connection page.");
+        throw new Error("OpenBot could not open the ChatGPT connection page.");
+      }
+      return this.getStatus();
+    } catch (error) {
+      if (client && this.#codexLogin?.client !== client && this.#clients.get("codex") !== client) {
+        await client.stop().catch(() => undefined);
+      }
+      const status = this.#status.providers?.find((provider) => provider.id === "codex");
+      if (!this.#codexLogin && status?.connectionState === "connecting") {
+        this.#setProviderConnectionFailure("codex", error, cli?.version);
+      }
+      throw error;
+    }
+  }
+
+  async #completeCodexLogin(completion: AccountLoginCompletedResult, source: AgentClient): Promise<void> {
+    const pending = this.#codexLogin;
+    if (!pending || pending.completing) return;
+    if (pending.client !== source) return;
+    if (completion.loginId !== null && completion.loginId !== pending.loginId) return;
+    pending.completing = true;
+    clearTimeout(pending.timer);
+
+    if (!completion.success) {
+      await this.#failCodexLogin(pending, "ChatGPT connection was not completed. Try again.");
+      return;
+    }
+
+    try {
+      const account = await pending.client.request("account/read", { refreshToken: true }, decodeAccountReadResult);
+      if (account.account?.type !== "chatgpt") {
+        throw new Error("ChatGPT did not return an authenticated account.");
+      }
+      if (this.#codexLogin !== pending) return;
+      await this.#activateProviderClient(
+        "codex",
+        pending.client,
+        pending.cli,
+        account.account,
+        () => this.#codexLogin === pending,
+      );
+      if (this.#codexLogin === pending) this.#codexLogin = null;
+    } catch {
+      await this.#failCodexLogin(pending, "OpenBot could not verify the ChatGPT connection. Try again.");
+    }
+  }
+
+  async #cancelCodexLogin(message: string | null, expected?: PendingCodexLogin): Promise<void> {
+    const pending = this.#codexLogin;
+    if (!pending || (expected && pending !== expected)) return;
+    this.#codexLogin = null;
+    clearTimeout(pending.timer);
+    await pending.client
+      .request("account/login/cancel", { loginId: pending.loginId }, decodeRecordResponse)
+      .catch(() => undefined);
+    await pending.client.stop().catch(() => undefined);
+    if (message) this.#setProviderConnectionFailure("codex", new Error(message), pending.cli.version);
+    else this.#clearProviderConnectionState("codex");
+  }
+
+  async #failCodexLogin(pending: PendingCodexLogin, message: string): Promise<void> {
+    if (this.#codexLogin !== pending) return;
+    clearTimeout(pending.timer);
+    this.#codexLogin = null;
+    await pending.client.stop().catch(() => undefined);
+    this.#setProviderConnectionFailure("codex", new Error(message), pending.cli.version);
+  }
+
+  async #connect(
+    phase: "starting" | "restarting",
+    requestedProviders: readonly AgentProvider[],
+    options: { preserveCheckErrors?: boolean; refreshRuntimeInBackground?: boolean } = {},
+  ): Promise<void> {
     const hadClients = this.#clients.size > 0;
     const providerStatuses: AgentProviderStatus[] = structuredClone(
       this.#status.providers ?? INITIAL_STATUS.providers ?? [],
     );
     for (const provider of requestedProviders) {
+      const current = this.#status.providers?.find((candidate) => candidate.id === provider);
       setProviderStatus(providerStatuses, provider, {
         state: this.#clients.has(provider) ? "available" : "checking",
         version: this.#cli.get(provider)?.version ?? null,
         message: null,
         email: this.#accounts.get(provider)?.email ?? null,
+        checkError: options.preserveCheckErrors ? (current?.checkError ?? null) : null,
       });
     }
     this.#setStatus(
@@ -986,73 +1622,90 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           },
     );
 
-    const failures: string[] = [];
-    for (const provider of requestedProviders) {
-      if (this.#clients.has(provider)) continue;
-      const driver = requireProviderDriver(provider);
-      let client: AgentClient | null = null;
-      let cli: AgentCliInfo | null = null;
-      try {
-        cli = await driver.resolveCli();
-        client = this.#clientFactory
-          ? this.#clientFactory(provider, cli)
-          : driver.createClient(cli, this.#requestTimeoutMs);
-        this.#bindClient(client);
-        client.start();
-        await client.request(
-          "initialize",
-          {
-            clientInfo: { name: "openbot", title: "OpenBot", version: "0.1.0" },
-            capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
-          },
-          decodeRecordResponse,
-        );
-        client.notify("initialized");
-        const account = await client.request("account/read", { refreshToken: false }, decodeAccountReadResult);
-        if (!account.account) {
-          const message = driver.signInMessage;
-          setProviderStatus(providerStatuses, provider, {
-            state: "sign-in-required",
-            version: cli.version,
-            message,
-            email: null,
+    const results = await Promise.all(
+      requestedProviders.map(async (provider): Promise<string | null> => {
+        if (this.#clients.has(provider)) return null;
+        const driver = requireProviderDriver(provider);
+        let client: AgentClient | null = null;
+        let cli: AgentCliInfo | null = null;
+        try {
+          cli =
+            provider === "codex"
+              ? await resolveCodexCli({ bundledExecutable: this.#bundledCodexExecutable })
+              : provider === "claude"
+                ? await resolveClaudeCli({ bundledExecutable: this.#bundledClaudeExecutable })
+                : await resolveGrokCli({ bundledExecutable: this.#bundledGrokExecutable });
+          client = this.#clientFactory
+            ? this.#clientFactory(provider, cli)
+            : driver.createClient(cli, this.#requestTimeoutMs);
+          this.#bindClient(client);
+          client.start();
+          await client.request(
+            "initialize",
+            {
+              clientInfo: { name: "openbot", title: "OpenBot", version: "0.1.0" },
+              capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
+            },
+            decodeRecordResponse,
+          );
+          client.notify("initialized");
+          const account = await client.request("account/read", { refreshToken: false }, decodeAccountReadResult, 5_000);
+          if (!account.account) {
+            const message = provider === "codex" ? "Connect ChatGPT to continue." : driver.signInMessage;
+            await client.stop().catch(() => undefined);
+            this.#setStatus({
+              providers: updateProviderStatus(this.#status.providers, provider, {
+                state: "sign-in-required",
+                version: cli.version,
+                message,
+                email: null,
+              }),
+            });
+            return message;
+          }
+          driver.validateAccount(account.account);
+          this.#cli.set(provider, cli);
+          this.#clients.set(provider, client);
+          this.#accounts.set(provider, account.account);
+          this.#setStatus({
+            providers: updateProviderStatus(this.#status.providers, provider, {
+              state: "available",
+              version: cli.version,
+              message: null,
+              email: account.account.email ?? null,
+            }),
           });
-          failures.push(message);
-          await client.stop().catch(() => undefined);
-          continue;
+          return null;
+        } catch (error) {
+          if (client) await client.stop().catch(() => undefined);
+          const message = error instanceof Error ? error.message : String(error);
+          this.#setStatus({
+            providers: updateProviderStatus(
+              this.#status.providers,
+              provider,
+              providerFailureStatus(provider, error, cli?.version),
+            ),
+          });
+          if (!(error instanceof CodexCliError)) this.#emitError(`${provider}_start_failed`, error);
+          return message;
         }
-        driver.validateAccount(account.account);
-        this.#cli.set(provider, cli);
-        this.#clients.set(provider, client);
-        this.#accounts.set(provider, account.account);
-        setProviderStatus(providerStatuses, provider, {
-          state: "available",
-          version: cli.version,
-          message: null,
-          email: account.account.email ?? null,
-        });
-      } catch (error) {
-        if (client) await client.stop().catch(() => undefined);
-        const message = error instanceof Error ? error.message : String(error);
-        failures.push(message);
-        setProviderStatus(providerStatuses, provider, providerFailureStatus(error, cli?.version));
-        if (!(error instanceof CodexCliError)) this.#emitError(`${provider}_start_failed`, error);
-      }
-    }
+      }),
+    );
+    const failures = results.filter((message): message is string => message !== null);
+    const finalProviderStatuses = structuredClone(this.#status.providers ?? providerStatuses);
 
     if (this.#clients.size === 0) {
       this.#setStatus({
         phase: "blocked",
         cliVersion: null,
         auth: { kind: "unknown" },
-        providers: providerStatuses,
+        providers: finalProviderStatuses,
         capabilities: { ...this.#status.capabilities, chat: "unavailable" },
         message: failures.join(" "),
       });
       return;
     }
 
-    await this.#refreshModelCatalog();
     const primaryProvider = this.#clients.has(this.#preferredProvider)
       ? this.#preferredProvider
       : this.#clients.has("codex")
@@ -1060,25 +1713,44 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         : this.#clients.keys().next().value;
     if (!primaryProvider) throw new Error("No agent provider is ready.");
     const primaryAccount = this.#accounts.get(primaryProvider);
-    const codexClient = this.#clients.get("codex");
-    const computerUse = codexClient ? await this.#probeComputerUse(codexClient) : "unavailable";
     this.#restartAttempts = 0;
     this.#setStatus({
       phase: "ready",
       cliVersion: this.#cli.get(primaryProvider)?.version ?? null,
       auth: requireProviderDriver(primaryProvider).authState(primaryAccount ?? null),
-      providers: providerStatuses,
-      capabilities: { chat: "ready", browser: "ready", computerUse },
+      providers: finalProviderStatuses,
+      capabilities: {
+        chat: "ready",
+        browser: "ready",
+        computerUse: this.#clients.has("codex") ? this.#status.capabilities.computerUse : "unavailable",
+      },
       message: null,
     });
-    if (codexClient) void this.#refreshUsage(codexClient).catch(() => undefined);
-    await this.#reconcileUnresolvedDeliveries();
-    void this.#backfillProviderHistory();
-    for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
+    const refreshRuntime = async (): Promise<void> => {
+      const codexClient = this.#clients.get("codex");
+      const [, computerUse] = await Promise.all([
+        this.#refreshModelCatalog(),
+        codexClient ? this.#probeComputerUse(codexClient) : Promise.resolve("unavailable" as const),
+      ]);
+      if (codexClient === this.#clients.get("codex")) {
+        this.#setStatus({
+          capabilities: { ...this.#status.capabilities, computerUse },
+        });
+      }
+      if (codexClient) void this.#refreshUsage(codexClient).catch(() => undefined);
+      await this.#reconcileUnresolvedDeliveries();
+      void this.#backfillProviderHistory();
+      for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
+    };
+    if (options.refreshRuntimeInBackground) {
+      void refreshRuntime().catch((error) => this.#emitError("provider_metadata_refresh_failed", error));
+      return;
+    }
+    await refreshRuntime();
   }
 
   #bindClient(client: AgentClient): void {
-    client.on("notification", (notification) => this.#handleNotification(notification));
+    client.on("notification", (notification) => this.#handleNotification(notification, client));
     client.on("request", (request) => void this.#handleServerRequest(client, request));
     client.on("diagnostic", (message) => {
       if (/error|failed|warning/i.test(message)) {
@@ -1785,47 +2457,54 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #refreshModelCatalog(): Promise<void> {
-    const discovered: AgentModelOption[] = [];
-    for (const client of this.#clients.values()) {
-      try {
-        const response = await client.request(
-          "model/list",
-          { limit: 100, includeHidden: false },
-          decodeModelListResponse,
-          5_000,
-        );
-        const serverModels = new Map(
-          response.data
-            .filter((item): item is typeof item & { model: string } => !item.hidden && isString(item.model))
-            .map((item) => [item.model, item] as const),
-        );
-        for (const server of serverModels.values()) {
-          if (!server.model) continue;
-          if (client.provider === "codex" && !CURATED_CODEX_MODEL_IDS.has(server.model)) continue;
-          const fallback = FALLBACK_MODELS.find(
-            (candidate) => candidate.provider === client.provider && candidate.id === server.model,
-          );
-          const efforts = (server?.supportedReasoningEfforts ?? [])
-            .map((item) => item.reasoningEffort)
-            .filter(isReasoningEffort);
-          discovered.push({
-            provider: client.provider,
-            id: server.model,
-            name: cleanModelName(server.displayName, fallback?.name ?? server.model),
-            description:
-              fallback?.description ?? `${providerLabel(client.provider)} model discovered from the local CLI.`,
-            defaultReasoningEffort: isReasoningEffort(server?.defaultReasoningEffort)
-              ? server.defaultReasoningEffort
-              : (fallback?.defaultReasoningEffort ?? "medium"),
-            supportedReasoningEfforts: efforts.length ? efforts : (fallback?.supportedReasoningEfforts ?? ["medium"]),
-          });
-        }
-      } catch {
-        if (client.provider !== "grok") {
-          discovered.push(...FALLBACK_MODELS.filter((model) => model.provider === client.provider));
-        }
-      }
-    }
+    const discovered = (
+      await Promise.all(
+        [...this.#clients.values()].map(async (client): Promise<AgentModelOption[]> => {
+          try {
+            const response = await client.request(
+              "model/list",
+              { limit: 100, includeHidden: false },
+              decodeModelListResponse,
+              5_000,
+            );
+            const serverModels = new Map(
+              response.data
+                .filter((item): item is typeof item & { model: string } => !item.hidden && isString(item.model))
+                .map((item) => [item.model, item] as const),
+            );
+            const models: AgentModelOption[] = [];
+            for (const server of serverModels.values()) {
+              if (!server.model) continue;
+              if (client.provider === "codex" && !CURATED_CODEX_MODEL_IDS.has(server.model)) continue;
+              const fallback = FALLBACK_MODELS.find(
+                (candidate) => candidate.provider === client.provider && candidate.id === server.model,
+              );
+              const efforts = (server?.supportedReasoningEfforts ?? [])
+                .map((item) => item.reasoningEffort)
+                .filter(isReasoningEffort);
+              models.push({
+                provider: client.provider,
+                id: server.model,
+                name: cleanModelName(server.displayName, fallback?.name ?? server.model),
+                description:
+                  fallback?.description ?? `${providerLabel(client.provider)} model discovered from the local CLI.`,
+                defaultReasoningEffort: isReasoningEffort(server?.defaultReasoningEffort)
+                  ? server.defaultReasoningEffort
+                  : (fallback?.defaultReasoningEffort ?? "medium"),
+                supportedReasoningEfforts: efforts.length
+                  ? efforts
+                  : (fallback?.supportedReasoningEfforts ?? ["medium"]),
+              });
+            }
+            return models;
+          } catch {
+            return client.provider === "grok"
+              ? []
+              : FALLBACK_MODELS.filter((model) => model.provider === client.provider);
+          }
+        }),
+      )
+    ).flat();
     const discoveredById = new Map(discovered.map((model) => [`${model.provider}:${model.id}`, model]));
     const staticModels = FALLBACK_MODELS.map(
       (fallback) => discoveredById.get(`${fallback.provider}:${fallback.id}`) ?? fallback,
@@ -2013,12 +2692,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  #handleNotification(notification: AppServerNotification): void {
+  #handleNotification(notification: AppServerNotification, source: AgentClient): void {
     const params = notification.params;
     const threadId = getString(params, "threadId");
     const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
 
     switch (notification.method) {
+      case "account/login/completed": {
+        try {
+          const completion = decodeAccountLoginCompletedResult(params);
+          void this.#runProviderConnectionCommand("codex", async () => {
+            await this.#completeCodexLogin(completion, source);
+            return this.getStatus();
+          });
+        } catch {
+          const pending = this.#codexLogin;
+          if (pending)
+            void this.#failCodexLogin(pending, "OpenBot could not verify the ChatGPT connection. Try again.");
+        }
+        return;
+      }
       case "turn/started": {
         if (!threadId || !botId) return;
         const turn = getRecord(params, "turn");
@@ -2694,7 +3387,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async #probeComputerUse(client: AgentClient): Promise<"ready" | "setup-required" | "unavailable"> {
     try {
-      const result = await client.request("plugin/list", { cwds: [] }, decodeRecordResponse);
+      const result = await client.request("plugin/list", { cwds: [] }, decodeRecordResponse, 5_000);
       for (const marketplace of getArray(result, "marketplaces")) {
         for (const plugin of getArray(marketplace, "plugins")) {
           if (!isRecord(plugin)) continue;
@@ -3374,9 +4067,21 @@ function updateProviderStatus(
   return next;
 }
 
-function providerFailureStatus(error: unknown, version: string | null | undefined): Omit<AgentProviderStatus, "id"> {
+function providerFailureStatus(
+  provider: AgentProvider,
+  error: unknown,
+  version: string | null | undefined,
+): Omit<AgentProviderStatus, "id"> {
   const message = error instanceof Error ? error.message : String(error);
   if (error instanceof CodexCliError) {
+    if (provider === "codex" || provider === "claude") {
+      const label = provider === "codex" ? "ChatGPT" : "Claude";
+      const bundledMessage =
+        error.code === "missing"
+          ? `OpenBot's included ${label} runtime is missing. Reinstall OpenBot.`
+          : `OpenBot could not start its included ${label} runtime. Update or reinstall OpenBot.`;
+      return { state: "error", version: version ?? null, message: bundledMessage };
+    }
     if (error.code === "missing") {
       return { state: "not-installed", version: null, message };
     }
@@ -3385,6 +4090,25 @@ function providerFailureStatus(error: unknown, version: string | null | undefine
     }
   }
   return { state: "error", version: version ?? null, message };
+}
+
+function waitForSuccessfulProcess(child: ChildProcess, timeoutMs: number): Promise<void> {
+  return new Promise((resolveProcess, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error("Provider login timed out."));
+    }, timeoutMs);
+    timer.unref?.();
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0 && signal === null) resolveProcess();
+      else reject(new Error(`Provider login stopped with ${signal ?? `code ${String(code)}`}.`));
+    });
+  });
 }
 
 function isRequestTimeout(error: unknown, method: string): boolean {

@@ -243,6 +243,7 @@ export function createAppController(props: AppProps = {}) {
   const [pendingApprovals, setPendingApprovals] = createSignal<Record<string, AgentApproval | undefined>>({});
   const [appInfo, setAppInfo] = createSignal<AppInfo | null>(null);
   const [agentStatus, setAgentStatus] = createSignal<AgentStatus>(FALLBACK_STATUS);
+  const [refreshingProviders, setRefreshingProviders] = createSignal(false);
   const [accountUsage, setAccountUsage] = createSignal<AccountUsage | null>(null);
   const [updateStatus, setUpdateStatus] = createSignal<UpdateStatus>(FALLBACK_UPDATE_STATUS);
   const [leftPanelWidth, setLeftPanelWidth] = createSignal(
@@ -1754,6 +1755,49 @@ export function createAppController(props: AppProps = {}) {
     }
   }
 
+  function openProviderInstallGuide(provider: AgentProviderId): Promise<void> {
+    if (provider !== "claude")
+      return Promise.reject(new Error(`${provider === "codex" ? "ChatGPT" : "Grok"} is included with OpenBot.`));
+    return window.openbot.openExternal("claude-install");
+  }
+
+  function openProviderSignInGuide(provider: AgentProviderId): Promise<void> {
+    if (provider === "codex") return connectChatGPT();
+    if (provider === "claude") return window.openbot.openExternal("claude-sign-in");
+    return connectGrok();
+  }
+
+  async function connectChatGPT(): Promise<void> {
+    return connectProvider(window.openbot.connectChatGPT);
+  }
+
+  async function connectClaude(): Promise<void> {
+    return connectProvider(window.openbot.connectClaude);
+  }
+
+  async function connectGrok(): Promise<void> {
+    return connectProvider(window.openbot.connectGrok);
+  }
+
+  async function connectProvider(connect: () => Promise<AgentStatus>): Promise<void> {
+    if (refreshingProviders()) return;
+    const status = await connect();
+    flush(() => setAgentStatus(status));
+  }
+
+  async function refreshAgentProviders(): Promise<void> {
+    if (refreshingProviders() || agentStatus().phase === "starting" || agentStatus().phase === "restarting") {
+      return;
+    }
+    setRefreshingProviders(true);
+    try {
+      const status = await window.openbot.refreshAgentProviders();
+      flush(() => setAgentStatus(status));
+    } finally {
+      flush(() => setRefreshingProviders(false));
+    }
+  }
+
   async function requestEmailCode(email: string): Promise<void> {
     const state = await window.openbot.auth.requestEmailCode(email);
     desktopAnalytics.track("account_sign_in_started", {
@@ -2370,6 +2414,13 @@ export function createAppController(props: AppProps = {}) {
     setupState,
     pendingInviteUrl,
     agentStatus,
+    refreshingProviders,
+    connectChatGPT,
+    connectClaude,
+    connectGrok,
+    openProviderInstallGuide,
+    openProviderSignInGuide,
+    refreshAgentProviders,
     saveSetup,
     previewInvite,
     joinRemoteDuringSetup,

@@ -66,10 +66,65 @@ afterEach(async () => {
   delete process.env.OPENBOT_FAKE_ARCHIVED_THREAD;
   delete process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY;
   delete process.env.OPENBOT_FAKE_WARNING;
+  delete process.env.OPENBOT_FAKE_CLAUDE_LOGIN_LOG;
   await rm(root, { recursive: true, force: true });
 });
 
 describe.sequential("AgentService", () => {
+  it("checks providers concurrently and publishes each completed row", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    process.env.OPENBOT_GROK_PATH = await createFakeGrok(root);
+    const { store, mailbox } = stores();
+    const delays: Record<AgentProvider, number> = { codex: 300, claude: 20, grok: 150 };
+    const availableOrder: AgentProvider[] = [];
+    const seen = new Set<AgentProvider>();
+    const accountReads = new Set<AgentProvider>();
+    let releaseAccountReads: (() => void) | undefined;
+    const allAccountReadsStarted = new Promise<void>((resolve) => {
+      releaseAccountReads = resolve;
+    });
+    const waitForConcurrentAccountReads = async (method: string, provider: AgentProvider) => {
+      if (method !== "account/read") return;
+      accountReads.add(provider);
+      if (accountReads.size === 3) releaseAccountReads?.();
+      await allAccountReadsStarted;
+    };
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      null,
+      30_000,
+      "codex",
+      (provider) =>
+        new FakeAgentClient(
+          provider,
+          "DONE",
+          true,
+          true,
+          { "account/read": delays[provider] },
+          waitForConcurrentAccountReads,
+        ),
+    );
+    service.on("event", (event) => {
+      if (event.type !== "status") return;
+      for (const provider of event.status.providers ?? []) {
+        if (provider.state !== "available" || seen.has(provider.id)) continue;
+        seen.add(provider.id);
+        availableOrder.push(provider.id);
+      }
+    });
+
+    await Promise.race([
+      service.initialize(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Provider account checks did not start concurrently.")), 3_000),
+      ),
+    ]);
+
+    expect(availableOrder).toEqual(["claude", "grok", "codex"]);
+  });
+
   it("only exposes the curated Codex models from the CLI catalog", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
@@ -237,7 +292,7 @@ describe.sequential("AgentService", () => {
           version: "0.144.1",
           email: "codex@example.com",
         },
-        { id: "claude", state: "not-installed", version: null },
+        { id: "claude", state: "error", version: null },
         { id: "grok", state: "not-installed", version: null },
       ],
       capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
@@ -309,6 +364,263 @@ describe.sequential("AgentService", () => {
       expect(params.runtimeWorkspaceRoots).toEqual([params.cwd, store.sharedRoot]);
     }
     expect((await store.getOrCreate("chief")).threadId).not.toBe((await store.getOrCreate("sales-outbound")).threadId);
+  });
+
+  it("connects ChatGPT through the Codex App Server and promotes the authenticated client", async () => {
+    const { store, mailbox } = stores();
+    const codexClients: FakeAgentClient[] = [];
+    const openExternal = vi.fn(async () => undefined);
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(
+        provider,
+        provider === "codex" ? "CODEX_DONE" : "CLAUDE_DONE",
+        true,
+        provider !== "codex",
+      );
+      if (provider === "codex") codexClients.push(client);
+      return client;
+    });
+    await service.initialize();
+
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({ id: "codex", state: "sign-in-required" }),
+    );
+    const connecting = await service.connectChatGPT(openExternal);
+
+    expect(connecting.providers).toContainEqual(
+      expect.objectContaining({
+        id: "codex",
+        state: "sign-in-required",
+        connectionState: "connecting",
+        version: "0.144.1",
+      }),
+    );
+    expect(openExternal).toHaveBeenCalledWith("https://auth.openai.test/connect");
+    expect(codexClients).toHaveLength(2);
+    expect(codexClients[1]?.requests).toContainEqual({
+      method: "account/login/start",
+      params: {
+        type: "chatgpt",
+        appBrand: "chatgpt",
+        codexStreamlinedLogin: true,
+        useHostedLoginSuccessPage: true,
+      },
+    });
+
+    await service.connectChatGPT(openExternal);
+    expect(openExternal).toHaveBeenCalledTimes(2);
+    expect(codexClients).toHaveLength(3);
+    expect(codexClients[1]?.requests).toContainEqual({
+      method: "account/login/cancel",
+      params: { loginId: "login-1" },
+    });
+    expect(codexClients[1]?.running).toBe(false);
+    codexClients[1]?.completeLogin(true);
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({ id: "codex", connectionState: "connecting" }),
+    );
+    codexClients[2]?.completeLogin(true);
+    await waitFor(
+      () => service?.getStatus().providers?.find((provider) => provider.id === "codex")?.state === "available",
+    );
+
+    expect(service.getStatus().phase).toBe("ready");
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({ id: "codex", state: "available", email: "codex@example.com" }),
+    );
+  });
+
+  it("connects Claude through the bundled CLI login command", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const { store, mailbox } = stores();
+    let claudeClients = 0;
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "claude", (provider) => {
+      const authenticated = provider === "claude" ? claudeClients > 0 : true;
+      if (provider === "claude") claudeClients += 1;
+      return new FakeAgentClient(provider, "DONE", true, authenticated);
+    });
+    await service.initialize();
+
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({ id: "claude", state: "sign-in-required" }),
+    );
+
+    const connecting = await service.connectClaude();
+
+    expect(connecting.providers).toContainEqual(
+      expect.objectContaining({ id: "claude", state: "sign-in-required", connectionState: "connecting" }),
+    );
+    await waitFor(() => claudeClients === 2);
+    await waitFor(
+      () => service?.getStatus().providers?.find((provider) => provider.id === "claude")?.state === "available",
+    );
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({ id: "claude", state: "available", email: "claude@example.com" }),
+    );
+  });
+
+  it("connects Grok through the bundled CLI login command", async () => {
+    process.env.OPENBOT_GROK_PATH = await createFakeGrok(root);
+    const { store, mailbox } = stores();
+    let grokClients = 0;
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "grok", (provider) => {
+      const authenticated = provider === "grok" ? grokClients > 0 : true;
+      if (provider === "grok") grokClients += 1;
+      return new FakeAgentClient(provider, "DONE", true, authenticated);
+    });
+    await service.initialize();
+
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({ id: "grok", state: "sign-in-required" }),
+    );
+
+    const connecting = await service.connectGrok();
+
+    expect(connecting.providers).toContainEqual(
+      expect.objectContaining({ id: "grok", state: "sign-in-required", connectionState: "connecting" }),
+    );
+    await waitFor(() => grokClients === 2);
+    await waitFor(
+      () => service?.getStatus().providers?.find((provider) => provider.id === "grok")?.state === "available",
+    );
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({ id: "grok", state: "available", email: "grok@example.com" }),
+    );
+  });
+
+  it("restores the connect action when the login page cannot open", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      null,
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider, "DONE", true, provider !== "codex"),
+    );
+    await service.initialize();
+
+    await expect(service.connectChatGPT(async () => Promise.reject(new Error("browser failed")))).rejects.toThrow(
+      "could not open",
+    );
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({ id: "codex", state: "sign-in-required" }),
+    );
+  });
+
+  it("cancels a ChatGPT login that does not complete", async () => {
+    const { store, mailbox } = stores();
+    const codexClients: FakeAgentClient[] = [];
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "DONE", true, provider !== "codex");
+      if (provider === "codex") codexClients.push(client);
+      return client;
+    });
+    await service.initialize();
+    vi.useFakeTimers();
+    await service.connectChatGPT(async () => undefined);
+
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    expect(codexClients[1]?.requests).toContainEqual({
+      method: "account/login/cancel",
+      params: { loginId: "login-1" },
+    });
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({
+        id: "codex",
+        state: "sign-in-required",
+        message: expect.stringContaining("timed out"),
+      }),
+    );
+  });
+
+  it("runs provider logins independently and Refresh cancels both generations", async () => {
+    const claudeLoginLog = join(root, "claude-login.log");
+    process.env.OPENBOT_FAKE_CLAUDE_LOGIN_LOG = claudeLoginLog;
+    process.env.OPENBOT_CLAUDE_PATH = await createPendingFakeClaude(root);
+    const { store, mailbox } = stores();
+    const codexClients: FakeAgentClient[] = [];
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "DONE", true, false);
+      if (provider === "codex") codexClients.push(client);
+      return client;
+    });
+    await service.initialize();
+
+    await Promise.all([service.connectChatGPT(async () => undefined), service.connectClaude()]);
+    expect(service.getStatus().providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "codex", connectionState: "connecting" }),
+        expect.objectContaining({ id: "claude", connectionState: "connecting" }),
+      ]),
+    );
+    await waitFor(async () => (await readTextOrEmpty(claudeLoginLog)).includes("started"));
+
+    await service.connectClaude();
+    await waitFor(async () => {
+      const log = await readTextOrEmpty(claudeLoginLog);
+      return log.match(/^started$/gmu)?.length === 2 && log.includes("stopped");
+    });
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({ id: "claude", connectionState: "connecting" }),
+    );
+
+    await service.refreshProviders();
+
+    expect(codexClients[1]?.requests).toContainEqual({
+      method: "account/login/cancel",
+      params: { loginId: "login-1" },
+    });
+    expect(codexClients[1]?.running).toBe(false);
+    await waitFor(async () => (await readTextOrEmpty(claudeLoginLog)).match(/^stopped$/gmu)?.length === 2);
+    expect(service.getStatus().providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "codex", state: "sign-in-required" }),
+        expect.objectContaining({ id: "claude", state: "sign-in-required" }),
+      ]),
+    );
+    expect(service.getStatus().providers?.some((provider) => provider.connectionState === "connecting")).toBe(false);
+
+    codexClients[1]?.completeLogin(true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({ id: "codex", state: "sign-in-required" }),
+    );
+  });
+
+  it("keeps the active ChatGPT client until reconnect succeeds", async () => {
+    const { store, mailbox } = stores();
+    const codexClients: FakeAgentClient[] = [];
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "DONE", true, provider !== "codex" || codexClients.length === 0);
+      if (provider === "codex") codexClients.push(client);
+      return client;
+    });
+    await service.initialize();
+    const activeClient = codexClients[0];
+
+    await service.connectChatGPT(async () => undefined);
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({ id: "codex", state: "available", connectionState: "connecting" }),
+    );
+    codexClients[1]?.completeLogin(false);
+    await waitFor(() => !service?.getStatus().providers?.find((provider) => provider.id === "codex")?.connectionState);
+    expect(activeClient?.running).toBe(true);
+    expect(service.getStatus().providers).toContainEqual(
+      expect.objectContaining({ id: "codex", state: "available", message: expect.stringContaining("not completed") }),
+    );
+
+    await service.connectChatGPT(async () => undefined);
+    codexClients[2]?.completeLogin(true);
+    await waitFor(
+      () =>
+        service?.getStatus().providers?.find((provider) => provider.id === "codex")?.state === "available" &&
+        !service?.getStatus().providers?.find((provider) => provider.id === "codex")?.connectionState,
+    );
+    expect(activeClient?.running).toBe(false);
+    expect(codexClients[2]?.running).toBe(true);
   });
 
   it("maps provider browser tool calls to the stable OpenBot thread", async () => {
@@ -732,7 +1044,7 @@ describe.sequential("AgentService", () => {
         {
           id: "claude",
           state: "available",
-          version: "2.1.231",
+          version: "2.1.246",
           email: "claude@example.com",
         },
         { id: "grok", state: "not-installed", version: null },
@@ -759,6 +1071,120 @@ describe.sequential("AgentService", () => {
     });
   });
 
+  it("detects a newly installed provider without disconnecting an available one", async () => {
+    const codexPath = process.env.OPENBOT_CODEX_PATH;
+    if (!codexPath) throw new Error("The fake Codex path is missing.");
+    process.env.OPENBOT_CODEX_PATH = join(root, "missing-codex");
+    const workingDirectory = process.cwd();
+    process.chdir(root);
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    try {
+      await service.initialize();
+      expect(service.getStatus()).toMatchObject({
+        phase: "blocked",
+        providers: [
+          { id: "codex", state: "error", message: expect.stringContaining("included ChatGPT runtime") },
+          { id: "claude", state: "error", message: expect.stringContaining("included Claude runtime") },
+          { id: "grok", state: "not-installed" },
+        ],
+      });
+
+      process.env.OPENBOT_CODEX_PATH = codexPath;
+      await expect(service.refreshProviders()).resolves.toMatchObject({
+        phase: "ready",
+        providers: [
+          { id: "codex", state: "available" },
+          { id: "claude", state: "error", message: expect.stringContaining("included Claude runtime") },
+          { id: "grok", state: "not-installed" },
+        ],
+      });
+      const codexClient = clients.get("codex");
+      expect(codexClient?.running).toBe(true);
+
+      await service.refreshProviders();
+
+      expect(clients.get("codex")).toBe(codexClient);
+      expect(codexClient?.running).toBe(true);
+      expect(service.getStatus().providers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "codex", state: "available" }),
+          expect.objectContaining({ id: "claude", state: "error" }),
+          expect.objectContaining({ id: "grok", state: "not-installed" }),
+        ]),
+      );
+    } finally {
+      process.chdir(workingDirectory);
+    }
+  });
+
+  it("returns a provider refresh before runtime metadata finishes loading", async () => {
+    const { store, mailbox } = stores();
+    let holdMetadata = false;
+    let releaseMetadata: (() => void) | undefined;
+    const metadataReleased = new Promise<void>((resolve) => {
+      releaseMetadata = resolve;
+    });
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      null,
+      30_000,
+      "codex",
+      (provider) =>
+        new FakeAgentClient(provider, "DONE", true, true, {}, async (method) => {
+          if (holdMetadata && (method === "model/list" || method === "plugin/list")) await metadataReleased;
+        }),
+    );
+    await service.initialize();
+    holdMetadata = true;
+
+    const outcome = await Promise.race([
+      service.refreshProviders().then(() => "resolved" as const),
+      new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 500)),
+    ]);
+    releaseMetadata?.();
+
+    expect(outcome).toBe("resolved");
+    expect(service.getStatus().phase).toBe("ready");
+  });
+
+  it("keeps a connected provider and surfaces its account refresh warning", async () => {
+    const { store, mailbox } = stores();
+    let accountReads = 0;
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      null,
+      30_000,
+      "codex",
+      (provider) =>
+        new FakeAgentClient(provider, "DONE", true, true, {}, async (method) => {
+          if (method === "account/read" && ++accountReads === 2) throw new Error("Temporary account API failure");
+        }),
+    );
+    await service.initialize();
+
+    await service.refreshProviders();
+
+    expect(service.getStatus().providers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "codex",
+          state: "available",
+          checkError: "Could not verify ChatGPT. Keeping the existing connection.",
+        }),
+      ]),
+    );
+  });
+
   it("removes a new Bot and its workspace when the first message cannot enter the queue", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
@@ -780,7 +1206,7 @@ describe.sequential("AgentService", () => {
     const threadId = await store.ensureThreadId("chief");
 
     await expect(service.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" })).rejects.toThrow(
-      "Claude CLI was not found",
+      "included Claude runtime",
     );
     expect(service.listBots().find((bot) => bot.id === "chief")).toMatchObject({
       model: "gpt-5.6-luna",
@@ -2119,6 +2545,9 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
     readonly provider: AgentProvider,
     readonly output = provider === "codex" ? "CODEX_DONE" : provider === "grok" ? "GROK_DONE" : "CLAUDE_DONE",
     readonly autoComplete = true,
+    private accountSignedIn = true,
+    private readonly requestDelays: Readonly<Record<string, number>> = {},
+    private readonly requestHook?: (method: string, provider: AgentProvider) => Promise<void>,
   ) {
     super();
   }
@@ -2133,17 +2562,26 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
 
   async request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>): Promise<T> {
     this.requests.push({ method, params: structuredClone(params) });
+    await this.requestHook?.(method, this.provider);
+    const delayMs = this.requestDelays[method] ?? 0;
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
     let result: unknown;
     if (method === "initialize") result = {};
     if (method === "account/read") {
       result = {
-        account: {
-          type: this.provider === "codex" ? "chatgpt" : this.provider,
-          email: `${this.provider}@example.com`,
-        },
+        account: this.accountSignedIn
+          ? {
+              type: this.provider === "codex" ? "chatgpt" : this.provider,
+              email: `${this.provider}@example.com`,
+            }
+          : null,
         requiresOpenaiAuth: false,
       };
     }
+    if (method === "account/login/start") {
+      result = { type: "chatgpt", loginId: "login-1", authUrl: "https://auth.openai.test/connect" };
+    }
+    if (method === "account/login/cancel") result = { status: "cancelled" };
     if (method === "account/rateLimits/read") {
       result = { rateLimits: null, rateLimitsByLimitId: null };
     }
@@ -2213,6 +2651,14 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
   }
 
   notify(): void {}
+
+  completeLogin(success: boolean): void {
+    this.accountSignedIn = success;
+    this.emit(
+      "notification",
+      notification("account/login/completed", { loginId: "login-1", success, error: success ? null : "denied" }),
+    );
+  }
 
   respond(id: RequestId, result: unknown): void {
     this.responses.push({ id, result: structuredClone(result) });
@@ -2494,7 +2940,7 @@ async function createFakeClaude(directory: string): Promise<string> {
     executable,
     `#!/bin/sh
 if [ "$1" = "--version" ]; then
-  printf '%s\\n' '2.1.231 (Claude Code)'
+  printf '%s\\n' '2.1.246 (Claude Code)'
 elif [ "$1" = "auth" ]; then
   printf '%s' '{"loggedIn":true,"email":"claude@example.com","subscriptionType":"max"}'
 fi
@@ -2502,6 +2948,34 @@ fi
   );
   await chmod(executable, 0o755);
   return executable;
+}
+
+async function createPendingFakeClaude(directory: string): Promise<string> {
+  const executable = join(directory, "claude-pending");
+  await writeFile(
+    executable,
+    `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s\\n' '2.1.246 (Claude Code)'
+elif [ "$1" = "auth" ] && [ "$2" = "login" ]; then
+  printf '%s\\n' 'started' >> "$OPENBOT_FAKE_CLAUDE_LOGIN_LOG"
+  trap 'printf "%s\\n" "stopped" >> "$OPENBOT_FAKE_CLAUDE_LOGIN_LOG"; exit 143' TERM INT
+  while :; do sleep 0.1; done
+elif [ "$1" = "auth" ]; then
+  printf '%s' '{"loggedIn":false}'
+fi
+`,
+  );
+  await chmod(executable, 0o755);
+  return executable;
+}
+
+async function readTextOrEmpty(path: string): Promise<string> {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return "";
+  }
 }
 
 async function createFakeGrok(directory: string): Promise<string> {

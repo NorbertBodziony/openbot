@@ -27,6 +27,8 @@ export interface AgentProviderStatus {
   version: string | null;
   message: string | null;
   email?: string | null;
+  connectionState?: "connecting";
+  checkError?: string | null;
 }
 
 export type AgentAuthState =

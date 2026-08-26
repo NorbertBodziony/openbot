@@ -145,6 +145,10 @@
   color: var(--openbot-text-secondary);
 }
 
+.onboarding-provider .provider-picker-heading {
+  padding-inline: 1px;
+}
+
 .onboarding-provider .provider-picker-list {
   background: var(--openbot-bg-control);
 }
@@ -561,6 +565,15 @@
 }
 
 @media (max-width: 460px) {
+  .onboarding-provider .provider-picker-option-selection {
+    grid-template-columns: 16px 18px minmax(0, 1fr);
+  }
+
+  .onboarding-provider .provider-picker-status {
+    grid-column: 3;
+    justify-self: start;
+  }
+
   .onboarding-computer-visual {
     width: min(100%, 320px);
     margin-top: 14px;

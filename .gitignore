@@ -28,6 +28,9 @@ index-*.css
 .openbot-browser-test/
 .openbot-build/
 /build/cloudflared/
+/build/codex/
+/build/claude/
+/build/grok/
 /build/remote-desktop-runtime/
 /build/remote-desktop-release/
 Bots

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
+import { verifyCodexRuntimeProcess } from "./verify-codex-runtime-process";
 
 const FUSE_DISABLED = 48;
 const FUSE_ENABLED = 49;
@@ -17,6 +18,12 @@ const plistPath = resolve(contentsPath, "Info.plist");
 const whisperExecutablePath = resolve(resourcesPath, "whisper/bin/whisper-cli");
 const whisperModelPath = resolve(resourcesPath, "whisper/model/ggml-medium-q5_0.bin");
 const remoteRuntimePath = resolve(resourcesPath, "remote-desktop-runtime/darwin/arm64");
+const codexRuntimePath = resolve(resourcesPath, "codex/mac/arm64");
+const codexExecutablePath = resolve(codexRuntimePath, "bin/codex");
+const claudeRuntimePath = resolve(resourcesPath, "claude/mac/arm64");
+const claudeExecutablePath = resolve(claudeRuntimePath, "bin/claude");
+const grokRuntimePath = resolve(resourcesPath, "grok/mac/arm64");
+const grokExecutablePath = resolve(grokRuntimePath, "bin/grok");
 
 await Promise.all([
   access(executablePath),
@@ -46,6 +53,20 @@ await Promise.all([
   access(resolve(resourcesPath, "cloudflared/mac/arm64/VERSION.txt")),
   access(resolve(resourcesPath, "cloudflared/licenses/cloudflared-Apache-2.0.txt")),
   access(resolve(resourcesPath, "cloudflared/source-manifest.json")),
+  access(codexExecutablePath),
+  access(resolve(codexRuntimePath, "bin/codex-code-mode-host")),
+  access(resolve(codexRuntimePath, "codex-package.json")),
+  access(resolve(resourcesPath, "codex/licenses/Codex-Apache-2.0.txt")),
+  access(resolve(resourcesPath, "codex/source-manifest.json")),
+  access(claudeExecutablePath),
+  access(resolve(claudeRuntimePath, "claude-package.json")),
+  access(resolve(resourcesPath, "claude/licenses/Claude-Code-LICENSE.md")),
+  access(resolve(resourcesPath, "claude/source-manifest.json")),
+  access(grokExecutablePath),
+  access(resolve(grokRuntimePath, "grok-package.json")),
+  access(resolve(resourcesPath, "grok/licenses/Grok-CLI-LICENSE")),
+  access(resolve(resourcesPath, "grok/licenses/Grok-CLI-THIRD-PARTY-NOTICES")),
+  access(resolve(resourcesPath, "grok/source-manifest.json")),
 ]);
 
 const plist = JSON.parse(run("plutil", ["-convert", "json", "-o", "-", plistPath]));
@@ -76,6 +97,16 @@ const whisperArchitecture = run("file", [whisperExecutablePath]);
 if (!whisperArchitecture.includes("arm64")) {
   throw new Error(`Expected an ARM64 Whisper executable: ${whisperArchitecture}`);
 }
+const codexArchitecture = run("file", [codexExecutablePath]);
+if (!codexArchitecture.includes("arm64")) throw new Error(`Expected an ARM64 Codex executable: ${codexArchitecture}`);
+const claudeArchitecture = run("file", [claudeExecutablePath]);
+if (!claudeArchitecture.includes("arm64")) {
+  throw new Error(`Expected an ARM64 Claude executable: ${claudeArchitecture}`);
+}
+const grokArchitecture = run("file", [grokExecutablePath]);
+if (!grokArchitecture.includes("arm64")) {
+  throw new Error(`Expected an ARM64 Grok executable: ${grokArchitecture}`);
+}
 expectEqual(
   createHash("sha256")
     .update(await readFile(whisperModelPath))
@@ -86,6 +117,18 @@ expectEqual(
 
 for (const name of ["Sunshine.app", "web-server", "streamer"]) {
   run("codesign", ["--verify", "--strict", "--verbose=2", resolve(remoteRuntimePath, name)]);
+}
+for (const name of ["bin/codex", "bin/codex-code-mode-host", "codex-path/rg", "codex-resources/zsh/bin/zsh"]) {
+  run("codesign", ["--verify", "--strict", "--verbose=2", resolve(codexRuntimePath, name)]);
+}
+await verifyCodexRuntimeProcess(codexExecutablePath, "0.149.1");
+run("codesign", ["--verify", "--strict", "--verbose=2", claudeExecutablePath]);
+if (!run(claudeExecutablePath, ["--version"]).startsWith("2.1.246")) {
+  throw new Error("The bundled Claude runtime returned an unexpected version.");
+}
+run("codesign", ["--verify", "--strict", "--verbose=2", grokExecutablePath]);
+if (!run(grokExecutablePath, ["--version"]).includes("1.0.5")) {
+  throw new Error("The bundled Grok runtime returned an unexpected version.");
 }
 
 const fuses = await getCurrentFuseWire(executablePath);
@@ -135,7 +178,14 @@ function run(command: string, args: string[], includeStderr = false): string {
 async function verifyLaunch(executable: string): Promise<void> {
   const userDataPath = await mkdtemp(join(tmpdir(), "openbot-package-smoke-"));
   const child = spawn(executable, [`--user-data-dir=${userDataPath}`, "--use-mock-keychain"], {
-    env: { ...process.env, OPENBOT_CODEX_PATH: join(userDataPath, "missing-codex") },
+    env: {
+      ...process.env,
+      CODEX_HOME: join(userDataPath, "codex-home"),
+      CLAUDE_CONFIG_DIR: join(userDataPath, "claude-home"),
+      OPENBOT_CODEX_PATH: join(userDataPath, "missing-codex"),
+      OPENBOT_CLAUDE_PATH: join(userDataPath, "missing-claude"),
+      OPENBOT_GROK_PATH: join(userDataPath, "missing-grok"),
+    },
     stdio: ["ignore", "ignore", "pipe"],
   });
   let stderr = "";
@@ -173,7 +223,14 @@ async function verifyLaunch(executable: string): Promise<void> {
 
 async function verifySecondInstanceExits(executable: string, userDataPath: string): Promise<void> {
   const second = spawn(executable, [`--user-data-dir=${userDataPath}`, "--use-mock-keychain"], {
-    env: { ...process.env, OPENBOT_CODEX_PATH: join(userDataPath, "missing-codex") },
+    env: {
+      ...process.env,
+      CODEX_HOME: join(userDataPath, "codex-home"),
+      CLAUDE_CONFIG_DIR: join(userDataPath, "claude-home"),
+      OPENBOT_CODEX_PATH: join(userDataPath, "missing-codex"),
+      OPENBOT_CLAUDE_PATH: join(userDataPath, "missing-claude"),
+      OPENBOT_GROK_PATH: join(userDataPath, "missing-grok"),
+    },
     stdio: ["ignore", "ignore", "pipe"],
   });
   let stderr = "";
