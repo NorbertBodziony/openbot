@@ -64,13 +64,15 @@ export function SelectValue<Option>(props: SelectValueProps<Option>): JSX.Elemen
 }
 
 export type SelectContentProps = PolymorphicProps<"div", SelectPrimitive.SelectContentProps<"div">> &
-  Pick<ComponentProps<"div">, "class">;
+  Pick<ComponentProps<"div">, "class"> & {
+    mount?: Element;
+  };
 
 export function SelectContent(props: SelectContentProps): JSX.Element {
-  const others = omit(props, "class");
+  const others = omit(props, "class", "mount");
   let contentElement: HTMLElement | undefined;
   return (
-    <SelectPrimitive.Portal>
+    <SelectPrimitive.Portal mount={props.mount}>
       <SelectPrimitive.Content
         ref={(element) => {
           contentElement = element;

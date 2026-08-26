@@ -18,6 +18,7 @@ import {
   Popover,
   RadioGroup,
   SelectPrimitive,
+  SlidingTabs,
   Tabs,
   Tooltip,
   Trash2,
@@ -307,6 +308,39 @@ export const TabsAndRadioGroup: Story = {
     general.focus();
     await userEvent.keyboard("{ArrowDown}");
     await expect(canvas.getByRole("radio", { name: "Research" })).toBeChecked();
+  },
+};
+
+export const SlidingSelectionTabs: Story = {
+  render: () => (
+    <main class="foundation-story foundation-interaction-stage">
+      <Heading as="h1" size="lg">
+        Sliding tabs
+      </Heading>
+      <SlidingTabs.Root defaultValue="plan">
+        <SlidingTabs.List aria-label="Response mode">
+          <SlidingTabs.Trigger value="plan">Plan</SlidingTabs.Trigger>
+          <SlidingTabs.Trigger value="debug">Debug</SlidingTabs.Trigger>
+          <SlidingTabs.Trigger value="ask">Ask</SlidingTabs.Trigger>
+        </SlidingTabs.List>
+        <SlidingTabs.ContentSlot>
+          <SlidingTabs.Content value="plan">Plan mode</SlidingTabs.Content>
+          <SlidingTabs.Content value="debug">Debug mode</SlidingTabs.Content>
+          <SlidingTabs.Content value="ask">Ask mode</SlidingTabs.Content>
+        </SlidingTabs.ContentSlot>
+      </SlidingTabs.Root>
+    </main>
+  ),
+  play: async ({ canvasElement, userEvent }) => {
+    const canvas = within(canvasElement);
+    const plan = canvas.getByRole("tab", { name: "Plan" });
+    const debug = canvas.getByRole("tab", { name: "Debug" });
+    await expect(plan).toHaveAttribute("aria-selected", "true");
+    await userEvent.click(debug);
+    await expect(debug).toHaveAttribute("aria-selected", "true");
+    debug.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    await expect(canvas.getByRole("tab", { name: "Ask" })).toHaveAttribute("aria-selected", "true");
   },
 };
 

@@ -9,7 +9,8 @@ import type {
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { normalizeAvatarFile } from "../avatar-image";
-import { Badge, Button, buttonVariants, Input, Popover, Puzzle } from "./ui";
+import { presentUpdateStatus } from "../update-status";
+import { Badge, Button, buttonVariants, Input, Popover, Puzzle, Settings } from "./ui";
 
 interface AccountDockProps {
   account: CentralAuthUser;
@@ -25,6 +26,7 @@ interface AccountDockProps {
   onLogout: () => Promise<void>;
   onOpenExternal: (destination: ExternalDestination) => Promise<void>;
   onOpenPermissions: () => void;
+  onOpenSettings: (trigger: HTMLElement) => void;
   onOpenSkills: () => void;
 }
 
@@ -112,6 +114,7 @@ export function AccountDock(props: AccountDockProps) {
   const [avatarFailed, setAvatarFailed] = createSignal(false);
   const [loggingOut, setLoggingOut] = createSignal(false);
   let avatarInput: HTMLInputElement | undefined;
+  let triggerElement: HTMLButtonElement | undefined;
 
   const accountName = createMemo(() => props.account.name?.trim() || props.account.email);
   const accountInitials = createMemo(() => {
@@ -133,33 +136,7 @@ export function AccountDock(props: AccountDockProps) {
     const usage = weeklyUsage();
     return usage ? Math.max(0, Math.round(100 - usage.usedPercent)) : null;
   });
-  const updateAvailable = createMemo(() =>
-    ["available", "downloading", "ready", "installing"].includes(props.updateStatus.phase),
-  );
-  const updateBusy = createMemo(() => ["checking", "downloading", "installing"].includes(props.updateStatus.phase));
-  const updateLabel = createMemo(() => {
-    switch (props.updateStatus.phase) {
-      case "checking":
-        return "Checking for updates…";
-      case "available":
-        return "Download update";
-      case "downloading":
-        return "Downloading update…";
-      case "ready":
-        return "Restart to update";
-      case "installing":
-        return "Restarting…";
-      default:
-        return "Check for updates";
-    }
-  });
-  const updateDetail = createMemo(() => {
-    const status = props.updateStatus;
-    if (status.phase === "downloading" && status.progress !== null) return `${Math.round(status.progress)}%`;
-    if (status.availableVersion) return `v${status.availableVersion}`;
-    if (status.phase === "up-to-date") return "Up to date";
-    return status.currentVersion ? `v${status.currentVersion}` : "";
-  });
+  const updatePresentation = createMemo(() => presentUpdateStatus(props.updateStatus));
   const popoverError = createMemo(
     () => error() ?? (props.updateStatus.phase === "error" ? props.updateStatus.message : null),
   );
@@ -274,6 +251,7 @@ export function AccountDock(props: AccountDockProps) {
         gutter={8}
       >
         <Popover.Trigger
+          ref={(element) => (triggerElement = element)}
           as="button"
           type="button"
           class={buttonVariants({ variant: "ghost", class: "account-dock-trigger" })}
@@ -294,7 +272,7 @@ export function AccountDock(props: AccountDockProps) {
               )}
             </Show>
           </span>
-          <Show when={updateAvailable()}>
+          <Show when={updatePresentation().available}>
             <Badge class="sidebar-update-pill" tone="accent" shape="pill">
               Update
             </Badge>
@@ -354,11 +332,11 @@ export function AccountDock(props: AccountDockProps) {
                 type="button"
                 class="account-menu-row account-update-row"
                 onClick={runUpdateAction}
-                disabled={updateBusy()}
+                disabled={updatePresentation().busy}
               >
-                <UpdateIcon active={updateBusy()} />
-                <span>{updateLabel()}</span>
-                <small>{updateDetail()}</small>
+                <UpdateIcon active={updatePresentation().busy} />
+                <span>{updatePresentation().actionLabel}</span>
+                <small>{updatePresentation().detail}</small>
               </Button>
             </Show>
             <Button
@@ -374,6 +352,18 @@ export function AccountDock(props: AccountDockProps) {
             </Button>
 
             <div class="account-menu-separator" />
+            <Button
+              variant="ghost"
+              type="button"
+              class="account-menu-row"
+              onClick={() => {
+                setOpen(false);
+                if (triggerElement) props.onOpenSettings(triggerElement);
+              }}
+            >
+              <Settings class="account-menu-icon" />
+              <span>Settings</span>
+            </Button>
             <Button
               variant="ghost"
               type="button"

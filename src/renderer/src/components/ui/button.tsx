@@ -115,13 +115,14 @@ export interface CopyButtonProps extends Omit<ButtonProps, "children" | "onClick
   value: string | null | undefined;
   label?: string;
   copiedLabel?: string;
+  iconOnly?: boolean;
   onCopyError?: (error: unknown) => void;
 }
 
 export function CopyButton(props: CopyButtonProps): JSX.Element {
   const [copied, setCopied] = createSignal(false);
   let resetTimer: number | undefined;
-  const others = omit(props, "value", "label", "copiedLabel", "onCopyError", "disabled");
+  const others = omit(props, "value", "label", "copiedLabel", "iconOnly", "onCopyError", "disabled", "class", "size");
 
   function clearResetTimer(): void {
     if (resetTimer === undefined) return;
@@ -160,7 +161,8 @@ export function CopyButton(props: CopyButtonProps): JSX.Element {
     <Button
       type="button"
       variant="ghost"
-      size="sm"
+      size={props.size ?? (props.iconOnly ? "icon-sm" : "sm")}
+      class={cx(props.iconOnly && "ui-icon-button", props.class)}
       disabled={Boolean(props.disabled || !props.value)}
       data-copied={copied() ? "" : undefined}
       {...others}
@@ -169,7 +171,9 @@ export function CopyButton(props: CopyButtonProps): JSX.Element {
       <Show when={copied()} fallback={<Copy aria-hidden="true" />}>
         <Check aria-hidden="true" />
       </Show>
-      <span aria-live="polite">{copied() ? (props.copiedLabel ?? "Copied") : (props.label ?? "Copy")}</span>
+      <span class={props.iconOnly ? "sr-only" : undefined} aria-live="polite">
+        {copied() ? (props.copiedLabel ?? "Copied") : (props.label ?? "Copy")}
+      </span>
     </Button>
   );
 }

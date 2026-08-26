@@ -1,20 +1,32 @@
-import { createSignal, Show } from "solid-js";
+import type { AppInfo, UpdateStatus } from "@openbot/contracts/ipc";
+import { createMemo, createSignal } from "solid-js";
+import type { GeneralSettingsValue } from "../app-settings";
+import { presentUpdateStatus } from "../update-status";
 import { SettingsDialogShell } from "./SettingsDialogShell";
 import {
   Badge,
   Bell,
   Button,
   Card,
-  Check,
-  ChevronDown,
   Field,
-  Heading,
   Input,
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
   Palette,
-  SelectPrimitive,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Settings,
+  SettingsSection,
   SlidersHorizontal,
   SwitchField,
+  Tabs,
   Text,
   UserRound,
 } from "./ui";
@@ -22,6 +34,12 @@ import {
 export interface SettingsModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  value: GeneralSettingsValue;
+  onValueChange: (value: GeneralSettingsValue) => void;
+  appInfo: AppInfo | null;
+  updateStatus: UpdateStatus;
+  onUpdateAction: () => Promise<void>;
+  restoreFocusTarget?: HTMLElement | null;
 }
 
 type SettingsTab = "general" | "profile";
@@ -43,48 +61,70 @@ const navItems: ReadonlyArray<SettingsNavItem> = [
   { value: "advanced", label: "Advanced", icon: SlidersHorizontal, enabled: false },
 ];
 
-const linkTargetOptions = ["Default browser", "OpenBot"];
+const linkTargetOptions: GeneralSettingsValue["externalLinkTarget"][] = ["Default browser", "OpenBot"];
 
 export function SettingsModal(props: SettingsModalProps) {
   const [activeTab, setActiveTab] = createSignal<SettingsTab>("general");
-  const [linkTarget, setLinkTarget] = createSignal("Default browser");
   const [profileName, setProfileName] = createSignal("OpenBot user");
-  const [updateChecked, setUpdateChecked] = createSignal(false);
+  const [updateError, setUpdateError] = createSignal<string | null>(null);
   let modalElement: HTMLElement | undefined;
-
-  function selectTab(tab: SettingsTab): void {
-    setActiveTab(tab);
-  }
 
   const title = () => (activeTab() === "general" ? "General" : "Profile");
   const description = () =>
     activeTab() === "general" ? "Control how OpenBot behaves on this computer." : "Manage how you appear in OpenBot.";
+  const updatePresentation = createMemo(() => presentUpdateStatus(props.updateStatus));
+  const installedVersion = () => props.updateStatus.currentVersion || props.appInfo?.version || "Unknown";
+  const updateMessage = () =>
+    updateError() ??
+    (props.updateStatus.phase === "error" ? props.updateStatus.message : null) ??
+    (props.updateStatus.phase === "up-to-date" ? "OpenBot is up to date." : "Installed version");
+  const tabsProps = {
+    get value() {
+      return activeTab();
+    },
+    onChange(value: string) {
+      if (value === "general" || value === "profile") setActiveTab(value);
+    },
+    orientation: "vertical" as const,
+    activationMode: "automatic" as const,
+  };
+
+  function updateSetting<Key extends keyof GeneralSettingsValue>(key: Key, value: GeneralSettingsValue[Key]): void {
+    props.onValueChange({ ...props.value, [key]: value });
+  }
+
+  async function runUpdateAction(): Promise<void> {
+    if (updatePresentation().busy || !updatePresentation().supported) return;
+    setUpdateError(null);
+    try {
+      await props.onUpdateAction();
+    } catch (error) {
+      setUpdateError(error instanceof Error ? error.message : "Could not update OpenBot.");
+    }
+  }
 
   return (
-    <SettingsDialogShell
-      open={props.open}
-      onOpenChange={props.onOpenChange}
-      title={title()}
-      description={description()}
-      contentKey={activeTab()}
-      onContentElement={(element) => (modalElement = element)}
-      sidebar={
-        <>
-          <Text class="settings-modal-label" variant="label" tone="secondary">
-            Settings
-          </Text>
-          <nav class="settings-modal-nav" aria-label="Settings sections">
+    <Tabs.Root {...tabsProps}>
+      <SettingsDialogShell
+        class="app-settings-modal-shell"
+        open={props.open}
+        onOpenChange={props.onOpenChange}
+        title={title()}
+        description={description()}
+        contentKey={activeTab()}
+        restoreFocusTarget={props.restoreFocusTarget}
+        onContentElement={(element) => (modalElement = element)}
+        sidebar={
+          <Tabs.List class="settings-modal-nav" aria-label="Settings sections">
             {navItems.map((item) => {
               const NavIcon = item.icon;
               return (
-                <Button
-                  type="button"
+                <Tabs.Trigger
                   class="settings-modal-nav-item"
-                  variant="ghost"
-                  aria-current={activeTab() === item.value ? "page" : undefined}
+                  value={item.value}
                   disabled={!item.enabled}
                   title={item.enabled ? undefined : "Coming soon"}
-                  onClick={() => item.enabled && selectTab(item.value)}
+                  aria-current={activeTab() === item.value ? "page" : undefined}
                 >
                   <NavIcon aria-hidden="true" />
                   <span>{item.label}</span>
@@ -93,174 +133,159 @@ export function SettingsModal(props: SettingsModalProps) {
                       Soon
                     </span>
                   )}
-                </Button>
+                </Tabs.Trigger>
               );
             })}
-          </nav>
-        </>
-      }
-    >
-      <Show
-        when={activeTab() === "general"}
-        fallback={
-          <div class="settings-modal-tab-panel" data-tab="profile">
-            <section class="settings-modal-group" aria-labelledby="settings-profile-account">
-              <Heading id="settings-profile-account" as="h3" size="sm" tone="secondary">
-                Account
-              </Heading>
-              <Card class="settings-modal-card settings-modal-profile-card">
-                <div class="settings-modal-profile-summary">
-                  <div class="settings-modal-avatar" aria-hidden="true">
-                    OB
-                  </div>
-                  <div class="settings-modal-profile-copy">
-                    <span class="settings-modal-row-title">{profileName()}</span>
-                    <Text tone="muted" variant="caption">
-                      person@example.com
-                    </Text>
-                  </div>
-                  <Button variant="outline" type="button" size="sm">
-                    Change avatar
-                  </Button>
-                </div>
-              </Card>
-            </section>
-
-            <section class="settings-modal-group" aria-labelledby="settings-profile-details">
-              <Heading id="settings-profile-details" as="h3" size="sm" tone="secondary">
-                Profile details
-              </Heading>
-              <Card class="settings-modal-card settings-modal-profile-fields">
-                <Field
-                  label="Display name"
-                  description="This name is visible in shared workspaces."
-                  htmlFor="settings-profile-name"
-                >
-                  <Input id="settings-profile-name" value={profileName()} onValueChange={setProfileName} />
-                </Field>
-                <SwitchField
-                  defaultChecked
-                  label="Show activity status"
-                  description="Let workspace members see when you are active."
-                />
-              </Card>
-            </section>
-          </div>
+          </Tabs.List>
         }
       >
-        <div class="settings-modal-tab-panel" data-tab="general">
-          <section class="settings-modal-group" aria-labelledby="settings-app-behavior">
-            <Heading id="settings-app-behavior" as="h3" size="sm" tone="secondary">
-              App behavior
-            </Heading>
-            <Card class="settings-modal-card">
+        <Tabs.Content value="general" class="settings-modal-tab-panel" data-tab="general">
+          <SettingsSection title="App behavior">
+            <ItemGroup class="settings-modal-card" surface="subtle">
               <SwitchField
-                defaultChecked
+                checked={props.value.launchAtLogin}
+                onChange={(checked) => updateSetting("launchAtLogin", checked)}
                 label="Launch OpenBot at login"
                 description="Open the app when you sign in to this computer."
               />
               <SwitchField
+                checked={props.value.keepRunningInBackground}
+                onChange={(checked) => updateSetting("keepRunningInBackground", checked)}
                 label="Keep OpenBot running in the background"
                 description="Keep active tasks running after you close the window."
               />
-            </Card>
-          </section>
+            </ItemGroup>
+          </SettingsSection>
 
-          <section class="settings-modal-group" aria-labelledby="settings-workspace">
-            <Heading id="settings-workspace" as="h3" size="sm" tone="secondary">
-              Workspace
-            </Heading>
-            <Card class="settings-modal-card">
+          <SettingsSection title="Workspace">
+            <ItemGroup class="settings-modal-card" surface="subtle">
               <SwitchField
-                defaultChecked
+                checked={props.value.restoreLastWorkspace}
+                onChange={(checked) => updateSetting("restoreLastWorkspace", checked)}
                 label="Restore the last workspace on launch"
                 description="Open the workspace and tasks from your previous session."
               />
-              <div class="settings-modal-row">
-                <div class="settings-modal-row-copy">
-                  <span class="settings-modal-row-title">Open external links in</span>
-                  <Text tone="muted" variant="caption">
-                    Choose where links from conversations open.
-                  </Text>
-                </div>
-                <SelectPrimitive.Root<string>
-                  options={linkTargetOptions}
-                  value={linkTarget()}
-                  onChange={(value) => value && setLinkTarget(value)}
-                  placement="bottom-end"
-                  gutter={4}
-                  sameWidth
-                  itemComponent={(selectProps) => (
-                    <SelectPrimitive.Item class="settings-modal-select-item" item={selectProps.item}>
-                      <SelectPrimitive.ItemLabel>{selectProps.item.rawValue}</SelectPrimitive.ItemLabel>
-                      <SelectPrimitive.ItemIndicator class="settings-modal-select-indicator">
-                        <Check aria-hidden="true" />
-                      </SelectPrimitive.ItemIndicator>
-                    </SelectPrimitive.Item>
-                  )}
-                >
-                  <SelectPrimitive.Trigger class="settings-modal-select-trigger" aria-label="Open external links in">
-                    <SelectPrimitive.Value<string>>{(state) => state.selectedOption()}</SelectPrimitive.Value>
-                    <ChevronDown aria-hidden="true" />
-                  </SelectPrimitive.Trigger>
-                  <SelectPrimitive.HiddenSelect />
-                  <SelectPrimitive.Portal mount={modalElement}>
-                    <SelectPrimitive.Content class="settings-modal-select-content">
-                      <SelectPrimitive.Listbox class="settings-modal-select-listbox" />
-                    </SelectPrimitive.Content>
-                  </SelectPrimitive.Portal>
-                </SelectPrimitive.Root>
-              </div>
-            </Card>
-          </section>
+              <Item class="settings-modal-row">
+                <ItemContent>
+                  <ItemTitle>Open external links in</ItemTitle>
+                  <ItemDescription>Choose where links from conversations open.</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Select<GeneralSettingsValue["externalLinkTarget"]>
+                    class="settings-modal-select"
+                    options={linkTargetOptions}
+                    value={props.value.externalLinkTarget}
+                    onChange={(value) => value && updateSetting("externalLinkTarget", value)}
+                    placement="bottom-end"
+                    itemComponent={(selectProps) => (
+                      <SelectItem item={selectProps.item}>{selectProps.item.rawValue}</SelectItem>
+                    )}
+                  >
+                    <SelectTrigger size="sm" aria-label="Open external links in">
+                      <SelectValue<GeneralSettingsValue["externalLinkTarget"]>>
+                        {(state) => state.selectedOption()}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent mount={modalElement} />
+                  </Select>
+                </ItemActions>
+              </Item>
+            </ItemGroup>
+          </SettingsSection>
 
-          <section class="settings-modal-group" aria-labelledby="settings-notifications">
-            <Heading id="settings-notifications" as="h3" size="sm" tone="secondary">
-              Notifications
-            </Heading>
-            <Card class="settings-modal-card">
+          <SettingsSection title="Notifications">
+            <ItemGroup class="settings-modal-card" surface="subtle">
               <SwitchField
-                defaultChecked
+                checked={props.value.desktopNotifications}
+                onChange={(checked) => updateSetting("desktopNotifications", checked)}
                 label="Desktop notifications"
                 description="Show a notification when an agent needs attention."
               />
               <SwitchField
+                checked={props.value.taskCompletionSound}
+                onChange={(checked) => updateSetting("taskCompletionSound", checked)}
                 label="Play a sound when a task finishes"
                 description="Use a short sound for completed tasks."
               />
-            </Card>
-          </section>
+            </ItemGroup>
+          </SettingsSection>
 
-          <section class="settings-modal-group" aria-labelledby="settings-updates">
-            <Heading id="settings-updates" as="h3" size="sm" tone="secondary">
-              Updates
-            </Heading>
-            <Card class="settings-modal-card">
+          <SettingsSection title="Updates">
+            <ItemGroup class="settings-modal-card" surface="subtle">
               <SwitchField
-                defaultChecked
+                checked={props.value.autoDownloadUpdates}
+                onChange={(checked) => updateSetting("autoDownloadUpdates", checked)}
                 label="Automatically download updates"
                 description="Download new versions when they become available."
               />
-              <div class="settings-modal-row">
-                <div class="settings-modal-row-copy">
-                  <span class="settings-modal-row-title">OpenBot version</span>
-                  <div class="settings-modal-version">
-                    <Text tone="muted" variant="caption">
-                      Installed version
-                    </Text>
-                    <Badge tone={updateChecked() ? "success" : "accent"}>
-                      {updateChecked() ? "Up to date" : "0.1.11"}
-                    </Badge>
-                  </div>
+              <Item class="settings-modal-row settings-modal-update-row">
+                <ItemContent>
+                  <ItemTitle>OpenBot version</ItemTitle>
+                  <ItemDescription
+                    class={updateError() || props.updateStatus.phase === "error" ? "settings-modal-error" : undefined}
+                  >
+                    {updateMessage()}
+                  </ItemDescription>
+                </ItemContent>
+                <ItemActions class="settings-modal-update-actions">
+                  <Badge tone={props.updateStatus.phase === "up-to-date" ? "success" : "accent"}>
+                    v{installedVersion()}
+                  </Badge>
+                  <Button
+                    variant="outline"
+                    type="button"
+                    size="sm"
+                    loading={updatePresentation().busy}
+                    loadingLabel={updatePresentation().actionLabel}
+                    disabled={!updatePresentation().supported}
+                    onClick={() => void runUpdateAction()}
+                  >
+                    {updatePresentation().supported ? updatePresentation().actionLabel : "Updates unavailable"}
+                  </Button>
+                </ItemActions>
+              </Item>
+            </ItemGroup>
+          </SettingsSection>
+        </Tabs.Content>
+
+        <Tabs.Content value="profile" class="settings-modal-tab-panel" data-tab="profile">
+          <SettingsSection title="Account">
+            <Card class="settings-modal-card settings-modal-profile-card">
+              <div class="settings-modal-profile-summary">
+                <div class="settings-modal-avatar" aria-hidden="true">
+                  OB
                 </div>
-                <Button variant="outline" type="button" size="sm" onClick={() => setUpdateChecked(true)}>
-                  {updateChecked() ? "Checked" : "Check for updates"}
+                <div class="settings-modal-profile-copy">
+                  <span class="settings-modal-row-title">{profileName()}</span>
+                  <Text tone="muted" variant="caption">
+                    person@example.com
+                  </Text>
+                </div>
+                <Button variant="outline" type="button" size="sm">
+                  Change avatar
                 </Button>
               </div>
             </Card>
-          </section>
-        </div>
-      </Show>
-    </SettingsDialogShell>
+          </SettingsSection>
+
+          <SettingsSection title="Profile details">
+            <Card class="settings-modal-card settings-modal-profile-fields">
+              <Field
+                label="Display name"
+                description="This name is visible in shared workspaces."
+                htmlFor="settings-profile-name"
+              >
+                <Input id="settings-profile-name" value={profileName()} onValueChange={setProfileName} />
+              </Field>
+              <SwitchField
+                defaultChecked
+                label="Show activity status"
+                description="Let workspace members see when you are active."
+              />
+            </Card>
+          </SettingsSection>
+        </Tabs.Content>
+      </SettingsDialogShell>
+    </Tabs.Root>
   );
 }

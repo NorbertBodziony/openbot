@@ -60,6 +60,7 @@ import {
   toBotProfile,
   withoutBot,
 } from "./app-message-projection";
+import { DEFAULT_GENERAL_SETTINGS, type GeneralSettingsValue } from "./app-settings";
 import { playCompletionSoundForAgentEvent } from "./completion-sound";
 import { createFirstBotDraft, type FirstBotDraft } from "./components/FirstBotSetup";
 import { readPanelWidth } from "./components/PanelResizer";
@@ -267,6 +268,8 @@ export function createAppController(props: AppProps = {}) {
   const [authSuccessVisible, setAuthSuccessVisible] = createSignal(false);
   const [permissionsOpen, setPermissionsOpen] = createSignal(false);
   const [skillsMarketplaceOpen, setSkillsMarketplaceOpen] = createSignal(false);
+  const [appSettingsOpen, setAppSettingsOpen] = createSignal(false);
+  const [generalSettings, setGeneralSettings] = createSignal<GeneralSettingsValue>(DEFAULT_GENERAL_SETTINGS);
   const [servers, setServers] = createSignal<ServerSummary[]>([]);
   const [joinServerOpen, setJoinServerOpen] = createSignal(false);
   const [pendingInviteUrl, setPendingInviteUrl] = createSignal("");
@@ -315,6 +318,7 @@ export function createAppController(props: AppProps = {}) {
   let directConversationRequest = 0;
   let serverSettingsRequest = 0;
   let serverSettingsRestoreTarget: HTMLElement | null = null;
+  let appSettingsRestoreTarget: HTMLElement | null = null;
   let appFrameElement: HTMLDivElement | undefined;
   let remoteDesktopRestoreTarget: HTMLElement | null = null;
   let remoteDesktopConnectPromise: Promise<RemoteDesktopSession | undefined> | null = null;
@@ -1796,6 +1800,11 @@ export function createAppController(props: AppProps = {}) {
     }
   }
 
+  function openAppSettings(trigger: HTMLElement): void {
+    appSettingsRestoreTarget = trigger;
+    setAppSettingsOpen(true);
+  }
+
   async function selectServer(serverId: string): Promise<void> {
     if (botSetupOpen() && creatingAgent()) return;
     const previousServerId = servers().find((server) => server.active)?.id;
@@ -2391,6 +2400,12 @@ export function createAppController(props: AppProps = {}) {
     runUpdateAction,
     updateAccountAvatar,
     setPermissionsOpen,
+    appSettingsOpen,
+    setAppSettingsOpen,
+    generalSettings,
+    setGeneralSettings,
+    openAppSettings,
+    appSettingsRestoreTarget: () => appSettingsRestoreTarget,
     skillsMarketplaceOpen,
     setSkillsMarketplaceOpen,
     LEFT_PANEL_DEFAULT,

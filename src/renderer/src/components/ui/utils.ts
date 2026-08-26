@@ -16,3 +16,11 @@ export function cx(...values: ClassValue[]): string {
     })
     .join(" ");
 }
+
+export function truncateMiddle(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  const visibleLength = maxLength - 1;
+  const startLength = Math.ceil((visibleLength * 2) / 3);
+  const endLength = visibleLength - startLength;
+  return `${value.slice(0, startLength)}…${value.slice(-endLength)}`;
+}

@@ -1,22 +1,46 @@
+import type { UpdateStatus } from "@openbot/contracts/ipc";
 import { createSignal } from "solid-js";
-import { expect, waitFor, within } from "storybook/test";
+import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
+import { DEFAULT_GENERAL_SETTINGS } from "../src/app-settings";
 import { SettingsModal } from "../src/components/SettingsModal";
 import { Button, Heading, Text } from "../src/components/ui";
 
+const storyAppInfo = { name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" } as const;
+const storyUpdateStatus: UpdateStatus = {
+  phase: "idle",
+  currentVersion: "0.2.1",
+  availableVersion: null,
+  progress: null,
+  checkedAt: null,
+  message: null,
+};
+
 function SettingsModalStory(props: { initialOpen: boolean }) {
   const [open, setOpen] = createSignal(props.initialOpen);
+  const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
+  const [updateStatus, setUpdateStatus] = createSignal<UpdateStatus>(storyUpdateStatus);
 
   return (
     <main class="foundation-story foundation-interaction-stage">
       <Heading as="h1" size="lg">
         Workspace settings
       </Heading>
-      <Text tone="secondary">Preview the standalone settings surface before it is connected to the app.</Text>
+      <Text tone="secondary">Preview the global settings surface with session-scoped preferences.</Text>
       <Button variant="outline" type="button" onClick={() => setOpen(true)}>
         Open settings
       </Button>
-      <SettingsModal open={open()} onOpenChange={setOpen} />
+      <SettingsModal
+        open={open()}
+        onOpenChange={setOpen}
+        value={value()}
+        onValueChange={setValue}
+        appInfo={storyAppInfo}
+        updateStatus={updateStatus()}
+        onUpdateAction={async () => {
+          setUpdateStatus({ ...storyUpdateStatus, phase: "up-to-date", checkedAt: new Date().toISOString() });
+        }}
+      />
     </main>
   );
 }
@@ -24,8 +48,31 @@ function SettingsModalStory(props: { initialOpen: boolean }) {
 const meta = {
   title: "Settings/SettingsModal",
   component: SettingsModal,
-  args: { open: false, onOpenChange: () => undefined },
-  parameters: { layout: "fullscreen", a11y: { test: "error" } },
+  args: {
+    open: false,
+    onOpenChange: fn(),
+    value: DEFAULT_GENERAL_SETTINGS,
+    onValueChange: fn(),
+    appInfo: storyAppInfo,
+    updateStatus: storyUpdateStatus,
+    onUpdateAction: fn(async () => undefined),
+  },
+  parameters: {
+    layout: "fullscreen",
+    a11y: { test: "error" },
+    viewport: {
+      options: {
+        settingsDesktop: {
+          name: "Settings — 1200 × 820",
+          styles: { width: "1200px", height: "820px" },
+        },
+        settingsNarrow: {
+          name: "Settings — 640 × 720",
+          styles: { width: "640px", height: "720px" },
+        },
+      },
+    },
+  },
 } satisfies Meta<typeof SettingsModal>;
 
 export default meta;
@@ -33,6 +80,11 @@ type Story = StoryObj<typeof meta>;
 
 export const Open: Story = {
   render: () => <SettingsModalStory initialOpen />,
+};
+
+export const Narrow: Story = {
+  render: () => <SettingsModalStory initialOpen />,
+  parameters: { viewport: { defaultViewport: "settingsNarrow" } },
 };
 
 export const Interactive: Story = {
@@ -45,21 +97,22 @@ export const Interactive: Story = {
     let dialog = await body.findByRole("dialog", { name: "General" });
     await waitFor(() => expect(dialog).toBeVisible());
     await expect(body.getByTestId("settings-modal-scroll-frame")).toHaveAttribute("data-scroll-down");
-    await expect(body.getByRole("button", { name: "Appearance" })).toBeDisabled();
-    await expect(body.getByRole("button", { name: "Notifications" })).toBeDisabled();
-    await expect(body.getByRole("button", { name: "Advanced" })).toBeDisabled();
+    await expect(body.getByRole("tab", { name: "Appearance" })).toBeDisabled();
+    await expect(body.getByRole("tab", { name: "Notifications" })).toBeDisabled();
+    await expect(body.getByRole("tab", { name: "Advanced" })).toBeDisabled();
 
-    const profileTab = body.getByRole("button", { name: "Profile" });
-    await userEvent.click(profileTab);
-    await expect(profileTab).toHaveAttribute("aria-current", "page");
+    const generalTab = body.getByRole("tab", { name: "General" });
+    generalTab.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    const profileTab = body.getByRole("tab", { name: "Profile" });
+    await expect(profileTab).toHaveAttribute("aria-selected", "true");
     await expect(body.getByRole("heading", { name: "Profile", level: 2 })).toBeVisible();
     await expect(body.getByRole("textbox", { name: "Display name" })).toHaveValue("OpenBot user");
 
-    const generalTab = body.getByRole("button", { name: "General" });
     await userEvent.click(generalTab);
-    await expect(generalTab).toHaveAttribute("aria-current", "page");
+    await expect(generalTab).toHaveAttribute("aria-selected", "true");
 
-    const linkTarget = body.getByRole("button", { name: /Open external links in/ });
+    const linkTarget = body.getByRole("button", { name: /^Open external links in/ });
     await userEvent.click(linkTarget);
     await waitFor(() => expect(body.getByRole("listbox")).toBeVisible());
     await userEvent.click(body.getByRole("option", { name: "OpenBot" }));
@@ -70,6 +123,9 @@ export const Interactive: Story = {
     await userEvent.click(launchSwitch);
     await expect(launchSwitch).not.toBeChecked();
 
+    await userEvent.click(body.getByRole("button", { name: "Check for updates" }));
+    await expect(body.getByText("OpenBot is up to date.")).toBeVisible();
+
     await userEvent.click(body.getByRole("button", { name: "Close settings" }));
     await expect(dialog).toHaveAttribute("data-motion", "closing");
     await waitFor(() => expect(body.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
@@ -77,7 +133,7 @@ export const Interactive: Story = {
 
     await userEvent.click(trigger);
     dialog = await body.findByRole("dialog", { name: "General" });
-    await waitFor(() => expect(dialog).toBeVisible());
+    await expect(body.getByRole("switch", { name: "Launch OpenBot at login" })).not.toBeChecked();
     await userEvent.keyboard("{Escape}");
     await expect(dialog).toHaveAttribute("data-motion", "closing");
     await waitFor(() => expect(body.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
