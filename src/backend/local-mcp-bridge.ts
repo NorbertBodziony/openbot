@@ -172,10 +172,16 @@ export class LocalMcpBridge {
     try {
       await mcp.connect(transport);
       await transport.handleRequest(request, response, await readJsonBody(request));
-    } catch (error) {
+    } catch {
       if (!response.headersSent) {
         response.writeHead(500, { "content-type": "application/json" });
-        response.end(JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32603, message: String(error) } }));
+        response.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32603, message: "Internal MCP bridge error." },
+          }),
+        );
       }
     } finally {
       await transport.close().catch(() => undefined);

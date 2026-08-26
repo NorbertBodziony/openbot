@@ -35,6 +35,38 @@ afterEach(async () => {
 });
 
 describe("LocalMcpBridge", () => {
+  it("does not expose request parsing failures", async () => {
+    const bridge = new LocalMcpBridge();
+    bridges.push(bridge);
+    const session = await bridge.createSession(
+      "thread-1",
+      TOOLS,
+      () => "turn-1",
+      async () => ({
+        success: true,
+        contentItems: [],
+      }),
+    );
+    const server = session.servers[0];
+    if (!server) throw new Error("The MCP server was not created.");
+
+    const response = await fetch(server.url, {
+      method: "POST",
+      headers: {
+        ...Object.fromEntries(server.headers.map((header) => [header.name, header.value])),
+        "content-type": "application/json",
+      },
+      body: "private-invalid-json",
+    });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32603, message: "Internal MCP bridge error." },
+    });
+  });
+
   it("requires its session token, isolates sessions, and forwards text and image results", async () => {
     const bridge = new LocalMcpBridge();
     bridges.push(bridge);

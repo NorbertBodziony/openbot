@@ -68,6 +68,7 @@ function placeCaret(container: Node, offset: number): void {
 function testBot(id: string, name: string, description = ""): BotProfile {
   return {
     id,
+    provider: "codex",
     name,
     title: "Agent",
     description,
