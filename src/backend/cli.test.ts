@@ -58,6 +58,9 @@ describe("bundled Codex resolution", () => {
     expect(bundledCodexExecutable("darwin", "arm64", null)).toBe(
       join(process.cwd(), "build/codex/mac/arm64/bin/codex"),
     );
+    expect(bundledCodexExecutable("darwin", "arm64", undefined)).toBe(
+      join(process.cwd(), "build/codex/mac/arm64/bin/codex"),
+    );
   });
 
   it.runIf(process.platform !== "win32")("prefers a compatible system CLI", async () => {
