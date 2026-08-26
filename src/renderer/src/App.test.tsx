@@ -4179,7 +4179,9 @@ describe("OpenBot connected desktop shell", () => {
       requestId: "paste-1",
       attachments: [attachment("pasted-1", "pasted.png", "image")],
     });
-    expect(await screen.findByRole("button", { name: "Remove pasted.png" })).toBeInTheDocument();
+    await fireEvent.click(await screen.findByRole("button", { name: "Remove pasted.png" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove pasted.png" })).not.toBeInTheDocument());
+    expect(window.openbot.agent.discardDraftAttachment).toHaveBeenCalledWith("pasted-1");
   });
 
   it("keeps an asynchronous pasted attachment with the bot that received the paste", async () => {

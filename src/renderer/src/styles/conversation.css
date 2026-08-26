@@ -6141,6 +6141,20 @@
   left: 0;
 }
 
+.composer[data-has-attachments] .composer-input-label,
+.composer[data-has-attachments] .composer-editor-root,
+.composer[data-has-attachments] .composer-editor-surface {
+  min-height: 28px;
+}
+
+.composer[data-has-attachments] .composer-editor-surface {
+  padding: 4px;
+}
+
+.composer[data-has-attachments] .composer-editor-placeholder {
+  top: 4px;
+}
+
 .composer-editor-root {
   position: relative;
   display: flex;
@@ -6321,59 +6335,16 @@
   line-height: 18px;
 }
 
-.attachment-menu {
-  translate: 0;
-}
-
-.composer-action-menu {
-  width: min(300px, calc(100vw - var(--openbot-space-6)));
-  max-width: min(300px, calc(100vw - var(--openbot-space-6)));
-}
-
-.ui-action-menu:not([data-menu-layout="grid"]) .composer-action-item {
-  height: auto;
-  min-height: 52px;
-  align-items: flex-start;
-  padding: 8px;
-  white-space: normal;
-}
-
-.composer-action-item > svg {
-  margin-top: 2px;
-}
-
-.composer-action-item > span {
-  display: grid;
-  min-width: 0;
-  gap: 1px;
-}
-
-.composer-action-item strong,
-.composer-action-item small {
-  display: block;
-}
-
-.composer-action-item strong {
-  color: inherit;
-  font-size: var(--openbot-text-md);
-  font-weight: var(--openbot-weight-medium);
-  line-height: var(--openbot-leading-md);
-}
-
-.composer-action-item small {
-  color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-xs);
-  line-height: var(--openbot-leading-sm);
-}
-
 .composer-attachments {
   position: relative;
   z-index: 11;
   display: flex;
+  width: 100%;
+  min-width: 0;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin: 0 10px 6px;
+  margin: 2px 0 4px;
 }
 
 .composer-attachment {
@@ -6388,20 +6359,20 @@
   height: 52px;
   flex: 0 0 auto;
   border: 1px solid var(--openbot-border);
-  border-radius: var(--openbot-radius-pill);
+  border-radius: var(--openbot-radius-lg);
   background: var(--openbot-bg-control);
-  padding: 3px;
+  padding: 0;
 }
 
 .composer-attachment[data-kind="file"] {
   width: 220px;
-  max-width: calc(100vw - 56px);
+  max-width: 100%;
   height: 52px;
   gap: 10px;
   border: 1px solid var(--openbot-border);
   border-radius: var(--openbot-radius-lg);
   background: var(--openbot-bg-control);
-  padding: 7px 10px;
+  padding: 7px 12px 7px 8px;
 }
 
 .composer-attachment-copy {
@@ -6431,33 +6402,6 @@
   line-height: 14px;
 }
 
-.composer-attachment > button {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  display: grid;
-  width: 20px;
-  height: 20px;
-  place-items: center;
-  border: 0;
-  border-radius: var(--openbot-radius-pill);
-  background: var(--openbot-bg-overlay);
-  color: var(--openbot-text-secondary);
-  opacity: 0;
-  transition: opacity var(--openbot-duration-hover) var(--openbot-ease-out);
-}
-
-.composer-attachment:hover > button,
-.composer-attachment > button:focus-visible {
-  opacity: 1;
-}
-
-.composer-attachment > button:hover,
-.composer-attachment > button:focus-visible {
-  background: var(--openbot-border);
-  color: var(--openbot-white);
-}
-
 .composer-attachment-preview {
   display: grid;
   width: 36px;
@@ -6474,9 +6418,9 @@
 }
 
 .composer-attachment[data-kind="image"] .composer-attachment-preview {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--openbot-radius-pill);
+  width: 100%;
+  height: 100%;
+  border-radius: calc(var(--openbot-radius-lg) - 1px);
 }
 
 .composer-attachment-preview img {

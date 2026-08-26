@@ -57,6 +57,7 @@ import {
   isString,
 } from "@openbot/contracts/runtime-values";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { clipboardFiles } from "./clipboard-files";
 
 const attachmentImportListeners = new Set<(event: AttachmentImportEvent) => void>();
 let selectedServerId = "local";
@@ -670,7 +671,7 @@ window.addEventListener("drop", (event) => {
   void importFiles(files);
 });
 window.addEventListener("paste", (event) => {
-  const files = [...(event.clipboardData?.files ?? [])];
+  const files = clipboardFiles(event.clipboardData);
   if (files.length) {
     event.preventDefault();
     void importFiles(files);

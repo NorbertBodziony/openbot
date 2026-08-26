@@ -433,7 +433,8 @@ export function ComposerEditor(props: ComposerEditorProps) {
     if (!editor || props.disabled) return;
 
     const clipboard = event.clipboardData;
-    if (!clipboard || clipboard.files.length > 0) return;
+    const hasFileItem = Array.from(clipboard?.items ?? []).some((item) => item.kind === "file");
+    if (!clipboard || clipboard.files.length > 0 || hasFileItem) return;
 
     const text = clipboard.getData("text/plain").replace(/\r\n?/g, "\n").slice(0, INPUT_LIMITS.messageText);
     if (!text) return;

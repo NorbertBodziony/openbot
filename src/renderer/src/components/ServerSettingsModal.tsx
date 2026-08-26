@@ -32,6 +32,7 @@ import {
   Ellipsis,
   Field,
   Image,
+  ImageRemoveButton,
   Input,
   Item,
   ItemActions,
@@ -60,7 +61,6 @@ import {
   Trash2,
   UserRound,
   UsersRound,
-  X,
 } from "./ui";
 import { truncateMiddle } from "./ui/utils";
 
@@ -595,7 +595,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   when={canEditIdentity()}
                   fallback={<ServerLogo name={draftName() || props.server.name} url={draftLogoUrl()} />}
                 >
-                  <div class="server-settings-logo-picker">
+                  <div class="server-settings-logo-picker ui-removable-image">
                     <Button
                       type="button"
                       variant="outline"
@@ -612,22 +612,16 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                       </Show>
                     </Button>
                     <Show when={draftLogoUrl()}>
-                      <Button
-                        type="button"
-                        variant="destructive-ghost"
-                        size="icon-xs"
+                      <ImageRemoveButton
                         class="server-settings-logo-remove"
-                        aria-label="Remove server logo"
-                        title="Remove server logo"
+                        label="Remove server logo"
                         onClick={() => {
                           setIdentityEditing(true);
                           setDraftLogoUrl(null);
                           setDraftLogo(null);
                           setLogoError(null);
                         }}
-                      >
-                        <X aria-hidden="true" />
-                      </Button>
+                      />
                     </Show>
                   </div>
                 </Show>

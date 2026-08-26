@@ -1,3 +1,4 @@
+import { ATTACHMENT_FILE_ACCEPT, IMAGE_ATTACHMENT_ACCEPT } from "@openbot/contracts/attachment-files";
 import {
   attachmentReferenceIds,
   expandAttachmentReferences,
@@ -94,6 +95,7 @@ import {
   DropdownMenu,
   File,
   Image,
+  ImageRemoveButton,
   Input,
   LoaderCircle,
   Message,
@@ -2667,38 +2669,6 @@ export function ConversationComposer() {
             </Show>
           </div>
         </div>
-        <Show when={unreferencedDraftAttachments().length > 0}>
-          <div class="composer-attachments">
-            <For each={unreferencedDraftAttachments()}>
-              {(attachment) => (
-                <div class="composer-attachment" data-kind={attachment.kind}>
-                  <span
-                    class="composer-attachment-preview"
-                    data-file-tone={attachment.kind === "file" ? attachmentReferenceTone(attachment.name) : undefined}
-                  >
-                    <Show when={attachment.kind === "image"} fallback={fileBadge(attachment)}>
-                      <img src={attachment.previewUrl ?? ""} alt="" />
-                    </Show>
-                  </span>
-                  <Show when={attachment.kind === "file"}>
-                    <span class="composer-attachment-copy">
-                      <strong title={attachment.name}>{attachment.name}</strong>
-                      <small>{formatFileSize(attachment.size)}</small>
-                    </span>
-                  </Show>
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    aria-label={`Remove ${attachment.name}`}
-                    onClick={() => removeAttachment(attachment.id)}
-                  >
-                    <CloseIcon />
-                  </Button>
-                </div>
-              )}
-            </For>
-          </div>
-        </Show>
         <Show when={replyTarget()}>
           {(message) => (
             <div class="composer-reply-preview">
@@ -2724,7 +2694,10 @@ export function ConversationComposer() {
         </Show>
         <div
           class={`composer${voicePhase() === "recording" ? " composer-recording" : ""}`}
-          data-compact={currentDraft().text.includes("\n") ? undefined : ""}
+          data-compact={
+            currentDraft().text.includes("\n") || unreferencedDraftAttachments().length > 0 ? undefined : ""
+          }
+          data-has-attachments={unreferencedDraftAttachments().length > 0 ? "" : undefined}
           onPointerDown={(event) => {
             if (!(event.target instanceof Element)) return;
             if (event.target.closest("button, .composer-editor-surface")) return;
@@ -2732,6 +2705,34 @@ export function ConversationComposer() {
             setComposerFocusRequest((current) => current + 1);
           }}
         >
+          <Show when={unreferencedDraftAttachments().length > 0}>
+            <div class="composer-attachments">
+              <For each={unreferencedDraftAttachments()}>
+                {(attachment) => (
+                  <div class="composer-attachment ui-removable-image" data-kind={attachment.kind}>
+                    <span
+                      class="composer-attachment-preview"
+                      data-file-tone={attachment.kind === "file" ? attachmentReferenceTone(attachment.name) : undefined}
+                    >
+                      <Show when={attachment.kind === "image"} fallback={fileBadge(attachment)}>
+                        <img src={attachment.previewUrl ?? ""} alt="" />
+                      </Show>
+                    </span>
+                    <Show when={attachment.kind === "file"}>
+                      <span class="composer-attachment-copy">
+                        <strong title={attachment.name}>{attachment.name}</strong>
+                        <small>{formatFileSize(attachment.size)}</small>
+                      </span>
+                    </Show>
+                    <ImageRemoveButton
+                      label={`Remove ${attachment.name}`}
+                      onClick={() => removeAttachment(attachment.id)}
+                    />
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
           <div class="composer-input-label">
             <ComposerEditor
               botId={props.bot?.id}
@@ -2764,7 +2765,7 @@ export function ConversationComposer() {
             <Input
               ref={setImageAttachmentPickerElement}
               type="file"
-              accept=".png,.jpg,.jpeg,.gif,.webp,.avif"
+              accept={IMAGE_ATTACHMENT_ACCEPT}
               multiple
               hidden
               tabindex={-1}
@@ -2773,6 +2774,7 @@ export function ConversationComposer() {
             <Input
               ref={setContextAttachmentPickerElement}
               type="file"
+              accept={ATTACHMENT_FILE_ACCEPT}
               multiple
               hidden
               tabindex={-1}
@@ -2793,9 +2795,8 @@ export function ConversationComposer() {
                 <PlusIcon />
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content class="attachment-menu composer-action-menu" aria-label="Add to prompt">
+                <DropdownMenu.Content aria-label="Add to prompt">
                   <DropdownMenu.Item
-                    class="composer-action-item"
                     disabled={attachmentBusy()}
                     onPointerDown={(event) => {
                       if (event.button === 0) openAttachmentPicker("images");
@@ -2803,24 +2804,13 @@ export function ConversationComposer() {
                     onKeyDown={(event) => openAttachmentPickerFromKey(event, "images")}
                   >
                     <Image aria-hidden="true" />
-                    <span>
-                      <strong>Attach image</strong>
-                      <small>Add a screenshot or visual reference.</small>
-                    </span>
+                    <span>Attach image</span>
                   </DropdownMenu.Item>
-                  <DropdownMenu.Item
-                    class="composer-action-item"
-                    disabled
-                    title="Skill selection is not available yet."
-                  >
+                  <DropdownMenu.Item disabled title="Skill selection is not available yet.">
                     <Puzzle aria-hidden="true" />
-                    <span>
-                      <strong>Use a skill</strong>
-                      <small>Skill selection is not available yet.</small>
-                    </span>
+                    <span>Use a skill</span>
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
-                    class="composer-action-item"
                     disabled={attachmentBusy()}
                     onPointerDown={(event) => {
                       if (event.button === 0) openAttachmentPicker("all");
@@ -2828,10 +2818,7 @@ export function ConversationComposer() {
                     onKeyDown={(event) => openAttachmentPickerFromKey(event, "all")}
                   >
                     <File aria-hidden="true" />
-                    <span>
-                      <strong>Add context</strong>
-                      <small>Include a file with supporting details.</small>
-                    </span>
+                    <span>Add context</span>
                   </DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
