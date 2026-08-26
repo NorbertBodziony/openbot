@@ -19,7 +19,9 @@
     "db:migrate:local": "wrangler d1 migrations apply openbot-auth --local",
     "db:migrate:remote": "wrangler d1 migrations apply openbot-auth --remote",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --config vitest.config.ts && vitest run --config vitest.client.config.ts"
+    "test": "bun run --parallel test:server test:client",
+    "test:server": "vitest run --config vitest.config.ts",
+    "test:client": "vitest run --config vitest.client.config.ts"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.3.0",

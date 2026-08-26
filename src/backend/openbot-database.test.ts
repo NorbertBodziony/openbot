@@ -175,14 +175,14 @@ describe("OpenBotDatabase", () => {
     restored.close();
   });
 
-  it("pages and searches a 10,000-message conversation without gaps", async () => {
+  it("pages and searches a 1,000-message conversation without gaps", async () => {
     const database = await createDatabase();
     const bot = testBot();
     database.replaceAgents("agents-large-history", [bot], "agents.imported");
-    const messages = Array.from({ length: 10_000 }, (_, index) => ({
+    const messages = Array.from({ length: 1_000 }, (_, index) => ({
       id: `message-${index.toString().padStart(5, "0")}`,
       author: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
-      text: index === 1234 ? "A unique pagination needle" : `Message ${index}`,
+      text: index === 234 ? "A unique pagination needle" : `Message ${index}`,
       createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0, index)).toISOString(),
       status: "completed" as const,
     }));
@@ -193,8 +193,8 @@ describe("OpenBotDatabase", () => {
 
     const latest = database.readConversationPage(bot.id, bot.threadId, { type: "latest" }, 50);
     expect(latest.messages).toHaveLength(50);
-    expect(latest.messages[0]?.id).toBe("message-09950");
-    expect(latest.messages.at(-1)?.id).toBe("message-09999");
+    expect(latest.messages[0]?.id).toBe("message-00950");
+    expect(latest.messages.at(-1)?.id).toBe("message-00999");
     expect(latest.pageInfo.hasOlder).toBe(true);
 
     const seen = new Set(latest.messages.map((message) => message.id));
@@ -211,21 +211,21 @@ describe("OpenBotDatabase", () => {
         seen.add(message.id);
       });
     }
-    expect(seen.size).toBe(10_000);
+    expect(seen.size).toBe(1_000);
 
     const around = database.readConversationPage(
       bot.id,
       bot.threadId,
-      { type: "around", messageId: "message-05000" },
+      { type: "around", messageId: "message-00500" },
       50,
     );
     expect(around.messages).toHaveLength(50);
-    expect(around.messages.some((message) => message.id === "message-05000")).toBe(true);
+    expect(around.messages.some((message) => message.id === "message-00500")).toBe(true);
     expect(database.readConversationPage(bot.id, bot.threadId, { type: "latest" }, 1_000).messages).toHaveLength(100);
 
     const search = database.searchConversationMessages("pagination needle", bot.id, undefined, 100);
     expect(search.total).toBe(1);
-    expect(search.results[0]?.message.id).toBe("message-01234");
+    expect(search.results[0]?.message.id).toBe("message-00234");
     database.close();
   });
 

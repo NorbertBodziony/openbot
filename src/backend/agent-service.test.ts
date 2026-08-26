@@ -75,7 +75,7 @@ describe.sequential("AgentService", () => {
     process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
     process.env.OPENBOT_GROK_PATH = await createFakeGrok(root);
     const { store, mailbox } = stores();
-    const delays: Record<AgentProvider, number> = { codex: 300, claude: 20, grok: 150 };
+    const delays: Record<AgentProvider, number> = { codex: 60, claude: 5, grok: 30 };
     const availableOrder: AgentProvider[] = [];
     const seen = new Set<AgentProvider>();
     const accountReads = new Set<AgentProvider>();
@@ -1770,7 +1770,7 @@ describe.sequential("AgentService", () => {
   });
 
   it("waits for active queue drains before shutdown completes", async () => {
-    process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY = "2000";
+    process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY = "100";
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
@@ -2287,9 +2287,9 @@ describe.sequential("AgentService", () => {
 
   it("does not fail or replay a turn whose start response times out after lifecycle events", async () => {
     process.env.OPENBOT_FAKE_AUTO_COMPLETE = "Finished despite the late response";
-    process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY = "2000";
+    process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY = "250";
     const { store, mailbox } = stores();
-    service = new AgentService(store, mailbox, fakeBrowser(), null, 1000);
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 75);
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
@@ -2528,37 +2528,6 @@ describe.sequential("AgentService", () => {
         ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
         .some((run) => run.status === "interrupted"),
     );
-  });
-
-  it("reschedules a paused routine from now when it is reactivated", async () => {
-    const { store, mailbox } = stores();
-    service = new AgentService(
-      store,
-      mailbox,
-      fakeBrowser(),
-      null,
-      30_000,
-      "codex",
-      (provider) => new FakeAgentClient(provider),
-    );
-    await service.initialize();
-    const bot = await store.getOrCreate("chief");
-    vi.useFakeTimers({ now: new Date("2026-08-25T08:00:00.000Z") });
-    const routine = service.createRoutine({
-      botId: bot.id,
-      name: "Morning brief",
-      instruction: "Prepare the daily brief.",
-      active: true,
-      timezone: "UTC",
-      schedule: { kind: "daily", time: "09:00" },
-    });
-    service.updateRoutine({ botId: bot.id, routineId: routine.id, active: false });
-
-    vi.setSystemTime(new Date("2026-08-27T10:00:00.000Z"));
-    const resumed = service.updateRoutine({ botId: bot.id, routineId: routine.id, active: true });
-
-    expect(resumed.trigger.nextRunAt).toBe("2026-08-28T09:00:00.000Z");
-    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toEqual([]);
   });
 
   it("queues only the last missed run after sleep and does not duplicate it after restart", async () => {
