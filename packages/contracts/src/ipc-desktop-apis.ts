@@ -11,7 +11,13 @@ import type {
   SetAnalyticsPreferenceInput,
   UpdateStatus,
 } from "./ipc-app-auth";
-import type { BrowserControlState, BrowserOpenInput, BrowserTab, BrowserVisibilityInput } from "./ipc-browser";
+import type {
+  BrowserControlState,
+  BrowserNavigateInput,
+  BrowserOpenInput,
+  BrowserTab,
+  BrowserVisibilityInput,
+} from "./ipc-browser";
 import type {
   AccountUsage,
   AgentEvent,
@@ -44,6 +50,7 @@ import type {
   ReadConversationPageInput,
   ReorderQueueInput,
   RespondToApprovalInput,
+  RespondToBrowserTakeoverInput,
   RespondToPromptInput,
   Routine,
   RoutineRun,
@@ -113,7 +120,7 @@ import type {
   UpdateHostIdentityInput,
   UpdateTeamMemberInput,
 } from "./ipc-team-host";
-import type { VoiceTranscriptionInput, VoiceTranscriptionResult } from "./ipc-voice";
+import type { VoiceModelStatus, VoiceTranscriptionInput, VoiceTranscriptionResult } from "./ipc-voice";
 
 export interface AgentDesktopApi {
   getStatus: () => Promise<AgentStatus>;
@@ -160,6 +167,7 @@ export interface AgentDesktopApi {
   interrupt: (input: InterruptTurnInput) => Promise<void>;
   respondToPrompt: (input: RespondToPromptInput) => Promise<void>;
   respondToApproval: (input: RespondToApprovalInput) => Promise<void>;
+  respondToBrowserTakeover: (input: RespondToBrowserTakeoverInput) => Promise<void>;
   onEvent: (listener: (event: AgentEvent) => void) => () => void;
 }
 
@@ -175,6 +183,7 @@ export interface MarketplaceAgentsDesktopApi {
 export interface BrowserDesktopApi {
   open: (input: BrowserOpenInput) => Promise<BrowserTab>;
   activate: (tabId: string) => Promise<void>;
+  navigate: (input: BrowserNavigateInput) => Promise<void>;
   reload: (tabId: string) => Promise<void>;
   close: (tabId: string) => Promise<void>;
   listTabs: () => Promise<BrowserTab[]>;
@@ -254,7 +263,10 @@ export interface RemoteDesktopDesktopApi {
 }
 
 export interface VoiceDesktopApi {
+  getModelStatus: () => Promise<VoiceModelStatus>;
+  prepareModel: () => Promise<VoiceModelStatus>;
   transcribe: (input: VoiceTranscriptionInput) => Promise<VoiceTranscriptionResult>;
+  onModelStatus: (listener: (status: VoiceModelStatus) => void) => () => void;
 }
 
 export interface SkillsDesktopApi {

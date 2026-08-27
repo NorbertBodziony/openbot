@@ -354,6 +354,12 @@ describe.sequential("AgentService", () => {
           }),
         ]),
       );
+      const browserTools = (Array.isArray(params.dynamicTools) ? params.dynamicTools : [])
+        .filter(isDynamicRecord)
+        .find((tool) => tool.type === "namespace" && tool.name === "openbot_browser");
+      expect(browserTools).toMatchObject({
+        tools: expect.arrayContaining([expect.objectContaining({ name: "request_takeover" })]),
+      });
     }
     for (const turn of requests.filter((message) => message.method === "turn/start")) {
       const params = paramsRecord(turn.params);
@@ -664,7 +670,7 @@ describe.sequential("AgentService", () => {
     });
 
     await waitFor(() => calls.length === 1);
-    expect(calls[0]?.threadId).toBe(openbotThreadId);
+    expect(calls[0]).toMatchObject({ threadId: openbotThreadId, ownerBotId: "chief" });
   });
 
   it("surfaces Codex approvals without auto-accepting and maps one-shot decisions", async () => {
@@ -799,6 +805,109 @@ describe.sequential("AgentService", () => {
       throw new Error("The question result has no text content.");
     }
     expect(JSON.parse(content.text)).toEqual({ favorite: ["Blue"] });
+  });
+
+  it("pauses a browser tool call until the user resolves the takeover", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const tabs: BrowserTab[] = [];
+    const browser = fakeBrowser(tabs);
+    browser.handleDynamicTool = async (params) => {
+      if (params.tool === "open") {
+        tabs.push({
+          id: "protected-tab",
+          title: "Sign in",
+          url: "https://example.com/login",
+          loading: false,
+          ownerThreadId: params.threadId,
+          ownerBotId: params.ownerBotId ?? null,
+        });
+      }
+      return { success: true, contentItems: [] };
+    };
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, browser, null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Open a protected page" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    const client = clients.get("codex");
+    const externalThreadId = store.activeProviderSession("chief")?.externalSessionId;
+    const started = events.find((event) => event.type === "turn-started");
+    if (!client || !externalThreadId || started?.type !== "turn-started") throw new Error("Turn did not start.");
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "open-call",
+      params: {
+        threadId: externalThreadId,
+        turnId: started.turnId,
+        callId: "open-call",
+        namespace: "openbot_browser",
+        tool: "open",
+        arguments: { url: "https://example.com/login" },
+      },
+    });
+    await waitFor(() => client.responses.length === 1);
+    expect(tabs[0]).toMatchObject({
+      ownerThreadId: started.threadId,
+      ownerBotId: "chief",
+    });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "takeover-call",
+      params: {
+        threadId: externalThreadId,
+        turnId: started.turnId,
+        callId: "takeover-call",
+        namespace: "openbot_browser",
+        tool: "request_takeover",
+        arguments: { tabId: "protected-tab" },
+      },
+    });
+    await waitFor(() => events.some((event) => event.type === "browser-takeover-requested"));
+    expect(client.responses).toHaveLength(1);
+    expect(events.find((event) => event.type === "browser-takeover-requested")).toMatchObject({
+      request: { requestId: "takeover-call", botId: "chief", tabId: "protected-tab" },
+    });
+
+    await service.respondToBrowserTakeover({ requestId: "takeover-call", decision: "complete" });
+    await waitFor(() => client.responses.length === 2);
+    expect(openBotToolPayload(client.responses[1]?.result)).toEqual({
+      status: "completed",
+      next: "Take a fresh snapshot and continue the task.",
+    });
+    expect(events).toContainEqual({
+      type: "browser-takeover-resolved",
+      requestId: "takeover-call",
+      botId: "chief",
+    });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "takeover-cancel",
+      params: {
+        threadId: externalThreadId,
+        turnId: started.turnId,
+        callId: "takeover-cancel",
+        namespace: "openbot_browser",
+        tool: "request_takeover",
+        arguments: { tabId: "protected-tab" },
+      },
+    });
+    await waitFor(() =>
+      events.some(
+        (event) => event.type === "browser-takeover-requested" && event.request.requestId === "takeover-cancel",
+      ),
+    );
+    await service.respondToBrowserTakeover({ requestId: "takeover-cancel", decision: "cancel" });
+    await waitFor(() => client.responses.length === 3);
+    expect(openBotToolPayload(client.responses[2]?.result)).toEqual({ status: "cancelled" });
   });
 
   it("commits an automatic memory only after a successful turn and refreshes the next turn context", async () => {
@@ -2799,12 +2908,13 @@ function stores(): { store: BotStore; mailbox: MailboxStore } {
   return { store, mailbox: new MailboxStore(join(root, "user-data"), store.sharedRoot) };
 }
 
-function fakeBrowser() {
+function fakeBrowser(tabs: BrowserTab[] = []) {
   return {
     onChanged: (_listener: (tabs: BrowserTab[], activeTabId: string | null) => void) => () => undefined,
     onControlChanged: (_listener: (state: BrowserControlState) => void) => () => undefined,
     clearControls: () => undefined,
     endControl: () => undefined,
+    listTabs: () => tabs,
     handleDynamicTool: async (_params: DynamicToolCallParams) => ({ success: true, contentItems: [] }),
   };
 }

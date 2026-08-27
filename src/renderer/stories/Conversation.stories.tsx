@@ -648,6 +648,14 @@ const prompt: Extract<AgentEvent, { type: "prompt" }> = {
   ],
 };
 
+const browserTakeover: Extract<AgentEvent, { type: "browser-takeover-requested" }>["request"] = {
+  requestId: "takeover-1",
+  botId: "chief",
+  threadId: "thread-chief",
+  turnId: "turn-takeover",
+  tabId: "tab-login",
+};
+
 const promptQuestions: Extract<AgentEvent, { type: "prompt" }> = {
   type: "prompt",
   requestId: "prompt-questions",
@@ -764,6 +772,7 @@ function MockedConversation(props: {
   args: Parameters<typeof Conversation>[0];
   messages?: RendererBotMessage[];
   initialAttachments?: DraftAttachment[];
+  voiceModelProgress?: number;
 }) {
   const previousApi = window.openbot;
   const mock = createMockOpenBot();
@@ -776,6 +785,12 @@ function MockedConversation(props: {
       controller.setDrafts({
         [initialBotId]: { text: "", attachments: props.initialAttachments ?? [], replyToMessageId: null },
       });
+    });
+  }
+  if (props.voiceModelProgress !== undefined) {
+    onSettled(() => {
+      controller.setVoicePhase("preparing");
+      controller.setVoiceModelProgress(props.voiceModelProgress ?? null);
     });
   }
   const [unreadCount, setUnreadCount] = createSignal(0);
@@ -897,6 +912,7 @@ const args: Parameters<typeof Conversation>[0] = {
   remoteDesktopVisible: false,
   prompt: undefined,
   approval: undefined,
+  browserTakeover: undefined,
   onSelectAgent: fn(),
   onUpdateBot: async (_botId: string, _updates: Omit<UpdateBotInput, "botId">) => undefined,
   onSetAgentAvatar: async (_botId: string, _image: AvatarImageInput | null) => undefined,
@@ -905,6 +921,7 @@ const args: Parameters<typeof Conversation>[0] = {
   onTypingChange: fn(),
   onAnswerPrompt: async (_answers: Record<string, string[]>) => true,
   onRespondToApproval: async (_decision: "accept" | "decline") => true,
+  onRespondToBrowserTakeover: async (_decision: "complete" | "cancel") => true,
   onCancelQueuedMessage: fn(),
   onSteerQueuedMessage: fn(),
   onUpdateQueuedMessage: async (
@@ -951,6 +968,11 @@ export const VoiceRecording: Story = {
     await expect(canvas.findByRole("group", { name: "Voice recording" })).resolves.toBeVisible();
     await expect(canvas.findByRole("button", { name: "Stop voice recording" })).resolves.toBeVisible();
   },
+};
+
+export const VoiceModelDownload: Story = {
+  name: "Voice model download",
+  render: (storyArgs) => <MockedConversation args={storyArgs} voiceModelProgress={47} />,
 };
 
 export const SearchConversation: Story = {
@@ -1217,6 +1239,25 @@ export const Thinking: Story = {
 
 export const Prompt: Story = {
   args: { prompt },
+};
+
+export const BrowserTakeover: Story = {
+  name: "Browser authorization takeover",
+  args: {
+    browserTakeover,
+    browserTabs: [
+      {
+        id: "tab-login",
+        title: "Sign in",
+        url: "https://example.com/login",
+        loading: false,
+        ownerThreadId: "thread-chief",
+        ownerBotId: "chief",
+      },
+    ],
+    activeBrowserTabId: "tab-login",
+    activeTurnId: "turn-takeover",
+  },
 };
 
 export const PromptQuestionsInChat: Story = {

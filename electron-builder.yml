@@ -26,6 +26,8 @@ files:
   - package.json
   - LICENSE
   - NOTICE
+  - "!node_modules/@anthropic-ai/claude-agent-sdk-darwin-*/**/*"
+  - "!node_modules/@anthropic-ai/claude-agent-sdk-win32-*/**/*"
 extraResources:
   - from: build/icon-production.png
     to: icons/icon-production.png
@@ -43,8 +45,6 @@ extraResources:
     to: licenses/whisper.cpp-LICENSE
   - from: .openbot-build/whisper/bin
     to: whisper/bin
-  - from: .openbot-build/whisper/model
-    to: whisper/model
   - from: build/remote-desktop-runtime
     to: remote-desktop-runtime
   - from: build/cloudflared/${os}/${arch}

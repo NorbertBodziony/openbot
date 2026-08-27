@@ -44,6 +44,7 @@ import { appendVoiceTranscript, recordingToWav } from "../voice-recording";
 import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
 import { useConversationController } from "./Conversation";
+import { BrowserTakeoverCard } from "./ConversationPrompts";
 import {
   AgentActivityIndicator,
   type AgentActivityPresentation,
@@ -188,6 +189,7 @@ export interface ConversationProps {
   remoteDesktopVisible: boolean;
   prompt: Extract<AgentEvent, { type: "prompt" }> | undefined;
   approval: Extract<AgentEvent, { type: "approval" }>["approval"] | undefined;
+  browserTakeover: Extract<AgentEvent, { type: "browser-takeover-requested" }>["request"] | undefined;
   onSelectAgent: (botId: string) => void;
   onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
   onSetAgentAvatar: (botId: string, image: AvatarImageInput | null) => Promise<void>;
@@ -200,6 +202,7 @@ export interface ConversationProps {
   onTypingChange: (botId: string, typing: boolean) => void;
   onAnswerPrompt: (answers: Record<string, string[]>) => Promise<boolean>;
   onRespondToApproval: (decision: "accept" | "decline") => Promise<boolean>;
+  onRespondToBrowserTakeover: (decision: "complete" | "cancel") => Promise<boolean>;
   onCancelQueuedMessage: (deliveryId: string) => void;
   onSteerQueuedMessage: (deliveryId: string) => void;
   onUpdateQueuedMessage: (
@@ -326,6 +329,8 @@ function createConversationViewScope(props: ConversationProps) {
     setComposerError,
     voicePhase,
     setVoicePhase,
+    voiceModelProgress,
+    setVoiceModelProgress,
     voiceElapsedSeconds,
     setVoiceElapsedSeconds,
     markingRead,
@@ -580,6 +585,23 @@ function createConversationViewScope(props: ConversationProps) {
       else agentActivityExitDelayTimer = window.setTimeout(beginExit, exitDelay);
     },
   );
+
+  createEffect(
+    () => {
+      const tabId = props.browserTakeover?.tabId;
+      return {
+        tabId,
+        tabExists: Boolean(tabId && browserTabs().some((tab) => tab.id === tabId)),
+        activeTabId: props.activeBrowserTabId,
+        activateTab: props.onActivateBrowserTab,
+      };
+    },
+    ({ tabId, tabExists, activeTabId, activateTab }) => {
+      if (!tabId || !tabExists) return;
+      setActiveRightPanel("browser");
+      if (activeTabId !== tabId) activateTab(tabId);
+    },
+  );
   onCleanup(() => {
     clearAgentActivityShowTimer();
     clearAgentActivityExitDelayTimer();
@@ -827,8 +849,19 @@ function createConversationViewScope(props: ConversationProps) {
     const botId = props.bot?.id;
     if (!botId || voicePhase() !== "idle") return;
     setComposerError(null);
-    setVoicePhase("requesting");
+    setVoicePhase("preparing");
+    setVoiceModelProgress(0);
     try {
+      const modelStatus = await window.openbot.voice.prepareModel();
+      if (resources.voiceDisposed || voicePhase() !== "preparing") return;
+      if (modelStatus.phase !== "ready") {
+        setVoicePhase("idle");
+        setVoiceModelProgress(null);
+        setComposerError(modelStatus.message ?? "Could not prepare the voice model.");
+        return;
+      }
+      setVoicePhase("requesting");
+      setVoiceModelProgress(null);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       if (resources.voiceDisposed || voicePhase() !== "requesting") {
         for (const track of stream.getTracks()) track.stop();
@@ -852,6 +885,12 @@ function createConversationViewScope(props: ConversationProps) {
       setComposerError(voiceCaptureError(error));
     }
   }
+
+  const removeVoiceModelListener = window.openbot.voice.onModelStatus((status) => {
+    if (voicePhase() !== "preparing") return;
+    setVoiceModelProgress(status.progress);
+  });
+  onCleanup(removeVoiceModelListener);
 
   function stopVoiceRecording(): void {
     if (voicePhase() !== "recording" || !resources.voiceRecorder) return;
@@ -1679,6 +1718,7 @@ function createConversationViewScope(props: ConversationProps) {
   async function openBrowserAddress(address = browserAddress()) {
     const value = address.trim();
     if (!value) return;
+    setBrowserAddressEditing(false);
     const analytics = desktopAnalytics.scope();
     const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
     try {
@@ -1686,6 +1726,7 @@ function createConversationViewScope(props: ConversationProps) {
         url,
         ownerThreadId: props.bot?.threadId ?? null,
         ownerBotId: props.bot?.id ?? null,
+        focus: true,
       });
       setBrowserAddress(tab.url);
       if (!screenOpen()) setActiveRightPanel("browser");
@@ -1768,6 +1809,14 @@ function createConversationViewScope(props: ConversationProps) {
         result: "failed",
         failure_code: "browser_reload_failed",
       });
+    }
+  }
+
+  async function navigateBrowserTab(tabId: string, direction: "back" | "forward") {
+    try {
+      await window.openbot.browser.navigate({ tabId, direction });
+    } catch {
+      setComposerError(`Could not navigate ${direction}.`);
     }
   }
 
@@ -2036,6 +2085,7 @@ function createConversationViewScope(props: ConversationProps) {
     queueExitTimer,
     queuePanelVisible,
     reactToMessage,
+    navigateBrowserTab,
     reloadBrowserTab,
     removeAttachment,
     renderedAgentActivity,
@@ -2129,6 +2179,7 @@ function createConversationViewScope(props: ConversationProps) {
     virtualRoot,
     voiceElapsedSeconds,
     voicePhase,
+    voiceModelProgress,
   };
 }
 
@@ -2656,6 +2707,14 @@ export function ConversationTimeline() {
               </Loading>
             )}
           </Show>
+          <Show when={props.browserTakeover}>
+            <Loading>
+              <BrowserTakeoverCard
+                onComplete={() => props.onRespondToBrowserTakeover("complete")}
+                onCancel={() => props.onRespondToBrowserTakeover("cancel")}
+              />
+            </Loading>
+          </Show>
         </Show>
       </div>
     </>
@@ -2698,9 +2757,10 @@ export function ConversationComposer() {
     updateTeamTyping,
     voiceElapsedSeconds,
     voicePhase,
+    voiceModelProgress,
   } = useConversationViewScope();
   return (
-    <Show when={!props.prompt && !props.approval}>
+    <Show when={!props.prompt && !props.approval && !props.browserTakeover}>
       <div class="composer-wrap">
         <div
           class="agent-queue-slot"
@@ -2879,6 +2939,11 @@ export function ConversationComposer() {
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
             <div class="composer-primary-actions">
+              <Show when={voicePhase() === "preparing"}>
+                <span class="voice-model-progress" role="status">
+                  Downloading voice model {voiceModelProgress() ?? 0}%
+                </span>
+              </Show>
               <Show
                 when={voicePhase() === "recording"}
                 fallback={
@@ -2889,13 +2954,16 @@ export function ConversationComposer() {
                     aria-label={voiceButtonLabel(voicePhase())}
                     disabled={
                       voicePhase() === "requesting" ||
+                      voicePhase() === "preparing" ||
                       voicePhase() === "transcribing" ||
                       (voicePhase() === "idle" && (!props.bot || !agentReady()))
                     }
                     onClick={() => void startVoiceRecording()}
                   >
                     <Show
-                      when={voicePhase() === "requesting" || voicePhase() === "transcribing"}
+                      when={
+                        voicePhase() === "preparing" || voicePhase() === "requesting" || voicePhase() === "transcribing"
+                      }
                       fallback={<Mic aria-hidden="true" />}
                     >
                       <LoaderCircle class="dictation-spinner" aria-hidden="true" />
@@ -2975,6 +3043,7 @@ export function ConversationPanels() {
     openSharedFile,
     openSidebarFileExternally,
     openWorkspaceFile,
+    navigateBrowserTab,
     props,
     reloadBrowserTab,
     screenOpen,
@@ -3047,6 +3116,7 @@ export function ConversationPanels() {
           onAddressChange={setBrowserAddress}
           onAddressEditingChange={setBrowserAddressEditing}
           onOpenAddress={(address) => void openBrowserAddress(address)}
+          onNavigate={(tabId, direction) => void navigateBrowserTab(tabId, direction)}
           onReload={(tabId) => void reloadBrowserTab(tabId)}
           onActivateTab={props.onActivateBrowserTab}
           onCloseTab={(tabId) => void closeBrowserTab(tabId)}

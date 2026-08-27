@@ -14,6 +14,7 @@ const storyUpdateStatus: UpdateStatus = {
   progress: null,
   checkedAt: null,
   message: null,
+  errorCode: null,
 };
 
 function SettingsModalStory(props: { initialOpen: boolean }) {

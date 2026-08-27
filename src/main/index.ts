@@ -26,6 +26,7 @@ import {
   type SendMessageInput,
   type SidebarLayoutSnapshot,
   type UpdateBotInput,
+  type VoiceModelStatus,
   type VoiceTranscriptionResult,
 } from "@openbot/contracts/ipc";
 import { isNumber, isString } from "@openbot/contracts/runtime-values";
@@ -36,6 +37,7 @@ import {
   dialog,
   Menu,
   Notification,
+  autoUpdater as nativeAutoUpdater,
   type OpenDialogOptions,
   protocol,
   safeStorage,
@@ -75,6 +77,7 @@ import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service"
 import {
   parseAgentRequest,
   parseApprovalResponse,
+  parseBrowserTakeoverResponse,
   parseCancelQueuedMessage,
   parseChooseAttachments,
   parseCreateBot,
@@ -111,7 +114,7 @@ import {
   parseProvider,
 } from "./ipc/app-inputs";
 import { parseAvatarImage } from "./ipc/avatar-inputs";
-import { parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
+import { parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
 import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
 import { isObject, requireString } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
@@ -148,6 +151,7 @@ import { TeamStore } from "./team-store";
 import { handleTrusted } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 import { supportsInstalledUpdates, UpdateService } from "./update-service";
+import { WHISPER_MODEL_NAME, WHISPER_MODEL_URL } from "./voice-model-service";
 import { VoiceTranscriptionService } from "./voice-transcription-service";
 
 const commandLineUserDataDirectory = app.commandLine.getSwitchValue("user-data-dir").trim();
@@ -334,6 +338,8 @@ function registerIpcHandlers(
     }
     return shell.openExternal(url.toString());
   });
+  handleTrusted(IPC_CHANNELS.voiceGetModelStatus, (): Promise<VoiceModelStatus> => voice.getModelStatus());
+  handleTrusted(IPC_CHANNELS.voicePrepareModel, (): Promise<VoiceModelStatus> => voice.prepareModel());
   handleTrusted(
     IPC_CHANNELS.voiceTranscribe,
     (input: unknown): Promise<VoiceTranscriptionResult> => voice.transcribe(parseVoiceTranscription(input).audio),
@@ -956,11 +962,23 @@ function registerIpcHandlers(
       ? service.respondToApproval(parsed)
       : remoteServers.request("/v1/approvals/respond", { method: "POST", body: parsed }, scoped.serverId, decodeVoid);
   });
+  handleTrusted(IPC_CHANNELS.agentRespondToBrowserTakeover, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseBrowserTakeoverResponse(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.respondToBrowserTakeover(parsed)
+      : remoteServers.request(
+          "/v1/browser-takeovers/respond",
+          { method: "POST", body: parsed },
+          scoped.serverId,
+          decodeVoid,
+        );
+  });
 
   handleTrusted(IPC_CHANNELS.browserOpen, (input: unknown) => {
     const parsed = parseBrowserOpen(input);
     return remoteServers.activeServerId === "local"
-      ? browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null)
+      ? browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null, parsed.focus)
       : remoteServers.request("/v1/browser/open", { method: "POST", body: parsed }, undefined, decodeBrowserTab);
   });
   handleTrusted(IPC_CHANNELS.browserActivate, (tabId: unknown) =>
@@ -973,6 +991,12 @@ function registerIpcHandlers(
           decodeVoid,
         ),
   );
+  handleTrusted(IPC_CHANNELS.browserNavigate, (input: unknown) => {
+    const parsed = parseBrowserNavigate(input);
+    return remoteServers.activeServerId === "local"
+      ? browser.navigate(parsed.tabId, parsed.direction)
+      : remoteServers.request("/v1/browser/navigate", { method: "POST", body: parsed }, undefined, decodeVoid);
+  });
   handleTrusted(IPC_CHANNELS.browserReload, (tabId: unknown) =>
     remoteServers.activeServerId === "local"
       ? browser.reload(requireString(tabId, "tabId"))
@@ -1164,6 +1188,11 @@ function forwardAgentEvent(serverId: string, event: AgentEvent): void {
 function forwardUpdateStatus(status: import("@openbot/contracts/ipc").UpdateStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.updateEvent, status);
+}
+
+function forwardVoiceModelStatus(status: VoiceModelStatus): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_CHANNELS.voiceModelStatus, status);
 }
 
 function forwardHostStatus(status: import("@openbot/contracts/ipc").HostStatus): void {
@@ -1515,9 +1544,14 @@ if (!hasSingleInstanceLock) {
       const host = hostService;
       const remoteDesktop = remoteDesktopManager;
       const remoteServers = remoteServerManager;
-      voiceTranscriptionService = new VoiceTranscriptionService(
-        app.isPackaged ? join(process.resourcesPath, "whisper") : resolve(".openbot-build/whisper"),
-      );
+      voiceTranscriptionService = new VoiceTranscriptionService({
+        resourcesRoot: app.isPackaged ? join(process.resourcesPath, "whisper") : resolve(".openbot-build/whisper"),
+        modelPath: app.isPackaged
+          ? join(app.getPath("userData"), "runtimes", "whisper", WHISPER_MODEL_NAME)
+          : resolve(".openbot-build/whisper/model", WHISPER_MODEL_NAME),
+        modelDownloadUrl: WHISPER_MODEL_URL,
+      });
+      voiceTranscriptionService.on("modelStatus", forwardVoiceModelStatus);
       const { autoUpdater } = electronUpdater;
       updateService = new UpdateService(autoUpdater, {
         currentVersion: app.getVersion(),
@@ -1526,6 +1560,10 @@ if (!hasSingleInstanceLock) {
           supportsInstalledUpdates(process.platform) &&
           existsSync(join(process.resourcesPath, "app-update.yml")),
         beforeInstall: prepareForShutdown,
+        platform: process.platform,
+        nativeUpdater: nativeAutoUpdater,
+        logDirectory: join(app.getPath("userData"), "logs", "update"),
+        shipItDirectory: join(homedir(), "Library", "Caches", "app.openbot.desktop.ShipIt"),
       });
       service.on("event", (event) => forwardAgentEvent("local", event));
       sidebarLayoutStore.on("changed", (layout) =>

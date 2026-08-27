@@ -3,6 +3,7 @@ import type {
   AgentStatus,
   AttachmentImportEvent,
   BotSummary,
+  BrowserTab,
   CentralAuthState,
   ConversationSnapshot,
   DirectConversationSnapshot,
@@ -12,6 +13,7 @@ import type {
   ServerSummary,
   TeamPresenceSnapshot,
   UpdateStatus,
+  VoiceModelStatus,
 } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
@@ -235,7 +237,10 @@ describe("OpenBot connected desktop shell", () => {
         }),
         openUrl: vi.fn().mockResolvedValue(undefined),
         voice: {
+          getModelStatus: vi.fn().mockResolvedValue({ phase: "ready", progress: 100, message: null }),
+          prepareModel: vi.fn().mockResolvedValue({ phase: "ready", progress: 100, message: null }),
           transcribe: vi.fn().mockResolvedValue({ text: "Voice transcript" }),
+          onModelStatus: vi.fn().mockReturnValue(() => undefined),
         },
         auth: {
           getState: vi.fn().mockResolvedValue({
@@ -460,6 +465,7 @@ describe("OpenBot connected desktop shell", () => {
           interrupt: vi.fn().mockResolvedValue(undefined),
           respondToPrompt: vi.fn().mockResolvedValue(undefined),
           respondToApproval: vi.fn().mockResolvedValue(undefined),
+          respondToBrowserTakeover: vi.fn().mockResolvedValue(undefined),
           onEvent: vi.fn((listener) => {
             emitAgentEvent = listener;
             return () => undefined;
@@ -468,6 +474,7 @@ describe("OpenBot connected desktop shell", () => {
         browser: {
           open: vi.fn().mockResolvedValue(undefined),
           activate: vi.fn().mockResolvedValue(undefined),
+          navigate: vi.fn().mockResolvedValue(undefined),
           reload: vi.fn().mockResolvedValue(undefined),
           close: vi.fn().mockResolvedValue(undefined),
           listTabs: vi.fn().mockResolvedValue([]),
@@ -1774,6 +1781,7 @@ describe("OpenBot connected desktop shell", () => {
       progress: null,
       checkedAt: "2026-08-12T22:00:00.000Z",
       message: null,
+      errorCode: null,
     });
     render(() => <App />);
 
@@ -1794,6 +1802,7 @@ describe("OpenBot connected desktop shell", () => {
       progress: 100,
       checkedAt: "2026-08-12T22:00:00.000Z",
       message: null,
+      errorCode: null,
     });
     fireEvent.click(await screen.findByRole("button", { name: /Restart to update/ }));
     await waitFor(() => expect(window.openbot.update.install).toHaveBeenCalledOnce());
@@ -1807,6 +1816,7 @@ describe("OpenBot connected desktop shell", () => {
       progress: null,
       checkedAt: null,
       message: null,
+      errorCode: null,
     });
     vi.mocked(window.openbot.update.download).mockResolvedValueOnce({
       phase: "error",
@@ -1815,6 +1825,7 @@ describe("OpenBot connected desktop shell", () => {
       progress: null,
       checkedAt: "2026-08-12T22:00:00.000Z",
       message: "Could not check for updates. Try again.",
+      errorCode: "download_failed",
     });
     render(() => <App />);
 
@@ -1856,6 +1867,32 @@ describe("OpenBot connected desktop shell", () => {
     expect(
       await screen.findByText("Microphone access is blocked. Allow OpenBot to use the microphone in system settings."),
     ).toBeInTheDocument();
+  });
+
+  it("downloads the voice model before it requests microphone access", async () => {
+    let resolvePreparation: ((status: VoiceModelStatus) => void) | undefined;
+    let reportModelStatus: ((status: VoiceModelStatus) => void) | undefined;
+    vi.mocked(window.openbot.voice.prepareModel).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePreparation = resolve;
+        }),
+    );
+    vi.mocked(window.openbot.voice.onModelStatus).mockImplementationOnce((listener) => {
+      reportModelStatus = listener;
+      return () => undefined;
+    });
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Create prompt with voice" }));
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+    reportModelStatus?.({ phase: "downloading", progress: 47, message: null });
+    await waitFor(() => {
+      expect(screen.getAllByRole("status").some((status) => status.textContent?.includes("47%"))).toBe(true);
+    });
+
+    resolvePreparation?.({ phase: "ready", progress: 100, message: null });
+    await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledOnce());
   });
 
   it("shows the recording timer and stop control while capturing voice", async () => {
@@ -2663,6 +2700,21 @@ describe("OpenBot connected desktop shell", () => {
     if (!(addressForm instanceof HTMLFormElement)) throw new Error("Browser address form was not rendered.");
     await fireEvent.submit(addressForm);
     await waitFor(() => expect(window.openbot.browser.open).toHaveBeenCalledTimes(1));
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-next",
+          title: "Redirected page",
+          url: "https://substack.com/dashboard",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-next",
+    });
+    expect(address).toHaveValue("https://substack.com/dashboard");
     expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-pip");
 
     vi.mocked(window.openbot.browser.setVisible).mockClear();
@@ -2720,8 +2772,12 @@ describe("OpenBot connected desktop shell", () => {
       expect(screen.getByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-pip"),
     );
     expect(conversation).toHaveClass("browser-panel-active");
+    await fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    expect(window.openbot.browser.navigate).toHaveBeenCalledWith({ tabId: "tab-next", direction: "back" });
+    await fireEvent.click(screen.getByRole("button", { name: "Go forward" }));
+    expect(window.openbot.browser.navigate).toHaveBeenCalledWith({ tabId: "tab-next", direction: "forward" });
     await fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
-    expect(window.openbot.browser.reload).toHaveBeenCalledWith("tab-pip");
+    expect(window.openbot.browser.reload).toHaveBeenCalledWith("tab-next");
     expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
 
     await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
@@ -2731,6 +2787,49 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
     expect(window.openbot.browser.close).not.toHaveBeenCalled();
     expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
+  });
+
+  it("keeps a newly opened browser tab active when the initial tab request resolves late", async () => {
+    const googleTab: BrowserTab = {
+      id: "tab-google",
+      title: "Google",
+      url: "https://www.google.com",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const substackTab: BrowserTab = {
+      id: "tab-substack",
+      title: "Substack | Chat",
+      url: "https://substack.com/chat",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    let resolveInitialTabs: (tabs: BrowserTab[]) => void = () => undefined;
+    vi.mocked(window.openbot.browser.listTabs).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveInitialTabs = resolve;
+      }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(window.openbot.browser.listTabs).toHaveBeenCalledTimes(1));
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [googleTab, substackTab],
+      activeTabId: substackTab.id,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    const substackTrigger = await screen.findByRole("tab", { name: "Substack | Chat" });
+    expect(substackTrigger).toHaveAttribute("aria-selected", "true");
+
+    resolveInitialTabs([googleTab]);
+
+    await waitFor(() => expect(substackTrigger).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("tab", { name: "Google" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://substack.com/chat");
   });
 
   it("clamps and restores Picture in Picture per conversation without overriding it during agent control", async () => {
@@ -2852,6 +2951,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://www.google.com",
       ownerThreadId: "thread-chief",
       ownerBotId: "chief",
+      focus: true,
     });
     expect(screen.queryByText("Typing…")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Chief is controlling the browser" })).toHaveAttribute(
@@ -2886,6 +2986,62 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
     expect(controlledTab.closest(".browser-tab-wrap")).not.toHaveClass("browser-tab-controlled");
     expect(await screen.findByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-controlled");
+  });
+
+  it("reveals the requested browser tab and resumes the agent from the takeover card", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitAgentEvent).toBeDefined());
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-public",
+          title: "Public page",
+          url: "https://example.com",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+        {
+          id: "tab-login",
+          title: "Sign in",
+          url: "https://example.com/login",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-public",
+    });
+    emitAgentEvent?.({
+      type: "browser-takeover-requested",
+      request: {
+        requestId: "takeover-1",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-1",
+        tabId: "tab-login",
+      },
+    });
+
+    expect(await screen.findByRole("region", { name: "Browser takeover" })).toHaveTextContent("Take over");
+    expect(
+      screen.getByText("Complete the authorization in the open browser, then let the agent continue."),
+    ).toBeVisible();
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeVisible();
+    await waitFor(() => expect(window.openbot.browser.activate).toHaveBeenCalledWith("tab-login"));
+    expect(screen.queryByRole("textbox", { name: "Message Chief" })).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() =>
+      expect(window.openbot.agent.respondToBrowserTakeover).toHaveBeenCalledWith({
+        requestId: "takeover-1",
+        decision: "complete",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Browser takeover" })).not.toBeInTheDocument());
   });
 
   it("closes browser tabs with the middle mouse button and Control W, then closes the panel", async () => {

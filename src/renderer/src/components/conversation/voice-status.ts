@@ -1,7 +1,8 @@
-export type VoicePhase = "idle" | "requesting" | "recording" | "transcribing";
+export type VoicePhase = "idle" | "preparing" | "requesting" | "recording" | "transcribing";
 
 export function voiceButtonLabel(phase: VoicePhase) {
   if (phase === "recording") return "Stop voice recording";
+  if (phase === "preparing") return "Downloading voice model";
   if (phase === "requesting") return "Requesting microphone access";
   if (phase === "transcribing") return "Transcribing voice prompt";
   return "Create prompt with voice";

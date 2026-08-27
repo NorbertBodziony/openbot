@@ -9,8 +9,8 @@ export interface UpdateStatusPresentation {
 }
 
 export function presentUpdateStatus(status: UpdateStatus): UpdateStatusPresentation {
-  const available = ["available", "downloading", "ready", "installing"].includes(status.phase);
-  const busy = ["checking", "downloading", "installing"].includes(status.phase);
+  const available = ["available", "downloading", "preparing", "ready", "installing"].includes(status.phase);
+  const busy = ["checking", "downloading", "preparing", "installing"].includes(status.phase);
   let actionLabel = "Check for updates";
 
   switch (status.phase) {
@@ -22,6 +22,9 @@ export function presentUpdateStatus(status: UpdateStatus): UpdateStatusPresentat
       break;
     case "downloading":
       actionLabel = "Downloading update…";
+      break;
+    case "preparing":
+      actionLabel = "Preparing update…";
       break;
     case "ready":
       actionLabel = "Restart to update";

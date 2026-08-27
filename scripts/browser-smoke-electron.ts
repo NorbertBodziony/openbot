@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, webContents } from "electron";
 import { BrowserHost } from "../src/backend/browser-host";
 import { getString } from "../src/backend/protocol";
 
@@ -91,6 +91,7 @@ async function main(): Promise<void> {
     const downloadsRoot = join(temporaryRoot, "downloads");
     const statePath = join(temporaryRoot, "browser-tabs.json");
     const browser = new BrowserHost(window, downloadsRoot, statePath);
+    await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } });
 
     const controlPhases: string[] = [];
     const controlledTabIds: Array<string | null> = [];
@@ -102,7 +103,10 @@ async function main(): Promise<void> {
       } else if (controlPhases.length > 0) controlPhases.push("ended");
     });
 
-    const tab = await browser.open(origin, "smoke-thread", "smoke-bot");
+    const tab = await browser.open(origin, "smoke-thread", "smoke-bot", true);
+    if (webContents.getFocusedWebContents()?.getURL() !== `${origin}/`) {
+      throw new Error("A user-opened browser tab did not receive keyboard focus.");
+    }
     process.stdout.write("BrowserHost: local tab opened.\n");
     const first = await browser.snapshot(tab.id);
     const input = first.elements.find((element) => element.name === "Task");
@@ -218,11 +222,43 @@ async function main(): Promise<void> {
       threadId: "smoke-thread",
       turnId: "browser-smoke-turn",
       callId: "browser-smoke-call",
+      ownerBotId: "smoke-bot",
       namespace: "openbot_browser",
       tool: "open",
       arguments: { url: `${origin}/cookie` },
     });
     if (!toolResult.success) throw new Error("Dynamic browser tool failed.");
+    const otherBotTab = await browser.open(`${origin}/cookie`, "smoke-thread", "other-bot");
+    const scopedTabsResult = await browser.handleDynamicTool({
+      threadId: "smoke-thread",
+      turnId: "browser-smoke-scope-turn",
+      callId: "browser-smoke-scope-call",
+      ownerBotId: "smoke-bot",
+      namespace: "openbot_browser",
+      tool: "list_tabs",
+      arguments: {},
+    });
+    const scopedTabsContent = scopedTabsResult.contentItems[0];
+    const scopedTabsPayload = scopedTabsContent?.type === "inputText" ? JSON.parse(scopedTabsContent.text) : undefined;
+    if (
+      !scopedTabsResult.success ||
+      !isDynamicRecord(scopedTabsPayload) ||
+      !Array.isArray(scopedTabsPayload.tabs) ||
+      scopedTabsPayload.tabs.some((candidate) => isDynamicRecord(candidate) && candidate.id === otherBotTab.id)
+    ) {
+      throw new Error("Dynamic browser tools exposed another agent's tab.");
+    }
+    const crossAgentSnapshot = await browser.handleDynamicTool({
+      threadId: "smoke-thread",
+      turnId: "browser-smoke-scope-turn",
+      callId: "browser-smoke-cross-agent-call",
+      ownerBotId: "smoke-bot",
+      namespace: "openbot_browser",
+      tool: "snapshot",
+      arguments: { tabId: otherBotTab.id },
+    });
+    if (crossAgentSnapshot.success) throw new Error("Dynamic browser tools accessed another agent's tab.");
+    process.stdout.write("BrowserHost: agent tab isolation passed.\n");
     if (!controlPhases.includes("open:acting") || !controlPhases.includes("open:waiting")) {
       throw new Error(`Browser control lifecycle was not reported: ${controlPhases.join(", ")}`);
     }

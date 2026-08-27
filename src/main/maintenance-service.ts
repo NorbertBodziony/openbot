@@ -111,7 +111,7 @@ export async function exportDiagnostics(
   });
   const update = context.updater.getStatus();
   const diagnostics = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     application: {
       version: app.getVersion(),
@@ -142,6 +142,8 @@ export async function exportDiagnostics(
       availableVersion: update.availableVersion,
       progress: update.progress,
       checkedAt: update.checkedAt,
+      errorCode: update.errorCode,
+      history: context.updater.getDiagnostics(),
     },
     privacy:
       "Contains no conversations, URLs, email addresses, tokens, file contents, file paths, or raw error messages.",

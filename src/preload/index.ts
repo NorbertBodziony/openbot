@@ -698,7 +698,14 @@ const openbotApi: OpenBotDesktopApi = {
   refreshAgentProviders: () => ipcRenderer.invoke(IPC_CHANNELS.refreshAgentProviders),
   openUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.openUrl, url),
   voice: {
+    getModelStatus: () => ipcRenderer.invoke(IPC_CHANNELS.voiceGetModelStatus),
+    prepareModel: () => ipcRenderer.invoke(IPC_CHANNELS.voicePrepareModel),
     transcribe: (input) => ipcRenderer.invoke(IPC_CHANNELS.voiceTranscribe, input),
+    onModelStatus: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: Parameters<typeof listener>[0]) => listener(status);
+      ipcRenderer.on(IPC_CHANNELS.voiceModelStatus, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.voiceModelStatus, handler);
+    },
   },
   auth: {
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.authGetState),
@@ -787,6 +794,7 @@ const openbotApi: OpenBotDesktopApi = {
     interrupt: (input) => invokeAgent(IPC_CHANNELS.agentInterrupt, input, decodeVoid),
     respondToPrompt: (input) => invokeAgent(IPC_CHANNELS.agentRespondToPrompt, input, decodeVoid),
     respondToApproval: (input) => invokeAgent(IPC_CHANNELS.agentRespondToApproval, input, decodeVoid),
+    respondToBrowserTakeover: (input) => invokeAgent(IPC_CHANNELS.agentRespondToBrowserTakeover, input, decodeVoid),
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: ScopedAgentEvent) => {
         if (payload.serverId === selectedServerId) listener(payload.event);
@@ -798,6 +806,7 @@ const openbotApi: OpenBotDesktopApi = {
   browser: {
     open: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserOpen, input),
     activate: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserActivate, tabId),
+    navigate: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserNavigate, input),
     reload: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserReload, tabId),
     close: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserClose, tabId),
     listTabs: () => ipcRenderer.invoke(IPC_CHANNELS.browserListTabs),

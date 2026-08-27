@@ -25,6 +25,7 @@ import {
   isReasoningEffort,
   type ReorderQueueInput,
   type RespondToApprovalInput,
+  type RespondToBrowserTakeoverInput,
   type SidebarLayoutSnapshot,
   type SteerQueuedMessageInput,
   type TeamMemberSummary,
@@ -100,6 +101,7 @@ type TeamApiAgentMethods = Pick<
   | "interrupt"
   | "respondToPrompt"
   | "respondToApproval"
+  | "respondToBrowserTakeover"
 >;
 
 type TeamApiAgents = TeamApiAgentMethods & {
@@ -114,7 +116,7 @@ type TeamApiSidebarLayout = Pick<SidebarLayoutStore, "getSnapshot" | "mutate" | 
 };
 type TeamApiBrowser = Pick<
   BrowserHost,
-  "listTabs" | "getControlState" | "open" | "activate" | "reload" | "close" | "setVisible"
+  "listTabs" | "getControlState" | "open" | "activate" | "navigate" | "reload" | "close" | "setVisible"
 >;
 type TeamApiRemoteScreen = Pick<
   RemoteScreenGateway,
@@ -611,6 +613,8 @@ export class TeamApiServer {
       }
       if (method === "POST" && url.pathname === "/v1/browser/open") {
         const body = await readJson(request);
+        const focus = body.focus ?? false;
+        if (!isBoolean(focus)) throw new HttpError(400, "focus must be a boolean.");
         return this.#json(
           response,
           201,
@@ -618,12 +622,22 @@ export class TeamApiServer {
             stringField(body, "url", false, INPUT_LIMITS.browserUrl),
             nullableString(body, "ownerThreadId"),
             nullableString(body, "ownerBotId"),
+            focus,
           ),
         );
       }
       if (method === "POST" && url.pathname === "/v1/browser/activate") {
         const body = await readJson(request);
         await this.#options.browser.activate(stringField(body, "tabId"));
+        return this.#empty(response, 204);
+      }
+      if (method === "POST" && url.pathname === "/v1/browser/navigate") {
+        const body = await readJson(request);
+        const direction = stringField(body, "direction");
+        if (direction !== "back" && direction !== "forward") {
+          throw new HttpError(400, "Invalid browser navigation direction.");
+        }
+        await this.#options.browser.navigate(stringField(body, "tabId"), direction);
         return this.#empty(response, 204);
       }
       if (method === "POST" && url.pathname === "/v1/browser/reload") {
@@ -1038,6 +1052,14 @@ export class TeamApiServer {
         await this.#options.agents.respondToApproval({
           requestId: promptRequestId(body.requestId),
           decision: approvalDecision(body.decision),
+        });
+        return this.#empty(response, 204);
+      }
+      if (method === "POST" && url.pathname === "/v1/browser-takeovers/respond") {
+        const body = await readJson(request);
+        await this.#options.agents.respondToBrowserTakeover({
+          requestId: promptRequestId(body.requestId),
+          decision: browserTakeoverDecision(body.decision),
         });
         return this.#empty(response, 204);
       }
@@ -1472,6 +1494,11 @@ function promptAnswers(value: unknown): Record<string, string[]> {
 function approvalDecision(value: unknown): RespondToApprovalInput["decision"] {
   if (value === "accept" || value === "decline") return value;
   throw new HttpError(400, "approval decision is invalid.");
+}
+
+function browserTakeoverDecision(value: unknown): RespondToBrowserTakeoverInput["decision"] {
+  if (value === "complete" || value === "cancel") return value;
+  throw new HttpError(400, "browser takeover decision is invalid.");
 }
 
 function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {

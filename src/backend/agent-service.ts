@@ -24,6 +24,7 @@ import type {
   BotSummary,
   BrowserControlState,
   BrowserTab,
+  BrowserTakeoverRequest,
   ConversationMessage,
   ConversationPage,
   ConversationPageAnchor,
@@ -44,6 +45,7 @@ import type {
   QueueSnapshot,
   ReorderQueueInput,
   RespondToApprovalInput,
+  RespondToBrowserTakeoverInput,
   RespondToPromptInput,
   Routine,
   RoutineRun,
@@ -133,6 +135,7 @@ interface AgentBrowserHost {
   onControlChanged(listener: (state: BrowserControlState) => void): () => void;
   clearControls(): void;
   endControl(threadId: string, turnId: string): void;
+  listTabs(): BrowserTab[];
   handleDynamicTool(params: DynamicToolCallParams): Promise<DynamicToolResult>;
 }
 
@@ -149,6 +152,12 @@ interface PendingApproval {
   method: string;
   params: unknown;
   approval: AgentApproval;
+}
+
+interface PendingBrowserTakeover {
+  params: DynamicToolCallParams;
+  request: BrowserTakeoverRequest;
+  resolve: (result: DynamicToolResult) => void;
 }
 
 interface ComputerUsePrerequisites {
@@ -314,6 +323,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #loadedThreads = new Set<string>();
   readonly #pendingPrompts = new Map<RequestId, PendingPrompt>();
   readonly #pendingApprovals = new Map<RequestId, PendingApproval>();
+  readonly #pendingBrowserTakeovers = new Map<RequestId, PendingBrowserTakeover>();
   readonly #itemTurns = new Map<string, string>();
   readonly #imageGenerationOperations = new Map<string, ImageGenerationOperation>();
   readonly #interruptedTurns = new Set<string>();
@@ -376,6 +386,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#bundledGrokExecutable = bundledGrokExecutable;
     this.#preferredProvider = preferredProvider;
     this.#browser.onChanged((tabs, activeTabId) => {
+      for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
+        if (!tabs.some((tab) => tab.id === pending.request.tabId)) {
+          this.#resolveBrowserTakeover(requestId, pending, "cancel");
+        }
+      }
       this.#emit({ type: "browser-changed", tabs, activeTabId });
     });
     this.#browser.onControlChanged((state) => {
@@ -784,6 +799,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#pendingMemoryMutations.clear();
     this.#pendingRuntimeRefreshes.clear();
     this.#clearPendingPrompts();
+    this.#clearPendingBrowserTakeovers();
     this.#pendingApprovals.clear();
     const pendingLogin = this.#codexLogin;
     this.#codexLogin = null;
@@ -1060,6 +1076,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       pending.client.respond(pending.id, { decision: input.decision });
     }
     this.#pendingApprovals.delete(input.requestId);
+  }
+
+  async respondToBrowserTakeover(input: RespondToBrowserTakeoverInput): Promise<void> {
+    const pending = this.#pendingBrowserTakeovers.get(input.requestId);
+    if (!pending) throw new Error("This browser takeover is no longer active.");
+    this.#markRoutineRunningForTurn(pending.request.turnId);
+    this.#resolveBrowserTakeover(input.requestId, pending, input.decision);
   }
 
   async #runProviderConnectionCommand(
@@ -1772,6 +1795,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#loadedThreads.clear();
     this.#clearCompactionRuntime();
     this.#clearPendingPrompts();
+    this.#clearPendingBrowserTakeovers();
     this.#pendingApprovals.clear();
     this.#browser.clearControls();
     this.#emitError(`${client.provider}_exited`, error);
@@ -1928,11 +1952,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           if (request.params.namespace === OPENBOT_BROWSER_NAMESPACE) {
             const botId = this.#threadToBot.get(request.params.threadId);
             if (!botId) throw new Error("The browsing OpenBot agent is unknown.");
+            if (request.params.tool === "request_takeover") {
+              client.respond(request.id, await this.#surfaceBrowserTakeover(request));
+              return;
+            }
             client.respond(
               request.id,
               await this.#browser.handleDynamicTool({
                 ...request.params,
                 threadId: this.#publicThreadId(botId, request.params.threadId),
+                ownerBotId: botId,
               }),
             );
             return;
@@ -3346,6 +3375,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.#pendingApprovals.delete(requestId);
       }
     }
+    for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
+      if (pending.params.threadId === threadId && pending.params.turnId === turnId) {
+        this.#resolveBrowserTakeover(requestId, pending, "cancel");
+      }
+    }
   }
 
   #clearPendingPrompts(): void {
@@ -3353,6 +3387,65 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       pending.resolve?.(dynamicPromptResult({}));
     }
     this.#pendingPrompts.clear();
+  }
+
+  #clearPendingBrowserTakeovers(): void {
+    for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
+      this.#resolveBrowserTakeover(requestId, pending, "cancel");
+    }
+  }
+
+  #resolveBrowserTakeover(
+    requestId: RequestId,
+    pending: PendingBrowserTakeover,
+    decision: RespondToBrowserTakeoverInput["decision"],
+  ): void {
+    this.#pendingBrowserTakeovers.delete(requestId);
+    this.#emit({
+      type: "browser-takeover-resolved",
+      requestId: pending.request.requestId,
+      botId: pending.request.botId,
+    });
+    pending.resolve(browserTakeoverResult(decision));
+  }
+
+  #surfaceBrowserTakeover(request: AppServerRequest): Promise<DynamicToolResult> {
+    if (!isDynamicToolCall(request.params)) return Promise.resolve(browserTakeoverError());
+    const params = request.params;
+    const { threadId, turnId } = params;
+    const botId = this.#threadToBot.get(threadId);
+    const args = getRecord(params, "arguments");
+    const tabId = getString(args, "tabId");
+    const publicThreadId = botId ? this.#publicThreadId(botId, threadId) : null;
+    const tab = tabId ? this.#browser.listTabs().find((candidate) => candidate.id === tabId) : undefined;
+    if (
+      !botId ||
+      !turnId ||
+      !tabId ||
+      !publicThreadId ||
+      !tab ||
+      tab.ownerThreadId !== publicThreadId ||
+      tab.ownerBotId !== botId
+    ) {
+      return Promise.resolve(browserTakeoverError());
+    }
+
+    const takeover: BrowserTakeoverRequest = {
+      requestId: request.id,
+      botId,
+      threadId: publicThreadId,
+      turnId,
+      tabId,
+    };
+    return new Promise((resolve) => {
+      this.#pendingBrowserTakeovers.set(request.id, {
+        params,
+        request: takeover,
+        resolve,
+      });
+      this.#markRoutineNeedsAttention(turnId);
+      this.#emit({ type: "browser-takeover-requested", request: takeover });
+    });
   }
 
   #surfaceDynamicPrompt(client: AgentClient, request: AppServerRequest): Promise<DynamicToolResult> {
@@ -3932,6 +4025,7 @@ function developerInstructions(bot: BotSummary, sharedRoot: string, memories: Bo
     "You have full local computer, filesystem, command, and network access as requested by the user.",
     "Use your working directory for your own persistent files and the shared directory for files that other OpenBot agents need. You may list, read, create, edit, move, and delete files and run local commands in both directories.",
     `For every browser task, use ${OPENBOT_BROWSER_NAMESPACE} directly. It is OpenBot's private embedded browser and is available through its dynamic tools. Never use browser:control-in-app-browser, browser-use, Chrome, or another browser plugin inside OpenBot; those tools target a different host and can report a false unavailable state. Use the installed Computer Use plugin only for macOS GUI tasks outside the browser.`,
+    `When a browser step requires the user to log in, grant consent, solve a CAPTCHA, use a passkey, enter a one-time code, or complete another authorization step, call ${OPENBOT_BROWSER_NAMESPACE}.request_takeover for that tab. Never enter credentials or authentication secrets yourself. Wait for the takeover result; when it is completed, take a fresh snapshot and continue the original task.`,
     "Use openbot.list_agents to discover other persistent OpenBot teammates.",
     "When routing work, call openbot.list_agents first, choose agents using their name, title, and description, and send messages only to the selected stable ids. Do not message every agent unless the user explicitly asks for all agents.",
     "Use openbot.update_profile with the target bot id to change a local agent's name, title, or description. The target id is required and may refer to any local agent.",
@@ -4174,6 +4268,28 @@ function dynamicPromptResult(answers: Record<string, string[]>): DynamicToolResu
   return {
     success: true,
     contentItems: [{ type: "inputText", text: JSON.stringify(answers) }],
+  };
+}
+
+function browserTakeoverResult(decision: RespondToBrowserTakeoverInput["decision"]): DynamicToolResult {
+  return {
+    success: true,
+    contentItems: [
+      {
+        type: "inputText",
+        text: JSON.stringify({
+          status: decision === "complete" ? "completed" : "cancelled",
+          ...(decision === "complete" ? { next: "Take a fresh snapshot and continue the task." } : {}),
+        }),
+      },
+    ],
+  };
+}
+
+function browserTakeoverError(): DynamicToolResult {
+  return {
+    success: false,
+    contentItems: [{ type: "inputText", text: "OpenBot could not create a browser takeover request." }],
   };
 }
 
