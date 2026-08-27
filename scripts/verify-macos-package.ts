@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -34,7 +34,6 @@ await Promise.all([
   access(resolve(resourcesPath, "licenses/OpenAI-Whisper-LICENSE")),
   access(resolve(resourcesPath, "licenses/whisper.cpp-LICENSE")),
   access(whisperExecutablePath),
-  access(whisperModelPath),
   access(resolve(resourcesPath, "remote-desktop-runtime/licenses/Sunshine-GPL-3.0.txt")),
   access(resolve(resourcesPath, "remote-desktop-runtime/licenses/moonlight-web-stream-GPL-3.0.txt")),
   access(resolve(resourcesPath, "remote-desktop-runtime/source-manifest.json")),
@@ -107,13 +106,7 @@ const grokArchitecture = run("file", [grokExecutablePath]);
 if (!grokArchitecture.includes("arm64")) {
   throw new Error(`Expected an ARM64 Grok executable: ${grokArchitecture}`);
 }
-expectEqual(
-  createHash("sha256")
-    .update(await readFile(whisperModelPath))
-    .digest("hex"),
-  "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f",
-  "Whisper model digest",
-);
+if (existsSync(whisperModelPath)) throw new Error("The on-demand Whisper model must not be in the application.");
 
 for (const name of ["Sunshine.app", "web-server", "streamer"]) {
   run("codesign", ["--verify", "--strict", "--verbose=2", resolve(remoteRuntimePath, name)]);

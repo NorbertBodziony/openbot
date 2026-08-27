@@ -12,6 +12,7 @@ const idleUpdateStatus: UpdateStatus = {
   progress: null,
   checkedAt: null,
   message: null,
+  errorCode: null,
 };
 
 describe("SettingsModal", () => {

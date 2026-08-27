@@ -772,6 +772,7 @@ function MockedConversation(props: {
   args: Parameters<typeof Conversation>[0];
   messages?: RendererBotMessage[];
   initialAttachments?: DraftAttachment[];
+  voiceModelProgress?: number;
 }) {
   const previousApi = window.openbot;
   const mock = createMockOpenBot();
@@ -784,6 +785,12 @@ function MockedConversation(props: {
       controller.setDrafts({
         [initialBotId]: { text: "", attachments: props.initialAttachments ?? [], replyToMessageId: null },
       });
+    });
+  }
+  if (props.voiceModelProgress !== undefined) {
+    onSettled(() => {
+      controller.setVoicePhase("preparing");
+      controller.setVoiceModelProgress(props.voiceModelProgress ?? null);
     });
   }
   const [unreadCount, setUnreadCount] = createSignal(0);
@@ -961,6 +968,11 @@ export const VoiceRecording: Story = {
     await expect(canvas.findByRole("group", { name: "Voice recording" })).resolves.toBeVisible();
     await expect(canvas.findByRole("button", { name: "Stop voice recording" })).resolves.toBeVisible();
   },
+};
+
+export const VoiceModelDownload: Story = {
+  name: "Voice model download",
+  render: (storyArgs) => <MockedConversation args={storyArgs} voiceModelProgress={47} />,
 };
 
 export const SearchConversation: Story = {

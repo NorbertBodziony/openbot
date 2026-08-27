@@ -366,7 +366,10 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     refreshAgentProviders: async () => clone(agentStatus),
     openUrl: async () => undefined,
     voice: {
+      getModelStatus: async () => ({ phase: "ready", progress: 100, message: null }),
+      prepareModel: async () => ({ phase: "ready", progress: 100, message: null }),
       transcribe: async () => ({ text: "Mock voice transcript" }),
+      onModelStatus: () => () => undefined,
     },
     auth: {
       getState: async () => clone(authState),

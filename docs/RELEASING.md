@@ -106,7 +106,7 @@ The workflow:
 4. builds signed and notarized ARM64 DMG and ZIP artifacts on a GitHub macOS runner;
 5. builds an unsigned Windows x64 NSIS installer on a GitHub Windows runner;
 6. verifies both unpacked applications, update metadata, runtimes, licenses, checksums, platform
-   signing contracts, and launch behavior;
+   signing contracts, launch behavior, and update artifact size limits;
 7. generates SPDX SBOMs and GitHub build-provenance attestations for both platforms;
 8. publishes one non-draft GitHub Release only after both platform jobs pass.
 
@@ -115,7 +115,16 @@ Users can verify a downloaded artifact with
 
 Installed OpenBot builds check for updates shortly after launch and every four hours. Updates are
 never downloaded without a user action. The account popover shows the current state and lets the user
-download an available version, then restart into it.
+download an available version, then restart into it. macOS shows the restart action only after the
+native updater finishes staging the ZIP. Windows installs only after the explicit restart action.
+
+The Whisper executable is part of the application. The `ggml-medium-q5_0.bin` model is not part of an
+application or update artifact. OpenBot downloads the pinned model on first voice use, checks its size
+and SHA-256, and keeps the verified file in the user data directory for later offline use.
+
+The release workflow stops if the macOS update ZIP or Windows NSIS installer is larger than 700 MiB,
+or if the DMG is larger than 750 MiB. It also stops if update metadata has a wrong size or SHA-512, if
+the Whisper model is present, or if the application contains a second native Claude runtime.
 
 If a release is bad, publish a newer patch version. Do not replace an already published version with
 different binaries.
@@ -133,8 +142,12 @@ Before creating the first tag or any later release:
 6. confirm that the lock file contains both runtime artifacts and that their install checks pass;
 7. smoke-test sign-in/setup, chat streaming, queues, attachments, agent messaging, browser control,
    context compaction, and the update popover;
-8. confirm `CHANGELOG.md` describes the version and the working tree is clean;
-9. create and push the version commit and tag only after CI passes on `main`.
+8. on macOS ARM64 and Windows x64, update from the last public version and confirm check, download,
+   preparation, explicit restart, new version, local agents, conversations, and queues;
+9. test first voice use, download progress, retry after a stopped download, transcription, and cached
+   offline use;
+10. confirm `CHANGELOG.md` describes the version and the working tree is clean;
+11. create and push the version commit and tag only after CI passes on `main`.
 
 The unsigned local macOS package is a development artifact. It does not prove Gatekeeper,
 notarization, or auto-update readiness. Those are proven only by the signed release workflow's

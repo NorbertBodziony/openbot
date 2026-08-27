@@ -329,6 +329,8 @@ function createConversationViewScope(props: ConversationProps) {
     setComposerError,
     voicePhase,
     setVoicePhase,
+    voiceModelProgress,
+    setVoiceModelProgress,
     voiceElapsedSeconds,
     setVoiceElapsedSeconds,
     markingRead,
@@ -847,8 +849,19 @@ function createConversationViewScope(props: ConversationProps) {
     const botId = props.bot?.id;
     if (!botId || voicePhase() !== "idle") return;
     setComposerError(null);
-    setVoicePhase("requesting");
+    setVoicePhase("preparing");
+    setVoiceModelProgress(0);
     try {
+      const modelStatus = await window.openbot.voice.prepareModel();
+      if (resources.voiceDisposed || voicePhase() !== "preparing") return;
+      if (modelStatus.phase !== "ready") {
+        setVoicePhase("idle");
+        setVoiceModelProgress(null);
+        setComposerError(modelStatus.message ?? "Could not prepare the voice model.");
+        return;
+      }
+      setVoicePhase("requesting");
+      setVoiceModelProgress(null);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       if (resources.voiceDisposed || voicePhase() !== "requesting") {
         for (const track of stream.getTracks()) track.stop();
@@ -872,6 +885,12 @@ function createConversationViewScope(props: ConversationProps) {
       setComposerError(voiceCaptureError(error));
     }
   }
+
+  const removeVoiceModelListener = window.openbot.voice.onModelStatus((status) => {
+    if (voicePhase() !== "preparing") return;
+    setVoiceModelProgress(status.progress);
+  });
+  onCleanup(removeVoiceModelListener);
 
   function stopVoiceRecording(): void {
     if (voicePhase() !== "recording" || !resources.voiceRecorder) return;
@@ -2160,6 +2179,7 @@ function createConversationViewScope(props: ConversationProps) {
     virtualRoot,
     voiceElapsedSeconds,
     voicePhase,
+    voiceModelProgress,
   };
 }
 
@@ -2737,6 +2757,7 @@ export function ConversationComposer() {
     updateTeamTyping,
     voiceElapsedSeconds,
     voicePhase,
+    voiceModelProgress,
   } = useConversationViewScope();
   return (
     <Show when={!props.prompt && !props.approval && !props.browserTakeover}>
@@ -2918,6 +2939,11 @@ export function ConversationComposer() {
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
             <div class="composer-primary-actions">
+              <Show when={voicePhase() === "preparing"}>
+                <span class="voice-model-progress" role="status">
+                  Downloading voice model {voiceModelProgress() ?? 0}%
+                </span>
+              </Show>
               <Show
                 when={voicePhase() === "recording"}
                 fallback={
@@ -2928,13 +2954,16 @@ export function ConversationComposer() {
                     aria-label={voiceButtonLabel(voicePhase())}
                     disabled={
                       voicePhase() === "requesting" ||
+                      voicePhase() === "preparing" ||
                       voicePhase() === "transcribing" ||
                       (voicePhase() === "idle" && (!props.bot || !agentReady()))
                     }
                     onClick={() => void startVoiceRecording()}
                   >
                     <Show
-                      when={voicePhase() === "requesting" || voicePhase() === "transcribing"}
+                      when={
+                        voicePhase() === "preparing" || voicePhase() === "requesting" || voicePhase() === "transcribing"
+                      }
                       fallback={<Mic aria-hidden="true" />}
                     >
                       <LoaderCircle class="dictation-spinner" aria-hidden="true" />

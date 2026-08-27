@@ -5,6 +5,15 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+### Changed
+
+- Download and verify the Whisper model on first voice use instead of shipping it in every application update.
+
+### Fixed
+
+- Wait for native macOS update staging before offering a restart, and require an explicit update restart on Windows.
+- Reject oversized or inconsistent release artifacts and remove duplicate native runtime files from packages.
+
 ## [0.3.4] - 2026-08-26
 
 ### Fixed
