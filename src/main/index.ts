@@ -186,6 +186,7 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const appVariant = readAppVariant(process.env.OPENBOT_APP_VARIANT, app.isPackaged);
 const appIconPath = resolveAppIconPath({
   variant: appVariant,
+  platform: process.platform,
   isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath,
   sourceRoot: resolve(__dirname, "../.."),
