@@ -50,7 +50,10 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   const [showComposerActions, setShowComposerActions] = createSignal(false);
   const [attachmentBusy, setAttachmentBusy] = createSignal(false);
   const [composerError, setComposerError] = createSignal<string | null>(null);
-  const [voicePhase, setVoicePhase] = createSignal<"idle" | "requesting" | "recording" | "transcribing">("idle");
+  const [voicePhase, setVoicePhase] = createSignal<"idle" | "preparing" | "requesting" | "recording" | "transcribing">(
+    "idle",
+  );
+  const [voiceModelProgress, setVoiceModelProgress] = createSignal<number | null>(null);
   const [voiceElapsedSeconds, setVoiceElapsedSeconds] = createSignal(0);
   const [markingRead, setMarkingRead] = createSignal(false);
   const [submitting, setSubmitting] = createSignal(false);
@@ -121,6 +124,8 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     setComposerError,
     voicePhase,
     setVoicePhase,
+    voiceModelProgress,
+    setVoiceModelProgress,
     voiceElapsedSeconds,
     setVoiceElapsedSeconds,
     markingRead,

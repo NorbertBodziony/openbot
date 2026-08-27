@@ -494,6 +494,7 @@ export const STORY_UPDATE_STATUS: UpdateStatus = {
   progress: null,
   checkedAt: STORY_NOW,
   message: null,
+  errorCode: null,
 };
 
 export const STORY_APP_INFO = {

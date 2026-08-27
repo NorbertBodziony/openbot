@@ -6025,6 +6025,12 @@
   gap: 6px;
 }
 
+.voice-model-progress {
+  color: var(--openbot-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .voice-recording-status {
   display: flex;
   height: 28px;

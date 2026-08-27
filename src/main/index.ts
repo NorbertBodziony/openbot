@@ -26,6 +26,7 @@ import {
   type SendMessageInput,
   type SidebarLayoutSnapshot,
   type UpdateBotInput,
+  type VoiceModelStatus,
   type VoiceTranscriptionResult,
 } from "@openbot/contracts/ipc";
 import { isNumber, isString } from "@openbot/contracts/runtime-values";
@@ -36,6 +37,7 @@ import {
   dialog,
   Menu,
   Notification,
+  autoUpdater as nativeAutoUpdater,
   type OpenDialogOptions,
   protocol,
   safeStorage,
@@ -148,6 +150,7 @@ import { TeamStore } from "./team-store";
 import { handleTrusted } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 import { supportsInstalledUpdates, UpdateService } from "./update-service";
+import { WHISPER_MODEL_NAME, WHISPER_MODEL_URL } from "./voice-model-service";
 import { VoiceTranscriptionService } from "./voice-transcription-service";
 
 const commandLineUserDataDirectory = app.commandLine.getSwitchValue("user-data-dir").trim();
@@ -333,6 +336,8 @@ function registerIpcHandlers(
     }
     return shell.openExternal(url.toString());
   });
+  handleTrusted(IPC_CHANNELS.voiceGetModelStatus, (): Promise<VoiceModelStatus> => voice.getModelStatus());
+  handleTrusted(IPC_CHANNELS.voicePrepareModel, (): Promise<VoiceModelStatus> => voice.prepareModel());
   handleTrusted(
     IPC_CHANNELS.voiceTranscribe,
     (input: unknown): Promise<VoiceTranscriptionResult> => voice.transcribe(parseVoiceTranscription(input).audio),
@@ -1165,6 +1170,11 @@ function forwardUpdateStatus(status: import("@openbot/contracts/ipc").UpdateStat
   mainWindow.webContents.send(IPC_CHANNELS.updateEvent, status);
 }
 
+function forwardVoiceModelStatus(status: VoiceModelStatus): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_CHANNELS.voiceModelStatus, status);
+}
+
 function forwardHostStatus(status: import("@openbot/contracts/ipc").HostStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.hostEvent, status);
@@ -1514,9 +1524,14 @@ if (!hasSingleInstanceLock) {
       const host = hostService;
       const remoteDesktop = remoteDesktopManager;
       const remoteServers = remoteServerManager;
-      voiceTranscriptionService = new VoiceTranscriptionService(
-        app.isPackaged ? join(process.resourcesPath, "whisper") : resolve(".openbot-build/whisper"),
-      );
+      voiceTranscriptionService = new VoiceTranscriptionService({
+        resourcesRoot: app.isPackaged ? join(process.resourcesPath, "whisper") : resolve(".openbot-build/whisper"),
+        modelPath: app.isPackaged
+          ? join(app.getPath("userData"), "runtimes", "whisper", WHISPER_MODEL_NAME)
+          : resolve(".openbot-build/whisper/model", WHISPER_MODEL_NAME),
+        modelDownloadUrl: WHISPER_MODEL_URL,
+      });
+      voiceTranscriptionService.on("modelStatus", forwardVoiceModelStatus);
       const { autoUpdater } = electronUpdater;
       updateService = new UpdateService(autoUpdater, {
         currentVersion: app.getVersion(),
@@ -1525,6 +1540,10 @@ if (!hasSingleInstanceLock) {
           supportsInstalledUpdates(process.platform) &&
           existsSync(join(process.resourcesPath, "app-update.yml")),
         beforeInstall: prepareForShutdown,
+        platform: process.platform,
+        nativeUpdater: nativeAutoUpdater,
+        logDirectory: join(app.getPath("userData"), "logs", "update"),
+        shipItDirectory: join(homedir(), "Library", "Caches", "app.openbot.desktop.ShipIt"),
       });
       service.on("event", (event) => forwardAgentEvent("local", event));
       sidebarLayoutStore.on("changed", (layout) =>

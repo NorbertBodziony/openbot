@@ -1,18 +1,50 @@
 import { type ChildProcess, execFile } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { VoiceTranscriptionResult } from "@openbot/contracts/ipc";
+import type { VoiceModelStatus, VoiceTranscriptionResult } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
+import { VoiceModelService } from "./voice-model-service";
 
 const TRANSCRIPTION_TIMEOUT_MS = 180_000;
 
-export class VoiceTranscriptionService {
+interface VoiceTranscriptionEvents {
+  modelStatus: [status: VoiceModelStatus];
+}
+
+interface VoiceTranscriptionServiceOptions {
+  resourcesRoot: string;
+  modelPath: string;
+  modelDownloadUrl: string | null;
+  fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+}
+
+export class VoiceTranscriptionService extends EventEmitter<VoiceTranscriptionEvents> {
   private activeChild: ChildProcess | null = null;
   private busy = false;
+  private readonly resourcesRoot: string;
+  private readonly model: VoiceModelService;
 
-  constructor(private readonly resourcesRoot: string) {}
+  constructor(options: VoiceTranscriptionServiceOptions) {
+    super();
+    this.resourcesRoot = options.resourcesRoot;
+    this.model = new VoiceModelService({
+      modelPath: options.modelPath,
+      downloadUrl: options.modelDownloadUrl,
+      fetch: options.fetch,
+    });
+    this.model.on("status", (status) => this.emit("modelStatus", status));
+  }
+
+  getModelStatus(): Promise<VoiceModelStatus> {
+    return this.model.getStatus();
+  }
+
+  prepareModel(): Promise<VoiceModelStatus> {
+    return this.model.prepare();
+  }
 
   async transcribe(audio: Uint8Array): Promise<VoiceTranscriptionResult> {
     if (this.busy) throw new Error("A voice transcription is already in progress.");
@@ -23,7 +55,9 @@ export class VoiceTranscriptionService {
       "bin",
       process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli",
     );
-    const model = join(this.resourcesRoot, "model", "ggml-medium-q5_0.bin");
+    const modelStatus = await this.model.prepare();
+    if (modelStatus.phase !== "ready") throw new Error(modelStatus.message ?? "The voice model is unavailable.");
+    const model = this.model.modelPath;
     const startedAt = Date.now();
 
     try {
@@ -61,6 +95,7 @@ export class VoiceTranscriptionService {
   }
 
   shutdown(): void {
+    this.model.shutdown();
     this.activeChild?.kill();
     this.activeChild = null;
   }

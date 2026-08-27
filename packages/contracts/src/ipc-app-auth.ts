@@ -15,6 +15,7 @@ export type UpdatePhase =
   | "checking"
   | "available"
   | "downloading"
+  | "preparing"
   | "ready"
   | "installing"
   | "up-to-date"
@@ -28,7 +29,10 @@ export interface UpdateStatus {
   progress: number | null;
   checkedAt: string | null;
   message: string | null;
+  errorCode: UpdateFailureCode | null;
 }
+
+export type UpdateFailureCode = "check_failed" | "download_failed" | "prepare_failed" | "install_failed";
 
 export interface ExportResult {
   saved: boolean;

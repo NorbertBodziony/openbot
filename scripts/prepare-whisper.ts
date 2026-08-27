@@ -17,6 +17,7 @@ const modelRoot = join(buildRoot, "model");
 const modelPath = join(modelRoot, MODEL_NAME);
 const executableName = process.platform === "win32" ? "whisper-cli.exe" : "whisper-cli";
 const outputExecutable = join(binaryRoot, executableName);
+const runtimeOnly = process.argv.includes("--runtime-only");
 
 if (process.platform !== "darwin" && process.platform !== "win32") {
   throw new Error("Voice assets can currently be prepared only on macOS or Windows.");
@@ -24,9 +25,14 @@ if (process.platform !== "darwin" && process.platform !== "win32") {
 
 requireCommand("cmake", ["--version"]);
 requireCommand("tar", ["--version"]);
-await Promise.all([mkdir(binaryRoot, { recursive: true }), mkdir(modelRoot, { recursive: true })]);
-await removeOtherModels();
-await prepareModel();
+await Promise.all([
+  mkdir(binaryRoot, { recursive: true }),
+  ...(runtimeOnly ? [] : [mkdir(modelRoot, { recursive: true })]),
+]);
+if (!runtimeOnly) {
+  await removeOtherModels();
+  await prepareModel();
+}
 await prepareSource();
 buildExecutable();
 console.log(`Prepared Whisper voice assets in ${buildRoot}`);

@@ -698,7 +698,14 @@ const openbotApi: OpenBotDesktopApi = {
   refreshAgentProviders: () => ipcRenderer.invoke(IPC_CHANNELS.refreshAgentProviders),
   openUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.openUrl, url),
   voice: {
+    getModelStatus: () => ipcRenderer.invoke(IPC_CHANNELS.voiceGetModelStatus),
+    prepareModel: () => ipcRenderer.invoke(IPC_CHANNELS.voicePrepareModel),
     transcribe: (input) => ipcRenderer.invoke(IPC_CHANNELS.voiceTranscribe, input),
+    onModelStatus: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, status: Parameters<typeof listener>[0]) => listener(status);
+      ipcRenderer.on(IPC_CHANNELS.voiceModelStatus, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.voiceModelStatus, handler);
+    },
   },
   auth: {
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.authGetState),

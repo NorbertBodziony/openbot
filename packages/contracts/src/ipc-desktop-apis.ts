@@ -113,7 +113,7 @@ import type {
   UpdateHostIdentityInput,
   UpdateTeamMemberInput,
 } from "./ipc-team-host";
-import type { VoiceTranscriptionInput, VoiceTranscriptionResult } from "./ipc-voice";
+import type { VoiceModelStatus, VoiceTranscriptionInput, VoiceTranscriptionResult } from "./ipc-voice";
 
 export interface AgentDesktopApi {
   getStatus: () => Promise<AgentStatus>;
@@ -254,7 +254,10 @@ export interface RemoteDesktopDesktopApi {
 }
 
 export interface VoiceDesktopApi {
+  getModelStatus: () => Promise<VoiceModelStatus>;
+  prepareModel: () => Promise<VoiceModelStatus>;
   transcribe: (input: VoiceTranscriptionInput) => Promise<VoiceTranscriptionResult>;
+  onModelStatus: (listener: (status: VoiceModelStatus) => void) => () => void;
 }
 
 export interface SkillsDesktopApi {

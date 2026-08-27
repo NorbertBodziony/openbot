@@ -12,6 +12,7 @@ import type {
   ServerSummary,
   TeamPresenceSnapshot,
   UpdateStatus,
+  VoiceModelStatus,
 } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
@@ -235,7 +236,10 @@ describe("OpenBot connected desktop shell", () => {
         }),
         openUrl: vi.fn().mockResolvedValue(undefined),
         voice: {
+          getModelStatus: vi.fn().mockResolvedValue({ phase: "ready", progress: 100, message: null }),
+          prepareModel: vi.fn().mockResolvedValue({ phase: "ready", progress: 100, message: null }),
           transcribe: vi.fn().mockResolvedValue({ text: "Voice transcript" }),
+          onModelStatus: vi.fn().mockReturnValue(() => undefined),
         },
         auth: {
           getState: vi.fn().mockResolvedValue({
@@ -1774,6 +1778,7 @@ describe("OpenBot connected desktop shell", () => {
       progress: null,
       checkedAt: "2026-08-12T22:00:00.000Z",
       message: null,
+      errorCode: null,
     });
     render(() => <App />);
 
@@ -1794,6 +1799,7 @@ describe("OpenBot connected desktop shell", () => {
       progress: 100,
       checkedAt: "2026-08-12T22:00:00.000Z",
       message: null,
+      errorCode: null,
     });
     fireEvent.click(await screen.findByRole("button", { name: /Restart to update/ }));
     await waitFor(() => expect(window.openbot.update.install).toHaveBeenCalledOnce());
@@ -1807,6 +1813,7 @@ describe("OpenBot connected desktop shell", () => {
       progress: null,
       checkedAt: null,
       message: null,
+      errorCode: null,
     });
     vi.mocked(window.openbot.update.download).mockResolvedValueOnce({
       phase: "error",
@@ -1815,6 +1822,7 @@ describe("OpenBot connected desktop shell", () => {
       progress: null,
       checkedAt: "2026-08-12T22:00:00.000Z",
       message: "Could not check for updates. Try again.",
+      errorCode: "download_failed",
     });
     render(() => <App />);
 
@@ -1856,6 +1864,32 @@ describe("OpenBot connected desktop shell", () => {
     expect(
       await screen.findByText("Microphone access is blocked. Allow OpenBot to use the microphone in system settings."),
     ).toBeInTheDocument();
+  });
+
+  it("downloads the voice model before it requests microphone access", async () => {
+    let resolvePreparation: ((status: VoiceModelStatus) => void) | undefined;
+    let reportModelStatus: ((status: VoiceModelStatus) => void) | undefined;
+    vi.mocked(window.openbot.voice.prepareModel).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePreparation = resolve;
+        }),
+    );
+    vi.mocked(window.openbot.voice.onModelStatus).mockImplementationOnce((listener) => {
+      reportModelStatus = listener;
+      return () => undefined;
+    });
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Create prompt with voice" }));
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+    reportModelStatus?.({ phase: "downloading", progress: 47, message: null });
+    await waitFor(() => {
+      expect(screen.getAllByRole("status").some((status) => status.textContent?.includes("47%"))).toBe(true);
+    });
+
+    resolvePreparation?.({ phase: "ready", progress: 100, message: null });
+    await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledOnce());
   });
 
   it("shows the recording timer and stop control while capturing voice", async () => {

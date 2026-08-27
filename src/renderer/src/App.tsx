@@ -114,6 +114,7 @@ const FALLBACK_UPDATE_STATUS: UpdateStatus = {
   progress: null,
   checkedAt: null,
   message: null,
+  errorCode: null,
 };
 const ANALYTICS_APP_VERSION_STORAGE_KEY = "openbot:analytics-app-version";
 

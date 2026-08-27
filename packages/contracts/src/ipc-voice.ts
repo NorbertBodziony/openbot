@@ -13,3 +13,11 @@ export interface VoiceTranscriptionInput {
 export interface VoiceTranscriptionResult {
   text: string;
 }
+
+export type VoiceModelPhase = "missing" | "downloading" | "ready" | "error";
+
+export interface VoiceModelStatus {
+  phase: VoiceModelPhase;
+  progress: number | null;
+  message: string | null;
+}
