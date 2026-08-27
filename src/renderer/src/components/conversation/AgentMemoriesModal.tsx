@@ -1,6 +1,6 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { BotMemory } from "@openbot/contracts/ipc";
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, For, onSettled, Show } from "solid-js";
 import { Button, Dialog, IconButton, Plus, Textarea, Trash2, X } from "../ui";
 
 interface AgentMemoriesModalProps {
@@ -45,7 +45,7 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
     window.requestAnimationFrame(updateScrollFades);
   }
 
-  onCleanup(() => memoryListResizeObserver?.disconnect());
+  onSettled(() => () => memoryListResizeObserver?.disconnect());
 
   async function loadMemories(showLoading = true): Promise<void> {
     if (showLoading) setLoading(true);
@@ -77,11 +77,10 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
     () => [props.open, props.botId] as const,
     ([open, botId]) => {
       if (!open) return;
-      const unsubscribe = window.openbot.agent.onEvent((event) => {
+      return window.openbot.agent.onEvent((event) => {
         if (event.type !== "memories-changed" || event.botId !== botId) return;
         void loadMemories(false);
       });
-      onCleanup(unsubscribe);
     },
   );
 

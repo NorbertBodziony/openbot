@@ -61,6 +61,10 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
    only repository lint and format tools.
 7. Do not add compatibility paths without a removal condition and a test for that condition.
 
+SQLite migration history starts at the frozen version 8 compatibility baseline. Keep the baseline
+schema unchanged, append every later migration in numeric order, and update the separate latest
+schema used for new databases. Never remove or rewrite a migration that may have shipped.
+
 ## Required verification
 
 Run `bun run check` for normal changes. Changes to packaging, native modules, or Electron security

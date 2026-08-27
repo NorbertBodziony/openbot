@@ -27,6 +27,8 @@ export interface AgentProviderStatus {
   version: string | null;
   message: string | null;
   email?: string | null;
+  connectionState?: "connecting";
+  checkError?: string | null;
 }
 
 export type AgentAuthState =
@@ -83,6 +85,13 @@ export interface BotSummary {
   avatarSeed: string;
   avatarHue: BotAvatarHue | null;
   avatarUrl: string | null;
+  marketplaceSource?: {
+    agentId: string;
+    versionId: string;
+    version: number;
+    skillIds: string[];
+    routineIds: string[];
+  };
 }
 
 export type BotMemoryOrigin = "automatic" | "manual";
@@ -590,6 +599,7 @@ export interface ConversationMessage {
   delivery?: Pick<QueueDelivery, "id" | "status" | "position">;
   exchange?: AgentExchangeSummary;
   reaction?: MessageReaction | null;
+  reactions?: ConversationReaction[];
   routine?: {
     routineId: string;
     runId: string;
@@ -618,6 +628,9 @@ export function isConversationMessage(value: unknown): value is ConversationMess
       value.source === "routine") &&
     (value.senderBotId === undefined || isString(value.senderBotId)) &&
     (value.replyToMessageId === undefined || value.replyToMessageId === null || isString(value.replyToMessageId)) &&
+    (value.reaction === undefined || value.reaction === null || isMessageReaction(value.reaction)) &&
+    (value.reactions === undefined ||
+      (Array.isArray(value.reactions) && value.reactions.every(isConversationReaction))) &&
     (value.routine === undefined ||
       (isDynamicRecord(value.routine) &&
         isString(value.routine.routineId) &&
@@ -631,10 +644,28 @@ export function isConversationMessage(value: unknown): value is ConversationMess
 export const MESSAGE_REACTIONS = ["👍", "👎", "❤️", "😂", "🎉", "😮"] as const;
 export const MORE_MESSAGE_REACTIONS = ["🔥", "👏", "🙏", "🤔", "👀", "✅", "🚀", "💯"] as const;
 export const ALL_MESSAGE_REACTIONS = [...MESSAGE_REACTIONS, ...MORE_MESSAGE_REACTIONS] as const;
-export type MessageReaction = (typeof MESSAGE_REACTIONS)[number] | (typeof MORE_MESSAGE_REACTIONS)[number];
+export type MessageReaction = string;
+
+export type ConversationReactionActor = { kind: "user" } | { kind: "bot"; botId: string };
+
+export interface ConversationReaction {
+  emoji: MessageReaction;
+  actor: ConversationReactionActor;
+}
+
+// biome-ignore lint/complexity/useRegexLiterals: The v flag is supported at runtime but the contracts target predates ES2024.
+const RGI_EMOJI_PATTERN = new RegExp("^(?:\\p{RGI_Emoji})$", "v");
 
 export function isMessageReaction(value: unknown): value is MessageReaction {
-  return isOneOf(ALL_MESSAGE_REACTIONS, value);
+  return isString(value) && RGI_EMOJI_PATTERN.test(value);
+}
+
+export function isConversationReaction(value: unknown): value is ConversationReaction {
+  if (!isDynamicRecord(value) || !isMessageReaction(value.emoji) || !isDynamicRecord(value.actor)) return false;
+  return (
+    value.actor.kind === "user" ||
+    (value.actor.kind === "bot" && isString(value.actor.botId) && value.actor.botId.length > 0)
+  );
 }
 
 export interface AgentExchangeSummary {

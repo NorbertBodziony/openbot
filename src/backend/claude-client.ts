@@ -212,6 +212,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         timeout: 5_000,
         maxBuffer: 64 * 1024,
         shell: process.platform === "win32",
+        env: claudeEnvironment(this.#cli),
       });
       const status = JSON.parse(stdout);
       if (!isRecord(status) || status.loggedIn !== true) {
@@ -253,14 +254,13 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
           append: config.developerInstructions,
         },
         settingSources: ["user", "project", "local"],
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
+        permissionMode: "default",
         includePartialMessages: true,
         persistSession: config.persistSession,
         additionalDirectories: config.additionalDirectories,
         canUseTool,
         mcpServers,
-        env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "openbot/0.1.0" },
+        env: { ...claudeEnvironment(this.#cli), CLAUDE_AGENT_SDK_CLIENT_APP: "openbot/0.1.0" },
       },
     });
     const runtime: ThreadRuntime = {
@@ -587,6 +587,12 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
             (args) => call("openbot", "forget_memory", args),
           ),
           tool(
+            "react_to_user_message",
+            "Add one emoji reaction for an obvious positive or negative emotional moment such as a win, affection, gratitude, humor, sadness, disappointment, frustration, empathy, or strong approval. Inline emoji do not count as reactions. Skip neutral messages and always provide the same complete normal answer.",
+            { emoji: z.string().min(1).max(64) },
+            (args) => call("openbot", "react_to_user_message", args),
+          ),
+          tool(
             "send_message",
             "Send an asynchronous message or local files to OpenBot teammates.",
             {
@@ -659,6 +665,13 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     if (!runtime) throw new Error(`Unknown Claude thread: ${threadId}`);
     return runtime;
   }
+}
+
+function claudeEnvironment(cli: ClaudeCliInfo): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...(cli.source === "bundled" ? { DISABLE_AUTOUPDATER: "1" } : {}),
+  };
 }
 
 class AsyncMessageQueue implements AsyncIterable<SDKUserMessage> {

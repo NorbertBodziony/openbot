@@ -268,6 +268,21 @@ describe("ComposerEditor", () => {
     expect(editor.textContent).toBe("First line\nSecond line\nThird line");
   });
 
+  it("leaves image-only clipboard items for the attachment importer", async () => {
+    const { editor, onValueChange } = renderComposer();
+
+    await fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        items: [{ kind: "file", type: "image/png", getAsFile: () => new File([], "pasted.png") }],
+        getData: () => "unexpected text",
+      },
+    });
+
+    expect(onValueChange).not.toHaveBeenCalled();
+    expect(editor.textContent).toBe("");
+  });
+
   it("limits typed and pasted messages to the shared message limit", async () => {
     const { editor, onValueChange } = renderComposer();
     editor.textContent = "x".repeat(INPUT_LIMITS.messageText + 1);

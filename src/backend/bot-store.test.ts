@@ -68,6 +68,34 @@ describe("BotStore", () => {
     });
   });
 
+  it("persists marketplace installation versions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const home = join(root, "home");
+    const store = new BotStore(userData, home);
+    await store.initialize();
+    const bot = await store.createBot(BOT_PROFILE_INPUT);
+
+    store.setMarketplaceSource(bot.id, {
+      agentId: "market-planner",
+      versionId: "market-planner-v2",
+      version: 2,
+      skillIds: ["planning"],
+      routineIds: ["routine-marketplace"],
+    });
+
+    const restored = new BotStore(userData, home);
+    await restored.initialize();
+    expect(restored.list().find((candidate) => candidate.id === bot.id)?.marketplaceSource).toEqual({
+      agentId: "market-planner",
+      versionId: "market-planner-v2",
+      version: 2,
+      skillIds: ["planning"],
+      routineIds: ["routine-marketplace"],
+    });
+  });
+
   it("migrates version 1 avatars to stable id seeds", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);

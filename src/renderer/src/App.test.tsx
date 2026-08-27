@@ -1,5 +1,6 @@
 import type {
   AgentEvent,
+  AgentStatus,
   AttachmentImportEvent,
   BotSummary,
   CentralAuthState,
@@ -17,7 +18,6 @@ import { createSignal, Show } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App, AppControllerProvider, createAppController, createBotInitialMessage, useAppController } from "./App";
 import { desktopAnalytics } from "./analytics";
-import { triggerResize } from "./setupTests";
 import { SIDEBAR_PINS_STORAGE_KEY } from "./sidebar-pins";
 import { SIDEBAR_COLLAPSED_STORAGE_KEY } from "./sidebar-sections";
 
@@ -143,6 +143,85 @@ describe("OpenBot connected desktop shell", () => {
           accessibility: "granted",
         }),
         openExternal: vi.fn().mockResolvedValue(undefined),
+        connectChatGPT: vi.fn().mockResolvedValue({
+          phase: "blocked",
+          cliVersion: "0.149.1",
+          auth: { kind: "unknown" },
+          providers: [
+            {
+              id: "codex",
+              state: "sign-in-required",
+              connectionState: "connecting",
+              version: "0.149.1",
+              message: null,
+            },
+            { id: "claude", state: "sign-in-required", version: "2.1.246", message: null },
+          ],
+          capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+          message: null,
+          fullAccess: true,
+        }),
+        connectClaude: vi.fn().mockResolvedValue({
+          phase: "blocked",
+          cliVersion: "2.1.246",
+          auth: { kind: "unknown" },
+          providers: [
+            { id: "codex", state: "sign-in-required", version: "0.149.1", message: null },
+            {
+              id: "claude",
+              state: "sign-in-required",
+              connectionState: "connecting",
+              version: "2.1.246",
+              message: null,
+            },
+          ],
+          capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+          message: null,
+          fullAccess: true,
+        }),
+        connectGrok: vi.fn().mockResolvedValue({
+          phase: "blocked",
+          cliVersion: "1.0.5",
+          auth: { kind: "unknown" },
+          providers: [
+            { id: "codex", state: "sign-in-required", version: "0.149.1", message: null },
+            { id: "claude", state: "sign-in-required", version: "2.1.246", message: null },
+            {
+              id: "grok",
+              state: "sign-in-required",
+              connectionState: "connecting",
+              version: "1.0.5",
+              message: null,
+            },
+          ],
+          capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+          message: null,
+          fullAccess: true,
+        }),
+        refreshAgentProviders: vi.fn().mockResolvedValue({
+          phase: "ready",
+          cliVersion: "0.144.1",
+          auth: { kind: "chatgpt", email: "norbert@example.com" },
+          providers: [
+            {
+              id: "codex",
+              state: "available",
+              version: "0.144.1",
+              message: null,
+              email: "norbert@example.com",
+            },
+            {
+              id: "claude",
+              state: "available",
+              version: "2.1.231",
+              message: null,
+              email: "claude@example.com",
+            },
+          ],
+          capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+          message: null,
+          fullAccess: true,
+        }),
         openUrl: vi.fn().mockResolvedValue(undefined),
         voice: {
           transcribe: vi.fn().mockResolvedValue({ text: "Voice transcript" }),
@@ -629,6 +708,48 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.servers.onPresence).toHaveBeenCalledTimes(presenceSubscriptionCount);
   });
 
+  it("restores the active server before loading its workspace data", async () => {
+    let resolveServers: ((servers: ServerSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockReturnValueOnce(
+      new Promise<ServerSummary[]>((resolve) => {
+        resolveServers = resolve;
+      }),
+    );
+    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([{ ...BOTS[0], name: "Remote Chief" }]);
+
+    render(() => <App />);
+    await waitFor(() => expect(window.openbot.servers.list).toHaveBeenCalledOnce());
+    expect(window.openbot.agent.listBots).not.toHaveBeenCalled();
+
+    resolveServers?.([
+      {
+        id: "local",
+        name: "Local",
+        logoUrl: null,
+        kind: "local",
+        state: "online",
+        apiUrl: null,
+        remoteDesktopAvailable: false,
+        role: null,
+        active: false,
+      },
+      {
+        id: "remote-1",
+        name: "Studio Mac",
+        logoUrl: null,
+        kind: "remote",
+        state: "online",
+        apiUrl: "https://studio.example.com",
+        remoteDesktopAvailable: false,
+        role: "member",
+        active: true,
+      },
+    ]);
+
+    expect(await screen.findByRole("heading", { name: "Remote Chief" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("shows the first-run onboarding before starting agents", async () => {
     vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
       completed: false,
@@ -643,14 +764,302 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
     const providers = screen.getByRole("radiogroup", { name: "Default provider" });
-    const codex = within(providers).getByRole("radio", { name: /Codex.*Available/ });
+    const codex = within(providers).getByRole("radio", { name: /ChatGPT.*Connected/ });
     expect(codex).toHaveFocus();
-    await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Available/ }));
+    expect(codex).toBeChecked();
+    await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Connected/ }));
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await fireEvent.click(screen.getByRole("button", { name: "Open OpenBot" }));
     expect(window.openbot.saveSetup).toHaveBeenCalledWith({ preferredProvider: "claude" });
     expect(await screen.findByRole("heading", { name: "Chief" })).toBeInTheDocument();
+  });
+
+  it("connects bundled Claude and Grok providers", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: "Connect ChatGPT." },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Sign in to Claude." },
+        { id: "grok", state: "sign-in-required", version: "1.0.5", message: "Sign in to Grok." },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Install a provider.",
+      fullAccess: true,
+    });
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Connect Claude" }));
+
+    expect(window.openbot.connectClaude).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Restart Claude" })).toBeEnabled();
+    await fireEvent.click(screen.getByRole("button", { name: "Connect Grok" }));
+    expect(window.openbot.connectGrok).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Restart Grok" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+
+  it("restarts provider connections independently and Refresh resets both", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    const disconnectedStatus: AgentStatus = {
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: null },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: null },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: null,
+      fullAccess: true,
+    };
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce(disconnectedStatus);
+    const bothConnecting: AgentStatus = {
+      ...disconnectedStatus,
+      providers: disconnectedStatus.providers?.map((provider) => ({
+        ...provider,
+        connectionState: "connecting" as const,
+      })),
+    };
+    vi.mocked(window.openbot.connectChatGPT).mockResolvedValue(bothConnecting);
+    vi.mocked(window.openbot.connectClaude).mockResolvedValue(bothConnecting);
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Connect ChatGPT" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Restart Claude" }));
+    expect(screen.getByRole("button", { name: "Restart ChatGPT" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Restart Claude" })).toBeEnabled();
+    expect(window.openbot.connectChatGPT).toHaveBeenCalledTimes(1);
+    expect(window.openbot.connectClaude).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Restart ChatGPT" }));
+    expect(window.openbot.connectChatGPT).toHaveBeenCalledTimes(2);
+    emitAgentEvent?.({
+      type: "status",
+      status: {
+        ...disconnectedStatus,
+        phase: "ready",
+        providers: [
+          {
+            id: "codex",
+            state: "sign-in-required",
+            version: "0.149.1",
+            message: "ChatGPT connection was not completed. Try again.",
+          },
+          {
+            id: "claude",
+            state: "available",
+            version: "2.1.246",
+            message: null,
+            email: "claude@example.com",
+          },
+        ],
+      },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("ChatGPT connection was not completed. Try again.");
+    await fireEvent.click(screen.getByRole("button", { name: "Refresh providers" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reconnect ChatGPT" })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "Reconnect Claude" })).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("refreshes provider detection and opens the matching sign-in guide", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: "Connect ChatGPT." },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Sign in to Claude." },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Install a provider.",
+      fullAccess: true,
+    });
+    let finishRefresh: ((status: AgentStatus) => void) | undefined;
+    vi.mocked(window.openbot.refreshAgentProviders).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishRefresh = resolve;
+      }),
+    );
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Refresh providers" }));
+    expect(screen.getByRole("button", { name: "Checking providers" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /^Install / })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+
+    expect(finishRefresh).toBeTypeOf("function");
+    finishRefresh?.({
+      phase: "ready",
+      cliVersion: "2.1.231",
+      auth: { kind: "claude", email: "claude@example.com" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.144.1", message: "Sign in to ChatGPT." },
+        {
+          id: "claude",
+          state: "available",
+          version: "2.1.231",
+          message: null,
+          email: "claude@example.com",
+        },
+      ],
+      capabilities: { chat: "ready", browser: "ready", computerUse: "unavailable" },
+      message: null,
+      fullAccess: true,
+    });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Connect ChatGPT" })).toBeEnabled());
+    expect(
+      within(screen.getByRole("radiogroup", { name: "Default provider" })).getByRole("radio", { name: /Claude/ }),
+    ).toBeChecked();
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+    const connectChatGPT = screen.getByRole("button", { name: "Connect ChatGPT" });
+    await fireEvent.click(connectChatGPT);
+    expect(window.openbot.connectChatGPT).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Restart ChatGPT" })).toBeEnabled();
+  });
+
+  it("refreshes providers after returning from a Connect browser flow", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: "Connect ChatGPT." },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Connect Claude." },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: null,
+      fullAccess: true,
+    });
+    render(() => <App />);
+    window.dispatchEvent(new Event("focus"));
+    expect(window.openbot.refreshAgentProviders).not.toHaveBeenCalled();
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Connect ChatGPT" }));
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() => expect(window.openbot.refreshAgentProviders).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows a provider-specific warning when Refresh cannot verify an existing connection", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({ completed: false, preferredProvider: null });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "ready",
+      cliVersion: "0.149.1",
+      auth: { kind: "chatgpt", email: "norbert@example.com" },
+      providers: [
+        {
+          id: "codex",
+          state: "available",
+          version: "0.149.1",
+          message: null,
+          email: "norbert@example.com",
+          checkError: "Could not verify ChatGPT. Keeping the existing connection.",
+        },
+      ],
+      capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+      message: null,
+      fullAccess: true,
+    });
+
+    render(() => <App />);
+
+    expect(await screen.findByText("Could not verify ChatGPT. Keeping the existing connection.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Reconnect ChatGPT" })).toBeEnabled();
+  });
+
+  it("shows a friendly inline error when a provider guide cannot open", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: "Connect ChatGPT." },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Sign in to Claude." },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Install a provider.",
+      fullAccess: true,
+    });
+    vi.mocked(window.openbot.connectChatGPT).mockRejectedValueOnce(new Error("Raw IPC failure"));
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Connect ChatGPT" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("OpenBot could not connect ChatGPT. Try again.");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Raw IPC failure");
+  });
+
+  it("shows a native ChatGPT login failure reported after the browser opens", async () => {
+    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
+      completed: false,
+      preferredProvider: null,
+    });
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
+      phase: "blocked",
+      cliVersion: null,
+      auth: { kind: "unknown" },
+      providers: [
+        { id: "codex", state: "sign-in-required", version: "0.149.1", message: "Connect ChatGPT." },
+        { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Sign in to Claude." },
+      ],
+      capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+      message: "Connect ChatGPT.",
+      fullAccess: true,
+    });
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Connect ChatGPT" }));
+    expect(screen.getByRole("button", { name: "Restart ChatGPT" })).toBeEnabled();
+
+    emitAgentEvent?.({
+      type: "status",
+      status: {
+        phase: "blocked",
+        cliVersion: null,
+        auth: { kind: "unknown" },
+        providers: [
+          {
+            id: "codex",
+            state: "sign-in-required",
+            version: "0.149.1",
+            message: "ChatGPT connection timed out. Try again.",
+          },
+          { id: "claude", state: "sign-in-required", version: "2.1.246", message: "Sign in to Claude." },
+        ],
+        capabilities: { chat: "unavailable", browser: "ready", computerUse: "unavailable" },
+        message: "ChatGPT connection timed out. Try again.",
+        fullAccess: true,
+      },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("ChatGPT connection timed out. Try again.");
+    expect(screen.getByRole("button", { name: "Connect ChatGPT" })).toBeEnabled();
   });
 
   it("connects to a remote host after account sign-in", async () => {
@@ -997,7 +1406,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
 
     const providers = await screen.findByRole("radiogroup", { name: "Default provider" });
-    const codex = within(providers).getByRole("radio", { name: /Codex.*Checking/ });
+    const codex = within(providers).getByRole("radio", { name: /ChatGPT.*Checking/ });
     const claude = within(providers).getByRole("radio", { name: /Claude.*Checking/ });
 
     expect(codex).toBeEnabled();
@@ -1006,7 +1415,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(claude);
     expect(claude).toBeChecked();
-    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
 
     emitAgentEvent?.({
       type: "status",
@@ -1041,6 +1450,38 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     expect(claude).toBeChecked();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+
+    emitAgentEvent?.({
+      type: "status",
+      status: {
+        phase: "ready",
+        cliVersion: "2.1.231",
+        auth: { kind: "claude", email: "claude@example.com" },
+        providers: [
+          {
+            id: "codex",
+            state: "not-installed",
+            version: null,
+            message: "Codex CLI is not installed.",
+            email: null,
+          },
+          {
+            id: "claude",
+            state: "available",
+            version: "2.1.231",
+            message: null,
+            email: "claude@example.com",
+          },
+        ],
+        capabilities: { chat: "ready", browser: "ready", computerUse: "setup-required" },
+        message: null,
+        fullAccess: true,
+      },
+    });
+
+    expect(claude).toBeChecked();
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await fireEvent.click(screen.getByRole("button", { name: "Open OpenBot" }));
@@ -1056,11 +1497,11 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(screen.getByRole("dialog", { name: "Providers & permissions" })).toBeInTheDocument();
     const providers = screen.getByRole("radiogroup", { name: "Default provider" });
-    expect(within(providers).getByRole("radio", { name: /Codex.*Available/ })).toBeChecked();
+    expect(within(providers).getByRole("radio", { name: /Codex.*Connected/ })).toBeChecked();
     expect(within(providers).getByText("norbert@example.com")).toBeInTheDocument();
     expect(within(providers).getByText("claude@example.com")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Available/ }));
+    await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Connected/ }));
     await fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     expect(window.openbot.saveSetup).toHaveBeenLastCalledWith({ preferredProvider: "claude" });
     expect(screen.queryByRole("dialog", { name: "Providers & permissions" })).not.toBeInTheDocument();
@@ -1086,7 +1527,7 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(
       within(await screen.findByRole("radiogroup", { name: "Default provider" })).getByRole("radio", {
-        name: /Codex.*Available/,
+        name: /ChatGPT.*Connected/,
       }),
     ).toBeChecked();
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -1328,27 +1769,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(within(status).getByText("0:00")).toBeVisible();
     expect(within(status).getByRole("button", { name: "Stop voice recording" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Create prompt with voice" })).not.toBeInTheDocument();
-  });
-
-  it("renders loaded history without replaying entrance animations", async () => {
-    vi.mocked(window.openbot.agent.readConversation).mockResolvedValueOnce({
-      botId: "chief",
-      threadId: "thread-chief",
-      activeTurnId: null,
-      revision: 1,
-      messages: [
-        {
-          id: "stored-message",
-          author: "assistant",
-          text: "Already in history",
-          createdAt: "2026-08-12T09:00:00.000Z",
-          status: "completed",
-        },
-      ],
-    });
-    render(() => <App />);
-    const stored = await screen.findByText("Already in history");
-    expect(stored.closest(".message-entry")).not.toHaveClass("message-entry-animated");
   });
 
   it("renders message links and opens them in the external browser", async () => {
@@ -1773,80 +2193,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("This agent has no saved memories yet.")).toBeInTheDocument();
   });
 
-  it("selects a stable generated avatar and color without tying it to the agent name", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
-    const settings = await screen.findByRole("complementary", { name: "Agent settings" });
-    const avatarButton = within(settings).getByRole("button", { name: "Edit agent avatar" });
-    await fireEvent.click(avatarButton);
-
-    const editor = within(settings).getByRole("dialog", { name: "Avatar editor" });
-    expect(within(editor).getByRole("button", { name: /Upload image/ })).toBeInTheDocument();
-    expect(within(editor).getAllByRole("button", { name: /Avatar option/ })).toHaveLength(11);
-    const faceButtons = within(editor).getAllByRole("button", {
-      name: /Selected avatar|Avatar option/,
-    });
-    expect(faceButtons).toHaveLength(12);
-    for (const faceButton of faceButtons) {
-      expect(faceButton.querySelector(".bot-avatar-motion-hover")).not.toBeNull();
-      expect(faceButton.querySelector(".bot-avatar-bloub > svg")).not.toBeNull();
-      expect(faceButton.querySelector(".agent-mark")).toBeNull();
-    }
-    const optionTwo = within(editor).getByRole("button", { name: "Avatar option 2" });
-    const faceMarkup = faceButtons.map((button) => button.innerHTML);
-    await fireEvent.click(optionTwo);
-    expect(optionTwo).toHaveAttribute("aria-pressed", "true");
-    expect(within(editor).getAllByRole("button", { name: /Selected avatar|Avatar option/ })[1]).toBe(optionTwo);
-    expect(
-      within(editor)
-        .getAllByRole("button", { name: /Selected avatar|Avatar option/ })
-        .map((button) => button.innerHTML),
-    ).toEqual(faceMarkup);
-    const callsBeforeNewSet = vi.mocked(window.openbot.agent.updateBot).mock.calls.length;
-    await fireEvent.click(within(editor).getByRole("button", { name: "New set" }));
-    const nextFaceButtons = within(editor).getAllByRole("button", {
-      name: /Selected avatar|Avatar option/,
-    });
-    expect(nextFaceButtons[0]).toHaveAttribute("aria-pressed", "true");
-    expect(nextFaceButtons.map((button) => button.innerHTML)).not.toEqual(faceMarkup);
-    expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(callsBeforeNewSet);
-    await waitFor(() =>
-      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
-        botId: "chief",
-        avatarSeed: "chief:avatar:0:1",
-      }),
-    );
-    await fireEvent.click(within(editor).getByRole("button", { name: "Reset to ID" }));
-    await waitFor(() =>
-      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
-        botId: "chief",
-        avatarSeed: "chief",
-      }),
-    );
-    await fireEvent.click(within(editor).getByRole("button", { name: "Avatar option 2" }));
-
-    await fireEvent.click(within(editor).getByRole("button", { name: "Blue avatar color" }));
-    await waitFor(() =>
-      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
-        botId: "chief",
-        avatarHue: 215,
-      }),
-    );
-
-    const name = within(settings).getByRole("textbox", { name: "Agent name" });
-    await fireEvent.pointerDown(name);
-    expect(within(settings).queryByRole("dialog", { name: "Avatar editor" })).toBeNull();
-    await fireEvent.input(name, { target: { value: "Coordinator" } });
-    await fireEvent.blur(name);
-    await waitFor(() =>
-      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
-        botId: "chief",
-        name: "Coordinator",
-      }),
-    );
-  });
-
   it("removes a custom agent avatar and keeps its generated avatar settings", async () => {
     vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([
       { ...BOTS[0], avatarUrl: "openbot-avatar://agent/chief?v=image-1" },
@@ -2130,93 +2476,12 @@ describe("OpenBot connected desktop shell", () => {
     expect(resizer).toHaveAttribute("aria-valuenow", "240");
   });
 
-  it("auto-compacts for conversation space and restores without changing user preference", async () => {
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 759 });
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    const frame = screen.getByRole("main", { name: "Conversation" }).closest(".app-frame");
-
-    await waitFor(() => expect(frame).toHaveClass("app-frame-sidebar-compact"));
-    expect(frame).toHaveStyle("--left-panel-width: 88px");
-    expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBeNull();
-
-    Object.defineProperty(window, "innerWidth", { configurable: true, value: 900 });
-    window.dispatchEvent(new Event("resize"));
-    await waitFor(() => expect(frame).not.toHaveClass("app-frame-sidebar-compact"));
-    expect(frame).toHaveStyle("--left-panel-width: 280px");
-    expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBeNull();
-  });
-
   it("migrates old narrow sidebar widths to the expanded minimum", async () => {
     window.localStorage.setItem("openbot:left-panel-width", "220");
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "240");
-  });
-
-  it("defaults the embedded browser to half of the conversation container", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    emitAgentEvent?.({
-      type: "browser-changed",
-      tabs: [
-        {
-          id: "tab-browser-split",
-          title: "Browser split",
-          url: "https://example.com",
-          loading: false,
-          ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
-        },
-      ],
-      activeTabId: "tab-browser-split",
-    });
-    const conversation = screen.getByRole("main", { name: "Conversation" });
-    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 800 });
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
-
-    expect(await screen.findByRole("separator", { name: "Resize right panel" })).toHaveAttribute(
-      "aria-valuenow",
-      "400",
-    );
-    expect(conversation).toHaveStyle("--browser-panel-width: 400px");
-    const resizer = screen.getByRole("separator", { name: "Resize right panel" });
-    await waitFor(() => expect(resizer).toHaveAttribute("aria-valuenow", "400"));
-
-    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 1000 });
-    await waitFor(() => {
-      triggerResize(conversation);
-      expect(resizer).toHaveAttribute("aria-valuenow", "500");
-    });
-    expect(conversation).toHaveStyle("--browser-panel-width: 500px");
-
-    await fireEvent.keyDown(resizer, { key: "ArrowLeft" });
-    expect(resizer).toHaveAttribute("aria-valuenow", "512");
-    expect(window.localStorage.getItem("openbot:browser-panel-width")).toBe("512");
-
-    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 400 });
-    await waitFor(() => {
-      triggerResize(conversation);
-      expect(resizer).toHaveAttribute("aria-valuenow", "304");
-    });
-    expect(window.localStorage.getItem("openbot:browser-panel-width")).toBe("512");
-
-    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 1200 });
-    await waitFor(() => {
-      triggerResize(conversation);
-      expect(resizer).toHaveAttribute("aria-valuenow", "512");
-    });
-    expect(conversation).toHaveStyle("--browser-panel-width: 512px");
-
-    await fireEvent.dblClick(resizer);
-    expect(window.localStorage.getItem("openbot:browser-panel-width")).toBeNull();
-    expect(resizer).toHaveAttribute("aria-valuenow", "600");
-
-    Object.defineProperty(conversation, "clientWidth", { configurable: true, value: 800 });
-    await fireEvent(window, new Event("resize"));
-    expect(resizer).toHaveAttribute("aria-valuenow", "400");
   });
 
   it("moves the live embedded browser between the sidebar and Picture in Picture", async () => {
@@ -2792,27 +3057,6 @@ describe("OpenBot connected desktop shell", () => {
     });
   });
 
-  it("keeps the composer compact until the draft becomes multiline", async () => {
-    render(() => <App />);
-    await confirmOnboardingModel();
-    const editor = screen.getByRole("textbox", { name: "Message Chief" });
-    const composer = editor.closest(".composer");
-
-    expect(composer).toHaveAttribute("data-compact");
-
-    editor.textContent = "Start a message";
-    await fireEvent.input(editor);
-    expect(composer).toHaveAttribute("data-compact");
-
-    editor.textContent = "Start a message\nContinue here";
-    await fireEvent.input(editor);
-    expect(composer).not.toHaveAttribute("data-compact");
-
-    editor.textContent = "Start a message";
-    await fireEvent.input(editor);
-    expect(composer).toHaveAttribute("data-compact");
-  });
-
   it("publishes typing state", async () => {
     render(() => <App />);
     await confirmOnboardingModel();
@@ -3199,10 +3443,9 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("Ready to ship."));
   });
 
-  it("keeps agent activity at the conversation bottom without replaying existing message entrances", async () => {
+  it("lets the user remove only their own reaction while keeping the agent reaction read-only", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    const createdAt = "2026-08-12T10:00:00.000Z";
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
@@ -3212,438 +3455,29 @@ describe("OpenBot connected desktop shell", () => {
         revision: 1,
         messages: [
           {
-            id: "delivery-live",
-            turnId: "turn-live",
+            id: "user-reactions",
             author: "user",
-            text: "Do the work",
-            createdAt,
-            status: "completed",
-            delivery: { id: "delivery-live", status: "starting", position: null },
-          },
-        ],
-      },
-    });
-    const firstMessage = await screen.findByText("Do the work");
-    const firstMessageEntry = firstMessage.closest(".message-entry");
-    expect(firstMessageEntry).not.toHaveClass("message-entry-animated");
-    const sidebarAvatar = document.querySelector(".agent-row .bot-avatar");
-    expect(sidebarAvatar).toHaveClass("bot-avatar-motion-idle");
-
-    const liveDelivery = queuedDelivery("delivery-live", "Do the work", null, { status: "starting" });
-    emitAgentEvent?.({
-      type: "queue-changed",
-      snapshot: { botId: "chief", deliveries: [liveDelivery] },
-    });
-
-    emitAgentEvent?.({
-      type: "turn-started",
-      botId: "chief",
-      threadId: "thread-chief",
-      turnId: "turn-live",
-    });
-    emitAgentEvent?.({
-      type: "queue-changed",
-      snapshot: {
-        botId: "chief",
-        deliveries: [{ ...liveDelivery, status: "running", turnId: "turn-live" }],
-      },
-    });
-    const workingIndicator = await screen.findByRole("status", { name: "Chief is working" });
-    const firstAnimation = workingIndicator
-      .querySelector(".agent-activity-avatar")
-      ?.getAttribute("data-animation-state");
-    const firstLabel = workingIndicator.querySelector(".agent-activity-label")?.textContent;
-    const virtualChatList = document.querySelector(".virtual-chat-list");
-    expect(virtualChatList?.nextElementSibling).toBe(workingIndicator.parentElement);
-    expect(firstAnimation).toBeTruthy();
-    expect(firstLabel).toBeTruthy();
-    expect(sidebarAvatar).toHaveClass("bot-avatar-motion-working");
-
-    const scrollElement = document.querySelector<HTMLElement>(".conversation-scroll");
-    const activitySlot = workingIndicator.parentElement;
-    if (!scrollElement || !activitySlot) throw new Error("Conversation scroll elements are missing.");
-    let scrollHeight = 900;
-    Object.defineProperties(scrollElement, {
-      clientHeight: { configurable: true, value: 500 },
-      scrollHeight: { configurable: true, get: () => scrollHeight },
-    });
-    scrollElement.scrollTop = 400;
-    scrollHeight = 940;
-    triggerResize(activitySlot);
-    expect(scrollElement.scrollTop).toBe(940);
-
-    scrollElement.scrollTop = 100;
-    await fireEvent.scroll(scrollElement);
-    scrollHeight = 1_000;
-    triggerResize(activitySlot);
-    expect(scrollElement.scrollTop).toBe(100);
-    scrollElement.scrollTop = 500;
-    await fireEvent.scroll(scrollElement);
-
-    emitAgentEvent?.({
-      type: "conversation",
-      snapshot: {
-        botId: "chief",
-        threadId: "thread-chief",
-        activeTurnId: "turn-live",
-        revision: 2,
-        messages: [
-          {
-            id: "delivery-live",
-            turnId: "turn-live",
-            author: "user",
-            text: "Do the work",
-            createdAt,
-            status: "completed",
-            delivery: { id: "delivery-live", status: "running", position: null },
-          },
-        ],
-      },
-    });
-    expect(screen.getByText("Do the work").closest(".message-entry")).toBe(firstMessageEntry);
-    expect(screen.getByText("Do the work").closest(".user-bubble")).not.toHaveTextContent("Working");
-    expect(workingIndicator.querySelector(".agent-activity-avatar")).toHaveAttribute(
-      "data-animation-state",
-      firstAnimation,
-    );
-    expect(workingIndicator.querySelector(".agent-activity-label")).toHaveTextContent(firstLabel ?? "");
-
-    emitAgentEvent?.({
-      type: "conversation",
-      snapshot: {
-        botId: "chief",
-        threadId: "thread-chief",
-        activeTurnId: "turn-live",
-        revision: 3,
-        messages: [
-          {
-            id: "delivery-live",
-            turnId: "turn-live",
-            author: "user",
-            text: "Do the work",
-            createdAt,
-            status: "completed",
-            delivery: { id: "delivery-live", status: "running", position: null },
-          },
-          {
-            id: "assistant-live",
-            turnId: "turn-live",
-            author: "assistant",
-            text: "I am on it",
-            createdAt: "2026-08-12T10:00:01.000Z",
-            status: "streaming",
-          },
-        ],
-      },
-    });
-    const streamingMessageEntry = await waitFor(() => {
-      const entry = document.querySelector<HTMLElement>('[data-chat-search-message="assistant-live"]');
-      expect(entry).toHaveTextContent("I am on");
-      if (!entry) throw new Error("The streaming message did not render.");
-      return entry;
-    });
-    const streamingBubble = streamingMessageEntry.querySelector(".bot-bubble");
-    expect(streamingMessageEntry).toHaveClass("message-entry-animated");
-    expect(streamingBubble).toHaveClass("bot-bubble-streaming");
-    expect(screen.queryByText("Typing…")).not.toBeInTheDocument();
-    expect(screen.getByRole("status", { name: "Chief is working" })).toBe(workingIndicator);
-    expect(virtualChatList?.nextElementSibling).toBe(workingIndicator.parentElement);
-    expect(streamingMessageEntry?.compareDocumentPosition(workingIndicator) ?? 0).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    );
-
-    emitAgentEvent?.({
-      type: "conversation-delta",
-      botId: "chief",
-      threadId: "thread-chief",
-      turnId: "turn-live",
-      messageId: "assistant-live",
-      delta: " now",
-      createdAt: "2026-08-12T10:00:01.000Z",
-      revision: 4,
-    });
-    await waitFor(() => expect(streamingMessageEntry).toHaveTextContent("I am on it"));
-    expect(streamingMessageEntry.querySelector(".bot-bubble")).toBe(streamingBubble);
-    expect(screen.getByText("Do the work").closest(".message-entry")).toBe(firstMessageEntry);
-    expect(screen.getByRole("status", { name: "Chief is working" })).toBe(workingIndicator);
-
-    for (const [revision, text] of [
-      [5, "I am on it now.\n\nFirst buffered line"],
-      [6, "I am on it now.\n\nFinal buffered line"],
-    ] as const) {
-      emitAgentEvent?.({
-        type: "conversation",
-        snapshot: {
-          botId: "chief",
-          threadId: "thread-chief",
-          activeTurnId: "turn-live",
-          revision,
-          messages: [
-            {
-              id: "delivery-live",
-              turnId: "turn-live",
-              author: "user",
-              text: "Do the work",
-              createdAt,
-              status: "completed",
-              delivery: { id: "delivery-live", status: "running", position: null },
-            },
-            {
-              id: "assistant-live",
-              turnId: "turn-live",
-              author: "assistant",
-              text,
-              createdAt: "2026-08-12T10:00:01.000Z",
-              status: "streaming",
-            },
-          ],
-        },
-      });
-    }
-    await waitFor(() => expect(streamingMessageEntry).toHaveTextContent("Final buffered"));
-    expect(streamingMessageEntry.querySelector(".bot-bubble")).toBe(streamingBubble);
-    expect(screen.queryByText("First buffered line")).not.toBeInTheDocument();
-
-    emitAgentEvent?.({
-      type: "turn-completed",
-      botId: "chief",
-      threadId: "thread-chief",
-      turnId: "turn-live",
-      status: "completed",
-    });
-    expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "active");
-    await new Promise((resolve) => window.setTimeout(resolve, 160));
-    expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "active");
-
-    emitAgentEvent?.({
-      type: "conversation",
-      snapshot: {
-        botId: "chief",
-        threadId: "thread-chief",
-        activeTurnId: "turn-live",
-        revision: 7,
-        messages: [
-          {
-            id: "delivery-live",
-            turnId: "turn-live",
-            author: "user",
-            text: "Do the work",
-            createdAt,
-            status: "completed",
-          },
-          {
-            id: "assistant-live",
-            turnId: "turn-live",
-            author: "assistant",
-            text: "I am on it now.\n\nFinal buffered line",
-            createdAt: "2026-08-12T10:00:01.000Z",
-            status: "completed",
-          },
-        ],
-      },
-    });
-    await waitFor(() => expect(streamingBubble).not.toHaveClass("bot-bubble-streaming"));
-    expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "active");
-    await new Promise((resolve) => window.setTimeout(resolve, 420));
-    expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "active");
-    await waitFor(() =>
-      expect(screen.getByRole("status", { name: "Chief is working" })).toHaveAttribute("data-state", "exiting"),
-    );
-    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
-    expect(sidebarAvatar).toHaveClass("bot-avatar-motion-idle");
-    expect(document.querySelector(".agent-activity-entry")).toBeNull();
-    expect(activitySlot).toHaveAttribute("data-reserved", "true");
-
-    emitAgentEvent?.({
-      type: "conversation",
-      snapshot: {
-        botId: "chief",
-        threadId: "thread-chief",
-        activeTurnId: "turn-next",
-        revision: 8,
-        messages: [
-          {
-            id: "delivery-live",
-            author: "user",
-            text: "Do the work",
-            createdAt,
-            status: "completed",
-          },
-          {
-            id: "assistant-live",
-            author: "assistant",
-            text: "I am on it now.\n\nFinal buffered line",
-            createdAt: "2026-08-12T10:00:01.000Z",
-            status: "completed",
-          },
-          {
-            id: "delivery-next",
-            turnId: "turn-next",
-            author: "user",
-            text: "Do the next thing",
-            createdAt: "2026-08-12T10:00:02.000Z",
-            status: "completed",
-          },
-        ],
-      },
-    });
-    const nextIndicator = await screen.findByRole("status", { name: "Chief is working" });
-    expect(nextIndicator.querySelector(".agent-activity-avatar")).not.toHaveAttribute(
-      "data-animation-state",
-      firstAnimation,
-    );
-    expect(nextIndicator.querySelector(".agent-activity-label")).not.toHaveTextContent(firstLabel ?? "");
-
-    emitAgentEvent?.({
-      type: "turn-completed",
-      botId: "chief",
-      threadId: "thread-chief",
-      turnId: "turn-next",
-      status: "failed",
-    });
-    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
-  });
-
-  it("does not flash agent activity when a turn completes before the entrance delay", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    const delivery = queuedDelivery("delivery-fast", "Quick answer", null, {
-      status: "running",
-      turnId: "turn-fast",
-    });
-
-    emitAgentEvent?.({
-      type: "conversation",
-      snapshot: {
-        botId: "chief",
-        threadId: "thread-chief",
-        activeTurnId: "turn-fast",
-        revision: 1,
-        messages: [
-          {
-            id: delivery.id,
-            turnId: "turn-fast",
-            author: "user",
-            text: delivery.text,
-            createdAt: delivery.createdAt,
-            status: "completed",
-            delivery: { id: delivery.id, status: "running", position: null },
-          },
-        ],
-      },
-    });
-    emitAgentEvent?.({
-      type: "queue-changed",
-      snapshot: { botId: "chief", deliveries: [delivery] },
-    });
-    emitAgentEvent?.({
-      type: "turn-completed",
-      botId: "chief",
-      threadId: "thread-chief",
-      turnId: "turn-fast",
-      status: "completed",
-    });
-
-    await new Promise((resolve) => window.setTimeout(resolve, 180));
-    expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument();
-  });
-
-  it("replaces a live image-generation placeholder with the completed image", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    const turnId = "turn-image-live";
-    const imageAttachment = attachment("image-live", "generated-image.png", "image");
-
-    emitAgentEvent?.({
-      type: "conversation",
-      snapshot: {
-        botId: "chief",
-        threadId: "thread-chief",
-        activeTurnId: turnId,
-        revision: 1,
-        messages: [
-          {
-            id: "user-image-live",
-            turnId,
-            author: "user",
-            text: "Create a landscape image of a quiet observatory.",
+            text: "The launch is approved.",
             createdAt: "2026-08-12T10:00:00.000Z",
             status: "completed",
-          },
-          {
-            id: "image-live",
-            turnId,
-            author: "assistant",
-            text: "",
-            createdAt: "2026-08-12T10:00:01.000Z",
-            status: "streaming",
-            itemType: "image_generation",
-            imageGeneration: {
-              prompt: "A quiet observatory above the clouds at blue hour",
-              resolution: "1536 × 1024",
-              aspectRatio: "landscape",
-            },
+            reaction: "❤️",
+            reactions: [
+              { emoji: "❤️", actor: { kind: "user" } },
+              { emoji: "🎉", actor: { kind: "bot", botId: "chief" } },
+            ],
           },
         ],
       },
     });
 
-    expect(await screen.findByRole("img", { name: "Generating image" })).toHaveAttribute("aria-busy", "true");
-    expect(await screen.findByRole("status", { name: "Chief is working" })).toBeInTheDocument();
-
-    emitAgentEvent?.({
-      type: "conversation",
-      snapshot: {
-        botId: "chief",
-        threadId: "thread-chief",
-        activeTurnId: turnId,
-        revision: 2,
-        messages: [
-          {
-            id: "user-image-live",
-            turnId,
-            author: "user",
-            text: "Create a landscape image of a quiet observatory.",
-            createdAt: "2026-08-12T10:00:00.000Z",
-            status: "completed",
-          },
-          {
-            id: "image-live",
-            turnId,
-            author: "assistant",
-            text: "",
-            createdAt: "2026-08-12T10:00:01.000Z",
-            status: "completed",
-            itemType: "image_generation",
-            imageGeneration: {
-              prompt: "A quiet observatory above the clouds at blue hour",
-              resolution: "1536 × 1024",
-              aspectRatio: "landscape",
-            },
-            attachments: [imageAttachment],
-          },
-        ],
-      },
-    });
-
-    await waitFor(() => expect(screen.getByRole("button", { name: "Preview generated image" })).toBeInTheDocument());
-    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
-    expect(screen.queryByText("Generating image")).not.toBeInTheDocument();
-
-    emitAgentEvent?.({
-      type: "turn-completed",
+    await screen.findByRole("img", { name: "Chief reacted with 🎉" });
+    await fireEvent.click(screen.getByRole("button", { name: "Remove your reaction ❤️" }));
+    expect(window.openbot.agent.setMessageReaction).toHaveBeenCalledWith({
       botId: "chief",
-      threadId: "thread-chief",
-      turnId,
-      status: "completed",
+      messageId: "user-reactions",
+      emoji: null,
     });
-    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
-
-    await fireEvent.click(screen.getByRole("button", { name: "Download generated image" }));
-    expect(window.openbot.agent.openAttachment).toHaveBeenCalledWith({
-      attachmentId: imageAttachment.id,
-      action: "download",
-    });
+    expect(screen.getByRole("img", { name: "Chief reacted with 🎉" })).toBeInTheDocument();
   });
 
   it("groups commentary into a collapsed thinking disclosure", async () => {
@@ -3792,7 +3626,9 @@ describe("OpenBot connected desktop shell", () => {
       requestId: "paste-1",
       attachments: [attachment("pasted-1", "pasted.png", "image")],
     });
-    expect(await screen.findByRole("button", { name: "Remove pasted.png" })).toBeInTheDocument();
+    await fireEvent.click(await screen.findByRole("button", { name: "Remove pasted.png" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove pasted.png" })).not.toBeInTheDocument());
+    expect(window.openbot.agent.discardDraftAttachment).toHaveBeenCalledWith("pasted-1");
   });
 
   it("keeps an asynchronous pasted attachment with the bot that received the paste", async () => {
@@ -3809,50 +3645,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("button", { name: "Remove for-chief.png" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
     expect(await screen.findByRole("button", { name: "Remove for-chief.png" })).toBeInTheDocument();
-  });
-
-  it("shows and controls queued work", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    emitAgentEvent?.({
-      type: "queue-changed",
-      snapshot: {
-        botId: "chief",
-        deliveries: [
-          {
-            id: "delivery-1",
-            messageId: "message-1",
-            recipientBotId: "chief",
-            sender: { kind: "user" },
-            text: "Later",
-            attachments: [],
-            replyToMessageId: null,
-            status: "running",
-            position: 1,
-            turnId: "turn-1",
-            error: null,
-            createdAt: new Date().toISOString(),
-          },
-          {
-            id: "delivery-2",
-            messageId: "message-2",
-            recipientBotId: "chief",
-            sender: { kind: "user" },
-            text: "Later, too",
-            attachments: [],
-            replyToMessageId: null,
-            status: "queued",
-            position: 2,
-            turnId: null,
-            error: null,
-            createdAt: new Date().toISOString(),
-          },
-        ],
-      },
-    });
-    await fireEvent.click(await screen.findByRole("button", { name: "Delete queued message 2" }));
-    await waitFor(() => expect(window.openbot.agent.cancelQueuedMessage).toHaveBeenCalled());
-    expect(screen.queryByRole("button", { name: "Resume queue" })).not.toBeInTheDocument();
   });
 
   it("keeps the first delivery out of Queue until work starts", async () => {
@@ -3954,79 +3746,6 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(document.querySelector(".agent-queue-panel")).not.toBeInTheDocument());
     expect(queueSlot).toHaveAttribute("data-open", "false");
     expect(queueSlot).toHaveAttribute("aria-hidden", "true");
-  });
-
-  it("smokes two composer submissions through the live Queue projection", async () => {
-    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
-      botId: "chief",
-      threadId: "thread-chief",
-      activeTurnId: null,
-      revision: 0,
-      messages: [
-        {
-          id: "existing-message",
-          author: "assistant",
-          text: "Ready for the queue smoke test.",
-          createdAt: "2026-08-20T09:59:59.000Z",
-          status: "completed",
-        },
-      ],
-      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
-    });
-    const deliveries: QueueDelivery[] = [];
-    vi.mocked(window.openbot.agent.sendMessage).mockImplementation(async (input) => {
-      const delivery = queuedDelivery(`delivery-smoke-${deliveries.length + 1}`, input.text, deliveries.length + 1);
-      deliveries.push(delivery);
-      emitAgentEvent?.({
-        type: "queue-changed",
-        snapshot: { botId: input.botId, deliveries: [...deliveries] },
-      });
-      return {
-        messageId: delivery.messageId,
-        deliveries: [
-          {
-            id: delivery.id,
-            recipientBotId: delivery.recipientBotId,
-            status: delivery.status,
-            position: delivery.position,
-          },
-        ],
-      };
-    });
-
-    render(() => <App />);
-    await screen.findByText("Ready for the queue smoke test.");
-    const composer = screen.getByRole("textbox", { name: "Message Chief" });
-
-    composer.textContent = "First live smoke message";
-    await fireEvent.input(composer);
-    await fireEvent.keyDown(composer, { key: "Enter" });
-    await waitFor(() => expect(window.openbot.agent.sendMessage).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(composer).toHaveTextContent(""));
-    expect(
-      screen.queryByText("First live smoke message", { selector: ".agent-queue-message" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText("First live smoke message", { selector: ".message-copy" })).not.toBeInTheDocument();
-
-    const firstDelivery = deliveries[0];
-    if (!firstDelivery) throw new Error("The first smoke delivery is missing.");
-    deliveries[0] = { ...firstDelivery, status: "running", position: null, turnId: "turn-smoke" };
-    emitAgentEvent?.({ type: "turn-started", botId: "chief", threadId: "thread-chief", turnId: "turn-smoke" });
-    emitAgentEvent?.({
-      type: "queue-changed",
-      snapshot: { botId: "chief", deliveries: [...deliveries] },
-    });
-
-    composer.textContent = "Second live smoke message";
-    await fireEvent.input(composer);
-    await fireEvent.keyDown(composer, { key: "Enter" });
-    await waitFor(() => expect(window.openbot.agent.sendMessage).toHaveBeenCalledTimes(2));
-    expect(
-      await screen.findByText("Second live smoke message", { selector: ".agent-queue-message" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText("First live smoke message", { selector: ".agent-queue-message" }),
-    ).not.toBeInTheDocument();
   });
 
   it("keeps foreground starts out of Queue and hides waiting work between turns", async () => {
@@ -4642,68 +4361,6 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(screen.getByRole("textbox", { name: "Server name" })).toBe(name);
     expect(name).toHaveValue("Design");
-  });
-
-  it("configures the local identity before publication", async () => {
-    const configured = {
-      phase: "idle" as const,
-      configured: true,
-      enabledOnLaunch: false,
-      serverId: "server-1",
-      serverName: "Design studio",
-      logoUrl: null,
-      apiUrl: "https://design-studio-k7m4q2pz-host.openbot.run",
-      apiOnline: false,
-      remoteDesktopReady: false,
-      remoteDesktopUnattended: false,
-      remoteDesktopActiveSessions: 0,
-      remoteDesktopMaxSessions: 4,
-      message: "Address reserved.",
-    };
-    vi.mocked(window.openbot.host.configure).mockResolvedValueOnce(configured);
-    vi.mocked(window.openbot.servers.list)
-      .mockResolvedValueOnce([
-        {
-          id: "local",
-          name: "Local",
-          logoUrl: null,
-          kind: "local",
-          state: "online",
-          apiUrl: null,
-          remoteDesktopAvailable: false,
-          role: null,
-          active: true,
-        },
-      ])
-      .mockResolvedValue([
-        {
-          id: "local",
-          name: "Design studio",
-          logoUrl: null,
-          kind: "local",
-          state: "offline",
-          apiUrl: configured.apiUrl,
-          remoteDesktopAvailable: false,
-          role: "owner",
-          active: true,
-        },
-      ]);
-    render(() => <App />);
-
-    await screen.findByRole("heading", { name: "Chief" });
-    await fireEvent.contextMenu(screen.getByRole("button", { name: "Local server" }), {
-      clientX: 32,
-      clientY: 80,
-    });
-    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Server settings" }), { button: 0 });
-    await fireEvent.input(await screen.findByRole("textbox", { name: "Server name" }), {
-      target: { value: "Design studio" },
-    });
-    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() => expect(window.openbot.host.configure).toHaveBeenCalledWith({ serverName: "Design studio" }));
-    expect(window.openbot.host.start).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.getByRole("switch", { name: "Publish this server" })).toBeEnabled());
   });
 
   it("shows publishing controls in the local server context menu on Windows", async () => {

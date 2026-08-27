@@ -51,6 +51,13 @@ export function AppAccessGate() {
     setupState,
     pendingInviteUrl,
     agentStatus,
+    refreshingProviders,
+    connectChatGPT,
+    connectClaude,
+    connectGrok,
+    openProviderInstallGuide,
+    openProviderSignInGuide,
+    refreshAgentProviders,
     saveSetup,
     previewInvite,
     joinRemoteDuringSetup,
@@ -88,6 +95,21 @@ export function AppAccessGate() {
                       state={setupState() ?? { completed: false, preferredProvider: null }}
                       agentStatus={agentStatus()}
                       platform={appInfo()?.platform ?? "darwin"}
+                      refreshingProviders={
+                        refreshingProviders() ||
+                        agentStatus().phase === "starting" ||
+                        agentStatus().phase === "restarting"
+                      }
+                      onConnectProvider={(provider) =>
+                        provider === "codex"
+                          ? connectChatGPT()
+                          : provider === "claude"
+                            ? connectClaude()
+                            : connectGrok()
+                      }
+                      onInstallProvider={openProviderInstallGuide}
+                      onSignInProvider={openProviderSignInGuide}
+                      onRefreshProviders={refreshAgentProviders}
                       onSave={saveSetup}
                     />
                   </Loading>
@@ -505,6 +527,7 @@ function WorkspaceOverlays(props: {
     appSettingsRestoreTarget,
     skillsMarketplaceOpen,
     setSkillsMarketplaceOpen,
+    openInstalledMarketplaceAgent,
     setupState,
     agentStatus,
     appInfo,
@@ -580,6 +603,7 @@ function WorkspaceOverlays(props: {
             bots={activeServer()?.kind === "local" ? botList() : []}
             activeBotId={activeServer()?.kind === "local" ? (activeBot()?.id ?? "") : ""}
             onOpenChange={setSkillsMarketplaceOpen}
+            onAgentInstalled={openInstalledMarketplaceAgent}
           />
         </Loading>
       </Show>

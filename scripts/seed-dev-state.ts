@@ -569,8 +569,8 @@ async function seedConversations(
       `dev-seed:conversation:${botId}`,
     );
   }
-  await mailbox.setReaction("chief", "chief-assistant-plan", "🎉");
-  await mailbox.setReaction("research", "research-assistant", "✅");
+  await mailbox.setReaction("chief", "chief-assistant-plan", { kind: "user" }, "🎉");
+  await mailbox.setReaction("research", "research-assistant", { kind: "user" }, "✅");
 }
 
 async function seedAgentExchanges(mailbox: MailboxStore): Promise<void> {

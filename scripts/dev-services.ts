@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { prepareDevelopmentEnvironment } from "./prepare-dev-environment";
 
 export type DevelopmentService = "api" | "app" | "test-client";
 type DevelopmentTarget = DevelopmentService | "all";
@@ -82,7 +83,7 @@ export function createDevelopmentServiceSpec(
       OPENBOT_DEV_REMOTE_DEBUGGING_PORT:
         environment.OPENBOT_DEV_REMOTE_DEBUGGING_PORT ??
         String(isTestClient ? DEFAULT_REMOTE_DEBUGGING_PORTS["test-client"] : DEFAULT_REMOTE_DEBUGGING_PORTS.app),
-      OPENBOT_DEV_REMOTE_ROLE: isTestClient ? "client" : "host",
+      OPENBOT_DEV_REMOTE_ROLE: environment.OPENBOT_DEV_REMOTE_ROLE ?? (isTestClient ? "client" : "host"),
     },
   };
 }
@@ -102,6 +103,7 @@ export function parseDevelopmentTarget(args: string[]): {
 
 async function main(): Promise<void> {
   const { target, dryRun } = parseDevelopmentTarget(process.argv.slice(2));
+  if (!dryRun) prepareDevelopmentEnvironment();
   const services = servicesForTarget(target);
   const sharedEnvironment = developmentEnvironmentForTarget(target);
   const reservedPorts = new Set<number>();
@@ -133,6 +135,7 @@ async function main(): Promise<void> {
       reservedPorts.add(rendererPort);
       environment.OPENBOT_DEV_RENDERER_PORT = String(rendererPort);
       if (rendererPort !== defaultPort) {
+        environment.OPENBOT_DEV_INSTANCE_ID ??= String(rendererPort);
         console.log(`Renderer port ${defaultPort} is busy. Using ${rendererPort} for ${service}.`);
       }
 
@@ -216,6 +219,12 @@ async function findAvailablePort(preferredPort: number, reservedPorts: Set<numbe
 }
 
 function isPortAvailable(port: number): Promise<boolean> {
+  return Promise.all([isAddressPortAvailable(port, "127.0.0.1"), isAddressPortAvailable(port, "::1")]).then((results) =>
+    results.every(Boolean),
+  );
+}
+
+function isAddressPortAvailable(port: number, host: "127.0.0.1" | "::1"): Promise<boolean> {
   return new Promise((resolvePort, reject) => {
     const server = createServer();
     const finish = (available: boolean) => {
@@ -227,9 +236,13 @@ function isPortAvailable(port: number): Promise<boolean> {
         finish(false);
         return;
       }
+      if (host === "::1" && (error.code === "EADDRNOTAVAIL" || error.code === "EAFNOSUPPORT")) {
+        finish(true);
+        return;
+      }
       reject(error);
     });
-    server.listen(port, "127.0.0.1", () => {
+    server.listen(port, host, () => {
       server.close(() => finish(true));
     });
   });

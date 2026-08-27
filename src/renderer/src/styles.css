@@ -202,7 +202,10 @@
   --openbot-radius-lg: 12px;
   --openbot-radius-dialog: 14px;
   --openbot-radius-xl: 20px;
+  --openbot-radius-bubble: 22px;
+  --openbot-radius-bubble-inset: calc(var(--openbot-radius-bubble) - var(--openbot-space-3) - 1px);
   --openbot-radius-modal: 30px;
+  --openbot-radius-media-preview: calc(var(--openbot-radius-lg) - 1px);
   --openbot-radius-pill: 999px;
   --openbot-radius-logo: 20%;
   --openbot-control-xs: 24px;
@@ -229,6 +232,10 @@
   --openbot-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --openbot-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --openbot-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --text-swap-dur: 150ms;
+  --text-swap-translate-y: 4px;
+  --text-swap-blur: 2px;
+  --text-swap-ease: ease-in-out;
   --modal-open-dur: 250ms;
   --modal-close-dur: 150ms;
   --modal-scale: 0.96;

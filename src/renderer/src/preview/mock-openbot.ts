@@ -352,6 +352,10 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       accessibility: "granted",
     }),
     openExternal: async () => undefined,
+    connectChatGPT: async () => clone(agentStatus),
+    connectClaude: async () => clone(agentStatus),
+    connectGrok: async () => clone(agentStatus),
+    refreshAgentProviders: async () => clone(agentStatus),
     openUrl: async () => undefined,
     voice: {
       transcribe: async () => ({ text: "Mock voice transcript" }),
@@ -407,6 +411,22 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         throw new Error("Skill installation is unavailable in preview mode.");
       },
       uninstall: async () => undefined,
+    },
+    marketplaceAgents: {
+      list: async () => ({ agents: [], nextCursor: null }),
+      get: async () => {
+        throw new Error("Agent not found");
+      },
+      listMine: async () => [],
+      preview: async () => {
+        throw new Error("Agent publishing is unavailable in preview mode.");
+      },
+      submit: async () => {
+        throw new Error("Agent publishing is unavailable in preview mode.");
+      },
+      install: async () => {
+        throw new Error("Agent installation is unavailable in preview mode.");
+      },
     },
     agent: {
       getStatus: async () => clone(agentStatus),
@@ -732,7 +752,13 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       setMessageReaction: async (input: SetMessageReactionInput) => {
         updateSnapshot(input.botId, (snapshot) => {
           const message = snapshot.messages.find((candidate) => candidate.id === input.messageId);
-          if (message) message.reaction = input.emoji;
+          if (message) {
+            message.reaction = input.emoji;
+            message.reactions = [
+              ...(message.reactions ?? []).filter((reaction) => reaction.actor.kind !== "user"),
+              ...(input.emoji ? [{ emoji: input.emoji, actor: { kind: "user" as const } }] : []),
+            ];
+          }
         });
       },
       listQueue: async (botId) => clone(queues.get(botId) ?? emptyQueue(botId)),

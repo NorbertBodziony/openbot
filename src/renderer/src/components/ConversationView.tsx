@@ -1,3 +1,4 @@
+import { ATTACHMENT_FILE_ACCEPT, IMAGE_ATTACHMENT_ACCEPT } from "@openbot/contracts/attachment-files";
 import {
   attachmentReferenceIds,
   expandAttachmentReferences,
@@ -68,6 +69,7 @@ import {
   renderChatSearchHighlights,
 } from "./conversation/chat-search";
 import { calculateChatScrollMargin, createChatVirtualizer } from "./conversation/createChatVirtualizer";
+import { messageContentBlocks } from "./conversation/DataTable";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
 import { MessageSelectionActions } from "./conversation/SelectionActions";
@@ -84,7 +86,24 @@ import {
   voiceTranscriptionError,
 } from "./conversation/voice-status";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { Button, Dialog, DropdownMenu, File, Image, Input, LoaderCircle, Mic, Puzzle } from "./ui";
+import {
+  Bubble,
+  BubbleContent,
+  BubbleReactions,
+  type BubbleVariant,
+  Button,
+  Dialog,
+  DropdownMenu,
+  File,
+  Image,
+  ImageRemoveButton,
+  Input,
+  LoaderCircle,
+  Message,
+  MessageContent,
+  Mic,
+  Puzzle,
+} from "./ui";
 
 const loadAgentSettingsPanel = () => import("./conversation/AgentSettingsPanel");
 const AgentSettingsPanel = lazy(loadAgentSettingsPanel);
@@ -92,6 +111,14 @@ const BrowserPanel = lazy(() => import("./conversation/BrowserPanel"));
 const FilePreviewPanel = lazy(() => import("./conversation/FilePreviewPanel"));
 const QueuePanel = lazy(() => import("./conversation/QueuePanel").then((module) => ({ default: module.QueuePanel })));
 const ApprovalCard = lazy(() => import("./ConversationPrompts").then((module) => ({ default: module.ApprovalCard })));
+
+function conversationBubbleVariant(message: BotMessage): BubbleVariant {
+  if (message.author === "you") return "secondary";
+  if (message.imageGeneration || (!message.body.trim() && message.attachments?.length)) return "ghost";
+  return messageContentBlocks(message.body, message.streaming === true).some((block) => block.type !== "text")
+    ? "ghost"
+    : "muted";
+}
 
 interface RenderedAgentActivity {
   activityId: string;
@@ -2363,6 +2390,17 @@ export function ConversationTimeline() {
                 const message = createMemo(() => props.messages[virtualRow.index]);
                 const initialMessage = untrack(message);
                 if (!initialMessage) return null;
+                const displayedReactions = createMemo(() => {
+                  const currentMessage = message();
+                  if (currentMessage?.reactions?.length) return currentMessage.reactions;
+                  if (currentMessage?.reaction) {
+                    return [{ emoji: currentMessage.reaction, actor: { kind: "user" as const } }];
+                  }
+                  return (currentMessage?.reactionSummary?.emojis ?? []).map((emoji) => ({
+                    emoji,
+                    actor: { kind: "user" as const },
+                  }));
+                });
                 const animateEntrance = initialMessage.animate === true && markMessageSeen(initialMessage.id);
                 return (
                   <div
@@ -2389,8 +2427,11 @@ export function ConversationTimeline() {
                         <Show
                           when={message()?.kind === "thinking"}
                           fallback={
-                            <article
+                            <Message
+                              role="article"
+                              align={message()?.author === "you" ? "end" : "start"}
                               data-chat-search-message={message()?.id}
+                              data-author={message()?.author === "you" ? "user" : "assistant"}
                               class={[
                                 "message-entry",
                                 {
@@ -2400,92 +2441,127 @@ export function ConversationTimeline() {
                                 },
                               ]}
                             >
-                              <div class="message-shell">
-                                <div
-                                  class={[
-                                    message()?.author === "you" ? "user-bubble" : "bot-bubble",
-                                    {
-                                      "bot-bubble-streaming": message()?.streaming === true,
-                                    },
-                                  ]}
-                                >
-                                  <MessageBody
+                              <MessageContent>
+                                <div class="message-shell">
+                                  <Bubble
+                                    align={message()?.author === "you" ? "end" : "start"}
+                                    variant={conversationBubbleVariant(message() ?? initialMessage)}
+                                    data-author={message()?.author === "you" ? "user" : "assistant"}
+                                    data-streaming={message()?.streaming === true ? "" : undefined}
+                                  >
+                                    <BubbleContent>
+                                      <MessageBody
+                                        message={message() ?? initialMessage}
+                                        referencedMessage={
+                                          props.messages.find(
+                                            (candidate) => candidate.id === message()?.replyToMessageId,
+                                          ) ??
+                                          (message()?.replyToMessageId
+                                            ? props.messageReferences?.[message()?.replyToMessageId ?? ""]
+                                            : undefined)
+                                        }
+                                        bots={props.bots}
+                                        onSelectAgent={props.onSelectAgent}
+                                        onOpenLink={(url) => void openExternalMessageUrl(url)}
+                                        onPreview={(attachment) => void previewAttachment(attachment)}
+                                        onAttachmentAction={attachmentAction}
+                                        onOpenSharedFile={openSharedFile}
+                                        onOpenWorkspaceFile={openWorkspaceFile}
+                                        onDownload={(attachment) => attachmentAction(attachment, "download")}
+                                        onOpenRoutine={openRoutineSettings}
+                                      />
+                                    </BubbleContent>
+                                    <Show when={displayedReactions().length > 0}>
+                                      <BubbleReactions
+                                        class="message-reaction-anchor"
+                                        align={message()?.author === "you" ? "start" : "end"}
+                                        overflowCount={message()?.reactionSummary?.overflowCount}
+                                        role="group"
+                                        aria-label={`Reactions: ${displayedReactions()
+                                          .map((reaction) => reaction.emoji)
+                                          .join(", ")}`}
+                                      >
+                                        <For each={displayedReactions()}>
+                                          {(reaction) => (
+                                            <Show
+                                              when={reaction.actor.kind === "user"}
+                                              fallback={
+                                                <span
+                                                  class="message-reaction-pill message-reaction-pill-readonly"
+                                                  role="img"
+                                                  aria-label={`${
+                                                    props.bots.find(
+                                                      (bot) =>
+                                                        reaction.actor.kind === "bot" &&
+                                                        bot.id === reaction.actor.botId,
+                                                    )?.name ?? "Agent"
+                                                  } reacted with ${reaction.emoji}`}
+                                                >
+                                                  <span aria-hidden="true">{reaction.emoji}</span>
+                                                </span>
+                                              }
+                                            >
+                                              <Button
+                                                variant="ghost"
+                                                type="button"
+                                                class="message-reaction-pill"
+                                                aria-label={`Remove your reaction ${reaction.emoji}`}
+                                                onClick={() => {
+                                                  const currentMessage = message();
+                                                  if (currentMessage) void reactToMessage(currentMessage, null);
+                                                }}
+                                              >
+                                                <span aria-hidden="true">{reaction.emoji}</span>
+                                              </Button>
+                                            </Show>
+                                          )}
+                                        </For>
+                                      </BubbleReactions>
+                                    </Show>
+                                  </Bubble>
+                                  <MessageActions
                                     message={message() ?? initialMessage}
-                                    referencedMessage={
-                                      props.messages.find(
-                                        (candidate) => candidate.id === message()?.replyToMessageId,
-                                      ) ??
-                                      (message()?.replyToMessageId
-                                        ? props.messageReferences?.[message()?.replyToMessageId ?? ""]
-                                        : undefined)
-                                    }
-                                    bots={props.bots}
-                                    onSelectAgent={props.onSelectAgent}
-                                    onOpenLink={(url) => void openExternalMessageUrl(url)}
-                                    onPreview={(attachment) => void previewAttachment(attachment)}
-                                    onAttachmentAction={attachmentAction}
-                                    onOpenSharedFile={openSharedFile}
-                                    onOpenWorkspaceFile={openWorkspaceFile}
-                                    onDownload={(attachment) => attachmentAction(attachment, "download")}
-                                    onOpenRoutine={openRoutineSettings}
+                                    pickerOpen={openReactionMessageId() === message()?.id}
+                                    moreOpen={openMoreMessageId() === message()?.id}
+                                    expandedEmoji={expandedEmojiMessageId() === message()?.id}
+                                    copied={copiedMessageId() === message()?.id}
+                                    onTogglePicker={() => {
+                                      const messageId = message()?.id;
+                                      if (!messageId) return;
+                                      setOpenReactionMessageId((current) => (current === messageId ? null : messageId));
+                                      setOpenMoreMessageId(null);
+                                      setExpandedEmojiMessageId(null);
+                                    }}
+                                    onToggleMore={() => {
+                                      const messageId = message()?.id;
+                                      if (!messageId) return;
+                                      setOpenMoreMessageId((current) => (current === messageId ? null : messageId));
+                                      setOpenReactionMessageId(null);
+                                      setExpandedEmojiMessageId(null);
+                                    }}
+                                    onExpandEmoji={() => {
+                                      const messageId = message()?.id;
+                                      if (!messageId) return;
+                                      setExpandedEmojiMessageId((current) =>
+                                        current === messageId ? null : messageId,
+                                      );
+                                    }}
+                                    onReact={(emoji) => {
+                                      const currentMessage = message();
+                                      if (currentMessage) void reactToMessage(currentMessage, emoji);
+                                    }}
+                                    onReply={() => {
+                                      const currentMessage = message();
+                                      if (currentMessage) replyToMessage(currentMessage);
+                                    }}
+                                    onCopy={() => {
+                                      const currentMessage = message();
+                                      if (currentMessage) void copyMessage(currentMessage);
+                                    }}
                                   />
                                 </div>
-                                <MessageActions
-                                  message={message() ?? initialMessage}
-                                  pickerOpen={openReactionMessageId() === message()?.id}
-                                  moreOpen={openMoreMessageId() === message()?.id}
-                                  expandedEmoji={expandedEmojiMessageId() === message()?.id}
-                                  copied={copiedMessageId() === message()?.id}
-                                  onTogglePicker={() => {
-                                    const messageId = message()?.id;
-                                    if (!messageId) return;
-                                    setOpenReactionMessageId((current) => (current === messageId ? null : messageId));
-                                    setOpenMoreMessageId(null);
-                                    setExpandedEmojiMessageId(null);
-                                  }}
-                                  onToggleMore={() => {
-                                    const messageId = message()?.id;
-                                    if (!messageId) return;
-                                    setOpenMoreMessageId((current) => (current === messageId ? null : messageId));
-                                    setOpenReactionMessageId(null);
-                                    setExpandedEmojiMessageId(null);
-                                  }}
-                                  onExpandEmoji={() => {
-                                    const messageId = message()?.id;
-                                    if (!messageId) return;
-                                    setExpandedEmojiMessageId((current) => (current === messageId ? null : messageId));
-                                  }}
-                                  onReact={(emoji) => {
-                                    const currentMessage = message();
-                                    if (currentMessage) void reactToMessage(currentMessage, emoji);
-                                  }}
-                                  onReply={() => {
-                                    const currentMessage = message();
-                                    if (currentMessage) replyToMessage(currentMessage);
-                                  }}
-                                  onCopy={() => {
-                                    const currentMessage = message();
-                                    if (currentMessage) void copyMessage(currentMessage);
-                                  }}
-                                />
-                              </div>
-                              <Show when={message()?.reaction}>
-                                {(reaction) => (
-                                  <Button
-                                    variant="ghost"
-                                    type="button"
-                                    class="message-reaction-pill"
-                                    aria-label={`Remove reaction ${reaction()}`}
-                                    onClick={() => {
-                                      const currentMessage = message();
-                                      if (currentMessage) void reactToMessage(currentMessage, null);
-                                    }}
-                                  >
-                                    {reaction()}
-                                  </Button>
-                                )}
-                              </Show>
-                            </article>
+                              </MessageContent>
+                            </Message>
                           }
                         >
                           <div
@@ -2645,38 +2721,6 @@ export function ConversationComposer() {
             </Show>
           </div>
         </div>
-        <Show when={unreferencedDraftAttachments().length > 0}>
-          <div class="composer-attachments">
-            <For each={unreferencedDraftAttachments()}>
-              {(attachment) => (
-                <div class="composer-attachment" data-kind={attachment.kind}>
-                  <span
-                    class="composer-attachment-preview"
-                    data-file-tone={attachment.kind === "file" ? attachmentReferenceTone(attachment.name) : undefined}
-                  >
-                    <Show when={attachment.kind === "image"} fallback={fileBadge(attachment)}>
-                      <img src={attachment.previewUrl ?? ""} alt="" />
-                    </Show>
-                  </span>
-                  <Show when={attachment.kind === "file"}>
-                    <span class="composer-attachment-copy">
-                      <strong title={attachment.name}>{attachment.name}</strong>
-                      <small>{formatFileSize(attachment.size)}</small>
-                    </span>
-                  </Show>
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    aria-label={`Remove ${attachment.name}`}
-                    onClick={() => removeAttachment(attachment.id)}
-                  >
-                    <CloseIcon />
-                  </Button>
-                </div>
-              )}
-            </For>
-          </div>
-        </Show>
         <Show when={replyTarget()}>
           {(message) => (
             <div class="composer-reply-preview">
@@ -2702,7 +2746,10 @@ export function ConversationComposer() {
         </Show>
         <div
           class={`composer${voicePhase() === "recording" ? " composer-recording" : ""}`}
-          data-compact={currentDraft().text.includes("\n") ? undefined : ""}
+          data-compact={
+            currentDraft().text.includes("\n") || unreferencedDraftAttachments().length > 0 ? undefined : ""
+          }
+          data-has-attachments={unreferencedDraftAttachments().length > 0 ? "" : undefined}
           onPointerDown={(event) => {
             if (!(event.target instanceof Element)) return;
             if (event.target.closest("button, .composer-editor-surface")) return;
@@ -2710,6 +2757,34 @@ export function ConversationComposer() {
             setComposerFocusRequest((current) => current + 1);
           }}
         >
+          <Show when={unreferencedDraftAttachments().length > 0}>
+            <div class="composer-attachments">
+              <For each={unreferencedDraftAttachments()}>
+                {(attachment) => (
+                  <div class="composer-attachment ui-removable-image" data-kind={attachment.kind}>
+                    <span
+                      class="composer-attachment-preview"
+                      data-file-tone={attachment.kind === "file" ? attachmentReferenceTone(attachment.name) : undefined}
+                    >
+                      <Show when={attachment.kind === "image"} fallback={fileBadge(attachment)}>
+                        <img src={attachment.previewUrl ?? ""} alt="" />
+                      </Show>
+                    </span>
+                    <Show when={attachment.kind === "file"}>
+                      <span class="composer-attachment-copy">
+                        <strong title={attachment.name}>{attachment.name}</strong>
+                        <small>{formatFileSize(attachment.size)}</small>
+                      </span>
+                    </Show>
+                    <ImageRemoveButton
+                      label={`Remove ${attachment.name}`}
+                      onClick={() => removeAttachment(attachment.id)}
+                    />
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
           <div class="composer-input-label">
             <ComposerEditor
               botId={props.bot?.id}
@@ -2742,7 +2817,7 @@ export function ConversationComposer() {
             <Input
               ref={setImageAttachmentPickerElement}
               type="file"
-              accept=".png,.jpg,.jpeg,.gif,.webp,.avif"
+              accept={IMAGE_ATTACHMENT_ACCEPT}
               multiple
               hidden
               tabindex={-1}
@@ -2751,6 +2826,7 @@ export function ConversationComposer() {
             <Input
               ref={setContextAttachmentPickerElement}
               type="file"
+              accept={ATTACHMENT_FILE_ACCEPT}
               multiple
               hidden
               tabindex={-1}
@@ -2771,9 +2847,8 @@ export function ConversationComposer() {
                 <PlusIcon />
               </DropdownMenu.Trigger>
               <DropdownMenu.Portal>
-                <DropdownMenu.Content class="attachment-menu composer-action-menu" aria-label="Add to prompt">
+                <DropdownMenu.Content aria-label="Add to prompt">
                   <DropdownMenu.Item
-                    class="composer-action-item"
                     disabled={attachmentBusy()}
                     onPointerDown={(event) => {
                       if (event.button === 0) openAttachmentPicker("images");
@@ -2781,24 +2856,13 @@ export function ConversationComposer() {
                     onKeyDown={(event) => openAttachmentPickerFromKey(event, "images")}
                   >
                     <Image aria-hidden="true" />
-                    <span>
-                      <strong>Attach image</strong>
-                      <small>Add a screenshot or visual reference.</small>
-                    </span>
+                    <span>Attach image</span>
                   </DropdownMenu.Item>
-                  <DropdownMenu.Item
-                    class="composer-action-item"
-                    disabled
-                    title="Skill selection is not available yet."
-                  >
+                  <DropdownMenu.Item disabled title="Skill selection is not available yet.">
                     <Puzzle aria-hidden="true" />
-                    <span>
-                      <strong>Use a skill</strong>
-                      <small>Skill selection is not available yet.</small>
-                    </span>
+                    <span>Use a skill</span>
                   </DropdownMenu.Item>
                   <DropdownMenu.Item
-                    class="composer-action-item"
                     disabled={attachmentBusy()}
                     onPointerDown={(event) => {
                       if (event.button === 0) openAttachmentPicker("all");
@@ -2806,10 +2870,7 @@ export function ConversationComposer() {
                     onKeyDown={(event) => openAttachmentPickerFromKey(event, "all")}
                   >
                     <File aria-hidden="true" />
-                    <span>
-                      <strong>Add context</strong>
-                      <small>Include a file with supporting details.</small>
-                    </span>
+                    <span>Add context</span>
                   </DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>

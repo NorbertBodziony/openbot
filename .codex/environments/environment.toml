@@ -4,12 +4,7 @@ name = "openbot"
 
 [setup]
 script = """
-test -f .env.keys || {
-  echo "Missing .env.keys. Add it to the local checkout so Codex can copy it through .worktreeinclude."
-  exit 1
-}
-bun install --frozen-lockfile
-bun run api:migrate:local
+bun scripts/prepare-dev-environment.ts
 """
 
 [[actions]]

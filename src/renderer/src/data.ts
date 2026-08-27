@@ -5,6 +5,8 @@ import type {
   AgentReasoningEffort,
   AttachmentSummary,
   BotAvatarHue,
+  BotSummary,
+  ConversationReaction,
   ImageGenerationInfo,
   MessageReaction,
 } from "@openbot/contracts/ipc";
@@ -16,6 +18,11 @@ export interface MessageCitation {
   label: string;
   url: string;
   host?: string;
+}
+
+export interface MessageReactionSummary {
+  emojis: MessageReaction[];
+  overflowCount?: number;
 }
 
 export interface BotMessage {
@@ -36,6 +43,8 @@ export interface BotMessage {
   citations?: MessageCitation[];
   exchange?: AgentExchangeSummary;
   reaction?: MessageReaction | null;
+  reactions?: ConversationReaction[];
+  reactionSummary?: MessageReactionSummary;
   routine?: {
     routineId: string;
     runId: string;
@@ -58,6 +67,7 @@ export interface BotProfile {
   avatarSeed: string;
   avatarHue: BotAvatarHue | null;
   avatarUrl: string | null;
+  marketplaceSource?: BotSummary["marketplaceSource"];
   time: string;
   preview: string;
 }

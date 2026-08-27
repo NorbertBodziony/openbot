@@ -139,7 +139,7 @@ Use `bun run dev:seed --dry-run` to inspect the target and fixture counts withou
 | `bun run package:verify` | Build and verify the real ARM64 app bundle, icon, metadata, ASAR, and fuses. |
 | `bun run package:win` | Build an unpacked local Windows x64 application on Windows. |
 | `bun run package:win:verify` | Build and verify the Windows x64 application on Windows. |
-| `bun run release:preflight` | Verify version, Git state, Apple signing, and GitHub release secrets before tagging. |
+| `bun run release:preflight` | Verify version, Git state, and GitHub release secrets before tagging. |
 | `bun run dist:mac` | Build unsigned local ARM64 DMG and ZIP update artifacts. |
 | `bun run dist:win` | Build an unsigned Windows x64 NSIS installer on Windows. |
 | `bun run release:patch` | Create the next patch version commit and tag. |

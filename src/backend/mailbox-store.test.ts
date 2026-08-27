@@ -223,7 +223,7 @@ describe("MailboxStore", () => {
     await expect(readFile(statePath, "utf8")).resolves.toBe(unsupported);
   });
 
-  it("persists reply metadata and one local reaction per conversation message", async () => {
+  it("persists one reaction per actor without overwriting other actors", async () => {
     const receipt = await store.enqueue({
       sender: { kind: "user" },
       recipientBotIds: ["chief"],
@@ -236,12 +236,19 @@ describe("MailboxStore", () => {
       replyToMessageId: "assistant-1",
     });
 
-    await store.setReaction("chief", "assistant-1", "❤️");
+    await store.setReaction("chief", "assistant-1", { kind: "user" }, "❤️");
+    await store.setReaction("chief", "assistant-1", { kind: "bot", botId: "chief" }, "🎉");
     const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
     await restored.initialize();
     expect(restored.reactionFor("chief", "assistant-1")).toBe("❤️");
-    await restored.setReaction("chief", "assistant-1", null);
+    expect(restored.reactionFor("chief", "assistant-1", { kind: "bot", botId: "chief" })).toBe("🎉");
+    expect(restored.reactionsFor("chief").get("assistant-1")).toEqual([
+      { emoji: "❤️", actor: { kind: "user" } },
+      { emoji: "🎉", actor: { kind: "bot", botId: "chief" } },
+    ]);
+    await restored.setReaction("chief", "assistant-1", { kind: "user" }, null);
     expect(restored.reactionFor("chief", "assistant-1")).toBeNull();
+    expect(restored.reactionFor("chief", "assistant-1", { kind: "bot", botId: "chief" })).toBe("🎉");
   });
 
   it("tracks the initiating bot through a reply chain and detects explicit replies", async () => {
@@ -312,6 +319,32 @@ describe("MailboxStore", () => {
         ],
       ),
     ).rejects.toThrow("metadata is too long");
+  });
+
+  it("accepts whitelisted context files and rejects unsupported binaries", async () => {
+    const paths = ["brief.pdf", "notes.txt", "README.md", "requirements.docx"].map((name) => join(root, name));
+    await Promise.all(paths.map((path) => writeFile(path, "fixture")));
+
+    await expect(store.prepareAttachments(paths)).resolves.toMatchObject([
+      { name: "brief.pdf", mimeType: "application/pdf", previewKind: "pdf" },
+      { name: "notes.txt", mimeType: "text/plain", previewKind: "text" },
+      { name: "README.md", mimeType: "text/markdown", previewKind: "text" },
+      {
+        name: "requirements.docx",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        previewKind: "none",
+      },
+    ]);
+
+    const archive = join(root, "bundle.zip");
+    await writeFile(archive, "fixture");
+    await expect(store.prepareAttachments([archive])).rejects.toThrow("bundle.zip is not supported");
+    await expect(
+      store.prepareImportedAttachments(
+        [],
+        [{ name: "installer.exe", mimeType: "application/octet-stream", bytes: new Uint8Array([1]) }],
+      ),
+    ).rejects.toThrow("installer.exe is not supported");
   });
 
   it("imports pathless image bytes and accepts an attachment-only user message", async () => {
@@ -440,7 +473,7 @@ describe("MailboxStore", () => {
       [],
       [
         {
-          name: "clipboard.bin",
+          name: "clipboard.txt",
           mimeType: "image/png",
           bytes: new Uint8Array([137, 80, 78, 71]),
         },

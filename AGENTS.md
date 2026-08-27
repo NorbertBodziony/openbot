@@ -25,6 +25,14 @@
 - Use `lucide-solid` for renderer UI icons. Reuse a suitable Lucide icon before you add an inline SVG or a local icon component. Add a custom icon only when Lucide has no suitable icon, and document the exception next to the custom icon.
 - Treat the `:root` properties in `src/renderer/src/styles.css` as the renderer color palette. Use the closest semantic `--openbot-*` token, including opacity variants, instead of ad-hoc color literals. Add a token there only for a new semantic role. Keep existing compatibility aliases when used, and isolate fixed integration, generated asset, SVG, or platform colors at their boundaries.
 
+## Database migrations
+
+- OpenBot does not create an automatic full copy of `openbot.db` before upgrading. Treat every migration as an irreversible production data operation: preserve all user data, support every shipped source schema, and never depend on a backup being available.
+- Keep each schema change and its `schema_migrations` marker in the same transaction. Roll back on any error, restore foreign-key enforcement in `finally`, and run the integrity checks before allowing startup to continue.
+- Never edit or delete a migration that may have shipped, including the frozen version 8 baseline. Append the next contiguous version and update the separate latest schema used for new databases.
+- Migration changes require data-preservation fixtures for every affected released schema plus failure, rollback, retry, downgrade, missing-version, foreign-key, and integrity coverage at the stable database boundary.
+- Do not add automatic full-database migration backups. Their time and disk cost is unbounded because conversation history lives in SQLite; make the migration itself safe instead.
+
 ## Test value policy
 
 - Keep verification minimal and proportional to the change. Run the narrowest relevant automated test and, when needed, one manual UI check; do not repeat equivalent checks across Vitest, Storybook, and the integrated app unless they cover genuinely different runtime behavior.

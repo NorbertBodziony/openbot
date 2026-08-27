@@ -18,7 +18,7 @@ import {
   providerForLegacyModel,
   type UpdateBotInput,
 } from "@openbot/contracts/ipc";
-import { type DynamicRecord, isBoolean, isOneOf, isString } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isBoolean, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { isUuidV4 } from "@openbot/contracts/validation";
 import { OpenBotDatabase, type ProviderSession, stableThreadId } from "./openbot-database";
 import { isRecord } from "./protocol";
@@ -186,6 +186,14 @@ export class BotStore {
     bot.updatedAt = new Date().toISOString();
     this.#persist("agent.updated");
     return { ...bot };
+  }
+
+  setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary {
+    const bot = this.#requireBot(botId);
+    bot.marketplaceSource = structuredClone(source);
+    bot.updatedAt = new Date().toISOString();
+    this.#persist("agent.marketplace-source-updated");
+    return { ...bot, marketplaceSource: structuredClone(source) };
   }
 
   async setAvatar(botId: string, image: AvatarImageInput | null): Promise<BotSummary> {
@@ -429,7 +437,24 @@ function isStoredBot(value: unknown): value is PersistedStoredBot {
   return (
     (record.provider === undefined || isOneOf(AGENT_PROVIDERS, record.provider)) &&
     isAvatarSeed(record.avatarSeed) &&
-    (record.avatarHue === null || isAvatarHue(record.avatarHue))
+    (record.avatarHue === null || isAvatarHue(record.avatarHue)) &&
+    isMarketplaceSource(record.marketplaceSource)
+  );
+}
+
+function isMarketplaceSource(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isRecord(value) &&
+    isString(value.agentId) &&
+    isString(value.versionId) &&
+    isNumber(value.version) &&
+    Number.isInteger(value.version) &&
+    value.version > 0 &&
+    Array.isArray(value.skillIds) &&
+    value.skillIds.every(isString) &&
+    Array.isArray(value.routineIds) &&
+    value.routineIds.every(isString)
   );
 }
 

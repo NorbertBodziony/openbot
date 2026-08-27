@@ -5,6 +5,48 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-26
+
+### Fixed
+
+- Verify source-built Windows remote desktop binaries as intentionally unsigned while preserving strict vendor signature checks.
+
+## [0.3.3] - 2026-08-26
+
+### Fixed
+
+- Isolate Windows package signature checks from the PowerShell 7 module path used by GitHub Actions.
+
+## [0.3.2] - 2026-08-26
+
+### Fixed
+
+- Stage Claude and Grok runtimes on the destination volume before the atomic Windows install switch.
+
+## [0.3.1] - 2026-08-26
+
+### Fixed
+
+- Resolve bundled provider and fallback CLI paths with the target platform's path format.
+
+## [0.3.0] - 2026-08-26
+
+### Added
+
+- Add the Grok CLI provider and bundle the supported provider CLIs for a more reliable onboarding experience.
+- Add attachments directly in the conversation composer and connect the agent marketplace.
+- Add per-participant emoji reactions, including optional context-aware bot reactions to user messages.
+- Add improved server invitation and member workflows.
+
+### Changed
+
+- Rebuild chat messages on reusable bubble primitives and refresh settings, routines, and related popovers.
+
+### Fixed
+
+- Preserve the active server across refreshes and make server address copying reliable.
+- Improve composer mentions, worktree setup, invitation handling, and emoji reaction presentation.
+
 ## [0.2.1] - 2026-08-25
 
 ### Added

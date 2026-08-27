@@ -1,4 +1,11 @@
-import type { InstalledSkill, MarketplaceSkillPage, OpenBotDesktopApi, SkillSubmission } from "@openbot/contracts/ipc";
+import type {
+  BotSummary,
+  InstalledSkill,
+  MarketplaceAgentDetail,
+  MarketplaceSkillPage,
+  OpenBotDesktopApi,
+  SkillSubmission,
+} from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SkillsMarketplaceModal } from "./SkillsMarketplaceModal";
@@ -57,6 +64,14 @@ describe("SkillsMarketplaceModal", () => {
       uninstall: vi.fn(),
     };
     window.openbot = { ...window.openbot, skills };
+    window.openbot.marketplaceAgents = {
+      list: vi.fn(async () => ({ agents: [], nextCursor: null })),
+      get: vi.fn(),
+      listMine: vi.fn(async () => []),
+      preview: vi.fn(),
+      submit: vi.fn(),
+      install: vi.fn(),
+    };
   });
 
   it("opens the approved skill instructions inside the marketplace modal", async () => {
@@ -98,7 +113,7 @@ describe("SkillsMarketplaceModal", () => {
     ));
     expect(screen.getByRole("dialog", { name: "Marketplace" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Skills" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("button", { name: "Agents" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Agents" })).toBeEnabled();
     await waitFor(() => expect(screen.getByText("Release Notes")).toBeInTheDocument());
     expect(screen.getByText(/1,280 installs/u)).toBeInTheDocument();
     expect(screen.getByLabelText("Search skills")).toBeInTheDocument();
@@ -107,6 +122,159 @@ describe("SkillsMarketplaceModal", () => {
       sort: "installs",
       limit: 5,
     });
+  });
+
+  it("confirms active routines before installing an independent agent", async () => {
+    const detail: MarketplaceAgentDetail = {
+      id: "research-agent",
+      versionId: "research-agent-v1",
+      name: "Research Agent",
+      title: "Finds evidence quickly",
+      description: "Searches sources and produces concise cited findings.",
+      creatorName: "Ada",
+      version: 1,
+      installs: 42,
+      featured: true,
+      avatarSeed: "research-agent",
+      avatarHue: 215,
+      avatarUrl: "https://example.com/research-agent.png",
+      skillCount: 1,
+      routineCount: 1,
+      activeRoutineCount: 1,
+      updatedAt: "2026-08-25T00:00:00.000Z",
+      skills: [{ skillId: "research", versionId: "research-v1", slug: "research", name: "Research", version: 1 }],
+      routines: [
+        {
+          name: "Daily brief",
+          instruction: "Prepare a brief.",
+          active: true,
+          schedule: { kind: "daily", time: "09:00" },
+        },
+      ],
+    };
+    const installedBot = {
+      id: "bot-installed",
+      name: detail.name,
+      title: detail.title,
+      description: detail.description,
+      notifications: true,
+      provider: "codex",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
+      threadId: null,
+      workspacePath: "/tmp/bot-installed",
+      preview: "No messages yet",
+      updatedAt: null,
+      avatarSeed: detail.avatarSeed,
+      avatarHue: detail.avatarHue,
+      avatarUrl: detail.avatarUrl,
+    } satisfies BotSummary;
+    window.openbot.marketplaceAgents.list = vi.fn(async () => ({ agents: [detail], nextCursor: null }));
+    window.openbot.marketplaceAgents.get = vi.fn(async () => detail);
+    window.openbot.marketplaceAgents.install = vi.fn(async () => ({ bot: installedBot }));
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onInstalled = vi.fn();
+
+    render(() => (
+      <SkillsMarketplaceModal
+        open
+        bots={[]}
+        activeBotId=""
+        onOpenChange={() => undefined}
+        onAgentInstalled={onInstalled}
+      />
+    ));
+    screen.getByRole("button", { name: "Agents" }).click();
+    (await screen.findByRole("button", { name: "View Research Agent" })).click();
+    (await screen.findByRole("button", { name: "Install agent" })).click();
+
+    await waitFor(() => expect(window.openbot.marketplaceAgents.install).toHaveBeenCalled());
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("1 active routine"));
+    expect(window.openbot.marketplaceAgents.install).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: detail.id }),
+    );
+    await waitFor(() => expect(onInstalled).toHaveBeenCalledWith(installedBot));
+  });
+
+  it("offers updates and disables agents that are already current", async () => {
+    const baseAgent = {
+      name: "Research Agent",
+      title: "Finds evidence quickly",
+      description: "Searches sources and produces concise cited findings.",
+      creatorName: "Ada",
+      installs: 42,
+      featured: true,
+      avatarSeed: "research-agent",
+      avatarHue: 215,
+      avatarUrl: null,
+      skillCount: 1,
+      routineCount: 0,
+      activeRoutineCount: 0,
+      updatedAt: "2026-08-25T00:00:00.000Z",
+    } as const;
+    window.openbot.marketplaceAgents.list = vi.fn(async () => ({
+      agents: [
+        { ...baseAgent, id: "research-agent", version: 2 },
+        { ...baseAgent, id: "writer-agent", name: "Writer Agent", version: 1 },
+      ],
+      nextCursor: null,
+    }));
+
+    render(() => (
+      <SkillsMarketplaceModal
+        open
+        bots={[
+          {
+            id: "research-local",
+            name: "Research Agent",
+            marketplaceSource: {
+              agentId: "research-agent",
+              versionId: "research-v1",
+              version: 1,
+              skillIds: [],
+              routineIds: [],
+            },
+          },
+          {
+            id: "writer-local",
+            name: "Writer Agent",
+            marketplaceSource: {
+              agentId: "writer-agent",
+              versionId: "writer-v1",
+              version: 1,
+              skillIds: [],
+              routineIds: [],
+            },
+          },
+        ]}
+        activeBotId="research-local"
+        onOpenChange={() => undefined}
+      />
+    ));
+
+    screen.getByRole("button", { name: "Agents" }).click();
+    expect(await screen.findByRole("button", { name: "Update" })).toBeEnabled();
+    expect(
+      screen.getAllByRole("button", { name: "Installed" }).find((button) => button.hasAttribute("disabled")),
+    ).toBeDefined();
+  });
+
+  it("keeps the shared marketplace navigation when browsing installed agents", async () => {
+    render(() => (
+      <SkillsMarketplaceModal
+        open
+        bots={[{ id: "writer", name: "Writer" }]}
+        activeBotId="writer"
+        onOpenChange={() => undefined}
+      />
+    ));
+
+    screen.getByRole("button", { name: "Agents" }).click();
+    screen.getByRole("button", { name: "Installed" }).click();
+
+    expect(await screen.findByRole("heading", { name: "Local agents" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Writer" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add agent" })).toBeInTheDocument();
   });
 
   it("waits 500ms after typing before searching", async () => {

@@ -90,4 +90,4 @@ export interface MacPermissionsState {
   accessibility: MacPermissionState;
 }
 
-export type ExternalDestination = "agent-setup" | "feedback" | "message";
+export type ExternalDestination = "agent-setup" | "claude-install" | "claude-sign-in" | "feedback" | "message";

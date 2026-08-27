@@ -137,7 +137,9 @@ describe("ConversationReadStore", () => {
         legacyDirectMessage.createdAt,
         JSON.stringify(legacyDirectMessage),
       );
-    migrateOpenBotDatabase(legacy, "2026-08-19T10:00:00.000Z");
+    migrateOpenBotDatabase(legacy, {
+      appliedAt: "2026-08-19T10:00:00.000Z",
+    });
     legacy.close();
 
     const database = new OpenBotDatabase(root);

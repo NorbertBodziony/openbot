@@ -32,6 +32,7 @@ import {
   Ellipsis,
   Field,
   Image,
+  ImageRemoveButton,
   Input,
   Item,
   ItemActions,
@@ -58,9 +59,9 @@ import {
   Tabs,
   Text,
   Trash2,
+  toast,
   UserRound,
   UsersRound,
-  X,
 } from "./ui";
 import { truncateMiddle } from "./ui/utils";
 
@@ -89,6 +90,7 @@ type InviteMode = "link" | "email";
 type InviteRole = Exclude<TeamRole, "owner">;
 
 const ROLE_OPTIONS = ["Member", "Admin"];
+const INVITE_LINK_PLACEHOLDER = "Create a private one-time link.";
 const sections: Record<Section, { title: string; description: string }> = {
   general: { title: "General", description: "Manage this server’s identity and published access." },
   members: { title: "Members", description: "Invite people and manage access to this server." },
@@ -106,13 +108,13 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   const [nameTouched, setNameTouched] = createSignal(false);
   const [nameShaking, setNameShaking] = createSignal(false);
   const [logoError, setLogoError] = createSignal<string | null>(null);
-  const [actionError, setActionError] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal<string | null>(null);
   const [inviteMode, setInviteMode] = createSignal<InviteMode>("email");
   const [inviteRole, setInviteRole] = createSignal<InviteRole>("member");
   const [inviteEmail, setInviteEmail] = createSignal("");
   const [inviteEmailError, setInviteEmailError] = createSignal<string | null>(null);
   const [inviteResult, setInviteResult] = createSignal<InviteSummary | null>(null);
+  const [inviteLinkValue, setInviteLinkValue] = createSignal("");
   const [memberSearch, setMemberSearch] = createSignal("");
   const [removeMemberId, setRemoveMemberId] = createSignal<string | null>(null);
   const [now, setNow] = createSignal(Date.now());
@@ -120,8 +122,10 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   let logoInput: HTMLInputElement | undefined;
   let nameInput: HTMLInputElement | undefined;
   let removeMemberTrigger: HTMLElement | undefined;
+  let inviteLinkInput: HTMLInputElement | undefined;
   let syncedServerId = "";
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+  let inviteLinkSwapTimer: ReturnType<typeof setTimeout> | undefined;
   const objectUrls: string[] = [];
 
   const local = () => props.server.kind === "local";
@@ -180,8 +184,8 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
         setNameTouched(false);
         setNameShaking(false);
         setMemberSearch("");
-        setActionError(null);
         setInviteResult(null);
+        resetInviteLink();
       }
       if (!editing) {
         setSavedName(name);
@@ -212,18 +216,47 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
 
   onCleanup(() => {
     if (expiryTimer) clearTimeout(expiryTimer);
+    if (inviteLinkSwapTimer) clearTimeout(inviteLinkSwapTimer);
     for (const url of objectUrls) URL.revokeObjectURL(url);
   });
+
+  function resetInviteLink(): void {
+    if (inviteLinkSwapTimer) clearTimeout(inviteLinkSwapTimer);
+    inviteLinkSwapTimer = undefined;
+    inviteLinkInput?.classList.remove("is-exit", "is-enter-start");
+    setInviteLinkValue("");
+  }
+
+  function swapInviteLink(next: string): void {
+    const element = inviteLinkInput;
+    if (!element || (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false)) {
+      setInviteLinkValue(next);
+      return;
+    }
+    if (inviteLinkSwapTimer) clearTimeout(inviteLinkSwapTimer);
+    const duration =
+      Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--text-swap-dur")) || 150;
+    element.classList.add("is-exit");
+    inviteLinkSwapTimer = setTimeout(() => {
+      inviteLinkSwapTimer = undefined;
+      setInviteLinkValue(next);
+      element.classList.remove("is-exit");
+      element.classList.add("is-enter-start");
+      void element.offsetHeight;
+      element.classList.remove("is-enter-start");
+    }, duration);
+  }
 
   async function run(key: string, action: () => Promise<void>): Promise<boolean> {
     if (busy()) return false;
     setBusy(key);
-    setActionError(null);
     try {
       await action();
       return true;
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "The server action failed.");
+      toast.error("Server action failed", {
+        description: error instanceof Error ? error.message : "The server action failed.",
+      });
       return false;
     } finally {
       setBusy(null);
@@ -253,7 +286,6 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
     setNameTouched(false);
     setNameShaking(false);
     setLogoError(null);
-    setActionError(null);
   }
 
   function updateDraftName(value: string): void {
@@ -267,7 +299,6 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
     } else if (!nameError()) {
       setNameShaking(false);
     }
-    setActionError(null);
   }
 
   function restartNameShake(): void {
@@ -304,7 +335,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   }
 
   function showCopyError(): void {
-    setActionError("OpenBot could not copy this value.");
+    toast.error("Copy failed", { description: "OpenBot could not copy this value." });
   }
 
   async function createInvite(): Promise<void> {
@@ -319,6 +350,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
     });
     if (!saved || !result) return;
     setInviteResult(result);
+    if (!result.email) swapInviteLink(result.inviteUrl);
     setInviteEmailError(null);
     if (email) setInviteEmail("");
   }
@@ -342,12 +374,13 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
       if (value !== "link" && value !== "email") return;
       setInviteMode(value);
       setInviteResult(null);
+      resetInviteLink();
       setInviteEmailError(null);
     },
   };
 
   return (
-    <Tabs.Root {...sectionTabsProps}>
+    <Tabs.Root {...sectionTabsProps} class="settings-modal-tabs-root">
       <SettingsDialogShell
         class="server-settings-modal-shell"
         open={props.open}
@@ -359,7 +392,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
         restoreFocusTarget={props.restoreFocusTarget}
         onContentElement={(element) => (modalElement = element)}
         floatingContent={
-          <Show when={props.loadError || actionError()}>
+          <Show when={props.loadError}>
             <Alert
               class="server-settings-error-toast"
               data-with-save-bar={section() === "general" && identityDirty() ? "" : undefined}
@@ -370,23 +403,21 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 <ShieldCheck />
               </AlertIcon>
               <AlertContent>
-                <AlertTitle>Server action failed</AlertTitle>
-                <AlertDescription>{actionError() ?? props.loadError}</AlertDescription>
+                <AlertTitle>Server settings unavailable</AlertTitle>
+                <AlertDescription>{props.loadError}</AlertDescription>
               </AlertContent>
-              <Show when={props.loadError}>
-                <AlertActions>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    loading={props.loading}
-                    onClick={() => void run("retry", props.onRetry)}
-                  >
-                    <RefreshCw aria-hidden="true" />
-                    Retry
-                  </Button>
-                </AlertActions>
-              </Show>
+              <AlertActions>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  loading={props.loading}
+                  onClick={() => void run("retry", props.onRetry)}
+                >
+                  <RefreshCw aria-hidden="true" />
+                  Retry
+                </Button>
+              </AlertActions>
             </Alert>
           </Show>
         }
@@ -595,7 +626,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   when={canEditIdentity()}
                   fallback={<ServerLogo name={draftName() || props.server.name} url={draftLogoUrl()} />}
                 >
-                  <div class="server-settings-logo-picker">
+                  <div class="server-settings-logo-picker ui-removable-image">
                     <Button
                       type="button"
                       variant="outline"
@@ -612,22 +643,16 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                       </Show>
                     </Button>
                     <Show when={draftLogoUrl()}>
-                      <Button
-                        type="button"
-                        variant="destructive-ghost"
-                        size="icon-xs"
+                      <ImageRemoveButton
                         class="server-settings-logo-remove"
-                        aria-label="Remove server logo"
-                        title="Remove server logo"
+                        label="Remove server logo"
                         onClick={() => {
                           setIdentityEditing(true);
                           setDraftLogoUrl(null);
                           setDraftLogo(null);
                           setLogoError(null);
                         }}
-                      >
-                        <X aria-hidden="true" />
-                      </Button>
+                      />
                     </Show>
                   </div>
                 </Show>
@@ -778,9 +803,17 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   </Field>
                 </SlidingTabs.Content>
                 <SlidingTabs.Content value="link" class="server-settings-invite-mode-panel">
-                  <Text variant="body-sm" tone="secondary">
-                    Create a private one-time link.
-                  </Text>
+                  <Input
+                    ref={(element) => (inviteLinkInput = element)}
+                    class="server-settings-invite-link-input t-text-swap"
+                    size="md"
+                    readonly
+                    aria-label="Invitation link"
+                    placeholder={INVITE_LINK_PLACEHOLDER}
+                    value={inviteLinkValue()}
+                    title={inviteLinkValue() || undefined}
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
                 </SlidingTabs.Content>
               </SlidingTabs.ContentSlot>
               <Select<string>
@@ -796,18 +829,35 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 </SelectTrigger>
                 <SelectContent />
               </Select>
-              <Button
-                type="button"
-                size="sm"
-                variant="default"
-                loading={busy() === "invite"}
-                disabled={!canInvite()}
-                onClick={() => void createInvite()}
+              <Show
+                when={inviteMode() === "link" && inviteResult() && !inviteResult()?.email ? inviteResult() : null}
+                fallback={
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="default"
+                    loading={busy() === "invite"}
+                    disabled={!canInvite()}
+                    onClick={() => void createInvite()}
+                  >
+                    {inviteMode() === "email" ? "Send invite" : "Create link"}
+                  </Button>
+                }
               >
-                {inviteMode() === "email" ? "Send invite" : "Create link"}
-              </Button>
+                {(result) => (
+                  <CopyButton
+                    class="server-settings-invite-copy"
+                    value={result().inviteUrl}
+                    label="Copy link"
+                    copiedLabel="Copied"
+                    size="sm"
+                    variant="default"
+                    onCopyError={showCopyError}
+                  />
+                )}
+              </Show>
             </div>
-            <Show when={inviteResult()}>
+            <Show when={inviteResult()?.email ? inviteResult() : null}>
               {(result) => (
                 <Alert class="server-settings-invite-result" tone="success" role="status">
                   <AlertIcon>
@@ -815,13 +865,8 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   </AlertIcon>
                   <AlertContent>
                     <AlertTitle>{result().email ? "Invitation sent" : "Invitation link ready"}</AlertTitle>
-                    <AlertDescription>{result().email ?? "The private link is ready to share."}</AlertDescription>
+                    <AlertDescription>{result().email}</AlertDescription>
                   </AlertContent>
-                  <Show when={!result().email}>
-                    <AlertActions>
-                      <CopyButton value={result().inviteUrl} label="Copy link" onCopyError={showCopyError} />
-                    </AlertActions>
-                  </Show>
                 </Alert>
               )}
             </Show>

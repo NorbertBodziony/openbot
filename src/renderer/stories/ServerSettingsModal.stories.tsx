@@ -192,6 +192,19 @@ export const Members: Story = {
   },
 };
 
+export const InviteLinkReady: Story = {
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    await body.findByRole("dialog", { name: "General" });
+    await userEvent.click(body.getByRole("tab", { name: "Members" }));
+    await userEvent.click(body.getByRole("tab", { name: "Invite link" }));
+    await userEvent.click(body.getByRole("button", { name: "Create link" }));
+    await expect(await body.findByRole("textbox", { name: "Invitation link" })).toHaveValue(
+      "https://team.example.com/invite/story",
+    );
+  },
+};
+
 export const MembersEmptyResults: Story = {
   play: async ({ userEvent }) => {
     const body = within(document.body);

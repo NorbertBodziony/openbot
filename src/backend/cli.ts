@@ -2,25 +2,30 @@ import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
-import { extname, join, win32 } from "node:path";
+import { extname, posix, resolve, win32 } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const MINIMUM_CODEX_VERSION = [0, 144, 1] as const;
+const MINIMUM_CLAUDE_VERSION = [2, 1, 232] as const;
+const MINIMUM_GROK_VERSION = [1, 0, 5] as const;
 
 export interface CodexCliInfo {
   executable: string;
   version: string;
+  source: "system" | "bundled";
 }
 
 export interface ClaudeCliInfo {
   executable: string;
   version: string;
+  source?: "system" | "bundled";
 }
 
 export interface GrokCliInfo {
   executable: string;
   version: string;
+  source?: "system" | "bundled";
 }
 
 export type AgentCliInfo = CodexCliInfo | ClaudeCliInfo | GrokCliInfo;
@@ -35,21 +40,28 @@ export class CodexCliError extends Error {
   }
 }
 
-export async function resolveCodexCli(): Promise<CodexCliInfo> {
-  const candidates = await collectCandidates("codex", process.env.OPENBOT_CODEX_PATH);
+export async function resolveCodexCli(
+  input: { systemCandidates?: string[]; bundledExecutable?: string | null } = {},
+): Promise<CodexCliInfo> {
+  const systemCandidates = input.systemCandidates ?? (await collectCandidates("codex", process.env.OPENBOT_CODEX_PATH));
+  const bundledExecutable = input.bundledExecutable === undefined ? bundledCodexExecutable() : input.bundledExecutable;
+  const candidates = [
+    ...systemCandidates.map((executable) => ({ executable, source: "system" as const })),
+    ...(bundledExecutable ? [{ executable: bundledExecutable, source: "bundled" as const }] : []),
+  ].filter((candidate, index, all) => all.findIndex((other) => other.executable === candidate.executable) === index);
   const failures: CodexCliError[] = [];
 
   for (const candidate of candidates) {
-    if (!(await isExecutable(candidate))) continue;
+    if (!(await isExecutable(candidate.executable))) continue;
 
     try {
-      const stdout = await readCliVersion(candidate);
+      const stdout = await readCliVersion(candidate.executable);
       const version = parseCodexVersion(stdout);
-      if (!isMinimumVersion(version)) {
+      if (!isMinimumVersion(version, MINIMUM_CODEX_VERSION)) {
         throw new CodexCliError(`Codex CLI ${version} is too old. OpenBot requires 0.144.1 or newer.`, "outdated");
       }
 
-      return { executable: candidate, version };
+      return { executable: candidate.executable, version, source: candidate.source };
     } catch (error) {
       failures.push(
         error instanceof CodexCliError
@@ -74,62 +86,136 @@ export async function resolveCodexCli(): Promise<CodexCliInfo> {
   );
 }
 
-export async function resolveClaudeCli(): Promise<ClaudeCliInfo> {
-  const candidates = await collectCandidates("claude", process.env.OPENBOT_CLAUDE_PATH);
-  let foundCandidate = false;
+export function bundledCodexExecutable(
+  platform = process.platform,
+  architecture = process.arch,
+  resourcesPath: string | null | undefined = process.resourcesPath,
+): string | null {
+  return bundledProviderExecutable("codex", platform, architecture, resourcesPath);
+}
+
+export async function resolveClaudeCli(
+  input: { systemCandidates?: string[]; bundledExecutable?: string | null } = {},
+): Promise<ClaudeCliInfo> {
+  const systemCandidates =
+    input.systemCandidates ?? (await collectCandidates("claude", process.env.OPENBOT_CLAUDE_PATH));
+  const bundledExecutable = input.bundledExecutable === undefined ? bundledClaudeExecutable() : input.bundledExecutable;
+  const candidates = [
+    ...systemCandidates.map((executable) => ({ executable, source: "system" as const })),
+    ...(bundledExecutable ? [{ executable: bundledExecutable, source: "bundled" as const }] : []),
+  ].filter((candidate, index, all) => all.findIndex((other) => other.executable === candidate.executable) === index);
+  const failures: CodexCliError[] = [];
 
   for (const candidate of candidates) {
-    if (!(await isExecutable(candidate))) continue;
-    foundCandidate = true;
+    if (!(await isExecutable(candidate.executable))) continue;
 
     try {
-      const stdout = await readCliVersion(candidate);
-      return { executable: candidate, version: parseClaudeVersion(stdout) };
-    } catch {
-      // Try the next executable candidate.
+      const stdout = await readCliVersion(candidate.executable);
+      const version = parseClaudeVersion(stdout);
+      if (!isMinimumVersion(version, MINIMUM_CLAUDE_VERSION)) {
+        throw new CodexCliError(`Claude Code ${version} is too old. OpenBot requires 2.1.232 or newer.`, "outdated");
+      }
+      return { executable: candidate.executable, version, source: candidate.source };
+    } catch (error) {
+      failures.push(
+        error instanceof CodexCliError
+          ? error
+          : new CodexCliError("Claude CLI was found but could not be started.", "invalid"),
+      );
     }
   }
 
-  if (foundCandidate) {
+  const outdated = failures.find((failure) => failure.code === "outdated");
+  if (outdated) throw outdated;
+  if (failures.length > 0) {
     throw new CodexCliError(
       "Claude CLI was found but could not be started. Run `claude --version` in a new terminal.",
       "invalid",
     );
   }
 
-  throw new CodexCliError(
-    "Claude CLI was not found. Install Claude Code, run `claude auth login`, then restart OpenBot.",
-    "missing",
-  );
+  throw new CodexCliError("OpenBot's included Claude runtime is missing. Reinstall OpenBot.", "missing");
 }
 
-export async function resolveGrokCli(): Promise<GrokCliInfo> {
-  const candidates = await collectCandidates("grok", process.env.OPENBOT_GROK_PATH);
-  let foundCandidate = false;
+export function bundledClaudeExecutable(
+  platform = process.platform,
+  architecture = process.arch,
+  resourcesPath: string | null | undefined = process.resourcesPath,
+): string | null {
+  return bundledProviderExecutable("claude", platform, architecture, resourcesPath);
+}
+
+export async function resolveGrokCli(
+  input: { systemCandidates?: string[]; bundledExecutable?: string | null } = {},
+): Promise<GrokCliInfo> {
+  const systemCandidates = input.systemCandidates ?? (await collectCandidates("grok", process.env.OPENBOT_GROK_PATH));
+  const bundledExecutable = input.bundledExecutable === undefined ? bundledGrokExecutable() : input.bundledExecutable;
+  const candidates = [
+    ...systemCandidates.map((executable) => ({ executable, source: "system" as const })),
+    ...(bundledExecutable ? [{ executable: bundledExecutable, source: "bundled" as const }] : []),
+  ].filter((candidate, index, all) => all.findIndex((other) => other.executable === candidate.executable) === index);
+  const failures: CodexCliError[] = [];
 
   for (const candidate of candidates) {
-    if (!(await isExecutable(candidate))) continue;
-    foundCandidate = true;
+    if (!(await isExecutable(candidate.executable))) continue;
 
     try {
-      const stdout = await readCliVersion(candidate);
-      return { executable: candidate, version: parseGrokVersion(stdout) };
-    } catch {
-      // Try the next executable candidate.
+      const stdout = await readCliVersion(candidate.executable);
+      const version = parseGrokVersion(stdout);
+      if (!isMinimumVersion(version, MINIMUM_GROK_VERSION)) {
+        throw new CodexCliError(`Grok CLI ${version} is too old. OpenBot requires 1.0.5 or newer.`, "outdated");
+      }
+      return { executable: candidate.executable, version, source: candidate.source };
+    } catch (error) {
+      failures.push(
+        error instanceof CodexCliError
+          ? error
+          : new CodexCliError("Grok CLI was found but could not be started.", "invalid"),
+      );
     }
   }
 
-  if (foundCandidate) {
+  const outdated = failures.find((failure) => failure.code === "outdated");
+  if (outdated) throw outdated;
+  if (failures.length > 0) {
     throw new CodexCliError(
       "Grok CLI was found but could not be started. Run `grok --version` in a new terminal.",
       "invalid",
     );
   }
 
-  throw new CodexCliError(
-    "Grok CLI was not found. Install Grok CLI, run `grok login`, then restart OpenBot.",
-    "missing",
-  );
+  throw new CodexCliError("OpenBot's included Grok runtime is missing. Reinstall OpenBot.", "missing");
+}
+
+export function bundledGrokExecutable(
+  platform = process.platform,
+  architecture = process.arch,
+  resourcesPath: string | null | undefined = process.resourcesPath,
+): string | null {
+  return bundledProviderExecutable("grok", platform, architecture, resourcesPath);
+}
+
+function bundledProviderExecutable(
+  provider: "codex" | "claude" | "grok",
+  platform: NodeJS.Platform,
+  architecture: string,
+  resourcesPath: string | null | undefined,
+): string | null {
+  const targetPlatform =
+    platform === "darwin" && architecture === "arm64"
+      ? "mac"
+      : platform === "win32" && architecture === "x64"
+        ? "win"
+        : null;
+  if (!targetPlatform) return null;
+
+  const executable = platform === "win32" ? `${provider}.exe` : provider;
+  if (!resourcesPath) {
+    return resolve("build", provider, targetPlatform, architecture, "bin", executable);
+  }
+
+  const targetPath = platform === "win32" ? win32 : posix;
+  return targetPath.join(resourcesPath, provider, targetPlatform, architecture, "bin", executable);
 }
 
 export function parseCodexVersion(output: string): string {
@@ -150,11 +236,11 @@ export function parseGrokVersion(output: string): string {
   return `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`;
 }
 
-function isMinimumVersion(version: string): boolean {
+function isMinimumVersion(version: string, minimum: readonly number[]): boolean {
   const parts = version.split(".").map(Number);
-  for (let index = 0; index < MINIMUM_CODEX_VERSION.length; index += 1) {
-    if (parts[index] > MINIMUM_CODEX_VERSION[index]) return true;
-    if (parts[index] < MINIMUM_CODEX_VERSION[index]) return false;
+  for (let index = 0; index < minimum.length; index += 1) {
+    if (parts[index] > minimum[index]) return true;
+    if (parts[index] < minimum[index]) return false;
   }
   return true;
 }
@@ -232,9 +318,9 @@ export function windowsFallbackPaths(
 }
 
 export function posixFallbackPaths(command: "codex" | "claude" | "grok", userHome = homedir()): string[] {
-  const paths = [join(userHome, ".local", "bin", command)];
-  if (command === "claude") paths.push(join(userHome, ".claude", "local", "claude"));
-  if (command === "grok") paths.push(join(userHome, ".grok", "bin", "grok"));
+  const paths = [posix.join(userHome, ".local", "bin", command)];
+  if (command === "claude") paths.push(posix.join(userHome, ".claude", "local", "claude"));
+  if (command === "grok") paths.push(posix.join(userHome, ".grok", "bin", "grok"));
   paths.push(`/opt/homebrew/bin/${command}`, `/usr/local/bin/${command}`);
   return paths;
 }

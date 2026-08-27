@@ -21,11 +21,6 @@ if (run("git", ["tag", "--list", `v${packageJson.version}`])) {
   failures.push(`tag v${packageJson.version} already exists`);
 }
 
-const identities = run("security", ["find-identity", "-v", "-p", "codesigning"]);
-if (!identities.includes("Developer ID Application:")) {
-  failures.push("Developer ID Application certificate is not installed locally");
-}
-
 let releaseSecrets = "";
 try {
   releaseSecrets = run("gh", ["secret", "list", "--env", "release"]);

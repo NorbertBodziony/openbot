@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  bundledClaudeExecutable,
+  bundledCodexExecutable,
+  bundledGrokExecutable,
   CodexCliError,
   parseClaudeVersion,
   parseCodexVersion,
@@ -40,6 +43,52 @@ describe("Codex CLI version parsing", () => {
   });
 });
 
+describe("bundled Codex resolution", () => {
+  it("resolves the packaged runtime path for supported targets", () => {
+    expect(bundledCodexExecutable("darwin", "arm64", "/Applications/OpenBot.app/Contents/Resources")).toBe(
+      "/Applications/OpenBot.app/Contents/Resources/codex/mac/arm64/bin/codex",
+    );
+    expect(bundledCodexExecutable("win32", "x64", "C:\\Program Files\\OpenBot\\resources")).toBe(
+      "C:\\Program Files\\OpenBot\\resources\\codex\\win\\x64\\bin\\codex.exe",
+    );
+    expect(bundledCodexExecutable("linux", "x64", "/resources")).toBeNull();
+  });
+
+  it("resolves the build runtime path during development", () => {
+    expect(bundledCodexExecutable("darwin", "arm64", null)).toBe(
+      join(process.cwd(), "build/codex/mac/arm64/bin/codex"),
+    );
+    expect(bundledCodexExecutable("darwin", "arm64", undefined)).toBe(
+      join(process.cwd(), "build/codex/mac/arm64/bin/codex"),
+    );
+  });
+
+  it.runIf(process.platform !== "win32")("prefers a compatible system CLI", async () => {
+    const system = await createExecutable("system-codex", "codex-cli 0.148.0");
+    const bundled = await createExecutable("bundled-codex", "codex-cli 0.149.1");
+
+    await expect(resolveCodexCli({ systemCandidates: [system], bundledExecutable: bundled })).resolves.toEqual({
+      executable: system,
+      version: "0.148.0",
+      source: "system",
+    });
+  });
+
+  it.runIf(process.platform !== "win32")("falls back when the system CLI is outdated or invalid", async () => {
+    const outdated = await createExecutable("old-codex", "codex-cli 0.120.0");
+    const invalid = await createExecutable("broken-codex", "not a version");
+    const bundled = await createExecutable("bundled-codex", "codex-cli 0.149.1");
+
+    await expect(
+      resolveCodexCli({ systemCandidates: [outdated, invalid], bundledExecutable: bundled }),
+    ).resolves.toEqual({
+      executable: bundled,
+      version: "0.149.1",
+      source: "bundled",
+    });
+  });
+});
+
 describe("Claude CLI version parsing", () => {
   it("reads the installed CLI version format", () => {
     expect(parseClaudeVersion("2.1.231 (Claude Code)\n")).toBe("2.1.231");
@@ -50,7 +99,44 @@ describe("Claude CLI version parsing", () => {
   });
 });
 
-describe("Grok CLI discovery", () => {
+describe("bundled Claude resolution", () => {
+  it("resolves the packaged runtime path for supported targets", () => {
+    expect(bundledClaudeExecutable("darwin", "arm64", "/Applications/OpenBot.app/Contents/Resources")).toBe(
+      "/Applications/OpenBot.app/Contents/Resources/claude/mac/arm64/bin/claude",
+    );
+    expect(bundledClaudeExecutable("win32", "x64", "C:\\Program Files\\OpenBot\\resources")).toBe(
+      "C:\\Program Files\\OpenBot\\resources\\claude\\win\\x64\\bin\\claude.exe",
+    );
+    expect(bundledClaudeExecutable("linux", "x64", "/resources")).toBeNull();
+  });
+
+  it.runIf(process.platform !== "win32")("prefers a compatible system CLI", async () => {
+    const system = await createExecutable("system-claude", "2.1.240 (Claude Code)");
+    const bundled = await createExecutable("bundled-claude", "2.1.246 (Claude Code)");
+
+    await expect(resolveClaudeCli({ systemCandidates: [system], bundledExecutable: bundled })).resolves.toEqual({
+      executable: system,
+      version: "2.1.240",
+      source: "system",
+    });
+  });
+
+  it.runIf(process.platform !== "win32")("falls back when the system CLI is outdated or invalid", async () => {
+    const outdated = await createExecutable("old-claude", "2.0.0 (Claude Code)");
+    const invalid = await createExecutable("broken-claude", "not a version");
+    const bundled = await createExecutable("bundled-claude", "2.1.246 (Claude Code)");
+
+    await expect(
+      resolveClaudeCli({ systemCandidates: [outdated, invalid], bundledExecutable: bundled }),
+    ).resolves.toEqual({
+      executable: bundled,
+      version: "2.1.246",
+      source: "bundled",
+    });
+  });
+});
+
+describe("bundled Grok CLI resolution", () => {
   it("reads Grok versions and includes documented macOS and Windows locations", () => {
     expect(parseGrokVersion("grok 1.0.5\n")).toBe("1.0.5");
     expect(posixFallbackPaths("grok", "/Users/jane")).toContain("/Users/jane/.grok/bin/grok");
@@ -66,6 +152,16 @@ describe("Grok CLI discovery", () => {
     );
   });
 
+  it("resolves the packaged runtime path for supported targets", () => {
+    expect(bundledGrokExecutable("darwin", "arm64", "/Applications/OpenBot.app/Contents/Resources")).toBe(
+      "/Applications/OpenBot.app/Contents/Resources/grok/mac/arm64/bin/grok",
+    );
+    expect(bundledGrokExecutable("win32", "x64", "C:\\Program Files\\OpenBot\\resources")).toBe(
+      "C:\\Program Files\\OpenBot\\resources\\grok\\win\\x64\\bin\\grok.exe",
+    );
+    expect(bundledGrokExecutable("linux", "x64", "/resources")).toBeNull();
+  });
+
   it.runIf(process.platform !== "win32")("honors OPENBOT_GROK_PATH and probes --version", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-grok-cli-test-"));
     temporaryPaths.push(root);
@@ -74,12 +170,30 @@ describe("Grok CLI discovery", () => {
     await chmod(executable, 0o700);
     process.env.OPENBOT_GROK_PATH = executable;
 
-    await expect(resolveGrokCli()).resolves.toEqual({ executable, version: "1.0.5" });
+    await expect(resolveGrokCli({ bundledExecutable: null })).resolves.toEqual({
+      executable,
+      version: "1.0.5",
+      source: "system",
+    });
   });
 
   it("does not fabricate an installed Grok CLI when the configured executable is missing", async () => {
     process.env.OPENBOT_GROK_PATH = join(tmpdir(), `missing-grok-${Date.now()}`);
-    await expect(resolveGrokCli()).rejects.toMatchObject({ code: "missing" });
+    await expect(resolveGrokCli({ bundledExecutable: null })).rejects.toMatchObject({ code: "missing" });
+  });
+
+  it.runIf(process.platform !== "win32")("falls back when the system CLI is outdated or invalid", async () => {
+    const outdated = await createExecutable("old-grok", "grok 0.9.0");
+    const invalid = await createExecutable("broken-grok", "not a version");
+    const bundled = await createExecutable("bundled-grok", "grok 1.0.5");
+
+    await expect(
+      resolveGrokCli({ systemCandidates: [outdated, invalid], bundledExecutable: bundled }),
+    ).resolves.toEqual({
+      executable: bundled,
+      version: "1.0.5",
+      source: "bundled",
+    });
   });
 });
 
@@ -105,7 +219,7 @@ describe("Windows CLI fallback paths", () => {
   it.runIf(process.platform === "win32")("runs npm command shims when the user profile contains a space", async () => {
     await createWindowsNpmShims();
     await expect(resolveCodexCli()).resolves.toMatchObject({ version: "0.144.1" });
-    await expect(resolveClaudeCli()).resolves.toMatchObject({ version: "2.1.231" });
+    await expect(resolveClaudeCli()).resolves.toMatchObject({ version: "2.1.232", source: "system" });
   });
 
   it.runIf(process.platform === "win32")("reports a CLI that exists but cannot start", async () => {
@@ -131,9 +245,18 @@ async function createWindowsNpmShims(): Promise<void> {
   await mkdir(npmDirectory, { recursive: true });
   await Promise.all([
     writeFile(join(npmDirectory, "codex.cmd"), "@echo off\r\necho codex-cli 0.144.1\r\n"),
-    writeFile(join(npmDirectory, "claude.cmd"), "@echo off\r\necho 2.1.231 (Claude Code)\r\n"),
+    writeFile(join(npmDirectory, "claude.cmd"), "@echo off\r\necho 2.1.232 (Claude Code)\r\n"),
   ]);
   useIsolatedWindowsEnvironment(appData, join(root, "missing-local-app-data"));
+}
+
+async function createExecutable(name: string, versionOutput: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "openbot-cli-test-"));
+  temporaryPaths.push(root);
+  const path = join(root, name);
+  await writeFile(path, `#!/bin/sh\nprintf '%s\\n' '${versionOutput}'\n`);
+  await chmod(path, 0o755);
+  return path;
 }
 
 function useIsolatedWindowsEnvironment(appData: string, localAppData: string): void {

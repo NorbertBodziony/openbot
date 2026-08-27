@@ -55,7 +55,7 @@ export function RichMessageText(props: RichMessageTextProps) {
     setTooltip({
       anchor,
       content,
-      light: Boolean(anchor.closest(".user-bubble")),
+      light: Boolean(anchor.closest('[data-slot="bubble"][data-author="user"]')),
     });
   };
   const closeTooltip = (anchor: HTMLElement) => {

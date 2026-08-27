@@ -3,6 +3,12 @@ import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
+import {
+  ATTACHMENT_FILE_EXTENSIONS,
+  IMAGE_ATTACHMENT_EXTENSIONS,
+  isSupportedAttachmentName,
+  SUPPORTED_ATTACHMENT_DESCRIPTION,
+} from "@openbot/contracts/attachment-files";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import {
@@ -44,16 +50,24 @@ import { AgentService } from "../backend/agent-service";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
 import { isCloseBrowserTabShortcut, isSelectAllShortcut, isToggleDevToolsShortcut } from "../backend/browser-shortcuts";
+import { bundledClaudeExecutable, bundledCodexExecutable, bundledGrokExecutable } from "../backend/cli";
 import { MailboxStore } from "../backend/mailbox-store";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import { TeamChatStore } from "../backend/team-chat-store";
 import { AgentInitializationGate } from "./agent-initialization";
+import { AgentMarketplaceService } from "./agent-marketplace-service";
 import { notificationForAgentEvent } from "./agent-notifications";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
 import { resolveOpenBotCloudflaredExecutable } from "./cloudflared-artifact";
 import { buildContentSecurityPolicy } from "./content-security-policy";
-import { developmentUserDataName, readDevelopmentProfile, shouldAutoStartHost } from "./development-profile";
+import {
+  developmentUserDataName,
+  readDevelopmentInstanceId,
+  readDevelopmentProfile,
+  shouldAutoStartHost,
+  shouldShowDevelopmentWindow,
+} from "./development-profile";
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "./file-preview";
 import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
 import {
@@ -89,7 +103,7 @@ import {
   parseUpdateQueuedMessage,
   parseUpdateRoutine,
 } from "./ipc/agent-inputs";
-import { parseMacPermission, parseProvider } from "./ipc/app-inputs";
+import { parseExternalDestination, parseMacPermission, parseProvider } from "./ipc/app-inputs";
 import { parseAvatarImage } from "./ipc/avatar-inputs";
 import { parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
 import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
@@ -121,6 +135,7 @@ import {
   decodeVoid,
   RemoteServerManager,
 } from "./remote-server-manager";
+import { canCheckRendererPermission, canRequestRendererPermission } from "./renderer-permissions";
 import { readSetupState, writeSetupState } from "./setup-store";
 import { SkillMarketplaceService } from "./skill-marketplace-service";
 import { TeamStore } from "./team-store";
@@ -137,6 +152,9 @@ const developmentRemoteRole =
     ? process.env.OPENBOT_DEV_REMOTE_ROLE
     : null;
 const developmentTestClientEnabled = !app.isPackaged && process.env.OPENBOT_DEV_TEST_CLIENT_ENABLED === "1";
+const developmentInviteLinkOptions = {
+  allowLocalDevelopmentApiUrl: developmentRemoteRole !== null,
+};
 if (!app.isPackaged && /^\d{4,5}$/u.test(process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT ?? "")) {
   app.commandLine.appendSwitch("remote-debugging-port", process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT);
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
@@ -144,7 +162,16 @@ if (!app.isPackaged && /^\d{4,5}$/u.test(process.env.OPENBOT_DEV_REMOTE_DEBUGGIN
 if (commandLineUserDataDirectory) {
   app.setPath("userData", resolve(commandLineUserDataDirectory));
 } else if (!app.isPackaged) {
-  app.setPath("userData", join(app.getPath("appData"), developmentUserDataName(developmentProfile ?? "app")));
+  app.setPath(
+    "userData",
+    join(
+      app.getPath("appData"),
+      developmentUserDataName(
+        developmentProfile ?? "app",
+        readDevelopmentInstanceId(process.env.OPENBOT_DEV_INSTANCE_ID),
+      ),
+    ),
+  );
 }
 app.enableSandbox();
 if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
@@ -213,6 +240,8 @@ const REMOTE_DESKTOP_RUNTIME_SECRET_FILE = "openbot-remote-desktop-runtime-v1.js
 
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "agent-setup": "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
+  "claude-install": "https://code.claude.com/docs",
+  "claude-sign-in": "https://code.claude.com/docs/en/authentication",
   feedback: "https://x.com/intent/post?text=Feedback%20for%20OpenBot%20%40norbertbodziony%3A%20",
   message: "https://x.com/norbertbodziony",
 };
@@ -247,6 +276,7 @@ function registerIpcHandlers(
   remoteServers: RemoteServerManager,
   centralAuth: CentralAuthManager,
   skills: SkillMarketplaceService,
+  marketplaceAgents: AgentMarketplaceService,
   voice: VoiceTranscriptionService,
 ): void {
   handleTrusted(IPC_CHANNELS.getAppInfo, (): AppInfo => {
@@ -269,11 +299,18 @@ function registerIpcHandlers(
     requestMacPermission(parseMacPermission(permission)),
   );
   handleTrusted(IPC_CHANNELS.openExternal, (destination: unknown) => {
-    if (destination !== "agent-setup" && destination !== "feedback" && destination !== "message") {
-      throw new Error("Unknown external destination.");
-    }
-    return shell.openExternal(EXTERNAL_DESTINATIONS[destination]);
+    return shell.openExternal(EXTERNAL_DESTINATIONS[parseExternalDestination(destination)]);
   });
+  handleTrusted(IPC_CHANNELS.connectChatGPT, () =>
+    service.connectChatGPT(async (value) => {
+      const url = new URL(value);
+      if (url.protocol !== "https:") throw new Error("Only HTTPS ChatGPT login links can open in the browser.");
+      await shell.openExternal(url.toString());
+    }),
+  );
+  handleTrusted(IPC_CHANNELS.connectClaude, () => service.connectClaude());
+  handleTrusted(IPC_CHANNELS.connectGrok, () => service.connectGrok());
+  handleTrusted(IPC_CHANNELS.refreshAgentProviders, () => service.refreshProviders());
   handleTrusted(IPC_CHANNELS.openUrl, (value: unknown) => {
     const url = new URL(requireString(value, "URL", INPUT_LIMITS.browserUrl));
     if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -351,6 +388,41 @@ function registerIpcHandlers(
       botId: requireString(input.botId, "botId"),
       skillId: requireString(input.skillId, "skillId"),
       ...(input.removeModified === true ? { removeModified: true } : {}),
+    });
+  });
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsList, (input: unknown) => {
+    if (input === null || input === undefined) return marketplaceAgents.list();
+    if (!isObject(input)) throw new Error("Invalid agent marketplace query.");
+    if (input.sort !== undefined && input.sort !== "installs") throw new Error("Unknown agent sort order.");
+    return marketplaceAgents.list({
+      ...(isString(input.query) ? { query: input.query.slice(0, 100) } : {}),
+      ...(input.featured === true ? { featured: true } : {}),
+      ...(input.sort === "installs" ? { sort: "installs" as const } : {}),
+      ...(isString(input.cursor) ? { cursor: input.cursor } : {}),
+      ...(isNumber(input.limit) ? { limit: input.limit } : {}),
+    });
+  });
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsGet, (input: unknown) =>
+    marketplaceAgents.get(requireString(input, "agentId")),
+  );
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsListMine, () => marketplaceAgents.listMine());
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsPreview, (input: unknown) =>
+    marketplaceAgents.preview(requireString(input, "botId")),
+  );
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsSubmit, (input: unknown) => {
+    if (!isObject(input)) throw new Error("Invalid agent submission.");
+    return marketplaceAgents.submit({
+      botId: requireString(input.botId, "botId"),
+      ...(input.agentId === undefined ? {} : { agentId: requireString(input.agentId, "agentId") }),
+    });
+  });
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsInstall, (input: unknown) => {
+    if (!isObject(input)) throw new Error("Invalid agent installation.");
+    return marketplaceAgents.install({
+      agentId: requireString(input.agentId, "agentId"),
+      ...(input.botId === undefined ? {} : { botId: requireString(input.botId, "botId", INPUT_LIMITS.identifier) }),
+      timezone: requireString(input.timezone, "timezone", 255),
+      receiptId: requireString(input.receiptId, "receiptId", INPUT_LIMITS.identifier),
     });
   });
   handleTrusted(IPC_CHANNELS.updateGetStatus, () => updater.getStatus());
@@ -628,8 +700,8 @@ function registerIpcHandlers(
       properties: ["openFile", "multiSelections"],
       filters:
         filter === "images"
-          ? [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "avif"] }]
-          : undefined,
+          ? [{ name: "Images", extensions: [...IMAGE_ATTACHMENT_EXTENSIONS] }]
+          : [{ name: "Supported files", extensions: [...ATTACHMENT_FILE_EXTENSIONS] }],
     };
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     if (result.canceled) return [];
@@ -961,7 +1033,14 @@ function createWindow(): BrowserWindow {
   });
 
   window.once("ready-to-show", () => {
-    if (developmentRemoteRole !== "host") window.show();
+    if (
+      shouldShowDevelopmentWindow({
+        remoteRole: developmentRemoteRole,
+        testClientEnabled: developmentTestClientEnabled,
+      })
+    ) {
+      window.show();
+    }
   });
   window.on("close", (event) => {
     if (process.platform === "darwin" && !isQuitting) {
@@ -1145,7 +1224,7 @@ function forwardCentralAuth(state: CentralAuthState): void {
 
 function acceptInviteUrl(value: string): void {
   try {
-    parseInviteUrl(value);
+    parseInviteUrl(value, developmentInviteLinkOptions);
   } catch {
     return;
   }
@@ -1165,7 +1244,7 @@ function acceptOpenbotUrl(value: string): void {
 function findInviteUrl(values: string[]): string | null {
   for (const value of values) {
     try {
-      parseInviteUrl(value);
+      parseInviteUrl(value, developmentInviteLinkOptions);
       return value;
     } catch {
       // Most command-line arguments are not invitations.
@@ -1176,7 +1255,7 @@ function findInviteUrl(values: string[]): string | null {
 
 app.on("open-url", (event, url) => {
   try {
-    parseInviteUrl(url);
+    parseInviteUrl(url, developmentInviteLinkOptions);
   } catch {
     return;
   }
@@ -1187,7 +1266,7 @@ app.on("open-url", (event, url) => {
 app.on("continue-activity", (event, type, _userInfo, details) => {
   if (type !== "NSUserActivityTypeBrowsingWeb" || !details.webpageURL) return;
   try {
-    parseInviteUrl(details.webpageURL);
+    parseInviteUrl(details.webpageURL, developmentInviteLinkOptions);
   } catch {
     return;
   }
@@ -1214,7 +1293,7 @@ if (!hasSingleInstanceLock) {
       if (process.platform === "darwin") app.setAsDefaultProtocolClient("openbot");
       if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
       configureContentSecurityPolicy();
-      configureMediaPermissions();
+      configureRendererPermissions();
       mainWindow = createWindow();
       centralAuthManager = new CentralAuthManager({
         apiUrl: readCentralAuthApiUrl(
@@ -1252,6 +1331,10 @@ if (!hasSingleInstanceLock) {
         readComputerUsePrerequisites,
         30_000,
         setupState.preferredProvider ?? "codex",
+        null,
+        bundledCodexExecutable(process.platform, process.arch, app.isPackaged ? process.resourcesPath : null),
+        bundledClaudeExecutable(process.platform, process.arch, app.isPackaged ? process.resourcesPath : null),
+        bundledGrokExecutable(process.platform, process.arch, app.isPackaged ? process.resourcesPath : null),
       );
       const service = agentService;
       const skillMarketplace = new SkillMarketplaceService(
@@ -1259,6 +1342,7 @@ if (!hasSingleInstanceLock) {
         () => service.listBots(),
         async (botId) => service.refreshBotRuntime(botId),
       );
+      const agentMarketplace = new AgentMarketplaceService(centralAuthManager, service, skillMarketplace);
       configureAttachmentProtocol(mailboxStore, service);
       const teamStore = new TeamStore(join(app.getPath("userData"), TEAM_FILE));
       await teamStore.initialize();
@@ -1299,6 +1383,7 @@ if (!hasSingleInstanceLock) {
         mailbox: mailboxStore,
         browser: browserHost,
         chat: teamChatStore,
+        allowLocalDevelopmentInvites: developmentRemoteRole === "host",
         logDirectory: join(app.getPath("userData"), "logs", "remote"),
         removeLegacyRemoteDesktopCredential: async () => {
           const credentialPath = join(app.getPath("userData"), LEGACY_REMOTE_DESKTOP_CREDENTIAL_FILE);
@@ -1383,6 +1468,7 @@ if (!hasSingleInstanceLock) {
             return centralAuthManager.getSignedInUser().email;
           },
         },
+        { allowLocalDevelopmentInvites: developmentRemoteRole !== null },
       );
       await remoteServerManager.initialize();
       if (developmentRemoteRole === "host") {
@@ -1443,6 +1529,7 @@ if (!hasSingleInstanceLock) {
         remoteServers,
         centralAuthManager,
         skillMarketplace,
+        agentMarketplace,
         voiceTranscriptionService,
       );
       configureApplicationMenu(service, updateService);
@@ -1599,19 +1686,13 @@ async function prepareForShutdown(): Promise<void> {
   await (agentService?.stop() ?? Promise.resolve());
 }
 
-function configureMediaPermissions(): void {
-  session.defaultSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
-    if (permission !== "media" || !isTrustedRendererUrl(requestingOrigin)) return false;
-    return details.mediaType === "audio";
-  });
+function configureRendererPermissions(): void {
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) =>
+    canCheckRendererPermission(permission, requestingOrigin, details),
+  );
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     const mediaTypes = ("mediaTypes" in details ? details.mediaTypes : undefined) ?? [];
-    callback(
-      permission === "media" &&
-        isTrustedRendererUrl(webContents.getURL()) &&
-        mediaTypes.length > 0 &&
-        mediaTypes.every((mediaType) => mediaType === "audio"),
-    );
+    callback(canRequestRendererPermission(permission, webContents.getURL(), { mediaTypes }));
   });
 }
 
@@ -1684,6 +1765,7 @@ async function uploadRemotePaths(remoteServers: RemoteServerManager, serverId: s
   if (paths.length > INPUT_LIMITS.attachments) {
     throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
   }
+  for (const path of paths) assertSupportedAttachmentName(basename(path));
   const files = await Promise.all(
     paths.map(async (path) => ({
       name: basename(path),
@@ -1725,6 +1807,7 @@ async function uploadRemoteImports(
       bytes: item.bytes,
     })),
   ];
+  for (const file of files) assertSupportedAttachmentName(file.name);
   if (files.some((file) => file.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes)) {
     throw new Error("A file exceeds the 100 MB limit.");
   }
@@ -1734,6 +1817,11 @@ async function uploadRemoteImports(
   return Promise.all(
     files.map((file) => remoteServers.uploadAttachment(file.name, file.mimeType, file.bytes, serverId)),
   );
+}
+
+function assertSupportedAttachmentName(name: string): void {
+  if (isSupportedAttachmentName(name)) return;
+  throw new Error(`${name} is not supported. Attach ${SUPPORTED_ATTACHMENT_DESCRIPTION}.`);
 }
 
 function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService): void {

@@ -3,13 +3,20 @@ import type {
   AgentEvent,
   AttachmentSummary,
   AvatarImageInput,
+  DraftAttachment,
   QueueSnapshot,
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
-import { createEffect, createSignal, onCleanup } from "solid-js";
+import { createEffect, createSignal, onCleanup, onSettled } from "solid-js";
 import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { Conversation } from "../src/components/Conversation";
+import { clipboardFiles } from "../../preload/clipboard-files";
+import {
+  Conversation,
+  ConversationControllerProvider,
+  createConversationController,
+} from "../src/components/Conversation";
+import { ConversationView } from "../src/components/ConversationView";
 import type { BotMessage as RendererBotMessage } from "../src/data";
 import {
   STORY_AGENT_STATUS,
@@ -130,6 +137,70 @@ const queuePreviewAttachments: AttachmentSummary[] = [
     previewUrl: generatedImagePreviewAlternate,
   },
 ];
+const supportedContextAttachments: AttachmentSummary[] = [
+  {
+    id: "composer-context-pdf",
+    name: "product-brief.pdf",
+    size: 842_752,
+    kind: "file",
+    mimeType: "application/pdf",
+    previewKind: "pdf",
+    previewUrl: null,
+  },
+  {
+    id: "composer-context-markdown",
+    name: "README.md",
+    size: 12_288,
+    kind: "file",
+    mimeType: "text/markdown",
+    previewKind: "text",
+    previewUrl: null,
+  },
+  {
+    id: "composer-context-text",
+    name: "meeting-notes.txt",
+    size: 4_096,
+    kind: "file",
+    mimeType: "text/plain",
+    previewKind: "text",
+    previewUrl: null,
+  },
+  {
+    id: "composer-context-json",
+    name: "sample-data.json",
+    size: 24_576,
+    kind: "file",
+    mimeType: "application/json",
+    previewKind: "text",
+    previewUrl: null,
+  },
+  {
+    id: "composer-context-docx",
+    name: "requirements.docx",
+    size: 126_976,
+    kind: "file",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    previewKind: "none",
+    previewUrl: null,
+  },
+];
+const sentContextFileMessages: RendererBotMessage[] = [
+  {
+    id: "sent-context-request",
+    author: "bot",
+    body: "Podeślij materiały, na których mam oprzeć podsumowanie.",
+    time: "10:04",
+    kind: "text",
+  },
+  {
+    id: "sent-context-files",
+    author: "you",
+    body: "Jasne — załączam brief, notatki, dane i wymagania. Przygotuj z nich krótkie podsumowanie.",
+    time: "10:05",
+    kind: "text",
+    attachments: supportedContextAttachments,
+  },
+];
 
 const completedImageGenerationMessages: RendererBotMessage[] = imageGenerationMessages.map((message) =>
   message.id === "image-generation-in-chat"
@@ -147,6 +218,191 @@ const completedImageGenerationPresence = {
     member.typingBotId === "chief" ? { ...member, typingBotId: null } : member,
   ),
 };
+
+const botMessageGalleryMessages: RendererBotMessage[] = [
+  {
+    id: "bot-gallery-user",
+    author: "you",
+    body: "Show every message surface and interaction in one thread.",
+    time: "10:00",
+    kind: "text",
+  },
+  {
+    id: "bot-gallery-plain",
+    author: "bot",
+    body: "Plain assistant text uses the muted Bubble surface and keeps its actions aligned with the bottom edge.",
+    time: "10:01",
+    kind: "text",
+    reaction: "👍",
+    reactionSummary: { emojis: ["👍", "🚀"], overflowCount: 2 },
+  },
+  {
+    id: "bot-gallery-links",
+    author: "bot",
+    body: [
+      "## Links and references",
+      "",
+      "Review [OpenBot documentation](https://openbot.run/docs), the [Kobalte guide](https://kobalte.dev/docs/core/overview/introduction), and https://zaidan.carere.dev/docs/components/kobalte/bubble.",
+      "",
+      "You can also open [ConversationView.tsx](/Users/test/OpenBot/src/renderer/src/components/ConversationView.tsx), ask @Research, or inspect the attached source file below.",
+      "",
+      `Attachment reference: ${serializeAttachmentReference(STORY_ATTACHMENTS[0].name, STORY_ATTACHMENTS[0].id)}.`,
+      "",
+      "The implementation follows the component source [1] and the accessibility guidance [2].",
+    ].join("\n"),
+    time: "10:02",
+    kind: "text",
+    attachments: [STORY_ATTACHMENTS[0]],
+    citations: [
+      {
+        number: 1,
+        label: "Zaidan Bubble",
+        url: "https://zaidan.carere.dev/docs/components/kobalte/bubble",
+        host: "zaidan.carere.dev",
+      },
+      {
+        number: 2,
+        label: "Kobalte accessibility",
+        url: "https://kobalte.dev/docs/core/overview/accessibility",
+        host: "kobalte.dev",
+      },
+    ],
+    reaction: "👀",
+    reactionSummary: { emojis: ["👀", "🔥", "✅"], overflowCount: 1 },
+  },
+  {
+    id: "bot-gallery-reply",
+    author: "bot",
+    body: "This Bubble includes a reply context without changing how reactions or message actions are positioned.",
+    time: "10:03",
+    kind: "text",
+    replyToMessageId: "bot-gallery-user",
+    reaction: "❤️",
+  },
+  {
+    id: "bot-gallery-markdown",
+    author: "bot",
+    body: [
+      "## Markdown response",
+      "",
+      "- **Bold**, *emphasis*, and `inline code`",
+      "- [x] Completed task",
+      "- [ ] Pending task",
+      "",
+      "> Rich text remains inside one assistant Bubble.",
+    ].join("\n"),
+    time: "10:04",
+    kind: "text",
+    reaction: "🎉",
+  },
+  {
+    id: "bot-gallery-code",
+    author: "bot",
+    body: [
+      "Run the focused verification:",
+      "",
+      "```bash verify-chat.sh",
+      "bun run typecheck:renderer",
+      "bunx vitest run src/renderer/src/components/conversation/MessageRendering.test.tsx",
+      "```",
+    ].join("\n"),
+    time: "10:05",
+    kind: "text",
+    reaction: "✅",
+    reactionSummary: { emojis: ["✅", "🚀"] },
+  },
+  {
+    id: "bot-gallery-data-table",
+    author: "bot",
+    body: [
+      "Current message surfaces:",
+      "",
+      "| Content | Surface | Actions |",
+      "| --- | --- | --- |",
+      "| Plain text | Muted | Reply + react |",
+      "| Code | Ghost | Reply + react |",
+      "| Image | Ghost | Reply + react |",
+    ].join("\n"),
+    time: "10:06",
+    kind: "text",
+    reaction: "🚀",
+  },
+  {
+    id: "bot-gallery-comparison-table",
+    author: "bot",
+    body: [
+      "Feature matrix:",
+      "",
+      "| Capability | Text | Rich content |",
+      "| --- | --- | --- |",
+      "| Reactions | ✓ | ✓ |",
+      "| Reply | ✓ | ✓ |",
+      "| Keyboard actions | ✓ | ✓ |",
+      "| Nested frame | — | — |",
+    ].join("\n"),
+    time: "10:07",
+    kind: "text",
+    reaction: "💯",
+  },
+  {
+    id: "bot-gallery-attachment-with-text",
+    author: "bot",
+    body: "The supporting files are ready. This example keeps an attachment inside a regular text Bubble.",
+    time: "10:08",
+    kind: "text",
+    attachments: STORY_ATTACHMENTS.slice(0, 2),
+    reaction: "👏",
+  },
+  {
+    id: "bot-gallery-attachment-only",
+    author: "bot",
+    body: "",
+    time: "10:09",
+    kind: "text",
+    attachments: [STORY_ATTACHMENTS[0]],
+    reaction: "🔥",
+  },
+  {
+    id: "bot-gallery-image",
+    author: "bot",
+    body: "",
+    time: "10:10",
+    kind: "text",
+    status: "completed",
+    attachments: [generatedImageAttachment],
+    imageGeneration: {
+      prompt: "A quiet observatory above the clouds at blue hour",
+      resolution: "1024 × 1024",
+      aspectRatio: "square",
+    },
+    reaction: "😮",
+    reactionSummary: { emojis: ["😮", "🎉"], overflowCount: 3 },
+  },
+  {
+    id: "bot-gallery-failed",
+    author: "bot",
+    body: "I could not finish the remote verification. The message still exposes reply, copy, and reaction actions.",
+    time: "10:11",
+    kind: "text",
+    status: "Failed",
+    reaction: "🤔",
+  },
+  {
+    id: "bot-gallery-streaming",
+    author: "bot",
+    body: [
+      "Streaming response with an open code fence:",
+      "",
+      "```ts stream.ts",
+      "const message = await renderNextChunk();",
+    ].join("\n"),
+    time: "10:12",
+    kind: "text",
+    turnId: "bot-gallery-stream",
+    status: "streaming",
+    streaming: true,
+  },
+];
 
 const dataTableMessages: RendererBotMessage[] = [
   {
@@ -512,9 +768,24 @@ const referenceQueue: QueueSnapshot = {
   })),
 };
 
-function MockedConversation(props: { args: Parameters<typeof Conversation>[0]; messages?: RendererBotMessage[] }) {
+function MockedConversation(props: {
+  args: Parameters<typeof Conversation>[0];
+  messages?: RendererBotMessage[];
+  initialAttachments?: DraftAttachment[];
+}) {
   const previousApi = window.openbot;
   const mock = createMockOpenBot();
+  const controller = createConversationController({ onTypingChange: props.args.onTypingChange });
+  const previewUrls = new Set<string>();
+  let storyFrameElement: HTMLDivElement | undefined;
+  const initialBotId = props.args.bot?.id;
+  if (initialBotId && props.initialAttachments?.length) {
+    onSettled(() => {
+      controller.setDrafts({
+        [initialBotId]: { text: "", attachments: props.initialAttachments ?? [], replyToMessageId: null },
+      });
+    });
+  }
   const [unreadCount, setUnreadCount] = createSignal(0);
   const [firstUnreadMessageId, setFirstUnreadMessageId] = createSignal<string | null>(null);
   createEffect(
@@ -525,23 +796,60 @@ function MockedConversation(props: { args: Parameters<typeof Conversation>[0]; m
     },
   );
   window.openbot = mock.api;
+  const handlePastedImages = (event: ClipboardEvent) => {
+    const files = clipboardFiles(event.clipboardData).filter((file) => file.type.startsWith("image/"));
+    if (files.length === 0) return;
+
+    const botId = props.args.bot?.id;
+    if (!botId) return;
+    event.preventDefault();
+    const requestId = crypto.randomUUID();
+    const currentDraft = controller.drafts()[botId] ?? { text: "", attachments: [], replyToMessageId: null };
+    const attachments: DraftAttachment[] = files
+      .slice(0, Math.max(0, 10 - currentDraft.attachments.length))
+      .map((file, index) => {
+        const previewUrl = URL.createObjectURL(file);
+        previewUrls.add(previewUrl);
+        return {
+          id: `${requestId}-${index}`,
+          name: file.name || `pasted-${index + 1}.png`,
+          size: file.size,
+          kind: "image",
+          mimeType: file.type || "image/png",
+          previewKind: "image",
+          previewUrl,
+        };
+      });
+    controller.setDrafts((current) => ({
+      ...current,
+      [botId]: { ...currentDraft, attachments: [...currentDraft.attachments, ...attachments] },
+    }));
+  };
+  const setStoryFrameElement = (element: HTMLDivElement) => {
+    storyFrameElement = element;
+    element.addEventListener("paste", handlePastedImages, true);
+  };
   onCleanup(() => {
+    storyFrameElement?.removeEventListener("paste", handlePastedImages, true);
+    for (const previewUrl of previewUrls) URL.revokeObjectURL(previewUrl);
     mock.dispose();
     window.openbot = previousApi;
   });
   return (
-    <div class="conversation-story-frame">
-      <Conversation
-        {...props.args}
-        messages={props.messages ?? props.args.messages}
-        unreadCount={unreadCount()}
-        firstUnreadMessageId={firstUnreadMessageId()}
-        onMarkRead={async () => {
-          await props.args.onMarkRead();
-          setUnreadCount(0);
-          setFirstUnreadMessageId(null);
-        }}
-      />
+    <div ref={setStoryFrameElement} class="conversation-story-frame">
+      <ConversationControllerProvider controller={controller}>
+        <ConversationView
+          {...props.args}
+          messages={props.messages ?? props.args.messages}
+          unreadCount={unreadCount()}
+          firstUnreadMessageId={firstUnreadMessageId()}
+          onMarkRead={async () => {
+            await props.args.onMarkRead();
+            setUnreadCount(0);
+            setFirstUnreadMessageId(null);
+          }}
+        />
+      </ConversationControllerProvider>
     </div>
   );
 }
@@ -636,6 +944,15 @@ type Story = StoryObj<typeof meta>;
 
 export const RichConversation: Story = {};
 
+export const AllBotMessageTypes: Story = {
+  name: "All bot message types",
+  args: {
+    messages: botMessageGalleryMessages,
+    activeTurnId: "bot-gallery-stream",
+    presence: completedImageGenerationPresence,
+  },
+};
+
 export const VoiceRecording: Story = {
   name: "Voice recording",
   render: (storyArgs) => <RecordingConversation args={storyArgs} />,
@@ -678,10 +995,37 @@ export const ComposerActionMenu: Story = {
     const useSkill = within(menu).getByRole("menuitem", { name: /Use a skill/ });
     const addContext = within(menu).getByRole("menuitem", { name: /Add context/ });
     await expect(menu).toHaveClass("ui-action-menu");
-    await expect(attachImage.getBoundingClientRect().height).toBeGreaterThanOrEqual(52);
+    await waitFor(() => expect(attachImage).toHaveFocus());
     await expect(useSkill).toHaveAttribute("data-disabled");
     await expect(addContext).toBeVisible();
   },
+};
+
+export const PastedImageInComposer: Story = {
+  name: "Pasted image in composer",
+  render: (storyArgs) => <MockedConversation args={storyArgs} initialAttachments={queuePreviewAttachments} />,
+};
+
+export const MixedAttachmentsInNarrowComposer: Story = {
+  name: "Mixed attachments in narrow composer",
+  render: (storyArgs) => (
+    <section
+      data-testid="narrow-composer-attachments-sample"
+      style={{ width: "360px", height: "820px", overflow: "hidden" }}
+    >
+      <MockedConversation args={storyArgs} initialAttachments={[...queuePreviewAttachments, STORY_ATTACHMENTS[0]]} />
+    </section>
+  ),
+};
+
+export const SupportedContextFilesInComposer: Story = {
+  name: "Supported context files in composer",
+  render: (storyArgs) => <MockedConversation args={storyArgs} initialAttachments={supportedContextAttachments} />,
+};
+
+export const SentMessageWithContextFiles: Story = {
+  name: "Sent message with context files",
+  render: (storyArgs) => <MockedConversation args={storyArgs} messages={sentContextFileMessages} />,
 };
 
 export const NarrowRichConversation: Story = {

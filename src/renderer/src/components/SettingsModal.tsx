@@ -104,7 +104,7 @@ export function SettingsModal(props: SettingsModalProps) {
   }
 
   return (
-    <Tabs.Root {...tabsProps}>
+    <Tabs.Root {...tabsProps} class="settings-modal-tabs-root">
       <SettingsDialogShell
         class="app-settings-modal-shell"
         open={props.open}

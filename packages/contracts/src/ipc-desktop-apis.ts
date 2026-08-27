@@ -60,6 +60,16 @@ import type {
   UpdateRoutineInput,
 } from "./ipc-conversation";
 import type {
+  AgentPublicationPreview,
+  AgentSubmission,
+  InstallMarketplaceAgentInput,
+  InstallMarketplaceAgentResult,
+  MarketplaceAgentDetail,
+  MarketplaceAgentPage,
+  MarketplaceAgentQuery,
+  SubmitMarketplaceAgentInput,
+} from "./ipc-marketplace-agents";
+import type {
   InstalledSkill,
   InstallSkillInput,
   MarketplaceSkillDetail,
@@ -151,6 +161,15 @@ export interface AgentDesktopApi {
   respondToApproval: (input: RespondToApprovalInput) => Promise<void>;
   respondToBrowserTakeover: (input: RespondToBrowserTakeoverInput) => Promise<void>;
   onEvent: (listener: (event: AgentEvent) => void) => () => void;
+}
+
+export interface MarketplaceAgentsDesktopApi {
+  list: (query?: MarketplaceAgentQuery) => Promise<MarketplaceAgentPage>;
+  get: (agentId: string) => Promise<MarketplaceAgentDetail>;
+  listMine: () => Promise<AgentSubmission[]>;
+  preview: (botId: string) => Promise<AgentPublicationPreview>;
+  submit: (input: SubmitMarketplaceAgentInput) => Promise<AgentSubmission>;
+  install: (input: InstallMarketplaceAgentInput) => Promise<InstallMarketplaceAgentResult>;
 }
 
 export interface BrowserDesktopApi {
@@ -256,9 +275,14 @@ export interface OpenBotDesktopApi {
   getMacPermissions: () => Promise<MacPermissionsState>;
   requestMacPermission: (permission: MacPermissionId) => Promise<MacPermissionsState>;
   openExternal: (destination: ExternalDestination) => Promise<void>;
+  connectChatGPT: () => Promise<AgentStatus>;
+  connectClaude: () => Promise<AgentStatus>;
+  connectGrok: () => Promise<AgentStatus>;
+  refreshAgentProviders: () => Promise<AgentStatus>;
   openUrl: (url: string) => Promise<void>;
   voice: VoiceDesktopApi;
   skills: SkillsDesktopApi;
+  marketplaceAgents: MarketplaceAgentsDesktopApi;
   auth: CentralAuthDesktopApi;
   agent: AgentDesktopApi;
   browser: BrowserDesktopApi;

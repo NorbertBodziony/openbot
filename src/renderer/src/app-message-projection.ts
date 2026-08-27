@@ -15,6 +15,7 @@ export function toBotProfile(stored: BotSummary): BotProfile {
     avatarSeed: stored.avatarSeed,
     avatarHue: stored.avatarHue,
     avatarUrl: stored.avatarUrl,
+    marketplaceSource: stored.marketplaceSource,
     time: stored.updatedAt ? formatTime(stored.updatedAt) : "now",
     preview: cleanPreview(stored.preview),
   };
@@ -37,6 +38,8 @@ export function toBotMessage(message: ConversationMessage): BotMessage {
     imageGeneration: message.imageGeneration,
     exchange: message.exchange,
     reaction: message.reaction,
+    reactions:
+      message.reactions ?? (message.reaction ? [{ emoji: message.reaction, actor: { kind: "user" as const } }] : []),
     routine: message.routine,
     status: message.exchange
       ? undefined
@@ -117,9 +120,28 @@ export function botProfilesEqual(left: BotProfile, right: BotProfile): boolean {
     left.threadId === right.threadId &&
     left.avatarSeed === right.avatarSeed &&
     left.avatarHue === right.avatarHue &&
+    marketplaceSourcesEqual(left.marketplaceSource, right.marketplaceSource) &&
     left.time === right.time &&
     left.preview === right.preview
   );
+}
+
+function marketplaceSourcesEqual(
+  left: BotProfile["marketplaceSource"],
+  right: BotProfile["marketplaceSource"],
+): boolean {
+  if (!left || !right) return left === right;
+  return (
+    left.agentId === right.agentId &&
+    left.versionId === right.versionId &&
+    left.version === right.version &&
+    stringArraysEqual(left.skillIds, right.skillIds) &&
+    stringArraysEqual(left.routineIds, right.routineIds)
+  );
+}
+
+function stringArraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
@@ -136,6 +158,8 @@ export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
     left.senderBotId === right.senderBotId &&
     left.replyToMessageId === right.replyToMessageId &&
     left.reaction === right.reaction &&
+    JSON.stringify(left.reactions) === JSON.stringify(right.reactions) &&
+    JSON.stringify(left.reactionSummary) === JSON.stringify(right.reactionSummary) &&
     JSON.stringify(left.attachments) === JSON.stringify(right.attachments) &&
     JSON.stringify(left.exchange) === JSON.stringify(right.exchange) &&
     JSON.stringify(left.routine) === JSON.stringify(right.routine) &&

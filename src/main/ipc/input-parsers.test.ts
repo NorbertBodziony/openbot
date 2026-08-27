@@ -31,7 +31,7 @@ import {
   parseUpdateQueuedMessage,
   parseUpdateRoutine,
 } from "./agent-inputs";
-import { parseMacPermission, parseProvider } from "./app-inputs";
+import { parseExternalDestination, parseMacPermission, parseProvider } from "./app-inputs";
 import { parseBrowserOpen, parseVisibility } from "./browser-inputs";
 import {
   parseCreateTeamInvite,
@@ -51,12 +51,16 @@ describe("app IPC input parsing", () => {
     expect(parseProvider({ preferredProvider: "claude" })).toBe("claude");
     expect(parseMacPermission("screen-recording")).toBe("screen-recording");
     expect(parseMacPermission("accessibility")).toBe("accessibility");
+    expect(parseExternalDestination("claude-install")).toBe("claude-install");
+    expect(parseExternalDestination("claude-sign-in")).toBe("claude-sign-in");
   });
 
   it("keeps setup and permission error messages", () => {
     expect(() => parseProvider(null)).toThrowError("Setup input is required.");
     expect(() => parseProvider({ preferredProvider: "other" })).toThrowError("Unknown provider.");
     expect(() => parseMacPermission("camera")).toThrowError("Unknown macOS permission.");
+    expect(() => parseExternalDestination("https://example.com")).toThrowError("Unknown external destination.");
+    expect(() => parseExternalDestination("chatgpt-install")).toThrowError("Unknown external destination.");
   });
 });
 
@@ -162,6 +166,11 @@ describe("agent IPC input parsing", () => {
       botId: "bot-1",
       messageId: "message-1",
       emoji: "👍",
+    });
+    expect(parseMessageReaction({ botId: "bot-1", messageId: "message-1", emoji: "👨‍👩‍👧‍👦" })).toEqual({
+      botId: "bot-1",
+      messageId: "message-1",
+      emoji: "👨‍👩‍👧‍👦",
     });
     expect(parseInterrupt({ botId: "bot-1", turnId: "turn-1" })).toEqual({
       botId: "bot-1",
