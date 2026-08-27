@@ -1,5 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, mkdtemp, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -21,6 +33,8 @@ export const DEVELOPMENT_SEED_MANIFEST_FILE = "openbot-dev-seed-v1.json";
 
 const TEAM_FILE = "openbot-team-server-v1.json";
 const SETUP_FILE = "openbot-setup-v2.json";
+const BROWSER_PARTITION_DIRECTORY = join("Partitions", "openbot-browser");
+const CENTRAL_AUTH_FILE = "openbot-central-auth-v1.bin";
 const SEED_VERSION = 1;
 const SEEDED_AT = "2026-08-21T10:00:00.000Z";
 const SEED_AGENT_MODEL = "gpt-5.6-luna";
@@ -147,6 +161,7 @@ export async function seedDevelopmentState(options: DevelopmentSeedOptions = {})
   const newTransferDirectories: string[] = [];
   try {
     await buildSeedProfile(stagingProfile, homeDirectory, newTransferDirectories);
+    await preserveDevelopmentAuthentication(targetProfile, stagingProfile);
     if (await isDevelopmentProfileActive(targetProfile)) {
       throw new Error("Quit the OpenBot dev app before you seed its local state.");
     }
@@ -160,6 +175,39 @@ export async function seedDevelopmentState(options: DevelopmentSeedOptions = {})
   }
 
   return summary;
+}
+
+async function preserveDevelopmentAuthentication(sourceProfile: string, stagingProfile: string): Promise<void> {
+  const browserSource = join(sourceProfile, BROWSER_PARTITION_DIRECTORY);
+  const browserSourceStat = await optionalStat(browserSource);
+  if (browserSourceStat) {
+    if (!browserSourceStat.isDirectory()) {
+      throw new Error(`Cannot preserve the embedded browser session because ${browserSource} is not a directory.`);
+    }
+    const browserTarget = join(stagingProfile, BROWSER_PARTITION_DIRECTORY);
+    await mkdir(dirname(browserTarget), { recursive: true, mode: 0o700 });
+    await cp(browserSource, browserTarget, { recursive: true });
+  }
+
+  const authSource = join(sourceProfile, CENTRAL_AUTH_FILE);
+  const authSourceStat = await optionalStat(authSource);
+  if (authSourceStat) {
+    if (!authSourceStat.isFile()) {
+      throw new Error(`Cannot preserve the OpenBot account session because ${authSource} is not a file.`);
+    }
+    const authTarget = join(stagingProfile, CENTRAL_AUTH_FILE);
+    await copyFile(authSource, authTarget);
+    await chmod(authTarget, 0o600);
+  }
+}
+
+async function optionalStat(path: string): Promise<Awaited<ReturnType<typeof lstat>> | null> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
 }
 
 export async function isDevelopmentProfileActive(profilePath: string): Promise<boolean> {

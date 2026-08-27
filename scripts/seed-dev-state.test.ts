@@ -187,6 +187,54 @@ describe("development state seed", () => {
     }
   });
 
+  it("preserves browser and OpenBot account sessions while discarding other profile state", async () => {
+    const { appDataRoot, homeDirectory } = await createRoots();
+    await seedDevelopmentState({ appDataRoot, homeDirectory });
+    const profilePath = join(appDataRoot, developmentUserDataName("app"));
+    const cookiePath = join(profilePath, "Partitions", "openbot-browser", "Cookies");
+    const indexedDbPath = join(
+      profilePath,
+      "Partitions",
+      "openbot-browser",
+      "IndexedDB",
+      "https_example.com_0.indexeddb.leveldb",
+      "CURRENT",
+    );
+    const authPath = join(profilePath, "openbot-central-auth-v1.bin");
+    const browserStatePath = join(profilePath, "openbot-browser-state-v1.json");
+    const unrelatedPath = join(profilePath, "unrelated.txt");
+    await Promise.all([
+      writeSentinel(cookiePath, "cookie session"),
+      writeSentinel(indexedDbPath, "indexed db session"),
+      writeSentinel(authPath, "encrypted account session"),
+      writeSentinel(browserStatePath, "saved tabs"),
+      writeSentinel(unrelatedPath, "discard me"),
+    ]);
+
+    await seedDevelopmentState({ appDataRoot, homeDirectory });
+
+    await expect(readFile(cookiePath, "utf8")).resolves.toBe("cookie session");
+    await expect(readFile(indexedDbPath, "utf8")).resolves.toBe("indexed db session");
+    await expect(readFile(authPath, "utf8")).resolves.toBe("encrypted account session");
+    await expect(stat(browserStatePath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(unrelatedPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("leaves the existing profile untouched when authentication cannot be preserved", async () => {
+    const { appDataRoot, homeDirectory } = await createRoots();
+    const profilePath = join(appDataRoot, developmentUserDataName("app"));
+    const sentinel = join(profilePath, "keep.txt");
+    await Promise.all([
+      writeSentinel(sentinel, "keep"),
+      writeSentinel(join(profilePath, "Partitions", "openbot-browser"), "not a browser directory"),
+    ]);
+
+    await expect(seedDevelopmentState({ appDataRoot, homeDirectory })).rejects.toThrow(
+      "Cannot preserve the embedded browser session",
+    );
+    await expect(readFile(sentinel, "utf8")).resolves.toBe("keep");
+  });
+
   it("blocks a live profile before it removes existing state", async () => {
     const { appDataRoot, homeDirectory } = await createRoots();
     const profilePath = join(appDataRoot, developmentUserDataName("app"));

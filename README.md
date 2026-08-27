@@ -116,6 +116,9 @@ bun run dev
 
 The seed adds agents, rich conversations, managed files and references, reactions, completed
 agent exchanges, and local team chat data. It does not add live queue items or start model turns.
+Existing embedded-browser sign-ins and the encrypted OpenBot account session are preserved. Browser
+tabs are reset with the rest of the showcase, and every agent can use the shared signed-in browser
+session. Use `bun run dev:reset` when you intentionally want to remove development authentication.
 Use `bun run dev:seed --dry-run` to inspect the target and fixture counts without changing files.
 
 ## Commands
@@ -131,7 +134,7 @@ Use `bun run dev:seed --dry-run` to inspect the target and fixture counts withou
 | `bun run api:deploy` | Build and deploy the account API to Cloudflare Workers. |
 | `bun run dev:all` | Start the API and the single local Electron instance. |
 | `bun run dev:test-client` | Start the API, the local instance, and an isolated second client for team testing. |
-| `bun run dev:seed` | Replace only the app development profile with deterministic showcase data. |
+| `bun run dev:seed` | Replace the app development profile with deterministic showcase data while preserving authentication. |
 | `bun run dev:reset` | Delete the local app, test-client, and legacy host development state. |
 | `bun run check` | Run Biome, both typechecks, offline tests, the browser smoke test, and the production build. |
 | `bun run test:backend` | Run backend tests only. |
