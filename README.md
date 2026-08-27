@@ -52,7 +52,10 @@ OpenBot supports macOS 12 or newer on Apple Silicon and Windows 10 or newer on x
 
 ### Agent setup
 
-Install at least one supported CLI.
+OpenBot can download a supported provider runtime when you select `Download` in onboarding,
+Settings, Bot setup, or the model picker. A compatible system CLI remains the first choice.
+
+You can also install a CLI yourself.
 
 Codex CLI on macOS:
 
@@ -70,8 +73,7 @@ Install Grok CLI following the [Grok Build documentation](https://docs.x.ai/buil
 authenticate with `grok login` or set `XAI_API_KEY` in the environment used to launch OpenBot.
 
 On Windows, install the native CLI and make sure `codex`, `claude`, or `grok` is available in PowerShell.
-Claude Code also requires Git for Windows. Then authenticate the installed CLI and restart
-OpenBot. Each available provider appears in the agent model list.
+Claude Code also requires Git for Windows. Then authenticate the installed CLI and restart OpenBot.
 
 Bun and Node.js are not required when using an installed release. Screen Recording and Accessibility
 permissions are needed only for the optional Computer Use plugin.

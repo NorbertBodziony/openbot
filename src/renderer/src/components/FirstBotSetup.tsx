@@ -1,8 +1,9 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { BotAvatarHue } from "@openbot/contracts/ipc";
-import { createSignal, For, onSettled, Show } from "solid-js";
+import type { AgentProviderId, AgentStatus, BotAvatarHue, ProviderRuntimeStatus } from "@openbot/contracts/ipc";
+import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js";
 import { AVATAR_HUE_OPTIONS, avatarCandidateSeeds, avatarHeadColor, avatarHueSwatch } from "../bloub-avatar";
 import { AgentAvatar } from "./AgentAvatar";
+import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 import { Button, Field, Input, Textarea } from "./ui";
 
 export interface FirstBotDraft {
@@ -30,6 +31,13 @@ export interface FirstBotSetupProps {
   mode?: "first" | "additional";
   submitting?: boolean;
   error?: string | null;
+  providerSetup?: {
+    agentStatus: AgentStatus;
+    runtimeStatuses: Partial<Record<AgentProviderId, ProviderRuntimeStatus>>;
+    onDownload: (provider: AgentProviderId) => void | Promise<void>;
+    onCancel: (provider: AgentProviderId) => void | Promise<void>;
+    onConnect: (provider: AgentProviderId) => void | Promise<void>;
+  };
   onChange: (value: FirstBotDraft) => void;
   onSubmit: (value: FirstBotDraft) => void | Promise<void>;
   onCancel?: () => void;
@@ -146,7 +154,38 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
   const [canScrollSuggestionsBack, setCanScrollSuggestionsBack] = createSignal(false);
   const [canScrollSuggestionsForward, setCanScrollSuggestionsForward] = createSignal(false);
   const [draggingSuggestions, setDraggingSuggestions] = createSignal(false);
-  const canSubmit = () => Boolean(props.value.name.trim() && props.value.purpose.trim()) && !props.submitting;
+  const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(null);
+  const providerOptions = createMemo<ProviderPickerOption[]>(() =>
+    (["codex", "claude", "grok"] as const).map((provider) => {
+      const agent = props.providerSetup?.agentStatus.providers?.find((candidate) => candidate.id === provider);
+      const runtime = props.providerSetup?.runtimeStatuses[provider];
+      return {
+        id: provider,
+        name: provider === "codex" ? "ChatGPT" : provider === "claude" ? "Claude" : "Grok",
+        description: "Available on this computer",
+        state: agent?.state ?? "not-installed",
+        message: agent?.message,
+        email: agent?.email,
+        connectionState: agent?.connectionState,
+        checkError: agent?.checkError,
+        runtimeStatus:
+          runtime?.phase === "not-downloaded" && (agent?.state === "available" || agent?.state === "sign-in-required")
+            ? { ...runtime, phase: "ready", version: agent.version }
+            : runtime,
+      };
+    }),
+  );
+  createEffect(
+    () => providerOptions().find((provider) => provider.state === "available")?.id ?? null,
+    (connectedProvider) => {
+      if (!selectedProvider() && connectedProvider) setSelectedProvider(connectedProvider);
+    },
+  );
+  const providerConnected = () =>
+    !props.providerSetup ||
+    providerOptions().some((provider) => provider.id === selectedProvider() && provider.state === "available");
+  const canSubmit = () =>
+    Boolean(props.value.name.trim() && props.value.purpose.trim()) && providerConnected() && !props.submitting;
   const displayName = () => props.value.name.trim() || "New Bot";
 
   function updateSuggestionFades(): void {
@@ -200,7 +239,8 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
       event.preventDefault();
       props.onCancel();
     };
-    if (suggestionList) observer.observe(suggestionList);
+    const list = suggestionList;
+    if (list) observer.observe(list);
     document.addEventListener("keydown", closeOnEscape);
     return () => {
       observer.disconnect();
@@ -409,6 +449,26 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
               />
             </Field>
           </div>
+
+          <Show when={props.providerSetup}>
+            {(setup) => (
+              <ProviderPicker
+                value={selectedProvider()}
+                options={providerOptions()}
+                ariaLabel="AI provider for this Bot"
+                label="AI provider"
+                embedded
+                allowUnavailableSelection
+                onChange={setSelectedProvider}
+                onDownloadProvider={(provider) => {
+                  setSelectedProvider(provider);
+                  return setup().onDownload(provider);
+                }}
+                onCancelProviderDownload={setup().onCancel}
+                onConnectProvider={setup().onConnect}
+              />
+            )}
+          </Show>
 
           <Show when={props.error}>
             {(error) => (

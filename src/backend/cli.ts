@@ -13,19 +13,19 @@ const MINIMUM_GROK_VERSION = [1, 0, 5] as const;
 export interface CodexCliInfo {
   executable: string;
   version: string;
-  source: "system" | "bundled";
+  source: "system" | "managed";
 }
 
 export interface ClaudeCliInfo {
   executable: string;
   version: string;
-  source?: "system" | "bundled";
+  source?: "system" | "managed";
 }
 
 export interface GrokCliInfo {
   executable: string;
   version: string;
-  source?: "system" | "bundled";
+  source?: "system" | "managed";
 }
 
 export type AgentCliInfo = CodexCliInfo | ClaudeCliInfo | GrokCliInfo;
@@ -47,7 +47,7 @@ export async function resolveCodexCli(
   const bundledExecutable = input.bundledExecutable === undefined ? bundledCodexExecutable() : input.bundledExecutable;
   const candidates = [
     ...systemCandidates.map((executable) => ({ executable, source: "system" as const })),
-    ...(bundledExecutable ? [{ executable: bundledExecutable, source: "bundled" as const }] : []),
+    ...(bundledExecutable ? [{ executable: bundledExecutable, source: "managed" as const }] : []),
   ].filter((candidate, index, all) => all.findIndex((other) => other.executable === candidate.executable) === index);
   const failures: CodexCliError[] = [];
 
@@ -80,10 +80,7 @@ export async function resolveCodexCli(
     );
   }
 
-  throw new CodexCliError(
-    "Codex CLI was not found. Install Codex, run `codex login`, then restart OpenBot.",
-    "missing",
-  );
+  throw new CodexCliError("ChatGPT is not downloaded. Download it in OpenBot to continue.", "missing");
 }
 
 export function bundledCodexExecutable(
@@ -102,7 +99,7 @@ export async function resolveClaudeCli(
   const bundledExecutable = input.bundledExecutable === undefined ? bundledClaudeExecutable() : input.bundledExecutable;
   const candidates = [
     ...systemCandidates.map((executable) => ({ executable, source: "system" as const })),
-    ...(bundledExecutable ? [{ executable: bundledExecutable, source: "bundled" as const }] : []),
+    ...(bundledExecutable ? [{ executable: bundledExecutable, source: "managed" as const }] : []),
   ].filter((candidate, index, all) => all.findIndex((other) => other.executable === candidate.executable) === index);
   const failures: CodexCliError[] = [];
 
@@ -134,7 +131,7 @@ export async function resolveClaudeCli(
     );
   }
 
-  throw new CodexCliError("OpenBot's included Claude runtime is missing. Reinstall OpenBot.", "missing");
+  throw new CodexCliError("Claude is not downloaded. Download it in OpenBot to continue.", "missing");
 }
 
 export function bundledClaudeExecutable(
@@ -152,7 +149,7 @@ export async function resolveGrokCli(
   const bundledExecutable = input.bundledExecutable === undefined ? bundledGrokExecutable() : input.bundledExecutable;
   const candidates = [
     ...systemCandidates.map((executable) => ({ executable, source: "system" as const })),
-    ...(bundledExecutable ? [{ executable: bundledExecutable, source: "bundled" as const }] : []),
+    ...(bundledExecutable ? [{ executable: bundledExecutable, source: "managed" as const }] : []),
   ].filter((candidate, index, all) => all.findIndex((other) => other.executable === candidate.executable) === index);
   const failures: CodexCliError[] = [];
 
@@ -184,7 +181,7 @@ export async function resolveGrokCli(
     );
   }
 
-  throw new CodexCliError("OpenBot's included Grok runtime is missing. Reinstall OpenBot.", "missing");
+  throw new CodexCliError("Grok is not downloaded. Download it in OpenBot to continue.", "missing");
 }
 
 export function bundledGrokExecutable(

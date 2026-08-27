@@ -3,6 +3,10 @@ Copyright 2026 Norbert Bodziony
 
 This product includes software developed by Norbert Bodziony.
 
+OpenBot can download optional Codex, Claude, and Grok provider runtimes directly from their vendors.
+These optional runtimes are not included in the OpenBot application package. Their vendor licenses
+are installed with each downloaded runtime.
+
 This product includes Blobatar 0.2.0.
 Copyright (c) 2026 Alain
 

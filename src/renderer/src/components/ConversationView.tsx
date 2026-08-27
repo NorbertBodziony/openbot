@@ -17,6 +17,7 @@ import type {
   DraftAttachment,
   FilePreview,
   MessageReaction,
+  ProviderRuntimeStatus,
   QueueDelivery,
   QueueSnapshot,
   ServerSummary,
@@ -160,6 +161,10 @@ function followConversationBottom(element: HTMLDivElement): void {
 
 export interface ConversationProps {
   agentStatus: AgentStatus;
+  providerRuntimeStatuses?: Partial<Record<AgentProviderId, ProviderRuntimeStatus>>;
+  onDownloadProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  onCancelProviderDownload?: (provider: AgentProviderId) => void | Promise<void>;
+  onConnectProvider?: (provider: AgentProviderId) => void | Promise<void>;
   bot: BotProfile | undefined;
   bots: BotProfile[];
   modelOptions: AgentModelOption[];
@@ -1988,12 +1993,12 @@ function createConversationViewScope(props: ConversationProps) {
     activityPresentation,
     addAttachments,
     agentActivity,
+    agentReady,
     agentActivityExitDelayTimer,
     agentActivityExitTimer,
     agentActivityShowTimer,
     agentActivitySlot,
     agentActivitySpaceReserved,
-    agentReady,
     attachmentAction,
     attachmentBusy,
     browserAddress,
@@ -2198,7 +2203,6 @@ export function ConversationHeader() {
   const {
     activeBrowserControl,
     agentActivity,
-    agentReady,
     browserControlBot,
     hideBrowserPanel,
     props,
@@ -2236,7 +2240,11 @@ export function ConversationHeader() {
             value={settingsModel()}
             modelOptions={props.modelOptions}
             agentStatus={props.agentStatus}
-            disabled={!agentReady() || agentActivity() === "Working"}
+            runtimeStatuses={props.providerRuntimeStatuses}
+            onDownloadProvider={props.onDownloadProvider}
+            onCancelProviderDownload={props.onCancelProviderDownload}
+            onConnectProvider={props.onConnectProvider}
+            disabled={agentActivity() === "Working"}
             disabledReason={
               agentActivity() === "Working"
                 ? "Wait for the current work to finish before changing models."
@@ -3143,6 +3151,10 @@ export function ConversationPanels() {
             <AgentSettingsPanel
               bot={bot()}
               agentStatus={props.agentStatus}
+              providerRuntimeStatuses={props.providerRuntimeStatuses}
+              onDownloadProvider={props.onDownloadProvider}
+              onCancelProviderDownload={props.onCancelProviderDownload}
+              onConnectProvider={props.onConnectProvider}
               modelOptions={props.modelOptions}
               working={agentActivity() === "Working"}
               maxWidth={() =>

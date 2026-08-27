@@ -35,6 +35,7 @@ import {
   type MarketplaceSkillDetail,
   type MarketplaceSkillPage,
   type OpenBotDesktopApi,
+  type ProviderRuntimeSnapshot,
   type QueuedMessageReceipt,
   type QueueSnapshot,
   type Routine,
@@ -170,6 +171,34 @@ function decodeFilePreview(value: unknown): FilePreview {
 function decodeAgentStatus(value: unknown): AgentStatus {
   if (!isAgentStatusValue(value)) throw new Error("Invalid agent status response.");
   return value;
+}
+
+function decodeProviderRuntimeSnapshot(value: unknown): ProviderRuntimeSnapshot {
+  if (!isDynamicRecord(value) || !isNumber(value.revision) || !isDynamicRecord(value.providers)) {
+    throw new Error("Invalid provider runtime response.");
+  }
+  const decoded: Partial<ProviderRuntimeSnapshot["providers"]> = {};
+  for (const provider of ["codex", "claude", "grok"] as const) {
+    const status = value.providers[provider];
+    if (
+      !isDynamicRecord(status) ||
+      !isOneOf(["not-downloaded", "downloading", "finishing", "ready", "download-error"] as const, status.phase) ||
+      (status.progress !== null && !isNumber(status.progress)) ||
+      !nullableString(status.message, "provider runtime message") ||
+      !nullableString(status.version, "provider runtime version")
+    ) {
+      throw new Error("Invalid provider runtime response.");
+    }
+    decoded[provider] = {
+      phase: status.phase,
+      progress: status.progress,
+      message: status.message,
+      version: status.version,
+    };
+  }
+  const { codex, claude, grok } = decoded;
+  if (!codex || !claude || !grok) throw new Error("Invalid provider runtime response.");
+  return { revision: value.revision, providers: { codex, claude, grok } };
 }
 
 function isAgentStatusValue(value: unknown): value is AgentStatus {
@@ -696,6 +725,19 @@ const openbotApi: OpenBotDesktopApi = {
   connectClaude: () => ipcRenderer.invoke(IPC_CHANNELS.connectClaude),
   connectGrok: () => ipcRenderer.invoke(IPC_CHANNELS.connectGrok),
   refreshAgentProviders: () => ipcRenderer.invoke(IPC_CHANNELS.refreshAgentProviders),
+  providerRuntimes: {
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.providerRuntimesGetStatus).then(decodeProviderRuntimeSnapshot),
+    download: (provider) =>
+      ipcRenderer.invoke(IPC_CHANNELS.providerRuntimesDownload, provider).then(decodeProviderRuntimeSnapshot),
+    cancel: (provider) =>
+      ipcRenderer.invoke(IPC_CHANNELS.providerRuntimesCancel, provider).then(decodeProviderRuntimeSnapshot),
+    onEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: unknown) =>
+        listener(decodeProviderRuntimeSnapshot(snapshot));
+      ipcRenderer.on(IPC_CHANNELS.providerRuntimesEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.providerRuntimesEvent, handler);
+    },
+  },
   openUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.openUrl, url),
   voice: {
     getModelStatus: () => ipcRenderer.invoke(IPC_CHANNELS.voiceGetModelStatus),

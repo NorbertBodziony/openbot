@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
-import { verifyCodexRuntimeProcess } from "./verify-codex-runtime-process";
 
 const FUSE_DISABLED = 48;
 const FUSE_ENABLED = 49;
@@ -21,12 +20,6 @@ const executablePath = resolve(appPath, "OpenBot.exe");
 const resourcesPath = resolve(appPath, "resources");
 const whisperExecutablePath = resolve(resourcesPath, "whisper/bin/whisper-cli.exe");
 const whisperModelPath = resolve(resourcesPath, "whisper/model/ggml-medium-q5_0.bin");
-const codexRuntimePath = resolve(resourcesPath, "codex/win/x64");
-const codexExecutablePath = resolve(codexRuntimePath, "bin/codex.exe");
-const claudeRuntimePath = resolve(resourcesPath, "claude/win/x64");
-const claudeExecutablePath = resolve(claudeRuntimePath, "bin/claude.exe");
-const grokRuntimePath = resolve(resourcesPath, "grok/win/x64");
-const grokExecutablePath = resolve(grokRuntimePath, "bin/grok.exe");
 
 await Promise.all([
   access(executablePath),
@@ -54,21 +47,9 @@ await Promise.all([
   access(resolve(resourcesPath, "cloudflared/win/x64/VERSION.txt")),
   access(resolve(resourcesPath, "cloudflared/licenses/cloudflared-Apache-2.0.txt")),
   access(resolve(resourcesPath, "cloudflared/source-manifest.json")),
-  access(codexExecutablePath),
-  access(resolve(codexRuntimePath, "bin/codex-code-mode-host.exe")),
-  access(resolve(codexRuntimePath, "codex-package.json")),
-  access(resolve(resourcesPath, "codex/licenses/Codex-Apache-2.0.txt")),
-  access(resolve(resourcesPath, "codex/source-manifest.json")),
-  access(claudeExecutablePath),
-  access(resolve(claudeRuntimePath, "claude-package.json")),
-  access(resolve(resourcesPath, "claude/licenses/Claude-Code-LICENSE.md")),
-  access(resolve(resourcesPath, "claude/source-manifest.json")),
-  access(grokExecutablePath),
-  access(resolve(grokRuntimePath, "grok-package.json")),
-  access(resolve(resourcesPath, "grok/licenses/Grok-CLI-LICENSE")),
-  access(resolve(resourcesPath, "grok/licenses/Grok-CLI-THIRD-PARTY-NOTICES")),
-  access(resolve(resourcesPath, "grok/source-manifest.json")),
 ]);
+await Promise.all(["codex", "claude", "grok"].map((name) => assertAbsent(resolve(resourcesPath, name))));
+await assertAbsent(resolve(resourcesPath, "app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-win32-x64"));
 
 if (existsSync(whisperModelPath)) throw new Error("The on-demand Whisper model must not be in the application.");
 
@@ -91,17 +72,6 @@ for (const name of ["sunshine.exe", "web-server.exe", "streamer.exe"]) {
   verifyAuthenticode(resolve(resourcesPath, "remote-desktop-runtime/win32/x64", name), "NotSigned");
 }
 verifyAuthenticode(resolve(resourcesPath, "cloudflared/win/x64/cloudflared.exe"), "Valid");
-verifyAuthenticode(codexExecutablePath, "Valid");
-verifyAuthenticode(resolve(codexRuntimePath, "bin/codex-code-mode-host.exe"), "Valid");
-await verifyCodexRuntimeProcess(codexExecutablePath, "0.149.1");
-verifyAuthenticode(claudeExecutablePath, "Valid");
-if (!run(claudeExecutablePath, ["--version"]).startsWith("2.1.246")) {
-  throw new Error("The bundled Claude runtime returned an unexpected version.");
-}
-verifyAuthenticode(grokExecutablePath, "Valid");
-if (!run(grokExecutablePath, ["--version"]).includes("1.0.5")) {
-  throw new Error("The bundled Grok runtime returned an unexpected version.");
-}
 
 const versionInfo = JSON.parse(
   runWindowsPowerShell(
@@ -159,8 +129,13 @@ function expectEqual(actual: unknown, expected: unknown, label: string): void {
   }
 }
 
-function run(command: string, args: string[]): string {
-  return execFileSync(command, args, { encoding: "utf8" }).trim();
+async function assertAbsent(path: string): Promise<void> {
+  try {
+    await access(path);
+  } catch {
+    return;
+  }
+  throw new Error(`Provider runtime must not be packaged: ${path}`);
 }
 
 function powerShellLiteral(value: string): string {

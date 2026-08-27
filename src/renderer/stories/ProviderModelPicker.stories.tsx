@@ -60,3 +60,28 @@ export const UnavailableProvidersOpen: Story = {
   },
   play: Opens.play,
 };
+
+export const ProviderDownloadsOpen: Story = {
+  args: {
+    modelOptions: STORY_MODELS.filter((model) => model.provider === "codex"),
+    agentStatus: {
+      ...STORY_AGENT_STATUS,
+      phase: "blocked",
+      providers: STORY_AGENT_STATUS.providers?.map((provider) => ({
+        ...provider,
+        state: "not-installed" as const,
+        version: null,
+        message: null,
+      })),
+    },
+    runtimeStatuses: {
+      codex: { phase: "downloading", progress: 24, message: null, version: null },
+      claude: { phase: "downloading", progress: 48, message: null, version: null },
+      grok: { phase: "downloading", progress: 72, message: null, version: null },
+    },
+    onDownloadProvider: fn(),
+    onCancelProviderDownload: fn(),
+    onConnectProvider: fn(),
+  },
+  play: Opens.play,
+};

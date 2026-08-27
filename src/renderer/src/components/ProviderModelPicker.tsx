@@ -5,9 +5,10 @@ import type {
   AgentProviderId,
   AgentProviderStatus,
   AgentStatus,
+  ProviderRuntimeStatus,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js";
-import { Listbox, Popover, Tabs } from "./ui";
+import { Button, Listbox, Popover, Progress, Tabs } from "./ui";
 
 interface ProviderModelPickerProps {
   provider: AgentProviderId;
@@ -19,6 +20,10 @@ interface ProviderModelPickerProps {
   label?: string;
   disabled?: boolean;
   disabledReason?: string;
+  runtimeStatuses?: Partial<Record<AgentProviderId, ProviderRuntimeStatus>>;
+  onDownloadProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  onCancelProviderDownload?: (provider: AgentProviderId) => void | Promise<void>;
+  onConnectProvider?: (provider: AgentProviderId) => void | Promise<void>;
   onChange: (model: AgentModelId, provider: AgentProviderId) => void;
 }
 
@@ -175,6 +180,32 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                 const status = () => providerAvailability(props.agentStatus, props.modelOptions, provider);
                 const models = () => props.modelOptions.filter((option) => option.provider === provider);
                 const available = () => status().state === "available";
+                const runtime = () => {
+                  const value = props.runtimeStatuses?.[provider];
+                  if (
+                    value?.phase === "not-downloaded" &&
+                    (status().state === "available" || status().state === "sign-in-required")
+                  ) {
+                    return { ...value, phase: "ready" as const, version: status().version };
+                  }
+                  return value;
+                };
+                const runtimeAction = () => {
+                  if (available() || status().connectionState === "connecting") return undefined;
+                  if (runtime()?.phase === "downloading") return "Cancel" as const;
+                  if (runtime()?.phase === "ready") return "Connect" as const;
+                  if (runtime()?.phase === "download-error") return "Retry" as const;
+                  if (runtime()?.phase === "not-downloaded") return "Download" as const;
+                  return undefined;
+                };
+                const runtimeMessage = () => {
+                  const runtimeStatus = runtime();
+                  if (runtimeStatus?.phase === "downloading") {
+                    return `Downloading ${Math.round(runtimeStatus.progress ?? 0)}%`;
+                  }
+                  if (runtimeStatus?.phase === "finishing") return "Setting up";
+                  return runtimeStatus?.message ?? status().message ?? `${providerName(provider)} is unavailable.`;
+                };
                 return (
                   <Tabs.Content
                     value={provider}
@@ -187,7 +218,29 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                     </div>
                     <Show when={!available()}>
                       <div class="provider-model-empty" role="status">
-                        {status().message ?? `${providerName(provider)} is unavailable.`}
+                        <span>{runtimeMessage()}</span>
+                        <Show when={runtime()?.phase === "downloading"}>
+                          <Progress
+                            value={runtime()?.progress ?? 0}
+                            aria-label={`${providerName(provider)} download`}
+                          />
+                        </Show>
+                        <Show when={runtimeAction()}>
+                          {(action) => (
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant={action() === "Download" ? "default" : "outline"}
+                              onClick={() => {
+                                if (action() === "Cancel") void props.onCancelProviderDownload?.(provider);
+                                else if (action() === "Connect") void props.onConnectProvider?.(provider);
+                                else void props.onDownloadProvider?.(provider);
+                              }}
+                            >
+                              {action()}
+                            </Button>
+                          )}
+                        </Show>
                       </div>
                     </Show>
                     <Show

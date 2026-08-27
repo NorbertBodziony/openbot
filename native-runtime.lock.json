@@ -10,11 +10,15 @@
       "darwin-arm64": {
         "asset": "codex-package-aarch64-apple-darwin.tar.gz",
         "assetSha256": "4cbb17468b5d86b4b182a28c016d62e9d273a241cec04885ccfae76e6983ae3f",
+        "downloadBytes": 110095583,
+        "installedBytes": 300000000,
         "executable": "bin/codex"
       },
       "win32-x64": {
         "asset": "codex-package-x86_64-pc-windows-msvc.tar.gz",
         "assetSha256": "e302697785b0761833779fe2d7b65614d6d156e8e6b8b9fa9725b6503d552613",
+        "downloadBytes": 134545938,
+        "installedBytes": 350000000,
         "executable": "bin/codex.exe"
       }
     }
@@ -31,6 +35,8 @@
         "asset": "claude-agent-sdk-darwin-arm64-0.3.246.tgz",
         "assetSha256": "da4a8698387517bc94f742297fba9707d2aca18a0c3fe6086436e0535b782ab4",
         "binarySha256": "7b09f01cb76a38e0e3a7c47c5d698d382162a5ff26538fc778683770caf9218b",
+        "downloadBytes": 91782353,
+        "installedBytes": 250000000,
         "executable": "claude",
         "platformDirectory": "mac"
       },
@@ -39,6 +45,8 @@
         "asset": "claude-agent-sdk-win32-x64-0.3.246.tgz",
         "assetSha256": "54a98c7b891efff0cfd630a477a2290dad9ffb7f1d7d70b54c74ccadeea2d9c5",
         "binarySha256": "9f07f1ecaf26231fc2fac489e7c5214140d38fd14764938a2c8c46f31931d204",
+        "downloadBytes": 104501831,
+        "installedBytes": 280000000,
         "executable": "claude.exe",
         "platformDirectory": "win"
       }
@@ -56,12 +64,16 @@
       "darwin-arm64": {
         "asset": "grok-1.0.5-macos-aarch64",
         "assetSha256": "3dfa7f04fbb5427a8fbead286591543aaecb478b3a0ab222c4329eca1a3b2f86",
+        "downloadBytes": 134349648,
+        "installedBytes": 145000000,
         "executable": "grok",
         "platformDirectory": "mac"
       },
       "win32-x64": {
         "asset": "grok-1.0.5-windows-x86_64.exe",
         "assetSha256": "4b924daa801663ea20e96382408b1f2b5ba39efad62c14d20d88618a9eb0be64",
+        "downloadBytes": 142651720,
+        "installedBytes": 155000000,
         "executable": "grok.exe",
         "platformDirectory": "win"
       }

@@ -1,7 +1,14 @@
-import type { AppInfo, UpdateStatus } from "@openbot/contracts/ipc";
+import type {
+  AgentProviderId,
+  AgentStatus,
+  AppInfo,
+  ProviderRuntimeStatus,
+  UpdateStatus,
+} from "@openbot/contracts/ipc";
 import { createMemo, createSignal } from "solid-js";
 import type { GeneralSettingsValue } from "../app-settings";
 import { presentUpdateStatus } from "../update-status";
+import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 import { SettingsDialogShell } from "./SettingsDialogShell";
 import {
   Badge,
@@ -39,6 +46,11 @@ export interface SettingsModalProps {
   appInfo: AppInfo | null;
   updateStatus: UpdateStatus;
   onUpdateAction: () => Promise<void>;
+  agentStatus?: AgentStatus;
+  providerRuntimeStatuses?: Partial<Record<AgentProviderId, ProviderRuntimeStatus>>;
+  onDownloadProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  onCancelProviderDownload?: (provider: AgentProviderId) => void | Promise<void>;
+  onConnectProvider?: (provider: AgentProviderId) => void | Promise<void>;
   restoreFocusTarget?: HTMLElement | null;
 }
 
@@ -67,6 +79,7 @@ export function SettingsModal(props: SettingsModalProps) {
   const [activeTab, setActiveTab] = createSignal<SettingsTab>("general");
   const [profileName, setProfileName] = createSignal("OpenBot user");
   const [updateError, setUpdateError] = createSignal<string | null>(null);
+  const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(null);
   let modalElement: HTMLElement | undefined;
 
   const title = () => (activeTab() === "general" ? "General" : "Profile");
@@ -78,6 +91,26 @@ export function SettingsModal(props: SettingsModalProps) {
     updateError() ??
     (props.updateStatus.phase === "error" ? props.updateStatus.message : null) ??
     (props.updateStatus.phase === "up-to-date" ? "OpenBot is up to date." : "Installed version");
+  const providerOptions = createMemo<ProviderPickerOption[]>(() =>
+    (["codex", "claude", "grok"] as const).map((provider) => {
+      const agent = props.agentStatus?.providers?.find((candidate) => candidate.id === provider);
+      const runtime = props.providerRuntimeStatuses?.[provider];
+      return {
+        id: provider,
+        name: provider === "codex" ? "ChatGPT" : provider === "claude" ? "Claude" : "Grok",
+        description: "Available on this computer",
+        state: agent?.state ?? "not-installed",
+        message: agent?.message,
+        email: agent?.email,
+        connectionState: agent?.connectionState,
+        checkError: agent?.checkError,
+        runtimeStatus:
+          runtime?.phase === "not-downloaded" && (agent?.state === "available" || agent?.state === "sign-in-required")
+            ? { ...runtime, phase: "ready", version: agent.version ?? null }
+            : runtime,
+      };
+    }),
+  );
   const tabsProps = {
     get value() {
       return activeTab();
@@ -140,6 +173,20 @@ export function SettingsModal(props: SettingsModalProps) {
         }
       >
         <Tabs.Content value="general" class="settings-modal-tab-panel" data-tab="general">
+          <SettingsSection title="AI providers">
+            <ProviderPicker
+              value={selectedProvider()}
+              options={providerOptions()}
+              ariaLabel="AI providers"
+              embedded
+              allowUnavailableSelection
+              onChange={setSelectedProvider}
+              onDownloadProvider={props.onDownloadProvider}
+              onCancelProviderDownload={props.onCancelProviderDownload}
+              onConnectProvider={props.onConnectProvider}
+            />
+          </SettingsSection>
+
           <SettingsSection title="App behavior">
             <ItemGroup class="settings-modal-card" surface="subtle">
               <SwitchField

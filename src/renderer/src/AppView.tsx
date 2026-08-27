@@ -51,6 +51,10 @@ export function AppAccessGate() {
     setupState,
     pendingInviteUrl,
     agentStatus,
+    providerRuntimeStatuses,
+    providerRuntimeDownloadsAvailable,
+    downloadProviderRuntime,
+    cancelProviderRuntimeDownload,
     refreshingProviders,
     connectChatGPT,
     connectClaude,
@@ -100,6 +104,13 @@ export function AppAccessGate() {
                         agentStatus().phase === "starting" ||
                         agentStatus().phase === "restarting"
                       }
+                      providerRuntimeStatuses={
+                        providerRuntimeDownloadsAvailable() ? providerRuntimeStatuses() : undefined
+                      }
+                      onDownloadProvider={providerRuntimeDownloadsAvailable() ? downloadProviderRuntime : undefined}
+                      onCancelProviderDownload={
+                        providerRuntimeDownloadsAvailable() ? cancelProviderRuntimeDownload : undefined
+                      }
                       onConnectProvider={(provider) =>
                         provider === "codex"
                           ? connectChatGPT()
@@ -107,9 +118,9 @@ export function AppAccessGate() {
                             ? connectClaude()
                             : connectGrok()
                       }
-                      onInstallProvider={openProviderInstallGuide}
-                      onSignInProvider={openProviderSignInGuide}
-                      onRefreshProviders={refreshAgentProviders}
+                      onInstallProvider={providerRuntimeDownloadsAvailable() ? undefined : openProviderInstallGuide}
+                      onSignInProvider={providerRuntimeDownloadsAvailable() ? undefined : openProviderSignInGuide}
+                      onRefreshProviders={providerRuntimeDownloadsAvailable() ? undefined : refreshAgentProviders}
                       onSave={saveSetup}
                     />
                   </Loading>
@@ -183,6 +194,13 @@ function WorkspaceShell(props: {
     accountUsage,
     updateStatus,
     agentStatus,
+    providerRuntimeStatuses,
+    providerRuntimeDownloadsAvailable,
+    downloadProviderRuntime,
+    cancelProviderRuntimeDownload,
+    connectChatGPT,
+    connectClaude,
+    connectGrok,
     refreshAccountUsage,
     runUpdateAction,
     updateAccountAvatar,
@@ -409,6 +427,18 @@ function WorkspaceShell(props: {
           mode={botList().length === 0 ? "first" : "additional"}
           submitting={creatingAgent()}
           error={botSetupError()}
+          providerSetup={
+            botList().length === 0 && activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()
+              ? {
+                  agentStatus: agentStatus(),
+                  runtimeStatuses: providerRuntimeStatuses(),
+                  onDownload: downloadProviderRuntime,
+                  onCancel: cancelProviderRuntimeDownload,
+                  onConnect: (provider) =>
+                    provider === "codex" ? connectChatGPT() : provider === "claude" ? connectClaude() : connectGrok(),
+                }
+              : undefined
+          }
           onChange={setBotSetupDraft}
           onSubmit={createAgent}
           onCancel={botList().length > 0 ? cancelBotSetup : undefined}
@@ -447,6 +477,27 @@ function WorkspaceShell(props: {
       <Show when={!botSetupOpen() && !activeDirectMember()}>
         <Conversation
           agentStatus={agentStatus()}
+          providerRuntimeStatuses={
+            activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()
+              ? providerRuntimeStatuses()
+              : undefined
+          }
+          onDownloadProvider={
+            activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()
+              ? downloadProviderRuntime
+              : undefined
+          }
+          onCancelProviderDownload={
+            activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()
+              ? cancelProviderRuntimeDownload
+              : undefined
+          }
+          onConnectProvider={
+            activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()
+              ? (provider) =>
+                  provider === "codex" ? connectChatGPT() : provider === "claude" ? connectClaude() : connectGrok()
+              : undefined
+          }
           bot={activeBot()}
           bots={botList()}
           modelOptions={modelOptions()}
@@ -559,6 +610,13 @@ function WorkspaceOverlays(props: {
     revokeServerInvite,
     updateStatus,
     runUpdateAction,
+    providerRuntimeStatuses,
+    providerRuntimeDownloadsAvailable,
+    downloadProviderRuntime,
+    cancelProviderRuntimeDownload,
+    connectChatGPT,
+    connectClaude,
+    connectGrok,
     globalSearchOpen,
     botList,
     activeBot,
@@ -655,6 +713,28 @@ function WorkspaceOverlays(props: {
           appInfo={appInfo()}
           updateStatus={updateStatus()}
           onUpdateAction={runUpdateAction}
+          agentStatus={agentStatus()}
+          providerRuntimeStatuses={
+            activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()
+              ? providerRuntimeStatuses()
+              : undefined
+          }
+          onDownloadProvider={
+            activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()
+              ? downloadProviderRuntime
+              : undefined
+          }
+          onCancelProviderDownload={
+            activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()
+              ? cancelProviderRuntimeDownload
+              : undefined
+          }
+          onConnectProvider={
+            activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()
+              ? (provider) =>
+                  provider === "codex" ? connectChatGPT() : provider === "claude" ? connectClaude() : connectGrok()
+              : undefined
+          }
           restoreFocusTarget={appSettingsRestoreTarget()}
         />
       </Loading>

@@ -1,7 +1,7 @@
 {
   "name": "openbot",
   "productName": "OpenBot",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "A local-first multi-agent desktop workspace for Codex, Claude, and Grok.",
   "author": {
     "name": "Norbert Bodziony",
@@ -116,16 +116,16 @@
     "check:builds": "bun run --parallel api:build:check build",
     "api:build:check": "CLOUDFLARE_ENV=preview bun run api:build",
     "check:ui": "bun scripts/ui-foundation-check.ts",
-    "package": "bun run voice:prepare-runtime && bun run install:codex-runtime && bun run install:claude-runtime && bun run install:grok-runtime && bun run install:cloudflared && bun run prepare:remote-desktop-runtime && bun run verify:remote-desktop-runtime && bun run build && electron-builder --dir --mac --arm64 --config.mac.identity=null --config.mac.notarize=false",
+    "package": "bun run voice:prepare-runtime && bun run install:cloudflared && bun run prepare:remote-desktop-runtime && bun run verify:remote-desktop-runtime && bun run build && electron-builder --dir --mac --arm64 --config.mac.identity=null --config.mac.notarize=false",
     "verify:package": "bun scripts/verify-macos-package.ts",
     "package:verify": "bun run package && bun run verify:package",
-    "package:win": "bun run voice:prepare-runtime && bun scripts/install-codex-runtime.ts win32 x64 && bun scripts/install-claude-runtime.ts win32 x64 && bun scripts/install-grok-runtime.ts win32 x64 && bun scripts/install-cloudflared.ts win32 x64 && bun scripts/prepare-remote-desktop-runtime.ts win32 x64 && bun run verify:remote-desktop-runtime --windows && bun run build && electron-builder --dir --win --x64 --publish never",
+    "package:win": "bun run voice:prepare-runtime && bun scripts/install-cloudflared.ts win32 x64 && bun scripts/prepare-remote-desktop-runtime.ts win32 x64 && bun run verify:remote-desktop-runtime --windows && bun run build && electron-builder --dir --win --x64 --publish never",
     "verify:package:win": "bun scripts/verify-windows-package.ts",
     "verify:update-artifacts": "bun scripts/verify-update-artifacts.ts",
     "package:win:verify": "bun run package:win && bun run verify:package:win",
-    "dist:mac": "bun run voice:prepare-runtime && bun run install:codex-runtime && bun run install:claude-runtime && bun run install:grok-runtime && bun run install:cloudflared && bun run prepare:remote-desktop-runtime && bun run verify:remote-desktop-runtime && bun run build && electron-builder --mac --arm64 --config.mac.identity=null --config.mac.notarize=false",
-    "dist:win": "bun run voice:prepare-runtime && bun scripts/install-codex-runtime.ts win32 x64 && bun scripts/install-claude-runtime.ts win32 x64 && bun scripts/install-grok-runtime.ts win32 x64 && bun scripts/install-cloudflared.ts win32 x64 && bun scripts/prepare-remote-desktop-runtime.ts win32 x64 && bun run verify:remote-desktop-runtime --windows && bun run build && electron-builder --win nsis --x64 --publish never",
-    "dist:release": "bun run voice:prepare-runtime && bun run install:codex-runtime && bun run install:claude-runtime && bun run install:grok-runtime && bun run install:cloudflared && bun run prepare:remote-desktop-runtime && bun run verify:remote-desktop-runtime && bun run build && electron-builder --mac --arm64 --publish never"
+    "dist:mac": "bun run voice:prepare-runtime && bun run install:cloudflared && bun run prepare:remote-desktop-runtime && bun run verify:remote-desktop-runtime && bun run build && electron-builder --mac --arm64 --config.mac.identity=null --config.mac.notarize=false",
+    "dist:win": "bun run voice:prepare-runtime && bun scripts/install-cloudflared.ts win32 x64 && bun scripts/prepare-remote-desktop-runtime.ts win32 x64 && bun run verify:remote-desktop-runtime --windows && bun run build && electron-builder --win nsis --x64 --publish never",
+    "dist:release": "bun run voice:prepare-runtime && bun run install:cloudflared && bun run prepare:remote-desktop-runtime && bun run verify:remote-desktop-runtime && bun run build && electron-builder --mac --arm64 --publish never"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",

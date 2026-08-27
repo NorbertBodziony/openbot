@@ -34,6 +34,20 @@ export interface UpdateStatus {
 
 export type UpdateFailureCode = "check_failed" | "download_failed" | "prepare_failed" | "install_failed";
 
+export type ProviderRuntimePhase = "not-downloaded" | "downloading" | "finishing" | "ready" | "download-error";
+
+export interface ProviderRuntimeStatus {
+  phase: ProviderRuntimePhase;
+  progress: number | null;
+  message: string | null;
+  version: string | null;
+}
+
+export interface ProviderRuntimeSnapshot {
+  revision: number;
+  providers: Record<AgentProviderId, ProviderRuntimeStatus>;
+}
+
 export interface ExportResult {
   saved: boolean;
 }
