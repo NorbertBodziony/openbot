@@ -428,7 +428,10 @@ export function Sidebar(props: SidebarProps) {
   const visibleSectionIds = createMemo(() =>
     props.layout.order.filter((sectionId) => {
       if (sectionId === SIDEBAR_PEOPLE_SECTION_ID) return filteredPeople().length > 0;
-      if (sectionId !== SIDEBAR_UNASSIGNED_SECTION_ID && !customSectionById().has(sectionId)) return false;
+      if (customSectionById().has(sectionId)) {
+        return !normalizedQuery() || (filteredBotsBySection().get(sectionId)?.length ?? 0) > 0;
+      }
+      if (sectionId !== SIDEBAR_UNASSIGNED_SECTION_ID) return false;
       return (filteredBotsBySection().get(sectionId)?.length ?? 0) > 0;
     }),
   );
@@ -1569,7 +1572,7 @@ export function Sidebar(props: SidebarProps) {
               cancelSectionEditor();
             }
           }}
-          onBlur={() => void saveSectionEditor()}
+          onBlur={cancelSectionEditor}
         />
         <ChevronDown class="sidebar-section-editor-chevron size-4" aria-hidden="true" />
         <Show when={sectionNameError()}>
@@ -2051,7 +2054,9 @@ export function Sidebar(props: SidebarProps) {
                     ? "Unassigned"
                     : (customSectionById().get(sectionId)?.name ?? "");
                 return (
-                  <Show when={name() && bots().length > 0}>
+                  <Show
+                    when={name() && (bots().length > 0 || (customSectionById().has(sectionId) && !normalizedQuery()))}
+                  >
                     <section
                       class={["sidebar-chat-group sidebar-section", sectionDragClasses(sectionId)]}
                       style={`--sidebar-section-drag-y: ${sectionDragOffset(sectionId)}px;`}
