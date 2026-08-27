@@ -3,6 +3,14 @@ import { isSkillCategory, type SkillCategory } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { unzipSync } from "fflate";
 import { parse as parseYaml } from "yaml";
+import {
+  decodeMarketplaceCursor,
+  encodeMarketplaceCursor,
+  type MarketplaceSort,
+  marketplaceLikePattern,
+  normalizeMarketplaceLimit,
+  normalizeMarketplaceQuery,
+} from "./marketplace-pagination";
 import type { AuthUser, WorkerBindings } from "./types";
 
 const MAX_ARCHIVE_BYTES = 10 * 1024 * 1024;
@@ -67,9 +75,10 @@ export class SkillMarketplace {
   }) {
     const clauses = ["skills.approved_version_id = versions.id"];
     const values: unknown[] = [];
-    if (input.query?.trim()) {
-      clauses.push("(lower(versions.name) LIKE ? OR lower(versions.description) LIKE ?)");
-      const query = `%${input.query.trim().toLowerCase().slice(0, 100)}%`;
+    const queryInput = normalizeMarketplaceQuery(input.query);
+    if (queryInput) {
+      clauses.push("(lower(versions.name) LIKE ? ESCAPE '\\' OR lower(versions.description) LIKE ? ESCAPE '\\')");
+      const query = marketplaceLikePattern(queryInput);
       values.push(query, query);
     }
     if (input.category) {
@@ -79,15 +88,23 @@ export class SkillMarketplace {
       values.push(input.category);
     }
     if (input.featured) clauses.push("skills.featured = 1");
-    if (input.cursor && !input.sort) {
+    const limit = normalizeMarketplaceLimit(input.limit);
+    const sort: MarketplaceSort = input.sort === "installs" ? "installs" : "updated";
+    const cursor = decodeMarketplaceCursor(input.cursor, sort);
+    if (cursor && "legacyUpdatedAt" in cursor) {
       clauses.push("skills.updated_at < ?");
-      values.push(Number(input.cursor));
+      values.push(cursor.legacyUpdatedAt);
+    } else if (cursor) {
+      const primary = sort === "installs" ? "skills.installs" : "skills.featured";
+      clauses.push(
+        `(${primary} < ? OR (${primary} = ? AND (skills.updated_at < ? OR (skills.updated_at = ? AND skills.id < ?))))`,
+      );
+      values.push(cursor.primary, cursor.primary, cursor.updatedAt, cursor.updatedAt, cursor.id);
     }
-    const limit = Math.max(1, Math.min(50, input.limit ?? 24));
     const orderBy =
-      input.sort === "installs"
-        ? "skills.installs DESC, skills.updated_at DESC"
-        : "skills.featured DESC, skills.updated_at DESC";
+      sort === "installs"
+        ? "skills.installs DESC, skills.updated_at DESC, skills.id DESC"
+        : "skills.featured DESC, skills.updated_at DESC, skills.id DESC";
     values.push(limit + 1);
     const result = await this.bindings.DB.prepare(
       `SELECT skills.id, skills.slug, skills.installs, skills.featured, skills.updated_at,
@@ -104,9 +121,17 @@ export class SkillMarketplace {
       .all<ApprovedRow>();
     const rows = result.results;
     const page = rows.slice(0, limit);
+    const last = page.at(-1);
     return {
       skills: page.map(publicSummary),
-      nextCursor: !input.sort && rows.length > limit ? String(page.at(-1)?.updated_at ?? "") : null,
+      nextCursor:
+        rows.length > limit && last
+          ? encodeMarketplaceCursor(sort, {
+              primary: sort === "installs" ? last.installs : last.featured,
+              updatedAt: last.updated_at,
+              id: last.id,
+            })
+          : null,
     };
   }
 

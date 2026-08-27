@@ -8,10 +8,11 @@ export const Route = createFileRoute("/v1/skills/$skillId/versions/$versionId/co
         try {
           const object = await requestSkillMarketplace().versionContent(params.skillId, params.versionId);
           const headers = new Headers({
-            "Cache-Control": "private, no-store",
+            "Cache-Control": "public, max-age=31536000, immutable",
             "Content-Type": "application/zip",
             "X-Content-Type-Options": "nosniff",
           });
+          headers.set("ETag", object.httpEtag);
           return new Response(object.body, { headers });
         } catch (error) {
           return skillErrorResponse(error);

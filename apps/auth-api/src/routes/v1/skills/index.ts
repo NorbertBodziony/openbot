@@ -1,7 +1,19 @@
 import { isSkillCategory } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
 import { createFileRoute } from "@tanstack/solid-router";
-import { apiError, json, requestSkillMarketplace, requestUser, skillErrorResponse } from "../../../server/request-auth";
+import { readMultipartFormData } from "../../../server/json-body";
+import { normalizeMarketplaceQuery, parseMarketplaceLimit } from "../../../server/marketplace-pagination";
+import {
+  apiError,
+  enforceMarketplaceMutationRateLimit,
+  json,
+  publicMarketplaceJson,
+  requestSkillMarketplace,
+  requestUser,
+  skillErrorResponse,
+} from "../../../server/request-auth";
+
+const SKILL_SUBMISSION_BODY_LIMIT = 12 * 1024 * 1024;
 
 export const Route = createFileRoute("/v1/skills/")({
   server: {
@@ -14,14 +26,14 @@ export const Route = createFileRoute("/v1/skills/")({
           if (category && !isSkillCategory(category))
             return apiError(400, "invalid_category", "Unknown skill category.");
           if (sort && sort !== "installs") return apiError(400, "invalid_sort", "Unknown skill sort order.");
-          return json(
+          return publicMarketplaceJson(
             await requestSkillMarketplace().list({
-              query: url.searchParams.get("query") ?? undefined,
+              query: normalizeMarketplaceQuery(url.searchParams.get("query") ?? undefined),
               category,
               featured: url.searchParams.get("featured") === "true",
               sort: sort === "installs" ? sort : undefined,
               cursor: url.searchParams.get("cursor") ?? undefined,
-              limit: Number(url.searchParams.get("limit") ?? 24),
+              limit: parseMarketplaceLimit(url.searchParams.get("limit")),
             }),
           );
         } catch (error) {
@@ -32,7 +44,8 @@ export const Route = createFileRoute("/v1/skills/")({
         try {
           const user = await requestUser(request);
           if (!user) return apiError(401, "unauthorized", "Sign in is required.");
-          const form = await request.formData();
+          await enforceMarketplaceMutationRateLimit("upload", user.id);
+          const form = await readMultipartFormData(request, SKILL_SUBMISSION_BODY_LIMIT);
           const bundle = form.get("bundle");
           const icon = form.get("icon");
           const category = form.get("category");
