@@ -8,9 +8,18 @@ import type {
 } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type AnalyticsEventName, type DesktopAnalyticsEvents, desktopAnalytics } from "../analytics";
 import { SkillsMarketplaceModal } from "./SkillsMarketplaceModal";
 
 const nativeCanvasGetContext = HTMLCanvasElement.prototype.getContext;
+const trackMarketplaceAnalytics = vi.fn();
+
+function trackScopedMarketplaceAnalytics<Name extends AnalyticsEventName>(
+  name: Name,
+  properties: DesktopAnalyticsEvents[Name],
+) {
+  trackMarketplaceAnalytics(name, properties);
+}
 
 describe("SkillsMarketplaceModal", () => {
   afterEach(() => {
@@ -25,6 +34,8 @@ describe("SkillsMarketplaceModal", () => {
   });
 
   beforeEach(() => {
+    trackMarketplaceAnalytics.mockClear();
+    vi.spyOn(desktopAnalytics, "scope").mockImplementation(() => ({ track: trackScopedMarketplaceAnalytics }));
     const page: MarketplaceSkillPage = {
       skills: [
         {
@@ -94,6 +105,11 @@ describe("SkillsMarketplaceModal", () => {
     expect(within(details).getByText("What this skill does")).toBeInTheDocument();
     expect(within(details).getByText(/Group changes by customer impact/u)).toBeInTheDocument();
     expect(within(details).getByText("references/template.md")).toBeInTheDocument();
+    expect(trackMarketplaceAnalytics).toHaveBeenCalledWith("marketplace_action", {
+      entity: "skill",
+      action: "view",
+      result: "succeeded",
+    });
     within(details).getByRole("button", { name: "Back to skills" }).click();
     await waitFor(() =>
       expect(screen.queryByRole("region", { name: "Release Notes details" })).not.toBeInTheDocument(),
@@ -194,6 +210,47 @@ describe("SkillsMarketplaceModal", () => {
       expect.objectContaining({ agentId: detail.id }),
     );
     await waitFor(() => expect(onInstalled).toHaveBeenCalledWith(installedBot));
+    expect(trackMarketplaceAnalytics).toHaveBeenCalledWith("marketplace_action", {
+      entity: "agent",
+      action: "install",
+      result: "succeeded",
+    });
+  });
+
+  it("reports an install failure when agent details cannot load", async () => {
+    const agent = {
+      id: "research-agent",
+      name: "Research Agent",
+      title: "Finds evidence quickly",
+      description: "Searches sources.",
+      creatorName: "Ada",
+      version: 1,
+      installs: 42,
+      featured: true,
+      avatarSeed: "research-agent",
+      avatarHue: 215,
+      avatarUrl: null,
+      skillCount: 1,
+      routineCount: 0,
+      activeRoutineCount: 0,
+      updatedAt: "2026-08-25T00:00:00.000Z",
+    } as const;
+    window.openbot.marketplaceAgents.list = vi.fn(async () => ({ agents: [agent], nextCursor: null }));
+    window.openbot.marketplaceAgents.get = vi.fn().mockRejectedValue(new Error("private response"));
+
+    render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
+    screen.getByRole("button", { name: "Agents" }).click();
+    (await screen.findByRole("button", { name: "Install" })).click();
+
+    await waitFor(() =>
+      expect(trackMarketplaceAnalytics).toHaveBeenCalledWith("marketplace_action", {
+        entity: "agent",
+        action: "install",
+        result: "failed",
+        failure_code: "load_failed",
+      }),
+    );
+    expect(window.openbot.marketplaceAgents.install).not.toHaveBeenCalled();
   });
 
   it("offers updates and disables agents that are already current", async () => {

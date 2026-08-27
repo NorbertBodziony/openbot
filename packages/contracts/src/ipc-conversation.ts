@@ -851,6 +851,8 @@ export interface RespondToApprovalInput {
   decision: "accept" | "decline";
 }
 
+export type AgentTurnOrigin = "user" | "routine" | "bot" | "unknown";
+
 export type AgentEvent =
   | { type: "status"; status: AgentStatus }
   | { type: "usage-changed"; usage: AccountUsage }
@@ -870,13 +872,14 @@ export type AgentEvent =
       revision: number;
     }
   | { type: "queue-changed"; snapshot: QueueSnapshot }
-  | { type: "turn-started"; botId: string; threadId: string; turnId: string }
+  | { type: "turn-started"; botId: string; threadId: string; turnId: string; origin?: AgentTurnOrigin }
   | {
       type: "turn-completed";
       botId: string;
       threadId: string;
       turnId: string;
       status: string;
+      origin?: AgentTurnOrigin;
     }
   | {
       type: "prompt";
@@ -924,7 +927,12 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
       return isDynamicRecord(value.snapshot);
     case "turn-started":
     case "turn-completed":
-      return isString(value.botId) && isString(value.threadId) && isString(value.turnId);
+      return (
+        isString(value.botId) &&
+        isString(value.threadId) &&
+        isString(value.turnId) &&
+        (value.origin === undefined || isAgentTurnOrigin(value.origin))
+      );
     case "prompt":
       return (
         (isString(value.requestId) || isNumber(value.requestId)) &&
@@ -948,6 +956,10 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
     default:
       return false;
   }
+}
+
+function isAgentTurnOrigin(value: unknown): value is AgentTurnOrigin {
+  return value === "user" || value === "routine" || value === "bot" || value === "unknown";
 }
 
 export function isSidebarLayoutSnapshot(value: unknown): value is SidebarLayoutSnapshot {

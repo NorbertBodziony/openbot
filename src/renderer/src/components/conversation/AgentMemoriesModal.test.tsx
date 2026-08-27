@@ -8,6 +8,7 @@ import type {
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type AnalyticsEventName, type DesktopAnalyticsEvents, desktopAnalytics } from "../../analytics";
 import { createMockOpenBot, type MockOpenBotControls } from "../../preview/mock-openbot";
 import { AgentMemoriesModal } from "./AgentMemoriesModal";
 
@@ -29,6 +30,16 @@ let updateMemory: Mock<(input: UpdateBotMemoryInput) => Promise<BotMemory>>;
 let deleteMemory: Mock<(input: DeleteBotMemoryInput) => Promise<void>>;
 let clearMemories: Mock<(botId: string) => Promise<void>>;
 let activeMock: MockOpenBotControls | undefined;
+const trackMemoryAnalytics = vi.fn();
+
+function trackScopedMemoryAnalytics<Name extends AnalyticsEventName>(
+  name: Name,
+  properties: DesktopAnalyticsEvents[Name],
+) {
+  trackMemoryAnalytics(name, properties);
+}
+
+vi.spyOn(desktopAnalytics, "scope").mockImplementation(() => ({ track: trackScopedMemoryAnalytics }));
 
 afterEach(() => {
   activeMock?.dispose();
@@ -36,6 +47,7 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  trackMemoryAnalytics.mockClear();
   memoryState = [];
   emitAgentEvent = undefined;
   listMemories = vi.fn(async () => [...memoryState]);
@@ -114,6 +126,10 @@ describe("AgentMemoriesModal", () => {
     expect(screen.queryByRole("textbox", { name: "New memory" })).not.toBeInTheDocument();
     expect(screen.getByText(/Added manually/)).toBeInTheDocument();
     expect(onCountChange).toHaveBeenLastCalledWith(1);
+    expect(trackMemoryAnalytics).toHaveBeenCalledWith("memory_action", {
+      action: "create",
+      result: "succeeded",
+    });
 
     memoryState.push({ ...firstMemory, id: "memory-remote", text: "Remote change" });
     emitAgentEvent?.({ type: "memories-changed", botId: "chief" });

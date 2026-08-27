@@ -17,11 +17,20 @@ import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-lib
 import { createSignal, Show } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App, AppControllerProvider, createAppController, createBotInitialMessage, useAppController } from "./App";
-import { desktopAnalytics } from "./analytics";
+import { type AnalyticsEventName, type DesktopAnalyticsEvents, desktopAnalytics } from "./analytics";
 import { SIDEBAR_PINS_STORAGE_KEY } from "./sidebar-pins";
 import { SIDEBAR_COLLAPSED_STORAGE_KEY } from "./sidebar-sections";
 
 const trackAnalytics = vi.spyOn(desktopAnalytics, "track").mockImplementation(() => undefined);
+function trackScopedAnalytics<Name extends AnalyticsEventName>(name: Name, properties: DesktopAnalyticsEvents[Name]) {
+  trackAnalytics(name, properties);
+}
+vi.spyOn(desktopAnalytics, "scope").mockImplementation(() => ({
+  track: trackScopedAnalytics,
+}));
+vi.spyOn(desktopAnalytics, "anonymousScope").mockImplementation(() => ({
+  track: trackScopedAnalytics,
+}));
 const defaultMatchMedia = window.matchMedia;
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
@@ -130,6 +139,8 @@ describe("OpenBot connected desktop shell", () => {
           variant: "production",
         }),
         getSetupState: vi.fn().mockResolvedValue({ completed: true, preferredProvider: "codex" }),
+        getAnalyticsPreference: vi.fn().mockResolvedValue({ enabled: true }),
+        setAnalyticsPreference: vi.fn(async ({ enabled }) => ({ enabled })),
         saveSetup: vi.fn().mockImplementation(async ({ preferredProvider }) => ({
           completed: true,
           preferredProvider,
@@ -840,6 +851,16 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("button", { name: "Restart Claude" })).toBeEnabled();
     expect(window.openbot.connectChatGPT).toHaveBeenCalledTimes(1);
     expect(window.openbot.connectClaude).toHaveBeenCalledTimes(1);
+    expect(trackAnalytics).toHaveBeenCalledWith("provider_action", {
+      provider: "codex",
+      action: "connect_started",
+      result: "succeeded",
+    });
+    expect(trackAnalytics).toHaveBeenCalledWith("provider_action", {
+      provider: "claude",
+      action: "connect_started",
+      result: "succeeded",
+    });
 
     await fireEvent.click(screen.getByRole("button", { name: "Restart ChatGPT" }));
     expect(window.openbot.connectChatGPT).toHaveBeenCalledTimes(2);
@@ -866,6 +887,11 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
     expect(await screen.findByRole("alert")).toHaveTextContent("ChatGPT connection was not completed. Try again.");
+    expect(trackAnalytics).toHaveBeenCalledWith("provider_action", {
+      provider: "claude",
+      action: "connect_completed",
+      result: "succeeded",
+    });
     await fireEvent.click(screen.getByRole("button", { name: "Refresh providers" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Reconnect ChatGPT" })).toBeEnabled());
@@ -960,6 +986,7 @@ describe("OpenBot connected desktop shell", () => {
     window.dispatchEvent(new Event("focus"));
 
     await waitFor(() => expect(window.openbot.refreshAgentProviders).toHaveBeenCalledTimes(1));
+    expect(trackAnalytics).toHaveBeenCalledWith("provider_action", { action: "refresh", result: "succeeded" });
   });
 
   it("shows a provider-specific warning when Refresh cannot verify an existing connection", async () => {
@@ -1013,6 +1040,17 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("OpenBot could not connect ChatGPT. Try again.");
     expect(screen.getByRole("alert")).not.toHaveTextContent("Raw IPC failure");
+    expect(trackAnalytics).toHaveBeenCalledWith("provider_action", {
+      provider: "codex",
+      action: "connect_started",
+      result: "succeeded",
+    });
+    expect(trackAnalytics).toHaveBeenCalledWith("provider_action", {
+      provider: "codex",
+      action: "connect_completed",
+      result: "failed",
+      failure_code: "connect_failed",
+    });
   });
 
   it("shows a native ChatGPT login failure reported after the browser opens", async () => {
@@ -1084,6 +1122,15 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() => expect(window.openbot.saveSetup).toHaveBeenCalledWith({ preferredProvider: "codex" }));
+    expect(trackAnalytics).toHaveBeenCalledWith("team_action", {
+      action: "server_joined",
+      result: "succeeded",
+      entry_point: "invite_deep_link",
+    });
+    expect(trackAnalytics).not.toHaveBeenCalledWith(
+      "team_action",
+      expect.objectContaining({ action: "server_selected" }),
+    );
   });
 
   it("loads a cold-start invitation into first-run remote setup", async () => {
@@ -1671,6 +1718,26 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(accountButton).toHaveFocus());
   });
 
+  it("persists the product analytics opt-out", async () => {
+    render(() => <App />);
+    await fireEvent.click(await screen.findByRole("button", { name: "Open account menu" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await fireEvent.click(await screen.findByRole("switch", { name: "Share product analytics" }));
+
+    await waitFor(() => expect(window.openbot.setAnalyticsPreference).toHaveBeenCalledWith({ enabled: false }));
+  });
+
+  it("does not open desktop analytics when the saved preference is disabled", async () => {
+    vi.mocked(window.openbot.getAnalyticsPreference).mockResolvedValueOnce({ enabled: false });
+    const setTrackingEnabled = vi.spyOn(desktopAnalytics, "setTrackingEnabled");
+    render(() => <App />);
+
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(setTrackingEnabled).toHaveBeenCalledWith(false));
+    expect(trackAnalytics).not.toHaveBeenCalledWith("desktop_app_opened", expect.anything());
+    setTrackingEnabled.mockRestore();
+  });
+
   it("removes a custom account avatar from the account menu", async () => {
     vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({
       status: "signed_in",
@@ -1695,7 +1762,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     await waitFor(() => expect(window.openbot.auth.logout).toHaveBeenCalledOnce());
-    expect(trackAnalytics).toHaveBeenCalledWith("account_signed_out", {});
+    expect(trackAnalytics).toHaveBeenCalledWith("account_sign_out", { result: "succeeded" });
     expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
     expect(window.openbot.agent.deleteBot).not.toHaveBeenCalled();
   });
@@ -1715,6 +1782,11 @@ describe("OpenBot connected desktop shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open account menu" }));
     fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
     await waitFor(() => expect(window.openbot.update.download).toHaveBeenCalledOnce());
+    expect(trackAnalytics).toHaveBeenCalledWith("update_action", {
+      action: "download",
+      result: "succeeded",
+      phase: "downloading",
+    });
 
     emitUpdateStatus?.({
       phase: "ready",
@@ -1726,6 +1798,53 @@ describe("OpenBot connected desktop shell", () => {
     });
     fireEvent.click(await screen.findByRole("button", { name: /Restart to update/ }));
     await waitFor(() => expect(window.openbot.update.install).toHaveBeenCalledOnce());
+  });
+
+  it("reports a returned update error as a failed action", async () => {
+    vi.mocked(window.openbot.update.getStatus).mockResolvedValueOnce({
+      phase: "available",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: null,
+      checkedAt: null,
+      message: null,
+    });
+    vi.mocked(window.openbot.update.download).mockResolvedValueOnce({
+      phase: "error",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: null,
+      checkedAt: "2026-08-12T22:00:00.000Z",
+      message: "Could not check for updates. Try again.",
+    });
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open account menu" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
+
+    await waitFor(() =>
+      expect(trackAnalytics).toHaveBeenCalledWith("update_action", {
+        action: "download",
+        result: "failed",
+        phase: "error",
+        failure_code: "download_failed",
+      }),
+    );
+  });
+
+  it("confirms an installed app version on the next launch", async () => {
+    const configureAnalytics = vi.spyOn(desktopAnalytics, "configure").mockReturnValue(true);
+    window.localStorage.setItem("openbot:analytics-app-version", "0.0.9");
+    render(() => <App />);
+
+    await waitFor(() =>
+      expect(trackAnalytics).toHaveBeenCalledWith("app_updated", {
+        from_version: "0.0.9",
+        to_version: "0.1.0",
+      }),
+    );
+    expect(window.localStorage.getItem("openbot:analytics-app-version")).toBe("0.1.0");
+    configureAnalytics.mockRestore();
   });
 
   it("offers local voice prompting and explains blocked microphone access", async () => {
@@ -2113,14 +2232,8 @@ describe("OpenBot connected desktop shell", () => {
       status: "completed",
     });
     await waitFor(() => expect(trigger).toBeEnabled());
-    expect(trackAnalytics).toHaveBeenCalledWith(
-      "turn_started",
-      expect.objectContaining({ provider: "codex", model: "gpt-5.6-luna" }),
-    );
-    expect(trackAnalytics).toHaveBeenCalledWith(
-      "turn_completed",
-      expect.objectContaining({ provider: "codex", status: "completed", duration_ms: expect.any(Number) }),
-    );
+    expect(trackAnalytics).not.toHaveBeenCalledWith("system_turn_started", expect.anything());
+    expect(trackAnalytics).not.toHaveBeenCalledWith("system_turn_completed", expect.anything());
   });
 
   it("supports picker keyboard navigation and outside dismissal", async () => {
@@ -3045,7 +3158,7 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() => expect(composer).toHaveTextContent(""));
-    expect(trackAnalytics).toHaveBeenCalledWith("message_sent", {
+    expect(trackAnalytics).toHaveBeenCalledWith("message_send", {
       provider: "codex",
       model: "gpt-5.6-luna",
       reasoning_effort: "medium",
@@ -3053,6 +3166,7 @@ describe("OpenBot connected desktop shell", () => {
       channel: "agent",
       attachment_count: 0,
       is_reply: false,
+      result: "succeeded",
       delivery_count: 1,
     });
   });
@@ -3123,6 +3237,14 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("Hello Alice")).toBeInTheDocument();
     await waitFor(() => expect(input).toHaveValue(""));
     expect(await screen.findByText("Read state unavailable")).toBeInTheDocument();
+    expect(trackAnalytics).toHaveBeenCalledWith("message_send", {
+      channel: "direct",
+      attachment_count: 0,
+      is_reply: false,
+      result: "succeeded",
+      delivery_count: 1,
+      server_kind: "local",
+    });
 
     emitDirectTyping?.({
       type: "team-direct-typing",
@@ -3437,6 +3559,7 @@ describe("OpenBot connected desktop shell", () => {
       messageId: "assistant-actions",
       emoji: "❤️",
     });
+    expect(trackAnalytics).toHaveBeenCalledWith("reaction_action", { action: "add", result: "succeeded" });
 
     await fireEvent.pointerDown(screen.getByRole("button", { name: "More message actions" }), { button: 0 });
     await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Copy" }), { button: 0 });
@@ -3477,6 +3600,7 @@ describe("OpenBot connected desktop shell", () => {
       messageId: "user-reactions",
       emoji: null,
     });
+    expect(trackAnalytics).toHaveBeenCalledWith("reaction_action", { action: "remove", result: "succeeded" });
     expect(screen.getByRole("img", { name: "Chief reacted with 🎉" })).toBeInTheDocument();
   });
 

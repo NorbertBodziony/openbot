@@ -13,12 +13,14 @@ export function LandingPage() {
   let hero: HTMLDivElement | undefined;
 
   onSettled(() => {
-    landingAnalytics.start(document, window.location.hostname);
-    if (!hero) return;
-    hero.classList.remove("is-hiding");
-    hero.classList.remove("is-shown");
-    void hero.offsetHeight;
-    hero.classList.add("is-shown");
+    const cleanup = landingAnalytics.start(document, window.location.hostname);
+    if (hero) {
+      hero.classList.remove("is-hiding");
+      hero.classList.remove("is-shown");
+      void hero.offsetHeight;
+      hero.classList.add("is-shown");
+    }
+    return cleanup;
   });
 
   return (

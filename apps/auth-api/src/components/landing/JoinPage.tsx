@@ -1,6 +1,7 @@
 import { AppLogo } from "@openbot/brand";
 import { OPENBOT_INVITE_ORIGIN, toOpenBotInviteUrl } from "@openbot/contracts/invite-links";
 import { createSignal, onSettled, Show } from "solid-js";
+import { landingAnalytics } from "../../lib/analytics";
 import { detectDownloadPlatform } from "../../lib/download-platforms";
 import { OPENBOT_DOWNLOAD_LINKS } from "../../lib/landing-links";
 import { Button } from "../ui/button";
@@ -11,16 +12,19 @@ export function JoinPage() {
   const [invalid, setInvalid] = createSignal(false);
 
   onSettled(() => {
+    const platform = detectDownloadPlatform(globalThis.navigator) === "windows" ? "windows" : "macos";
+    let validInvite = true;
     try {
       const pageUrl = new URL(window.location.href);
       const canonicalUrl = new URL(`${pageUrl.pathname}${pageUrl.search}`, OPENBOT_INVITE_ORIGIN);
       setOpenUrl(toOpenBotInviteUrl(canonicalUrl.toString()));
     } catch {
+      validInvite = false;
       setInvalid(true);
     }
-    if (detectDownloadPlatform(globalThis.navigator) === "windows") {
-      setDownloadUrl(OPENBOT_DOWNLOAD_LINKS.windows);
-    }
+    if (platform === "windows") setDownloadUrl(OPENBOT_DOWNLOAD_LINKS.windows);
+    const cleanup = landingAnalytics.startJoin(document, window.location.hostname, { validInvite, platform });
+    return cleanup;
   });
 
   return (

@@ -1,4 +1,5 @@
 import type {
+  AnalyticsPreference,
   AppInfo,
   AppSetupState,
   CentralAuthDesktopApi,
@@ -7,6 +8,7 @@ import type {
   MacPermissionId,
   MacPermissionsState,
   SaveSetupInput,
+  SetAnalyticsPreferenceInput,
   UpdateStatus,
 } from "./ipc-app-auth";
 import type { BrowserControlState, BrowserOpenInput, BrowserTab, BrowserVisibilityInput } from "./ipc-browser";
@@ -272,6 +274,8 @@ export interface OpenBotDesktopApi {
   getAppInfo: () => Promise<AppInfo>;
   getSetupState: () => Promise<AppSetupState>;
   saveSetup: (input: SaveSetupInput) => Promise<AppSetupState>;
+  getAnalyticsPreference: () => Promise<AnalyticsPreference>;
+  setAnalyticsPreference: (input: SetAnalyticsPreferenceInput) => Promise<AnalyticsPreference>;
   getMacPermissions: () => Promise<MacPermissionsState>;
   requestMacPermission: (permission: MacPermissionId) => Promise<MacPermissionsState>;
   openExternal: (destination: ExternalDestination) => Promise<void>;

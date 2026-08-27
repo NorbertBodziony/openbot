@@ -31,7 +31,7 @@ import {
   parseUpdateQueuedMessage,
   parseUpdateRoutine,
 } from "./agent-inputs";
-import { parseExternalDestination, parseMacPermission, parseProvider } from "./app-inputs";
+import { parseAnalyticsPreference, parseExternalDestination, parseMacPermission, parseProvider } from "./app-inputs";
 import { parseBrowserOpen, parseVisibility } from "./browser-inputs";
 import {
   parseCreateTeamInvite,
@@ -53,6 +53,7 @@ describe("app IPC input parsing", () => {
     expect(parseMacPermission("accessibility")).toBe("accessibility");
     expect(parseExternalDestination("claude-install")).toBe("claude-install");
     expect(parseExternalDestination("claude-sign-in")).toBe("claude-sign-in");
+    expect(parseAnalyticsPreference({ enabled: false })).toEqual({ enabled: false });
   });
 
   it("keeps setup and permission error messages", () => {
@@ -61,6 +62,7 @@ describe("app IPC input parsing", () => {
     expect(() => parseMacPermission("camera")).toThrowError("Unknown macOS permission.");
     expect(() => parseExternalDestination("https://example.com")).toThrowError("Unknown external destination.");
     expect(() => parseExternalDestination("chatgpt-install")).toThrowError("Unknown external destination.");
+    expect(() => parseAnalyticsPreference({ enabled: "false" })).toThrowError("Analytics preference is required.");
   });
 });
 
