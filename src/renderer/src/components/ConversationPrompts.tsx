@@ -1,8 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { AgentApproval, AgentPromptQuestion } from "@openbot/contracts/ipc";
-import { LogIn } from "lucide-solid";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { Button, Input, RadioGroup } from "./ui";
+import { Button, Input, LogIn, RadioGroup } from "./ui";
 
 export function ChoiceCard(props: {
   title: string;
