@@ -8,19 +8,20 @@ export function readAppVariant(value: string | undefined, isPackaged: boolean): 
   return isPackaged ? "production" : "dev";
 }
 
-export function appIconFileName(variant: AppVariant): string {
-  return `icon-${variant}.png`;
+export function appIconFileName(variant: AppVariant, platform: NodeJS.Platform): string {
+  return platform === "darwin" ? `icon-${variant}-macos-safe-area.png` : `icon-${variant}.png`;
 }
 
 export function resolveAppIconPath(options: {
   variant: AppVariant;
+  platform: NodeJS.Platform;
   isPackaged: boolean;
   resourcesPath: string;
   sourceRoot: string;
 }): string {
   return options.isPackaged
-    ? join(options.resourcesPath, "icons", appIconFileName(options.variant))
-    : join(options.sourceRoot, "build", appIconFileName(options.variant));
+    ? join(options.resourcesPath, "icons", appIconFileName(options.variant, options.platform))
+    : join(options.sourceRoot, "build", appIconFileName(options.variant, options.platform));
 }
 
 function isAppVariant(value: string | undefined): value is AppVariant {
