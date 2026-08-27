@@ -75,6 +75,7 @@ import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service"
 import {
   parseAgentRequest,
   parseApprovalResponse,
+  parseBrowserTakeoverResponse,
   parseCancelQueuedMessage,
   parseChooseAttachments,
   parseCreateBot,
@@ -111,7 +112,7 @@ import {
   parseProvider,
 } from "./ipc/app-inputs";
 import { parseAvatarImage } from "./ipc/avatar-inputs";
-import { parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
+import { parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
 import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
 import { isObject, requireString } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
@@ -956,11 +957,23 @@ function registerIpcHandlers(
       ? service.respondToApproval(parsed)
       : remoteServers.request("/v1/approvals/respond", { method: "POST", body: parsed }, scoped.serverId, decodeVoid);
   });
+  handleTrusted(IPC_CHANNELS.agentRespondToBrowserTakeover, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseBrowserTakeoverResponse(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.respondToBrowserTakeover(parsed)
+      : remoteServers.request(
+          "/v1/browser-takeovers/respond",
+          { method: "POST", body: parsed },
+          scoped.serverId,
+          decodeVoid,
+        );
+  });
 
   handleTrusted(IPC_CHANNELS.browserOpen, (input: unknown) => {
     const parsed = parseBrowserOpen(input);
     return remoteServers.activeServerId === "local"
-      ? browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null)
+      ? browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null, parsed.focus)
       : remoteServers.request("/v1/browser/open", { method: "POST", body: parsed }, undefined, decodeBrowserTab);
   });
   handleTrusted(IPC_CHANNELS.browserActivate, (tabId: unknown) =>
@@ -973,6 +986,12 @@ function registerIpcHandlers(
           decodeVoid,
         ),
   );
+  handleTrusted(IPC_CHANNELS.browserNavigate, (input: unknown) => {
+    const parsed = parseBrowserNavigate(input);
+    return remoteServers.activeServerId === "local"
+      ? browser.navigate(parsed.tabId, parsed.direction)
+      : remoteServers.request("/v1/browser/navigate", { method: "POST", body: parsed }, undefined, decodeVoid);
+  });
   handleTrusted(IPC_CHANNELS.browserReload, (tabId: unknown) =>
     remoteServers.activeServerId === "local"
       ? browser.reload(requireString(tabId, "tabId"))

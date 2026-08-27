@@ -44,6 +44,7 @@ import { appendVoiceTranscript, recordingToWav } from "../voice-recording";
 import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
 import { useConversationController } from "./Conversation";
+import { BrowserTakeoverCard } from "./ConversationPrompts";
 import {
   AgentActivityIndicator,
   type AgentActivityPresentation,
@@ -188,6 +189,7 @@ export interface ConversationProps {
   remoteDesktopVisible: boolean;
   prompt: Extract<AgentEvent, { type: "prompt" }> | undefined;
   approval: Extract<AgentEvent, { type: "approval" }>["approval"] | undefined;
+  browserTakeover: Extract<AgentEvent, { type: "browser-takeover-requested" }>["request"] | undefined;
   onSelectAgent: (botId: string) => void;
   onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
   onSetAgentAvatar: (botId: string, image: AvatarImageInput | null) => Promise<void>;
@@ -200,6 +202,7 @@ export interface ConversationProps {
   onTypingChange: (botId: string, typing: boolean) => void;
   onAnswerPrompt: (answers: Record<string, string[]>) => Promise<boolean>;
   onRespondToApproval: (decision: "accept" | "decline") => Promise<boolean>;
+  onRespondToBrowserTakeover: (decision: "complete" | "cancel") => Promise<boolean>;
   onCancelQueuedMessage: (deliveryId: string) => void;
   onSteerQueuedMessage: (deliveryId: string) => void;
   onUpdateQueuedMessage: (
@@ -578,6 +581,23 @@ function createConversationViewScope(props: ConversationProps) {
       const exitDelay = agentActivityExitDelay();
       if (exitDelay === 0) beginExit();
       else agentActivityExitDelayTimer = window.setTimeout(beginExit, exitDelay);
+    },
+  );
+
+  createEffect(
+    () => {
+      const tabId = props.browserTakeover?.tabId;
+      return {
+        tabId,
+        tabExists: Boolean(tabId && browserTabs().some((tab) => tab.id === tabId)),
+        activeTabId: props.activeBrowserTabId,
+        activateTab: props.onActivateBrowserTab,
+      };
+    },
+    ({ tabId, tabExists, activeTabId, activateTab }) => {
+      if (!tabId || !tabExists) return;
+      setActiveRightPanel("browser");
+      if (activeTabId !== tabId) activateTab(tabId);
     },
   );
   onCleanup(() => {
@@ -1679,6 +1699,7 @@ function createConversationViewScope(props: ConversationProps) {
   async function openBrowserAddress(address = browserAddress()) {
     const value = address.trim();
     if (!value) return;
+    setBrowserAddressEditing(false);
     const analytics = desktopAnalytics.scope();
     const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
     try {
@@ -1686,6 +1707,7 @@ function createConversationViewScope(props: ConversationProps) {
         url,
         ownerThreadId: props.bot?.threadId ?? null,
         ownerBotId: props.bot?.id ?? null,
+        focus: true,
       });
       setBrowserAddress(tab.url);
       if (!screenOpen()) setActiveRightPanel("browser");
@@ -1768,6 +1790,14 @@ function createConversationViewScope(props: ConversationProps) {
         result: "failed",
         failure_code: "browser_reload_failed",
       });
+    }
+  }
+
+  async function navigateBrowserTab(tabId: string, direction: "back" | "forward") {
+    try {
+      await window.openbot.browser.navigate({ tabId, direction });
+    } catch {
+      setComposerError(`Could not navigate ${direction}.`);
     }
   }
 
@@ -2036,6 +2066,7 @@ function createConversationViewScope(props: ConversationProps) {
     queueExitTimer,
     queuePanelVisible,
     reactToMessage,
+    navigateBrowserTab,
     reloadBrowserTab,
     removeAttachment,
     renderedAgentActivity,
@@ -2656,6 +2687,14 @@ export function ConversationTimeline() {
               </Loading>
             )}
           </Show>
+          <Show when={props.browserTakeover}>
+            <Loading>
+              <BrowserTakeoverCard
+                onComplete={() => props.onRespondToBrowserTakeover("complete")}
+                onCancel={() => props.onRespondToBrowserTakeover("cancel")}
+              />
+            </Loading>
+          </Show>
         </Show>
       </div>
     </>
@@ -2700,7 +2739,7 @@ export function ConversationComposer() {
     voicePhase,
   } = useConversationViewScope();
   return (
-    <Show when={!props.prompt && !props.approval}>
+    <Show when={!props.prompt && !props.approval && !props.browserTakeover}>
       <div class="composer-wrap">
         <div
           class="agent-queue-slot"
@@ -2975,6 +3014,7 @@ export function ConversationPanels() {
     openSharedFile,
     openSidebarFileExternally,
     openWorkspaceFile,
+    navigateBrowserTab,
     props,
     reloadBrowserTab,
     screenOpen,
@@ -3047,6 +3087,7 @@ export function ConversationPanels() {
           onAddressChange={setBrowserAddress}
           onAddressEditingChange={setBrowserAddressEditing}
           onOpenAddress={(address) => void openBrowserAddress(address)}
+          onNavigate={(tabId, direction) => void navigateBrowserTab(tabId, direction)}
           onReload={(tabId) => void reloadBrowserTab(tabId)}
           onActivateTab={props.onActivateBrowserTab}
           onCloseTab={(tabId) => void closeBrowserTab(tabId)}

@@ -1,7 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { AgentApproval, AgentPromptQuestion } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { Button, Input, RadioGroup } from "./ui";
+import { Button, Input, LogIn, RadioGroup } from "./ui";
 
 export function ChoiceCard(props: {
   title: string;
@@ -364,6 +364,55 @@ export function ApprovalCard(props: {
           </>
         )}
       </Show>
+    </section>
+  );
+}
+
+export function BrowserTakeoverCard(props: { onComplete: () => Promise<boolean>; onCancel: () => Promise<boolean> }) {
+  const [submitting, setSubmitting] = createSignal(false);
+  const submit = async (decision: "complete" | "cancel") => {
+    if (submitting()) return;
+    setSubmitting(true);
+    const completed = await (decision === "complete" ? props.onComplete() : props.onCancel());
+    if (!completed) setSubmitting(false);
+  };
+
+  return (
+    <section class="approval-card approval-card-takeover" aria-label="Browser takeover">
+      <header class="approval-card-header">
+        <span class="approval-card-icon" data-kind="takeover">
+          <LogIn aria-hidden="true" />
+        </span>
+        <div>
+          <strong>Take over</strong>
+        </div>
+      </header>
+      <div class="approval-card-content">
+        <p class="approval-reason">Complete the authorization in the open browser, then let the agent continue.</p>
+      </div>
+      <footer class="approval-card-footer approval-card-footer-end">
+        <div class="approval-card-actions">
+          <Button
+            variant="ghost"
+            type="button"
+            class="approval-button approval-button-ghost"
+            disabled={submitting()}
+            onClick={() => void submit("cancel")}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="default"
+            type="button"
+            class="approval-button approval-button-primary"
+            disabled={submitting()}
+            onClick={() => void submit("complete")}
+          >
+            {submitting() ? "Returning…" : "Done"}
+            <ReturnIcon />
+          </Button>
+        </div>
+      </footer>
     </section>
   );
 }

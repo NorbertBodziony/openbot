@@ -62,6 +62,7 @@ interface BrowserPanelProps {
   onAddressChange: (value: string) => void;
   onAddressEditingChange: (editing: boolean) => void;
   onOpenAddress: (address?: string) => void;
+  onNavigate: (tabId: string, direction: "back" | "forward") => void;
   onReload: (tabId: string) => void;
   onActivateTab: (tabId: string) => void;
   onCloseTab: (tabId: string) => void;
@@ -380,10 +381,24 @@ export default function BrowserPanel(props: BrowserPanelProps) {
         </header>
         <Tabs.Content forceMount value={props.activeTab?.id ?? "__empty"} class="browser-tab-panel">
           <div class="browser-toolbar">
-            <Button variant="ghost" type="button" aria-label="Go back" class="browser-toolbar-button" disabled>
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label="Go back"
+              class="browser-toolbar-button"
+              disabled={!props.activeTab}
+              onClick={() => props.activeTab && props.onNavigate(props.activeTab.id, "back")}
+            >
               <BrowserBackIcon />
             </Button>
-            <Button variant="ghost" type="button" aria-label="Go forward" class="browser-toolbar-button" disabled>
+            <Button
+              variant="ghost"
+              type="button"
+              aria-label="Go forward"
+              class="browser-toolbar-button"
+              disabled={!props.activeTab}
+              onClick={() => props.activeTab && props.onNavigate(props.activeTab.id, "forward")}
+            >
               <BrowserForwardIcon />
             </Button>
             <Button

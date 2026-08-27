@@ -22,6 +22,7 @@ export { default as Image } from "lucide-solid/icons/image";
 export { default as Info } from "lucide-solid/icons/info";
 export { default as Link2 } from "lucide-solid/icons/link-2";
 export { default as LoaderCircle } from "lucide-solid/icons/loader-circle";
+export { default as LogIn } from "lucide-solid/icons/log-in";
 export { default as Mic } from "lucide-solid/icons/mic";
 export { default as Monitor } from "lucide-solid/icons/monitor";
 export { default as OctagonX } from "lucide-solid/icons/octagon-x";
