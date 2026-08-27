@@ -146,6 +146,32 @@ describe("AccountLogin", () => {
     expect(onRequestEmailCode).toHaveBeenCalledWith("person@example.com");
   });
 
+  it("keeps the code input active after the local expiration time", async () => {
+    vi.useFakeTimers();
+    const onVerifyEmailCode = vi.fn().mockResolvedValue(undefined);
+    const view = renderLogin(
+      codeSentState({
+        expiresAt: Date.now() + 1_000,
+        resendAvailableAt: Date.now() - 1_000,
+      }),
+      { onVerifyEmailCode },
+    );
+
+    try {
+      const input = screen.getByRole("textbox", { name: "One-time code" });
+      await fireEvent.input(input, { target: { value: "ABCD" } });
+      await vi.advanceTimersByTimeAsync(2_000);
+      for (const key of "EFGH") await fireEvent.keyDown(input, { key });
+
+      expect(input).not.toHaveAttribute("readonly");
+      expect(view.container.querySelectorAll('.otp-input-slot[data-filled="true"]')).toHaveLength(8);
+      expect(onVerifyEmailCode).toHaveBeenCalledWith("challenge-1", "ABCD-EFGH");
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("exposes retry timing without allowing repeated requests", () => {
     renderLogin({
       status: "error",

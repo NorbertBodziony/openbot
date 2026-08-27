@@ -63,10 +63,9 @@ export function AccountLogin(props: AccountLoginProps) {
   const displayedIssue = () => (issueVisible() ? currentIssue() : undefined);
   const unavailable = () => props.state.status === "error" && props.state.issue.code === "auth_api_unavailable";
   const unavailableIssue = () => (unavailable() && props.state.status === "error" ? props.state.issue : undefined);
-  const codeExpiresIn = () => (props.state.status === "code_sent" ? secondsUntil(props.state.expiresAt, now()) : 0);
   const codeNeedsReplacement = () => {
     const issue = currentIssue();
-    return Boolean(issue && NEW_CODE_ISSUES.has(issue.code)) || (codeSent() && codeExpiresIn() === 0);
+    return Boolean(issue && NEW_CODE_ISSUES.has(issue.code));
   };
   const resendAvailableIn = () => {
     if (props.state.status !== "code_sent") return 0;
