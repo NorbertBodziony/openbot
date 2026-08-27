@@ -161,7 +161,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
                       onClick={() => {
                         if (action() === "Cancel") {
                           void props.onCancelProviderDownload?.(option().id);
-                        } else if (action() === "Connect") {
+                        } else if (["Connect", "Reconnect", "Restart"].includes(action())) {
                           void props.onConnectProvider?.(option().id);
                         } else {
                           void props.onDownloadProvider?.(option().id);
@@ -286,11 +286,11 @@ function providerRuntimeAction(
   state: AgentProviderState,
   connecting: boolean,
   runtimeStatus?: ProviderRuntimeStatus,
-): "Download" | "Cancel" | "Connect" | "Retry" | undefined {
-  if (!runtimeStatus || connecting || state === "available") return;
+): "Download" | "Cancel" | "Connect" | "Reconnect" | "Restart" | "Retry" | undefined {
+  if (!runtimeStatus) return;
   if (runtimeStatus.phase === "not-downloaded") return "Download";
   if (runtimeStatus.phase === "downloading") return "Cancel";
-  if (runtimeStatus.phase === "ready") return "Connect";
+  if (runtimeStatus.phase === "ready") return providerActionLabel(state, connecting);
   if (runtimeStatus.phase === "download-error") return "Retry";
 }
 

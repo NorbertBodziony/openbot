@@ -176,5 +176,7 @@ describe("OnboardingFlow", () => {
     }));
     await fireEvent.click(await view.findByRole("button", { name: "Connect Claude" }));
     await waitFor(() => expect(next).toBeEnabled());
+    await fireEvent.click(view.getByRole("button", { name: "Reconnect Claude" }));
+    expect(onConnectProvider).toHaveBeenCalledTimes(2);
   });
 });
