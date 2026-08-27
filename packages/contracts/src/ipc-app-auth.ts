@@ -43,6 +43,14 @@ export interface SaveSetupInput {
   preferredProvider: AgentProviderId;
 }
 
+export interface AnalyticsPreference {
+  enabled: boolean;
+}
+
+export interface SetAnalyticsPreferenceInput {
+  enabled: boolean;
+}
+
 export interface CentralAuthUser {
   id: string;
   email: string;

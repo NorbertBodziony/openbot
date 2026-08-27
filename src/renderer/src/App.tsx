@@ -115,6 +115,7 @@ const FALLBACK_UPDATE_STATUS: UpdateStatus = {
   checkedAt: null,
   message: null,
 };
+const ANALYTICS_APP_VERSION_STORAGE_KEY = "openbot:analytics-app-version";
 
 const FALLBACK_HOST_STATUS: HostStatus = {
   phase: "unconfigured",
@@ -185,17 +186,24 @@ function updateStored(store: StoredValue, value: StoredValue): void {
   storeSetters.get(store)?.(value);
 }
 
-function coarseFailureCode(value: string | undefined): string {
-  const normalized = value
-    ?.trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/gu, "_")
-    .slice(0, 64);
-  return normalized || "unknown";
-}
-
-function normalizedTurnStatus(value: string): string {
-  return ["completed", "failed", "interrupted", "cancelled"].includes(value) ? value : "other";
+function authFailureCode(value: string | undefined): string {
+  switch (value) {
+    case "auth_api_error":
+    case "code_recently_sent":
+    case "email_delivery_failed":
+    case "email_delivery_not_configured":
+    case "email_sign_in_failed":
+    case "email_sign_in_start_failed":
+    case "invalid_email":
+    case "invalid_sign_in_code":
+    case "rate_limited":
+    case "sign_in_code_expired":
+    case "too_many_code_attempts":
+    case "unauthorized":
+      return value;
+    default:
+      return "unknown";
+  }
 }
 
 export function createBotInitialMessage(draft: Pick<FirstBotDraft, "purpose">): string {
@@ -263,6 +271,7 @@ export function createAppController(props: AppProps = {}) {
   );
   const [setupState, setSetupState] = createSignal<AppSetupState | null>(null);
   const [setupLoaded, setSetupLoaded] = createSignal(false);
+  const [analyticsPreferenceLoaded, setAnalyticsPreferenceLoaded] = createSignal<boolean | null>(null);
   const [centralAuth, setCentralAuth] = createSignal<CentralAuthState>({
     status: "loading",
   });
@@ -314,8 +323,8 @@ export function createAppController(props: AppProps = {}) {
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const conversationPageRequests = new Map<string, number>();
   const queueSnapshotRequests = new Map<string, number>();
-  const turnStartedAt = new Map<string, number>();
   const completedTurnByBot = new Map<string, string>();
+  const pendingProviderConnections = new Map<AgentProviderId, ReturnType<typeof desktopAnalytics.scope>>();
   let conversationFrame: number | undefined;
   let directConversationRequest = 0;
   let serverSettingsRequest = 0;
@@ -327,7 +336,7 @@ export function createAppController(props: AppProps = {}) {
   let remoteDesktopConnectionRequest = 0;
   let authSuccessTimer: ReturnType<typeof setTimeout> | undefined;
   let analyticsOpened = false;
-  let analyticsUserId: string | null = null;
+  let analyticsVersionRecorded = false;
   let appInfoLoadedFromHost = false;
 
   function analyticsAgentProperties(botId: string) {
@@ -343,16 +352,29 @@ export function createAppController(props: AppProps = {}) {
   }
 
   createEffect(
-    () => ({ info: appInfo(), setup: setupState(), auth: centralAuth() }),
-    ({ info, setup, auth }) => {
+    () => ({
+      info: appInfo(),
+      setup: setupState(),
+      auth: centralAuth(),
+      analyticsEnabled: analyticsPreferenceLoaded(),
+    }),
+    ({ info, setup, auth, analyticsEnabled }) => {
+      if (analyticsEnabled === null) return;
+      desktopAnalytics.setTrackingEnabled(analyticsEnabled);
+      desktopAnalytics.setUser(auth.status === "signed_in" ? auth.user : null);
       if (!appInfoLoadedFromHost || !info || !setup || auth.status === "loading") return;
       if (!desktopAnalytics.configure(info)) return;
-      if (auth.status === "signed_in" && analyticsUserId !== auth.user.id) {
-        desktopAnalytics.identify(auth.user);
-        analyticsUserId = auth.user.id;
-      } else if (auth.status === "signed_out" && analyticsUserId) {
-        desktopAnalytics.clear();
-        analyticsUserId = null;
+      if (!analyticsVersionRecorded) {
+        analyticsVersionRecorded = true;
+        try {
+          const previousVersion = window.localStorage.getItem(ANALYTICS_APP_VERSION_STORAGE_KEY);
+          if (previousVersion && previousVersion !== info.version) {
+            desktopAnalytics.track("app_updated", { from_version: previousVersion, to_version: info.version });
+          }
+          window.localStorage.setItem(ANALYTICS_APP_VERSION_STORAGE_KEY, info.version);
+        } catch {
+          // Version attribution is optional and must not block startup.
+        }
       }
       if (analyticsOpened) return;
       analyticsOpened = true;
@@ -364,6 +386,7 @@ export function createAppController(props: AppProps = {}) {
   );
 
   function applyCentralAuthState(state: CentralAuthState): void {
+    desktopAnalytics.setUser(state.status === "signed_in" ? state.user : null);
     const completedCodeChallenge = centralAuth().status === "code_sent" && state.status === "signed_in";
     if (state.status !== "signed_in") {
       if (authSuccessTimer !== undefined) clearTimeout(authSuccessTimer);
@@ -378,6 +401,26 @@ export function createAppController(props: AppProps = {}) {
       }, AUTH_SUCCESS_HOLD_MS);
     }
     setCentralAuth(state);
+  }
+
+  function updateGeneralSettings(value: GeneralSettingsValue): void {
+    const previous = generalSettings();
+    setGeneralSettings(value);
+    if (previous.productAnalytics === value.productAnalytics) return;
+    desktopAnalytics.setTrackingEnabled(value.productAnalytics);
+    setAnalyticsPreferenceLoaded(value.productAnalytics);
+    void window.openbot
+      .setAnalyticsPreference({ enabled: value.productAnalytics })
+      .then((preference) => {
+        desktopAnalytics.setTrackingEnabled(preference.enabled);
+        setAnalyticsPreferenceLoaded(preference.enabled);
+        setGeneralSettings((current) => ({ ...current, productAnalytics: preference.enabled }));
+      })
+      .catch(() => {
+        desktopAnalytics.setTrackingEnabled(previous.productAnalytics);
+        setAnalyticsPreferenceLoaded(previous.productAnalytics);
+        setGeneralSettings(previous);
+      });
   }
 
   const leftPanelCompact = createMemo(() => leftPanelCollapsed() || leftPanelAutoCompact());
@@ -521,8 +564,8 @@ export function createAppController(props: AppProps = {}) {
       if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
       for (const timer of recentReplyTimers.values()) clearTimeout(timer);
       recentReplyTimers.clear();
-      turnStartedAt.clear();
       completedTurnByBot.clear();
+      pendingProviderConnections.clear();
       if (authSuccessTimer !== undefined) clearTimeout(authSuccessTimer);
     };
     void window.openbot.update
@@ -545,6 +588,16 @@ export function createAppController(props: AppProps = {}) {
       .getSetupState()
       .then(setSetupState)
       .finally(() => setSetupLoaded(true));
+    void window.openbot
+      .getAnalyticsPreference()
+      .then((preference) => {
+        setAnalyticsPreferenceLoaded(preference.enabled);
+        setGeneralSettings((current) => ({ ...current, productAnalytics: preference.enabled }));
+      })
+      .catch(() => {
+        setAnalyticsPreferenceLoaded(false);
+        setGeneralSettings((current) => ({ ...current, productAnalytics: false }));
+      });
     void window.openbot.servers
       .takePendingInvite()
       .then((inviteUrl) => inviteUrl && receiveInvite(inviteUrl))
@@ -670,7 +723,7 @@ export function createAppController(props: AppProps = {}) {
   function handleAgentEvent(event: AgentEvent) {
     switch (event.type) {
       case "status":
-        setAgentStatus(event.status);
+        applyAgentStatus(event.status);
         if (event.status.phase === "ready") {
           void window.openbot.agent
             .listModels()
@@ -710,12 +763,7 @@ export function createAppController(props: AppProps = {}) {
         setBrowserControlState(event.state);
         return;
       case "turn-started":
-        turnStartedAt.set(event.turnId, performance.now());
         completedTurnByBot.delete(event.botId);
-        {
-          const properties = analyticsAgentProperties(event.botId);
-          if (properties) desktopAnalytics.track("turn_started", properties);
-        }
         clearRecentReply(event.botId);
         setActiveTurns((current) => ({
           ...current,
@@ -724,20 +772,6 @@ export function createAppController(props: AppProps = {}) {
         return;
       case "turn-completed":
         completedTurnByBot.set(event.botId, event.turnId);
-        {
-          const properties = analyticsAgentProperties(event.botId);
-          const startedAt = turnStartedAt.get(event.turnId);
-          turnStartedAt.delete(event.turnId);
-          if (properties) {
-            desktopAnalytics.track("turn_completed", {
-              ...properties,
-              status: normalizedTurnStatus(event.status),
-              ...(startedAt === undefined
-                ? {}
-                : { duration_ms: Math.max(0, Math.round(performance.now() - startedAt)) }),
-            });
-          }
-        }
         setActiveTurns((current) => ({ ...current, [event.botId]: null }));
         setQueues((current) => {
           const snapshot = current[event.botId];
@@ -760,30 +794,41 @@ export function createAppController(props: AppProps = {}) {
         }
         return;
       case "prompt":
-        desktopAnalytics.track("agent_input_requested", {
-          kind: "prompt",
-          prompt_count: event.questions.length,
-          has_secret_prompt: event.questions.some((question) => question.isSecret),
-        });
         setPendingPrompts((current) => ({ ...current, [event.botId]: event }));
         return;
       case "approval":
-        desktopAnalytics.track("agent_input_requested", {
-          kind: "approval",
-          approval_kind: event.approval.kind,
-        });
         setPendingApprovals((current) => ({
           ...current,
           [event.approval.botId]: event.approval,
         }));
         return;
       case "error":
-        desktopAnalytics.track("operation_failed", {
-          area: "agent",
-          failure_code: coarseFailureCode(event.code),
-        });
         if (event.botId) appendUiError(event.botId, event.message, "Error");
     }
+  }
+
+  function applyAgentStatus(status: AgentStatus): void {
+    for (const provider of status.providers ?? []) {
+      const analytics = pendingProviderConnections.get(provider.id);
+      if (!analytics) continue;
+      if (provider.state === "available") {
+        pendingProviderConnections.delete(provider.id);
+        analytics.track("provider_action", {
+          provider: provider.id,
+          action: "connect_completed",
+          result: "succeeded",
+        });
+      } else if (provider.state === "error") {
+        pendingProviderConnections.delete(provider.id);
+        analytics.track("provider_action", {
+          provider: provider.id,
+          action: "connect_completed",
+          result: "failed",
+          failure_code: "connect_failed",
+        });
+      }
+    }
+    setAgentStatus(status);
   }
 
   function applyStoredBots(storedBots: BotSummary[]) {
@@ -1022,6 +1067,7 @@ export function createAppController(props: AppProps = {}) {
 
   async function createAgent(draft: FirstBotDraft = botSetupDraft()) {
     if (creatingAgent()) return;
+    const analytics = desktopAnalytics.scope();
     const submitted = { ...draft };
     setCreatingAgent(true);
     setBotSetupError(null);
@@ -1041,8 +1087,9 @@ export function createAppController(props: AppProps = {}) {
       setActiveDirectMemberId(null);
       setActiveBotId(newAgent.id);
       const properties = analyticsAgentProperties(newAgent.id);
-      if (properties) desktopAnalytics.track("agent_created", properties);
+      analytics.track("agent_action", { action: "create", result: "succeeded", ...(properties ?? {}) });
     } catch (error) {
+      analytics.track("agent_action", { action: "create", result: "failed", failure_code: "create_failed" });
       setBotSetupError(error instanceof Error ? error.message : "The Bot could not be created.");
     } finally {
       setCreatingAgent(false);
@@ -1088,15 +1135,27 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function searchGlobalMessages(query: string): Promise<Array<{ botId: string; message: BotMessage }>> {
-    const page = await window.openbot.agent.searchConversationMessages({ query, limit: 100 });
-    desktopAnalytics.track("search_used", { scope: "global", result_count: page.total });
-    return page.results.map((result) => ({ botId: result.botId, message: toBotMessage(result.message) }));
+    const analytics = desktopAnalytics.scope();
+    try {
+      const page = await window.openbot.agent.searchConversationMessages({ query, limit: 100 });
+      analytics.track("search_action", { scope: "global", result: "succeeded", result_count: page.total });
+      return page.results.map((result) => ({ botId: result.botId, message: toBotMessage(result.message) }));
+    } catch (error) {
+      analytics.track("search_action", { scope: "global", result: "failed", failure_code: "search_failed" });
+      throw error;
+    }
   }
 
   async function searchAgentMessages(botId: string, query: string): Promise<{ messageIds: string[]; total: number }> {
-    const page = await window.openbot.agent.searchConversationMessages({ query, botId, limit: 100 });
-    desktopAnalytics.track("search_used", { scope: "agent", result_count: page.total });
-    return { messageIds: page.results.map((result) => result.message.id), total: page.total };
+    const analytics = desktopAnalytics.scope();
+    try {
+      const page = await window.openbot.agent.searchConversationMessages({ query, botId, limit: 100 });
+      analytics.track("search_action", { scope: "agent", result: "succeeded", result_count: page.total });
+      return { messageIds: page.results.map((result) => result.message.id), total: page.total };
+    } catch (error) {
+      analytics.track("search_action", { scope: "agent", result: "failed", failure_code: "search_failed" });
+      throw error;
+    }
   }
 
   function selectGlobalSearchMessage(botId: string, messageId: string): void {
@@ -1285,12 +1344,35 @@ export function createAppController(props: AppProps = {}) {
   ): Promise<{ message: DirectMessage; readError?: string }> {
     const memberId = activeDirectMemberId();
     if (!memberId) throw new Error("Select a person first.");
-    const message = await window.openbot.servers.sendDirectMessage({
-      memberId,
-      text,
-      clientMessageId,
-    });
+    const analytics = desktopAnalytics.scope();
+    const serverKind = servers().find((server) => server.active)?.kind ?? "unknown";
+    let message: DirectMessage;
+    try {
+      message = await window.openbot.servers.sendDirectMessage({
+        memberId,
+        text,
+        clientMessageId,
+      });
+    } catch (error) {
+      analytics.track("message_send", {
+        channel: "direct",
+        attachment_count: 0,
+        is_reply: false,
+        result: "failed",
+        failure_code: "send_failed",
+        server_kind: serverKind,
+      });
+      throw error;
+    }
     mergeDirectMessage(memberId, message);
+    analytics.track("message_send", {
+      channel: "direct",
+      attachment_count: 0,
+      is_reply: false,
+      result: "succeeded",
+      delivery_count: 1,
+      server_kind: serverKind,
+    });
     let readError: string | undefined;
     try {
       await markDirectMessagesRead(memberId, message.sequence);
@@ -1298,13 +1380,6 @@ export function createAppController(props: AppProps = {}) {
       readError = error instanceof Error ? error.message : "Could not mark messages as read.";
     }
     await refreshDirectThreads();
-    desktopAnalytics.track("message_sent", {
-      channel: "direct",
-      attachment_count: 0,
-      is_reply: false,
-      delivery_count: 1,
-      server_kind: servers().find((server) => server.active)?.kind ?? "unknown",
-    });
     return { message, ...(readError ? { readError } : {}) };
   }
 
@@ -1424,23 +1499,38 @@ export function createAppController(props: AppProps = {}) {
   }
 
   function activateBrowserTab(tabId: string) {
+    const analytics = desktopAnalytics.scope();
     void window.openbot.browser
       .activate(tabId)
-      .then(() => desktopAnalytics.track("browser_action", { action: "activate", result: "succeeded" }))
-      .catch(() => desktopAnalytics.track("browser_action", { action: "activate", result: "failed" }));
+      .then(() => analytics.track("browser_action", { action: "activate", result: "succeeded" }))
+      .catch(() =>
+        analytics.track("browser_action", {
+          action: "activate",
+          result: "failed",
+          failure_code: "browser_activate_failed",
+        }),
+      );
   }
 
   async function closeBrowserTab(tabId: string) {
+    const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.browser.close(tabId);
-      desktopAnalytics.track("browser_action", { action: "close", result: "succeeded" });
+      analytics.track("browser_action", { action: "close", result: "succeeded" });
     } catch (error) {
-      desktopAnalytics.track("browser_action", { action: "close", result: "failed" });
+      analytics.track("browser_action", {
+        action: "close",
+        result: "failed",
+        failure_code: "browser_close_failed",
+      });
       throw error;
     }
   }
 
   async function updateBot(botId: string, updates: Omit<UpdateBotInput, "botId">) {
+    const analytics = desktopAnalytics.scope();
+    const properties = analyticsAgentProperties(botId);
+    const changedFields = Object.keys(updates);
     try {
       const stored = await window.openbot.agent.updateBot({
         botId,
@@ -1454,14 +1544,28 @@ export function createAppController(props: AppProps = {}) {
         if (existing) updateStored(existing, next);
         return current;
       });
-      desktopAnalytics.track("agent_updated", { changed_fields: Object.keys(updates) });
+      analytics.track("agent_action", {
+        action: "update",
+        changed_fields: changedFields,
+        result: "succeeded",
+        ...(properties ?? {}),
+      });
     } catch (error) {
+      analytics.track("agent_action", {
+        action: "update",
+        changed_fields: changedFields,
+        result: "failed",
+        failure_code: "update_failed",
+        ...(properties ?? {}),
+      });
       appendUiError(botId, error, "Settings failed");
       throw error;
     }
   }
 
   async function setAgentAvatar(botId: string, image: AvatarImageInput | null): Promise<void> {
+    const analytics = desktopAnalytics.scope();
+    const properties = analyticsAgentProperties(botId);
     try {
       const stored = await window.openbot.agent.setAvatar({ botId, image });
       const next = toBotProfile(stored);
@@ -1471,8 +1575,20 @@ export function createAppController(props: AppProps = {}) {
         updateStored(existing, next);
         return current;
       });
-      desktopAnalytics.track("agent_updated", { changed_fields: ["avatar"] });
+      analytics.track("agent_action", {
+        action: "update",
+        changed_fields: ["avatar"],
+        result: "succeeded",
+        ...(properties ?? {}),
+      });
     } catch (error) {
+      analytics.track("agent_action", {
+        action: "update",
+        changed_fields: ["avatar"],
+        result: "failed",
+        failure_code: "avatar_update_failed",
+        ...(properties ?? {}),
+      });
       appendUiError(botId, error, "Avatar update failed");
       throw error;
     }
@@ -1486,6 +1602,9 @@ export function createAppController(props: AppProps = {}) {
 
   async function deleteBot(botId: string) {
     if (botSetupOpen() && creatingAgent()) return;
+    const analytics = desktopAnalytics.scope();
+    const properties = analyticsAgentProperties(botId);
+    const marketplaceAgent = Boolean(botList().find((bot) => bot.id === botId)?.marketplaceSource);
     try {
       await window.openbot.agent.deleteBot(botId);
       const remaining = botList().filter((bot) => bot.id !== botId);
@@ -1506,8 +1625,25 @@ export function createAppController(props: AppProps = {}) {
       const replyTimer = recentReplyTimers.get(botId);
       if (replyTimer) clearTimeout(replyTimer);
       recentReplyTimers.delete(botId);
-      desktopAnalytics.track("agent_deleted", {});
+      analytics.track("agent_action", { action: "delete", result: "succeeded", ...(properties ?? {}) });
+      if (marketplaceAgent) {
+        analytics.track("marketplace_action", { entity: "agent", action: "uninstall", result: "succeeded" });
+      }
     } catch (error) {
+      analytics.track("agent_action", {
+        action: "delete",
+        result: "failed",
+        failure_code: "delete_failed",
+        ...(properties ?? {}),
+      });
+      if (marketplaceAgent) {
+        analytics.track("marketplace_action", {
+          entity: "agent",
+          action: "uninstall",
+          result: "failed",
+          failure_code: "uninstall_failed",
+        });
+      }
       appendUiError(botId, error, "Delete failed");
       throw error;
     }
@@ -1529,6 +1665,8 @@ export function createAppController(props: AppProps = {}) {
     attachmentDraftIds: string[],
     replyToMessageId: string | null = null,
   ): Promise<boolean> {
+    const analytics = desktopAnalytics.scope();
+    const properties = analyticsAgentProperties(botId);
     try {
       const receipt = await window.openbot.agent.sendMessage({
         botId,
@@ -1537,21 +1675,29 @@ export function createAppController(props: AppProps = {}) {
         ...(replyToMessageId ? { replyToMessageId } : {}),
       });
       setUiErrors((current) => ({ ...current, [botId]: [] }));
+      analytics.track("message_send", {
+        ...(properties ?? {}),
+        channel: "agent",
+        attachment_count: attachmentDraftIds.length,
+        is_reply: replyToMessageId !== null,
+        result: "succeeded",
+        delivery_count: receipt.deliveries.length,
+      });
       try {
         await markAgentMessagesRead(botId, receipt.deliveries[0]?.id ?? receipt.messageId);
       } catch (error) {
         appendUiError(botId, error, "Read state failed");
       }
-      const properties = analyticsAgentProperties(botId);
-      desktopAnalytics.track("message_sent", {
+      return true;
+    } catch (error) {
+      analytics.track("message_send", {
         ...(properties ?? {}),
         channel: "agent",
         attachment_count: attachmentDraftIds.length,
         is_reply: replyToMessageId !== null,
-        delivery_count: receipt.deliveries.length,
+        result: "failed",
+        failure_code: "send_failed",
       });
-      return true;
-    } catch (error) {
       appendUiError(botId, error, "Send failed");
       return false;
     }
@@ -1577,15 +1723,26 @@ export function createAppController(props: AppProps = {}) {
     const bot = activeBot();
     const prompt = bot ? pendingPrompts()[bot.id] : undefined;
     if (!bot || !prompt) return false;
+    const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.agent.respondToPrompt({
         requestId: prompt.requestId,
         answers,
       });
       setPendingPrompts((current) => ({ ...current, [bot.id]: undefined }));
-      desktopAnalytics.track("agent_input_resolved", { kind: "prompt", decision: "answered" });
+      analytics.track("agent_input_action", {
+        kind: "prompt",
+        decision: "answered",
+        result: "succeeded",
+      });
       return true;
     } catch (error) {
+      analytics.track("agent_input_action", {
+        kind: "prompt",
+        decision: "answered",
+        result: "failed",
+        failure_code: "response_failed",
+      });
       appendUiError(bot.id, error, "Answer failed");
       return false;
     }
@@ -1595,15 +1752,22 @@ export function createAppController(props: AppProps = {}) {
     const bot = activeBot();
     const approval = bot ? pendingApprovals()[bot.id] : undefined;
     if (!bot || !approval) return false;
+    const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.agent.respondToApproval({
         requestId: approval.requestId,
         decision,
       });
       setPendingApprovals((current) => ({ ...current, [bot.id]: undefined }));
-      desktopAnalytics.track("agent_input_resolved", { kind: "approval", decision });
+      analytics.track("agent_input_action", { kind: "approval", decision, result: "succeeded" });
       return true;
     } catch (error) {
+      analytics.track("agent_input_action", {
+        kind: "approval",
+        decision,
+        result: "failed",
+        failure_code: "response_failed",
+      });
       appendUiError(bot.id, error, "Approval failed");
       return false;
     }
@@ -1612,11 +1776,12 @@ export function createAppController(props: AppProps = {}) {
   function cancelQueuedMessage(deliveryId: string) {
     const bot = activeBot();
     if (!bot) return;
+    const analytics = desktopAnalytics.scope();
     void window.openbot.agent
       .cancelQueuedMessage({ botId: bot.id, deliveryId })
-      .then(() => desktopAnalytics.track("queue_action", { action: "cancel", result: "succeeded" }))
+      .then(() => analytics.track("queue_action", { action: "cancel", result: "succeeded" }))
       .catch((error) => {
-        desktopAnalytics.track("queue_action", { action: "cancel", result: "failed" });
+        analytics.track("queue_action", { action: "cancel", result: "failed", failure_code: "cancel_failed" });
         appendUiError(bot.id, error, "Cancel failed");
       });
   }
@@ -1625,11 +1790,12 @@ export function createAppController(props: AppProps = {}) {
     const bot = activeBot();
     const turnId = bot ? activeTurns()[bot.id] : null;
     if (!bot || !turnId) return;
+    const analytics = desktopAnalytics.scope();
     void window.openbot.agent
       .steerQueuedMessage({ botId: bot.id, deliveryId, expectedTurnId: turnId })
-      .then(() => desktopAnalytics.track("queue_action", { action: "steer", result: "succeeded" }))
+      .then(() => analytics.track("queue_action", { action: "steer", result: "succeeded" }))
       .catch((error) => {
-        desktopAnalytics.track("queue_action", { action: "steer", result: "failed" });
+        analytics.track("queue_action", { action: "steer", result: "failed", failure_code: "steer_failed" });
         appendUiError(bot.id, error, "Steer failed");
       });
   }
@@ -1642,6 +1808,7 @@ export function createAppController(props: AppProps = {}) {
   ): Promise<boolean> {
     const bot = activeBot();
     if (!bot) return false;
+    const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.agent.updateQueuedMessage({
         botId: bot.id,
@@ -1650,10 +1817,10 @@ export function createAppController(props: AppProps = {}) {
         keepAttachmentIds,
         attachmentDraftIds,
       });
-      desktopAnalytics.track("queue_action", { action: "edit", result: "succeeded" });
+      analytics.track("queue_action", { action: "edit", result: "succeeded" });
       return true;
     } catch (error) {
-      desktopAnalytics.track("queue_action", { action: "edit", result: "failed" });
+      analytics.track("queue_action", { action: "edit", result: "failed", failure_code: "edit_failed" });
       appendUiError(bot.id, error, "Edit failed");
       return false;
     }
@@ -1662,11 +1829,12 @@ export function createAppController(props: AppProps = {}) {
   function reorderQueue(deliveryIds: string[]) {
     const bot = activeBot();
     if (!bot) return;
+    const analytics = desktopAnalytics.scope();
     void window.openbot.agent
       .reorderQueue({ botId: bot.id, deliveryIds })
-      .then(() => desktopAnalytics.track("queue_action", { action: "reorder", result: "succeeded" }))
+      .then(() => analytics.track("queue_action", { action: "reorder", result: "succeeded" }))
       .catch((error) => {
-        desktopAnalytics.track("queue_action", { action: "reorder", result: "failed" });
+        analytics.track("queue_action", { action: "reorder", result: "failed", failure_code: "reorder_failed" });
         appendUiError(bot.id, error, "Reorder failed");
       });
   }
@@ -1675,11 +1843,16 @@ export function createAppController(props: AppProps = {}) {
     const bot = activeBot();
     const turnId = bot ? activeTurns()[bot.id] : null;
     if (!bot || !turnId) return;
+    const analytics = desktopAnalytics.scope();
     void window.openbot.agent
       .interrupt({ botId: bot.id, turnId })
-      .then(() => desktopAnalytics.track("queue_action", { action: "interrupt", result: "succeeded" }))
+      .then(() => analytics.track("queue_action", { action: "interrupt", result: "succeeded" }))
       .catch((error) => {
-        desktopAnalytics.track("queue_action", { action: "interrupt", result: "failed" });
+        analytics.track("queue_action", {
+          action: "interrupt",
+          result: "failed",
+          failure_code: "interrupt_failed",
+        });
         appendUiError(bot.id, error, "Stop failed");
       });
   }
@@ -1745,13 +1918,14 @@ export function createAppController(props: AppProps = {}) {
 
   async function saveSetup(preferredProvider: AgentProviderId): Promise<void> {
     const wasCompleted = setupState()?.completed === true;
+    const analytics = desktopAnalytics.scope();
     const state = await window.openbot.saveSetup({ preferredProvider });
     flush(() => {
       setSetupState(state);
       setPermissionsOpen(false);
     });
     if (!wasCompleted && state.completed) {
-      desktopAnalytics.track("onboarding_completed", { preferred_provider: preferredProvider });
+      analytics.track("onboarding_completed", { preferred_provider: preferredProvider });
     }
   }
 
@@ -1768,43 +1942,75 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function connectChatGPT(): Promise<void> {
-    return connectProvider(window.openbot.connectChatGPT);
+    return connectProvider("codex", window.openbot.connectChatGPT);
   }
 
   async function connectClaude(): Promise<void> {
-    return connectProvider(window.openbot.connectClaude);
+    return connectProvider("claude", window.openbot.connectClaude);
   }
 
   async function connectGrok(): Promise<void> {
-    return connectProvider(window.openbot.connectGrok);
+    return connectProvider("grok", window.openbot.connectGrok);
   }
 
-  async function connectProvider(connect: () => Promise<AgentStatus>): Promise<void> {
+  async function connectProvider(provider: AgentProviderId, connect: () => Promise<AgentStatus>): Promise<void> {
     if (refreshingProviders()) return;
-    const status = await connect();
-    flush(() => setAgentStatus(status));
+    const analytics = desktopAnalytics.scope();
+    pendingProviderConnections.set(provider, analytics);
+    analytics.track("provider_action", { provider, action: "connect_started", result: "succeeded" });
+    try {
+      const status = await connect();
+      flush(() => applyAgentStatus(status));
+    } catch (error) {
+      pendingProviderConnections.delete(provider);
+      analytics.track("provider_action", {
+        provider,
+        action: "connect_completed",
+        result: "failed",
+        failure_code: "connect_failed",
+      });
+      throw error;
+    }
   }
 
   async function refreshAgentProviders(): Promise<void> {
     if (refreshingProviders() || agentStatus().phase === "starting" || agentStatus().phase === "restarting") {
       return;
     }
+    const analytics = desktopAnalytics.scope();
     setRefreshingProviders(true);
     try {
       const status = await window.openbot.refreshAgentProviders();
-      flush(() => setAgentStatus(status));
+      flush(() => applyAgentStatus(status));
+      analytics.track("provider_action", { action: "refresh", result: "succeeded" });
+    } catch (error) {
+      analytics.track("provider_action", {
+        action: "refresh",
+        result: "failed",
+        failure_code: "refresh_failed",
+      });
+      throw error;
     } finally {
       flush(() => setRefreshingProviders(false));
     }
   }
 
   async function requestEmailCode(email: string): Promise<void> {
-    const state = await window.openbot.auth.requestEmailCode(email);
-    desktopAnalytics.track("account_sign_in_started", {
-      result: state.status === "code_sent" ? "code_sent" : "failed",
-      ...(state.status === "error" ? { failure_code: coarseFailureCode(state.issue.code) } : {}),
-    });
-    applyCentralAuthState(state);
+    const analytics = desktopAnalytics.anonymousScope();
+    try {
+      const state = await window.openbot.auth.requestEmailCode(email);
+      analytics.track("account_sign_in_started", {
+        result: state.status === "code_sent" ? "code_sent" : "failed",
+        ...(state.status === "error" ? { failure_code: authFailureCode(state.issue.code) } : {}),
+      });
+      applyCentralAuthState(state);
+    } catch (error) {
+      analytics.track("account_sign_in_started", {
+        result: "failed",
+        failure_code: "request_failed",
+      });
+      throw error;
+    }
   }
 
   async function retryCentralAccount(): Promise<void> {
@@ -1813,20 +2019,36 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function verifyEmailCode(challengeId: string, code: string): Promise<void> {
-    const state = await window.openbot.auth.verifyEmailCode(challengeId, code);
-    desktopAnalytics.track("account_sign_in_completed", {
-      result: state.status === "signed_in" ? "succeeded" : "failed",
-      ...("issue" in state ? { failure_code: coarseFailureCode(state.issue?.code) } : {}),
-    });
-    applyCentralAuthState(state);
+    const anonymousAnalytics = desktopAnalytics.anonymousScope();
+    try {
+      const state = await window.openbot.auth.verifyEmailCode(challengeId, code);
+      applyCentralAuthState(state);
+      desktopAnalytics.track("account_sign_in_completed", {
+        result: state.status === "signed_in" ? "succeeded" : "failed",
+        ...("issue" in state ? { failure_code: authFailureCode(state.issue?.code) } : {}),
+      });
+    } catch (error) {
+      anonymousAnalytics.track("account_sign_in_completed", {
+        result: "failed",
+        failure_code: "verification_failed",
+      });
+      throw error;
+    }
   }
 
   async function logoutCentralAccount(): Promise<void> {
-    const state = await window.openbot.auth.logout();
-    desktopAnalytics.track("account_signed_out", {});
-    desktopAnalytics.clear();
-    analyticsUserId = null;
-    applyCentralAuthState(state);
+    const analytics = desktopAnalytics.scope();
+    try {
+      const state = await window.openbot.auth.logout();
+      analytics.track("account_sign_out", { result: "succeeded" });
+      applyCentralAuthState(state);
+    } catch (error) {
+      analytics.track("account_sign_out", {
+        result: "failed",
+        failure_code: "sign_out_failed",
+      });
+      throw error;
+    }
   }
 
   async function updateAccountAvatar(image: AvatarImageInput | null): Promise<void> {
@@ -1834,10 +2056,20 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function runUpdateAction(): Promise<void> {
+    const analytics = desktopAnalytics.scope();
     const phase = updateStatus().phase;
     if (phase === "ready") {
-      desktopAnalytics.track("update_action", { action: "install", result: "succeeded", phase: "installing" });
-      await window.openbot.update.install();
+      try {
+        await window.openbot.update.install();
+        analytics.track("update_action", { action: "install", result: "succeeded", phase: "installing" });
+      } catch (error) {
+        analytics.track("update_action", {
+          action: "install",
+          result: "failed",
+          failure_code: "install_failed",
+        });
+        throw error;
+      }
       return;
     }
     const action = phase === "available" ? ("download" as const) : ("check" as const);
@@ -1845,9 +2077,22 @@ export function createAppController(props: AppProps = {}) {
       const status =
         action === "download" ? await window.openbot.update.download() : await window.openbot.update.check();
       setUpdateStatus(status);
-      desktopAnalytics.track("update_action", { action, result: "succeeded", phase: status.phase });
+      const succeeded =
+        action === "download"
+          ? status.phase === "downloading" || status.phase === "ready"
+          : status.phase !== "error" && status.phase !== "unsupported";
+      analytics.track("update_action", {
+        action,
+        result: succeeded ? "succeeded" : "failed",
+        phase: status.phase,
+        ...(succeeded ? {} : { failure_code: action === "download" ? "download_failed" : "check_failed" }),
+      });
     } catch (error) {
-      desktopAnalytics.track("update_action", { action, result: "failed" });
+      analytics.track("update_action", {
+        action,
+        result: "failed",
+        failure_code: action === "download" ? "download_failed" : "check_failed",
+      });
       throw error;
     }
   }
@@ -1857,14 +2102,34 @@ export function createAppController(props: AppProps = {}) {
     setAppSettingsOpen(true);
   }
 
-  async function selectServer(serverId: string): Promise<void> {
+  async function selectServer(serverId: string, trackSelection = true): Promise<void> {
     if (botSetupOpen() && creatingAgent()) return;
+    const analytics = desktopAnalytics.scope();
     const previousServerId = servers().find((server) => server.active)?.id;
     if (previousServerId && previousServerId !== serverId) {
       await disconnectRemoteDesktopWorkspace(false);
     }
     directConversationRequest += 1;
-    const nextServers = await window.openbot.servers.select(serverId);
+    let nextServers: ServerSummary[];
+    try {
+      nextServers = await window.openbot.servers.select(serverId);
+      if (trackSelection) {
+        analytics.track("team_action", {
+          action: "server_selected",
+          result: "succeeded",
+          server_kind: nextServers.find((server) => server.active)?.kind ?? "unknown",
+        });
+      }
+    } catch (error) {
+      if (trackSelection) {
+        analytics.track("team_action", {
+          action: "server_selected",
+          result: "failed",
+          failure_code: "server_select_failed",
+        });
+      }
+      throw error;
+    }
     setServers(nextServers);
     setBotSetupOpen(false);
     setBotSetupError(null);
@@ -1905,15 +2170,10 @@ export function createAppController(props: AppProps = {}) {
     setSidebarLayout(layout);
     applyStoredBots(storedBots);
     applyConversationReads(reads);
-    desktopAnalytics.track("team_action", {
-      action: "server_selected",
-      result: "succeeded",
-      server_kind: nextServers.find((server) => server.active)?.kind ?? "unknown",
-    });
   }
 
   async function openInstalledMarketplaceAgent(bot: BotSummary): Promise<void> {
-    await selectServer("local");
+    await selectServer("local", false);
     selectBot(bot.id);
     setSkillsMarketplaceOpen(false);
   }
@@ -1943,15 +2203,23 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function joinServer(input: { inviteUrl: string }): Promise<void> {
+    const analytics = desktopAnalytics.scope();
+    const entryPoint = pendingInviteUrl() ? "invite_deep_link" : "in_app";
     try {
       await window.openbot.servers.join(input);
       setPendingInviteUrl("");
       await selectServer(
         window.openbot ? ((await window.openbot.servers.list()).find((item) => item.active)?.id ?? "local") : "local",
+        false,
       );
-      desktopAnalytics.track("team_action", { action: "server_joined", result: "succeeded" });
+      analytics.track("team_action", { action: "server_joined", result: "succeeded", entry_point: entryPoint });
     } catch (error) {
-      desktopAnalytics.track("team_action", { action: "server_joined", result: "failed" });
+      analytics.track("team_action", {
+        action: "server_joined",
+        result: "failed",
+        entry_point: entryPoint,
+        failure_code: "join_failed",
+      });
       throw error;
     }
   }
@@ -2033,110 +2301,181 @@ export function createAppController(props: AppProps = {}) {
   async function saveServerIdentity(input: { serverName: string; logo?: AvatarImageInput | null }): Promise<void> {
     const server = serverSettingsTarget();
     if (server?.kind !== "local") throw new Error("Only the local server identity can change here.");
-    const status = hostStatus().configured
-      ? await window.openbot.host.updateIdentity(input)
-      : await window.openbot.host.configure(input);
-    setHostStatus(status);
-    setServers(await window.openbot.servers.list());
-    await refreshServerSettings(server.id);
-    desktopAnalytics.track("team_action", {
-      action: "identity_saved",
-      result: "succeeded",
-      server_kind: "local",
-    });
+    const analytics = desktopAnalytics.scope();
+    let operationSucceeded = false;
+    try {
+      const status = hostStatus().configured
+        ? await window.openbot.host.updateIdentity(input)
+        : await window.openbot.host.configure(input);
+      analytics.track("team_action", {
+        action: "identity_saved",
+        result: "succeeded",
+        server_kind: "local",
+      });
+      operationSucceeded = true;
+      setHostStatus(status);
+      setServers(await window.openbot.servers.list());
+      await refreshServerSettings(server.id);
+    } catch (error) {
+      if (!operationSucceeded) {
+        analytics.track("team_action", {
+          action: "identity_saved",
+          result: "failed",
+          server_kind: "local",
+          failure_code: "identity_save_failed",
+        });
+      }
+      throw error;
+    }
   }
 
   async function setServerPublished(published: boolean): Promise<void> {
     const server = serverSettingsTarget();
     if (server?.kind !== "local") throw new Error("Only the local server can change publication.");
-    const status = published ? await window.openbot.host.start() : await window.openbot.host.stop();
-    setHostStatus(status);
-    setServers(await window.openbot.servers.list());
-    await refreshServerSettings(server.id);
-    if (published && status.phase !== "online") {
-      desktopAnalytics.track("team_action", {
-        action: "published",
-        result: "failed",
-        server_kind: "local",
-      });
-      throw new Error(status.message ?? "This server could not be published.");
+    const analytics = desktopAnalytics.scope();
+    const action = published ? ("published" as const) : ("unpublished" as const);
+    let operationSucceeded = false;
+    try {
+      const status = published ? await window.openbot.host.start() : await window.openbot.host.stop();
+      if (published && status.phase !== "online") throw new Error("publish_failed");
+      analytics.track("team_action", { action, result: "succeeded", server_kind: "local" });
+      operationSucceeded = true;
+      setHostStatus(status);
+      setServers(await window.openbot.servers.list());
+      await refreshServerSettings(server.id);
+    } catch (error) {
+      if (!operationSucceeded) {
+        analytics.track("team_action", {
+          action,
+          result: "failed",
+          server_kind: "local",
+          failure_code: published ? "publish_failed" : "unpublish_failed",
+        });
+      }
+      throw error;
     }
-    desktopAnalytics.track("team_action", {
-      action: published ? "published" : "unpublished",
-      result: "succeeded",
-      server_kind: "local",
-    });
   }
 
   async function createServerInvite(input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
     const server = serverSettingsTarget();
     if (!server) throw new Error("This server is not available.");
-    const invite =
-      server.kind === "local"
-        ? await window.openbot.host.createInvite(input)
-        : await window.openbot.servers.createInvite(server.id, input);
-    await refreshServerSettings(server.id);
-    desktopAnalytics.track("team_action", {
-      action: "invite_created",
-      result: "succeeded",
-      server_kind: server.kind,
-      role: input.role,
-      email_bound: Boolean(input.email),
-    });
-    return invite;
+    const analytics = desktopAnalytics.scope();
+    let operationSucceeded = false;
+    try {
+      const invite =
+        server.kind === "local"
+          ? await window.openbot.host.createInvite(input)
+          : await window.openbot.servers.createInvite(server.id, input);
+      analytics.track("team_action", {
+        action: "invite_created",
+        result: "succeeded",
+        server_kind: server.kind,
+        role: input.role,
+        email_bound: Boolean(input.email),
+      });
+      operationSucceeded = true;
+      await refreshServerSettings(server.id);
+      return invite;
+    } catch (error) {
+      if (!operationSucceeded) {
+        analytics.track("team_action", {
+          action: "invite_created",
+          result: "failed",
+          server_kind: server.kind,
+          role: input.role,
+          email_bound: Boolean(input.email),
+          failure_code: "invite_create_failed",
+        });
+      }
+      throw error;
+    }
   }
 
   async function updateServerMember(input: UpdateTeamMemberInput): Promise<void> {
     const server = serverSettingsTarget();
     if (!server) throw new Error("This server is not available.");
-    if (server.kind === "local") await window.openbot.host.updateMember(input);
-    else await window.openbot.servers.updateMember(server.id, input);
-    await refreshServerSettings(server.id);
-    desktopAnalytics.track("team_action", {
-      action: "member_updated",
-      result: "succeeded",
-      server_kind: server.kind,
-    });
+    const analytics = desktopAnalytics.scope();
+    let operationSucceeded = false;
+    try {
+      if (server.kind === "local") await window.openbot.host.updateMember(input);
+      else await window.openbot.servers.updateMember(server.id, input);
+      analytics.track("team_action", { action: "member_updated", result: "succeeded", server_kind: server.kind });
+      operationSucceeded = true;
+      await refreshServerSettings(server.id);
+    } catch (error) {
+      if (!operationSucceeded) {
+        analytics.track("team_action", {
+          action: "member_updated",
+          result: "failed",
+          server_kind: server.kind,
+          failure_code: "member_update_failed",
+        });
+      }
+      throw error;
+    }
   }
 
   async function removeServerMember(memberId: string): Promise<void> {
     const server = serverSettingsTarget();
     if (!server) throw new Error("This server is not available.");
-    if (server.kind === "local") await window.openbot.host.removeMember(memberId);
-    else await window.openbot.servers.removeMember(server.id, memberId);
-    await refreshServerSettings(server.id);
-    desktopAnalytics.track("team_action", {
-      action: "member_removed",
-      result: "succeeded",
-      server_kind: server.kind,
-    });
+    const analytics = desktopAnalytics.scope();
+    let operationSucceeded = false;
+    try {
+      if (server.kind === "local") await window.openbot.host.removeMember(memberId);
+      else await window.openbot.servers.removeMember(server.id, memberId);
+      analytics.track("team_action", { action: "member_removed", result: "succeeded", server_kind: server.kind });
+      operationSucceeded = true;
+      await refreshServerSettings(server.id);
+    } catch (error) {
+      if (!operationSucceeded) {
+        analytics.track("team_action", {
+          action: "member_removed",
+          result: "failed",
+          server_kind: server.kind,
+          failure_code: "member_remove_failed",
+        });
+      }
+      throw error;
+    }
   }
 
   async function revokeServerInvite(inviteId: string): Promise<void> {
     const server = serverSettingsTarget();
     if (!server) throw new Error("This server is not available.");
-    if (server.kind === "local") await window.openbot.host.revokeInvite(inviteId);
-    else await window.openbot.servers.revokeInvite(server.id, inviteId);
-    await refreshServerSettings(server.id);
-    desktopAnalytics.track("team_action", {
-      action: "invite_revoked",
-      result: "succeeded",
-      server_kind: server.kind,
-    });
+    const analytics = desktopAnalytics.scope();
+    let operationSucceeded = false;
+    try {
+      if (server.kind === "local") await window.openbot.host.revokeInvite(inviteId);
+      else await window.openbot.servers.revokeInvite(server.id, inviteId);
+      analytics.track("team_action", { action: "invite_revoked", result: "succeeded", server_kind: server.kind });
+      operationSucceeded = true;
+      await refreshServerSettings(server.id);
+    } catch (error) {
+      if (!operationSucceeded) {
+        analytics.track("team_action", {
+          action: "invite_revoked",
+          result: "failed",
+          server_kind: server.kind,
+          failure_code: "invite_revoke_failed",
+        });
+      }
+      throw error;
+    }
   }
 
   async function connectRemoteDesktop(serverId: string): Promise<RemoteDesktopSession> {
+    const analytics = desktopAnalytics.scope();
     try {
       const session = await window.openbot.remoteDesktop.connect({ serverId });
       setRemoteDesktopSessions((current) => [...current.filter((item) => item.id !== session.id), session]);
-      desktopAnalytics.track("remote_desktop_action", {
+      analytics.track("remote_desktop_action", {
         action: "connect",
         result: "succeeded",
         transport: session.transport,
       });
       return session;
     } catch (error) {
-      desktopAnalytics.track("remote_desktop_action", {
+      analytics.track("remote_desktop_action", {
         action: "connect",
         result: "failed",
         failure_code: "connection_failed",
@@ -2146,17 +2485,23 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function disconnectRemoteDesktop(sessionId: string): Promise<void> {
+    const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.remoteDesktop.disconnect(sessionId);
       setRemoteDesktopSessions((current) => current.filter((session) => session.id !== sessionId));
-      desktopAnalytics.track("remote_desktop_action", { action: "disconnect", result: "succeeded" });
+      analytics.track("remote_desktop_action", { action: "disconnect", result: "succeeded" });
     } catch (error) {
-      desktopAnalytics.track("remote_desktop_action", { action: "disconnect", result: "failed" });
+      analytics.track("remote_desktop_action", {
+        action: "disconnect",
+        result: "failed",
+        failure_code: "disconnect_failed",
+      });
       throw error;
     }
   }
 
   async function selectRemoteDesktopDisplay(serverId: string, displayId: string): Promise<void> {
+    const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.remoteDesktop.selectDisplay({ serverId, displayId });
       setRemoteDesktopSessions((current) =>
@@ -2164,9 +2509,13 @@ export function createAppController(props: AppProps = {}) {
           session.serverId === serverId ? { ...session, selectedDisplayId: displayId } : session,
         ),
       );
-      desktopAnalytics.track("remote_desktop_action", { action: "select_display", result: "succeeded" });
+      analytics.track("remote_desktop_action", { action: "select_display", result: "succeeded" });
     } catch (error) {
-      desktopAnalytics.track("remote_desktop_action", { action: "select_display", result: "failed" });
+      analytics.track("remote_desktop_action", {
+        action: "select_display",
+        result: "failed",
+        failure_code: "display_select_failed",
+      });
       throw error;
     }
   }
@@ -2467,7 +2816,7 @@ export function createAppController(props: AppProps = {}) {
     appSettingsOpen,
     setAppSettingsOpen,
     generalSettings,
-    setGeneralSettings,
+    setGeneralSettings: updateGeneralSettings,
     openAppSettings,
     appSettingsRestoreTarget: () => appSettingsRestoreTarget,
     skillsMarketplaceOpen,

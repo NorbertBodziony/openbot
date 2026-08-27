@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtemp, readFile, rename, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -243,6 +243,31 @@ describe("TeamStore", () => {
     const restored = new TeamStore(path);
     await restored.initialize();
     expect(restored.listMembers()[0]?.avatarUrl).toBe("https://api.openbot.run/v1/avatars/owner-account?v=image-1");
+  });
+
+  it("reads an old team file and backfills the private owner account ID on the next account sync", async () => {
+    const { store, path } = await createStore();
+    const owner = {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    };
+    await store.configureWithAccount("Studio Mac", owner);
+    const legacy = JSON.parse(await readFile(path, "utf8"));
+    delete legacy.members[0].accountId;
+    await writeFile(path, JSON.stringify(legacy));
+
+    const restored = new TeamStore(path);
+    await restored.initialize();
+    expect(restored.getOwnerAnalyticsIdentity()).toBeNull();
+    expect(restored.listMembers()[0]).not.toHaveProperty("accountId");
+
+    await expect(restored.syncAccount(owner)).resolves.toBe(true);
+    expect(restored.getOwnerAnalyticsIdentity()).toEqual({ id: "owner-account", email: "owner@example.com" });
+    expect(restored.listMembers()[0]).not.toHaveProperty("accountId");
+    const persisted = JSON.parse(await readFile(path, "utf8"));
+    expect(persisted.members[0].accountId).toBe("owner-account");
   });
 
   it("allows only the OpenBot email that created the host to own it", async () => {

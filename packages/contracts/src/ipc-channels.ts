@@ -2,6 +2,8 @@ export const IPC_CHANNELS = {
   getAppInfo: "app:get-info",
   getSetupState: "app:get-setup-state",
   saveSetup: "app:save-setup",
+  getAnalyticsPreference: "app:get-analytics-preference",
+  setAnalyticsPreference: "app:set-analytics-preference",
   getMacPermissions: "app:get-mac-permissions",
   requestMacPermission: "app:request-mac-permission",
   openExternal: "app:open-external",

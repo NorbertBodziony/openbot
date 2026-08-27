@@ -46,6 +46,8 @@ describe("SettingsModal", () => {
     await fireEvent.pointerDown(select, { pointerType: "mouse", button: 0 });
     await fireEvent.click(screen.getByRole("option", { name: "OpenBot" }));
     expect(value().externalLinkTarget).toBe("OpenBot");
+    await fireEvent.click(screen.getByRole("switch", { name: "Share product analytics" }));
+    expect(value().productAnalytics).toBe(false);
 
     await fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
@@ -53,6 +55,7 @@ describe("SettingsModal", () => {
 
     expect(await screen.findByRole("switch", { name: "Launch OpenBot at login" })).not.toBeChecked();
     expect(screen.getByRole("button", { name: /^Open external links in/ })).toHaveTextContent("OpenBot");
+    expect(screen.getByRole("switch", { name: "Share product analytics" })).not.toBeChecked();
   });
 
   it("runs the updater and reflects its live status", async () => {

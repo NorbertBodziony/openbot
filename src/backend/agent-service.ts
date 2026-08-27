@@ -2753,6 +2753,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const publicThreadId = this.#publicThreadId(botId, threadId);
         const snapshot = this.#ensureSnapshot(botId, publicThreadId);
         snapshot.activeTurnId = turnId;
+        const origin = this.#mailbox.startingDeliveryForBot(botId)?.delivery.sender.kind ?? "unknown";
         const association = this.#associateStartedTurn(botId, turnId, snapshot);
         this.#turnAssociations.set(turnId, association);
         void association.finally(() => {
@@ -2760,7 +2761,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             this.#turnAssociations.delete(turnId);
           }
         });
-        this.#emit({ type: "turn-started", botId, threadId: publicThreadId, turnId });
+        this.#emit({ type: "turn-started", botId, threadId: publicThreadId, turnId, origin });
         this.#emitConversation(snapshot, "turn.started", { turnId });
         return;
       }
@@ -2909,6 +2910,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       threadId: this.#publicThreadId(botId, threadId),
       turnId,
       status,
+      origin: deliveries[0]?.delivery.sender.kind ?? "unknown",
     });
     if (shouldCompact) await this.#requestContextCompaction(botId, threadId);
     else this.#scheduleDrain(botId);
