@@ -172,6 +172,15 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$runtime_path/Sunshine.app"
           codesign --verify --strict --verbose=2 "$runtime_path/web-server"
           codesign --verify --strict --verbose=2 "$runtime_path/streamer"
+          verify_provider_signature() {
+            local executable="$1"
+            local team_id="$2"
+            codesign --verify --strict --verbose=2 "$executable"
+            codesign -d --verbose=4 "$executable" 2>&1 | grep -Fx "TeamIdentifier=$team_id"
+          }
+          verify_provider_signature build/codex/mac/arm64/bin/codex 2DC432GLL2
+          verify_provider_signature build/claude/mac/arm64/bin/claude Q6L2SF6YDW
+          verify_provider_signature build/grok/mac/arm64/bin/grok 5Y6N3AJ54S
           test -f "$app_path/Contents/embedded.provisionprofile"
           codesign -d --entitlements :- "$app_path" > "$RUNNER_TEMP/openbot-entitlements.plist"
           test -s "$RUNNER_TEMP/openbot-entitlements.plist"
@@ -190,6 +199,8 @@ jobs:
 
       - name: Verify updater metadata
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
           dmgs=(dist/*.dmg)
@@ -203,6 +214,24 @@ jobs:
           grep -F "version: $RELEASE_VERSION" dist/latest-mac.yml
           grep -F '.zip' dist/latest-mac.yml
           bun run verify:update-artifacts macos
+          current_size=$(stat -f%z "${zips[0]}")
+          if (( current_size >= 800000000 )); then
+            echo "The macOS ZIP is ${current_size} bytes. The limit is 800000000 bytes." >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/openbot-0.1.21"
+          gh release download v0.1.21 --repo "$GITHUB_REPOSITORY" --pattern '*.zip' \
+            --dir "$RUNNER_TEMP/openbot-0.1.21"
+          old_zips=("$RUNNER_TEMP/openbot-0.1.21"/*.zip)
+          if (( ${#old_zips[@]} != 1 )); then
+            echo "Expected one macOS ZIP in v0.1.21." >&2
+            exit 1
+          fi
+          old_size=$(stat -f%z "${old_zips[0]}")
+          if (( current_size >= old_size )); then
+            echo "The macOS ZIP is not smaller than v0.1.21 (${current_size} >= ${old_size})." >&2
+            exit 1
+          fi
 
       - name: Generate checksums
         shell: bash
@@ -274,6 +303,12 @@ jobs:
       - name: Install and verify remote desktop runtime
         run: bun scripts/install-remote-desktop-runtime.ts win32 x64 && bun run verify:remote-desktop-runtime --windows
 
+      - name: Install and verify provider control artifacts
+        run: |
+          bun scripts/install-codex-runtime.ts win32 x64
+          bun scripts/install-claude-runtime.ts win32 x64
+          bun scripts/install-grok-runtime.ts win32 x64
+
       - name: Build unsigned NSIS installer
         run: bun run dist:win
 
@@ -299,10 +334,10 @@ jobs:
           )
           $vendorRuntimeExecutables = @(
             "dist/win-unpacked/resources/cloudflared/win/x64/cloudflared.exe",
-            "dist/win-unpacked/resources/codex/win/x64/bin/codex.exe",
-            "dist/win-unpacked/resources/codex/win/x64/bin/codex-code-mode-host.exe",
-            "dist/win-unpacked/resources/claude/win/x64/bin/claude.exe",
-            "dist/win-unpacked/resources/grok/win/x64/bin/grok.exe"
+            "build/codex/win/x64/bin/codex.exe",
+            "build/codex/win/x64/bin/codex-code-mode-host.exe",
+            "build/claude/win/x64/bin/claude.exe",
+            "build/grok/win/x64/bin/grok.exe"
           )
           foreach ($runtimeExecutable in $sourceBuiltRuntimeExecutables) {
             $runtimeSignature = Get-AuthenticodeSignature -LiteralPath $runtimeExecutable
@@ -314,6 +349,18 @@ jobs:
             $runtimeSignature = Get-AuthenticodeSignature -LiteralPath $runtimeExecutable
             if ($runtimeSignature.Status -ne "Valid") {
               Write-Error "The vendor runtime signature is not valid for ${runtimeExecutable}: $($runtimeSignature.Status)."
+            }
+          }
+          $providerVendorPatterns = @{
+            "build/codex/win/x64/bin/codex.exe" = "OpenAI"
+            "build/codex/win/x64/bin/codex-code-mode-host.exe" = "OpenAI"
+            "build/claude/win/x64/bin/claude.exe" = "Anthropic"
+            "build/grok/win/x64/bin/grok.exe" = "X\.AI|xAI"
+          }
+          foreach ($runtimeExecutable in $providerVendorPatterns.Keys) {
+            $runtimeSignature = Get-AuthenticodeSignature -LiteralPath $runtimeExecutable
+            if ($runtimeSignature.SignerCertificate.Subject -notmatch $providerVendorPatterns[$runtimeExecutable]) {
+              Write-Error "The provider runtime has an unexpected signer: ${runtimeExecutable}."
             }
           }
           $signature = Get-AuthenticodeSignature -LiteralPath $installers[0].FullName

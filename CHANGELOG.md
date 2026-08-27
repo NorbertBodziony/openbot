@@ -8,11 +8,20 @@ All notable changes to OpenBot will be documented here. The project follows
 ### Changed
 
 - Download and verify the Whisper model on first voice use instead of shipping it in every application update.
+- Remove provider runtimes from macOS and Windows application packages while keeping system CLIs as the first choice.
+- Install application updates only after the user selects `Restart and install`.
+
+### Added
+
+- Download Codex, Claude, and Grok provider runtimes on demand from pinned vendor artifacts.
+- Show provider download, setup, retry, and connection actions in onboarding, Settings, Bot setup, and model selection.
 
 ### Fixed
 
 - Wait for native macOS update staging before offering a restart, and require an explicit update restart on Windows.
 - Reject oversized or inconsistent release artifacts and remove duplicate native runtime files from packages.
+- Stream large provider downloads to disk, support safe resume, and reject unsafe or invalid runtime archives.
+- Respect Windows shutdown and sign-out without starting the NSIS updater.
 
 ## [0.3.4] - 2026-08-26
 

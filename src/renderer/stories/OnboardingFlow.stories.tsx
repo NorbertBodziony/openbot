@@ -1,4 +1,4 @@
-import type { AgentProviderId, AgentStatus, AppSetupState } from "@openbot/contracts/ipc";
+import type { AgentProviderId, AgentStatus, AppSetupState, ProviderRuntimeStatus } from "@openbot/contracts/ipc";
 import { createSignal, onCleanup } from "solid-js";
 import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
@@ -57,6 +57,22 @@ const bothConnectingAgentStatus: AgentStatus = {
   })),
 };
 
+const lazyProviderAgentStatus: AgentStatus = {
+  ...noProvidersConnectedAgentStatus,
+  providers: noProvidersConnectedAgentStatus.providers?.map((provider) => ({
+    ...provider,
+    state: "not-installed",
+    connectionState: undefined,
+    message: null,
+  })),
+};
+
+const initialRuntimeStatuses = (): Record<AgentProviderId, ProviderRuntimeStatus> => ({
+  codex: { phase: "not-downloaded", progress: null, message: null, version: null },
+  claude: { phase: "not-downloaded", progress: null, message: null, version: null },
+  grok: { phase: "not-downloaded", progress: null, message: null, version: null },
+});
+
 function MockedOnboardingFlow(props: { args: Parameters<typeof OnboardingFlow>[0]; permissions?: boolean }) {
   const previousApi = window.openbot;
   const mock = createMockOpenBot();
@@ -90,6 +106,118 @@ function RefreshResettingFlow(props: { args: Parameters<typeof OnboardingFlow>[0
           setAgentStatus(noProvidersConnectedAgentStatus);
           setRefreshingProviders(false);
         },
+      }}
+    />
+  );
+}
+
+function LazyProviderDownloadsFlow(props: { args: Parameters<typeof OnboardingFlow>[0]; failGrokOnce?: boolean }) {
+  const [agentStatus, setAgentStatus] = createSignal(lazyProviderAgentStatus);
+  const [runtimeStatuses, setRuntimeStatuses] = createSignal(initialRuntimeStatuses());
+  const [grokFailed, setGrokFailed] = createSignal(false);
+  const providerTimers = new Map<AgentProviderId, Set<number>>();
+
+  function rememberTimer(provider: AgentProviderId, timer: number): number {
+    const timers = providerTimers.get(provider) ?? new Set<number>();
+    timers.add(timer);
+    providerTimers.set(provider, timers);
+    return timer;
+  }
+
+  function clearProviderTimers(provider: AgentProviderId): void {
+    for (const timer of providerTimers.get(provider) ?? []) {
+      window.clearInterval(timer);
+      window.clearTimeout(timer);
+    }
+    providerTimers.delete(provider);
+  }
+
+  function updateRuntime(provider: AgentProviderId, status: Partial<ProviderRuntimeStatus>): void {
+    setRuntimeStatuses((current) => ({ ...current, [provider]: { ...current[provider], ...status } }));
+  }
+
+  function updateProvider(
+    provider: AgentProviderId,
+    update: Partial<NonNullable<AgentStatus["providers"]>[number]>,
+  ): void {
+    setAgentStatus((current) => ({
+      ...current,
+      providers: current.providers?.map((candidate) =>
+        candidate.id === provider ? { ...candidate, ...update } : candidate,
+      ),
+    }));
+  }
+
+  function finishDownload(provider: AgentProviderId): void {
+    updateRuntime(provider, { phase: "finishing", progress: 100 });
+    rememberTimer(
+      provider,
+      window.setTimeout(() => {
+        providerTimers.delete(provider);
+        updateRuntime(provider, { phase: "ready", progress: 100 });
+        updateProvider(provider, { state: "sign-in-required", message: `Connect ${provider} to continue.` });
+      }, 700),
+    );
+  }
+
+  function downloadProvider(provider: AgentProviderId): void {
+    clearProviderTimers(provider);
+    updateProvider(provider, { state: "not-installed", connectionState: undefined, message: null });
+    updateRuntime(provider, { phase: "downloading", progress: 0 });
+    let progress = 0;
+    const interval = window.setInterval(() => {
+      progress = Math.min(100, progress + 4);
+      if (props.failGrokOnce && provider === "grok" && !grokFailed() && progress >= 56) {
+        window.clearInterval(interval);
+        providerTimers.delete(provider);
+        setGrokFailed(true);
+        updateRuntime(provider, {
+          phase: "download-error",
+          progress: 55,
+          message: "The download was interrupted. Try again.",
+        });
+        return;
+      }
+      updateRuntime(provider, { phase: "downloading", progress });
+      if (progress < 100) return;
+      window.clearInterval(interval);
+      providerTimers.delete(provider);
+      finishDownload(provider);
+    }, 160);
+    rememberTimer(provider, interval);
+  }
+
+  function cancelProviderDownload(provider: AgentProviderId): void {
+    clearProviderTimers(provider);
+    updateRuntime(provider, { phase: "not-downloaded", progress: null });
+  }
+
+  function connectProvider(provider: AgentProviderId): void {
+    clearProviderTimers(provider);
+    updateProvider(provider, { connectionState: "connecting", message: null });
+    rememberTimer(
+      provider,
+      window.setTimeout(() => {
+        providerTimers.delete(provider);
+        updateProvider(provider, { state: "available", connectionState: undefined, message: null });
+      }, 1_200),
+    );
+  }
+
+  onCleanup(() => {
+    for (const provider of ["codex", "claude", "grok"] as const) clearProviderTimers(provider);
+  });
+
+  return (
+    <MockedOnboardingFlow
+      args={{
+        ...props.args,
+        agentStatus: agentStatus(),
+        providerRuntimeStatuses: runtimeStatuses(),
+        onDownloadProvider: downloadProvider,
+        onCancelProviderDownload: cancelProviderDownload,
+        onConnectProvider: connectProvider,
+        onRefreshProviders: undefined,
       }}
     />
   );
@@ -274,4 +402,18 @@ export const ConnectedWithReconnect: Story = {
     await expect(canvas.getByRole("button", { name: "Reconnect Claude" })).toBeEnabled();
     await expect(canvas.getByRole("button", { name: "Next" })).toBeEnabled();
   },
+};
+
+export const LazyProviderDownloads: Story = {
+  args: {
+    agentStatus: lazyProviderAgentStatus,
+  },
+  render: (storyArgs) => <LazyProviderDownloadsFlow args={storyArgs} />,
+};
+
+export const LazyProviderDownloadsWithFailure: Story = {
+  args: {
+    agentStatus: lazyProviderAgentStatus,
+  },
+  render: (storyArgs) => <LazyProviderDownloadsFlow args={storyArgs} failGrokOnce />,
 };

@@ -129,7 +129,13 @@ export interface DesktopAnalyticsEvents {
   };
   provider_action: {
     provider?: AgentProviderId;
-    action: "connect_started" | "connect_completed" | "refresh";
+    action:
+      | "connect_started"
+      | "connect_completed"
+      | "refresh"
+      | "download_started"
+      | "download_completed"
+      | "download_cancelled";
     result: AnalyticsResult;
     failure_code?: string;
   };
@@ -294,7 +300,14 @@ const EVENT_ACTIONS: Partial<Record<AnalyticsEventName, readonly string[]>> = {
   update_action: ["check", "download", "install"],
   marketplace_action: ["view", "install", "update", "uninstall", "publish"],
   memory_action: ["create", "update", "delete", "clear"],
-  provider_action: ["connect_started", "connect_completed", "refresh"],
+  provider_action: [
+    "connect_started",
+    "connect_completed",
+    "refresh",
+    "download_started",
+    "download_completed",
+    "download_cancelled",
+  ],
   reaction_action: ["add", "remove"],
   maintenance_action: ["export_data", "export_diagnostics"],
 };

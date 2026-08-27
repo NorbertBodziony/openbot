@@ -7,6 +7,7 @@ import type {
   AgentStatus,
   AvatarImageInput,
   BotAvatarHue,
+  ProviderRuntimeStatus,
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js";
@@ -43,6 +44,10 @@ interface AgentSettingsPanelProps {
   agentStatus: AgentStatus;
   modelOptions: AgentModelOption[];
   working: boolean;
+  providerRuntimeStatuses?: Partial<Record<AgentProviderId, ProviderRuntimeStatus>>;
+  onDownloadProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  onCancelProviderDownload?: (provider: AgentProviderId) => void | Promise<void>;
+  onConnectProvider?: (provider: AgentProviderId) => void | Promise<void>;
   maxWidth: () => number;
   onClose: () => void;
   onWidthChange: (width: number) => void;
@@ -529,7 +534,11 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                   value={model()}
                   agentStatus={props.agentStatus}
                   modelOptions={props.modelOptions}
-                  disabled={props.agentStatus.phase !== "ready" || props.working}
+                  runtimeStatuses={props.providerRuntimeStatuses}
+                  onDownloadProvider={props.onDownloadProvider}
+                  onCancelProviderDownload={props.onCancelProviderDownload}
+                  onConnectProvider={props.onConnectProvider}
+                  disabled={props.working}
                   disabledReason={
                     props.working
                       ? "Wait for the current work to finish before changing models."

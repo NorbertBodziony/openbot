@@ -52,7 +52,6 @@ import { AgentService } from "../backend/agent-service";
 import { BotStore } from "../backend/bot-store";
 import { BrowserHost } from "../backend/browser-host";
 import { isCloseBrowserTabShortcut, isSelectAllShortcut, isToggleDevToolsShortcut } from "../backend/browser-shortcuts";
-import { bundledClaudeExecutable, bundledCodexExecutable, bundledGrokExecutable } from "../backend/cli";
 import { MailboxStore } from "../backend/mailbox-store";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import { TeamChatStore } from "../backend/team-chat-store";
@@ -112,6 +111,7 @@ import {
   parseExternalDestination,
   parseMacPermission,
   parseProvider,
+  parseProviderId,
 } from "./ipc/app-inputs";
 import { parseAvatarImage } from "./ipc/avatar-inputs";
 import { parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
@@ -119,6 +119,7 @@ import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-te
 import { isObject, requireString } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
 import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
+import { ProviderRuntimeManager } from "./provider-runtime-manager";
 import { RemoteDesktopManager } from "./remote-desktop-manager";
 import { resolveRemoteDesktopRuntime } from "./remote-desktop-runtime-artifact";
 import { loadOrCreateRemoteDesktopCredentials } from "./remote-desktop-secret-store";
@@ -230,6 +231,7 @@ let browserHost: BrowserHost | null = null;
 let agentService: AgentService | null = null;
 let mailboxStore: MailboxStore | null = null;
 let updateService: UpdateService | null = null;
+let providerRuntimeManager: ProviderRuntimeManager | null = null;
 let hostService: HostService | null = null;
 let remoteDesktopManager: RemoteDesktopManager | null = null;
 let remoteServerManager: RemoteServerManager | null = null;
@@ -238,6 +240,7 @@ let hostAnalytics: HostAnalytics | null = null;
 let voiceTranscriptionService: VoiceTranscriptionService | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
+let systemSessionEnding = false;
 let pendingInviteUrl: string | null = findInviteUrl(process.argv);
 let inviteReceiverReady = false;
 
@@ -278,6 +281,7 @@ function configureContentSecurityPolicy(): void {
 
 function registerIpcHandlers(
   service: AgentService,
+  providerRuntimes: ProviderRuntimeManager,
   mailbox: MailboxStore,
   browser: BrowserHost,
   updater: UpdateService,
@@ -331,6 +335,13 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.connectClaude, () => service.connectClaude());
   handleTrusted(IPC_CHANNELS.connectGrok, () => service.connectGrok());
   handleTrusted(IPC_CHANNELS.refreshAgentProviders, () => service.refreshProviders());
+  handleTrusted(IPC_CHANNELS.providerRuntimesGetStatus, () => providerRuntimes.getStatus());
+  handleTrusted(IPC_CHANNELS.providerRuntimesDownload, (provider: unknown) =>
+    providerRuntimes.download(parseProviderId(provider)),
+  );
+  handleTrusted(IPC_CHANNELS.providerRuntimesCancel, (provider: unknown) =>
+    providerRuntimes.cancel(parseProviderId(provider)),
+  );
   handleTrusted(IPC_CHANNELS.openUrl, (value: unknown) => {
     const url = new URL(requireString(value, "URL", INPUT_LIMITS.browserUrl));
     if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -1076,6 +1087,18 @@ function createWindow(): BrowserWindow {
       window.hide();
     }
   });
+  if (process.platform === "win32") {
+    window.on("query-session-end", () => {
+      systemSessionEnding = true;
+      isQuitting = true;
+      void providerRuntimeManager?.stop();
+    });
+    window.on("session-end", () => {
+      systemSessionEnding = true;
+      isQuitting = true;
+      void providerRuntimeManager?.stop();
+    });
+  }
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
   });
@@ -1193,6 +1216,11 @@ function forwardUpdateStatus(status: import("@openbot/contracts/ipc").UpdateStat
 function forwardVoiceModelStatus(status: VoiceModelStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.voiceModelStatus, status);
+}
+
+function forwardProviderRuntimeStatus(snapshot: import("@openbot/contracts/ipc").ProviderRuntimeSnapshot): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(IPC_CHANNELS.providerRuntimesEvent, snapshot);
 }
 
 function forwardHostStatus(status: import("@openbot/contracts/ipc").HostStatus): void {
@@ -1361,6 +1389,10 @@ if (!hasSingleInstanceLock) {
       const analyticsPreferenceFile = join(app.getPath("userData"), ANALYTICS_PREFERENCE_FILE);
       const setupState = await readSetupState(setupFile);
       const analyticsPreference = await readAnalyticsPreference(analyticsPreferenceFile);
+      providerRuntimeManager = new ProviderRuntimeManager({
+        root: join(app.getPath("userData"), "provider-runtimes"),
+      });
+      await providerRuntimeManager.initialize();
       agentService = new AgentService(
         store,
         mailboxStore,
@@ -1369,11 +1401,17 @@ if (!hasSingleInstanceLock) {
         30_000,
         setupState.preferredProvider ?? "codex",
         null,
-        bundledCodexExecutable(process.platform, process.arch, app.isPackaged ? process.resourcesPath : null),
-        bundledClaudeExecutable(process.platform, process.arch, app.isPackaged ? process.resourcesPath : null),
-        bundledGrokExecutable(process.platform, process.arch, app.isPackaged ? process.resourcesPath : null),
+        providerRuntimeManager.executablePath("codex"),
+        providerRuntimeManager.executablePath("claude"),
+        providerRuntimeManager.executablePath("grok"),
       );
       const service = agentService;
+      providerRuntimeManager.on("status", forwardProviderRuntimeStatus);
+      providerRuntimeManager.on("ready", (provider) => {
+        void service.refreshProvider(provider).catch((error) => {
+          console.error(`Unable to refresh ${provider} after runtime installation:`, error);
+        });
+      });
       const skillMarketplace = new SkillMarketplaceService(
         centralAuthManager,
         () => service.listBots(),
@@ -1586,6 +1624,7 @@ if (!hasSingleInstanceLock) {
       const agentInitialization = new AgentInitializationGate(() => service.initialize());
       registerIpcHandlers(
         service,
+        providerRuntimeManager,
         mailboxStore,
         browserHost,
         updateService,
@@ -1737,6 +1776,11 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", (event) => {
   isQuitting = true;
+  if (systemSessionEnding) {
+    updateService?.stop();
+    void providerRuntimeManager?.stop();
+    return;
+  }
   if (shutdownStarted) return;
   event.preventDefault();
   void prepareForShutdown().finally(() => app.quit());
@@ -1747,6 +1791,7 @@ async function prepareForShutdown(): Promise<void> {
   shutdownStarted = true;
   isQuitting = true;
   updateService?.stop();
+  await (providerRuntimeManager?.stop() ?? Promise.resolve());
   remoteServerManager?.stop();
   voiceTranscriptionService?.shutdown();
   await (remoteDesktopManager?.stop() ?? Promise.resolve());

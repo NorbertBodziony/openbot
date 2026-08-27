@@ -1,4 +1,4 @@
-import type { UpdateStatus } from "@openbot/contracts/ipc";
+import type { AgentStatus, ProviderRuntimeSnapshot, UpdateStatus } from "@openbot/contracts/ipc";
 import { createSignal } from "solid-js";
 import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
@@ -16,8 +16,27 @@ const storyUpdateStatus: UpdateStatus = {
   message: null,
   errorCode: null,
 };
+const providerAgentStatus: AgentStatus = {
+  phase: "blocked",
+  cliVersion: null,
+  auth: { kind: "unknown" },
+  providers: (["codex", "claude", "grok"] as const).map((id) => ({
+    id,
+    state: "not-installed",
+    version: null,
+    message: null,
+  })),
+  capabilities: { chat: "unavailable", browser: "ready", computerUse: "ready" },
+  message: null,
+  fullAccess: true,
+};
+const providerRuntimeStatuses: ProviderRuntimeSnapshot["providers"] = {
+  codex: { phase: "downloading", progress: 24, message: null, version: null },
+  claude: { phase: "downloading", progress: 48, message: null, version: null },
+  grok: { phase: "downloading", progress: 72, message: null, version: null },
+};
 
-function SettingsModalStory(props: { initialOpen: boolean }) {
+function SettingsModalStory(props: { initialOpen: boolean; providerDownloads?: boolean }) {
   const [open, setOpen] = createSignal(props.initialOpen);
   const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
   const [updateStatus, setUpdateStatus] = createSignal<UpdateStatus>(storyUpdateStatus);
@@ -41,6 +60,11 @@ function SettingsModalStory(props: { initialOpen: boolean }) {
         onUpdateAction={async () => {
           setUpdateStatus({ ...storyUpdateStatus, phase: "up-to-date", checkedAt: new Date().toISOString() });
         }}
+        agentStatus={props.providerDownloads ? providerAgentStatus : undefined}
+        providerRuntimeStatuses={props.providerDownloads ? providerRuntimeStatuses : undefined}
+        onDownloadProvider={props.providerDownloads ? fn() : undefined}
+        onCancelProviderDownload={props.providerDownloads ? fn() : undefined}
+        onConnectProvider={props.providerDownloads ? fn() : undefined}
       />
     </main>
   );
@@ -71,6 +95,10 @@ const meta = {
           name: "Settings — 640 × 720",
           styles: { width: "640px", height: "720px" },
         },
+        settingsPhone: {
+          name: "Settings — 420 × 760",
+          styles: { width: "420px", height: "760px" },
+        },
       },
     },
   },
@@ -86,6 +114,11 @@ export const Open: Story = {
 export const Narrow: Story = {
   render: () => <SettingsModalStory initialOpen />,
   parameters: { viewport: { defaultViewport: "settingsNarrow" } },
+};
+
+export const ProviderDownloads: Story = {
+  render: () => <SettingsModalStory initialOpen providerDownloads />,
+  parameters: { viewport: { defaultViewport: "settingsPhone" } },
 };
 
 export const Interactive: Story = {

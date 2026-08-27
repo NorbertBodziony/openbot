@@ -6,6 +6,8 @@ const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/u, "Must use a complete SH
 const codexArtifactSchema = z.object({
   asset: z.string().min(1),
   assetSha256: sha256Schema,
+  downloadBytes: z.number().int().positive(),
+  installedBytes: z.number().int().positive(),
   executable: z.string().regex(/^bin\/codex(?:\.exe)?$/u),
 });
 const claudeArtifactSchema = z.object({
@@ -13,12 +15,16 @@ const claudeArtifactSchema = z.object({
   asset: z.string().regex(/^claude-agent-sdk-(?:darwin-arm64|win32-x64)-\d+\.\d+\.\d+\.tgz$/u),
   assetSha256: sha256Schema,
   binarySha256: sha256Schema,
+  downloadBytes: z.number().int().positive(),
+  installedBytes: z.number().int().positive(),
   executable: z.enum(["claude", "claude.exe"]),
   platformDirectory: z.enum(["mac", "win"]),
 });
 const grokArtifactSchema = z.object({
   asset: z.string().regex(/^grok-\d+\.\d+\.\d+-(?:macos-aarch64|windows-x86_64(?:\.exe)?)$/u),
   assetSha256: sha256Schema,
+  downloadBytes: z.number().int().positive(),
+  installedBytes: z.number().int().positive(),
   executable: z.enum(["grok", "grok.exe"]),
   platformDirectory: z.enum(["mac", "win"]),
 });

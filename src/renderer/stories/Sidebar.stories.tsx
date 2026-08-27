@@ -42,7 +42,7 @@ const sectionedLayout: SidebarLayoutSnapshot = {
   revision: 1,
   sections: [
     { id: demoSectionId, name: "Core team" },
-    { id: emptySectionId, name: "Hidden empty section" },
+    { id: emptySectionId, name: "Empty section" },
   ],
   order: ["people", demoSectionId, "unassigned", emptySectionId],
   agentAssignments: { chief: demoSectionId, research: demoSectionId },
@@ -427,7 +427,7 @@ export const AgentContextMenu: Story = {
     fireEvent.keyDown(moveTo, { key: "Enter" });
     const assignmentMenu = await within(canvasElement.ownerDocument.body).findByRole("menu", { name: "Move to" });
     const coreTeam = within(assignmentMenu).getByRole("menuitem", { name: "Core team" });
-    const hiddenSection = within(assignmentMenu).getByRole("menuitem", { name: "Hidden empty section" });
+    const emptySection = within(assignmentMenu).getByRole("menuitem", { name: "Empty section" });
     const unassigned = within(assignmentMenu).getByRole("menuitem", { name: "Unassigned" });
     const assignmentDivider = within(assignmentMenu).getByRole("separator");
     const newSection = within(assignmentMenu).getByRole("menuitem", { name: "New section" });
@@ -437,7 +437,7 @@ export const AgentContextMenu: Story = {
     await expect(getComputedStyle(items[0]).backgroundColor).toBe("rgba(0, 0, 0, 0)");
     await expect(coreTeam.querySelector(".lucide-check")).toBeInTheDocument();
     await expect(unassigned.querySelector(".lucide-folder")).toBeInTheDocument();
-    await expect(hiddenSection).toBeInTheDocument();
+    await expect(emptySection).toBeInTheDocument();
     await expect(assignmentDivider.nextElementSibling).toBe(newSection);
     await expect(assignmentMenu.getBoundingClientRect().left).toBeGreaterThanOrEqual(
       menu.getBoundingClientRect().right - 4,
@@ -471,7 +471,7 @@ export const Sections: Story = {
     await expect(getComputedStyle(preview).transitionProperty).toBe("none");
     await expect(getComputedStyle(preview).transitionDuration).toBe("0s");
     fireEvent.dragEnd(researchItem, { dataTransfer });
-    await expect(canvas.queryByText("Hidden empty section")).not.toBeInTheDocument();
+    await expect(canvas.getByRole("button", { name: "Empty section" })).toBeInTheDocument();
   },
 };
 
