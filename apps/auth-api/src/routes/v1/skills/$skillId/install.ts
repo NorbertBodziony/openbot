@@ -1,7 +1,9 @@
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { createFileRoute } from "@tanstack/solid-router";
+import { readJsonObject } from "../../../../server/json-body";
 import {
   apiError,
+  enforceMarketplaceMutationRateLimit,
   json,
   requestSkillMarketplace,
   requestUser,
@@ -15,7 +17,8 @@ export const Route = createFileRoute("/v1/skills/$skillId/install")({
         try {
           const user = await requestUser(request);
           if (!user) return apiError(401, "unauthorized", "Sign in is required.");
-          const value = await request.json();
+          await enforceMarketplaceMutationRateLimit("mutation", user.id);
+          const value = await readJsonObject(request);
           if (!isDynamicRecord(value) || !isString(value.receiptId) || value.receiptId.length > 128) {
             return apiError(400, "invalid_receipt", "A valid install receipt is required.");
           }

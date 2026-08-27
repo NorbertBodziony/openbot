@@ -1,4 +1,5 @@
 import { type AuthRetentionResult, pruneExpiredAuthData } from "./auth-data-retention";
+import { enforceMarketplaceIngress, MarketplaceRateLimitError } from "./marketplace-request-policy";
 import type { WorkerBindings } from "./types";
 
 type WorkerFetch = (request: Request) => Response | Promise<Response>;
@@ -11,7 +12,31 @@ export function createWorkerHandler(
   log: RetentionLogger = logRetentionResult,
 ) {
   return {
-    fetch: fetchHandler,
+    async fetch(
+      request: Request,
+      bindings: Pick<WorkerBindings, "MARKETPLACE_INGRESS_RATE_LIMITER">,
+      _context?: ExecutionContext,
+    ) {
+      try {
+        await enforceMarketplaceIngress(request, bindings);
+      } catch (error) {
+        if (error instanceof MarketplaceRateLimitError) {
+          return Response.json(
+            { error: { code: error.code, message: error.message } },
+            {
+              status: error.status,
+              headers: {
+                "Cache-Control": "no-store",
+                "Retry-After": String(error.retryAfterSeconds),
+                "X-Content-Type-Options": "nosniff",
+              },
+            },
+          );
+        }
+        throw error;
+      }
+      return fetchHandler(request);
+    },
     async scheduled(controller: Pick<ScheduledController, "scheduledTime">, bindings: Pick<WorkerBindings, "DB">) {
       const result = await prune(bindings.DB, controller.scheduledTime);
       log(result);

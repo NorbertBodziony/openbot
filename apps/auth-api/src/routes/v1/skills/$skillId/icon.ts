@@ -11,7 +11,8 @@ export const Route = createFileRoute("/v1/skills/$skillId/icon")({
             ? new Response(object.body, {
                 headers: {
                   "Content-Type": object.httpMetadata?.contentType ?? "application/octet-stream",
-                  "Cache-Control": "public, max-age=3600",
+                  "Cache-Control": "public, max-age=300",
+                  ETag: object.httpEtag,
                 },
               })
             : new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } });

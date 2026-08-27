@@ -9,7 +9,8 @@ export const Route = createFileRoute("/v1/marketplace/agents/$agentId/avatar")({
           const object = await requestAgentMarketplace().avatar(params.agentId);
           const headers = new Headers();
           object.writeHttpMetadata(headers);
-          headers.set("Cache-Control", "public, max-age=31536000, immutable");
+          headers.set("Cache-Control", "public, max-age=300");
+          headers.set("ETag", object.httpEtag);
           headers.set("X-Content-Type-Options", "nosniff");
           return new Response(object.body, { headers });
         } catch (error) {

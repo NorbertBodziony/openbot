@@ -1,13 +1,33 @@
 import { describe, expect, it } from "vitest";
 import type { AuthRetentionResult } from "../src/server/auth-data-retention";
+import type { WorkerBindings } from "../src/server/types";
 import { createWorkerHandler } from "../src/server/worker-handler";
 
 describe("worker handler", () => {
-  it("keeps the TanStack fetch handler unchanged", () => {
+  it("delegates non-marketplace requests to the TanStack handler", async () => {
     const fetchHandler = () => new Response("ok");
     const handler = createWorkerHandler(fetchHandler);
 
-    expect(handler.fetch).toBe(fetchHandler);
+    const response = await handler.fetch(new Request("https://openbot.run/health/live"), fakeBindings());
+
+    expect(await response.text()).toBe("ok");
+  });
+
+  it("returns a retryable 429 before marketplace requests reach the application", async () => {
+    const fetchHandler = () => {
+      throw new Error("The application handler must not run.");
+    };
+    const handler = createWorkerHandler(fetchHandler);
+    const denied: RateLimit = { limit: async () => ({ success: false }) };
+
+    const response = await handler.fetch(new Request("https://openbot.run/v1/skills/"), {
+      MARKETPLACE_INGRESS_RATE_LIMITER: denied,
+    });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("60");
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "rate_limited" } });
   });
 
   it("uses the scheduled time and logs only aggregate deletion counts", async () => {
@@ -54,4 +74,9 @@ function fakeDatabase(): D1Database {
       throw new Error("Unexpected dump call.");
     },
   };
+}
+
+function fakeBindings(): Pick<WorkerBindings, "MARKETPLACE_INGRESS_RATE_LIMITER"> {
+  const limiter: RateLimit = { limit: async () => ({ success: true }) };
+  return { MARKETPLACE_INGRESS_RATE_LIMITER: limiter };
 }

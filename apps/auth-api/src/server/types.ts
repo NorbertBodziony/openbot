@@ -4,6 +4,9 @@ export interface WorkerBindings {
   DB: D1Database;
   AVATARS: R2Bucket;
   SKILLS: R2Bucket;
+  MARKETPLACE_INGRESS_RATE_LIMITER: RateLimit;
+  MARKETPLACE_MUTATION_RATE_LIMITER: RateLimit;
+  MARKETPLACE_UPLOAD_RATE_LIMITER: RateLimit;
   AUTH_EXPOSE_DEVELOPMENT_CODE?: string;
   EMAIL_SMTP_HOST?: string;
   EMAIL_SMTP_PORT?: string;
@@ -24,6 +27,9 @@ export function isWorkerBindings(value: unknown): value is WorkerBindings {
   const database = value.DB;
   const avatars = value.AVATARS;
   const skills = value.SKILLS;
+  const marketplaceIngressRateLimiter = value.MARKETPLACE_INGRESS_RATE_LIMITER;
+  const marketplaceMutationRateLimiter = value.MARKETPLACE_MUTATION_RATE_LIMITER;
+  const marketplaceUploadRateLimiter = value.MARKETPLACE_UPLOAD_RATE_LIMITER;
   if (
     !isDynamicRecord(database) ||
     !isFunction(database.prepare) ||
@@ -34,7 +40,13 @@ export function isWorkerBindings(value: unknown): value is WorkerBindings {
     !isDynamicRecord(skills) ||
     !isFunction(skills.get) ||
     !isFunction(skills.put) ||
-    !isFunction(skills.delete)
+    !isFunction(skills.delete) ||
+    !isDynamicRecord(marketplaceIngressRateLimiter) ||
+    !isFunction(marketplaceIngressRateLimiter.limit) ||
+    !isDynamicRecord(marketplaceMutationRateLimiter) ||
+    !isFunction(marketplaceMutationRateLimiter.limit) ||
+    !isDynamicRecord(marketplaceUploadRateLimiter) ||
+    !isFunction(marketplaceUploadRateLimiter.limit)
   ) {
     return false;
   }
