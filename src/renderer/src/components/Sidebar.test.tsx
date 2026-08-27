@@ -441,7 +441,7 @@ describe("Sidebar sections", () => {
     await waitFor(() => expect(sales).not.toBeInTheDocument());
   });
 
-  it("moves across hidden sections and disables movement at the visible edge", async () => {
+  it("moves through empty custom sections and disables movement at the visible edge", async () => {
     const props = sidebarProps();
     const layout = sectionLayout();
     const layoutWithHiddenGap = { ...layout, order: [demoId, emptyId, "people", "unassigned"] };
@@ -454,7 +454,7 @@ describe("Sidebar sections", () => {
       type: "move",
       sectionId: demoId,
       direction: "down",
-      steps: 2,
+      steps: 1,
     });
 
     await fireEvent.contextMenu(screen.getByRole("button", { name: "Unassigned" }));
@@ -617,20 +617,20 @@ describe("Sidebar sections", () => {
     expect(props.onUnpin).not.toHaveBeenCalled();
   });
 
-  it("reorders visible sections by drag and drop across hidden sections", async () => {
+  it("reorders sections by dropping onto an empty custom section", async () => {
     const props = sidebarProps();
     const layout = sectionLayout();
     const layoutWithHiddenGap = { ...layout, order: [demoId, emptyId, "people", "unassigned"] };
     const view = render(() => <Sidebar {...props} layout={layoutWithHiddenGap} />);
     const demo = screen.getByRole("button", { name: "Demo" });
     const demoSection = demo.closest<HTMLElement>("section");
-    const peopleSection = screen.getByRole("button", { name: "People" }).closest<HTMLElement>("section");
+    const emptySection = screen.getByRole("button", { name: "Empty" }).closest<HTMLElement>("section");
     const list = view.container.querySelector<HTMLElement>(".bot-list");
-    if (!demoSection || !peopleSection || !list) throw new Error("Sidebar section drag targets are missing.");
+    if (!demoSection || !emptySection || !list) throw new Error("Sidebar section drag targets are missing.");
     vi.spyOn(demo, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 32));
     vi.spyOn(demoSection, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 86));
     vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
-    const peopleBounds = vi.spyOn(peopleSection, "getBoundingClientRect").mockReturnValue(rect(12, 180, 256, 180));
+    const emptyBounds = vi.spyOn(emptySection, "getBoundingClientRect").mockReturnValue(rect(12, 180, 256, 36));
     const dataTransfer = {
       setData: vi.fn(),
       setDragImage: vi.fn(),
@@ -641,24 +641,23 @@ describe("Sidebar sections", () => {
     dragStartAt(demo, dataTransfer, { clientX: 30, clientY: 96 });
     await waitFor(() => expect(demoSection).toHaveClass("sidebar-section-dragging"));
     for (let index = 0; index < 50; index += 1) {
-      fireEvent(peopleSection, nativeDragEvent("dragover", dataTransfer, { clientX: 250, clientY: 320 }));
+      fireEvent(emptySection, nativeDragEvent("dragover", dataTransfer, { clientX: 250, clientY: 210 }));
     }
     await nextAnimationFrame();
-    expect(peopleSection).toHaveClass("sidebar-section-drop-after");
-    expect(peopleSection.style.getPropertyValue("--sidebar-section-drag-y")).toBe("-100px");
-    expect(peopleBounds).toHaveBeenCalledTimes(1);
+    expect(emptySection).toHaveClass("sidebar-section-drop-after");
+    expect(emptyBounds).toHaveBeenCalledTimes(1);
     const preview = document.querySelector<HTMLElement>(".sidebar-section-drag-preview");
     expect(preview).toBeInTheDocument();
     expect(preview?.style.transform).toContain("translate3d(12px,");
-    dropAt(peopleSection, dataTransfer, { clientX: 250, clientY: 320 });
+    dropAt(emptySection, dataTransfer, { clientX: 250, clientY: 210 });
 
     expect(props.onMutateLayout).toHaveBeenCalledWith({
       type: "move",
       sectionId: demoId,
       direction: "down",
-      steps: 2,
+      steps: 1,
     });
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Moved Demo to position 2 of 3."));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Moved Demo to position 2 of 4."));
     expect(document.querySelector(".sidebar-section-drag-preview")).not.toBeInTheDocument();
   });
 
@@ -739,11 +738,26 @@ describe("Sidebar sections", () => {
     const props = sidebarProps();
     render(() => <Sidebar {...props} layout={sectionLayout()} />);
 
+    expect(screen.getByRole("button", { name: "Empty" })).toBeInTheDocument();
+
     await fireEvent.contextMenu(screen.getByLabelText("Sidebar free area"));
     const sidebarMenu = await screen.findByRole("menu", { name: "Sidebar actions" });
     const newSection = within(sidebarMenu).getByRole("menuitem", { name: "New section" });
     await fireEvent.pointerUp(newSection, { button: 0 });
-    const createInput = await screen.findByRole("textbox", { name: "New section name" });
+    let createInput = await screen.findByRole("textbox", { name: "New section name" });
+    await fireEvent.input(createInput, { target: { value: "Draft" } });
+    await fireEvent.blur(createInput);
+    expect(screen.queryByRole("textbox", { name: "New section name" })).not.toBeInTheDocument();
+    expect(props.onMutateLayout).not.toHaveBeenCalled();
+
+    await fireEvent.contextMenu(screen.getByLabelText("Sidebar free area"));
+    await fireEvent.pointerUp(
+      within(await screen.findByRole("menu", { name: "Sidebar actions" })).getByRole("menuitem", {
+        name: "New section",
+      }),
+      { button: 0 },
+    );
+    createInput = await screen.findByRole("textbox", { name: "New section name" });
     await fireEvent.input(createInput, { target: { value: "Product" } });
     await fireEvent.keyDown(createInput, { key: "Enter" });
     expect(props.onMutateLayout).toHaveBeenCalledWith({ type: "create", name: "Product" });
