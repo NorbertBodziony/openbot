@@ -49,6 +49,14 @@ export interface BrowserOpenInput {
   url: string;
   ownerThreadId?: string | null;
   ownerBotId?: string | null;
+  focus?: boolean;
+}
+
+export type BrowserNavigationDirection = "back" | "forward";
+
+export interface BrowserNavigateInput {
+  tabId: string;
+  direction: BrowserNavigationDirection;
 }
 
 export interface BrowserVisibilityInput {

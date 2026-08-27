@@ -11,7 +11,13 @@ import type {
   SetAnalyticsPreferenceInput,
   UpdateStatus,
 } from "./ipc-app-auth";
-import type { BrowserControlState, BrowserOpenInput, BrowserTab, BrowserVisibilityInput } from "./ipc-browser";
+import type {
+  BrowserControlState,
+  BrowserNavigateInput,
+  BrowserOpenInput,
+  BrowserTab,
+  BrowserVisibilityInput,
+} from "./ipc-browser";
 import type {
   AccountUsage,
   AgentEvent,
@@ -44,6 +50,7 @@ import type {
   ReadConversationPageInput,
   ReorderQueueInput,
   RespondToApprovalInput,
+  RespondToBrowserTakeoverInput,
   RespondToPromptInput,
   Routine,
   RoutineRun,
@@ -160,6 +167,7 @@ export interface AgentDesktopApi {
   interrupt: (input: InterruptTurnInput) => Promise<void>;
   respondToPrompt: (input: RespondToPromptInput) => Promise<void>;
   respondToApproval: (input: RespondToApprovalInput) => Promise<void>;
+  respondToBrowserTakeover: (input: RespondToBrowserTakeoverInput) => Promise<void>;
   onEvent: (listener: (event: AgentEvent) => void) => () => void;
 }
 
@@ -175,6 +183,7 @@ export interface MarketplaceAgentsDesktopApi {
 export interface BrowserDesktopApi {
   open: (input: BrowserOpenInput) => Promise<BrowserTab>;
   activate: (tabId: string) => Promise<void>;
+  navigate: (input: BrowserNavigateInput) => Promise<void>;
   reload: (tabId: string) => Promise<void>;
   close: (tabId: string) => Promise<void>;
   listTabs: () => Promise<BrowserTab[]>;

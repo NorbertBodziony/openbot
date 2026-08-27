@@ -24,6 +24,7 @@ import {
   type ReadConversationPageInput,
   type ReorderQueueInput,
   type RespondToApprovalInput,
+  type RespondToBrowserTakeoverInput,
   type RespondToPromptInput,
   type SearchConversationMessagesInput,
   type SendMessageInput,
@@ -524,6 +525,20 @@ export function parseApprovalResponse(value: unknown): RespondToApprovalInput {
   }
   if (value.decision !== "accept" && value.decision !== "decline") {
     throw new Error("Invalid approval decision.");
+  }
+  return { requestId: value.requestId, decision: value.decision };
+}
+
+export function parseBrowserTakeoverResponse(value: unknown): RespondToBrowserTakeoverInput {
+  if (!isObject(value) || (!isString(value.requestId) && !isNumber(value.requestId))) {
+    throw new Error("Invalid browser takeover response.");
+  }
+  if (
+    (isString(value.requestId) && (value.requestId.length === 0 || value.requestId.length > INPUT_LIMITS.identifier)) ||
+    (isNumber(value.requestId) && !Number.isSafeInteger(value.requestId)) ||
+    (value.decision !== "complete" && value.decision !== "cancel")
+  ) {
+    throw new Error("Invalid browser takeover response.");
   }
   return { requestId: value.requestId, decision: value.decision };
 }

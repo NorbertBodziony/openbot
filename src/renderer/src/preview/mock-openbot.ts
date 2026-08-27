@@ -820,6 +820,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       },
       respondToPrompt: async (_input: RespondToPromptInput) => undefined,
       respondToApproval: async () => undefined,
+      respondToBrowserTakeover: async () => undefined,
       onEvent: (listener) => {
         agentListeners.add(listener);
         return () => agentListeners.delete(listener);
@@ -840,6 +841,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         return clone(tab);
       },
       activate: async () => undefined,
+      navigate: async () => undefined,
       reload: async () => undefined,
       close: async (tabId) => {
         browserTabs = browserTabs.filter((tab) => tab.id !== tabId);

@@ -90,6 +90,7 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     interrupt: unimplemented,
     respondToPrompt: unimplemented,
     respondToApproval: unimplemented,
+    respondToBrowserTakeover: unimplemented,
     ...overrides,
   };
 }
@@ -104,6 +105,7 @@ function createBrowser(): TestBrowser {
     getControlState: unimplemented,
     open: unimplemented,
     activate: unimplemented,
+    navigate: unimplemented,
     reload: unimplemented,
     close: unimplemented,
     setVisible: unimplemented,
@@ -1070,9 +1072,13 @@ describe("TeamApiServer administration", () => {
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
     const approvals: unknown[] = [];
+    const takeovers: unknown[] = [];
     const agents = createAgents({
       respondToApproval: async (input: unknown) => {
         approvals.push(input);
+      },
+      respondToBrowserTakeover: async (input: unknown) => {
+        takeovers.push(input);
       },
     });
     const api = new TeamApiServer({
@@ -1093,6 +1099,11 @@ describe("TeamApiServer administration", () => {
         body: { requestId: 17, decision: "accept" },
       });
       expect(approvals).toEqual([{ requestId: 17, decision: "accept" }]);
+      await emptyRequest(base, "/v1/browser-takeovers/respond", {
+        token: login.sessionToken,
+        body: { requestId: "takeover-17", decision: "complete" },
+      });
+      expect(takeovers).toEqual([{ requestId: "takeover-17", decision: "complete" }]);
 
       const invalid = await fetch(`${base}/v1/approvals/respond`, {
         method: "POST",
