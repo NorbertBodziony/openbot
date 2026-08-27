@@ -883,6 +883,14 @@
   opacity: 0.44;
 }
 
+.provider-picker-option-runtime {
+  color: var(--openbot-text-primary);
+}
+
+.provider-picker-option-runtime .provider-picker-logo {
+  opacity: 1;
+}
+
 .provider-picker-identity {
   display: grid;
   min-width: 0;
@@ -936,6 +944,18 @@
 
 .provider-picker-status-sign-in-required,
 .provider-picker-status-outdated {
+  color: var(--openbot-warning);
+}
+
+.provider-picker-status-ready {
+  color: var(--openbot-success);
+}
+
+.provider-picker-status-download-error {
+  color: var(--openbot-danger);
+}
+
+.provider-picker-status-finishing {
   color: var(--openbot-warning);
 }
 

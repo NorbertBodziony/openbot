@@ -84,7 +84,7 @@ describe("bundled Codex resolution", () => {
     ).resolves.toEqual({
       executable: bundled,
       version: "0.149.1",
-      source: "bundled",
+      source: "managed",
     });
   });
 });
@@ -131,7 +131,7 @@ describe("bundled Claude resolution", () => {
     ).resolves.toEqual({
       executable: bundled,
       version: "2.1.246",
-      source: "bundled",
+      source: "managed",
     });
   });
 });
@@ -192,7 +192,7 @@ describe("bundled Grok CLI resolution", () => {
     ).resolves.toEqual({
       executable: bundled,
       version: "1.0.5",
-      source: "bundled",
+      source: "managed",
     });
   });
 });

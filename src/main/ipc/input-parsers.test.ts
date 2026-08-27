@@ -31,7 +31,13 @@ import {
   parseUpdateQueuedMessage,
   parseUpdateRoutine,
 } from "./agent-inputs";
-import { parseAnalyticsPreference, parseExternalDestination, parseMacPermission, parseProvider } from "./app-inputs";
+import {
+  parseAnalyticsPreference,
+  parseExternalDestination,
+  parseMacPermission,
+  parseProvider,
+  parseProviderId,
+} from "./app-inputs";
 import { parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./browser-inputs";
 import {
   parseCreateTeamInvite,
@@ -49,6 +55,7 @@ describe("app IPC input parsing", () => {
   it("parses setup and permission values", () => {
     expect(parseProvider({ preferredProvider: "codex" })).toBe("codex");
     expect(parseProvider({ preferredProvider: "claude" })).toBe("claude");
+    expect(parseProviderId("grok")).toBe("grok");
     expect(parseMacPermission("screen-recording")).toBe("screen-recording");
     expect(parseMacPermission("accessibility")).toBe("accessibility");
     expect(parseExternalDestination("claude-install")).toBe("claude-install");
@@ -59,6 +66,7 @@ describe("app IPC input parsing", () => {
   it("keeps setup and permission error messages", () => {
     expect(() => parseProvider(null)).toThrowError("Setup input is required.");
     expect(() => parseProvider({ preferredProvider: "other" })).toThrowError("Unknown provider.");
+    expect(() => parseProviderId("other")).toThrowError("Unknown provider.");
     expect(() => parseMacPermission("camera")).toThrowError("Unknown macOS permission.");
     expect(() => parseExternalDestination("https://example.com")).toThrowError("Unknown external destination.");
     expect(() => parseExternalDestination("chatgpt-install")).toThrowError("Unknown external destination.");

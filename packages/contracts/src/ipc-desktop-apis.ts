@@ -7,6 +7,7 @@ import type {
   ExternalDestination,
   MacPermissionId,
   MacPermissionsState,
+  ProviderRuntimeSnapshot,
   SaveSetupInput,
   SetAnalyticsPreferenceInput,
   UpdateStatus,
@@ -22,6 +23,7 @@ import type {
   AccountUsage,
   AgentEvent,
   AgentModelOption,
+  AgentProviderId,
   AgentStatus,
   AttachmentImportEvent,
   BotMemory,
@@ -199,6 +201,13 @@ export interface UpdateDesktopApi {
   onEvent: (listener: (status: UpdateStatus) => void) => () => void;
 }
 
+export interface ProviderRuntimesDesktopApi {
+  getStatus: () => Promise<ProviderRuntimeSnapshot>;
+  download: (provider: AgentProviderId) => Promise<ProviderRuntimeSnapshot>;
+  cancel: (provider: AgentProviderId) => Promise<ProviderRuntimeSnapshot>;
+  onEvent: (listener: (snapshot: ProviderRuntimeSnapshot) => void) => () => void;
+}
+
 export interface MaintenanceDesktopApi {
   exportData: () => Promise<ExportResult>;
   exportDiagnostics: () => Promise<ExportResult>;
@@ -293,6 +302,7 @@ export interface OpenBotDesktopApi {
   connectClaude: () => Promise<AgentStatus>;
   connectGrok: () => Promise<AgentStatus>;
   refreshAgentProviders: () => Promise<AgentStatus>;
+  providerRuntimes: ProviderRuntimesDesktopApi;
   openUrl: (url: string) => Promise<void>;
   voice: VoiceDesktopApi;
   skills: SkillsDesktopApi;

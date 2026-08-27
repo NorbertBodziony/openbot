@@ -7,6 +7,7 @@ import type {
   DesktopPlatform,
   MacPermissionId,
   MacPermissionsState,
+  ProviderRuntimeStatus,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
 import { AgentAvatar } from "./AgentAvatar";
@@ -19,7 +20,10 @@ export interface OnboardingFlowProps {
   agentStatus: AgentStatus;
   platform: DesktopPlatform;
   refreshingProviders?: boolean;
+  providerRuntimeStatuses?: Partial<Record<AgentProviderId, ProviderRuntimeStatus>>;
   onConnectProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  onDownloadProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  onCancelProviderDownload?: (provider: AgentProviderId) => void | Promise<void>;
   onInstallProvider?: (provider: AgentProviderId) => void | Promise<void>;
   onSignInProvider?: (provider: AgentProviderId) => void | Promise<void>;
   onRefreshProviders?: () => void | Promise<void>;
@@ -99,6 +103,7 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
   const providerOptions = createMemo<ProviderPickerOption[]>(() =>
     PROVIDERS.map((provider) => {
       const status = props.agentStatus.providers?.find((candidate) => candidate.id === provider.id);
+      const runtime = props.providerRuntimeStatuses?.[provider.id];
       return {
         ...provider,
         state: status?.state ?? fallbackProviderState(props.agentStatus),
@@ -106,11 +111,23 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
         email: status?.email,
         connectionState: status?.connectionState,
         checkError: status?.checkError,
+        runtimeStatus:
+          runtime?.phase === "not-downloaded" && (status?.state === "available" || status?.state === "sign-in-required")
+            ? { ...runtime, phase: "ready", version: status.version }
+            : runtime,
       };
     }),
   );
   const showsProviderSetup = () =>
-    Boolean(props.onConnectProvider || props.onInstallProvider || props.onSignInProvider || props.onRefreshProviders);
+    Boolean(
+      props.onConnectProvider ||
+        props.onDownloadProvider ||
+        props.onCancelProviderDownload ||
+        props.onInstallProvider ||
+        props.onSignInProvider ||
+        props.onRefreshProviders,
+    );
+  const lazyProviderMode = () => Boolean(props.providerRuntimeStatuses || props.onDownloadProvider);
   const selectedProviderConnected = createMemo(() => {
     const selected = selectedProvider();
     return Boolean(
@@ -252,6 +269,30 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
     }
   }
 
+  async function downloadProvider(provider: AgentProviderId): Promise<void> {
+    if (!props.onDownloadProvider) return;
+    setError("");
+    setProviderSelectedByUser(true);
+    setSelectedProvider(provider);
+    try {
+      await props.onDownloadProvider(provider);
+    } catch {
+      const providerName = PROVIDERS.find((candidate) => candidate.id === provider)?.name ?? "provider";
+      setError(`OpenBot could not download ${providerName}. Try again.`);
+    }
+  }
+
+  async function cancelProviderDownload(provider: AgentProviderId): Promise<void> {
+    if (!props.onCancelProviderDownload) return;
+    setError("");
+    try {
+      await props.onCancelProviderDownload(provider);
+    } catch {
+      const providerName = PROVIDERS.find((candidate) => candidate.id === provider)?.name ?? "provider";
+      setError(`OpenBot could not cancel the ${providerName} download. Try again.`);
+    }
+  }
+
   async function refreshProviders(): Promise<void> {
     if (!props.onRefreshProviders || props.refreshingProviders) return;
     setError("");
@@ -376,15 +417,19 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
                     ariaLabel="Default provider"
                     label="Choose your AI provider"
                     hint={
-                      showsProviderSetup()
-                        ? "Connect and select a provider to continue. Use Refresh after external account changes."
-                        : "You can change this for each bot later."
+                      lazyProviderMode()
+                        ? "Download, connect, and select a provider to continue."
+                        : showsProviderSetup()
+                          ? "Connect and select a provider to continue. Use Refresh after external account changes."
+                          : "You can change this for each bot later."
                     }
                     allowUnavailableSelection
                     focusFirst
                     disabled={saving()}
                     refreshingProviders={props.refreshingProviders}
                     onConnectProvider={props.onConnectProvider ? connectProvider : undefined}
+                    onDownloadProvider={props.onDownloadProvider ? downloadProvider : undefined}
+                    onCancelProviderDownload={props.onCancelProviderDownload ? cancelProviderDownload : undefined}
                     onInstallProvider={
                       props.onInstallProvider
                         ? (provider) => openProviderGuide(provider, props.onInstallProvider, "install")
@@ -395,7 +440,7 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
                         ? (provider) => openProviderGuide(provider, props.onSignInProvider, "sign-in")
                         : undefined
                     }
-                    onRefreshProviders={props.onRefreshProviders ? refreshProviders : undefined}
+                    onRefreshProviders={!lazyProviderMode() && props.onRefreshProviders ? refreshProviders : undefined}
                     onChange={(provider) => {
                       setProviderSelectedByUser(true);
                       setSelectedProvider(provider);

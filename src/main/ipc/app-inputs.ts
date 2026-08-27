@@ -13,6 +13,11 @@ export function parseProvider(input: unknown): AgentProviderId {
   return provider;
 }
 
+export function parseProviderId(input: unknown): AgentProviderId {
+  if (input !== "codex" && input !== "claude" && input !== "grok") throw new Error("Unknown provider.");
+  return input;
+}
+
 export function parseAnalyticsPreference(input: unknown): SetAnalyticsPreferenceInput {
   if (!isDynamicRecord(input) || !isBoolean(input.enabled)) throw new Error("Analytics preference is required.");
   return { enabled: input.enabled };

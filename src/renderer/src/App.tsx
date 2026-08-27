@@ -24,6 +24,7 @@ import type {
   DirectTypingRealtimeEvent,
   HostStatus,
   InviteSummary,
+  ProviderRuntimeSnapshot,
   QueueSnapshot,
   RemoteDesktopSession,
   ServerSummary,
@@ -115,6 +116,14 @@ const FALLBACK_UPDATE_STATUS: UpdateStatus = {
   checkedAt: null,
   message: null,
   errorCode: null,
+};
+const FALLBACK_PROVIDER_RUNTIMES: ProviderRuntimeSnapshot = {
+  revision: -1,
+  providers: {
+    codex: { phase: "not-downloaded", progress: null, message: null, version: null },
+    claude: { phase: "not-downloaded", progress: null, message: null, version: null },
+    grok: { phase: "not-downloaded", progress: null, message: null, version: null },
+  },
 };
 const ANALYTICS_APP_VERSION_STORAGE_KEY = "openbot:analytics-app-version";
 
@@ -259,6 +268,8 @@ export function createAppController(props: AppProps = {}) {
   const [refreshingProviders, setRefreshingProviders] = createSignal(false);
   const [accountUsage, setAccountUsage] = createSignal<AccountUsage | null>(null);
   const [updateStatus, setUpdateStatus] = createSignal<UpdateStatus>(FALLBACK_UPDATE_STATUS);
+  const [providerRuntimeSnapshot, setProviderRuntimeSnapshot] =
+    createSignal<ProviderRuntimeSnapshot>(FALLBACK_PROVIDER_RUNTIMES);
   const [leftPanelWidth, setLeftPanelWidth] = createSignal(
     readPanelWidth(LEFT_PANEL_STORAGE_KEY, LEFT_PANEL_DEFAULT, LEFT_PANEL_MIN, LEFT_PANEL_MAX),
   );
@@ -514,6 +525,10 @@ export function createAppController(props: AppProps = {}) {
     const unsubscribeUpdate = window.openbot.update.onEvent((status) => {
       flush(() => setUpdateStatus(status));
     });
+    const unsubscribeProviderRuntimes =
+      window.openbot.providerRuntimes?.onEvent((snapshot) => {
+        flush(() => applyProviderRuntimeSnapshot(snapshot));
+      }) ?? (() => undefined);
     const unsubscribeAuth = window.openbot.auth.onEvent((state) => {
       flush(() => applyCentralAuthState(state));
     });
@@ -557,6 +572,7 @@ export function createAppController(props: AppProps = {}) {
     const cleanup = () => {
       unsubscribe();
       unsubscribeUpdate();
+      unsubscribeProviderRuntimes();
       unsubscribeAuth();
       unsubscribeServers();
       unsubscribePresence();
@@ -576,6 +592,10 @@ export function createAppController(props: AppProps = {}) {
     void window.openbot.update
       .getStatus()
       .then(setUpdateStatus)
+      .catch(() => undefined);
+    void window.openbot.providerRuntimes
+      ?.getStatus()
+      .then(applyProviderRuntimeSnapshot)
       .catch(() => undefined);
     void window.openbot.auth
       .getState()
@@ -1977,6 +1997,59 @@ export function createAppController(props: AppProps = {}) {
     return connectGrok();
   }
 
+  function applyProviderRuntimeSnapshot(snapshot: ProviderRuntimeSnapshot): void {
+    setProviderRuntimeSnapshot((current) => {
+      if (snapshot.revision < current.revision) return current;
+      for (const provider of ["codex", "claude", "grok"] as const) {
+        const previousPhase = current.providers[provider].phase;
+        const nextPhase = snapshot.providers[provider].phase;
+        if (previousPhase !== "downloading" && previousPhase !== "finishing") continue;
+        if (nextPhase === "ready") {
+          desktopAnalytics.scope().track("provider_action", {
+            provider,
+            action: "download_completed",
+            result: "succeeded",
+          });
+        } else if (nextPhase === "download-error") {
+          desktopAnalytics.scope().track("provider_action", {
+            provider,
+            action: "download_completed",
+            result: "failed",
+            failure_code: "runtime_download_failed",
+          });
+        }
+      }
+      return snapshot;
+    });
+  }
+
+  async function downloadProviderRuntime(provider: AgentProviderId): Promise<void> {
+    if (!window.openbot.providerRuntimes) throw new Error("Provider downloads are unavailable.");
+    const analytics = desktopAnalytics.scope();
+    analytics.track("provider_action", { provider, action: "download_started", result: "succeeded" });
+    try {
+      applyProviderRuntimeSnapshot(await window.openbot.providerRuntimes.download(provider));
+    } catch (error) {
+      analytics.track("provider_action", {
+        provider,
+        action: "download_completed",
+        result: "failed",
+        failure_code: "download_failed",
+      });
+      throw error;
+    }
+  }
+
+  async function cancelProviderRuntimeDownload(provider: AgentProviderId): Promise<void> {
+    if (!window.openbot.providerRuntimes) throw new Error("Provider downloads are unavailable.");
+    applyProviderRuntimeSnapshot(await window.openbot.providerRuntimes.cancel(provider));
+    desktopAnalytics.scope().track("provider_action", {
+      provider,
+      action: "download_cancelled",
+      result: "succeeded",
+    });
+  }
+
   async function connectChatGPT(): Promise<void> {
     return connectProvider("codex", window.openbot.connectChatGPT);
   }
@@ -2802,10 +2875,14 @@ export function createAppController(props: AppProps = {}) {
     setupState,
     pendingInviteUrl,
     agentStatus,
+    providerRuntimeStatuses: () => providerRuntimeSnapshot().providers,
+    providerRuntimeDownloadsAvailable: () => Boolean(window.openbot.providerRuntimes),
     refreshingProviders,
     connectChatGPT,
     connectClaude,
     connectGrok,
+    downloadProviderRuntime,
+    cancelProviderRuntimeDownload,
     openProviderInstallGuide,
     openProviderSignInGuide,
     refreshAgentProviders,

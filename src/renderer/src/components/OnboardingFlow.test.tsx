@@ -1,5 +1,12 @@
-import type { AgentProviderId, MacPermissionId, MacPermissionsState } from "@openbot/contracts/ipc";
+import type {
+  AgentProviderId,
+  AgentStatus,
+  MacPermissionId,
+  MacPermissionsState,
+  ProviderRuntimeStatus,
+} from "@openbot/contracts/ipc";
 import { fireEvent, render, waitFor, within } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { STORY_AGENT_STATUS } from "../preview/fixtures";
 import { createMockOpenBot, type MockOpenBotControls } from "../preview/mock-openbot";
@@ -95,5 +102,81 @@ describe("OnboardingFlow", () => {
     expect(await view.findByRole("alert")).toHaveTextContent("Setup failed.");
     expect(view.getByRole("heading", { name: "Give each bot a job" })).toBeInTheDocument();
     expect(onSave).toHaveBeenCalledWith("codex");
+  });
+
+  it("keeps provider downloads independent and blocks Next until the selected provider connects", async () => {
+    activeMock = createMockOpenBot();
+    window.openbot = activeMock.api;
+    const initialAgentStatus: AgentStatus = {
+      ...STORY_AGENT_STATUS,
+      providers: STORY_AGENT_STATUS.providers?.map((provider) => ({
+        ...provider,
+        state: "not-installed",
+        connectionState: undefined,
+        message: null,
+      })),
+    };
+    const initialRuntimeStatuses: Record<AgentProviderId, ProviderRuntimeStatus> = {
+      codex: { phase: "not-downloaded", progress: null, message: null, version: null },
+      claude: { phase: "not-downloaded", progress: null, message: null, version: null },
+      grok: { phase: "not-downloaded", progress: null, message: null, version: null },
+    };
+    const [agentStatus, setAgentStatus] = createSignal(initialAgentStatus);
+    const [runtimeStatuses, setRuntimeStatuses] = createSignal(initialRuntimeStatuses);
+    const onDownloadProvider = vi.fn((provider: AgentProviderId) => {
+      setRuntimeStatuses((current) => ({
+        ...current,
+        [provider]: { phase: "downloading", progress: 20, message: null, version: null },
+      }));
+    });
+    const onCancelProviderDownload = vi.fn((provider: AgentProviderId) => {
+      setRuntimeStatuses((current) => ({
+        ...current,
+        [provider]: { phase: "not-downloaded", progress: null, message: null, version: null },
+      }));
+    });
+    const onConnectProvider = vi.fn((provider: AgentProviderId) => {
+      setAgentStatus((current) => ({
+        ...current,
+        providers: current.providers?.map((candidate) =>
+          candidate.id === provider ? { ...candidate, state: "available", connectionState: undefined } : candidate,
+        ),
+      }));
+    });
+    const view = render(() => (
+      <OnboardingFlow
+        state={{ completed: false, preferredProvider: null }}
+        agentStatus={agentStatus()}
+        platform="darwin"
+        providerRuntimeStatuses={runtimeStatuses()}
+        onDownloadProvider={onDownloadProvider}
+        onCancelProviderDownload={onCancelProviderDownload}
+        onConnectProvider={onConnectProvider}
+        onSave={async () => undefined}
+      />
+    ));
+
+    const next = view.getByRole("button", { name: "Next" });
+    expect(next).toBeDisabled();
+    await fireEvent.click(view.getByRole("button", { name: "Download Grok" }));
+    expect(
+      within(view.getByRole("radiogroup", { name: "Default provider" })).getByRole("radio", { name: /Grok/ }),
+    ).toBeChecked();
+    expect(onDownloadProvider).toHaveBeenCalledWith("grok");
+
+    await fireEvent.click(view.getByRole("button", { name: "Download Claude" }));
+    await fireEvent.click(view.getByRole("button", { name: "Cancel Grok" }));
+    expect(onCancelProviderDownload).toHaveBeenCalledWith("grok");
+    expect(view.getByRole("button", { name: "Cancel Claude" })).toBeEnabled();
+    expect(next).toBeDisabled();
+
+    setRuntimeStatuses((current) => ({
+      ...current,
+      claude: { phase: "ready", progress: 100, message: null, version: "2.1.246" },
+    }));
+    await fireEvent.click(await view.findByRole("button", { name: "Connect Claude" }));
+    await waitFor(() => expect(next).toBeEnabled());
+    await fireEvent.click(view.getByRole("button", { name: "Reconnect Claude" }));
+    expect(onConnectProvider).toHaveBeenCalledTimes(2);
   });
 });

@@ -753,8 +753,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return refresh;
   }
 
-  connectChatGPT(openExternal: (url: string) => Promise<void>): Promise<AgentStatus> {
-    if (this.#providerRefresh || this.#status.phase === "starting" || this.#status.phase === "restarting") {
+  async refreshProvider(provider: AgentProvider): Promise<AgentStatus> {
+    if (this.#clients.has(provider)) return this.getStatus();
+    let start = this.#providerStarts.get(provider);
+    if (!start) {
+      start = this.#connect("starting", [provider], {
+        preserveCheckErrors: true,
+        refreshRuntimeInBackground: true,
+      }).finally(() => {
+        this.#providerStarts.delete(provider);
+      });
+      this.#providerStarts.set(provider, start);
+    }
+    await start;
+    return this.getStatus();
+  }
+
+  async connectChatGPT(openExternal: (url: string) => Promise<void>): Promise<AgentStatus> {
+    const start = this.#providerStarts.get("codex");
+    if (start) await start;
+    if (start && this.#clients.has("codex") && this.#accounts.has("codex")) return this.getStatus();
+    if (this.#providerRefresh || (!start && ["starting", "restarting"].includes(this.#status.phase))) {
       return Promise.resolve(this.getStatus());
     }
     return this.#runProviderConnectionCommand("codex", async () => {
@@ -763,8 +782,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
   }
 
-  connectClaude(): Promise<AgentStatus> {
-    if (this.#providerRefresh || this.#status.phase === "starting" || this.#status.phase === "restarting") {
+  async connectClaude(): Promise<AgentStatus> {
+    const start = this.#providerStarts.get("claude");
+    if (start) await start;
+    if (start && this.#clients.has("claude") && this.#accounts.has("claude")) return this.getStatus();
+    if (this.#providerRefresh || (!start && ["starting", "restarting"].includes(this.#status.phase))) {
       return Promise.resolve(this.getStatus());
     }
     return this.#runProviderConnectionCommand("claude", async () => {
@@ -773,8 +795,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
   }
 
-  connectGrok(): Promise<AgentStatus> {
-    if (this.#providerRefresh || this.#status.phase === "starting" || this.#status.phase === "restarting") {
+  async connectGrok(): Promise<AgentStatus> {
+    const start = this.#providerStarts.get("grok");
+    if (start) await start;
+    if (start && this.#clients.has("grok") && this.#accounts.has("grok")) return this.getStatus();
+    if (this.#providerRefresh || (!start && ["starting", "restarting"].includes(this.#status.phase))) {
       return Promise.resolve(this.getStatus());
     }
     return this.#runProviderConnectionCommand("grok", async () => {
@@ -1376,7 +1401,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         cwd: process.cwd(),
         env: {
           ...process.env,
-          ...(cli.source === "bundled" ? { DISABLE_AUTOUPDATER: "1" } : {}),
+          ...(cli.source === "managed" ? { DISABLE_AUTOUPDATER: "1" } : {}),
         },
         stdio: "ignore",
         shell: false,

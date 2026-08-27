@@ -364,6 +364,19 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     connectClaude: async () => clone(agentStatus),
     connectGrok: async () => clone(agentStatus),
     refreshAgentProviders: async () => clone(agentStatus),
+    providerRuntimes: {
+      getStatus: async () => ({
+        revision: 0,
+        providers: {
+          codex: { phase: "not-downloaded", progress: null, message: null, version: null },
+          claude: { phase: "not-downloaded", progress: null, message: null, version: null },
+          grok: { phase: "not-downloaded", progress: null, message: null, version: null },
+        },
+      }),
+      download: async () => api.providerRuntimes.getStatus(),
+      cancel: async () => api.providerRuntimes.getStatus(),
+      onEvent: () => () => undefined,
+    },
     openUrl: async () => undefined,
     voice: {
       getModelStatus: async () => ({ phase: "ready", progress: 100, message: null }),

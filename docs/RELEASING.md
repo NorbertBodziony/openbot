@@ -9,6 +9,10 @@ and Moonlight Web runtime artifacts. GitHub Actions downloads those artifacts, c
 verifies their native executables as part of the final OpenBot package. Release packages are not built
 on a developer machine.
 
+Codex, Claude, and Grok runtimes are optional downloads. They are not part of the application package.
+Release CI downloads the pinned macOS and Windows provider artifacts as control artifacts. It checks
+their SHA-256 values, versions, licenses, and vendor signatures without copying them into OpenBot.
+
 ## One-time GitHub setup
 
 Create the `release` environment in `NorbertBodziony/openbot`, then add these environment secrets:
@@ -105,8 +109,8 @@ The workflow:
 3. runs the complete offline repository check;
 4. builds signed and notarized ARM64 DMG and ZIP artifacts on a GitHub macOS runner;
 5. builds an unsigned Windows x64 NSIS installer on a GitHub Windows runner;
-6. verifies both unpacked applications, update metadata, runtimes, licenses, checksums, platform
-   signing contracts, launch behavior, and update artifact size limits;
+6. verifies both unpacked applications, update metadata, included runtimes, provider control artifacts,
+   licenses, checksums, platform signing contracts, launch behavior, and update artifact size limits;
 7. generates SPDX SBOMs and GitHub build-provenance attestations for both platforms;
 8. publishes one non-draft GitHub Release only after both platform jobs pass.
 
@@ -139,15 +143,26 @@ Before creating the first tag or any later release:
 4. run `bun install --frozen-lockfile` and `bun run check` from a clean clone;
 5. run `bun run package:verify` on macOS; Windows packaging and launch verification run on the release
    runner;
-6. confirm that the lock file contains both runtime artifacts and that their install checks pass;
+6. confirm that the lock file contains all six provider artifacts, their download and install sizes,
+   and that their install checks pass;
 7. smoke-test sign-in/setup, chat streaming, queues, attachments, agent messaging, browser control,
    context compaction, and the update popover;
 8. on macOS ARM64 and Windows x64, update from the last public version and confirm check, download,
    preparation, explicit restart, new version, local agents, conversations, and queues;
 9. test first voice use, download progress, retry after a stopped download, transcription, and cached
    offline use;
-10. confirm `CHANGELOG.md` describes the version and the working tree is clean;
-11. create and push the version commit and tag only after CI passes on `main`.
+10. build a signed and notarized canary and test an update from the official `0.1.21` application on
+   macOS 26 with a separate `userData` directory;
+11. confirm the canary update does not crash in `CFURLConnectionSynchronous`, preserves data, starts
+    the new version, and can run three provider downloads with restricted memory;
+12. on Windows 10 and 11 x64, confirm that normal exit, restart, and sign-out do not start NSIS, while
+    `Restart and install` does start it;
+13. confirm `CHANGELOG.md` describes the version and the working tree is clean;
+14. create and push the version commit and tag only after CI passes on `main`.
+
+The macOS ZIP must be smaller than 800,000,000 bytes and smaller than the official `0.1.21` ZIP.
+Do not publish when either size gate fails, the `0.1.21` canary update crashes, or Windows starts NSIS
+during shutdown or sign-out.
 
 The unsigned local macOS package is a development artifact. It does not prove Gatekeeper,
 notarization, or auto-update readiness. Those are proven only by the signed release workflow's

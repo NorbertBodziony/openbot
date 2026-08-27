@@ -94,7 +94,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     if (this.#started) return;
     this.#started = true;
     this.#updater.autoDownload = false;
-    this.#updater.autoInstallOnAppQuit = this.#options.platform === "darwin";
+    this.#updater.autoInstallOnAppQuit = false;
     this.#updater.allowPrerelease = false;
 
     this.#updater.on("checking-for-update", () => {

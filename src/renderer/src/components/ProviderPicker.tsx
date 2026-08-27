@@ -1,5 +1,10 @@
 import { ProviderLogo } from "@openbot/brand";
-import type { AgentProviderId, AgentProviderState } from "@openbot/contracts/ipc";
+import type {
+  AgentProviderId,
+  AgentProviderState,
+  ProviderRuntimePhase,
+  ProviderRuntimeStatus,
+} from "@openbot/contracts/ipc";
 import { createEffect, createUniqueId, For, Show } from "solid-js";
 import { Badge, Button, Input, RefreshCw, Spinner } from "./ui";
 
@@ -12,9 +17,10 @@ export interface ProviderPickerOption {
   email?: string | null;
   connectionState?: "connecting";
   checkError?: string | null;
+  runtimeStatus?: ProviderRuntimeStatus;
 }
 
-interface ProviderPickerProps {
+export interface ProviderPickerProps {
   value: AgentProviderId | null;
   options: ProviderPickerOption[];
   ariaLabel: string;
@@ -26,6 +32,8 @@ interface ProviderPickerProps {
   focusFirst?: boolean;
   refreshingProviders?: boolean;
   onConnectProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  onDownloadProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  onCancelProviderDownload?: (provider: AgentProviderId) => void | Promise<void>;
   onInstallProvider?: (provider: AgentProviderId) => void | Promise<void>;
   onSignInProvider?: (provider: AgentProviderId) => void | Promise<void>;
   onRefreshProviders?: () => void | Promise<void>;
@@ -89,9 +97,11 @@ export function ProviderPicker(props: ProviderPickerProps) {
         <For each={props.options} keyed={false}>
           {(option) => {
             const state = () => option().state;
+            const runtimeStatus = () => option().runtimeStatus;
             const connecting = () => option().connectionState === "connecting";
             const available = () => state() === "available";
-            const visualState = () => (connecting() && !available() ? "checking" : state());
+            const visualState = () => providerVisualState(state(), connecting(), runtimeStatus());
+            const runtimeAction = () => providerRuntimeAction(state(), connecting(), runtimeStatus());
             const inputId = () => `${pickerId}-${option().id}`;
             return (
               <div
@@ -100,6 +110,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
                   {
                     "provider-picker-option-selected": props.value === option().id,
                     "provider-picker-option-unavailable": !available(),
+                    "provider-picker-option-runtime": Boolean(runtimeStatus()),
                     "provider-picker-option-selectable-unavailable":
                       !available() && Boolean(props.allowUnavailableSelection),
                   },
@@ -127,17 +138,43 @@ export function ProviderPicker(props: ProviderPickerProps) {
                       {(checkError) => <small class="provider-picker-check-error">{checkError()}</small>}
                     </Show>
                   </span>
-                  <Badge
-                    class={`provider-picker-status provider-picker-status-${visualState()}`}
-                    tone={providerStatusTone(visualState())}
-                    shape="pill"
-                    dot
-                  >
-                    {providerStatusLabel(state(), connecting())}
-                  </Badge>
+                  <Show when={runtimeStatus()?.phase !== "not-downloaded"}>
+                    <Badge
+                      class={`provider-picker-status provider-picker-status-${visualState()}`}
+                      tone={providerStatusTone(visualState())}
+                      shape="pill"
+                      dot={runtimeStatus()?.phase !== "downloading"}
+                    >
+                      {providerStatusLabel(state(), connecting(), runtimeStatus())}
+                    </Badge>
+                  </Show>
                 </label>
+                <Show when={runtimeAction()}>
+                  {(action) => (
+                    <Button
+                      type="button"
+                      variant={action() === "Download" ? "default" : "outline"}
+                      size="xs"
+                      class="provider-picker-install"
+                      aria-label={`${action()} ${option().name}`}
+                      disabled={props.disabled || props.refreshingProviders}
+                      onClick={() => {
+                        if (action() === "Cancel") {
+                          void props.onCancelProviderDownload?.(option().id);
+                        } else if (["Connect", "Reconnect", "Restart"].includes(action())) {
+                          void props.onConnectProvider?.(option().id);
+                        } else {
+                          void props.onDownloadProvider?.(option().id);
+                        }
+                      }}
+                    >
+                      {action()}
+                    </Button>
+                  )}
+                </Show>
                 <Show
                   when={
+                    !runtimeStatus() &&
                     option().id === "claude" &&
                     state() === "not-installed" &&
                     !props.onConnectProvider &&
@@ -156,7 +193,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
                     Install
                   </Button>
                 </Show>
-                <Show when={props.onConnectProvider}>
+                <Show when={!runtimeStatus() && props.onConnectProvider}>
                   <Button
                     type="button"
                     variant="outline"
@@ -175,6 +212,7 @@ export function ProviderPicker(props: ProviderPickerProps) {
                 </Show>
                 <Show
                   when={
+                    !runtimeStatus() &&
                     option().id === "claude" &&
                     state() === "sign-in-required" &&
                     !props.onConnectProvider &&
@@ -203,24 +241,57 @@ export function ProviderPicker(props: ProviderPickerProps) {
   );
 }
 
-function providerStatusTone(state: AgentProviderState): "success" | "warning" | "danger" | "neutral" {
+type ProviderVisualState = AgentProviderState | ProviderRuntimePhase | "connecting";
+
+function providerStatusTone(state: ProviderVisualState): "success" | "warning" | "danger" | "neutral" {
   if (state === "available") return "success";
-  if (state === "error") return "danger";
-  if (state === "sign-in-required" || state === "outdated") return "warning";
+  if (state === "ready") return "success";
+  if (state === "error" || state === "download-error") return "danger";
+  if (state === "sign-in-required" || state === "outdated" || state === "finishing") return "warning";
   return "neutral";
 }
 
 function providerStatusLabel(
   state: AgentProviderState,
   connecting = false,
-): "Connected" | "Not connected" | "Not installed" | "Update required" | "Unavailable" | "Checking" | "Connecting" {
+  runtimeStatus?: ProviderRuntimeStatus,
+): string {
   if (connecting && state !== "available") return "Connecting";
   if (state === "available") return "Connected";
+  if (runtimeStatus?.phase === "not-downloaded") return "Not downloaded";
+  if (runtimeStatus?.phase === "downloading") {
+    return `${Math.round(Math.max(0, Math.min(100, runtimeStatus.progress ?? 0)))}%`;
+  }
+  if (runtimeStatus?.phase === "finishing") return "Setting up";
+  if (runtimeStatus?.phase === "ready") return "Ready";
+  if (runtimeStatus?.phase === "download-error") return "Download failed";
   if (state === "sign-in-required") return "Not connected";
   if (state === "not-installed") return "Not installed";
   if (state === "outdated") return "Update required";
   if (state === "error") return "Unavailable";
   return "Checking";
+}
+
+function providerVisualState(
+  state: AgentProviderState,
+  connecting: boolean,
+  runtimeStatus?: ProviderRuntimeStatus,
+): ProviderVisualState {
+  if (connecting && state !== "available") return "connecting";
+  if (state === "available") return "available";
+  return runtimeStatus?.phase ?? state;
+}
+
+function providerRuntimeAction(
+  state: AgentProviderState,
+  connecting: boolean,
+  runtimeStatus?: ProviderRuntimeStatus,
+): "Download" | "Cancel" | "Connect" | "Reconnect" | "Restart" | "Retry" | undefined {
+  if (!runtimeStatus) return;
+  if (runtimeStatus.phase === "not-downloaded") return "Download";
+  if (runtimeStatus.phase === "downloading") return "Cancel";
+  if (runtimeStatus.phase === "ready") return providerActionLabel(state, connecting);
+  if (runtimeStatus.phase === "download-error") return "Retry";
 }
 
 function providerActionLabel(state: AgentProviderState, connecting: boolean): "Connect" | "Reconnect" | "Restart" {
