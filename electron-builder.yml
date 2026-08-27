@@ -78,7 +78,14 @@ mac:
   minimumSystemVersion: "12.0"
   notarize: true
   hardenedRuntime: true
-  icon: build/icon-production.png
+  icon: build/icon-production-macos-safe-area.png
+  extraResources:
+    - from: build/icon-production-macos-safe-area.png
+      to: icons/icon-production-macos-safe-area.png
+    - from: build/icon-dev-macos-safe-area.png
+      to: icons/icon-dev-macos-safe-area.png
+    - from: build/icon-preview-macos-safe-area.png
+      to: icons/icon-preview-macos-safe-area.png
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
   darkModeSupport: true

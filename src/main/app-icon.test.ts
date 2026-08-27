@@ -19,10 +19,12 @@ describe("app icon variant", () => {
   });
 
   it("resolves source and packaged icon paths", () => {
-    expect(appIconFileName("preview")).toBe("icon-preview.png");
+    expect(appIconFileName("preview", "win32")).toBe("icon-preview.png");
+    expect(appIconFileName("preview", "darwin")).toBe("icon-preview-macos-safe-area.png");
     expect(
       resolveAppIconPath({
         variant: "dev",
+        platform: "win32",
         isPackaged: false,
         resourcesPath: "/Applications/OpenBot.app/Contents/Resources",
         sourceRoot: "/workspace/openbot",
@@ -31,10 +33,11 @@ describe("app icon variant", () => {
     expect(
       resolveAppIconPath({
         variant: "production",
+        platform: "darwin",
         isPackaged: true,
         resourcesPath: "/Applications/OpenBot.app/Contents/Resources",
         sourceRoot: "/workspace/openbot",
       }),
-    ).toBe("/Applications/OpenBot.app/Contents/Resources/icons/icon-production.png");
+    ).toBe("/Applications/OpenBot.app/Contents/Resources/icons/icon-production-macos-safe-area.png");
   });
 });
