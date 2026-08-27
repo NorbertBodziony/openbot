@@ -3,6 +3,7 @@ import type {
   AgentStatus,
   AttachmentImportEvent,
   BotSummary,
+  BrowserTab,
   CentralAuthState,
   ConversationSnapshot,
   DirectConversationSnapshot,
@@ -469,6 +470,7 @@ describe("OpenBot connected desktop shell", () => {
         browser: {
           open: vi.fn().mockResolvedValue(undefined),
           activate: vi.fn().mockResolvedValue(undefined),
+          navigate: vi.fn().mockResolvedValue(undefined),
           reload: vi.fn().mockResolvedValue(undefined),
           close: vi.fn().mockResolvedValue(undefined),
           listTabs: vi.fn().mockResolvedValue([]),
@@ -2664,6 +2666,21 @@ describe("OpenBot connected desktop shell", () => {
     if (!(addressForm instanceof HTMLFormElement)) throw new Error("Browser address form was not rendered.");
     await fireEvent.submit(addressForm);
     await waitFor(() => expect(window.openbot.browser.open).toHaveBeenCalledTimes(1));
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-next",
+          title: "Redirected page",
+          url: "https://substack.com/dashboard",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-next",
+    });
+    expect(address).toHaveValue("https://substack.com/dashboard");
     expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-pip");
 
     vi.mocked(window.openbot.browser.setVisible).mockClear();
@@ -2721,8 +2738,12 @@ describe("OpenBot connected desktop shell", () => {
       expect(screen.getByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-pip"),
     );
     expect(conversation).toHaveClass("browser-panel-active");
+    await fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    expect(window.openbot.browser.navigate).toHaveBeenCalledWith({ tabId: "tab-next", direction: "back" });
+    await fireEvent.click(screen.getByRole("button", { name: "Go forward" }));
+    expect(window.openbot.browser.navigate).toHaveBeenCalledWith({ tabId: "tab-next", direction: "forward" });
     await fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
-    expect(window.openbot.browser.reload).toHaveBeenCalledWith("tab-pip");
+    expect(window.openbot.browser.reload).toHaveBeenCalledWith("tab-next");
     expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
 
     await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
@@ -2732,6 +2753,49 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
     expect(window.openbot.browser.close).not.toHaveBeenCalled();
     expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
+  });
+
+  it("keeps a newly opened browser tab active when the initial tab request resolves late", async () => {
+    const googleTab: BrowserTab = {
+      id: "tab-google",
+      title: "Google",
+      url: "https://www.google.com",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const substackTab: BrowserTab = {
+      id: "tab-substack",
+      title: "Substack | Chat",
+      url: "https://substack.com/chat",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    let resolveInitialTabs: (tabs: BrowserTab[]) => void = () => undefined;
+    vi.mocked(window.openbot.browser.listTabs).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveInitialTabs = resolve;
+      }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(window.openbot.browser.listTabs).toHaveBeenCalledTimes(1));
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [googleTab, substackTab],
+      activeTabId: substackTab.id,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    const substackTrigger = await screen.findByRole("tab", { name: "Substack | Chat" });
+    expect(substackTrigger).toHaveAttribute("aria-selected", "true");
+
+    resolveInitialTabs([googleTab]);
+
+    await waitFor(() => expect(substackTrigger).toHaveAttribute("aria-selected", "true"));
+    expect(screen.getByRole("tab", { name: "Google" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://substack.com/chat");
   });
 
   it("clamps and restores Picture in Picture per conversation without overriding it during agent control", async () => {
@@ -2853,6 +2917,7 @@ describe("OpenBot connected desktop shell", () => {
       url: "https://www.google.com",
       ownerThreadId: "thread-chief",
       ownerBotId: "chief",
+      focus: true,
     });
     expect(screen.queryByText("Typing…")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Chief is controlling the browser" })).toHaveAttribute(

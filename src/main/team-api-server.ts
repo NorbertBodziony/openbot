@@ -116,7 +116,7 @@ type TeamApiSidebarLayout = Pick<SidebarLayoutStore, "getSnapshot" | "mutate" | 
 };
 type TeamApiBrowser = Pick<
   BrowserHost,
-  "listTabs" | "getControlState" | "open" | "activate" | "reload" | "close" | "setVisible"
+  "listTabs" | "getControlState" | "open" | "activate" | "navigate" | "reload" | "close" | "setVisible"
 >;
 type TeamApiRemoteScreen = Pick<
   RemoteScreenGateway,
@@ -613,6 +613,8 @@ export class TeamApiServer {
       }
       if (method === "POST" && url.pathname === "/v1/browser/open") {
         const body = await readJson(request);
+        const focus = body.focus ?? false;
+        if (!isBoolean(focus)) throw new HttpError(400, "focus must be a boolean.");
         return this.#json(
           response,
           201,
@@ -620,12 +622,22 @@ export class TeamApiServer {
             stringField(body, "url", false, INPUT_LIMITS.browserUrl),
             nullableString(body, "ownerThreadId"),
             nullableString(body, "ownerBotId"),
+            focus,
           ),
         );
       }
       if (method === "POST" && url.pathname === "/v1/browser/activate") {
         const body = await readJson(request);
         await this.#options.browser.activate(stringField(body, "tabId"));
+        return this.#empty(response, 204);
+      }
+      if (method === "POST" && url.pathname === "/v1/browser/navigate") {
+        const body = await readJson(request);
+        const direction = stringField(body, "direction");
+        if (direction !== "back" && direction !== "forward") {
+          throw new HttpError(400, "Invalid browser navigation direction.");
+        }
+        await this.#options.browser.navigate(stringField(body, "tabId"), direction);
         return this.#empty(response, 204);
       }
       if (method === "POST" && url.pathname === "/v1/browser/reload") {

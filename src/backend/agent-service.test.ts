@@ -670,7 +670,7 @@ describe.sequential("AgentService", () => {
     });
 
     await waitFor(() => calls.length === 1);
-    expect(calls[0]?.threadId).toBe(openbotThreadId);
+    expect(calls[0]).toMatchObject({ threadId: openbotThreadId, ownerBotId: "chief" });
   });
 
   it("surfaces Codex approvals without auto-accepting and maps one-shot decisions", async () => {
@@ -810,8 +810,22 @@ describe.sequential("AgentService", () => {
   it("pauses a browser tool call until the user resolves the takeover", async () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const tabs: BrowserTab[] = [];
+    const browser = fakeBrowser(tabs);
+    browser.handleDynamicTool = async (params) => {
+      if (params.tool === "open") {
+        tabs.push({
+          id: "protected-tab",
+          title: "Sign in",
+          url: "https://example.com/login",
+          loading: false,
+          ownerThreadId: params.threadId,
+          ownerBotId: params.ownerBotId ?? null,
+        });
+      }
+      return { success: true, contentItems: [] };
+    };
     const { store, mailbox } = stores();
-    service = new AgentService(store, mailbox, fakeBrowser(tabs), null, 30_000, "codex", (provider) => {
+    service = new AgentService(store, mailbox, browser, null, 30_000, "codex", (provider) => {
       const client = new FakeAgentClient(provider);
       clients.set(provider, client);
       return client;
@@ -826,11 +840,20 @@ describe.sequential("AgentService", () => {
     const externalThreadId = store.activeProviderSession("chief")?.externalSessionId;
     const started = events.find((event) => event.type === "turn-started");
     if (!client || !externalThreadId || started?.type !== "turn-started") throw new Error("Turn did not start.");
-    tabs.push({
-      id: "protected-tab",
-      title: "Sign in",
-      url: "https://example.com/login",
-      loading: false,
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "open-call",
+      params: {
+        threadId: externalThreadId,
+        turnId: started.turnId,
+        callId: "open-call",
+        namespace: "openbot_browser",
+        tool: "open",
+        arguments: { url: "https://example.com/login" },
+      },
+    });
+    await waitFor(() => client.responses.length === 1);
+    expect(tabs[0]).toMatchObject({
       ownerThreadId: started.threadId,
       ownerBotId: "chief",
     });
@@ -848,14 +871,14 @@ describe.sequential("AgentService", () => {
       },
     });
     await waitFor(() => events.some((event) => event.type === "browser-takeover-requested"));
-    expect(client.responses).toHaveLength(0);
+    expect(client.responses).toHaveLength(1);
     expect(events.find((event) => event.type === "browser-takeover-requested")).toMatchObject({
       request: { requestId: "takeover-call", botId: "chief", tabId: "protected-tab" },
     });
 
     await service.respondToBrowserTakeover({ requestId: "takeover-call", decision: "complete" });
-    await waitFor(() => client.responses.length === 1);
-    expect(openBotToolPayload(client.responses[0]?.result)).toEqual({
+    await waitFor(() => client.responses.length === 2);
+    expect(openBotToolPayload(client.responses[1]?.result)).toEqual({
       status: "completed",
       next: "Take a fresh snapshot and continue the task.",
     });
@@ -883,8 +906,8 @@ describe.sequential("AgentService", () => {
       ),
     );
     await service.respondToBrowserTakeover({ requestId: "takeover-cancel", decision: "cancel" });
-    await waitFor(() => client.responses.length === 2);
-    expect(openBotToolPayload(client.responses[1]?.result)).toEqual({ status: "cancelled" });
+    await waitFor(() => client.responses.length === 3);
+    expect(openBotToolPayload(client.responses[2]?.result)).toEqual({ status: "cancelled" });
   });
 
   it("commits an automatic memory only after a successful turn and refreshes the next turn context", async () => {

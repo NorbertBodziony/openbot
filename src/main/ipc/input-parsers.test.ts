@@ -32,7 +32,7 @@ import {
   parseUpdateRoutine,
 } from "./agent-inputs";
 import { parseAnalyticsPreference, parseExternalDestination, parseMacPermission, parseProvider } from "./app-inputs";
-import { parseBrowserOpen, parseVisibility } from "./browser-inputs";
+import { parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./browser-inputs";
 import {
   parseCreateTeamInvite,
   parseHostConfig,
@@ -427,10 +427,15 @@ describe("routine IPC input parsing", () => {
 
 describe("browser IPC input parsing", () => {
   it("parses URLs, owners, visibility, and bounds", () => {
-    expect(parseBrowserOpen({ url: "https://example.com", ownerThreadId: "thread-1" })).toEqual({
+    expect(parseBrowserOpen({ url: "https://example.com", ownerThreadId: "thread-1", focus: true })).toEqual({
       url: "https://example.com",
       ownerThreadId: "thread-1",
       ownerBotId: null,
+      focus: true,
+    });
+    expect(parseBrowserNavigate({ tabId: "tab-1", direction: "back" })).toEqual({
+      tabId: "tab-1",
+      direction: "back",
     });
     expect(parseVisibility({ visible: true, bounds: { x: 1, y: 2, width: 3, height: 4 } })).toEqual({
       visible: true,
@@ -440,6 +445,12 @@ describe("browser IPC input parsing", () => {
 
   it("keeps browser input error messages", () => {
     expect(() => parseBrowserOpen(null)).toThrowError("Invalid browser open request.");
+    expect(() => parseBrowserOpen({ url: "https://example.com", focus: "yes" })).toThrowError(
+      "Invalid browser focus request.",
+    );
+    expect(() => parseBrowserNavigate({ tabId: "tab-1", direction: "sideways" })).toThrowError(
+      "Invalid browser navigation request.",
+    );
     expect(() => parseVisibility({ visible: "yes" })).toThrowError("Invalid browser visibility request.");
     expect(() => parseVisibility({ visible: true, bounds: { x: 1, y: 2, width: Number.NaN, height: 4 } })).toThrowError(
       "Invalid browser bound: width.",

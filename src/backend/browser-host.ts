@@ -8,6 +8,7 @@ import type {
   BrowserControlAction,
   BrowserControlSession,
   BrowserControlState,
+  BrowserNavigationDirection,
   BrowserTab,
   BrowserVisibilityInput,
 } from "@openbot/contracts/ipc";
@@ -32,6 +33,7 @@ interface InternalTab {
   revision: number;
   queue: Promise<unknown>;
   xLoginRedirected: boolean;
+  focusOnVisible: boolean;
 }
 
 interface StoredBrowserState {
@@ -234,7 +236,12 @@ export class BrowserHost {
     return this.#visible;
   }
 
-  async open(url: string, ownerThreadId: string | null = null, ownerBotId: string | null = null): Promise<BrowserTab> {
+  async open(
+    url: string,
+    ownerThreadId: string | null = null,
+    ownerBotId: string | null = null,
+    focus = false,
+  ): Promise<BrowserTab> {
     if (this.#tabs.size >= INPUT_LIMITS.browserTabs) {
       throw new Error(`The browser can have up to ${INPUT_LIMITS.browserTabs} open tabs.`);
     }
@@ -244,6 +251,7 @@ export class BrowserHost {
     this.#tabs.set(tab.id, tab);
     this.#bindTabEvents(tab);
     this.#activeTabId = tab.id;
+    tab.focusOnVisible = focus;
     this.#syncAttachedView();
     this.#emitChanged();
     await this.#persistState();
@@ -274,6 +282,17 @@ export class BrowserHost {
     this.#syncAttachedView();
     this.#emitChanged();
     await this.#persistState();
+  }
+
+  async navigate(tabId: string, direction: BrowserNavigationDirection): Promise<void> {
+    await this.#enqueue(tabId, async (tab) => {
+      const history = tab.view.webContents.navigationHistory;
+      if (direction === "back") {
+        if (history.canGoBack()) history.goBack();
+        return;
+      }
+      if (history.canGoForward()) history.goForward();
+    });
   }
 
   async reload(tabId: string): Promise<void> {
@@ -360,28 +379,40 @@ export class BrowserHost {
       switch (params.tool) {
         case "open": {
           const url = requiredString(args, "url", INPUT_LIMITS.browserUrl);
-          const tab = await this.open(url, params.threadId);
+          const tab = await this.open(url, params.threadId, params.ownerBotId ?? null);
           this.#updateControlTab(params, tab.id);
           return textResult({ tab });
         }
-        case "list_tabs":
-          return textResult({ tabs: this.listTabs(), activeTabId: this.#activeTabId });
+        case "list_tabs": {
+          const tabs = this.listTabs().filter((tab) => this.#canUseToolTab(params, tab));
+          const activeTabId = tabs.some((tab) => tab.id === this.#activeTabId)
+            ? this.#activeTabId
+            : (tabs.at(-1)?.id ?? null);
+          return textResult({ tabs, activeTabId });
+        }
         case "snapshot": {
-          const snapshot = await this.snapshot(requiredString(args, "tabId", INPUT_LIMITS.identifier));
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const snapshot = await this.snapshot(tabId);
           return textResult(snapshot);
         }
         case "act": {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
           const revision = requiredNumber(args, "revision");
           const action = parseAction(args.action);
           return textResult(await this.act(tabId, revision, action));
         }
         case "screenshot": {
-          const imageUrl = await this.screenshot(requiredString(args, "tabId", INPUT_LIMITS.identifier));
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const imageUrl = await this.screenshot(tabId);
           return { success: true, contentItems: [{ type: "inputImage", imageUrl }] };
         }
         case "close_tab": {
-          await this.close(requiredString(args, "tabId", INPUT_LIMITS.identifier));
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          await this.close(tabId);
           return textResult({ closed: true });
         }
         default:
@@ -424,6 +455,7 @@ export class BrowserHost {
       revision: 0,
       queue: Promise.resolve(),
       xLoginRedirected: false,
+      focusOnVisible: false,
     };
   }
 
@@ -560,6 +592,10 @@ export class BrowserHost {
     tab.view.setBounds(this.#bounds);
     tab.view.setVisible(true);
     tab.view.webContents.invalidate();
+    if (tab.focusOnVisible) {
+      tab.focusOnVisible = false;
+      tab.view.webContents.focus();
+    }
   }
 
   #mountView(view: WebContentsView): void {
@@ -580,6 +616,18 @@ export class BrowserHost {
     const tab = this.#tabs.get(tabId);
     if (!tab) throw new Error(`Unknown browser tab: ${tabId}`);
     return tab;
+  }
+
+  #requireToolTab(params: DynamicToolCallParams, tabId: string): void {
+    const tab = this.listTabs().find((candidate) => candidate.id === tabId);
+    if (!tab || !this.#canUseToolTab(params, tab)) throw new Error(`Unknown browser tab: ${tabId}`);
+  }
+
+  #canUseToolTab(params: DynamicToolCallParams, tab: BrowserTab): boolean {
+    return (
+      tab.ownerThreadId === params.threadId &&
+      (tab.ownerBotId === null || tab.ownerBotId === (params.ownerBotId ?? null))
+    );
   }
 
   #enqueue<T>(tabId: string, operation: (tab: InternalTab) => Promise<T>): Promise<T> {

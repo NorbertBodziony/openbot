@@ -58,6 +58,7 @@ async function main(): Promise<void> {
         throw new Error("Browser is unavailable in the team smoke host.");
       },
       activate: async () => undefined,
+      navigate: async () => undefined,
       reload: async () => undefined,
       close: async () => undefined,
       setVisible: async () => undefined,

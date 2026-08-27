@@ -237,6 +237,7 @@ export function createAppController(props: AppProps = {}) {
   const [queues, setQueues] = createSignal<Record<string, QueueSnapshot>>({});
   const [browserTabs, setBrowserTabs] = createSignal<BrowserTab[]>([]);
   const [activeBrowserTabId, setActiveBrowserTabId] = createSignal<string | null>(null);
+  let browserChangeRevision = 0;
   const [browserControlState, setBrowserControlState] = createSignal<BrowserControlState>({
     sessions: [],
   });
@@ -650,9 +651,11 @@ export function createAppController(props: AppProps = {}) {
           .catch(() => undefined),
       ]);
       if (!props.landingPreview) {
+        const requestedAtRevision = browserChangeRevision;
         void window.openbot.browser
           .listTabs()
           .then((tabs) => {
+            if (browserChangeRevision !== requestedAtRevision) return;
             setBrowserTabs(tabs);
             setActiveBrowserTabId((current) => current ?? tabs[0]?.id ?? null);
           })
@@ -758,6 +761,7 @@ export function createAppController(props: AppProps = {}) {
         return;
       case "browser-changed":
         if (props.landingPreview) return;
+        browserChangeRevision += 1;
         setBrowserTabs(event.tabs);
         setActiveBrowserTabId(event.activeTabId);
         return;
@@ -2182,6 +2186,7 @@ export function createAppController(props: AppProps = {}) {
     setUnreadReplies({});
     setQueues({});
     setTeamPresence(EMPTY_TEAM_PRESENCE);
+    const browserRequestedAtRevision = browserChangeRevision;
     const [storedBots, layout, reads, status, models, tabs, controlState, presence] = await Promise.all([
       window.openbot.agent.listBots(),
       window.openbot.agent.getSidebarLayout(),
@@ -2194,8 +2199,10 @@ export function createAppController(props: AppProps = {}) {
     ]);
     setAgentStatus(status);
     setModelOptions(models);
-    setBrowserTabs(tabs);
-    setActiveBrowserTabId(tabs[0]?.id ?? null);
+    if (browserChangeRevision === browserRequestedAtRevision) {
+      setBrowserTabs(tabs);
+      setActiveBrowserTabId(tabs[0]?.id ?? null);
+    }
     setBrowserControlState(controlState);
     setTeamPresence(presence);
     setSidebarLayout(layout);

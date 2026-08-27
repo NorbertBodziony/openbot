@@ -1699,6 +1699,7 @@ function createConversationViewScope(props: ConversationProps) {
   async function openBrowserAddress(address = browserAddress()) {
     const value = address.trim();
     if (!value) return;
+    setBrowserAddressEditing(false);
     const analytics = desktopAnalytics.scope();
     const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
     try {
@@ -1706,6 +1707,7 @@ function createConversationViewScope(props: ConversationProps) {
         url,
         ownerThreadId: props.bot?.threadId ?? null,
         ownerBotId: props.bot?.id ?? null,
+        focus: true,
       });
       setBrowserAddress(tab.url);
       if (!screenOpen()) setActiveRightPanel("browser");
@@ -1788,6 +1790,14 @@ function createConversationViewScope(props: ConversationProps) {
         result: "failed",
         failure_code: "browser_reload_failed",
       });
+    }
+  }
+
+  async function navigateBrowserTab(tabId: string, direction: "back" | "forward") {
+    try {
+      await window.openbot.browser.navigate({ tabId, direction });
+    } catch {
+      setComposerError(`Could not navigate ${direction}.`);
     }
   }
 
@@ -2056,6 +2066,7 @@ function createConversationViewScope(props: ConversationProps) {
     queueExitTimer,
     queuePanelVisible,
     reactToMessage,
+    navigateBrowserTab,
     reloadBrowserTab,
     removeAttachment,
     renderedAgentActivity,
@@ -3003,6 +3014,7 @@ export function ConversationPanels() {
     openSharedFile,
     openSidebarFileExternally,
     openWorkspaceFile,
+    navigateBrowserTab,
     props,
     reloadBrowserTab,
     screenOpen,
@@ -3075,6 +3087,7 @@ export function ConversationPanels() {
           onAddressChange={setBrowserAddress}
           onAddressEditingChange={setBrowserAddressEditing}
           onOpenAddress={(address) => void openBrowserAddress(address)}
+          onNavigate={(tabId, direction) => void navigateBrowserTab(tabId, direction)}
           onReload={(tabId) => void reloadBrowserTab(tabId)}
           onActivateTab={props.onActivateBrowserTab}
           onCloseTab={(tabId) => void closeBrowserTab(tabId)}

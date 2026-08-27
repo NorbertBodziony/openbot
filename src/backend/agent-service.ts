@@ -1961,6 +1961,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               await this.#browser.handleDynamicTool({
                 ...request.params,
                 threadId: this.#publicThreadId(botId, request.params.threadId),
+                ownerBotId: botId,
               }),
             );
             return;

@@ -89,6 +89,7 @@ export const IPC_CHANNELS = {
   agentEvent: "agent:event",
   browserOpen: "browser:open",
   browserActivate: "browser:activate",
+  browserNavigate: "browser:navigate",
   browserReload: "browser:reload",
   browserClose: "browser:close",
   browserListTabs: "browser:list-tabs",
