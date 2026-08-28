@@ -16,6 +16,7 @@ import type {
   BrowserControlState,
   BrowserNavigateInput,
   BrowserOpenInput,
+  BrowserPreview,
   BrowserTab,
   BrowserVisibilityInput,
 } from "./ipc-browser";
@@ -190,6 +191,7 @@ export interface BrowserDesktopApi {
   close: (tabId: string) => Promise<void>;
   listTabs: () => Promise<BrowserTab[]>;
   getControlState: () => Promise<BrowserControlState>;
+  capturePreview: (tabId: string) => Promise<BrowserPreview>;
   setVisible: (input: BrowserVisibilityInput) => Promise<void>;
 }
 

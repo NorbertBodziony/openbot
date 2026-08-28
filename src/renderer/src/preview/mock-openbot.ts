@@ -10,6 +10,7 @@ import type {
   BotSummary,
   BrowserControlState,
   BrowserOpenInput,
+  BrowserPreview,
   BrowserTab,
   CentralAuthState,
   CentralAuthUser,
@@ -57,6 +58,7 @@ import type {
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import { SIDEBAR_PEOPLE_SECTION_ID, SIDEBAR_UNASSIGNED_SECTION_ID } from "@openbot/contracts/ipc";
+import browserTakeoverPreviewUrl from "../../stories/assets/browser-takeover-preview.svg";
 import {
   STORY_AGENT_STATUS,
   STORY_APP_INFO,
@@ -91,6 +93,7 @@ export interface MockOpenBotOptions {
   snapshots?: Record<string, ConversationSnapshot>;
   browserTabs?: BrowserTab[];
   browserControlState?: BrowserControlState;
+  browserPreview?: BrowserPreview | null;
   servers?: ServerSummary[];
   presence?: TeamPresenceSnapshot;
   directThreads?: DirectThreadSummary[];
@@ -162,6 +165,10 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   const snapshots = clone(options.snapshots ?? STORY_SNAPSHOTS);
   let browserTabs = clone(options.browserTabs ?? STORY_BROWSER_TABS);
   const browserControlState = clone(options.browserControlState ?? STORY_BROWSER_CONTROL);
+  const browserPreview =
+    options.browserPreview === undefined
+      ? { dataUrl: browserTakeoverPreviewUrl, width: 960, height: 600 }
+      : options.browserPreview;
   let servers = clone(options.servers ?? STORY_SERVERS);
   let presence = clone(options.presence ?? STORY_PRESENCE);
   let directThreads = clone(options.directThreads ?? STORY_DIRECT_THREADS);
@@ -866,6 +873,10 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       },
       listTabs: async () => clone(browserTabs),
       getControlState: async () => clone(browserControlState),
+      capturePreview: async () => {
+        if (!browserPreview) throw new Error("Browser preview is unavailable.");
+        return clone(browserPreview);
+      },
       setVisible: async () => undefined,
     },
     update: {

@@ -242,7 +242,9 @@ function createSidebarAgentDragCard(source: HTMLElement): HTMLElement {
   const titleText = source.querySelector(".sidebar-pinned-title, .bot-role-badge")?.textContent?.trim();
   if (titleText) {
     const title = document.createElement("span");
-    title.className = "ui-badge sidebar-pinned-title";
+    title.className = "z-badge z-badge-variant-secondary sidebar-pinned-title";
+    title.dataset.slot = "badge";
+    title.dataset.variant = "secondary";
     title.dataset.size = "sm";
     const label = document.createElement("span");
     label.textContent = titleText;

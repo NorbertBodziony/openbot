@@ -479,6 +479,11 @@ describe("OpenBot connected desktop shell", () => {
           close: vi.fn().mockResolvedValue(undefined),
           listTabs: vi.fn().mockResolvedValue([]),
           getControlState: vi.fn().mockResolvedValue({ sessions: [] }),
+          capturePreview: vi.fn().mockResolvedValue({
+            dataUrl: "data:image/jpeg;base64,YWJj",
+            width: 960,
+            height: 600,
+          }),
           setVisible: vi.fn().mockResolvedValue(undefined),
         },
         update: {
@@ -3011,15 +3016,16 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
-    expect(await screen.findByRole("region", { name: "Browser takeover" })).toHaveTextContent("Take over");
-    expect(
-      screen.getByText("Complete the authorization in the open browser, then let the agent continue."),
-    ).toBeVisible();
+    expect(await screen.findByRole("region", { name: "Browser takeover" })).toHaveTextContent("Action required");
+    expect(screen.getByRole("heading", { name: "Complete the step on example.com" })).toBeVisible();
+    expect(await screen.findByRole("img", { name: "Preview of Sign in" })).toBeVisible();
     expect(await screen.findByRole("complementary", { name: "Browser" })).toBeVisible();
     await waitFor(() => expect(window.openbot.browser.activate).toHaveBeenCalledWith("tab-login"));
+    expect(window.openbot.browser.capturePreview).toHaveBeenCalledTimes(1);
+    expect(window.openbot.browser.capturePreview).toHaveBeenCalledWith("tab-login");
     expect(screen.queryByRole("textbox", { name: "Message Chief" })).not.toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await fireEvent.click(screen.getByRole("button", { name: "I’m done" }));
     await waitFor(() =>
       expect(window.openbot.agent.respondToBrowserTakeover).toHaveBeenCalledWith({
         requestId: "takeover-1",
@@ -3027,6 +3033,56 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("region", { name: "Browser takeover" })).not.toBeInTheDocument());
+    const completedCard = await screen.findByRole("region", { name: "Browser takeover complete" });
+    expect(completedCard).toHaveTextContent("Done");
+    expect(within(completedCard).getByRole("img", { name: "Preview of Sign in" })).toBeVisible();
+    expect(within(completedCard).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Message Chief" })).toBeVisible();
+  });
+
+  it("keeps browser takeover actions available when the preview fails", async () => {
+    vi.mocked(window.openbot.browser.capturePreview).mockRejectedValueOnce(new Error("Preview unavailable"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitAgentEvent).toBeDefined());
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-login",
+          title: "Sign in",
+          url: "https://example.com/login",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-login",
+    });
+    emitAgentEvent?.({
+      type: "browser-takeover-requested",
+      request: {
+        requestId: "takeover-preview-failed",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-preview-failed",
+        tabId: "tab-login",
+      },
+    });
+
+    const card = await screen.findByRole("region", { name: "Browser takeover" });
+    await waitFor(() => expect(within(card).queryByRole("img")).not.toBeInTheDocument());
+    await fireEvent.click(within(card).getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(window.openbot.agent.respondToBrowserTakeover).toHaveBeenCalledWith({
+        requestId: "takeover-preview-failed",
+        decision: "cancel",
+      }),
+    );
+    const cancelledCard = await screen.findByRole("region", { name: "Browser takeover cancelled" });
+    expect(cancelledCard).toHaveTextContent("Cancelled");
+    expect(within(cancelledCard).queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("closes browser tabs with the middle mouse button and Control W, then closes the panel", async () => {

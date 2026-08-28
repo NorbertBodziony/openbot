@@ -99,7 +99,7 @@ function createMailbox(): TestMailbox {
   return { resolveAttachment: unimplemented };
 }
 
-function createBrowser(): TestBrowser {
+function createBrowser(overrides: Partial<TestBrowser> = {}): TestBrowser {
   return {
     listTabs: unimplemented,
     getControlState: unimplemented,
@@ -108,7 +108,9 @@ function createBrowser(): TestBrowser {
     navigate: unimplemented,
     reload: unimplemented,
     close: unimplemented,
+    capturePreview: unimplemented,
     setVisible: unimplemented,
+    ...overrides,
   };
 }
 
@@ -1114,6 +1116,43 @@ describe("TeamApiServer administration", () => {
         body: JSON.stringify({ requestId: 17, decision: "session" }),
       });
       expect(invalid.status).toBe(400);
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("returns a bounded browser preview to an authenticated client", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-browser-preview-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const capturePreview = vi.fn(async () => ({
+      dataUrl: "data:image/jpeg;base64,YWJj",
+      width: 960,
+      height: 600,
+    }));
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents(),
+      mailbox: createMailbox(),
+      browser: createBrowser({ capturePreview }),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      const preview = await jsonRequest<{ dataUrl: string; width: number; height: number }>(
+        base,
+        "/v1/browser/preview",
+        { token: login.sessionToken, body: { tabId: "tab-login" } },
+      );
+
+      expect(capturePreview).toHaveBeenCalledWith("tab-login");
+      expect(preview).toEqual({ dataUrl: "data:image/jpeg;base64,YWJj", width: 960, height: 600 });
     } finally {
       await api.stop();
     }
