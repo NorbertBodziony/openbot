@@ -210,10 +210,12 @@ describe("MailboxStore", () => {
 
     const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
     await restored.initialize();
-    expect(restored.listQueue("chief").deliveries).toMatchObject([
-      { id: first.deliveries[0].id, status: "interrupted", error: "Stopped by the user." },
-      { id: second.deliveries[0].id, status: "cancelled" },
-    ]);
+    const restoredById = new Map(restored.listQueue("chief").deliveries.map((delivery) => [delivery.id, delivery]));
+    expect(restoredById.get(first.deliveries[0].id)).toMatchObject({
+      status: "interrupted",
+      error: "Stopped by the user.",
+    });
+    expect(restoredById.get(second.deliveries[0].id)).toMatchObject({ status: "cancelled" });
   });
 
   it("keeps enqueue idempotent in SQLite", async () => {

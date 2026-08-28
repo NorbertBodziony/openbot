@@ -18,6 +18,7 @@
     "includes": [
       "**",
       "!.codex",
+      "!.worktrees",
       "!node_modules",
       "!out",
       "!out-dev-app",
