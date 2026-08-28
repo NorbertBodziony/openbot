@@ -223,9 +223,11 @@ export function createBotInitialMessage(draft: Pick<FirstBotDraft, "purpose">): 
 
 interface AppProps {
   landingPreview?: boolean;
+  peopleEnabled?: boolean;
 }
 
 export function createAppController(props: AppProps = {}) {
+  const peopleEnabled = props.peopleEnabled === true;
   const [botList, setBotList] = createSignal<BotProfile[]>([]);
   const [modelOptions, setModelOptions] = createSignal<AgentModelOption[]>([]);
   const [activeBotId, setActiveBotId] = createSignal("");
@@ -482,9 +484,11 @@ export function createAppController(props: AppProps = {}) {
     if (!currentMemberId) return [];
     return teamPresence().members.filter((member) => member.id !== currentMemberId && !member.disabled);
   });
-  const activeDirectMember = createMemo(() => directPeople().find((member) => member.id === activeDirectMemberId()));
+  const activeDirectMember = createMemo(() =>
+    peopleEnabled ? directPeople().find((member) => member.id === activeDirectMemberId()) : undefined,
+  );
   const activeBot = createMemo(() => {
-    if (activeDirectMemberId()) return undefined;
+    if (activeDirectMember()) return undefined;
     return botList().find((bot) => bot.id === activeBotId()) ?? botList()[0];
   });
   const activeMessages = createMemo(() => {
@@ -510,6 +514,7 @@ export function createAppController(props: AppProps = {}) {
   createEffect(
     () => currentTeamMember()?.id ?? null,
     (memberId) => {
+      if (!peopleEnabled) return;
       if (!memberId) {
         setDirectThreads([]);
         return;
@@ -534,12 +539,12 @@ export function createAppController(props: AppProps = {}) {
     });
     const unsubscribeServers = window.openbot.servers.onEvent((value) => flush(() => setServers(value)));
     const unsubscribePresence = window.openbot.servers.onPresence((snapshot) => flush(() => setTeamPresence(snapshot)));
-    const unsubscribeDirectMessage = window.openbot.servers.onDirectMessage((event) =>
-      flush(() => handleDirectMessageEvent(event)),
-    );
-    const unsubscribeDirectTyping = window.openbot.servers.onDirectTyping((event) =>
-      flush(() => handleDirectTypingEvent(event)),
-    );
+    const unsubscribeDirectMessage = peopleEnabled
+      ? window.openbot.servers.onDirectMessage((event) => flush(() => handleDirectMessageEvent(event)))
+      : () => undefined;
+    const unsubscribeDirectTyping = peopleEnabled
+      ? window.openbot.servers.onDirectTyping((event) => flush(() => handleDirectTypingEvent(event)))
+      : () => undefined;
     const receiveInvite = (inviteUrl: string) => {
       flush(() => {
         setPendingInviteUrl(inviteUrl);
@@ -1240,7 +1245,7 @@ export function createAppController(props: AppProps = {}) {
 
   async function selectDirectMember(memberId: string): Promise<void> {
     if (botSetupOpen() && creatingAgent()) return;
-    if (!currentTeamMember() || !directPeople().some((member) => member.id === memberId)) return;
+    if (!peopleEnabled || !currentTeamMember() || !directPeople().some((member) => member.id === memberId)) return;
     const previousBotId = activeBotId();
     if (previousBotId) pruneInactiveAgentHistory(previousBotId);
     setBotSetupOpen(false);
@@ -2901,6 +2906,7 @@ export function createAppController(props: AppProps = {}) {
     activeServer,
     botList,
     activeDirectMemberId,
+    peopleEnabled,
     activeBot,
     directPeople,
     directThreads,
