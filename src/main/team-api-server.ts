@@ -1489,6 +1489,7 @@ function promptAnswers(value: unknown): Record<string, string[]> {
     throw new HttpError(400, "Too many prompt answers.");
   }
   const answers: Record<string, string[]> = {};
+  let totalTextLength = 0;
   for (const [key, answer] of entries) {
     if (
       key.length > INPUT_LIMITS.identifier ||
@@ -1497,6 +1498,10 @@ function promptAnswers(value: unknown): Record<string, string[]> {
       !answer.every((item) => isString(item) && item.length <= INPUT_LIMITS.promptAnswerText)
     ) {
       throw new HttpError(400, "A prompt answer is invalid.");
+    }
+    totalTextLength += answer.reduce((length, item) => length + item.length, 0);
+    if (totalTextLength > INPUT_LIMITS.promptAnswersTotalText) {
+      throw new HttpError(400, "Prompt answers are too long.");
     }
     answers[key] = answer;
   }

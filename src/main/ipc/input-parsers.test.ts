@@ -358,6 +358,15 @@ describe("agent IPC input parsing", () => {
     );
     expect(() => parseDeleteBotMemory({ botId: "", memoryId: "memory-1" })).toThrowError("botId is required.");
     expect(() => parsePromptResponse({ requestId: 1, answers: null })).toThrowError("Prompt answers are required.");
+    expect(() =>
+      parsePromptResponse({
+        requestId: 1,
+        answers: {
+          first: ["a".repeat(INPUT_LIMITS.promptAnswersTotalText / 2 + 1)],
+          second: ["b".repeat(INPUT_LIMITS.promptAnswersTotalText / 2)],
+        },
+      }),
+    ).toThrowError("Prompt answers are too long.");
     expect(() => parseApprovalResponse({ requestId: "approval-1", decision: "maybe" })).toThrowError(
       "Invalid approval decision.",
     );

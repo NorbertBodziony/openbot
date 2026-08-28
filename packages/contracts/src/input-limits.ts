@@ -29,6 +29,7 @@ export const INPUT_LIMITS = {
   promptOptionDescription: 2_000,
   promptAnswersPerQuestion: 32,
   promptAnswerText: 100_000,
+  promptAnswersTotalText: 100_000,
   attachments: 10,
   draftAttachments: 50,
   messageRecipients: 32,
