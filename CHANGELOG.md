@@ -5,6 +5,8 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-08-27
+
 ### Changed
 
 - Download and verify the Whisper model on first voice use instead of shipping it in every application update.

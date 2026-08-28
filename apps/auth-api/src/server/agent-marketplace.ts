@@ -14,6 +14,14 @@ import {
   type MarketplaceAgentSummary,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
+import {
+  decodeMarketplaceCursor,
+  encodeMarketplaceCursor,
+  type MarketplaceSort,
+  marketplaceLikePattern,
+  normalizeMarketplaceLimit,
+  normalizeMarketplaceQuery,
+} from "./marketplace-pagination";
 import type { AuthUser, WorkerBindings } from "./types";
 
 const MAX_AGENTS_PER_USER = 5;
@@ -58,27 +66,34 @@ export class AgentMarketplace {
   constructor(private readonly bindings: WorkerBindings) {}
 
   async list(input: MarketplaceAgentQuery = {}): Promise<MarketplaceAgentPage> {
-    const limit = Math.max(1, Math.min(50, input.limit ?? 24));
+    const limit = normalizeMarketplaceLimit(input.limit);
     const clauses = ["agents.approved_version_id = versions.id"];
     const values: Array<string | number> = [];
-    if (input.query?.trim()) {
+    const queryInput = normalizeMarketplaceQuery(input.query);
+    if (queryInput) {
       clauses.push(
-        "(versions.name LIKE ? OR versions.title LIKE ? OR versions.description LIKE ? OR users.name LIKE ?)",
+        "(lower(versions.name) LIKE ? ESCAPE '\\' OR lower(versions.title) LIKE ? ESCAPE '\\' OR lower(versions.description) LIKE ? ESCAPE '\\' OR lower(users.name) LIKE ? ESCAPE '\\')",
       );
-      const query = `%${input.query.trim()}%`;
+      const query = marketplaceLikePattern(queryInput);
       values.push(query, query, query, query);
     }
     if (input.featured) clauses.push("agents.featured = 1");
-    if (input.cursor) {
-      const cursor = Number(input.cursor);
-      if (!Number.isFinite(cursor)) throw new AgentMarketplaceError(400, "invalid_cursor", "Invalid cursor.");
+    const sort: MarketplaceSort = input.sort === "installs" ? "installs" : "updated";
+    const cursor = decodeMarketplaceCursor(input.cursor, sort);
+    if (cursor && "legacyUpdatedAt" in cursor) {
       clauses.push("agents.updated_at < ?");
-      values.push(cursor);
+      values.push(cursor.legacyUpdatedAt);
+    } else if (cursor) {
+      const primary = sort === "installs" ? "agents.installs" : "agents.featured";
+      clauses.push(
+        `(${primary} < ? OR (${primary} = ? AND (agents.updated_at < ? OR (agents.updated_at = ? AND agents.id < ?))))`,
+      );
+      values.push(cursor.primary, cursor.primary, cursor.updatedAt, cursor.updatedAt, cursor.id);
     }
     const order =
-      input.sort === "installs"
-        ? "agents.installs DESC, agents.updated_at DESC"
-        : "agents.featured DESC, agents.updated_at DESC";
+      sort === "installs"
+        ? "agents.installs DESC, agents.updated_at DESC, agents.id DESC"
+        : "agents.featured DESC, agents.updated_at DESC, agents.id DESC";
     const result = await this.bindings.DB.prepare(
       `SELECT agents.id, agents.installs, agents.featured, agents.updated_at,
               versions.id AS version_id, versions.version, versions.name, versions.title, versions.description,
@@ -93,9 +108,17 @@ export class AgentMarketplace {
       .all<AgentRow>();
     const rows = result.results ?? [];
     const page = rows.slice(0, limit);
+    const last = page.at(-1);
     return {
       agents: page.map((row) => publicSummary(row)),
-      nextCursor: rows.length > limit ? String(page.at(-1)?.updated_at ?? "") : null,
+      nextCursor:
+        rows.length > limit && last
+          ? encodeMarketplaceCursor(sort, {
+              primary: sort === "installs" ? last.installs : last.featured,
+              updatedAt: last.updated_at,
+              id: last.id,
+            })
+          : null,
     };
   }
 

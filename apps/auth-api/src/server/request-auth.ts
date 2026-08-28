@@ -6,6 +6,12 @@ import { D1AuthRepository } from "./d1-auth-repository";
 import { D1TeamTunnelRepository } from "./d1-team-tunnel-repository";
 import { createEmailCodeDelivery, createTeamInviteEmailDelivery } from "./email-delivery";
 import { JsonBodyError } from "./json-body";
+import { MarketplaceQueryError } from "./marketplace-pagination";
+import {
+  enforceMarketplaceMutation,
+  type MarketplaceMutationKind,
+  MarketplaceRateLimitError,
+} from "./marketplace-request-policy";
 import { SkillMarketplace, SkillMarketplaceError } from "./skill-marketplace";
 import { authenticateTeamHost, TeamTunnelService } from "./team-tunnel-service";
 import { requireWorkerBindings, type TeamInviteEmailDelivery } from "./types";
@@ -34,6 +40,10 @@ export function requestAgentMarketplace(): AgentMarketplace {
   return new AgentMarketplace(requireWorkerBindings(env));
 }
 
+export function enforceMarketplaceMutationRateLimit(kind: MarketplaceMutationKind, principal: string): Promise<void> {
+  return enforceMarketplaceMutation(requireWorkerBindings(env), kind, principal);
+}
+
 export function marketplaceErrorResponse(error: unknown): Response {
   if (error instanceof AgentMarketplaceError) return apiError(error.status, error.code, error.message);
   return skillErrorResponse(error);
@@ -46,6 +56,12 @@ export async function requestUser(request: Request) {
 }
 
 export function skillErrorResponse(error: unknown): Response {
+  if (error instanceof MarketplaceQueryError) return apiError(400, error.code, error.message);
+  if (error instanceof MarketplaceRateLimitError) {
+    const response = apiError(error.status, error.code, error.message);
+    response.headers.set("Retry-After", String(error.retryAfterSeconds));
+    return response;
+  }
   if (error instanceof SkillMarketplaceError) return apiError(error.status, error.code, error.message);
   return authErrorResponse(error);
 }
@@ -106,6 +122,15 @@ export function json(value: unknown, status = 200): Response {
     status,
     headers: {
       "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
+export function publicMarketplaceJson(value: unknown): Response {
+  return Response.json(value, {
+    headers: {
+      "Cache-Control": "public, max-age=60, stale-while-revalidate=300, stale-if-error=300",
       "X-Content-Type-Options": "nosniff",
     },
   });

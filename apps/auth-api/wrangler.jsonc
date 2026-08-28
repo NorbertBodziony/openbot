@@ -6,6 +6,10 @@
   "main": "src/worker-entry.ts",
   "workers_dev": false,
   "preview_urls": false,
+  "cache": {
+    "enabled": true,
+    "cross_version_cache": false
+  },
   "triggers": {
     "crons": ["17 3 * * *"]
   },
@@ -52,6 +56,23 @@
       "preview_bucket_name": "openbot-skills-test"
     }
   ],
+  "ratelimits": [
+    {
+      "name": "MARKETPLACE_INGRESS_RATE_LIMITER",
+      "namespace_id": "2026082701",
+      "simple": { "limit": 300, "period": 60 }
+    },
+    {
+      "name": "MARKETPLACE_MUTATION_RATE_LIMITER",
+      "namespace_id": "2026082702",
+      "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "MARKETPLACE_UPLOAD_RATE_LIMITER",
+      "namespace_id": "2026082703",
+      "simple": { "limit": 5, "period": 60 }
+    }
+  ],
   "env": {
     "preview": {
       "name": "openbot-landing-preview",
@@ -90,6 +111,23 @@
         {
           "binding": "SKILLS",
           "bucket_name": "openbot-skills-test"
+        }
+      ],
+      "ratelimits": [
+        {
+          "name": "MARKETPLACE_INGRESS_RATE_LIMITER",
+          "namespace_id": "2026082704",
+          "simple": { "limit": 300, "period": 60 }
+        },
+        {
+          "name": "MARKETPLACE_MUTATION_RATE_LIMITER",
+          "namespace_id": "2026082705",
+          "simple": { "limit": 30, "period": 60 }
+        },
+        {
+          "name": "MARKETPLACE_UPLOAD_RATE_LIMITER",
+          "namespace_id": "2026082706",
+          "simple": { "limit": 5, "period": 60 }
         }
       ]
     },
@@ -130,6 +168,23 @@
         {
           "binding": "SKILLS",
           "bucket_name": "openbot-skills-test"
+        }
+      ],
+      "ratelimits": [
+        {
+          "name": "MARKETPLACE_INGRESS_RATE_LIMITER",
+          "namespace_id": "2026082707",
+          "simple": { "limit": 300, "period": 60 }
+        },
+        {
+          "name": "MARKETPLACE_MUTATION_RATE_LIMITER",
+          "namespace_id": "2026082708",
+          "simple": { "limit": 30, "period": 60 }
+        },
+        {
+          "name": "MARKETPLACE_UPLOAD_RATE_LIMITER",
+          "namespace_id": "2026082709",
+          "simple": { "limit": 5, "period": 60 }
         }
       ]
     }

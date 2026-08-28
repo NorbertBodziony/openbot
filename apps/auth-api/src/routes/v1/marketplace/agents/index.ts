@@ -1,12 +1,18 @@
 import { isString } from "@openbot/contracts/runtime-values";
 import { createFileRoute } from "@tanstack/solid-router";
+import { readMultipartFormData } from "../../../../server/json-body";
+import { normalizeMarketplaceQuery, parseMarketplaceLimit } from "../../../../server/marketplace-pagination";
 import {
   apiError,
+  enforceMarketplaceMutationRateLimit,
   json,
   marketplaceErrorResponse,
+  publicMarketplaceJson,
   requestAgentMarketplace,
   requestUser,
 } from "../../../../server/request-auth";
+
+const AGENT_SUBMISSION_BODY_LIMIT = 8 * 1024 * 1024;
 
 export const Route = createFileRoute("/v1/marketplace/agents/")({
   server: {
@@ -16,13 +22,13 @@ export const Route = createFileRoute("/v1/marketplace/agents/")({
           const url = new URL(request.url);
           const sort = url.searchParams.get("sort") ?? undefined;
           if (sort && sort !== "installs") return apiError(400, "invalid_sort", "Unknown agent sort order.");
-          return json(
+          return publicMarketplaceJson(
             await requestAgentMarketplace().list({
-              query: url.searchParams.get("query") ?? undefined,
+              query: normalizeMarketplaceQuery(url.searchParams.get("query") ?? undefined),
               featured: url.searchParams.get("featured") === "true",
               sort: sort === "installs" ? sort : undefined,
               cursor: url.searchParams.get("cursor") ?? undefined,
-              limit: Number(url.searchParams.get("limit") ?? 24),
+              limit: parseMarketplaceLimit(url.searchParams.get("limit")),
             }),
           );
         } catch (error) {
@@ -33,7 +39,8 @@ export const Route = createFileRoute("/v1/marketplace/agents/")({
         try {
           const user = await requestUser(request);
           if (!user) return apiError(401, "unauthorized", "Sign in is required.");
-          const form = await request.formData();
+          await enforceMarketplaceMutationRateLimit("upload", user.id);
+          const form = await readMultipartFormData(request, AGENT_SUBMISSION_BODY_LIMIT);
           const snapshotText = form.get("snapshot");
           const avatar = form.get("avatar");
           const agentId = form.get("agentId");
