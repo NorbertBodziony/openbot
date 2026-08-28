@@ -146,6 +146,8 @@ export function QuestionPromptBubble(props: QuestionPromptBubbleProps) {
   queueMicrotask(() => {
     const element = pageElements[activeSlot()];
     if (stage && element) stage.style.height = `${element.scrollHeight}px`;
+    const question = props.resolution ? undefined : props.questions[0];
+    if (question && !question.options?.length) customInputs.get(question.id)?.focus();
   });
 
   createEffect(

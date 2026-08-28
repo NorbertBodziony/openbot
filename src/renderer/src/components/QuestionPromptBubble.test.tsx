@@ -141,6 +141,7 @@ describe("QuestionPromptBubble", () => {
     render(() => <QuestionPromptBubble questions={customQuestion} onSubmit={onSubmit} />);
 
     const input = screen.getByRole("textbox", { name: /Custom answer/ });
+    await waitFor(() => expect(input).toHaveFocus());
     await fireEvent.input(input, { target: { value: "A working prototype" } });
     await fireEvent.keyDown(input, { key: "Enter" });
 
