@@ -8,6 +8,7 @@ import {
   type AttachmentImportEvent,
   type BotMemory,
   type BotSummary,
+  type BrowserPreview,
   type ConversationMessage,
   type ConversationPage,
   type ConversationReadState,
@@ -112,6 +113,26 @@ async function importFiles(files: File[]): Promise<void> {
 function record(value: unknown, label: string): DynamicRecord {
   if (!isDynamicRecord(value)) throw new Error(`Invalid ${label}.`);
   return value;
+}
+
+function decodeBrowserPreview(value: unknown): BrowserPreview {
+  const preview = record(value, "browser preview");
+  const dataUrl = requiredString(preview, "dataUrl");
+  const width = requiredNumber(preview, "width");
+  const height = requiredNumber(preview, "height");
+  if (
+    dataUrl.length > 2_000_000 ||
+    !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(dataUrl) ||
+    !Number.isSafeInteger(width) ||
+    width <= 0 ||
+    width > 960 ||
+    !Number.isSafeInteger(height) ||
+    height <= 0 ||
+    height > 600
+  ) {
+    throw new Error("Invalid browser preview.");
+  }
+  return { dataUrl, width, height };
 }
 
 function nullableString(value: unknown, label: string): value is string | null {
@@ -852,8 +873,24 @@ const openbotApi: OpenBotDesktopApi = {
     reload: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserReload, tabId),
     close: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserClose, tabId),
     listTabs: () => ipcRenderer.invoke(IPC_CHANNELS.browserListTabs),
+    getDisplayState: () => ipcRenderer.invoke(IPC_CHANNELS.browserGetDisplayState),
     getControlState: () => ipcRenderer.invoke(IPC_CHANNELS.browserGetControlState),
+    capturePreview: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserCapturePreview, tabId).then(decodeBrowserPreview),
     setVisible: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserSetVisible, input),
+    onDisplayState: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) => listener(state);
+      ipcRenderer.on(IPC_CHANNELS.browserDisplayStateEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.browserDisplayStateEvent, handler);
+    },
+    openPictureInPicture: (bounds) => ipcRenderer.invoke(IPC_CHANNELS.browserPictureInPictureOpen, bounds),
+    closePictureInPicture: () => ipcRenderer.invoke(IPC_CHANNELS.browserPictureInPictureClose),
+    dockPictureInPicture: () => ipcRenderer.invoke(IPC_CHANNELS.browserPictureInPictureDock),
+    hidePictureInPicture: () => ipcRenderer.invoke(IPC_CHANNELS.browserPictureInPictureHide),
+    onPictureInPictureEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: Parameters<typeof listener>[0]) => listener(event);
+      ipcRenderer.on(IPC_CHANNELS.browserPictureInPictureEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.browserPictureInPictureEvent, handler);
+    },
   },
   update: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.updateGetStatus),

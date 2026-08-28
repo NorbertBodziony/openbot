@@ -27,6 +27,7 @@ Shared/
 index-*.css
 .openbot-browser-test/
 .openbot-build/
+.worktrees/
 /build/cloudflared/
 /build/codex/
 /build/claude/

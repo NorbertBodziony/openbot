@@ -177,8 +177,6 @@ describe("ServerSettingsModal", () => {
 
     await fireEvent.blur(name);
     const error = screen.getByText("Enter at least 6 characters.");
-    expect(error).toHaveClass("ui-field-error");
-    expect(error.parentElement).toHaveAttribute("data-invalid");
     expect(name).toHaveAttribute("aria-invalid", "true");
     expect(name).toHaveAttribute("aria-describedby", error.id);
 

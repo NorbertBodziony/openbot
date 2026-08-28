@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import solidPlugin from "@solidjs/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
@@ -28,6 +29,15 @@ export default defineConfig({
       dedupe: ["solid-js", "@solidjs/web"],
     },
     server: rendererPort ? { port: rendererPort, strictPort: true } : undefined,
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve("src/renderer/index.html"),
+          browserPip: resolve("src/renderer/browser-pip.html"),
+          browserPipControls: resolve("src/renderer/browser-pip-controls.html"),
+        },
+      },
+    },
   },
 });
 

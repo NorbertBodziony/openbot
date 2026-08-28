@@ -116,7 +116,15 @@ type TeamApiSidebarLayout = Pick<SidebarLayoutStore, "getSnapshot" | "mutate" | 
 };
 type TeamApiBrowser = Pick<
   BrowserHost,
-  "listTabs" | "getControlState" | "open" | "activate" | "navigate" | "reload" | "close" | "setVisible"
+  | "listTabs"
+  | "getControlState"
+  | "open"
+  | "activate"
+  | "navigate"
+  | "reload"
+  | "close"
+  | "capturePreview"
+  | "setVisible"
 >;
 type TeamApiRemoteScreen = Pick<
   RemoteScreenGateway,
@@ -649,6 +657,10 @@ export class TeamApiServer {
         const body = await readJson(request);
         await this.#options.browser.close(stringField(body, "tabId"));
         return this.#empty(response, 204);
+      }
+      if (method === "POST" && url.pathname === "/v1/browser/preview") {
+        const body = await readJson(request);
+        return this.#json(response, 200, await this.#options.browser.capturePreview(stringField(body, "tabId")));
       }
       if (method === "POST" && url.pathname === "/v1/browser/visible") {
         const body = await readJson(request);

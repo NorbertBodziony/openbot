@@ -40,6 +40,7 @@ interface SidebarProps {
   onOpenServerSettings: (trigger: HTMLElement) => void;
   bots: BotProfile[];
   activeBotId: string;
+  showPeople?: boolean;
   people: TeamPresenceMember[];
   directThreads: DirectThreadSummary[];
   activeDirectMemberId: string | null;
@@ -242,7 +243,9 @@ function createSidebarAgentDragCard(source: HTMLElement): HTMLElement {
   const titleText = source.querySelector(".sidebar-pinned-title, .bot-role-badge")?.textContent?.trim();
   if (titleText) {
     const title = document.createElement("span");
-    title.className = "ui-badge sidebar-pinned-title";
+    title.className = "z-badge z-badge-variant-secondary sidebar-pinned-title";
+    title.dataset.slot = "badge";
+    title.dataset.variant = "secondary";
     title.dataset.size = "sm";
     const label = document.createElement("span");
     label.textContent = titleText;
@@ -428,7 +431,7 @@ export function Sidebar(props: SidebarProps) {
   });
   const visibleSectionIds = createMemo(() =>
     props.layout.order.filter((sectionId) => {
-      if (sectionId === SIDEBAR_PEOPLE_SECTION_ID) return filteredPeople().length > 0;
+      if (sectionId === SIDEBAR_PEOPLE_SECTION_ID) return props.showPeople !== false && filteredPeople().length > 0;
       if (customSectionById().has(sectionId)) {
         return !normalizedQuery() || (filteredBotsBySection().get(sectionId)?.length ?? 0) > 0;
       }
@@ -1813,7 +1816,7 @@ export function Sidebar(props: SidebarProps) {
             when={
               resolvedPinnedItems().length > 0 ||
               filteredBots().length > 0 ||
-              filteredPeople().length > 0 ||
+              (props.showPeople !== false && filteredPeople().length > 0) ||
               sectionEditor()?.kind === "create"
             }
             fallback={
@@ -1959,7 +1962,7 @@ export function Sidebar(props: SidebarProps) {
               {(sectionId) => {
                 if (sectionId === SIDEBAR_PEOPLE_SECTION_ID) {
                   return (
-                    <Show when={filteredPeople().length > 0}>
+                    <Show when={props.showPeople !== false && filteredPeople().length > 0}>
                       <section
                         class={["sidebar-chat-group sidebar-section", sectionDragClasses(sectionId)]}
                         style={`--sidebar-section-drag-y: ${sectionDragOffset(sectionId)}px;`}

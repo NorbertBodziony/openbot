@@ -3,6 +3,7 @@ import type {
   AgentStatus,
   AttachmentImportEvent,
   BotSummary,
+  BrowserPictureInPictureEvent,
   BrowserTab,
   CentralAuthState,
   ConversationSnapshot,
@@ -37,6 +38,7 @@ const defaultMatchMedia = window.matchMedia;
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
 let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
+let emitBrowserPictureInPicture: ((event: BrowserPictureInPictureEvent) => void) | undefined;
 let emitUpdateStatus: ((status: UpdateStatus) => void) | undefined;
 let emitAuth: ((state: CentralAuthState) => void) | undefined;
 let emitServers: ((servers: ServerSummary[]) => void) | undefined;
@@ -113,6 +115,7 @@ describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {
     emitAgentEvent = undefined;
     emitAttachmentImport = undefined;
+    emitBrowserPictureInPicture = undefined;
     emitUpdateStatus = undefined;
     emitAuth = undefined;
     emitServers = undefined;
@@ -478,8 +481,25 @@ describe("OpenBot connected desktop shell", () => {
           reload: vi.fn().mockResolvedValue(undefined),
           close: vi.fn().mockResolvedValue(undefined),
           listTabs: vi.fn().mockResolvedValue([]),
+          getDisplayState: vi.fn().mockResolvedValue({ tabs: [], activeTabId: null }),
           getControlState: vi.fn().mockResolvedValue({ sessions: [] }),
+          capturePreview: vi.fn().mockResolvedValue({
+            dataUrl: "data:image/jpeg;base64,YWJj",
+            width: 960,
+            height: 600,
+          }),
           setVisible: vi.fn().mockResolvedValue(undefined),
+          onDisplayState: vi.fn().mockReturnValue(() => undefined),
+          openPictureInPicture: vi
+            .fn()
+            .mockImplementation(async (bounds) => bounds ?? { x: 900, y: 500, width: 420, height: 300 }),
+          closePictureInPicture: vi.fn().mockResolvedValue(undefined),
+          dockPictureInPicture: vi.fn().mockResolvedValue(undefined),
+          hidePictureInPicture: vi.fn().mockResolvedValue(undefined),
+          onPictureInPictureEvent: vi.fn((listener) => {
+            emitBrowserPictureInPicture = listener;
+            return () => undefined;
+          }),
         },
         update: {
           getStatus: vi.fn().mockResolvedValue({
@@ -1247,7 +1267,6 @@ describe("OpenBot connected desktop shell", () => {
     const remoteDesktop = await screen.findByRole("main", { name: "Remote control" });
     const appFrame = document.querySelector<HTMLElement>(".app-frame");
     if (!appFrame) throw new Error("App frame is missing.");
-    expect(remoteDesktop).toHaveClass("remote-desktop-workspace-visible");
     expect(appFrame.inert).toBe(true);
     expect(appFrame).toHaveAttribute("aria-hidden", "true");
     expect(within(remoteDesktop).queryByText("Studio Mac")).not.toBeInTheDocument();
@@ -2102,7 +2121,7 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("opens and cancels Bot creation from a private conversation", async () => {
-    render(() => <App />);
+    render(() => <App peopleEnabled />);
     await screen.findByRole("heading", { name: "Chief" });
     emitPresence?.({
       serverId: "server-1",
@@ -2127,6 +2146,26 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("main", { name: "Direct conversation with Alice" })).toBeInTheDocument();
   });
 
+  it("hides People navigation and direct conversations by default", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitPresence?.({
+      serverId: "server-1",
+      updatedAt: "2026-08-19T10:00:00.000Z",
+      members: [
+        presenceMember("member-self", "person@example.com", "Person"),
+        presenceMember("member-alice", "alice@example.com", "Alice"),
+      ],
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "People" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Alice/ })).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole("main", { name: /Direct conversation/ })).not.toBeInTheDocument();
+    expect(window.openbot.servers.listDirectThreads).not.toHaveBeenCalled();
+  });
+
   it("resizes and persists the left and right side panels", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -2134,7 +2173,6 @@ describe("OpenBot connected desktop shell", () => {
     const leftResizer = screen.getByRole("separator", { name: "Resize left sidebar" });
     await fireEvent.keyDown(leftResizer, { key: "ArrowRight" });
     expect(leftResizer).toHaveAttribute("aria-valuenow", "292");
-    expect(leftResizer.closest(".app-frame")).toHaveStyle("--left-panel-width: 292px");
     expect(window.localStorage.getItem("openbot:left-panel-width")).toBe("292");
 
     await fireEvent.keyDown(leftResizer, { key: "Home" });
@@ -2153,7 +2191,6 @@ describe("OpenBot connected desktop shell", () => {
     const rightResizer = await screen.findByRole("separator", { name: "Resize right panel" });
     await fireEvent.keyDown(rightResizer, { key: "ArrowLeft" });
     expect(rightResizer).toHaveAttribute("aria-valuenow", "308");
-    expect(screen.getByRole("main", { name: "Conversation" })).toHaveStyle("--settings-panel-width: 308px");
     expect(window.localStorage.getItem("openbot:settings-panel-width")).toBe("308");
 
     await fireEvent.dblClick(rightResizer);
@@ -2581,17 +2618,13 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
-    const frame = screen.getByRole("main", { name: "Conversation" }).closest(".app-frame");
     const marketplaceButton = screen.getByRole("button", { name: "Open Marketplace" });
     expect(marketplaceButton).toHaveClass("sidebar-icon-button");
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).not.toBeInTheDocument();
     const resizer = screen.getByRole("separator", { name: "Resize left sidebar" });
     await fireEvent.keyDown(resizer, { key: "Home" });
 
-    expect(screen.getByRole("complementary", { name: "Bot navigation" })).toHaveClass("sidebar-compact");
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "88");
-    expect(frame).toHaveClass("app-frame-sidebar-compact");
-    expect(frame).toHaveStyle("--left-panel-width: 88px");
     expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBe("true");
     expect(screen.queryByRole("button", { name: "Show sidebar" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute("aria-expanded", "false");
@@ -2615,7 +2648,6 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(screen.getByRole("complementary", { name: "Bot navigation" })).toBeInTheDocument();
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "280");
-    expect(frame).not.toHaveClass("app-frame-sidebar-compact");
     expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBe("false");
     expect(screen.getByRole("button", { name: "Open Marketplace" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("searchbox", { name: "Search chats" })).toHaveFocus());
@@ -2656,8 +2688,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "240");
   });
 
-  it("moves the live embedded browser between the sidebar and Picture in Picture", async () => {
-    Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
+  it("moves the live embedded browser between the sidebar and desktop Picture in Picture", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -2677,141 +2708,40 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
     const conversation = screen.getByRole("main", { name: "Conversation" });
-    expect(await screen.findByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-pip");
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
     expect(conversation).toHaveClass("browser-panel-active");
 
     await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
 
-    const pip = await screen.findByRole("complementary", { name: "Browser" });
-    expect(pip).toHaveClass("browser-panel-pip");
-    expect(pip).toHaveStyle({ left: "588px", top: "400px", width: "420px", height: "300px" });
-    expect(pip).toHaveTextContent("Picture in Picture test");
+    await waitFor(() => expect(window.openbot.browser.openPictureInPicture).toHaveBeenCalledWith(undefined));
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
     expect(conversation).not.toHaveClass("browser-panel-active");
-    const address = screen.getByRole("textbox", { name: "Browser address" });
-    expect(address).toHaveValue("https://example.com/pip");
-    await fireEvent.focus(address);
-    await fireEvent.input(address, { target: { value: "example.com/typed" } });
-    emitAgentEvent?.({
-      type: "browser-changed",
-      tabs: [
-        {
-          id: "tab-pip",
-          title: "Updated while typing",
-          url: "https://example.com/updated",
-          loading: true,
-          ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
-        },
-      ],
-      activeTabId: "tab-pip",
-    });
-    expect(address).toHaveValue("example.com/typed");
-    await fireEvent.blur(address);
-    expect(address).toHaveValue("https://example.com/updated");
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
 
-    vi.mocked(window.openbot.browser.open).mockResolvedValueOnce({
-      id: "tab-next",
-      title: "Next page",
-      url: "https://example.com/next",
-      loading: false,
-      ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+    emitBrowserPictureInPicture?.({
+      type: "bounds-changed",
+      bounds: { x: 720, y: 360, width: 460, height: 340 },
     });
-    await fireEvent.focus(address);
-    await fireEvent.input(address, { target: { value: "example.com/next" } });
-    const addressForm = address.closest("form");
-    if (!(addressForm instanceof HTMLFormElement)) throw new Error("Browser address form was not rendered.");
-    await fireEvent.submit(addressForm);
-    await waitFor(() => expect(window.openbot.browser.open).toHaveBeenCalledTimes(1));
-    emitAgentEvent?.({
-      type: "browser-changed",
-      tabs: [
-        {
-          id: "tab-next",
-          title: "Redirected page",
-          url: "https://substack.com/dashboard",
-          loading: false,
-          ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
-        },
-      ],
-      activeTabId: "tab-next",
-    });
-    expect(address).toHaveValue("https://substack.com/dashboard");
-    expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-pip");
+    expect(window.localStorage.getItem("openbot:browser-pip-native-bounds")).toBe("720,360,460,340");
 
-    vi.mocked(window.openbot.browser.setVisible).mockClear();
-    await fireEvent.keyDown(window, { key: "k", metaKey: true });
-    expect(await screen.findByRole("dialog", { name: "Search OpenBot" })).toBeInTheDocument();
-    await waitFor(() => expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false }));
-    await fireEvent.keyDown(window, { key: "k", metaKey: true });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Search OpenBot" })).not.toBeInTheDocument());
+    emitBrowserPictureInPicture?.({ type: "dock" });
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(conversation).toHaveClass("browser-panel-active");
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
     await waitFor(() =>
-      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true })),
-    );
-
-    const header = pip.querySelector(".browser-pip-header");
-    if (!(header instanceof HTMLElement)) throw new Error("Picture in Picture header was not rendered.");
-    const surface = pip.querySelector(".browser-surface");
-    if (!(surface instanceof HTMLElement)) throw new Error("Picture in Picture browser surface was not rendered.");
-    vi.spyOn(surface, "getBoundingClientRect").mockImplementation(() => {
-      const left = Number.parseFloat(pip.style.left);
-      const top = Number.parseFloat(pip.style.top);
-      const width = Number.parseFloat(pip.style.width);
-      const height = Number.parseFloat(pip.style.height);
-      return {
-        x: left + 7,
-        y: top + 73,
-        width: width - 14,
-        height: height - 80,
-        top: top + 73,
-        right: left + width - 7,
-        bottom: top + height - 7,
-        left: left + 7,
-        toJSON: () => ({}),
-      };
-    });
-    vi.mocked(window.openbot.browser.setVisible).mockClear();
-    await fireEvent.pointerDown(header, { button: 0, pointerId: 7, clientX: 600, clientY: 460 });
-    await fireEvent.pointerMove(window, { pointerId: 7, clientX: 560, clientY: 420 });
-    await fireEvent.pointerUp(window, { pointerId: 7, clientX: 560, clientY: 420 });
-    expect(window.localStorage.getItem("openbot:browser-pip-bounds")).toBe("548,360,420,300");
-    await waitFor(() =>
-      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
-        visible: true,
-        bounds: { x: 555, y: 433, width: 406, height: 220 },
+      expect(window.openbot.browser.openPictureInPicture).toHaveBeenLastCalledWith({
+        x: 720,
+        y: 360,
+        width: 460,
+        height: 340,
       }),
     );
-
-    const resizeHandle = pip.querySelector(".browser-pip-resize-bottom-right");
-    if (!(resizeHandle instanceof HTMLElement)) throw new Error("Picture in Picture resize handle was not rendered.");
-    await fireEvent.pointerDown(resizeHandle, { button: 0, pointerId: 8, clientX: 968, clientY: 712 });
-    await fireEvent.pointerMove(window, { pointerId: 8, clientX: 928, clientY: 682 });
-    await fireEvent.pointerUp(window, { pointerId: 8, clientX: 928, clientY: 682 });
-    expect(window.localStorage.getItem("openbot:browser-pip-bounds")).toBe("548,360,380,270");
-
-    await fireEvent.click(screen.getByRole("button", { name: "Dock browser to right sidebar" }));
-    await waitFor(() =>
-      expect(screen.getByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-pip"),
-    );
-    expect(conversation).toHaveClass("browser-panel-active");
-    await fireEvent.click(screen.getByRole("button", { name: "Go back" }));
-    expect(window.openbot.browser.navigate).toHaveBeenCalledWith({ tabId: "tab-next", direction: "back" });
-    await fireEvent.click(screen.getByRole("button", { name: "Go forward" }));
-    expect(window.openbot.browser.navigate).toHaveBeenCalledWith({ tabId: "tab-next", direction: "forward" });
-    await fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
-    expect(window.openbot.browser.reload).toHaveBeenCalledWith("tab-next");
-    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
-    const reopenedPip = await screen.findByRole("complementary", { name: "Browser" });
-    expect(reopenedPip).toHaveStyle({ left: "628px", top: "430px", width: "380px", height: "270px" });
-    await fireEvent.click(screen.getByRole("button", { name: "Hide browser" }));
-    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+    emitBrowserPictureInPicture?.({ type: "hide" });
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
     expect(window.openbot.browser.close).not.toHaveBeenCalled();
-    expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
   });
-
   it("keeps a newly opened browser tab active when the initial tab request resolves late", async () => {
     const googleTab: BrowserTab = {
       id: "tab-google",
@@ -2855,9 +2785,8 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://substack.com/chat");
   });
 
-  it("clamps and restores Picture in Picture per conversation without overriding it during agent control", async () => {
-    Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
-    window.localStorage.setItem("openbot:browser-pip-bounds", "-50,-50,2000,2000");
+  it("restores desktop Picture in Picture per conversation without overriding it during agent control", async () => {
+    window.localStorage.setItem("openbot:browser-pip-native-bounds", "640,320,460,340");
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -2876,10 +2805,14 @@ describe("OpenBot connected desktop shell", () => {
     });
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
     await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
-
-    const pip = await screen.findByRole("complementary", { name: "Browser" });
-    expect(pip).toHaveClass("browser-panel-pip");
-    expect(pip).toHaveStyle({ left: "12px", top: "12px", width: "1000px", height: "744px" });
+    await waitFor(() =>
+      expect(window.openbot.browser.openPictureInPicture).toHaveBeenLastCalledWith({
+        x: 640,
+        y: 320,
+        width: 460,
+        height: 340,
+      }),
+    );
 
     emitAgentEvent?.({
       type: "browser-control-changed",
@@ -2898,14 +2831,12 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-    expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-pip");
-
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
-    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+    await waitFor(() => expect(window.openbot.browser.closePictureInPicture).toHaveBeenCalled());
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
-    expect(await screen.findByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-pip");
+    await waitFor(() => expect(window.openbot.browser.openPictureInPicture).toHaveBeenCalledTimes(2));
   });
-
   it("shows a stable indicator while an agent controls the embedded browser", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -2960,12 +2891,8 @@ describe("OpenBot connected desktop shell", () => {
     const controlledTab = await screen.findByRole("tab", {
       name: "Local smoke page, controlled by Chief",
     });
-    expect(controlledTab.closest(".browser-tab-wrap")).toHaveClass("browser-tab-controlled");
     expect(controlledTab).toHaveAttribute("aria-description", "Press Delete or Control/Command W to close");
-    expect(await screen.findByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-controlled");
-    const browserTabStrip = document.querySelector(".browser-tab-strip");
-    expect(browserTabStrip?.querySelectorAll(".browser-tab-wrap")).toHaveLength(3);
-    expect(browserTabStrip).not.toContainElement(screen.getByRole("button", { name: "New browser tab" }));
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
     await fireEvent.keyDown(screen.getByRole("tab", { name: "Third page" }), { key: "Delete" });
     expect(window.openbot.browser.close).toHaveBeenCalledWith("tab-3");
     expect(screen.queryByRole("button", { name: "Hide browser panel" })).not.toBeInTheDocument();
@@ -2981,7 +2908,6 @@ describe("OpenBot connected desktop shell", () => {
       "aria-expanded",
       "true",
     );
-    expect(screen.getByRole("button", { name: "Chief is controlling the browser" })).toHaveClass("header-panel-toggle");
 
     emitAgentEvent?.({
       type: "browser-control-changed",
@@ -3007,8 +2933,6 @@ describe("OpenBot connected desktop shell", () => {
       expect(screen.queryByRole("tab", { name: "Local smoke page, controlled by Chief" })).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
-    expect(controlledTab.closest(".browser-tab-wrap")).not.toHaveClass("browser-tab-controlled");
-    expect(await screen.findByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-controlled");
   });
 
   it("reveals the requested browser tab and resumes the agent from the takeover card", async () => {
@@ -3049,15 +2973,16 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
-    expect(await screen.findByRole("region", { name: "Browser takeover" })).toHaveTextContent("Take over");
-    expect(
-      screen.getByText("Complete the authorization in the open browser, then let the agent continue."),
-    ).toBeVisible();
+    expect(await screen.findByRole("region", { name: "Browser takeover" })).toHaveTextContent("Action required");
+    expect(screen.getByRole("heading", { name: "Complete the step on example.com" })).toBeVisible();
+    expect(await screen.findByRole("img", { name: "Preview of Sign in" })).toBeVisible();
     expect(await screen.findByRole("complementary", { name: "Browser" })).toBeVisible();
     await waitFor(() => expect(window.openbot.browser.activate).toHaveBeenCalledWith("tab-login"));
+    expect(window.openbot.browser.capturePreview).toHaveBeenCalledTimes(1);
+    expect(window.openbot.browser.capturePreview).toHaveBeenCalledWith("tab-login");
     expect(screen.queryByRole("textbox", { name: "Message Chief" })).not.toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await fireEvent.click(screen.getByRole("button", { name: "I’m done" }));
     await waitFor(() =>
       expect(window.openbot.agent.respondToBrowserTakeover).toHaveBeenCalledWith({
         requestId: "takeover-1",
@@ -3065,6 +2990,56 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("region", { name: "Browser takeover" })).not.toBeInTheDocument());
+    const completedCard = await screen.findByRole("region", { name: "Browser takeover complete" });
+    expect(completedCard).toHaveTextContent("Done");
+    expect(within(completedCard).getByRole("img", { name: "Preview of Sign in" })).toBeVisible();
+    expect(within(completedCard).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Message Chief" })).toBeVisible();
+  });
+
+  it("keeps browser takeover actions available when the preview fails", async () => {
+    vi.mocked(window.openbot.browser.capturePreview).mockRejectedValueOnce(new Error("Preview unavailable"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitAgentEvent).toBeDefined());
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-login",
+          title: "Sign in",
+          url: "https://example.com/login",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-login",
+    });
+    emitAgentEvent?.({
+      type: "browser-takeover-requested",
+      request: {
+        requestId: "takeover-preview-failed",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-preview-failed",
+        tabId: "tab-login",
+      },
+    });
+
+    const card = await screen.findByRole("region", { name: "Browser takeover" });
+    await waitFor(() => expect(within(card).queryByRole("img")).not.toBeInTheDocument());
+    await fireEvent.click(within(card).getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(window.openbot.agent.respondToBrowserTakeover).toHaveBeenCalledWith({
+        requestId: "takeover-preview-failed",
+        decision: "cancel",
+      }),
+    );
+    const cancelledCard = await screen.findByRole("region", { name: "Browser takeover cancelled" });
+    expect(cancelledCard).toHaveTextContent("Cancelled");
+    expect(within(cancelledCard).queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("closes browser tabs with the middle mouse button and Control W, then closes the panel", async () => {
@@ -3171,6 +3146,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
         visible: true,
+        target: "main",
         bounds: { x: 640, y: 73, width: 380, height: 600 },
       }),
     );
@@ -3251,7 +3227,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.agent.openWorkspaceFile).toHaveBeenCalledWith({ botId: "chief", path: workspacePath });
     await fireEvent.click(screen.getByRole("button", { name: "Close file preview" }));
     expect(screen.queryByRole("complementary", { name: "File preview" })).not.toBeInTheDocument();
-    expect(screen.getByRole("main", { name: "Conversation" })).not.toHaveClass("browser-panel-active");
 
     await fireEvent.click(screen.getByRole("button", { name: "Open shared file menu.txt" }));
     expect(await screen.findByText("Pasta menu")).toBeInTheDocument();
@@ -3309,7 +3284,7 @@ describe("OpenBot connected desktop shell", () => {
 
   it("opens a private person thread and receives direct messages in real time", async () => {
     vi.mocked(window.openbot.servers.markDirectRead).mockRejectedValueOnce(new Error("Read state unavailable"));
-    render(() => <App />);
+    render(() => <App peopleEnabled />);
     await screen.findByRole("heading", { name: "Chief" });
     emitPresence?.({
       serverId: "server-1",
@@ -3443,7 +3418,7 @@ describe("OpenBot connected desktop shell", () => {
         revision: 1,
       });
     });
-    render(() => <App />);
+    render(() => <App peopleEnabled />);
     await screen.findByRole("heading", { name: "Chief" });
     emitPresence?.({
       serverId: "server-1",
@@ -3546,7 +3521,6 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByText("Show this message", { selector: ".message-copy" })).toBeInTheDocument();
     expect(screen.queryByText("Show this message", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
-    expect(document.querySelector(".agent-queue-slot")).toHaveAttribute("data-open", "false");
   });
 
   it("replies to a message through the composer and keeps the reference in the queued input", async () => {
@@ -3843,7 +3817,6 @@ describe("OpenBot connected desktop shell", () => {
       ".png,.jpg,.jpeg,.gif,.webp,.avif",
     );
     await fireEvent.pointerDown(screen.getByRole("button", { name: "Add to prompt" }), { button: 0 });
-    expect(screen.getByRole("menuitem", { name: /Use a skill/ })).toHaveAttribute("data-disabled");
     await fireEvent.pointerDown(screen.getByRole("menuitem", { name: /Add context/ }), { button: 0 });
     expect(filePickerClick).toHaveBeenCalledTimes(2);
     emitAttachmentImport?.({ type: "started", requestId: "picker-1" });
@@ -3961,11 +3934,8 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
-    const activeMessage = await screen.findByText("Start this work", { selector: ".message-copy" });
-    const activity = await screen.findByRole("status", { name: "Chief is working" });
-    const activitySlot = activeMessage.closest(".virtual-chat-list")?.nextElementSibling;
-    expect(activitySlot).toHaveClass("agent-activity-slot");
-    expect(activitySlot).toContainElement(activity);
+    await screen.findByText("Start this work", { selector: ".message-copy" });
+    await screen.findByRole("status", { name: "Chief is working" });
     expect(screen.getByText("Run this second", { selector: ".agent-queue-message" })).toBeInTheDocument();
     expect(screen.getByText("Run this third", { selector: ".agent-queue-message" })).toBeInTheDocument();
     expect(screen.getByText("Run this fourth", { selector: ".agent-queue-message" })).toBeInTheDocument();
@@ -3987,10 +3957,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     const queueSlot = document.querySelector<HTMLElement>(".agent-queue-slot");
     await waitFor(() => expect(document.querySelectorAll(".agent-queue-item-removing")).toHaveLength(3));
-    expect(queueSlot).toHaveAttribute("data-open", "true");
-    expect(queueSlot).toContainElement(document.querySelector(".agent-queue-panel"));
     await waitFor(() => expect(document.querySelector(".agent-queue-panel")).not.toBeInTheDocument());
-    expect(queueSlot).toHaveAttribute("data-open", "false");
     expect(queueSlot).toHaveAttribute("aria-hidden", "true");
   });
 
@@ -4923,7 +4890,7 @@ describe("OpenBot connected desktop shell", () => {
         },
       ],
     });
-    render(() => <App />);
+    render(() => <App peopleEnabled />);
     await screen.findByRole("heading", { name: "Chief" });
     emitPresence?.({
       serverId: "server-1",

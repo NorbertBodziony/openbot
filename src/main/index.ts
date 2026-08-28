@@ -15,6 +15,7 @@ import {
   type AgentEvent,
   type AppInfo,
   type AppSetupState,
+  type BrowserDisplayState,
   type CentralAuthState,
   type ExternalDestination,
   type FilePreview,
@@ -61,6 +62,7 @@ import { notificationForAgentEvent } from "./agent-notifications";
 import { HostAnalytics } from "./analytics";
 import { readAnalyticsPreference, writeAnalyticsPreference } from "./analytics-preference-store";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
+import { BrowserPictureInPicture } from "./browser-picture-in-picture";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
 import { resolveOpenBotCloudflaredExecutable } from "./cloudflared-artifact";
 import { buildContentSecurityPolicy } from "./content-security-policy";
@@ -114,7 +116,7 @@ import {
   parseProviderId,
 } from "./ipc/app-inputs";
 import { parseAvatarImage } from "./ipc/avatar-inputs";
-import { parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
+import { parseBrowserBounds, parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
 import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
 import { isObject, requireString } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
@@ -133,6 +135,7 @@ import {
   decodeBotSummaries,
   decodeBotSummary,
   decodeBrowserControlState,
+  decodeBrowserPreview,
   decodeBrowserTab,
   decodeBrowserTabs,
   decodeQueuedMessageReceipt,
@@ -228,6 +231,7 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow: BrowserWindow | null = null;
 let browserHost: BrowserHost | null = null;
+let browserPictureInPicture: BrowserPictureInPicture | null = null;
 let agentService: AgentService | null = null;
 let mailboxStore: MailboxStore | null = null;
 let updateService: UpdateService | null = null;
@@ -284,6 +288,7 @@ function registerIpcHandlers(
   providerRuntimes: ProviderRuntimeManager,
   mailbox: MailboxStore,
   browser: BrowserHost,
+  browserPictureInPicture: BrowserPictureInPicture,
   updater: UpdateService,
   setupFile: string,
   analyticsPreferenceFile: string,
@@ -1033,11 +1038,23 @@ function registerIpcHandlers(
       ? browser.listTabs()
       : remoteServers.request("/v1/browser/tabs", {}, undefined, decodeBrowserTabs),
   );
+  handleTrusted(IPC_CHANNELS.browserGetDisplayState, (): BrowserDisplayState => browser.getDisplayState());
   handleTrusted(IPC_CHANNELS.browserGetControlState, () =>
     remoteServers.activeServerId === "local"
       ? browser.getControlState()
       : remoteServers.request("/v1/browser/control", {}, undefined, decodeBrowserControlState),
   );
+  handleTrusted(IPC_CHANNELS.browserCapturePreview, (tabId: unknown) => {
+    const parsedTabId = requireString(tabId, "tabId");
+    return remoteServers.activeServerId === "local"
+      ? browser.capturePreview(parsedTabId)
+      : remoteServers.request(
+          "/v1/browser/preview",
+          { method: "POST", body: { tabId: parsedTabId } },
+          undefined,
+          decodeBrowserPreview,
+        );
+  });
   handleTrusted(IPC_CHANNELS.browserSetVisible, async (input: unknown) => {
     const parsed = parseVisibility(input);
     if (remoteServers.activeServerId === "local") await browser.setVisible(parsed);
@@ -1045,6 +1062,12 @@ function registerIpcHandlers(
       await remoteServers.request("/v1/browser/visible", { method: "POST", body: parsed }, undefined, decodeVoid);
     }
   });
+  handleTrusted(IPC_CHANNELS.browserPictureInPictureOpen, (input: unknown) =>
+    browserPictureInPicture.open(input === undefined ? undefined : parseBrowserBounds(input)),
+  );
+  handleTrusted(IPC_CHANNELS.browserPictureInPictureClose, () => browserPictureInPicture.close());
+  handleTrusted(IPC_CHANNELS.browserPictureInPictureDock, () => browserPictureInPicture.dock());
+  handleTrusted(IPC_CHANNELS.browserPictureInPictureHide, () => browserPictureInPicture.hide());
 }
 
 function createWindow(): BrowserWindow {
@@ -1206,6 +1229,12 @@ function forwardAgentEvent(serverId: string, event: AgentEvent): void {
     mainWindow.focus();
   });
   notification.show();
+}
+
+function forwardBrowserDisplayState(state: BrowserDisplayState): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.browserDisplayStateEvent, state);
+  }
 }
 
 function forwardUpdateStatus(status: import("@openbot/contracts/ipc").UpdateStatus): void {
@@ -1385,6 +1414,18 @@ if (!hasSingleInstanceLock) {
       configureApplicationProtocol();
       browserHost = new BrowserHost(mainWindow, store.downloadsRoot, join(app.getPath("userData"), BROWSER_STATE_FILE));
       await browserHost.restore();
+      browserPictureInPicture = new BrowserPictureInPicture({
+        mainWindow,
+        browser: browserHost,
+        preloadPath: join(__dirname, "../preload/index.cjs"),
+        iconPath: appIconPath,
+        developmentUrl: process.env.ELECTRON_RENDERER_URL,
+        onEvent: (event) => {
+          if (!mainWindow || mainWindow.isDestroyed()) return;
+          mainWindow.webContents.send(IPC_CHANNELS.browserPictureInPictureEvent, event);
+        },
+      });
+      browserHost.onChanged((tabs, activeTabId) => forwardBrowserDisplayState({ tabs, activeTabId }));
       const setupFile = join(app.getPath("userData"), SETUP_FILE);
       const analyticsPreferenceFile = join(app.getPath("userData"), ANALYTICS_PREFERENCE_FILE);
       const setupState = await readSetupState(setupFile);
@@ -1627,6 +1668,7 @@ if (!hasSingleInstanceLock) {
         providerRuntimeManager,
         mailboxStore,
         browserHost,
+        browserPictureInPicture,
         updateService,
         setupFile,
         analyticsPreferenceFile,
@@ -1796,6 +1838,7 @@ async function prepareForShutdown(): Promise<void> {
   voiceTranscriptionService?.shutdown();
   await (remoteDesktopManager?.stop() ?? Promise.resolve());
   await (hostService?.shutdown() ?? Promise.resolve());
+  browserPictureInPicture?.destroy();
   await (browserHost?.destroy() ?? Promise.resolve());
   await (agentService?.stop() ?? Promise.resolve());
 }

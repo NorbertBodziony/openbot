@@ -13,9 +13,13 @@ import type {
   UpdateStatus,
 } from "./ipc-app-auth";
 import type {
+  BrowserBounds,
   BrowserControlState,
+  BrowserDisplayState,
   BrowserNavigateInput,
   BrowserOpenInput,
+  BrowserPictureInPictureEvent,
+  BrowserPreview,
   BrowserTab,
   BrowserVisibilityInput,
 } from "./ipc-browser";
@@ -189,8 +193,16 @@ export interface BrowserDesktopApi {
   reload: (tabId: string) => Promise<void>;
   close: (tabId: string) => Promise<void>;
   listTabs: () => Promise<BrowserTab[]>;
+  getDisplayState: () => Promise<BrowserDisplayState>;
   getControlState: () => Promise<BrowserControlState>;
+  capturePreview: (tabId: string) => Promise<BrowserPreview>;
   setVisible: (input: BrowserVisibilityInput) => Promise<void>;
+  onDisplayState: (listener: (state: BrowserDisplayState) => void) => () => void;
+  openPictureInPicture: (bounds?: BrowserBounds) => Promise<BrowserBounds>;
+  closePictureInPicture: () => Promise<void>;
+  dockPictureInPicture: () => Promise<void>;
+  hidePictureInPicture: () => Promise<void>;
+  onPictureInPictureEvent: (listener: (event: BrowserPictureInPictureEvent) => void) => () => void;
 }
 
 export interface UpdateDesktopApi {

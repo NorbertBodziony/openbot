@@ -320,60 +320,147 @@
   }
 }
 
-:where(.ui-badge) {
+:where(.z-badge) {
   width: fit-content;
+  height: 20px;
   min-width: 0;
   display: inline-flex;
+  overflow: hidden;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   gap: var(--openbot-space-1);
-  border: 1px solid var(--openbot-border);
-  border-radius: var(--openbot-radius-sm);
-  background: var(--openbot-bg-control);
-  color: var(--openbot-text-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--openbot-radius-pill);
+  padding: var(--openbot-space-0-5) var(--openbot-space-2);
   font-size: var(--openbot-text-xs);
   font-weight: var(--openbot-weight-medium);
   line-height: var(--openbot-leading-xs);
+  transition:
+    border-color var(--openbot-duration-fast) var(--openbot-ease-out),
+    background-color var(--openbot-duration-fast) var(--openbot-ease-out),
+    color var(--openbot-duration-fast) var(--openbot-ease-out);
   white-space: nowrap;
 }
 
-:where(.ui-badge)[data-size="sm"] {
+:where(.z-badge) > svg {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+:where(.z-badge):has(> [data-icon="inline-start"]) {
+  padding-left: var(--openbot-space-1-5);
+}
+
+:where(.z-badge):has(> [data-icon="inline-end"]) {
+  padding-right: var(--openbot-space-1-5);
+}
+
+:where(.z-badge)[data-size="sm"] {
   min-height: 16px;
+  height: 16px;
   padding: 0 var(--openbot-space-1);
   font-size: var(--openbot-text-2xs);
 }
 
-:where(.ui-badge)[data-size="md"] {
+:where(.z-badge)[data-size="md"] {
   min-height: 20px;
   padding: var(--openbot-space-0-5) var(--openbot-space-1-5);
 }
 
-:where(.ui-badge)[data-shape="pill"] {
-  border-radius: var(--openbot-radius-pill);
+:where(.z-badge)[data-shape="rounded"] {
+  border-radius: var(--openbot-radius-sm);
 }
 
-:where(.ui-badge)[data-tone="accent"] {
+:where(.z-badge-variant-default) {
+  background: var(--openbot-accent);
+  color: var(--openbot-text-primary);
+}
+
+:where(.z-badge-variant-secondary) {
+  background: var(--openbot-bg-control);
+  color: var(--openbot-text-secondary);
+}
+
+:where(.z-badge-variant-outline) {
+  border-color: var(--openbot-border-strong);
+  background: transparent;
+  color: var(--openbot-text-secondary);
+}
+
+:where(.z-badge-variant-ghost) {
+  background: transparent;
+  color: var(--openbot-text-secondary);
+}
+
+:where(.z-badge-variant-link) {
+  background: transparent;
+  color: var(--openbot-accent-text);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+:where(.z-badge-variant-primary-light) {
   border-color: var(--openbot-accent-strong);
   background: var(--openbot-accent-soft);
   color: var(--openbot-accent-text);
 }
 
-:where(.ui-badge)[data-tone="success"] {
+:where(.z-badge-variant-success-light) {
   border-color: var(--openbot-success-soft);
   background: var(--openbot-success-soft);
   color: var(--openbot-success);
 }
 
-:where(.ui-badge)[data-tone="warning"] {
+:where(.z-badge-variant-warning-light) {
   border-color: var(--openbot-warning-soft);
   background: var(--openbot-warning-soft);
   color: var(--openbot-warning);
 }
 
-:where(.ui-badge)[data-tone="danger"] {
+:where(.z-badge-variant-destructive),
+:where(.z-badge-variant-destructive-light) {
   border-color: var(--openbot-danger-soft);
   background: var(--openbot-danger-soft);
   color: var(--openbot-danger);
+}
+
+:where(.z-badge-variant-info-light) {
+  border-color: var(--openbot-settings-accent-soft);
+  background: var(--openbot-settings-accent-soft);
+  color: var(--openbot-settings-accent-text);
+}
+
+:where(.z-badge-variant-primary-outline) {
+  border-color: var(--openbot-border-strong);
+  background: transparent;
+  color: var(--openbot-accent-text);
+}
+
+:where(.z-badge-variant-success-outline) {
+  border-color: var(--openbot-border-strong);
+  background: transparent;
+  color: var(--openbot-success);
+}
+
+:where(.z-badge-variant-warning-outline) {
+  border-color: var(--openbot-border-strong);
+  background: transparent;
+  color: var(--openbot-warning);
+}
+
+:where(.z-badge-variant-destructive-outline) {
+  border-color: var(--openbot-border-strong);
+  background: transparent;
+  color: var(--openbot-danger);
+}
+
+:where(.z-badge-variant-info-outline) {
+  border-color: var(--openbot-border-strong);
+  background: transparent;
+  color: var(--openbot-settings-accent-text);
 }
 
 :where(.ui-checkbox) {
@@ -423,7 +510,7 @@
   stroke-width: 2.5;
 }
 
-.ui-badge-dot {
+.z-badge-dot {
   width: 6px;
   height: 6px;
   flex: 0 0 auto;

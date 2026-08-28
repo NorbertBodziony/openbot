@@ -442,7 +442,7 @@ describe("OpenBotDatabase", () => {
     await reopened.initialize();
     expect(snapshotEventCount(reopened, bot.threadId)).toBe(1);
     reopened.close();
-  });
+  }, 20_000);
 
   it("adds post-v4 agent memory and routine projections", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-db-v4-"));

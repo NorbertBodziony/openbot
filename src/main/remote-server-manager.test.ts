@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  decodeBrowserPreview,
   decodeBrowserTab,
   isValidRemoteApiUrl,
   RemoteServerManager,
@@ -31,6 +32,23 @@ describe("remote browser responses", () => {
       }),
     ).toMatchObject({ id: "tab-1", url: "https://example.com/" });
     expect(() => decodeBrowserTab(undefined)).toThrowError("Invalid remote browser tab.");
+  });
+
+  it("accepts only bounded JPEG browser previews", () => {
+    expect(
+      decodeBrowserPreview({
+        dataUrl: "data:image/jpeg;base64,YWJj",
+        width: 960,
+        height: 600,
+      }),
+    ).toMatchObject({ width: 960, height: 600 });
+    expect(() =>
+      decodeBrowserPreview({
+        dataUrl: "data:image/png;base64,YWJj",
+        width: 960,
+        height: 600,
+      }),
+    ).toThrowError("Invalid remote browser preview.");
   });
 });
 
