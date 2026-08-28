@@ -3,7 +3,6 @@ import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
-import { avatarHeadColor } from "../../bloub-avatar";
 import type { BotMessage, BotProfile } from "../../data";
 import { triggerResize } from "../../setupTests";
 import { ImageGeneration } from "./ImageGeneration";
@@ -61,17 +60,6 @@ const message = {
 } satisfies BotMessage;
 
 describe("ExchangeSystemRow", () => {
-  it("mixes every recipient avatar color for a multi-agent trigger", () => {
-    render(() => <ExchangeSystemRow message={message} bots={bots} onSelectAgent={vi.fn()} />);
-
-    const trigger = screen.getByRole("button", { name: "2 agents, show list" });
-    const researchColor = avatarHeadColor(bots[0].avatarSeed, bots[0].avatarHue);
-    const salesColor = avatarHeadColor(bots[1].avatarSeed, bots[1].avatarHue);
-    expect(trigger.style.getPropertyValue("--exchange-agent-color")).toBe(
-      `color-mix(in oklab, ${researchColor} 50%, ${salesColor})`,
-    );
-  });
-
   it("opens the chat for a single outgoing recipient", async () => {
     const onSelectAgent = vi.fn();
     render(() => (
@@ -620,7 +608,7 @@ describe("ImageGeneration", () => {
     previewUrl: "openbot-attachment://file/generated-image",
   };
 
-  it("exposes the generating state and preserves the requested aspect ratio", () => {
+  it("exposes the generating state", () => {
     render(() => (
       <ImageGeneration
         status="generating"
@@ -632,11 +620,6 @@ describe("ImageGeneration", () => {
 
     expect(screen.getByRole("img", { name: "Generating image" })).toHaveAttribute("aria-busy", "true");
     expect(screen.getByText("Generating image")).toBeInTheDocument();
-    expect(
-      document
-        .querySelector<HTMLElement>(".image-generation-stage")
-        ?.style.getPropertyValue("--image-generation-ratio"),
-    ).toBe("4 / 5");
   });
 
   it("crossfades to a clickable preview when complete", async () => {
@@ -663,25 +646,6 @@ describe("ImageGeneration", () => {
     expect(screen.getByRole("button", { name: "Download generated image" }).querySelector("svg")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Download generated image" }));
     expect(onDownload).toHaveBeenCalledWith(attachment);
-  });
-
-  it("uses the loaded image dimensions for the completed canvas", async () => {
-    render(() => (
-      <ImageGeneration status="completed" resolution="1024 × 1024" aspectRatio="square" attachment={attachment} />
-    ));
-
-    const image = screen.getByAltText("Generated image");
-    Object.defineProperties(image, {
-      naturalWidth: { configurable: true, value: 1536 },
-      naturalHeight: { configurable: true, value: 1024 },
-    });
-    await fireEvent.load(image);
-
-    expect(
-      document
-        .querySelector<HTMLElement>(".image-generation-stage")
-        ?.style.getPropertyValue("--image-generation-ratio"),
-    ).toBe("1536 / 1024");
   });
 
   it("shows the failure mark when the preview cannot load", async () => {

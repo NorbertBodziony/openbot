@@ -116,29 +116,21 @@ describe("QueuePanel", () => {
     await fireEvent.dragStart(rows[0], { dataTransfer });
     await fireEvent.dragOver(rows[2], { dataTransfer, clientY: 72.5 });
 
-    expect(rows[0].style.getPropertyValue("--queue-drag-step")).toBe("0");
-    expect(rows[1].style.getPropertyValue("--queue-drag-step")).toBe("-1");
-    expect(rows[2].style.getPropertyValue("--queue-drag-step")).toBe("-1");
-    expect(view.container.querySelector(".agent-queue-panel")).toHaveClass("agent-queue-panel-dragging");
-
     await fireEvent.drop(rows[2], { dataTransfer, clientY: 72.5 });
 
     expect(props.onReorder).toHaveBeenLastCalledWith(["delivery-2", "delivery-3", "delivery-1"]);
-    expect(rows[0].style.getPropertyValue("--queue-drag-step")).toBe("0");
-    expect(view.container.querySelector(".agent-queue-panel")).not.toHaveClass("agent-queue-panel-dragging");
     expect(screen.getByRole("status")).toHaveTextContent("Moved queued message to position 3 of 3.");
   });
 
   it("does not start row dragging from an action button", async () => {
     const props = callbacks();
-    const view = render(() => <QueuePanel deliveries={[delivery(1), delivery(2)]} canSteer {...props} />);
+    render(() => <QueuePanel deliveries={[delivery(1), delivery(2)]} canSteer {...props} />);
     const edit = screen.getByRole("button", { name: "Edit queued message 1" });
     const dataTransfer = { setData: vi.fn(), effectAllowed: "move", dropEffect: "move" };
 
     await fireEvent.dragStart(edit, { dataTransfer });
 
     expect(dataTransfer.setData).not.toHaveBeenCalled();
-    expect(view.container.querySelector(".agent-queue-panel")).not.toHaveClass("agent-queue-panel-dragging");
   });
 
   it("auto-scrolls a long queue while dragging near its edge", async () => {

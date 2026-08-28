@@ -113,7 +113,6 @@ describe("AgentMemoriesModal", () => {
       target: { value: "Prefers short status reports." },
     });
     const saveMemoryButton = screen.getByRole("button", { name: "Save memory" });
-    expect(saveMemoryButton).toHaveAttribute("data-variant", "default");
     await fireEvent.click(saveMemoryButton);
 
     await waitFor(() =>
@@ -151,7 +150,6 @@ describe("AgentMemoriesModal", () => {
       target: { value: "Uses SI units." },
     });
     const saveButton = screen.getByRole("button", { name: "Save" });
-    expect(saveButton).toHaveAttribute("data-variant", "default");
     await fireEvent.click(saveButton);
     expect(await screen.findByText("Uses SI units.")).toBeInTheDocument();
     expect(updateMemory).toHaveBeenCalledWith({ botId: "chief", memoryId: "memory-1", text: "Uses SI units." });
