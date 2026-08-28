@@ -3,6 +3,7 @@ import type {
   AgentStatus,
   AttachmentImportEvent,
   BotSummary,
+  BrowserPictureInPictureEvent,
   BrowserTab,
   CentralAuthState,
   ConversationSnapshot,
@@ -37,6 +38,7 @@ const defaultMatchMedia = window.matchMedia;
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
 let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
+let emitBrowserPictureInPicture: ((event: BrowserPictureInPictureEvent) => void) | undefined;
 let emitUpdateStatus: ((status: UpdateStatus) => void) | undefined;
 let emitAuth: ((state: CentralAuthState) => void) | undefined;
 let emitServers: ((servers: ServerSummary[]) => void) | undefined;
@@ -113,6 +115,7 @@ describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {
     emitAgentEvent = undefined;
     emitAttachmentImport = undefined;
+    emitBrowserPictureInPicture = undefined;
     emitUpdateStatus = undefined;
     emitAuth = undefined;
     emitServers = undefined;
@@ -478,6 +481,7 @@ describe("OpenBot connected desktop shell", () => {
           reload: vi.fn().mockResolvedValue(undefined),
           close: vi.fn().mockResolvedValue(undefined),
           listTabs: vi.fn().mockResolvedValue([]),
+          getDisplayState: vi.fn().mockResolvedValue({ tabs: [], activeTabId: null }),
           getControlState: vi.fn().mockResolvedValue({ sessions: [] }),
           capturePreview: vi.fn().mockResolvedValue({
             dataUrl: "data:image/jpeg;base64,YWJj",
@@ -485,6 +489,17 @@ describe("OpenBot connected desktop shell", () => {
             height: 600,
           }),
           setVisible: vi.fn().mockResolvedValue(undefined),
+          onDisplayState: vi.fn().mockReturnValue(() => undefined),
+          openPictureInPicture: vi
+            .fn()
+            .mockImplementation(async (bounds) => bounds ?? { x: 900, y: 500, width: 420, height: 300 }),
+          closePictureInPicture: vi.fn().mockResolvedValue(undefined),
+          dockPictureInPicture: vi.fn().mockResolvedValue(undefined),
+          hidePictureInPicture: vi.fn().mockResolvedValue(undefined),
+          onPictureInPictureEvent: vi.fn((listener) => {
+            emitBrowserPictureInPicture = listener;
+            return () => undefined;
+          }),
         },
         update: {
           getStatus: vi.fn().mockResolvedValue({
@@ -2647,8 +2662,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "240");
   });
 
-  it("moves the live embedded browser between the sidebar and Picture in Picture", async () => {
-    Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
+  it("moves the live embedded browser between the sidebar and desktop Picture in Picture", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -2667,131 +2681,41 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
-    await screen.findByRole("complementary", { name: "Browser" });
+    const conversation = screen.getByRole("main", { name: "Conversation" });
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(conversation).toHaveClass("browser-panel-active");
 
     await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
 
-    const pip = await screen.findByRole("complementary", { name: "Browser" });
-    expect(pip).toHaveTextContent("Picture in Picture test");
-    const address = screen.getByRole("textbox", { name: "Browser address" });
-    expect(address).toHaveValue("https://example.com/pip");
-    await fireEvent.focus(address);
-    await fireEvent.input(address, { target: { value: "example.com/typed" } });
-    emitAgentEvent?.({
-      type: "browser-changed",
-      tabs: [
-        {
-          id: "tab-pip",
-          title: "Updated while typing",
-          url: "https://example.com/updated",
-          loading: true,
-          ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
-        },
-      ],
-      activeTabId: "tab-pip",
-    });
-    expect(address).toHaveValue("example.com/typed");
-    await fireEvent.blur(address);
-    expect(address).toHaveValue("https://example.com/updated");
+    await waitFor(() => expect(window.openbot.browser.openPictureInPicture).toHaveBeenCalledWith(undefined));
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+    expect(conversation).not.toHaveClass("browser-panel-active");
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
 
-    vi.mocked(window.openbot.browser.open).mockResolvedValueOnce({
-      id: "tab-next",
-      title: "Next page",
-      url: "https://example.com/next",
-      loading: false,
-      ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+    emitBrowserPictureInPicture?.({
+      type: "bounds-changed",
+      bounds: { x: 720, y: 360, width: 460, height: 340 },
     });
-    await fireEvent.focus(address);
-    await fireEvent.input(address, { target: { value: "example.com/next" } });
-    const addressForm = address.closest("form");
-    if (!(addressForm instanceof HTMLFormElement)) throw new Error("Browser address form was not rendered.");
-    await fireEvent.submit(addressForm);
-    await waitFor(() => expect(window.openbot.browser.open).toHaveBeenCalledTimes(1));
-    emitAgentEvent?.({
-      type: "browser-changed",
-      tabs: [
-        {
-          id: "tab-next",
-          title: "Redirected page",
-          url: "https://substack.com/dashboard",
-          loading: false,
-          ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
-        },
-      ],
-      activeTabId: "tab-next",
-    });
-    expect(address).toHaveValue("https://substack.com/dashboard");
+    expect(window.localStorage.getItem("openbot:browser-pip-native-bounds")).toBe("720,360,460,340");
 
-    vi.mocked(window.openbot.browser.setVisible).mockClear();
-    await fireEvent.keyDown(window, { key: "k", metaKey: true });
-    expect(await screen.findByRole("dialog", { name: "Search OpenBot" })).toBeInTheDocument();
-    await waitFor(() => expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false }));
-    await fireEvent.keyDown(window, { key: "k", metaKey: true });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Search OpenBot" })).not.toBeInTheDocument());
+    emitBrowserPictureInPicture?.({ type: "dock" });
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(conversation).toHaveClass("browser-panel-active");
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
     await waitFor(() =>
-      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true })),
-    );
-
-    const header = pip.querySelector(".browser-pip-header");
-    if (!(header instanceof HTMLElement)) throw new Error("Picture in Picture header was not rendered.");
-    const surface = pip.querySelector(".browser-surface");
-    if (!(surface instanceof HTMLElement)) throw new Error("Picture in Picture browser surface was not rendered.");
-    vi.spyOn(surface, "getBoundingClientRect").mockImplementation(() => {
-      const left = Number.parseFloat(pip.style.left);
-      const top = Number.parseFloat(pip.style.top);
-      const width = Number.parseFloat(pip.style.width);
-      const height = Number.parseFloat(pip.style.height);
-      return {
-        x: left + 7,
-        y: top + 73,
-        width: width - 14,
-        height: height - 80,
-        top: top + 73,
-        right: left + width - 7,
-        bottom: top + height - 7,
-        left: left + 7,
-        toJSON: () => ({}),
-      };
-    });
-    vi.mocked(window.openbot.browser.setVisible).mockClear();
-    await fireEvent.pointerDown(header, { button: 0, pointerId: 7, clientX: 600, clientY: 460 });
-    await fireEvent.pointerMove(window, { pointerId: 7, clientX: 560, clientY: 420 });
-    await fireEvent.pointerUp(window, { pointerId: 7, clientX: 560, clientY: 420 });
-    expect(window.localStorage.getItem("openbot:browser-pip-bounds")).toBe("548,360,420,300");
-    await waitFor(() =>
-      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
-        visible: true,
-        bounds: { x: 555, y: 433, width: 406, height: 220 },
+      expect(window.openbot.browser.openPictureInPicture).toHaveBeenLastCalledWith({
+        x: 720,
+        y: 360,
+        width: 460,
+        height: 340,
       }),
     );
-
-    const resizeHandle = pip.querySelector(".browser-pip-resize-bottom-right");
-    if (!(resizeHandle instanceof HTMLElement)) throw new Error("Picture in Picture resize handle was not rendered.");
-    await fireEvent.pointerDown(resizeHandle, { button: 0, pointerId: 8, clientX: 968, clientY: 712 });
-    await fireEvent.pointerMove(window, { pointerId: 8, clientX: 928, clientY: 682 });
-    await fireEvent.pointerUp(window, { pointerId: 8, clientX: 928, clientY: 682 });
-    expect(window.localStorage.getItem("openbot:browser-pip-bounds")).toBe("548,360,380,270");
-
-    await fireEvent.click(screen.getByRole("button", { name: "Dock browser to right sidebar" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Go back" }));
-    expect(window.openbot.browser.navigate).toHaveBeenCalledWith({ tabId: "tab-next", direction: "back" });
-    await fireEvent.click(screen.getByRole("button", { name: "Go forward" }));
-    expect(window.openbot.browser.navigate).toHaveBeenCalledWith({ tabId: "tab-next", direction: "forward" });
-    await fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
-    expect(window.openbot.browser.reload).toHaveBeenCalledWith("tab-next");
-    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
-    await screen.findByRole("complementary", { name: "Browser" });
-    await fireEvent.click(screen.getByRole("button", { name: "Hide browser" }));
-    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+    emitBrowserPictureInPicture?.({ type: "hide" });
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
     expect(window.openbot.browser.close).not.toHaveBeenCalled();
-    expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
   });
-
   it("keeps a newly opened browser tab active when the initial tab request resolves late", async () => {
     const googleTab: BrowserTab = {
       id: "tab-google",
@@ -2835,7 +2759,8 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://substack.com/chat");
   });
 
-  it("restores Picture in Picture per conversation without overriding it during agent control", async () => {
+  it("restores desktop Picture in Picture per conversation without overriding it during agent control", async () => {
+    window.localStorage.setItem("openbot:browser-pip-native-bounds", "640,320,460,340");
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -2854,8 +2779,14 @@ describe("OpenBot connected desktop shell", () => {
     });
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
     await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
-
-    await screen.findByRole("complementary", { name: "Browser" });
+    await waitFor(() =>
+      expect(window.openbot.browser.openPictureInPicture).toHaveBeenLastCalledWith({
+        x: 640,
+        y: 320,
+        width: 460,
+        height: 340,
+      }),
+    );
 
     emitAgentEvent?.({
       type: "browser-control-changed",
@@ -2874,12 +2805,12 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
-    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+    await waitFor(() => expect(window.openbot.browser.closePictureInPicture).toHaveBeenCalled());
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
-    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.browser.openPictureInPicture).toHaveBeenCalledTimes(2));
   });
-
   it("shows a stable indicator while an agent controls the embedded browser", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -3189,6 +3120,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
         visible: true,
+        target: "main",
         bounds: { x: 640, y: 73, width: 380, height: 600 },
       }),
     );
