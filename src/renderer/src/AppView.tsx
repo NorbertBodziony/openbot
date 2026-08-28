@@ -429,18 +429,6 @@ function WorkspaceShell(props: {
           mode={botList().length === 0 ? "first" : "additional"}
           submitting={creatingAgent()}
           error={botSetupError()}
-          providerSetup={
-            botList().length === 0 && activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()
-              ? {
-                  agentStatus: agentStatus(),
-                  runtimeStatuses: providerRuntimeStatuses(),
-                  onDownload: downloadProviderRuntime,
-                  onCancel: cancelProviderRuntimeDownload,
-                  onConnect: (provider) =>
-                    provider === "codex" ? connectChatGPT() : provider === "claude" ? connectClaude() : connectGrok(),
-                }
-              : undefined
-          }
           onChange={setBotSetupDraft}
           onSubmit={createAgent}
           onCancel={botList().length > 0 ? cancelBotSetup : undefined}
