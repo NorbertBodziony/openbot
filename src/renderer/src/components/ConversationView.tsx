@@ -2409,6 +2409,18 @@ export function ConversationTimeline() {
     setVirtualRootElement,
   } = useConversationViewScope();
   const virtualMessageRows = createMemo(() => messageVirtualizer.getVirtualItems());
+  let cachedPrompt: { key: string; prompt: NonNullable<ConversationProps["prompt"]> } | null = null;
+  const keyedPrompt = createMemo(() => {
+    const prompt = props.prompt;
+    if (!prompt) {
+      cachedPrompt = null;
+      return null;
+    }
+    const key = JSON.stringify([prompt.turnId, String(prompt.requestId)]);
+    if (cachedPrompt?.key === key) return cachedPrompt;
+    cachedPrompt = { key, prompt };
+    return cachedPrompt;
+  });
   return (
     <>
       <Show when={chatSearchOpen()}>
@@ -2732,13 +2744,17 @@ export function ConversationTimeline() {
                       }
                     >
                       {(questionPrompt) => (
-                        <article data-chat-search-message={message()?.id} class="question-prompt-history-entry">
-                          <QuestionPromptBubble
-                            questions={questionPrompt().questions}
-                            resolution={questionPrompt().resolution ?? { status: "expired" }}
-                            onSubmit={async () => false}
-                          />
-                        </article>
+                        <Show when={questionPrompt().resolution}>
+                          {(resolution) => (
+                            <article data-chat-search-message={message()?.id} class="question-prompt-history-entry">
+                              <QuestionPromptBubble
+                                questions={questionPrompt().questions}
+                                resolution={resolution()}
+                                onSubmit={async () => false}
+                              />
+                            </article>
+                          )}
+                        </Show>
                       )}
                     </Show>
                   </div>
@@ -2761,14 +2777,14 @@ export function ConversationTimeline() {
               )}
             </Show>
           </div>
-          <Show when={props.prompt}>
-            {(prompt) => (
+          <Show when={keyedPrompt()} keyed>
+            {(entry) => (
               <Loading>
                 <QuestionPromptBubble
-                  questions={prompt().questions}
+                  questions={entry.prompt.questions}
                   onSubmit={props.onAnswerPrompt}
                   onResolutionPresented={() =>
-                    props.onPromptResolutionPresented?.(prompt().botId, prompt().turnId, prompt().requestId)
+                    props.onPromptResolutionPresented?.(entry.prompt.botId, entry.prompt.turnId, entry.prompt.requestId)
                   }
                 />
               </Loading>

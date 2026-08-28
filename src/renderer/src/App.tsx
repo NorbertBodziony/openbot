@@ -513,7 +513,8 @@ export function createAppController(props: AppProps = {}) {
     const prompt = pendingPrompts()[bot.id];
     const requestKey = prompt?.type === "prompt" ? promptRequestKey(prompt.turnId, prompt.requestId) : null;
     const messages = (liveMessages()[bot.id] ?? []).filter(
-      (message) => !requestKey || messagePromptRequestKey(message) !== requestKey,
+      (message) =>
+        message.questionPrompt?.resolution !== null && (!requestKey || messagePromptRequestKey(message) !== requestKey),
     );
     return [...messages, ...(uiErrors()[bot.id] ?? [])];
   });

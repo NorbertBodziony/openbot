@@ -4170,6 +4170,88 @@ describe("OpenBot connected desktop shell", () => {
     expect(answer).toBeEnabled();
   });
 
+  it("hides an unresolved history record and mounts a rapid follow-up prompt", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-first",
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-first:prompt-first",
+            turnId: "turn-first",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: First question?",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-first",
+              questions: [
+                {
+                  id: "first",
+                  header: "First",
+                  question: "First question?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: null,
+            },
+          },
+        ],
+      },
+    });
+    expect(screen.queryByRole("region", { name: "Questions expired" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-first",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-first",
+      questions: [
+        {
+          id: "first",
+          header: "First",
+          question: "First question?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+    const firstAnswer = await screen.findByRole("textbox", { name: "Custom answer for: First question?" });
+    await fireEvent.input(firstAnswer, { target: { value: "First answer" } });
+    await fireEvent.keyDown(firstAnswer, { key: "Enter" });
+    await screen.findByRole("region", { name: "Answers sent" });
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-second",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-second",
+      questions: [
+        {
+          id: "second",
+          header: "Second",
+          question: "Second question?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    expect(await screen.findByRole("textbox", { name: "Custom answer for: Second question?" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Answers sent" })).not.toBeInTheDocument();
+  });
+
   it("keeps an older resolved prompt when a new turn reuses its request ID", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
