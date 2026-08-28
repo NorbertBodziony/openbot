@@ -16,6 +16,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { app, type BrowserWindow, type Session, session, type WebContents, WebContentsView } from "electron";
+import { embeddedBrowserUserAgent } from "./browser-identity";
 import { isCloseBrowserTabShortcut, isGlobalSearchShortcut, isToggleDevToolsShortcut } from "./browser-shortcuts";
 import { persistentBrowserUrl, xLoginUrlForLanding } from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
@@ -532,7 +533,7 @@ export class BrowserHost {
   }
 
   #configureSession(): void {
-    const userAgent = browserUserAgent(this.#session.getUserAgent());
+    const userAgent = embeddedBrowserUserAgent(this.#session.getUserAgent());
     this.#session.setUserAgent(userAgent, preferredBrowserLanguageCodes());
     this.#session.webRequest.onBeforeSendHeaders((details, callback) => {
       callback({
@@ -888,24 +889,11 @@ function browserRequestHeaders(
   requestHeaders: Record<string, string>,
   sessionUserAgent: string,
 ): Record<string, string> {
-  const userAgent = browserUserAgent(sessionUserAgent);
+  const userAgent = embeddedBrowserUserAgent(sessionUserAgent);
   const headers = { ...requestHeaders };
   setRequestHeader(headers, "User-Agent", userAgent);
   setRequestHeader(headers, "Accept-Language", preferredBrowserLanguages());
   return headers;
-}
-
-function browserUserAgent(sessionUserAgent: string): string {
-  return removeUserAgentProducts(sessionUserAgent, ["Electron", app.getName()]);
-}
-
-function removeUserAgentProducts(userAgent: string, products: string[]): string {
-  return products
-    .filter(Boolean)
-    .reduce(
-      (current, product) => current.replace(new RegExp(`\\s${escapeRegExp(product)}/[^\\s]+`, "g"), ""),
-      userAgent,
-    );
 }
 
 function preferredBrowserLanguages(): string {
@@ -924,10 +912,6 @@ function setRequestHeader(headers: Record<string, string>, name: string, value: 
   const existingName = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
   if (existingName && existingName !== name) delete headers[existingName];
   headers[name] = value;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function readBrowserState(path: string): Promise<StoredBrowserState> {
