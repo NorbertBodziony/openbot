@@ -103,9 +103,11 @@ async function main(): Promise<void> {
       } else if (controlPhases.length > 0) controlPhases.push("ended");
     });
 
-    const tab = await browser.open(origin, "smoke-thread", "smoke-bot", true);
+    const openingTab = browser.open(origin, "smoke-thread", "smoke-bot", true);
+    window.webContents.focus();
+    const tab = await openingTab;
     if (webContents.getFocusedWebContents()?.getURL() !== `${origin}/`) {
-      throw new Error("A user-opened browser tab did not receive keyboard focus.");
+      throw new Error("A user-opened browser tab did not regain keyboard focus after loading.");
     }
     process.stdout.write("BrowserHost: local tab opened.\n");
     const first = await browser.snapshot(tab.id);

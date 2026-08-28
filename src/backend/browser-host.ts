@@ -285,6 +285,9 @@ export class BrowserHost {
 
     try {
       await tab.view.webContents.loadURL(normalizedUrl, browserLoadOptions());
+      if (focus && this.#activeTabId === tab.id && tab.view.getVisible()) {
+        tab.view.webContents.focus();
+      }
     } catch (error) {
       if (this.#tabs.get(tab.id) === tab) {
         this.#unmountView(tab.view);
