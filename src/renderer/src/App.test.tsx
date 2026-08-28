@@ -2104,7 +2104,7 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("opens and cancels Bot creation from a private conversation", async () => {
-    render(() => <App />);
+    render(() => <App peopleEnabled />);
     await screen.findByRole("heading", { name: "Chief" });
     emitPresence?.({
       serverId: "server-1",
@@ -2127,6 +2127,26 @@ describe("OpenBot connected desktop shell", () => {
     });
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(await screen.findByRole("main", { name: "Direct conversation with Alice" })).toBeInTheDocument();
+  });
+
+  it("hides People navigation and direct conversations by default", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitPresence?.({
+      serverId: "server-1",
+      updatedAt: "2026-08-19T10:00:00.000Z",
+      members: [
+        presenceMember("member-self", "person@example.com", "Person"),
+        presenceMember("member-alice", "alice@example.com", "Alice"),
+      ],
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "People" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Alice/ })).not.toBeInTheDocument();
+    });
+    expect(screen.queryByRole("main", { name: /Direct conversation/ })).not.toBeInTheDocument();
+    expect(window.openbot.servers.listDirectThreads).not.toHaveBeenCalled();
   });
 
   it("resizes and persists the left and right side panels", async () => {
@@ -3286,7 +3306,7 @@ describe("OpenBot connected desktop shell", () => {
 
   it("opens a private person thread and receives direct messages in real time", async () => {
     vi.mocked(window.openbot.servers.markDirectRead).mockRejectedValueOnce(new Error("Read state unavailable"));
-    render(() => <App />);
+    render(() => <App peopleEnabled />);
     await screen.findByRole("heading", { name: "Chief" });
     emitPresence?.({
       serverId: "server-1",
@@ -3420,7 +3440,7 @@ describe("OpenBot connected desktop shell", () => {
         revision: 1,
       });
     });
-    render(() => <App />);
+    render(() => <App peopleEnabled />);
     await screen.findByRole("heading", { name: "Chief" });
     emitPresence?.({
       serverId: "server-1",
@@ -4900,7 +4920,7 @@ describe("OpenBot connected desktop shell", () => {
         },
       ],
     });
-    render(() => <App />);
+    render(() => <App peopleEnabled />);
     await screen.findByRole("heading", { name: "Chief" });
     emitPresence?.({
       serverId: "server-1",

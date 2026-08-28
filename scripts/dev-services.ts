@@ -184,30 +184,55 @@ async function main(): Promise<void> {
   process.once("SIGINT", () => void stopAll("SIGTERM").then(() => process.exit(130)));
   process.once("SIGTERM", () => void stopAll("SIGTERM").then(() => process.exit(143)));
 
-  for (const spec of specs) {
-    const child = spawn(spec.executable, spec.args, {
-      cwd: spec.cwd,
-      env: spec.env,
-      stdio: "inherit",
-      shell: false,
-      detached: process.platform !== "win32",
-    });
-    processes.set(spec.name, child);
-    child.once("error", (error) => {
-      console.error(`[${spec.name}] Could not start:`, error.message);
-      void stopAll("SIGTERM").then(() => {
-        process.exitCode = 1;
+  try {
+    for (const spec of specs) {
+      const child = spawn(spec.executable, spec.args, {
+        cwd: spec.cwd,
+        env: spec.env,
+        stdio: "inherit",
+        shell: false,
+        detached: process.platform !== "win32",
       });
-    });
-    child.once("exit", (code, signal) => {
-      if (stopping) return;
-      const result = signal ? `signal ${signal}` : `code ${code ?? 1}`;
-      console.log(`[${spec.name}] stopped with ${result}. Stopping the other services.`);
-      void stopAll("SIGTERM").then(() => {
-        process.exitCode = code ?? 1;
+      processes.set(spec.name, child);
+      child.once("error", (error) => {
+        console.error(`[${spec.name}] Could not start:`, error.message);
+        void stopAll("SIGTERM").then(() => {
+          process.exitCode = 1;
+        });
       });
-    });
+      child.once("exit", (code, signal) => {
+        if (stopping) return;
+        const result = signal ? `signal ${signal}` : `code ${code ?? 1}`;
+        console.log(`[${spec.name}] stopped with ${result}. Stopping the other services.`);
+        void stopAll("SIGTERM").then(() => {
+          process.exitCode = code ?? 1;
+        });
+      });
+      if (spec.name === "api") await waitForDevelopmentApi(spec.env.OPENBOT_API_PORT, child);
+    }
+  } catch (error) {
+    await stopAll("SIGTERM");
+    throw error;
   }
+}
+
+async function waitForDevelopmentApi(portValue: string | undefined, child: ChildProcess): Promise<void> {
+  const port = readPort(portValue);
+  if (!port) throw new Error("The development API port is missing.");
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error("The development Auth API stopped before it became ready.");
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/health/live`, {
+        signal: AbortSignal.timeout(1_000),
+      });
+      if (response.ok) return;
+    } catch {
+      // The API can reject connections while Vite and the Worker runtime start.
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+  }
+  throw new Error(`The development Auth API did not become ready on port ${port}.`);
 }
 
 async function findAvailablePort(preferredPort: number, reservedPorts: Set<number>): Promise<number> {
