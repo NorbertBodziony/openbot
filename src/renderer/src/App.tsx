@@ -1070,6 +1070,7 @@ export function createAppController(props: AppProps = {}) {
     const pendingPrompt = pendingPrompts()[botId];
     const pendingRequestKey =
       pendingPrompt?.type === "prompt" ? promptRequestKey(pendingPrompt.turnId, pendingPrompt.requestId) : null;
+    const submittedRequestKey = submittedPromptRequests()[botId];
     const resolvedPendingPrompt =
       pendingRequestKey !== null &&
       snapshot.messages.some(
@@ -1086,8 +1087,12 @@ export function createAppController(props: AppProps = {}) {
       setPendingPrompts((current) => ({ ...current, [botId]: undefined }));
       setPresentedPromptResolutions((current) => ({ ...current, [botId]: undefined }));
       setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
-    } else if (resolvedPendingPrompt && activeBot()?.id !== botId) {
+    } else if (
+      resolvedPendingPrompt &&
+      (activeBot()?.id !== botId || !submittedRequestKey || submittedRequestKey !== pendingRequestKey)
+    ) {
       setPendingPrompts((current) => ({ ...current, [botId]: undefined }));
+      setPresentedPromptResolutions((current) => ({ ...current, [botId]: undefined }));
       setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
     }
     setActiveTurns((current) => ({

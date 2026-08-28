@@ -4170,6 +4170,72 @@ describe("OpenBot connected desktop shell", () => {
     expect(answer).toBeEnabled();
   });
 
+  it("replaces an active prompt when its resolution arrives from another client", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-external",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-external",
+      questions: [
+        {
+          id: "account",
+          header: "Account",
+          question: "Which external account?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+    expect(await screen.findByRole("textbox", { name: "Custom answer for: Which external account?" })).toBeVisible();
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-external",
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-external:prompt-external",
+            turnId: "turn-external",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: Which external account?\nAnswer: External",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-external",
+              questions: [
+                {
+                  id: "account",
+                  header: "Account",
+                  question: "Which external account?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { account: { status: "answered", answers: ["External"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible());
+    expect(
+      screen.queryByRole("textbox", { name: "Custom answer for: Which external account?" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("hides an unresolved history record and mounts a rapid follow-up prompt", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
