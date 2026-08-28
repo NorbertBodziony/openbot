@@ -4087,74 +4087,337 @@ describe("OpenBot connected desktop shell", () => {
         },
       ],
     });
-    await fireEvent.click(await screen.findByRole("button", { name: /Something else/ }));
     const answer = await screen.findByRole("textbox", {
       name: "Custom answer for: Which account?",
     });
     await fireEvent.input(answer, { target: { value: "Acme" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await fireEvent.keyDown(answer, { key: "Enter" });
     await waitFor(() =>
       expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledWith({
         requestId: "prompt-1",
         answers: { account: ["Acme"] },
       }),
     );
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-1",
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-1:prompt-1",
+            turnId: "turn-1",
+            author: "assistant",
+            source: "assistant",
+            text: "",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-1",
+              questions: [
+                {
+                  id: "account",
+                  header: "Account",
+                  question: "Which account?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { account: { status: "answered", answers: ["Acme"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+    await waitFor(() => expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible());
+    expect(screen.queryByRole("textbox", { name: "Custom answer for: Which account?" })).not.toBeInTheDocument();
   });
 
-  it("walks through questions one at a time and can skip them", async () => {
+  it("keeps the prompt active and reports a delivery failure", async () => {
+    vi.mocked(window.openbot.agent.respondToPrompt).mockRejectedValueOnce(new Error("Provider is offline."));
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
     emitAgentEvent?.({
       type: "prompt",
-      requestId: "prompt-steps",
+      requestId: "prompt-failure",
       botId: "chief",
       threadId: "thread-1",
-      turnId: "turn-1",
+      turnId: "turn-failure",
       questions: [
         {
-          id: "environment",
-          header: "Environment",
-          question: "Where should I work?",
-          isSecret: false,
-          options: [
-            { label: "Repository", description: "Use the current project." },
-            { label: "Sandbox", description: "Keep changes isolated." },
-          ],
-        },
-        {
-          id: "goal",
-          header: "Goal",
-          question: "What is the desired outcome?",
+          id: "account",
+          header: "Account",
+          question: "Which account?",
           isSecret: false,
           options: null,
         },
       ],
     });
 
-    expect(
-      await screen.findByText("Where should I work?", { selector: ".approval-question-prompt" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("1")).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: /Repository/ }));
-    await fireEvent.click(screen.getByRole("button", { name: "Next question" }));
-    expect(
-      await screen.findByText("What is the desired outcome?", {
-        selector: ".approval-question-prompt",
-      }),
-    ).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Previous question" }));
-    expect(
-      await screen.findByText("Where should I work?", { selector: ".approval-question-prompt" }),
-    ).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    const answer = await screen.findByRole("textbox", { name: "Custom answer for: Which account?" });
+    await fireEvent.input(answer, { target: { value: "Acme" } });
+    await fireEvent.keyDown(answer, { key: "Enter" });
 
-    await waitFor(() =>
-      expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledWith({
-        requestId: "prompt-steps",
-        answers: {},
-      }),
-    );
+    expect(await screen.findByText("Provider is offline.")).toBeVisible();
+    expect(screen.getByText("Answer failed")).toBeVisible();
+    expect(answer).toBeEnabled();
+  });
+
+  it("replaces an active prompt when its resolution arrives from another client", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-external",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-external",
+      questions: [
+        {
+          id: "account",
+          header: "Account",
+          question: "Which external account?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+    expect(await screen.findByRole("textbox", { name: "Custom answer for: Which external account?" })).toBeVisible();
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-external",
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-external:prompt-external",
+            turnId: "turn-external",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: Which external account?\nAnswer: External",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-external",
+              questions: [
+                {
+                  id: "account",
+                  header: "Account",
+                  question: "Which external account?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { account: { status: "answered", answers: ["External"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible());
+    expect(
+      screen.queryByRole("textbox", { name: "Custom answer for: Which external account?" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides an unresolved history record and mounts a rapid follow-up prompt", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-first",
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-first:prompt-first",
+            turnId: "turn-first",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: First question?",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-first",
+              questions: [
+                {
+                  id: "first",
+                  header: "First",
+                  question: "First question?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: null,
+            },
+          },
+        ],
+      },
+    });
+    expect(screen.queryByRole("region", { name: "Questions expired" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-first",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-first",
+      questions: [
+        {
+          id: "first",
+          header: "First",
+          question: "First question?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+    const firstAnswer = await screen.findByRole("textbox", { name: "Custom answer for: First question?" });
+    await fireEvent.input(firstAnswer, { target: { value: "First answer" } });
+    await fireEvent.keyDown(firstAnswer, { key: "Enter" });
+    await screen.findByRole("region", { name: "Answers sent" });
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-first",
+        revision: 21,
+        messages: [
+          {
+            id: "question-prompt:turn-first:prompt-first",
+            turnId: "turn-first",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: First question?\nAnswer: First answer",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-first",
+              questions: [
+                {
+                  id: "first",
+                  header: "First",
+                  question: "First question?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { first: { status: "answered", answers: ["First answer"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-second",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-second",
+      questions: [
+        {
+          id: "second",
+          header: "Second",
+          question: "Second question?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    expect(await screen.findByRole("textbox", { name: "Custom answer for: Second question?" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Answers sent" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an older resolved prompt when a new turn reuses its request ID", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: null,
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-old:prompt-reused",
+            turnId: "turn-old",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: Which account?\nAnswer: Acme",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-reused",
+              questions: [
+                {
+                  id: "account",
+                  header: "Account",
+                  question: "Which account?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { account: { status: "answered", answers: ["Acme"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+    expect(await screen.findByRole("region", { name: "Answers sent" })).toBeVisible();
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-reused",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-new",
+      questions: [
+        {
+          id: "goal",
+          header: "Goal",
+          question: "What should I do next?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    expect(await screen.findByRole("textbox", { name: "Custom answer for: What should I do next?" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible();
   });
 
   it("renders command approvals and keeps the action pending while submitting", async () => {

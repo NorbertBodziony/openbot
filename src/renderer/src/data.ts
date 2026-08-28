@@ -6,12 +6,13 @@ import type {
   AttachmentSummary,
   BotAvatarHue,
   BotSummary,
+  ConversationQuestionPrompt,
   ConversationReaction,
   ImageGenerationInfo,
   MessageReaction,
 } from "@openbot/contracts/ipc";
 
-export type MessageKind = "text" | "thinking" | "exchange";
+export type MessageKind = "text" | "thinking" | "exchange" | "question";
 
 export interface MessageCitation {
   number: number;
@@ -40,6 +41,7 @@ export interface BotMessage {
   replyToMessageId?: string | null;
   attachments?: AttachmentSummary[];
   imageGeneration?: ImageGenerationInfo;
+  questionPrompt?: ConversationQuestionPrompt;
   citations?: MessageCitation[];
   exchange?: AgentExchangeSummary;
   reaction?: MessageReaction | null;

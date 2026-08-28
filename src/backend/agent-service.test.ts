@@ -780,16 +780,30 @@ describe.sequential("AgentService", () => {
               question: "What is your favorite color?",
               options: [{ label: "Blue", description: "A calm choice." }],
             },
+            {
+              id: "token",
+              header: "Token",
+              question: "What is the private token?",
+              isSecret: true,
+            },
           ],
         },
       },
     });
     await waitFor(() => events.some((event) => event.type === "prompt"));
     expect(client.responses).toHaveLength(0);
+    const pendingMessage = (await service.readConversation("chief")).messages.find(
+      (message) => message.questionPrompt?.requestId === "question-call",
+    );
+    expect(pendingMessage).toMatchObject({
+      itemType: "question_prompt",
+      text: expect.stringContaining("What is your favorite color?"),
+      questionPrompt: { resolution: null },
+    });
 
     await service.respondToPrompt({
       requestId: "question-call",
-      answers: { favorite: ["Blue"] },
+      answers: { favorite: ["Blue"], token: ["super-secret"] },
     });
     await waitFor(() => client.responses.length === 1);
     expect(client.responses[0]).toMatchObject({
@@ -804,7 +818,353 @@ describe.sequential("AgentService", () => {
     if (!isDynamicRecord(content) || !isString(content.text)) {
       throw new Error("The question result has no text content.");
     }
-    expect(JSON.parse(content.text)).toEqual({ favorite: ["Blue"] });
+    expect(JSON.parse(content.text)).toEqual({ favorite: ["Blue"], token: ["super-secret"] });
+
+    const resolvedMessage = (await service.readConversation("chief")).messages.find(
+      (message) => message.questionPrompt?.requestId === "question-call",
+    );
+    expect(resolvedMessage?.questionPrompt?.resolution).toEqual({
+      status: "answered",
+      responses: {
+        favorite: { status: "answered", answers: ["Blue"] },
+        token: { status: "answered" },
+      },
+    });
+    expect(resolvedMessage?.text).toContain("Answer: Blue");
+    expect(resolvedMessage?.text).toContain("Answer: Private answer");
+    expect(JSON.stringify(resolvedMessage)).not.toContain("super-secret");
+    const persisted = store.database.readConversation(
+      "chief",
+      resolvedMessage?.turnId ? (store.list().find((bot) => bot.id === "chief")?.threadId ?? null) : null,
+    );
+    expect(JSON.stringify(persisted)).not.toContain("super-secret");
+    expect(service.searchConversationMessages("Blue", "chief").results).toEqual([
+      expect.objectContaining({ message: expect.objectContaining({ id: resolvedMessage?.id }) }),
+    ]);
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "skipped-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "skipped-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "favorite", header: "Favorite", question: "Choose again." }],
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 2);
+    await service.respondToPrompt({ requestId: "skipped-question-call", answers: { favorite: [] } });
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "skipped-question-call",
+      )?.questionPrompt?.resolution,
+    ).toEqual({ status: "answered", responses: { favorite: { status: "skipped" } } });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "cancelled-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "cancelled-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "favorite", header: "Favorite", question: "Choose one more time." }],
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 3);
+    await service.respondToPrompt({ requestId: "cancelled-question-call", answers: {} });
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "cancelled-question-call",
+      )?.questionPrompt?.resolution,
+    ).toEqual({ status: "cancelled" });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "duplicate-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "duplicate-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [
+            { id: "duplicate", header: "Secret", question: "Private value?", isSecret: true },
+            { id: "duplicate", header: "Public", question: "Public value?" },
+          ],
+        },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "duplicate-question-call"));
+    expect(client.responses.find((response) => response.id === "duplicate-question-call")?.result).toMatchObject({
+      success: false,
+    });
+    expect(events.filter((event) => event.type === "prompt")).toHaveLength(3);
+
+    const invalidPrompts = [
+      {
+        id: "too-many-questions-call",
+        questions: Array.from({ length: 33 }, (_, index) => ({
+          id: `question-${index}`,
+          header: "Question",
+          question: `Question ${index}?`,
+        })),
+      },
+      {
+        id: "too-many-options-call",
+        questions: [
+          {
+            id: "options",
+            header: "Options",
+            question: "Choose one.",
+            options: Array.from({ length: 6 }, (_, index) => ({ label: `Option ${index}` })),
+          },
+        ],
+      },
+      {
+        id: "long-question-call",
+        questions: [{ id: "long", header: "Long", question: "q".repeat(2_001) }],
+      },
+    ];
+    for (const invalidPrompt of invalidPrompts) {
+      client.emit("request", {
+        method: "item/tool/call",
+        id: invalidPrompt.id,
+        params: {
+          threadId,
+          turnId,
+          callId: invalidPrompt.id,
+          namespace: "openbot",
+          tool: "ask_user",
+          arguments: { questions: invalidPrompt.questions },
+        },
+      });
+      await waitFor(() => client.responses.some((response) => response.id === invalidPrompt.id));
+      expect(client.responses.find((response) => response.id === invalidPrompt.id)?.result).toMatchObject({
+        success: false,
+      });
+    }
+    expect(events.filter((event) => event.type === "prompt")).toHaveLength(3);
+
+    client.emit("request", {
+      method: "item/tool/requestUserInput",
+      id: "empty-legacy-question",
+      params: { threadId, turnId, questions: [] },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "empty-legacy-question"));
+    expect(client.responses.find((response) => response.id === "empty-legacy-question")?.result).toEqual({
+      answers: {},
+    });
+    expect(events.filter((event) => event.type === "prompt")).toHaveLength(3);
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "retry-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "retry-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "retry", header: "Retry", question: "Can this answer be retried?" }],
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 4);
+    await expect(
+      service.respondToPrompt({ requestId: "retry-question-call", answers: { typo: ["Yes"] } }),
+    ).rejects.toThrow("does not match an active question");
+    expect(client.responses.some((response) => response.id === "retry-question-call")).toBe(false);
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "retry-question-call",
+      )?.questionPrompt?.resolution,
+    ).toBeNull();
+    client.responseError = new Error("Provider process is not running.");
+    await expect(
+      service.respondToPrompt({ requestId: "retry-question-call", answers: { retry: ["Yes"] } }),
+    ).rejects.toThrow("Provider process is not running.");
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "retry-question-call",
+      )?.questionPrompt?.resolution,
+    ).toBeNull();
+    client.responseError = null;
+    await service.respondToPrompt({ requestId: "retry-question-call", answers: { retry: ["Yes"] } });
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "retry-question-call",
+      )?.questionPrompt?.resolution,
+    ).toEqual({ status: "answered", responses: { retry: { status: "answered", answers: ["Yes"] } } });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "persistence-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "persistence-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "delivery", header: "Delivery", question: "Was the answer delivered?" }],
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 5);
+    const persistenceFailure = vi.spyOn(store.database, "persistConversation").mockImplementationOnce(() => {
+      throw new Error("Database write failed.");
+    });
+    await expect(
+      service.respondToPrompt({ requestId: "persistence-question-call", answers: { delivery: ["Yes"] } }),
+    ).resolves.toBeUndefined();
+    expect(client.responses.filter((response) => response.id === "persistence-question-call")).toHaveLength(1);
+    await expect(
+      service.respondToPrompt({ requestId: "persistence-question-call", answers: { delivery: ["Yes"] } }),
+    ).rejects.toThrow("no longer active");
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "error", code: "prompt_persistence_failed", botId: "chief" }),
+    );
+    persistenceFailure.mockRestore();
+  });
+
+  it("does not use a question prompt summary as the completed assistant reply", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "DONE", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Ask only one question" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The question-only turn did not start.");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "question-only-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "question-only-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "scope", header: "Scope", question: "Which scope should we use?" }],
+        },
+      },
+    });
+    await waitFor(() => events.some((event) => event.type === "prompt"));
+    await service.respondToPrompt({ requestId: "question-only-call", answers: { scope: ["Small"] } });
+    const previewBeforeCompletion = service.listBots().find((bot) => bot.id === "chief")?.preview;
+
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
+    );
+    await waitFor(() => events.some((event) => event.type === "turn-completed"));
+
+    const previewAfterCompletion = service.listBots().find((bot) => bot.id === "chief")?.preview;
+    expect(previewAfterCompletion).toBe(previewBeforeCompletion);
+    expect(previewAfterCompletion).not.toContain("Which scope should we use?");
+  });
+
+  it("keeps prompts from a healthy provider active when another provider exits", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "DONE", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Ask from Codex" });
+    await service.setPreferredProvider("claude");
+    const claudeBot = await service.createBot({
+      ...CREATE_BOT_INPUT,
+      name: "Claude Prompt Bot",
+      avatarSeed: "setup:claude-prompt",
+    });
+    await service.sendMessage({ botId: claudeBot.id, text: "Ask from Claude" });
+    await waitFor(() => events.filter((event) => event.type === "turn-started").length === 2);
+
+    const codexClient = clients.get("codex");
+    const claudeClient = clients.get("claude");
+    const codexThreadId = store.activeProviderSession("chief")?.externalSessionId;
+    const claudeThreadId = store.activeProviderSession(claudeBot.id)?.externalSessionId;
+    const codexTurn = events.find((event) => event.type === "turn-started" && event.botId === "chief");
+    const claudeTurn = events.find((event) => event.type === "turn-started" && event.botId === claudeBot.id);
+    if (
+      !codexClient ||
+      !claudeClient ||
+      !codexThreadId ||
+      !claudeThreadId ||
+      codexTurn?.type !== "turn-started" ||
+      claudeTurn?.type !== "turn-started"
+    ) {
+      throw new Error("Both provider turns did not start.");
+    }
+
+    codexClient.emit("request", {
+      method: "item/tool/call",
+      id: "codex-provider-prompt",
+      params: {
+        threadId: codexThreadId,
+        turnId: codexTurn.turnId,
+        callId: "codex-provider-prompt",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: { questions: [{ id: "codex", header: "Codex", question: "Codex question?" }] },
+      },
+    });
+    claudeClient.emit("request", {
+      method: "item/tool/call",
+      id: "claude-provider-prompt",
+      params: {
+        threadId: claudeThreadId,
+        turnId: claudeTurn.turnId,
+        callId: "claude-provider-prompt",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: { questions: [{ id: "claude", header: "Claude", question: "Claude question?" }] },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 2);
+
+    codexClient.emit("exit", new Error("Codex exited."));
+    await waitFor(() => events.some((event) => event.type === "error" && event.code === "codex_exited"));
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "codex-provider-prompt",
+      )?.questionPrompt?.resolution,
+    ).toEqual({ status: "expired" });
+    expect(
+      (await service.readConversation(claudeBot.id)).messages.find(
+        (message) => message.questionPrompt?.requestId === "claude-provider-prompt",
+      )?.questionPrompt?.resolution,
+    ).toBeNull();
+
+    await service.respondToPrompt({ requestId: "claude-provider-prompt", answers: { claude: ["Still active"] } });
+    expect(claudeClient.responses.find((response) => response.id === "claude-provider-prompt")).toBeDefined();
   });
 
   it("pauses a browser tool call until the user resolves the takeover", async () => {
@@ -2439,6 +2799,51 @@ describe.sequential("AgentService", () => {
     expect((await store.getOrCreate("chief")).threadId).toBe(threadId);
   });
 
+  it("expires a persisted question prompt after restart", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Start a recoverable turn" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    const bot = await store.getOrCreate("chief");
+    await service.stop();
+    const snapshot = store.database.readConversation("chief", bot.threadId);
+    snapshot.activeTurnId = "turn-with-question";
+    snapshot.messages.push({
+      id: "question-prompt:turn-with-question:request-1",
+      turnId: "turn-with-question",
+      author: "assistant",
+      source: "assistant",
+      text: "",
+      createdAt: "2026-08-28T12:00:00.000Z",
+      status: "completed",
+      itemType: "question_prompt",
+      questionPrompt: {
+        requestId: "request-1",
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "How broad should the change be?",
+            isSecret: false,
+            options: null,
+          },
+        ],
+        resolution: null,
+      },
+    });
+    store.database.persistConversation(snapshot, "test.question-prompt-pending");
+
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    const recovered = await service.readConversation("chief");
+    expect(recovered.activeTurnId).toBeNull();
+    expect(recovered.messages.find((message) => message.questionPrompt)?.questionPrompt?.resolution).toEqual({
+      status: "expired",
+    });
+  });
+
   it("does not persist unchanged provider history after repeated restarts", async () => {
     const clients: FakeAgentClient[] = [];
     const { store, mailbox } = stores();
@@ -2697,6 +3102,7 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
   readonly errors: Array<{ id: RequestId; error: RpcError }> = [];
   #threadCounter = 0;
   running = false;
+  responseError: Error | null = null;
 
   constructor(
     readonly provider: AgentProvider,
@@ -2818,6 +3224,7 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
   }
 
   respond(id: RequestId, result: unknown): void {
+    if (this.responseError) throw this.responseError;
     this.responses.push({ id, result: structuredClone(result) });
   }
 

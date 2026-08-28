@@ -15,6 +15,7 @@ import type {
   AgentEvent,
   AgentModelOption,
   AgentPromptQuestion,
+  AgentPromptResolution,
   AgentProviderStatus,
   AgentStatus,
   AttachmentDataInput,
@@ -142,8 +143,13 @@ interface AgentBrowserHost {
 interface PendingPrompt {
   client: AgentClient;
   id: RequestId;
+  responseKind: "dynamic-tool" | "user-input";
   params: unknown;
-  resolve?: (result: DynamicToolResult) => void;
+  botId: string;
+  publicThreadId: string;
+  turnId: string;
+  messageId: string;
+  questions: AgentPromptQuestion[];
 }
 
 interface PendingApproval {
@@ -1069,16 +1075,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async respondToPrompt(input: RespondToPromptInput): Promise<void> {
     const pending = this.#pendingPrompts.get(input.requestId);
     if (!pending) throw new Error("This prompt is no longer active.");
+    const questionIds = new Set(pending.questions.map((question) => question.id));
+    if (Object.keys(input.answers).some((id) => !questionIds.has(id))) {
+      throw new Error("A prompt answer does not match an active question.");
+    }
     this.#markRoutineRunningForTurn(getString(pending.params, "turnId"));
 
+    const result =
+      pending.responseKind === "dynamic-tool"
+        ? dynamicPromptResult(input.answers)
+        : {
+            answers: Object.fromEntries(Object.entries(input.answers).map(([id, values]) => [id, { answers: values }])),
+          };
+    pending.client.respond(pending.id, result);
     this.#pendingPrompts.delete(input.requestId);
-    if (pending.resolve) {
-      pending.resolve(dynamicPromptResult(input.answers));
-      return;
+    try {
+      this.#resolvePersistedPrompt(pending, promptResolution(pending.questions, input.answers));
+    } catch (error) {
+      this.#emitError("prompt_persistence_failed", error, pending.botId);
     }
-
-    const answers = Object.fromEntries(Object.entries(input.answers).map(([id, values]) => [id, { answers: values }]));
-    pending.client.respond(pending.id, { answers });
   }
 
   async respondToApproval(input: RespondToApprovalInput): Promise<void> {
@@ -1819,7 +1834,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     void client.stop().catch(() => undefined);
     this.#loadedThreads.clear();
     this.#clearCompactionRuntime();
-    this.#clearPendingPrompts();
+    this.#clearPendingPrompts(client);
     this.#clearPendingBrowserTakeovers();
     this.#pendingApprovals.clear();
     this.#browser.clearControls();
@@ -1993,7 +2008,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
           if (request.params.namespace === "openbot") {
             if (request.params.tool === "ask_user") {
-              client.respond(request.id, await this.#surfaceDynamicPrompt(client, request));
+              this.#surfaceDynamicPrompt(client, request);
               return;
             }
             client.respond(request.id, await this.#handleOpenBotTool(request.params));
@@ -2656,15 +2671,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const bot of this.#store.list()) {
       if (!bot.threadId) continue;
       const snapshot = this.#store.database.readConversation(bot.id, bot.threadId);
-      if (!snapshot.activeTurnId) continue;
       const turnId = snapshot.activeTurnId;
-      snapshot.activeTurnId = null;
+      let changed = false;
+      if (turnId) {
+        snapshot.activeTurnId = null;
+        changed = true;
+      }
       for (const message of snapshot.messages) {
-        if (message.turnId === turnId && message.status === "streaming") {
+        if (message.questionPrompt?.resolution === null) {
+          message.questionPrompt.resolution = { status: "expired" };
+          changed = true;
+        }
+        if (turnId && message.turnId === turnId && message.status === "streaming") {
           message.status = "interrupted";
           markIncompleteImageGeneration(message, "interrupted");
+          changed = true;
         }
       }
+      if (!changed) continue;
       const persisted = this.#store.database.persistConversation(snapshot, "turn.interrupted-by-restart", { turnId });
       this.#snapshots.set(bot.id, persisted);
     }
@@ -2939,6 +2963,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           message.author === "assistant" &&
           message.turnId === turnId &&
           message.itemType !== "commentary" &&
+          message.itemType !== "question_prompt" &&
           message.text.trim(),
       );
     if (deliveries.length > 0) {
@@ -3389,7 +3414,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const pendingThreadId = getString(pending.params, "threadId");
       const pendingTurnId = getString(pending.params, "turnId");
       if (pendingThreadId === threadId && pendingTurnId === turnId) {
-        pending.resolve?.(dynamicPromptResult({}));
+        this.#resolvePersistedPrompt(pending, { status: "expired" });
         this.#pendingPrompts.delete(requestId);
       }
     }
@@ -3407,11 +3432,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  #clearPendingPrompts(): void {
-    for (const pending of this.#pendingPrompts.values()) {
-      pending.resolve?.(dynamicPromptResult({}));
+  #clearPendingPrompts(client?: AgentClient): void {
+    for (const [requestId, pending] of this.#pendingPrompts) {
+      if (client && pending.client !== client) continue;
+      this.#resolvePersistedPrompt(pending, { status: "expired" });
+      this.#pendingPrompts.delete(requestId);
     }
-    this.#pendingPrompts.clear();
   }
 
   #clearPendingBrowserTakeovers(): void {
@@ -3473,14 +3499,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
   }
 
-  #surfaceDynamicPrompt(client: AgentClient, request: AppServerRequest): Promise<DynamicToolResult> {
+  #surfaceDynamicPrompt(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "threadId");
     const turnId = getString(request.params, "turnId");
     const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
+    const publicThreadId = threadId && botId ? this.#publicThreadId(botId, threadId) : null;
     const args = getRecord(request.params, "arguments");
     const questions = promptQuestions(args);
-    if (!threadId || !turnId || !botId || questions.length === 0) {
-      return Promise.resolve({
+    if (!threadId || !turnId || !botId || !publicThreadId || !validPromptQuestions(questions)) {
+      client.respond(request.id, {
         success: false,
         contentItems: [
           {
@@ -3489,24 +3516,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           },
         ],
       });
+      return;
     }
 
-    return new Promise((resolve) => {
-      this.#pendingPrompts.set(request.id, {
-        client,
-        id: request.id,
-        params: request.params,
-        resolve,
-      });
-      this.#markRoutineNeedsAttention(turnId);
-      this.#emit({
-        type: "prompt",
-        requestId: request.id,
-        botId,
-        threadId: this.#publicThreadId(botId, threadId),
-        turnId,
-        questions,
-      });
+    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
+    this.#pendingPrompts.set(request.id, {
+      client,
+      id: request.id,
+      responseKind: "dynamic-tool",
+      params: request.params,
+      botId,
+      publicThreadId,
+      turnId,
+      messageId,
+      questions,
+    });
+    this.#markRoutineNeedsAttention(turnId);
+    this.#emit({
+      type: "prompt",
+      requestId: request.id,
+      botId,
+      threadId: publicThreadId,
+      turnId,
+      questions,
     });
   }
 
@@ -3520,15 +3552,75 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     const questions = promptQuestions(request.params);
-    this.#pendingPrompts.set(request.id, { client, id: request.id, params: request.params });
+    if (!validPromptQuestions(questions)) {
+      client.respond(request.id, { answers: {} });
+      return;
+    }
+    const publicThreadId = this.#publicThreadId(botId, threadId);
+    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
+    this.#pendingPrompts.set(request.id, {
+      client,
+      id: request.id,
+      responseKind: "user-input",
+      params: request.params,
+      botId,
+      publicThreadId,
+      turnId,
+      messageId,
+      questions,
+    });
     this.#markRoutineNeedsAttention(turnId);
     this.#emit({
       type: "prompt",
       requestId: request.id,
       botId,
-      threadId: this.#publicThreadId(botId, threadId),
+      threadId: publicThreadId,
       turnId,
       questions,
+    });
+  }
+
+  #persistQuestionPrompt(
+    botId: string,
+    publicThreadId: string,
+    turnId: string,
+    requestId: RequestId,
+    questions: AgentPromptQuestion[],
+  ): string {
+    const snapshot = this.#ensureSnapshot(botId, publicThreadId);
+    const messageId = `question-prompt:${turnId}:${String(requestId)}`;
+    const existing = snapshot.messages.find((message) => message.id === messageId);
+    if (!existing) {
+      snapshot.messages.push({
+        id: messageId,
+        turnId,
+        author: "assistant",
+        source: "assistant",
+        text: questionPromptText(questions, null),
+        createdAt: new Date().toISOString(),
+        status: "completed",
+        itemType: "question_prompt",
+        questionPrompt: {
+          requestId,
+          questions: structuredClone(questions),
+          resolution: null,
+        },
+      });
+      this.#emitConversation(snapshot, "prompt.requested", { turnId, requestId });
+    }
+    return messageId;
+  }
+
+  #resolvePersistedPrompt(pending: PendingPrompt, resolution: AgentPromptResolution): void {
+    const snapshot = this.#ensureSnapshot(pending.botId, pending.publicThreadId);
+    const message = snapshot.messages.find((candidate) => candidate.id === pending.messageId);
+    if (!message?.questionPrompt || message.questionPrompt.resolution !== null) return;
+    message.questionPrompt.resolution = structuredClone(resolution);
+    message.text = questionPromptText(message.questionPrompt.questions, resolution);
+    this.#emitConversation(snapshot, "prompt.resolved", {
+      turnId: pending.turnId,
+      requestId: pending.id,
+      status: resolution.status,
     });
   }
 
@@ -3858,11 +3950,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sortConversationMessages(snapshot.messages);
     const signature = conversationContentSignature(snapshot);
     if (this.#lastConversationSignatures.get(snapshot.botId) === signature) return;
-    this.#lastConversationSignatures.set(snapshot.botId, signature);
     if (snapshot.threadId) {
       const persisted = this.#store.database.persistConversation(snapshot, eventType, detail);
       snapshot.revision = persisted.revision;
     }
+    this.#lastConversationSignatures.set(snapshot.botId, signature);
     this.#emit({ type: "conversation", snapshot: structuredClone(snapshot) });
   }
 
@@ -4287,6 +4379,59 @@ function promptQuestions(params: unknown): AgentPromptQuestion[] {
           }))
         : null,
     }));
+}
+
+function validPromptQuestions(questions: AgentPromptQuestion[]): boolean {
+  return (
+    questions.length > 0 &&
+    questions.length <= INPUT_LIMITS.promptQuestions &&
+    new Set(questions.map((question) => question.id)).size === questions.length &&
+    questions.every(
+      (question) =>
+        question.id.length > 0 &&
+        question.id.length <= INPUT_LIMITS.identifier &&
+        question.header.length <= INPUT_LIMITS.promptHeader &&
+        question.question.length > 0 &&
+        question.question.length <= INPUT_LIMITS.promptQuestion &&
+        (question.options === null ||
+          (question.options.length <= INPUT_LIMITS.promptOptions &&
+            question.options.every(
+              (option) =>
+                option.label.length > 0 &&
+                option.label.length <= INPUT_LIMITS.promptOptionLabel &&
+                option.description.length <= INPUT_LIMITS.promptOptionDescription,
+            ))),
+    )
+  );
+}
+
+function questionPromptText(questions: AgentPromptQuestion[], resolution: AgentPromptResolution | null): string {
+  const responses = resolution?.status === "answered" ? resolution.responses : null;
+  return questions
+    .map((question) => {
+      const lines = [`Question: ${question.question}`];
+      if (!responses) return lines.join("\n");
+      const response = responses[question.id];
+      if (!response || response.status === "skipped") lines.push("Answer: Skipped");
+      else if (question.isSecret || !response.answers) lines.push("Answer: Private answer");
+      else lines.push(`Answer: ${response.answers.join(", ")}`);
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
+
+function promptResolution(questions: AgentPromptQuestion[], answers: Record<string, string[]>): AgentPromptResolution {
+  if (Object.keys(answers).length === 0) return { status: "cancelled" };
+  return {
+    status: "answered",
+    responses: Object.fromEntries(
+      questions.map((question) => {
+        const values = answers[question.id] ?? [];
+        if (values.length === 0) return [question.id, { status: "skipped" }];
+        return [question.id, question.isSecret ? { status: "answered" } : { status: "answered", answers: [...values] }];
+      }),
+    ),
+  };
 }
 
 function dynamicPromptResult(answers: Record<string, string[]>): DynamicToolResult {

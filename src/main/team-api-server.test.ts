@@ -1067,7 +1067,7 @@ describe("TeamApiServer administration", () => {
     }
   });
 
-  it("responds to an authenticated remote approval request", async () => {
+  it("responds to authenticated remote interactive requests", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-approval-"));
     roots.push(root);
     const store = new TeamStore(join(root, "team.json"));
@@ -1075,7 +1075,11 @@ describe("TeamApiServer administration", () => {
     await store.configure("Studio Mac", "owner", "correct horse battery");
     const approvals: unknown[] = [];
     const takeovers: unknown[] = [];
+    const prompts: unknown[] = [];
     const agents = createAgents({
+      respondToPrompt: async (input: unknown) => {
+        prompts.push(input);
+      },
       respondToApproval: async (input: unknown) => {
         approvals.push(input);
       },
@@ -1106,6 +1110,28 @@ describe("TeamApiServer administration", () => {
         body: { requestId: "takeover-17", decision: "complete" },
       });
       expect(takeovers).toEqual([{ requestId: "takeover-17", decision: "complete" }]);
+      await emptyRequest(base, "/v1/prompts/respond", {
+        token: login.sessionToken,
+        body: { requestId: "prompt-17", answers: { scope: ["Small"] } },
+      });
+      expect(prompts).toEqual([{ requestId: "prompt-17", answers: { scope: ["Small"] } }]);
+
+      const oversizedPrompt = await fetch(`${base}/v1/prompts/respond`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          requestId: "prompt-18",
+          answers: {
+            first: ["a".repeat(INPUT_LIMITS.promptAnswersTotalText / 2 + 1)],
+            second: ["b".repeat(INPUT_LIMITS.promptAnswersTotalText / 2)],
+          },
+        }),
+      });
+      expect(oversizedPrompt.status).toBe(400);
+      expect(prompts).toHaveLength(1);
 
       const invalid = await fetch(`${base}/v1/approvals/respond`, {
         method: "POST",

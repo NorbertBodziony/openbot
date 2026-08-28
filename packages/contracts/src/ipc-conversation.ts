@@ -583,6 +583,27 @@ export interface QueueSnapshot {
   deliveries: QueueDelivery[];
 }
 
+export interface AgentPromptQuestion {
+  id: string;
+  header: string;
+  question: string;
+  isSecret: boolean;
+  options: Array<{ label: string; description: string }> | null;
+}
+
+export type AgentPromptQuestionResolution = { status: "answered"; answers?: string[] } | { status: "skipped" };
+
+export type AgentPromptResolution =
+  | { status: "answered"; responses: Record<string, AgentPromptQuestionResolution> }
+  | { status: "cancelled" }
+  | { status: "expired" };
+
+export interface ConversationQuestionPrompt {
+  requestId: string | number;
+  questions: AgentPromptQuestion[];
+  resolution: AgentPromptResolution | null;
+}
+
 export interface ConversationMessage {
   id: string;
   turnId?: string;
@@ -606,6 +627,45 @@ export interface ConversationMessage {
     name: string;
     scheduledFor: string;
   };
+  questionPrompt?: ConversationQuestionPrompt;
+}
+
+function isAgentPromptQuestion(value: unknown): value is AgentPromptQuestion {
+  if (!isDynamicRecord(value)) return false;
+  return (
+    isString(value.id) &&
+    isString(value.header) &&
+    isString(value.question) &&
+    isBoolean(value.isSecret) &&
+    (value.options === null ||
+      (Array.isArray(value.options) &&
+        value.options.every(
+          (option) => isDynamicRecord(option) && isString(option.label) && isString(option.description),
+        )))
+  );
+}
+
+function isAgentPromptResolution(value: unknown): value is AgentPromptResolution {
+  if (!isDynamicRecord(value)) return false;
+  if (value.status === "cancelled" || value.status === "expired") return true;
+  if (value.status !== "answered" || !isDynamicRecord(value.responses)) return false;
+  return Object.values(value.responses).every(
+    (response) =>
+      isDynamicRecord(response) &&
+      (response.status === "skipped" ||
+        (response.status === "answered" &&
+          (response.answers === undefined || (Array.isArray(response.answers) && response.answers.every(isString))))),
+  );
+}
+
+function isConversationQuestionPrompt(value: unknown): value is ConversationQuestionPrompt {
+  if (!isDynamicRecord(value)) return false;
+  return (
+    (isString(value.requestId) || isNumber(value.requestId)) &&
+    Array.isArray(value.questions) &&
+    value.questions.every(isAgentPromptQuestion) &&
+    (value.resolution === null || isAgentPromptResolution(value.resolution))
+  );
 }
 
 export function isConversationMessage(value: unknown): value is ConversationMessage {
@@ -637,7 +697,8 @@ export function isConversationMessage(value: unknown): value is ConversationMess
         isString(value.routine.runId) &&
         isString(value.routine.name) &&
         isString(value.routine.scheduledFor))) &&
-    (value.imageGeneration === undefined || isImageGenerationInfo(value.imageGeneration))
+    (value.imageGeneration === undefined || isImageGenerationInfo(value.imageGeneration)) &&
+    (value.questionPrompt === undefined || isConversationQuestionPrompt(value.questionPrompt))
   );
 }
 
@@ -795,14 +856,6 @@ export interface ReorderQueueInput {
 export interface InterruptTurnInput {
   botId: string;
   turnId: string;
-}
-
-export interface AgentPromptQuestion {
-  id: string;
-  header: string;
-  question: string;
-  isSecret: boolean;
-  options: Array<{ label: string; description: string }> | null;
 }
 
 export interface RespondToPromptInput {

@@ -10,6 +10,7 @@ export * from "./image-remove-button";
 export * from "./item";
 export * from "./message";
 export * from "./progress";
+export * from "./questionnaire";
 export * from "./radial-progress";
 export * from "./select";
 export * from "./settings";

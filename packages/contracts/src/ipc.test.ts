@@ -1,5 +1,71 @@
 import { describe, expect, it } from "vitest";
-import { isAgentEvent, isAvatarHue, isAvatarSeed, isBotMemory, isMessageReaction } from "./ipc";
+import { isAgentEvent, isAvatarHue, isAvatarSeed, isBotMemory, isConversationMessage, isMessageReaction } from "./ipc";
+
+describe("question prompt message validation", () => {
+  const message = {
+    id: "question-prompt:turn-1:request-1",
+    turnId: "turn-1",
+    author: "assistant",
+    source: "assistant",
+    text: "",
+    createdAt: "2026-08-28T12:00:00.000Z",
+    status: "completed",
+    itemType: "question_prompt",
+    questionPrompt: {
+      requestId: "request-1",
+      questions: [
+        {
+          id: "scope",
+          header: "Scope",
+          question: "How broad should the change be?",
+          isSecret: false,
+          options: [{ label: "Small", description: "One focused change." }],
+        },
+      ],
+      resolution: null,
+    },
+  };
+
+  it("accepts pending, answered, cancelled, and expired prompt records", () => {
+    expect(isConversationMessage(message)).toBe(true);
+    expect(
+      isConversationMessage({
+        ...message,
+        questionPrompt: {
+          ...message.questionPrompt,
+          resolution: { status: "answered", responses: { scope: { status: "answered", answers: ["Small"] } } },
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isConversationMessage({
+        ...message,
+        questionPrompt: { ...message.questionPrompt, resolution: { status: "cancelled" } },
+      }),
+    ).toBe(true);
+    expect(
+      isConversationMessage({
+        ...message,
+        questionPrompt: { ...message.questionPrompt, resolution: { status: "expired" } },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects malformed question and resolution data", () => {
+    expect(
+      isConversationMessage({
+        ...message,
+        questionPrompt: { ...message.questionPrompt, questions: [{ id: "scope" }] },
+      }),
+    ).toBe(false);
+    expect(
+      isConversationMessage({
+        ...message,
+        questionPrompt: { ...message.questionPrompt, resolution: { status: "answered", responses: [] } },
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("message reaction validation", () => {
   it("accepts one complete Unicode emoji sequence", () => {

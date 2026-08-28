@@ -499,6 +499,7 @@ export function parsePromptResponse(value: unknown): RespondToPromptInput {
   const entries = Object.entries(value.answers);
   if (entries.length > INPUT_LIMITS.promptQuestions) throw new Error("Too many prompt answers.");
   const answers: Record<string, string[]> = {};
+  let totalTextLength = 0;
   for (const [key, answer] of entries) {
     if (
       key.length > INPUT_LIMITS.identifier ||
@@ -507,6 +508,10 @@ export function parsePromptResponse(value: unknown): RespondToPromptInput {
       !answer.every((item) => isString(item) && item.length <= INPUT_LIMITS.promptAnswerText)
     ) {
       throw new Error("Invalid prompt answer.");
+    }
+    totalTextLength += answer.reduce((length, item) => length + item.length, 0);
+    if (totalTextLength > INPUT_LIMITS.promptAnswersTotalText) {
+      throw new Error("Prompt answers are too long.");
     }
     answers[key] = answer;
   }
