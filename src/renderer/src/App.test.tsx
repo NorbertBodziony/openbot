@@ -2635,7 +2635,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("button", { name: "Show sidebar" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute("aria-expanded", "false");
 
-    const compactAccountButton = screen.getByRole("button", { name: "Open account menu" });
+    const compactAccountButton = await screen.findByRole("button", { name: "Open account menu" });
     await fireEvent.click(compactAccountButton);
     const compactAccountDialog = screen.getByRole("dialog", { name: "Account actions" });
     expect(within(compactAccountDialog).getByRole("button", { name: /Check for updates/ })).toBeInTheDocument();
@@ -2644,10 +2644,24 @@ describe("OpenBot connected desktop shell", () => {
     expect(within(compactAccountDialog).getByRole("button", { name: "Send feedback" })).toBeInTheDocument();
     expect(within(compactAccountDialog).getByRole("button", { name: "Message" })).toBeInTheDocument();
     expect(within(compactAccountDialog).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
-    expect(within(compactAccountDialog).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
-    expect(within(compactAccountDialog).queryByText("Weekly usage")).not.toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    const compactUsageButton = await within(compactAccountDialog).findByRole("button", {
+      name: "Weekly usage, 59% left",
+    });
     expect(within(compactAccountDialog).queryByRole("button", { name: /photo/i })).not.toBeInTheDocument();
+    const usageRequestsBeforeRefresh = vi.mocked(window.openbot.agent.getUsage).mock.calls.length;
+    await fireEvent.click(compactUsageButton);
+    await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(usageRequestsBeforeRefresh + 1));
     await fireEvent.keyDown(compactAccountDialog, { key: "Escape" });
+    await waitFor(() => expect(compactAccountButton).toHaveFocus());
+
+    await fireEvent.click(compactAccountButton);
+    await fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "Account actions" })).getByRole("button", { name: "Settings" }),
+    );
+    const compactSettingsDialog = await screen.findByRole("dialog", { name: "General" });
+    await fireEvent.click(within(compactSettingsDialog).getByRole("button", { name: "Close settings" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
     await waitFor(() => expect(compactAccountButton).toHaveFocus());
 
     await fireEvent.click(screen.getByRole("button", { name: "Expand sidebar and search chats" }));

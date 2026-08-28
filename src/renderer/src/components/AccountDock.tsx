@@ -193,9 +193,38 @@ export function AccountDock(props: AccountDockProps) {
     return <UserAvatar user={props.account} class={className} decorative />;
   }
 
-  function accountMenu() {
+  function accountMenu(includeDockActions = false) {
     return (
       <>
+        <Show when={includeDockActions}>
+          <section class="account-menu-group" aria-label="Account">
+            <Button
+              variant="ghost"
+              type="button"
+              class="account-menu-row"
+              aria-label={usageButtonLabel()}
+              onClick={refreshUsageWithFeedback}
+              disabled={usageRefreshActive() || props.agentStatus.phase !== "ready"}
+            >
+              <Gauge class="account-menu-icon" aria-hidden="true" />
+              <span>Weekly usage</span>
+              <small>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</small>
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              class="account-menu-row"
+              onClick={() => {
+                setMenuOpen(false);
+                if (legacyTrigger) props.onOpenSettings(legacyTrigger);
+              }}
+            >
+              <Settings class="account-menu-icon" aria-hidden="true" />
+              <span>Settings</span>
+            </Button>
+          </section>
+          <div class="account-menu-separator" />
+        </Show>
         <section class="account-menu-group" aria-label="OpenBot">
           <Show when={props.updateStatus.phase !== "unsupported"}>
             <Button
@@ -275,6 +304,7 @@ export function AccountDock(props: AccountDockProps) {
           setMenuOpen(nextOpen);
           if (nextOpen) {
             setMenuError(null);
+            if (!props.accountUsage && !usageLoading()) void refreshUsage();
           } else {
             restoreFocusWhenDockIsIdle(legacyTrigger);
           }
@@ -317,7 +347,7 @@ export function AccountDock(props: AccountDockProps) {
             aria-hidden={menuOpen() ? undefined : "true"}
           >
             <Popover.Title class="sr-only">Account actions</Popover.Title>
-            {accountMenu()}
+            {accountMenu(true)}
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>
