@@ -1724,7 +1724,13 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("button", { name: "Export data" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Export diagnostics" })).not.toBeInTheDocument();
 
-    fireEvent.click(within(accountDialog).getByRole("button", { name: "Send feedback" }));
+    await fireEvent.keyDown(accountDialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Account actions" })).not.toBeInTheDocument());
+    await waitFor(() => expect(accountButton).toHaveFocus());
+
+    await fireEvent.click(accountButton);
+    const reopenedAccountDialog = await screen.findByRole("dialog", { name: "Account actions" });
+    fireEvent.click(within(reopenedAccountDialog).getByRole("button", { name: "Send feedback" }));
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("feedback"));
 
     fireEvent.click(accountButton);

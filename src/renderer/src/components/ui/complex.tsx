@@ -26,12 +26,15 @@ function focusRestoreHandler(upstream: () => OpenChangeHandler | undefined): Ope
         document.activeElement instanceof HTMLElement && document.activeElement !== document.body
           ? document.activeElement
           : null;
-      queueMicrotask(() => {
-        restoreTarget ??=
-          Array.from(document.querySelectorAll<HTMLElement>('[aria-haspopup][aria-expanded="true"]')).find(
-            (element) => element.isConnected,
-          ) ?? null;
+    } else {
+      const openTrigger = Array.from(
+        document.querySelectorAll<HTMLElement>('[aria-haspopup][aria-expanded="true"][aria-controls]'),
+      ).find((element) => {
+        const controlledId = element.getAttribute("aria-controls");
+        const controlledElement = controlledId ? document.getElementById(controlledId) : null;
+        return controlledElement?.matches('[role="alertdialog"], [role="dialog"], [role="menu"]');
       });
+      restoreTarget = openTrigger ?? restoreTarget;
     }
 
     upstream()?.(open);

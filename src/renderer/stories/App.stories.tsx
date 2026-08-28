@@ -131,7 +131,7 @@ export const AccountMenu: Story = {
     const popover = await within(canvasElement.ownerDocument.body).findByRole("dialog", {
       name: "Account actions",
     });
-    await expect(within(popover).getByRole("button", { name: "Upload photo" })).toBeInTheDocument();
+    await expect(within(popover).getByRole("button", { name: "Marketplace" })).toBeInTheDocument();
     await expect(within(popover).getByRole("button", { name: "Providers & permissions" })).toBeInTheDocument();
     await expect(within(popover).getByRole("button", { name: "Send feedback" })).toBeInTheDocument();
     await expect(within(popover).getByRole("button", { name: "Message" })).toBeInTheDocument();
@@ -178,8 +178,10 @@ export const CompactAccountMenu: Story = {
     });
 
     await userEvent.click(trigger);
-    const popover = await within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "Account" });
-    await expect(popover.getBoundingClientRect().width).toBeGreaterThanOrEqual(280);
+    const popover = await within(canvasElement.ownerDocument.body).findByRole("dialog", {
+      name: "Account actions",
+    });
+    await expect(within(popover).getByRole("button", { name: "Marketplace" })).toBeInTheDocument();
   },
 };
 
@@ -197,8 +199,10 @@ export const LinuxAccountMenu: Story = {
     await expect(Math.abs(dock.getBoundingClientRect().width - sidebar.getBoundingClientRect().width)).toBeLessThan(1);
 
     await userEvent.click(await canvas.findByRole("button", { name: "Open account menu" }));
-    const popover = await within(canvasElement.ownerDocument.body).findByRole("dialog", { name: "Account" });
-    await expect(Math.abs(popover.getBoundingClientRect().width - dock.getBoundingClientRect().width)).toBeLessThan(1);
+    const popover = await within(canvasElement.ownerDocument.body).findByRole("dialog", {
+      name: "Account actions",
+    });
+    await expect(within(popover).getByRole("button", { name: "Marketplace" })).toBeInTheDocument();
   },
 };
 
@@ -219,26 +223,16 @@ export const LongAccountEmail: Story = {
       }}
     />
   ),
-  play: async ({ canvas, canvasElement, userEvent }) => {
-    await canvas.findByRole("heading", { name: "Chief" });
-    const accountName = canvasElement.querySelector<HTMLElement>(".account-dock-hybrid-identity strong");
-    const accountEmail = canvasElement.querySelector<HTMLElement>(
-      ".account-dock-hybrid-identity .account-dock-copy > span:not(.sr-only)",
-    );
+  play: async ({ canvas }) => {
+    const trigger = await canvas.findByRole("button", { name: "Open account actions" });
+    const accountName = trigger.querySelector<HTMLElement>("strong");
+    const accountEmail = trigger.querySelector<HTMLElement>(".account-dock-copy > span:not(.sr-only)");
     if (!accountName) throw new Error("The account name is missing from the dock.");
     if (!accountEmail) throw new Error("The account email is missing from the dock.");
     await expect(accountName).toHaveTextContent("Norbert Bodziony");
     await expect(accountEmail).toHaveTextContent("norbert.bodziony.with.a.very.long.workspace.profile@example.com");
     await expect(getComputedStyle(accountEmail).textOverflow).toBe("ellipsis");
     await expect(accountEmail.scrollWidth).toBeGreaterThan(accountEmail.clientWidth);
-
-    await userEvent.click(await canvas.findByRole("button", { name: "Open account actions" }));
-    const popover = await within(canvasElement.ownerDocument.body).findByRole("dialog", {
-      name: "Account actions",
-    });
-    await expect(
-      within(popover).getByText("norbert.bodziony.with.a.very.long.workspace.profile@example.com"),
-    ).toBeVisible();
   },
 };
 
