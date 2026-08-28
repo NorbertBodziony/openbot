@@ -980,6 +980,15 @@ describe.sequential("AgentService", () => {
       },
     });
     await waitFor(() => events.filter((event) => event.type === "prompt").length === 4);
+    await expect(
+      service.respondToPrompt({ requestId: "retry-question-call", answers: { typo: ["Yes"] } }),
+    ).rejects.toThrow("does not match an active question");
+    expect(client.responses.some((response) => response.id === "retry-question-call")).toBe(false);
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "retry-question-call",
+      )?.questionPrompt?.resolution,
+    ).toBeNull();
     client.responseError = new Error("Provider process is not running.");
     await expect(
       service.respondToPrompt({ requestId: "retry-question-call", answers: { retry: ["Yes"] } }),
@@ -1074,6 +1083,88 @@ describe.sequential("AgentService", () => {
     const previewAfterCompletion = service.listBots().find((bot) => bot.id === "chief")?.preview;
     expect(previewAfterCompletion).toBe(previewBeforeCompletion);
     expect(previewAfterCompletion).not.toContain("Which scope should we use?");
+  });
+
+  it("keeps prompts from a healthy provider active when another provider exits", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "DONE", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Ask from Codex" });
+    await service.setPreferredProvider("claude");
+    const claudeBot = await service.createBot({
+      ...CREATE_BOT_INPUT,
+      name: "Claude Prompt Bot",
+      avatarSeed: "setup:claude-prompt",
+    });
+    await service.sendMessage({ botId: claudeBot.id, text: "Ask from Claude" });
+    await waitFor(() => events.filter((event) => event.type === "turn-started").length === 2);
+
+    const codexClient = clients.get("codex");
+    const claudeClient = clients.get("claude");
+    const codexThreadId = store.activeProviderSession("chief")?.externalSessionId;
+    const claudeThreadId = store.activeProviderSession(claudeBot.id)?.externalSessionId;
+    const codexTurn = events.find((event) => event.type === "turn-started" && event.botId === "chief");
+    const claudeTurn = events.find((event) => event.type === "turn-started" && event.botId === claudeBot.id);
+    if (
+      !codexClient ||
+      !claudeClient ||
+      !codexThreadId ||
+      !claudeThreadId ||
+      codexTurn?.type !== "turn-started" ||
+      claudeTurn?.type !== "turn-started"
+    ) {
+      throw new Error("Both provider turns did not start.");
+    }
+
+    codexClient.emit("request", {
+      method: "item/tool/call",
+      id: "codex-provider-prompt",
+      params: {
+        threadId: codexThreadId,
+        turnId: codexTurn.turnId,
+        callId: "codex-provider-prompt",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: { questions: [{ id: "codex", header: "Codex", question: "Codex question?" }] },
+      },
+    });
+    claudeClient.emit("request", {
+      method: "item/tool/call",
+      id: "claude-provider-prompt",
+      params: {
+        threadId: claudeThreadId,
+        turnId: claudeTurn.turnId,
+        callId: "claude-provider-prompt",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: { questions: [{ id: "claude", header: "Claude", question: "Claude question?" }] },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 2);
+
+    codexClient.emit("exit", new Error("Codex exited."));
+    await waitFor(() => events.some((event) => event.type === "error" && event.code === "codex_exited"));
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "codex-provider-prompt",
+      )?.questionPrompt?.resolution,
+    ).toEqual({ status: "expired" });
+    expect(
+      (await service.readConversation(claudeBot.id)).messages.find(
+        (message) => message.questionPrompt?.requestId === "claude-provider-prompt",
+      )?.questionPrompt?.resolution,
+    ).toBeNull();
+
+    await service.respondToPrompt({ requestId: "claude-provider-prompt", answers: { claude: ["Still active"] } });
+    expect(claudeClient.responses.find((response) => response.id === "claude-provider-prompt")).toBeDefined();
   });
 
   it("pauses a browser tool call until the user resolves the takeover", async () => {

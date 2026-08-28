@@ -1075,6 +1075,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async respondToPrompt(input: RespondToPromptInput): Promise<void> {
     const pending = this.#pendingPrompts.get(input.requestId);
     if (!pending) throw new Error("This prompt is no longer active.");
+    const questionIds = new Set(pending.questions.map((question) => question.id));
+    if (Object.keys(input.answers).some((id) => !questionIds.has(id))) {
+      throw new Error("A prompt answer does not match an active question.");
+    }
     this.#markRoutineRunningForTurn(getString(pending.params, "turnId"));
 
     const result =
@@ -1830,7 +1834,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     void client.stop().catch(() => undefined);
     this.#loadedThreads.clear();
     this.#clearCompactionRuntime();
-    this.#clearPendingPrompts();
+    this.#clearPendingPrompts(client);
     this.#clearPendingBrowserTakeovers();
     this.#pendingApprovals.clear();
     this.#browser.clearControls();
@@ -3428,11 +3432,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  #clearPendingPrompts(): void {
-    for (const pending of this.#pendingPrompts.values()) {
+  #clearPendingPrompts(client?: AgentClient): void {
+    for (const [requestId, pending] of this.#pendingPrompts) {
+      if (client && pending.client !== client) continue;
       this.#resolvePersistedPrompt(pending, { status: "expired" });
+      this.#pendingPrompts.delete(requestId);
     }
-    this.#pendingPrompts.clear();
   }
 
   #clearPendingBrowserTakeovers(): void {
