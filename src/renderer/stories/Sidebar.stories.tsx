@@ -388,6 +388,32 @@ export const AgentTiles: Story = {
   },
 };
 
+export const AgentLongLabels: Story = {
+  args: {
+    bots: longLabelBots,
+    people: [],
+    directThreads: [],
+    agentStates: {},
+    pinnedItems: [],
+  },
+  decorators: [
+    (Story) => (
+      <div
+        style={{
+          width: "240px",
+          "min-width": "240px",
+          "max-width": "400px",
+          height: "100vh",
+          overflow: "hidden",
+          resize: "horizontal",
+        }}
+      >
+        {Story()}
+      </div>
+    ),
+  ],
+};
+
 export const AgentContextMenu: Story = {
   args: {
     people: [],

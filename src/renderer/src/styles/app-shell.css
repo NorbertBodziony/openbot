@@ -2967,6 +2967,15 @@ textarea {
   overflow: hidden;
 }
 
+.bot-row-title:has(.bot-role-badge) {
+  --bot-role-badge-collapsed-width: calc(2ch + 9px);
+
+  display: grid;
+  grid-template-columns:
+    fit-content(calc(100% - var(--bot-role-badge-collapsed-width) - 5px))
+    minmax(var(--bot-role-badge-collapsed-width), 1fr);
+}
+
 .bot-row-title strong,
 .person-row .bot-row-heading strong {
   min-width: 0;
@@ -2981,8 +2990,10 @@ textarea {
 
 .bot-role-badge {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   flex: 0 1 auto;
+  justify-self: start;
   border: 0.5px solid var(--openbot-border);
   border-radius: var(--openbot-radius-xs);
   background: var(--openbot-hover);
@@ -2991,6 +3002,12 @@ textarea {
   font-size: var(--openbot-text-xs);
   font-weight: 400;
   line-height: 16px;
+  white-space: nowrap;
+}
+
+.bot-role-badge > span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
