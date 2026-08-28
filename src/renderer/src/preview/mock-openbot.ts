@@ -1,4 +1,5 @@
 import type {
+  AccountUsage,
   AgentEvent,
   AgentModelOption,
   AgentStatus,
@@ -89,6 +90,7 @@ export interface MockOpenBotOptions {
   authState?: CentralAuthState;
   setupState?: AppSetupState;
   agentStatus?: AgentStatus;
+  usage?: AccountUsage;
   bots?: BotSummary[];
   models?: AgentModelOption[];
   snapshots?: Record<string, ConversationSnapshot>;
@@ -181,7 +183,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let sessions = clone(options.sessions ?? STORY_SESSIONS);
   let remoteDesktopSessions = clone(options.remoteDesktopSessions ?? [STORY_REMOTE_DESKTOP_SESSION]);
   let updateStatus = clone(options.updateStatus ?? STORY_UPDATE_STATUS);
-  const usage = clone(STORY_USAGE);
+  const usage = clone(options.usage ?? STORY_USAGE);
   let botCounter = bots.length;
   let messageCounter = 10;
   let directMessageCounter = 10;
@@ -420,7 +422,15 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         authState = { status: "signed_in", user };
         return clone(authState);
       },
-      updateAvatar: async () => clone(authState),
+      updateAvatar: async (image) => {
+        if (authState.status !== "signed_in") return clone(authState);
+        const avatarUrl = image
+          ? `data:${image.mimeType};base64,${btoa(Array.from(image.bytes, (byte) => String.fromCharCode(byte)).join(""))}`
+          : null;
+        authState = { ...authState, user: { ...authState.user, avatarUrl } };
+        emitAuthState(authState);
+        return clone(authState);
+      },
       logout: async () => {
         authState = { status: "signed_out" };
         emitAuthState(authState);

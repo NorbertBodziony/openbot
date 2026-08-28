@@ -1,3 +1,16 @@
+.ui-action-menu,
+.ui-popover-menu-surface {
+  border: 0;
+  border-radius: var(--openbot-radius-md);
+  outline: 0;
+  background: var(--openbot-bg-control);
+  box-shadow:
+    0 0 0 1px var(--openbot-border),
+    0 4px 6px -1px var(--openbot-shadow-popover-ambient),
+    0 2px 4px -2px var(--openbot-shadow-popover-key);
+  color: var(--openbot-text-primary);
+}
+
 .ui-action-menu {
   position: relative;
   z-index: var(--openbot-layer-popover);
@@ -5,16 +18,7 @@
   min-width: 160px;
   max-width: min(240px, calc(100vw - var(--openbot-space-4)));
   overflow: hidden;
-  border: 0;
-  border-radius: var(--openbot-radius-md);
-  outline: 0;
-  background: var(--openbot-bg-control);
   padding: var(--openbot-space-1);
-  box-shadow:
-    0 0 0 1px var(--openbot-border),
-    0 4px 6px -1px var(--openbot-shadow-popover-ambient),
-    0 2px 4px -2px var(--openbot-shadow-popover-key);
-  color: var(--openbot-text-primary);
   transform-origin: var(--kb-menu-content-transform-origin, var(--kb-popover-content-transform-origin));
   animation: ui-action-menu-in var(--openbot-duration-fast) var(--openbot-ease-out) both;
 }

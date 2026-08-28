@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
-import { Heading, Progress, Text } from "../src/components/ui";
+import { Heading, Progress, RadialProgress, Text } from "../src/components/ui";
 
 const meta = {
   title: "Foundations/Progress",
@@ -21,6 +21,17 @@ export const Gallery: Story = {
         <Text tone="muted">Determinate progress uses the same thin track as provider downloads.</Text>
         <Progress {...args} />
         <Progress value={100} aria-label="Completed download" />
+        <div class="foundation-story-row">
+          <RadialProgress value={59} aria-label="Normal weekly usage remaining">
+            <strong>59%</strong>
+          </RadialProgress>
+          <RadialProgress value={29} tone="warning" aria-label="Low weekly usage remaining">
+            <strong>29%</strong>
+          </RadialProgress>
+          <RadialProgress value={9} tone="danger" aria-label="Critical weekly usage remaining">
+            <strong>9%</strong>
+          </RadialProgress>
+        </div>
       </div>
     </main>
   ),

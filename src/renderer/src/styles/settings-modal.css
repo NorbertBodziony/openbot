@@ -491,8 +491,8 @@
 }
 
 .settings-modal-avatar {
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   display: grid;
   place-items: center;
   border: 1px solid var(--openbot-border-strong);
@@ -503,10 +503,34 @@
   font-weight: var(--openbot-weight-semibold);
 }
 
+.settings-modal-avatar > img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
 .settings-modal-profile-copy {
   min-width: 0;
   display: grid;
   gap: var(--openbot-space-1);
+}
+
+.settings-modal-profile-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-1);
+}
+
+.settings-modal-profile-actions .ui-button-variant-destructive-ghost {
+  color: var(--openbot-settings-danger);
+}
+
+.settings-modal-profile-error {
+  margin: var(--openbot-space-3) 0 0;
+  color: var(--openbot-settings-danger);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-medium);
 }
 
 .settings-modal-profile-fields > .ui-field {
@@ -644,6 +668,15 @@
 }
 
 @media (max-width: 520px) {
+  .settings-modal-profile-summary {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .settings-modal-profile-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+
   .app-settings-modal-shell .settings-modal-row.ui-item {
     align-items: flex-start;
     flex-direction: column;

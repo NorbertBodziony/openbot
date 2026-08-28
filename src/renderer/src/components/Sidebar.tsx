@@ -31,6 +31,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Puzzle,
   Trash2,
 } from "./ui";
 
@@ -61,8 +62,8 @@ interface SidebarProps {
   onEditBot: (botId: string) => void;
   onDeleteBot: (botId: string) => Promise<void>;
   compact: boolean;
-  onCollapse: () => void;
   onExpand: () => void;
+  onOpenMarketplace: () => void;
   emptyAction?: {
     label: string;
     avatarSeed: string;
@@ -1724,14 +1725,19 @@ export function Sidebar(props: SidebarProps) {
           <Button
             variant="ghost"
             type="button"
-            class="sidebar-icon-button sidebar-toggle-button no-drag"
-            onClick={() => (props.compact ? props.onExpand() : props.onCollapse())}
-            aria-label={props.compact ? "Expand sidebar" : "Collapse sidebar"}
-            aria-controls="bot-sidebar"
-            aria-expanded={props.compact ? "false" : "true"}
-            title={props.compact ? "Expand sidebar" : "Collapse sidebar"}
+            class={[
+              "sidebar-icon-button no-drag",
+              props.compact ? "sidebar-toggle-button" : "sidebar-marketplace-button",
+            ]}
+            onClick={() => (props.compact ? props.onExpand() : props.onOpenMarketplace())}
+            aria-label={props.compact ? "Expand sidebar" : "Open Marketplace"}
+            aria-controls={props.compact ? "bot-sidebar" : undefined}
+            aria-expanded={props.compact ? "false" : undefined}
+            title={props.compact ? "Expand sidebar" : "Marketplace"}
           >
-            <SidebarToggleIcon />
+            <Show when={props.compact} fallback={<Puzzle aria-hidden="true" />}>
+              <SidebarToggleIcon />
+            </Show>
           </Button>
           <Button
             variant="ghost"
