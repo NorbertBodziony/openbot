@@ -34,7 +34,7 @@ visited pages use the network, and installed plugins may connect to their own se
 
 ## Install
 
-OpenBot supports macOS 12 or newer on Apple Silicon and Windows 10 or newer on x64 systems.
+OpenBot supports macOS 13 or newer on Apple Silicon and Windows 10 or newer on x64 systems.
 
 ### macOS
 
