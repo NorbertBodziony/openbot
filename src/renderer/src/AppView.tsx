@@ -169,6 +169,7 @@ function WorkspaceShell(props: {
     activeServer,
     botList,
     activeDirectMemberId,
+    peopleEnabled,
     activeBot,
     directPeople,
     directThreads,
@@ -325,7 +326,8 @@ function WorkspaceShell(props: {
           if (server) openServerSettings(server.id, trigger);
         }}
         bots={botList()}
-        activeBotId={activeDirectMemberId() ? "" : (activeBot()?.id ?? "")}
+        activeBotId={activeDirectMember() ? "" : (activeBot()?.id ?? "")}
+        showPeople={peopleEnabled}
         people={directPeople()}
         directThreads={directThreads()}
         activeDirectMemberId={activeDirectMemberId()}
@@ -342,7 +344,7 @@ function WorkspaceShell(props: {
         onReorderPeople={reorderSidebarPeople}
         onSelectBot={selectBot}
         onSelectPerson={(memberId) => void selectDirectMember(memberId)}
-        onPreloadDirectConversation={() => void DirectConversation.preload()}
+        onPreloadDirectConversation={peopleEnabled ? () => void DirectConversation.preload() : undefined}
         onCreateBot={openBotSetup}
         onEditBot={editBot}
         onDeleteBot={deleteBot}
@@ -444,7 +446,7 @@ function WorkspaceShell(props: {
           onCancel={botList().length > 0 ? cancelBotSetup : undefined}
         />
       </Show>
-      <Show when={!botSetupOpen() && activeDirectMember()} keyed>
+      <Show when={peopleEnabled && !botSetupOpen() && activeDirectMember()} keyed>
         {(member) => (
           <Loading
             fallback={
