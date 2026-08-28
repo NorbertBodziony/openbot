@@ -323,7 +323,7 @@ async function main(): Promise<void> {
 
 async function runGoogleLiveProbe(browser: BrowserHost): Promise<void> {
   const googleTab = await browser.open(
-    "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.google.com%2F",
+    "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.google.com%2F&hl=en",
     "google-live-smoke",
     "google-live-smoke",
     true,
@@ -347,9 +347,7 @@ async function runGoogleLiveProbe(browser: BrowserHost): Promise<void> {
       normalized.includes("couldn’t find your google account") ||
       normalized.includes("couldn't find your google account") ||
       normalized.includes("couldn’t find this account") ||
-      normalized.includes("couldn't find this account") ||
-      normalized.includes("nie udało się znaleźć tego konta") ||
-      normalized.includes("nie znaleziono konta google")
+      normalized.includes("couldn't find this account")
     );
   });
   const normalized = outcome.text.toLowerCase();
@@ -360,9 +358,7 @@ async function runGoogleLiveProbe(browser: BrowserHost): Promise<void> {
     !normalized.includes("couldn’t find your google account") &&
     !normalized.includes("couldn't find your google account") &&
     !normalized.includes("couldn’t find this account") &&
-    !normalized.includes("couldn't find this account") &&
-    !normalized.includes("nie udało się znaleźć tego konta") &&
-    !normalized.includes("nie znaleziono konta google")
+    !normalized.includes("couldn't find this account")
   ) {
     throw new Error(`Google returned an unexpected identifier result: ${outcome.text.slice(0, 500)}`);
   }
