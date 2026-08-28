@@ -269,6 +269,7 @@ function WorkspaceShell(props: {
     openAgentMessage,
     setTeamTyping,
     answerPrompt,
+    presentPromptResolution,
     respondToApproval,
     respondToBrowserTakeover,
     cancelQueuedMessage,
@@ -535,6 +536,7 @@ function WorkspaceShell(props: {
           }
           onTypingChange={setTeamTyping}
           onAnswerPrompt={answerPrompt}
+          onPromptResolutionPresented={presentPromptResolution}
           onRespondToApproval={respondToApproval}
           onRespondToBrowserTakeover={respondToBrowserTakeover}
           onCancelQueuedMessage={cancelQueuedMessage}

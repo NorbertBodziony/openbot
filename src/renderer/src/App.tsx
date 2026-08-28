@@ -264,6 +264,10 @@ export function createAppController(props: AppProps = {}) {
   const [pendingPrompts, setPendingPrompts] = createSignal<
     Record<string, PromptEvent | BrowserTakeoverEvent | undefined>
   >({});
+  const [presentedPromptResolutions, setPresentedPromptResolutions] = createSignal<Record<string, string | undefined>>(
+    {},
+  );
+  const [submittedPromptRequests, setSubmittedPromptRequests] = createSignal<Record<string, string | undefined>>({});
   const [pendingApprovals, setPendingApprovals] = createSignal<Record<string, AgentApproval | undefined>>({});
   const [appInfo, setAppInfo] = createSignal<AppInfo | null>(null);
   const [agentStatus, setAgentStatus] = createSignal<AgentStatus>(FALLBACK_STATUS);
@@ -493,7 +497,13 @@ export function createAppController(props: AppProps = {}) {
   });
   const activeMessages = createMemo(() => {
     const bot = activeBot();
-    return bot ? [...(liveMessages()[bot.id] ?? []), ...(uiErrors()[bot.id] ?? [])] : [];
+    if (!bot) return [];
+    const prompt = pendingPrompts()[bot.id];
+    const requestId = prompt?.type === "prompt" ? String(prompt.requestId) : null;
+    const messages = (liveMessages()[bot.id] ?? []).filter(
+      (message) => !requestId || String(message.questionPrompt?.requestId) !== requestId,
+    );
+    return [...messages, ...(uiErrors()[bot.id] ?? [])];
   });
 
   createEffect(
@@ -819,7 +829,12 @@ export function createAppController(props: AppProps = {}) {
           if (deliveries.length === snapshot.deliveries.length) return current;
           return { ...current, [event.botId]: { ...snapshot, deliveries } };
         });
-        setPendingPrompts((current) => ({ ...current, [event.botId]: undefined }));
+        setPendingPrompts((current) => {
+          const pending = current[event.botId];
+          const submittedRequestId = submittedPromptRequests()[event.botId];
+          if (pending?.type === "prompt" && String(pending.requestId) === submittedRequestId) return current;
+          return { ...current, [event.botId]: undefined };
+        });
         setPendingApprovals((current) => ({ ...current, [event.botId]: undefined }));
         if (event.status === "completed") {
           markReplyCompleted(event.botId);
@@ -1031,6 +1046,30 @@ export function createAppController(props: AppProps = {}) {
       return { ...current, [botId]: next };
     });
     setConversationLoaded((current) => ({ ...current, [botId]: true }));
+    const presentedRequestId = presentedPromptResolutions()[botId];
+    const pendingPrompt = pendingPrompts()[botId];
+    const resolvedPendingPrompt =
+      pendingPrompt?.type === "prompt" &&
+      snapshot.messages.some(
+        (message) =>
+          String(message.questionPrompt?.requestId) === String(pendingPrompt.requestId) &&
+          message.questionPrompt?.resolution !== null,
+      );
+    if (
+      presentedRequestId &&
+      snapshot.messages.some(
+        (message) =>
+          String(message.questionPrompt?.requestId) === presentedRequestId &&
+          message.questionPrompt?.resolution !== null,
+      )
+    ) {
+      setPendingPrompts((current) => ({ ...current, [botId]: undefined }));
+      setPresentedPromptResolutions((current) => ({ ...current, [botId]: undefined }));
+      setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
+    } else if (resolvedPendingPrompt && activeBot()?.id !== botId) {
+      setPendingPrompts((current) => ({ ...current, [botId]: undefined }));
+      setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
+    }
     setActiveTurns((current) => ({
       ...current,
       [botId]: completedTurnByBot.get(botId) === snapshot.activeTurnId ? null : snapshot.activeTurnId,
@@ -1771,12 +1810,12 @@ export function createAppController(props: AppProps = {}) {
     const prompt = bot ? pendingPrompts()[bot.id] : undefined;
     if (!bot || prompt?.type !== "prompt") return false;
     const analytics = desktopAnalytics.scope();
+    setSubmittedPromptRequests((current) => ({ ...current, [bot.id]: String(prompt.requestId) }));
     try {
       await window.openbot.agent.respondToPrompt({
         requestId: prompt.requestId,
         answers,
       });
-      setPendingPrompts((current) => ({ ...current, [bot.id]: undefined }));
       analytics.track("agent_input_action", {
         kind: "prompt",
         decision: "answered",
@@ -1784,15 +1823,30 @@ export function createAppController(props: AppProps = {}) {
       });
       return true;
     } catch (error) {
+      setSubmittedPromptRequests((current) => ({ ...current, [bot.id]: undefined }));
       analytics.track("agent_input_action", {
         kind: "prompt",
         decision: "answered",
         result: "failed",
         failure_code: "response_failed",
       });
-      appendUiError(bot.id, error, "Answer failed");
-      return false;
+      throw error;
     }
+  }
+
+  function presentPromptResolution(botId: string, requestId: string | number): void {
+    const requestKey = String(requestId);
+    const persisted = (liveMessages()[botId] ?? []).some(
+      (message) =>
+        String(message.questionPrompt?.requestId) === requestKey && message.questionPrompt?.resolution !== null,
+    );
+    if (persisted) {
+      setPendingPrompts((current) => ({ ...current, [botId]: undefined }));
+      setPresentedPromptResolutions((current) => ({ ...current, [botId]: undefined }));
+      setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
+      return;
+    }
+    setPresentedPromptResolutions((current) => ({ ...current, [botId]: requestKey }));
   }
 
   async function respondToApproval(decision: "accept" | "decline"): Promise<boolean> {
@@ -3002,6 +3056,7 @@ export function createAppController(props: AppProps = {}) {
     openAgentMessage,
     setTeamTyping,
     answerPrompt,
+    presentPromptResolution,
     respondToApproval,
     respondToBrowserTakeover,
     cancelQueuedMessage,

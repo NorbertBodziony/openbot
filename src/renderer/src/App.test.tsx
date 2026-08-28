@@ -4087,18 +4087,56 @@ describe("OpenBot connected desktop shell", () => {
         },
       ],
     });
-    await fireEvent.click(await screen.findByRole("button", { name: /Something else/ }));
     const answer = await screen.findByRole("textbox", {
       name: "Custom answer for: Which account?",
     });
     await fireEvent.input(answer, { target: { value: "Acme" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await fireEvent.keyDown(answer, { key: "Enter" });
     await waitFor(() =>
       expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledWith({
         requestId: "prompt-1",
         answers: { account: ["Acme"] },
       }),
     );
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-1",
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-1:prompt-1",
+            turnId: "turn-1",
+            author: "assistant",
+            source: "assistant",
+            text: "",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-1",
+              questions: [
+                {
+                  id: "account",
+                  header: "Account",
+                  question: "Which account?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { account: { status: "answered", answers: ["Acme"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+    await waitFor(() => expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible());
+    expect(screen.queryByRole("textbox", { name: "Custom answer for: Which account?" })).not.toBeInTheDocument();
   });
 
   it("walks through questions one at a time and can skip them", async () => {
@@ -4132,27 +4170,21 @@ describe("OpenBot connected desktop shell", () => {
       ],
     });
 
-    expect(
-      await screen.findByText("Where should I work?", { selector: ".approval-question-prompt" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("1")).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: /Repository/ }));
-    await fireEvent.click(screen.getByRole("button", { name: "Next question" }));
-    expect(
-      await screen.findByText("What is the desired outcome?", {
-        selector: ".approval-question-prompt",
-      }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Where should I work?" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("radio", { name: /Repository/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: /Custom answer for: What is the desired outcome/ })).toBeEnabled(),
+    );
     await fireEvent.click(screen.getByRole("button", { name: "Previous question" }));
-    expect(
-      await screen.findByText("Where should I work?", { selector: ".approval-question-prompt" }),
-    ).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("radio", { name: /Repository/ })).toBeEnabled());
+    await fireEvent.click(screen.getByRole("button", { name: "Next question" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Skip" })).toBeEnabled());
     await fireEvent.click(screen.getByRole("button", { name: "Skip" }));
 
     await waitFor(() =>
       expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledWith({
         requestId: "prompt-steps",
-        answers: {},
+        answers: { environment: ["Repository"], goal: [] },
       }),
     );
   });

@@ -368,10 +368,105 @@
   color: var(--openbot-text-secondary);
 }
 
+.question-prompt-story-stage {
+  min-height: 100vh;
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  background: var(--openbot-bg-canvas);
+  padding: var(--openbot-space-8);
+}
+
+.question-prompt-story-narrow {
+  width: 320px;
+  max-width: 100%;
+}
+
+.question-prompt-story-stage:has(.question-prompt-chat-preview) {
+  display: block;
+  padding: 0;
+}
+
+.question-prompt-chat-preview {
+  width: 100%;
+  height: 100vh;
+  min-height: 560px;
+  color: var(--openbot-text-primary);
+}
+
+.question-prompt-chat-preview .conversation-title .bot-avatar {
+  width: 22px;
+  height: 22px;
+}
+
+.question-prompt-chat-model.provider-model-trigger {
+  height: 26px;
+  padding-inline: var(--openbot-space-2);
+}
+
+.question-prompt-chat-model svg {
+  width: var(--openbot-icon-xs);
+  height: var(--openbot-icon-xs);
+}
+
+.question-prompt-chat-thread {
+  width: min(760px, 100%);
+  margin: 0 auto;
+}
+
+.question-prompt-chat-question {
+  margin-top: var(--openbot-space-5);
+}
+
+.question-prompt-chat-question > .ui-message-content {
+  gap: var(--openbot-space-1);
+}
+
+.question-prompt-chat-composer-wrap {
+  width: min(784px, 100%);
+  align-self: center;
+}
+
+.question-prompt-chat-composer-wrap .ui-textarea {
+  width: 100%;
+  min-height: 28px;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  padding: 4px 0;
+  box-shadow: none;
+  color: var(--openbot-text-primary);
+  font: inherit;
+  font-size: var(--openbot-text-md);
+  line-height: 20px;
+}
+
+.question-prompt-chat-composer-wrap .ui-textarea::placeholder {
+  color: var(--openbot-text-muted);
+}
+
+.question-prompt-chat-composer-wrap .ui-textarea:focus {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+.question-prompt-chat-composer-wrap .composer-button svg,
+.question-prompt-chat-composer-wrap .voice-button svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+}
+
 @media (max-width: 720px) {
   .chat-primitives-stage,
-  .chat-primitives-gallery {
+  .chat-primitives-gallery,
+  .question-prompt-story-stage {
     padding: var(--openbot-space-4);
+  }
+
+  .question-prompt-story-stage:has(.question-prompt-chat-preview) {
+    padding: 0;
   }
 }
 

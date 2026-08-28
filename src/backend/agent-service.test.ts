@@ -780,16 +780,29 @@ describe.sequential("AgentService", () => {
               question: "What is your favorite color?",
               options: [{ label: "Blue", description: "A calm choice." }],
             },
+            {
+              id: "token",
+              header: "Token",
+              question: "What is the private token?",
+              isSecret: true,
+            },
           ],
         },
       },
     });
     await waitFor(() => events.some((event) => event.type === "prompt"));
     expect(client.responses).toHaveLength(0);
+    const pendingMessage = (await service.readConversation("chief")).messages.find(
+      (message) => message.questionPrompt?.requestId === "question-call",
+    );
+    expect(pendingMessage).toMatchObject({
+      itemType: "question_prompt",
+      questionPrompt: { resolution: null },
+    });
 
     await service.respondToPrompt({
       requestId: "question-call",
-      answers: { favorite: ["Blue"] },
+      answers: { favorite: ["Blue"], token: ["super-secret"] },
     });
     await waitFor(() => client.responses.length === 1);
     expect(client.responses[0]).toMatchObject({
@@ -804,7 +817,68 @@ describe.sequential("AgentService", () => {
     if (!isDynamicRecord(content) || !isString(content.text)) {
       throw new Error("The question result has no text content.");
     }
-    expect(JSON.parse(content.text)).toEqual({ favorite: ["Blue"] });
+    expect(JSON.parse(content.text)).toEqual({ favorite: ["Blue"], token: ["super-secret"] });
+
+    const resolvedMessage = (await service.readConversation("chief")).messages.find(
+      (message) => message.questionPrompt?.requestId === "question-call",
+    );
+    expect(resolvedMessage?.questionPrompt?.resolution).toEqual({
+      status: "answered",
+      responses: {
+        favorite: { status: "answered", answers: ["Blue"] },
+        token: { status: "answered" },
+      },
+    });
+    expect(JSON.stringify(resolvedMessage)).not.toContain("super-secret");
+    const persisted = store.database.readConversation(
+      "chief",
+      resolvedMessage?.turnId ? (store.list().find((bot) => bot.id === "chief")?.threadId ?? null) : null,
+    );
+    expect(JSON.stringify(persisted)).not.toContain("super-secret");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "skipped-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "skipped-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "favorite", header: "Favorite", question: "Choose again." }],
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 2);
+    await service.respondToPrompt({ requestId: "skipped-question-call", answers: { favorite: [] } });
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "skipped-question-call",
+      )?.questionPrompt?.resolution,
+    ).toEqual({ status: "answered", responses: { favorite: { status: "skipped" } } });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "cancelled-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "cancelled-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "favorite", header: "Favorite", question: "Choose one more time." }],
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 3);
+    await service.respondToPrompt({ requestId: "cancelled-question-call", answers: {} });
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "cancelled-question-call",
+      )?.questionPrompt?.resolution,
+    ).toEqual({ status: "cancelled" });
   });
 
   it("pauses a browser tool call until the user resolves the takeover", async () => {
@@ -2437,6 +2511,51 @@ describe.sequential("AgentService", () => {
       ]),
     });
     expect((await store.getOrCreate("chief")).threadId).toBe(threadId);
+  });
+
+  it("expires a persisted question prompt after restart", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Start a recoverable turn" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    const bot = await store.getOrCreate("chief");
+    await service.stop();
+    const snapshot = store.database.readConversation("chief", bot.threadId);
+    snapshot.activeTurnId = "turn-with-question";
+    snapshot.messages.push({
+      id: "question-prompt:turn-with-question:request-1",
+      turnId: "turn-with-question",
+      author: "assistant",
+      source: "assistant",
+      text: "",
+      createdAt: "2026-08-28T12:00:00.000Z",
+      status: "completed",
+      itemType: "question_prompt",
+      questionPrompt: {
+        requestId: "request-1",
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "How broad should the change be?",
+            isSecret: false,
+            options: null,
+          },
+        ],
+        resolution: null,
+      },
+    });
+    store.database.persistConversation(snapshot, "test.question-prompt-pending");
+
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    const recovered = await service.readConversation("chief");
+    expect(recovered.activeTurnId).toBeNull();
+    expect(recovered.messages.find((message) => message.questionPrompt)?.questionPrompt?.resolution).toEqual({
+      status: "expired",
+    });
   });
 
   it("does not persist unchanged provider history after repeated restarts", async () => {

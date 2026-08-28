@@ -31,11 +31,12 @@ export function toBotMessage(message: ConversationMessage): BotMessage {
     time: formatTime(message.createdAt),
     streaming: message.status === "streaming",
     itemType: message.itemType,
-    kind: message.exchange ? "exchange" : "text",
+    kind: message.questionPrompt ? "question" : message.exchange ? "exchange" : "text",
     senderBotId: exchangeSenderId,
     replyToMessageId: message.replyToMessageId,
     attachments: message.attachments,
     imageGeneration: message.imageGeneration,
+    questionPrompt: message.questionPrompt,
     exchange: message.exchange,
     reaction: message.reaction,
     reactions:
@@ -161,6 +162,7 @@ export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
     JSON.stringify(left.reactions) === JSON.stringify(right.reactions) &&
     JSON.stringify(left.reactionSummary) === JSON.stringify(right.reactionSummary) &&
     JSON.stringify(left.attachments) === JSON.stringify(right.attachments) &&
+    JSON.stringify(left.questionPrompt) === JSON.stringify(right.questionPrompt) &&
     JSON.stringify(left.exchange) === JSON.stringify(right.exchange) &&
     JSON.stringify(left.routine) === JSON.stringify(right.routine) &&
     JSON.stringify(left.items) === JSON.stringify(right.items)
