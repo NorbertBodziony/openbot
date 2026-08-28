@@ -1545,10 +1545,10 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Open account menu" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Open account actions" }));
     await fireEvent.click(screen.getByRole("button", { name: "Providers & permissions" }));
 
-    expect(screen.getByRole("dialog", { name: "Providers & permissions" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Providers & permissions" })).toBeInTheDocument();
     const providers = screen.getByRole("radiogroup", { name: "Default provider" });
     expect(within(providers).getByRole("radio", { name: /Codex.*Connected/ })).toBeChecked();
     expect(within(providers).getByText("norbert@example.com")).toBeInTheDocument();
@@ -1663,29 +1663,49 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("agent-setup"));
   });
 
-  it("shows a compact account menu with weekly usage and contact actions", async () => {
+  it("shows focused weekly usage and compact account actions", async () => {
     render(() => <App />);
-    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
-    expect(accountButton).toHaveTextContent("person@example.com");
-    expect(accountButton.closest(".account-dock")).toHaveClass("account-dock-with-server-rail");
-    expect(screen.getByRole("complementary", { name: "Bot navigation" })).not.toContainElement(accountButton);
-
-    fireEvent.click(accountButton);
     await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(1));
-    const accountDialog = screen.getByRole("dialog", { name: "Account" });
-    expect(within(accountDialog).getAllByText("person@example.com")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Upload photo" })).toBeInTheDocument();
-    expect(await screen.findByText("Weekly usage")).toBeInTheDocument();
-    expect(screen.getByText("59%")).toBeInTheDocument();
+    const usageButton = await screen.findByRole("button", { name: "Weekly usage, 59% left" });
+    const dock = usageButton.closest(".account-dock");
+    expect(dock).toHaveTextContent("person@example.com");
+    expect(dock).toHaveClass("account-dock-with-server-rail");
+    expect(screen.getByRole("complementary", { name: "Bot navigation" })).not.toContainElement(usageButton);
+
+    await fireEvent.click(usageButton);
+    const usageDialog = screen.getByRole("dialog", { name: "Weekly usage" });
+    const usageProgress = within(usageDialog).getByRole("progressbar", { name: "Weekly usage remaining" });
+    expect(usageProgress).toHaveAttribute("aria-valuenow", "59");
+    expect(usageProgress).toHaveAttribute("aria-valuetext", "59% left");
+    expect(within(usageDialog).getByText("59%")).toBeInTheDocument();
+    expect(within(usageDialog).getByText("Resets")).toBeInTheDocument();
+    await fireEvent.click(within(usageDialog).getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(2));
     expect(screen.queryByText(/ChatGPT Pro/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Developer preview/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Lifetime/i)).not.toBeInTheDocument();
 
+    await fireEvent.keyDown(usageDialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Weekly usage" })).not.toBeInTheDocument());
+    await waitFor(() => expect(usageButton).toHaveFocus());
+
+    const accountButton = screen.getByRole("button", { name: "Open account actions" });
+    await fireEvent.click(accountButton);
+    const accountDialog = screen.getByRole("dialog", { name: "Account actions" });
+    expect(within(accountDialog).getByRole("button", { name: /Check for updates/ })).toBeInTheDocument();
+    expect(within(accountDialog).getByRole("button", { name: "Marketplace" })).toBeInTheDocument();
+    expect(within(accountDialog).getByRole("button", { name: "Providers & permissions" })).toBeInTheDocument();
+    expect(within(accountDialog).getByRole("button", { name: "Send feedback" })).toBeInTheDocument();
+    expect(within(accountDialog).getByRole("button", { name: "Message" })).toBeInTheDocument();
+    expect(within(accountDialog).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    expect(within(accountDialog).queryByText("person@example.com")).not.toBeInTheDocument();
+    expect(within(accountDialog).queryByRole("button", { name: /photo/i })).not.toBeInTheDocument();
+    expect(within(accountDialog).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(within(accountDialog).queryByText("Weekly usage")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Export data" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Export diagnostics" })).not.toBeInTheDocument();
 
-    await screen.findByRole("button", { name: "Send feedback" });
-    fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+    fireEvent.click(within(accountDialog).getByRole("button", { name: "Send feedback" }));
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("feedback"));
 
     fireEvent.click(accountButton);
@@ -1693,12 +1713,11 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("message"));
   });
 
-  it("opens global settings from the account menu and restores focus after every close path", async () => {
+  it("opens global settings from the dock and restores focus after every close path", async () => {
     render(() => <App />);
-    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
+    const settingsButton = await screen.findByRole("button", { name: "Settings" });
 
-    await fireEvent.click(accountButton);
-    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await fireEvent.click(settingsButton);
     let dialog = await screen.findByRole("dialog", { name: "General" });
     const launchSwitch = within(dialog).getByRole("switch", { name: "Launch OpenBot at login" });
     await fireEvent.click(launchSwitch);
@@ -1706,28 +1725,25 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(within(dialog).getByRole("button", { name: "Close settings" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
-    await waitFor(() => expect(accountButton).toHaveFocus());
+    await waitFor(() => expect(settingsButton).toHaveFocus());
 
-    await fireEvent.click(accountButton);
-    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await fireEvent.click(settingsButton);
     dialog = await screen.findByRole("dialog", { name: "General" });
     expect(within(dialog).getByRole("switch", { name: "Launch OpenBot at login" })).not.toBeChecked();
     await fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
-    await waitFor(() => expect(accountButton).toHaveFocus());
+    await waitFor(() => expect(settingsButton).toHaveFocus());
 
-    await fireEvent.click(accountButton);
-    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await fireEvent.click(settingsButton);
     await screen.findByRole("dialog", { name: "General" });
     await fireEvent.pointerDown(screen.getByTestId("settings-modal-backdrop"), { button: 0 });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
-    await waitFor(() => expect(accountButton).toHaveFocus());
+    await waitFor(() => expect(settingsButton).toHaveFocus());
   });
 
   it("persists the product analytics opt-out", async () => {
     render(() => <App />);
-    await fireEvent.click(await screen.findByRole("button", { name: "Open account menu" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
     await fireEvent.click(await screen.findByRole("switch", { name: "Share product analytics" }));
 
     await waitFor(() => expect(window.openbot.setAnalyticsPreference).toHaveBeenCalledWith({ enabled: false }));
@@ -1744,27 +1760,9 @@ describe("OpenBot connected desktop shell", () => {
     setTrackingEnabled.mockRestore();
   });
 
-  it("removes a custom account avatar from the account menu", async () => {
-    vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({
-      status: "signed_in",
-      user: {
-        id: "user-1",
-        email: "person@example.com",
-        name: null,
-        avatarUrl: "https://api.openbot.run/v1/avatars/user-1?v=image-1",
-      },
-    });
-    render(() => <App />);
-    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
-    await fireEvent.click(accountButton);
-    await fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
-    await waitFor(() => expect(window.openbot.auth.updateAvatar).toHaveBeenCalledWith(null));
-  });
-
   it("signs out from the account menu without removing local data", async () => {
     render(() => <App />);
-    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
-    await fireEvent.click(accountButton);
+    await fireEvent.click(await screen.findByRole("button", { name: "Open account actions" }));
     await fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     await waitFor(() => expect(window.openbot.auth.logout).toHaveBeenCalledOnce());
@@ -1785,8 +1783,8 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    expect(await screen.findByText("Update")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Open account menu" }));
+    expect(await screen.findByText("OpenBot update available")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open account actions" }));
     fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
     await waitFor(() => expect(window.openbot.update.download).toHaveBeenCalledOnce());
     expect(trackAnalytics).toHaveBeenCalledWith("update_action", {
@@ -1829,7 +1827,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open account menu" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open account actions" }));
     fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
 
     await waitFor(() =>
@@ -2584,10 +2582,11 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("heading", { name: "Chief" });
 
     const frame = screen.getByRole("main", { name: "Conversation" }).closest(".app-frame");
-    const sidebarToggle = screen.getByRole("button", { name: "Collapse sidebar" });
-    expect(sidebarToggle).toHaveClass("sidebar-icon-button");
-    expect(sidebarToggle).toHaveAttribute("aria-expanded", "true");
-    await fireEvent.click(sidebarToggle);
+    const marketplaceButton = screen.getByRole("button", { name: "Open Marketplace" });
+    expect(marketplaceButton).toHaveClass("sidebar-icon-button");
+    expect(screen.queryByRole("button", { name: "Collapse sidebar" })).not.toBeInTheDocument();
+    const resizer = screen.getByRole("separator", { name: "Resize left sidebar" });
+    await fireEvent.keyDown(resizer, { key: "Home" });
 
     expect(screen.getByRole("complementary", { name: "Bot navigation" })).toHaveClass("sidebar-compact");
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "88");
@@ -2597,14 +2596,38 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("button", { name: "Show sidebar" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute("aria-expanded", "false");
 
+    const compactAccountButton = screen.getByRole("button", { name: "Open account menu" });
+    await fireEvent.click(compactAccountButton);
+    const compactAccountDialog = screen.getByRole("dialog", { name: "Account actions" });
+    expect(within(compactAccountDialog).getByRole("button", { name: /Check for updates/ })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Marketplace" })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Providers & permissions" })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Send feedback" })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Message" })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    expect(within(compactAccountDialog).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(within(compactAccountDialog).queryByText("Weekly usage")).not.toBeInTheDocument();
+    expect(within(compactAccountDialog).queryByRole("button", { name: /photo/i })).not.toBeInTheDocument();
+    await fireEvent.keyDown(compactAccountDialog, { key: "Escape" });
+    await waitFor(() => expect(compactAccountButton).toHaveFocus());
+
     await fireEvent.click(screen.getByRole("button", { name: "Expand sidebar and search chats" }));
 
     expect(screen.getByRole("complementary", { name: "Bot navigation" })).toBeInTheDocument();
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "280");
     expect(frame).not.toHaveClass("app-frame-sidebar-compact");
     expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBe("false");
-    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Open Marketplace" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("searchbox", { name: "Search chats" })).toHaveFocus());
+  });
+
+  it("opens Marketplace from the sidebar header", async () => {
+    render(() => <App />);
+    const marketplaceButton = await screen.findByRole("button", { name: "Open Marketplace" });
+
+    await fireEvent.click(marketplaceButton);
+
+    expect(await screen.findByRole("dialog", { name: "Marketplace" })).toBeInTheDocument();
   });
 
   it("snaps drag resizing between compact and expanded widths with hysteresis", async () => {

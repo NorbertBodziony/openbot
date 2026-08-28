@@ -35,8 +35,8 @@ function sidebarProps(pinnedItems: SidebarPinnedItem[] = []) {
     onEditBot: vi.fn(),
     onDeleteBot: vi.fn(async () => undefined),
     compact: false,
-    onCollapse: vi.fn(),
     onExpand: vi.fn(),
+    onOpenMarketplace: vi.fn(),
   };
 }
 

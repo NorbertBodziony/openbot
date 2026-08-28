@@ -2,15 +2,32 @@ import type {
   AccountUsage,
   AgentStatus,
   AppInfo,
-  AvatarImageInput,
   CentralAuthUser,
   ExternalDestination,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
-import { createEffect, createMemo, createSignal, Show } from "solid-js";
-import { normalizeAvatarFile } from "../avatar-image";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { presentUpdateStatus } from "../update-status";
-import { Badge, Button, buttonVariants, Input, Popover, Puzzle, Settings } from "./ui";
+import {
+  Badge,
+  Button,
+  buttonVariants,
+  CalendarClock,
+  ChevronUp,
+  CircleArrowDown,
+  Gauge,
+  LogOut,
+  Mail,
+  Megaphone,
+  Popover,
+  Progress,
+  Puzzle,
+  RadialProgress,
+  RefreshCw,
+  Settings,
+  ShieldCheck,
+  Tooltip,
+} from "./ui";
 
 interface AccountDockProps {
   account: CentralAuthUser;
@@ -22,7 +39,6 @@ interface AccountDockProps {
   withServerRail: boolean;
   onRefreshUsage: () => Promise<AccountUsage>;
   onUpdateAction: () => Promise<void>;
-  onUpdateAccountAvatar: (image: AvatarImageInput | null) => Promise<void>;
   onLogout: () => Promise<void>;
   onOpenExternal: (destination: ExternalDestination) => Promise<void>;
   onOpenPermissions: () => void;
@@ -30,95 +46,29 @@ interface AccountDockProps {
   onOpenSkills: () => void;
 }
 
-function UsageIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
-      <path d="M4.2 13.9a6.5 6.5 0 1 1 11.6 0" />
-      <path d="m10 10 3.1-2.3" />
-      <circle cx="10" cy="10" r="1" class="account-menu-icon-fill" />
-    </svg>
-  );
-}
-
-function FeedbackIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
-      <path d="M4 5.2h12v8.6H9l-3.5 2.4v-2.4H4V5.2Z" />
-      <path d="M7 8.2h6M7 10.8h4" />
-    </svg>
-  );
-}
-
-function MessageIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
-      <path d="M3.8 4.8h12.4v10.4H3.8V4.8Z" />
-      <path d="m4.5 5.6 5.5 4.2 5.5-4.2" />
-    </svg>
-  );
-}
-
-function UpdateIcon(props: { active: boolean }) {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      class={["account-menu-icon", { "account-menu-icon-spinning": props.active }]}
-    >
-      <path d="M15.4 6.8A6 6 0 1 0 16 10" />
-      <path d="M15.4 3.8v3h-3" />
-    </svg>
-  );
-}
-
-function PermissionsIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
-      <path d="M10 2.9 15.5 5v4.6c0 3.6-2.2 6.3-5.5 7.5-3.3-1.2-5.5-3.9-5.5-7.5V5L10 2.9Z" />
-      <path d="m7.6 9.9 1.5 1.5 3.3-3.4" />
-    </svg>
-  );
-}
-
-function LogoutIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-menu-icon">
-      <path d="M8.2 4.2H5.5v11.6h2.7" />
-      <path d="M11.6 6.6 15 10l-3.4 3.4M7.8 10H15" />
-    </svg>
-  );
-}
-
-function CameraIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20">
-      <path d="M6.5 6.2 7.7 4.5h4.6l1.2 1.7h2.1v9.3H4.4V6.2h2.1Z" />
-      <circle cx="10" cy="10.8" r="2.5" />
-    </svg>
-  );
-}
-
-function ChevronIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="account-dock-chevron">
-      <path d="m6.5 12 3.5-3.5 3.5 3.5" />
-    </svg>
-  );
-}
-
 export function AccountDock(props: AccountDockProps) {
-  const [open, setOpen] = createSignal(false);
+  const [menuOpen, setMenuOpen] = createSignal(false);
+  const [usageOpen, setUsageOpen] = createSignal(false);
+  const [usageTooltipOpen, setUsageTooltipOpen] = createSignal(false);
   const [usageLoading, setUsageLoading] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
-  const [avatarBusy, setAvatarBusy] = createSignal(false);
+  const [usageRefreshAcknowledging, setUsageRefreshAcknowledging] = createSignal(false);
+  const [usageError, setUsageError] = createSignal<string | null>(null);
+  const [menuError, setMenuError] = createSignal<string | null>(null);
   const [avatarFailed, setAvatarFailed] = createSignal(false);
   const [loggingOut, setLoggingOut] = createSignal(false);
-  let avatarInput: HTMLInputElement | undefined;
-  let triggerElement: HTMLButtonElement | undefined;
+  let initialUsageRequested = false;
+  let usageRefreshTimer: number | undefined;
+  let legacyTrigger: HTMLButtonElement | undefined;
+  let menuTrigger: HTMLButtonElement | undefined;
+  let usageTrigger: HTMLButtonElement | undefined;
+  let settingsTrigger: HTMLButtonElement | undefined;
 
-  const accountName = createMemo(() => props.account.name?.trim() || props.account.email);
+  const hybridLayout = createMemo(() => props.appInfo?.platform === "darwin" && props.withServerRail && !props.compact);
+  const accountName = createMemo(
+    () => props.account.name?.trim() || props.account.email.split("@")[0] || props.account.email,
+  );
   const accountInitials = createMemo(() => {
-    const localPart = accountName().split("@")[0] ?? "OpenBot";
+    const localPart = props.account.email.split("@")[0] ?? "OpenBot";
     const parts = localPart.split(/[._\-\s]+/).filter(Boolean);
     return (parts.length > 1 ? `${parts[0]?.[0]}${parts[1]?.[0]}` : localPart.slice(0, 2)).toUpperCase();
   });
@@ -136,9 +86,38 @@ export function AccountDock(props: AccountDockProps) {
     const usage = weeklyUsage();
     return usage ? Math.max(0, Math.round(100 - usage.usedPercent)) : null;
   });
+  const usageValue = createMemo(() => weeklyUsageRemaining() ?? 0);
+  const usageTone = createMemo(() => {
+    const remaining = weeklyUsageRemaining();
+    if (remaining === null || remaining >= 30) return "neutral";
+    return remaining < 10 ? "critical" : "warning";
+  });
+  const usageRadialTone = createMemo(() => {
+    const tone = usageTone();
+    if (tone === "critical") return "danger";
+    return tone === "warning" ? "warning" : "accent";
+  });
+  const usageButtonLabel = createMemo(() => {
+    if (usageLoading() && weeklyUsageRemaining() === null) return "Weekly usage is loading";
+    if (weeklyUsageRemaining() === null) return "Weekly usage unavailable";
+    return `Weekly usage, ${weeklyUsageRemaining()}% left`;
+  });
+  const usageRefreshActive = createMemo(() => usageLoading() || usageRefreshAcknowledging());
+  const weeklyUsageReset = createMemo(() => {
+    const resetsAt = weeklyUsage()?.resetsAt;
+    if (resetsAt === null || resetsAt === undefined) return null;
+    const date = new Date(resetsAt * 1_000);
+    if (Number.isNaN(date.getTime())) return null;
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+  });
   const updatePresentation = createMemo(() => presentUpdateStatus(props.updateStatus));
-  const popoverError = createMemo(
-    () => error() ?? (props.updateStatus.phase === "error" ? props.updateStatus.message : null),
+  const accountMenuError = createMemo(
+    () => menuError() ?? (props.updateStatus.phase === "error" ? props.updateStatus.message : null),
   );
 
   createEffect(
@@ -148,70 +127,77 @@ export function AccountDock(props: AccountDockProps) {
     },
   );
 
+  onCleanup(() => {
+    if (usageRefreshTimer !== undefined) window.clearTimeout(usageRefreshTimer);
+  });
+
+  createEffect(
+    () => [hybridLayout(), props.agentStatus.phase, props.accountUsage] as const,
+    ([hybrid, agentPhase, accountUsage]) => {
+      if (!hybrid || agentPhase !== "ready" || accountUsage || initialUsageRequested) return;
+      initialUsageRequested = true;
+      void refreshUsage();
+    },
+  );
+
+  function restoreFocusWhenDockIsIdle(target: HTMLButtonElement | undefined) {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        if (target?.isConnected && !menuOpen() && !usageOpen() && document.activeElement === document.body) {
+          target.focus();
+        }
+      });
+    });
+  }
+
   async function refreshUsage() {
     if (usageLoading() || props.agentStatus.phase !== "ready") return;
     setUsageLoading(true);
-    setError(null);
+    setUsageError(null);
     try {
       await props.onRefreshUsage();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Usage is unavailable.");
+      setUsageError(cause instanceof Error ? cause.message : "Usage is unavailable.");
     } finally {
       setUsageLoading(false);
     }
   }
 
+  function refreshUsageWithFeedback() {
+    if (usageRefreshActive()) return;
+    setUsageRefreshAcknowledging(true);
+    if (usageRefreshTimer !== undefined) window.clearTimeout(usageRefreshTimer);
+    usageRefreshTimer = window.setTimeout(() => {
+      usageRefreshTimer = undefined;
+      setUsageRefreshAcknowledging(false);
+    }, 600);
+    void refreshUsage();
+  }
+
   function openExternal(destination: ExternalDestination) {
-    setError(null);
+    setMenuError(null);
     void props
       .onOpenExternal(destination)
-      .then(() => setOpen(false))
-      .catch((cause) => setError(cause instanceof Error ? cause.message : "Could not open the link."));
+      .then(() => setMenuOpen(false))
+      .catch((cause) => setMenuError(cause instanceof Error ? cause.message : "Could not open the link."));
   }
 
   function runUpdateAction() {
-    setError(null);
+    setMenuError(null);
     void props
       .onUpdateAction()
-      .catch((cause) => setError(cause instanceof Error ? cause.message : "Could not update OpenBot."));
+      .catch((cause) => setMenuError(cause instanceof Error ? cause.message : "Could not update OpenBot."));
   }
 
   async function logout() {
     if (loggingOut()) return;
     setLoggingOut(true);
-    setError(null);
+    setMenuError(null);
     try {
       await props.onLogout();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not sign out.");
+      setMenuError(cause instanceof Error ? cause.message : "Could not sign out.");
       setLoggingOut(false);
-    }
-  }
-
-  async function updateAvatar(image: AvatarImageInput | null) {
-    if (avatarBusy()) return;
-    setAvatarBusy(true);
-    setError(null);
-    try {
-      await props.onUpdateAccountAvatar(image);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not update your avatar.");
-    } finally {
-      setAvatarBusy(false);
-    }
-  }
-
-  async function uploadAvatar(file: File | undefined) {
-    if (!file) return;
-    setAvatarBusy(true);
-    setError(null);
-    try {
-      await props.onUpdateAccountAvatar(await normalizeAvatarFile(file));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not update your avatar.");
-    } finally {
-      setAvatarBusy(false);
-      if (avatarInput) avatarInput.value = "";
     }
   }
 
@@ -228,42 +214,107 @@ export function AccountDock(props: AccountDockProps) {
     );
   }
 
-  return (
-    <div
-      class={[
-        "account-dock",
-        {
-          "account-dock-with-server-rail": props.withServerRail,
-          "account-dock-compact": props.compact,
-        },
-      ]}
-    >
+  function accountMenu() {
+    return (
+      <>
+        <section class="account-menu-group" aria-label="OpenBot">
+          <Show when={props.updateStatus.phase !== "unsupported"}>
+            <Button
+              variant="ghost"
+              type="button"
+              class="account-menu-row"
+              onClick={runUpdateAction}
+              disabled={updatePresentation().busy}
+            >
+              <CircleArrowDown
+                class={updatePresentation().busy ? "account-menu-icon account-menu-icon-spinning" : "account-menu-icon"}
+                aria-hidden="true"
+              />
+              <span>{updatePresentation().actionLabel}</span>
+              <small>{updatePresentation().detail}</small>
+            </Button>
+          </Show>
+          <Button
+            variant="ghost"
+            type="button"
+            class="account-menu-row"
+            onClick={() => {
+              setMenuOpen(false);
+              props.onOpenSkills();
+            }}
+          >
+            <Puzzle class="account-menu-icon" aria-hidden="true" />
+            <span>Marketplace</span>
+          </Button>
+          <Button
+            variant="ghost"
+            type="button"
+            class="account-menu-row"
+            onClick={() => {
+              setMenuOpen(false);
+              props.onOpenPermissions();
+            }}
+          >
+            <ShieldCheck class="account-menu-icon" aria-hidden="true" />
+            <span>Providers &amp; permissions</span>
+          </Button>
+        </section>
+
+        <div class="account-menu-separator" />
+        <section class="account-menu-group" aria-label="Help">
+          <Button variant="ghost" type="button" class="account-menu-row" onClick={() => openExternal("feedback")}>
+            <Megaphone class="account-menu-icon" aria-hidden="true" />
+            <span>Send feedback</span>
+          </Button>
+          <Button variant="ghost" type="button" class="account-menu-row" onClick={() => openExternal("message")}>
+            <Mail class="account-menu-icon" aria-hidden="true" />
+            <span>Message</span>
+          </Button>
+        </section>
+
+        <div class="account-menu-separator" />
+        <Button
+          variant="ghost"
+          type="button"
+          class="account-menu-row account-menu-danger"
+          onClick={() => void logout()}
+          disabled={loggingOut()}
+        >
+          <LogOut class="account-menu-icon" aria-hidden="true" />
+          <span>{loggingOut() ? "Signing out…" : "Sign out"}</span>
+        </Button>
+        <Show when={accountMenuError()}>{(message) => <p class="account-popover-error">{message()}</p>}</Show>
+      </>
+    );
+  }
+
+  function legacyDock() {
+    return (
       <Popover.Root
-        open={open()}
+        open={menuOpen()}
         onOpenChange={(nextOpen) => {
-          setOpen(nextOpen);
+          setMenuOpen(nextOpen);
           if (nextOpen) {
-            setError(null);
-            void refreshUsage();
+            setMenuError(null);
+          } else {
+            restoreFocusWhenDockIsIdle(legacyTrigger);
           }
         }}
         placement="top-start"
         gutter={8}
       >
         <Popover.Trigger
-          ref={(element) => (triggerElement = element)}
+          ref={(element) => (legacyTrigger = element)}
           as="button"
           type="button"
           class={buttonVariants({ variant: "ghost", class: "account-dock-trigger" })}
           aria-label="Open account menu"
-          aria-expanded={open() ? "true" : "false"}
+          aria-expanded={menuOpen() ? "true" : "false"}
         >
           {avatar("account-dock-avatar")}
           <span class="account-dock-copy">
-            <strong>{accountName()}</strong>
-            <Show when={props.account.name?.trim()}>
-              <span>{props.account.email}</span>
-            </Show>
+            <strong title={accountName()}>{accountName()}</strong>
+            <span title={props.account.email}>{props.account.email}</span>
             <Show when={props.appInfo}>
               {(info) => (
                 <span class="sr-only" data-testid="app-version">
@@ -278,141 +329,224 @@ export function AccountDock(props: AccountDockProps) {
             </Badge>
             <span class="sr-only">OpenBot update available</span>
           </Show>
-          <ChevronIcon />
+          <ChevronUp class="account-dock-chevron" aria-hidden="true" />
         </Popover.Trigger>
 
         <Popover.Portal>
-          <Popover.Content class="account-popover" aria-hidden={open() ? undefined : "true"}>
-            <Popover.Title class="sr-only">Account</Popover.Title>
-            <div class="account-profile-card">
-              <Input
-                ref={(element) => (avatarInput = element)}
-                class="sr-only"
-                type="file"
-                aria-label="Account profile photo"
-                accept="image/png,image/jpeg,image/webp"
-                onChange={(event) => void uploadAvatar(event.currentTarget.files?.[0])}
-              />
-              <Button
-                variant="ghost"
-                type="button"
-                class="account-profile-photo"
-                aria-label={props.account.avatarUrl ? "Replace photo" : "Upload photo"}
-                onClick={() => avatarInput?.click()}
-                disabled={avatarBusy()}
-              >
-                {avatar("account-profile-avatar")}
-                <span class="account-profile-photo-action">
-                  <CameraIcon />
-                </span>
-              </Button>
-              <div class="account-profile-copy">
-                <strong>{accountName()}</strong>
-                <Show when={props.account.name?.trim()}>
-                  <span>{props.account.email}</span>
-                </Show>
-                <Show when={props.account.avatarUrl}>
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    class="account-profile-remove"
-                    onClick={() => void updateAvatar(null)}
-                    disabled={avatarBusy()}
-                  >
-                    Remove photo
-                  </Button>
-                </Show>
-              </div>
-            </div>
-
-            <div class="account-menu-separator" />
-            <Show when={props.updateStatus.phase !== "unsupported"}>
-              <Button
-                variant="ghost"
-                type="button"
-                class="account-menu-row account-update-row"
-                onClick={runUpdateAction}
-                disabled={updatePresentation().busy}
-              >
-                <UpdateIcon active={updatePresentation().busy} />
-                <span>{updatePresentation().actionLabel}</span>
-                <small>{updatePresentation().detail}</small>
-              </Button>
-            </Show>
-            <Button
-              variant="destructive-ghost"
-              type="button"
-              class="account-menu-row"
-              onClick={() => void refreshUsage()}
-              disabled={usageLoading() || props.agentStatus.phase !== "ready"}
-            >
-              <UsageIcon />
-              <span>{usageLoading() ? "Updating usage…" : "Weekly usage"}</span>
-              <small>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</small>
-            </Button>
-
-            <div class="account-menu-separator" />
-            <Button
-              variant="ghost"
-              type="button"
-              class="account-menu-row"
-              onClick={() => {
-                setOpen(false);
-                if (triggerElement) props.onOpenSettings(triggerElement);
-              }}
-            >
-              <Settings class="account-menu-icon" />
-              <span>Settings</span>
-            </Button>
-            <Button
-              variant="ghost"
-              type="button"
-              class="account-menu-row"
-              onClick={() => {
-                setOpen(false);
-                props.onOpenSkills();
-              }}
-            >
-              <Puzzle class="account-menu-icon" />
-              <span>Marketplace</span>
-            </Button>
-            <Button
-              type="button"
-              class="account-menu-row"
-              onClick={() => {
-                setOpen(false);
-                props.onOpenPermissions();
-              }}
-            >
-              <PermissionsIcon />
-              <span>Providers &amp; permissions</span>
-            </Button>
-
-            <div class="account-menu-separator" />
-            <Button variant="ghost" type="button" class="account-menu-row" onClick={() => openExternal("feedback")}>
-              <FeedbackIcon />
-              <span>Send feedback</span>
-            </Button>
-            <Button variant="ghost" type="button" class="account-menu-row" onClick={() => openExternal("message")}>
-              <MessageIcon />
-              <span>Message</span>
-            </Button>
-
-            <div class="account-menu-separator" />
-            <Button
-              variant="ghost"
-              type="button"
-              class="account-menu-row account-menu-danger"
-              onClick={() => void logout()}
-              disabled={loggingOut()}
-            >
-              <LogoutIcon />
-              <span>{loggingOut() ? "Signing out…" : "Sign out"}</span>
-            </Button>
-            <Show when={popoverError()}>{(message) => <p class="account-popover-error">{message()}</p>}</Show>
+          <Popover.Content
+            class="ui-popover-menu-surface account-popover"
+            aria-hidden={menuOpen() ? undefined : "true"}
+          >
+            <Popover.Title class="sr-only">Account actions</Popover.Title>
+            {accountMenu()}
           </Popover.Content>
         </Popover.Portal>
       </Popover.Root>
+    );
+  }
+
+  function hybridDock() {
+    return (
+      <div class="account-dock-hybrid-shelf">
+        <Popover.Root
+          open={menuOpen()}
+          onOpenChange={(nextOpen) => {
+            setMenuOpen(nextOpen);
+            if (nextOpen) {
+              setUsageOpen(false);
+              setMenuError(null);
+            } else {
+              restoreFocusWhenDockIsIdle(menuTrigger);
+            }
+          }}
+          placement="top-start"
+          gutter={10}
+        >
+          <Popover.Trigger
+            ref={(element) => (menuTrigger = element)}
+            as="button"
+            type="button"
+            class={buttonVariants({ variant: "ghost", class: "account-dock-hybrid-identity" })}
+            aria-label="Open account actions"
+            aria-expanded={menuOpen() ? "true" : "false"}
+          >
+            <span class="account-dock-avatar-frame">{avatar("account-dock-avatar")}</span>
+            <span class="account-dock-copy">
+              <strong title={accountName()}>{accountName()}</strong>
+              <span title={props.account.email}>{props.account.email}</span>
+              <Show when={props.appInfo}>
+                {(info) => (
+                  <span class="sr-only" data-testid="app-version">
+                    Version {info().version} · {info().platform}
+                  </span>
+                )}
+              </Show>
+              <Show when={updatePresentation().available}>
+                <span class="sr-only">OpenBot update available</span>
+              </Show>
+            </span>
+          </Popover.Trigger>
+          <Popover.Portal>
+            <Popover.Content
+              class="ui-popover-menu-surface account-popover"
+              aria-hidden={menuOpen() ? undefined : "true"}
+            >
+              <Popover.Title class="sr-only">Account actions</Popover.Title>
+              {accountMenu()}
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
+
+        <Tooltip.Root
+          open={usageTooltipOpen()}
+          onOpenChange={(nextOpen) => setUsageTooltipOpen(usageOpen() ? false : nextOpen)}
+          openDelay={250}
+          closeDelay={75}
+          placement="top"
+          gutter={8}
+        >
+          <Tooltip.Trigger as="div" class="account-dock-tooltip-trigger">
+            <Popover.Root
+              open={usageOpen()}
+              onOpenChange={(nextOpen) => {
+                setUsageOpen(nextOpen);
+                if (nextOpen) {
+                  setUsageTooltipOpen(false);
+                  setMenuOpen(false);
+                  if (!props.accountUsage && !usageLoading()) void refreshUsage();
+                } else {
+                  restoreFocusWhenDockIsIdle(usageTrigger);
+                }
+              }}
+              placement="top-end"
+              gutter={10}
+            >
+              <Popover.Trigger
+                ref={(element) => (usageTrigger = element)}
+                as="button"
+                type="button"
+                class={buttonVariants({ variant: "ghost", class: "account-dock-usage-trigger" })}
+                aria-label={usageButtonLabel()}
+                aria-expanded={usageOpen() ? "true" : "false"}
+                data-usage-tone={usageTone()}
+                style={{ "--account-usage-value": `${usageValue()}%` }}
+              >
+                <span class="account-dock-usage-chip">
+                  <Gauge aria-hidden="true" />
+                  <strong>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</strong>
+                </span>
+                <span class="account-dock-usage-ring" aria-hidden="true">
+                  <span>{weeklyUsageRemaining() === null ? "—" : weeklyUsageRemaining()}</span>
+                </span>
+                <span class="account-dock-usage-bar" aria-hidden="true">
+                  <strong>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</strong>
+                  <Progress value={usageValue()} />
+                </span>
+              </Popover.Trigger>
+              <Popover.Portal>
+                <Popover.Content
+                  class="ui-popover-menu-surface account-usage-popover"
+                  aria-hidden={usageOpen() ? undefined : "true"}
+                >
+                  <header class="account-usage-popover-header">
+                    <div class="account-usage-popover-heading">
+                      <Gauge aria-hidden="true" />
+                      <Popover.Title class="account-usage-popover-title">Weekly usage</Popover.Title>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      type="button"
+                      size="icon-sm"
+                      class="account-usage-refresh"
+                      aria-label={usageRefreshActive() ? "Refreshing" : usageError() ? "Try again" : "Refresh"}
+                      title="Refresh usage"
+                      onClick={refreshUsageWithFeedback}
+                      disabled={usageRefreshActive() || props.agentStatus.phase !== "ready"}
+                    >
+                      <RefreshCw
+                        class={usageRefreshActive() ? "account-menu-icon-spinning" : undefined}
+                        aria-hidden="true"
+                      />
+                    </Button>
+                  </header>
+                  <div class="account-usage-popover-meter">
+                    <RadialProgress
+                      value={usageValue()}
+                      tone={usageRadialTone()}
+                      aria-label="Weekly usage remaining"
+                      aria-valuetext={
+                        usageLoading() && weeklyUsageRemaining() === null
+                          ? "Loading"
+                          : weeklyUsageRemaining() === null
+                            ? "Unavailable"
+                            : `${weeklyUsageRemaining()}% left`
+                      }
+                    >
+                      <strong>
+                        {usageLoading() && weeklyUsageRemaining() === null
+                          ? "…"
+                          : weeklyUsageRemaining() === null
+                            ? "—"
+                            : `${weeklyUsageRemaining()}%`}
+                      </strong>
+                    </RadialProgress>
+                  </div>
+                  <div class="account-usage-popover-reset">
+                    <CalendarClock aria-hidden="true" />
+                    <span>Resets</span>
+                    <strong>
+                      {weeklyUsageReset() ? weeklyUsageReset() : usageLoading() ? "Checking…" : "Unavailable"}
+                    </strong>
+                  </div>
+                  <Show when={usageError()}>{(message) => <p class="account-usage-popover-error">{message()}</p>}</Show>
+                </Popover.Content>
+              </Popover.Portal>
+            </Popover.Root>
+          </Tooltip.Trigger>
+          <Tooltip.Portal>
+            <Tooltip.Content class="account-dock-tooltip">Weekly usage</Tooltip.Content>
+          </Tooltip.Portal>
+        </Tooltip.Root>
+
+        <Tooltip.Root openDelay={250} closeDelay={75} placement="top" gutter={8}>
+          <Tooltip.Trigger as="div" class="account-dock-tooltip-trigger">
+            <Button
+              ref={(element) => (settingsTrigger = element)}
+              variant="ghost"
+              type="button"
+              class="account-dock-icon-button"
+              aria-label="Settings"
+              onClick={() => {
+                setMenuOpen(false);
+                setUsageOpen(false);
+                if (settingsTrigger) props.onOpenSettings(settingsTrigger);
+              }}
+            >
+              <Settings aria-hidden="true" />
+            </Button>
+          </Tooltip.Trigger>
+          <Tooltip.Portal>
+            <Tooltip.Content class="account-dock-tooltip">Settings</Tooltip.Content>
+          </Tooltip.Portal>
+        </Tooltip.Root>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      class={[
+        "account-dock",
+        {
+          "account-dock-with-server-rail": props.withServerRail,
+          "account-dock-compact": props.compact,
+          "account-dock-hybrid": hybridLayout(),
+        },
+      ]}
+    >
+      <Show when={hybridLayout()} fallback={legacyDock()}>
+        {hybridDock()}
+      </Show>
     </div>
   );
 }

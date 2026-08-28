@@ -203,7 +203,6 @@ function WorkspaceShell(props: {
     connectGrok,
     refreshAccountUsage,
     runUpdateAction,
-    updateAccountAvatar,
     logoutCentralAccount,
     setPermissionsOpen,
     appSettingsOpen,
@@ -347,8 +346,8 @@ function WorkspaceShell(props: {
         onEditBot={editBot}
         onDeleteBot={deleteBot}
         compact={leftPanelCompact()}
-        onCollapse={() => setSidebarCollapsed(true)}
         onExpand={expandSidebar}
+        onOpenMarketplace={() => setSkillsMarketplaceOpen(true)}
         emptyAction={
           botList().length === 0
             ? {
@@ -389,7 +388,6 @@ function WorkspaceShell(props: {
             withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
             onRefreshUsage={refreshAccountUsage}
             onUpdateAction={runUpdateAction}
-            onUpdateAccountAvatar={updateAccountAvatar}
             onLogout={logoutCentralAccount}
             onOpenExternal={(destination) => window.openbot.openExternal(destination)}
             onOpenPermissions={() => setPermissionsOpen(true)}

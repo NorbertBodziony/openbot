@@ -1069,6 +1069,61 @@
   transition: width var(--openbot-duration-normal) var(--openbot-ease-out);
 }
 
+.ui-radial-progress {
+  --ui-radial-progress-color: var(--openbot-accent);
+
+  position: relative;
+  display: grid;
+  width: 104px;
+  aspect-ratio: 1;
+  place-items: center;
+  color: var(--ui-radial-progress-color);
+}
+
+.ui-radial-progress[data-tone="warning"] {
+  --ui-radial-progress-color: var(--openbot-warning);
+}
+
+.ui-radial-progress[data-tone="danger"] {
+  --ui-radial-progress-color: var(--openbot-danger-strong);
+}
+
+.ui-radial-progress-chart {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.ui-radial-progress-track,
+.ui-radial-progress-indicator {
+  fill: none;
+}
+
+.ui-radial-progress-track {
+  stroke: var(--openbot-border-strong);
+}
+
+.ui-radial-progress-indicator {
+  stroke: currentcolor;
+  stroke-linecap: butt;
+  transition:
+    stroke-dasharray var(--openbot-duration-normal) var(--openbot-ease-out),
+    stroke-dashoffset var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+.ui-radial-progress-indicator[data-linecap="round"] {
+  stroke-linecap: round;
+}
+
+.ui-radial-progress-content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  color: var(--openbot-text-primary);
+}
+
 .ui-toaster[data-sonner-toaster][data-sonner-theme="dark"] {
   z-index: var(--openbot-layer-toast);
   color: var(--openbot-text-primary);
@@ -1211,7 +1266,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ui-progress-fill {
+  .ui-progress-fill,
+  .ui-radial-progress-indicator {
     animation: none;
     transition: none;
   }

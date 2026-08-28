@@ -1,4 +1,5 @@
 import type {
+  AccountUsage,
   AgentEvent,
   AgentModelOption,
   AgentStatus,
@@ -86,6 +87,7 @@ export interface MockOpenBotOptions {
   authState?: CentralAuthState;
   setupState?: AppSetupState;
   agentStatus?: AgentStatus;
+  usage?: AccountUsage;
   bots?: BotSummary[];
   models?: AgentModelOption[];
   snapshots?: Record<string, ConversationSnapshot>;
@@ -172,7 +174,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let sessions = clone(options.sessions ?? STORY_SESSIONS);
   let remoteDesktopSessions = clone(options.remoteDesktopSessions ?? [STORY_REMOTE_DESKTOP_SESSION]);
   let updateStatus = clone(options.updateStatus ?? STORY_UPDATE_STATUS);
-  const usage = clone(STORY_USAGE);
+  const usage = clone(options.usage ?? STORY_USAGE);
   let botCounter = bots.length;
   let messageCounter = 10;
   let directMessageCounter = 10;
