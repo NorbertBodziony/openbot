@@ -87,6 +87,7 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     steerQueuedMessage: unimplemented,
     updateQueuedMessage: unimplemented,
     reorderQueue: unimplemented,
+    stopAgent: unimplemented,
     interrupt: unimplemented,
     respondToPrompt: unimplemented,
     respondToApproval: unimplemented,

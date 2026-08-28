@@ -98,6 +98,7 @@ type TeamApiAgentMethods = Pick<
   | "steerQueuedMessage"
   | "updateQueuedMessage"
   | "reorderQueue"
+  | "stopAgent"
   | "interrupt"
   | "respondToPrompt"
   | "respondToApproval"
@@ -1035,6 +1036,10 @@ export class TeamApiServer {
         if (method === "POST" && action === "interrupt") {
           const body = await readJson(request);
           await this.#options.agents.interrupt(botId, stringField(body, "turnId"));
+          return this.#empty(response, 204);
+        }
+        if (method === "POST" && action === "stop") {
+          await this.#options.agents.stopAgent(botId);
           return this.#empty(response, 204);
         }
       }

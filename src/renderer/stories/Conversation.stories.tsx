@@ -951,6 +951,21 @@ type Story = StoryObj<typeof meta>;
 
 export const RichConversation: Story = {};
 
+export const InputStates: Story = {
+  name: "Input states",
+  args: {
+    activeTurnId: "turn-input-states",
+    queue: {
+      ...queue,
+      deliveries: queue.deliveries.map((delivery) => ({
+        ...delivery,
+        status: "running",
+        turnId: "turn-input-states",
+      })),
+    },
+  },
+};
+
 export const AllBotMessageTypes: Story = {
   name: "All bot message types",
   args: {

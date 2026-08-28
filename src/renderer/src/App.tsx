@@ -732,15 +732,17 @@ export function createAppController(props: AppProps = {}) {
       conversationPageRequests.set(botId, pageRequest);
       const queueRequest = (queueSnapshotRequests.get(botId) ?? 0) + 1;
       queueSnapshotRequests.set(botId, queueRequest);
-      void Promise.all([
-        window.openbot.agent.readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 }),
-        window.openbot.agent.listQueue(botId),
-      ])
-        .then(([page, queue]) => {
+      void window.openbot.agent
+        .listQueue(botId)
+        .then((queue) => {
+          if (queueSnapshotRequests.get(botId) !== queueRequest) return;
+          setQueues((current) => ({ ...current, [botId]: queue }));
+        })
+        .catch((error) => appendUiError(botId, error, "Queue load failed"));
+      void window.openbot.agent
+        .readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 })
+        .then((page) => {
           if (conversationPageRequests.get(botId) !== pageRequest) return;
-          if (queueSnapshotRequests.get(botId) === queueRequest) {
-            setQueues((current) => ({ ...current, [botId]: queue }));
-          }
           applyConversationPage(page, true, "latest");
           if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
             void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null).catch((error) =>
@@ -1900,22 +1902,21 @@ export function createAppController(props: AppProps = {}) {
       });
   }
 
-  function stopActiveTurn() {
+  async function stopActiveTurn(): Promise<void> {
     const bot = activeBot();
-    const turnId = bot ? activeTurns()[bot.id] : null;
-    if (!bot || !turnId) return;
+    if (!bot) return;
     const analytics = desktopAnalytics.scope();
-    void window.openbot.agent
-      .interrupt({ botId: bot.id, turnId })
-      .then(() => analytics.track("queue_action", { action: "interrupt", result: "succeeded" }))
-      .catch((error) => {
-        analytics.track("queue_action", {
-          action: "interrupt",
-          result: "failed",
-          failure_code: "interrupt_failed",
-        });
-        appendUiError(bot.id, error, "Stop failed");
+    try {
+      await window.openbot.agent.stop({ botId: bot.id });
+      analytics.track("queue_action", { action: "stop", result: "succeeded" });
+    } catch (error) {
+      analytics.track("queue_action", {
+        action: "stop",
+        result: "failed",
+        failure_code: "stop_failed",
       });
+      appendUiError(bot.id, error, "Stop failed");
+    }
   }
 
   async function refreshAccountUsage(): Promise<AccountUsage> {

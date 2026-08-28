@@ -192,6 +192,30 @@ describe("MailboxStore", () => {
     });
   });
 
+  it("persists one stop across active and queued deliveries", async () => {
+    const first = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Active work",
+    });
+    const second = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Queued work",
+    });
+    await store.markStarting(first.deliveries[0].id);
+    await store.markRunning(first.deliveries[0].id, "turn-1");
+
+    await expect(store.stopPending("chief", "Stopped by the user.")).resolves.toEqual({ turnIds: ["turn-1"] });
+
+    const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    expect(restored.listQueue("chief").deliveries).toMatchObject([
+      { id: first.deliveries[0].id, status: "interrupted", error: "Stopped by the user." },
+      { id: second.deliveries[0].id, status: "cancelled" },
+    ]);
+  });
+
   it("keeps enqueue idempotent in SQLite", async () => {
     const original = join(root, "retry.txt");
     await writeFile(original, "retry me\n");

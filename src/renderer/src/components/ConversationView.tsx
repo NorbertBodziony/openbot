@@ -221,7 +221,7 @@ export interface ConversationProps {
   onCloseBrowserTab: (tabId: string) => void | Promise<void>;
   onOpenRemoteDesktop: (serverId: string, trigger: HTMLElement) => Promise<void>;
   onOpenAgentSetup: () => Promise<void>;
-  onStop: () => void;
+  onStop: () => Promise<void>;
 }
 
 export interface ComposerDraft {
@@ -2212,6 +2212,22 @@ export function ConversationHeader() {
     settingsModel,
     showBrowserPanel,
   } = useConversationViewScope();
+  const [stoppingAgent, setStoppingAgent] = createSignal(false);
+  const hasActiveWork = createMemo(
+    () =>
+      Boolean(props.activeTurnId) ||
+      Boolean(props.queue?.deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status))),
+  );
+
+  async function stopAgent(): Promise<void> {
+    if (stoppingAgent()) return;
+    setStoppingAgent(true);
+    try {
+      await props.onStop();
+    } finally {
+      setStoppingAgent(false);
+    }
+  }
   return (
     <header class="window-drag conversation-header">
       <div class="conversation-heading-group">
@@ -2252,6 +2268,20 @@ export function ConversationHeader() {
             }
             onChange={(model, provider) => void selectAndConfirmModel(model, provider)}
           />
+        </Show>
+        <Show when={hasActiveWork()}>
+          <Button
+            variant="ghost"
+            type="button"
+            class="header-panel-toggle"
+            aria-label={stoppingAgent() ? "Stopping agent" : "Stop agent"}
+            disabled={stoppingAgent()}
+            onClick={() => void stopAgent()}
+          >
+            <Show when={!stoppingAgent()} fallback={<LoaderCircle aria-hidden="true" />}>
+              <StopIcon />
+            </Show>
+          </Button>
         </Show>
         <Show when={props.remoteDesktopEnabled !== false && props.server?.kind === "remote" ? props.server : undefined}>
           {(server) => {
@@ -2737,7 +2767,6 @@ export function ConversationComposer() {
     attachmentBusy,
     composerError,
     composerFocusRequest,
-    composerHasContent,
     currentDraft,
     editQueuedMessage,
     editingDeliveryId,
@@ -2767,6 +2796,22 @@ export function ConversationComposer() {
     voicePhase,
     voiceModelProgress,
   } = useConversationViewScope();
+  const [stoppingAgent, setStoppingAgent] = createSignal(false);
+  const hasActiveWork = createMemo(
+    () =>
+      Boolean(props.activeTurnId) ||
+      Boolean(props.queue?.deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status))),
+  );
+
+  async function stopAgent(): Promise<void> {
+    if (stoppingAgent()) return;
+    setStoppingAgent(true);
+    try {
+      await props.onStop();
+    } finally {
+      setStoppingAgent(false);
+    }
+  }
   return (
     <Show when={!props.prompt && !props.approval && !props.browserTakeover}>
       <div class="composer-wrap">
@@ -2947,6 +2992,21 @@ export function ConversationComposer() {
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
             <div class="composer-primary-actions">
+              <Show when={hasActiveWork()}>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  type="button"
+                  class="composer-stop-button"
+                  aria-label={stoppingAgent() ? "Stopping agent" : "Stop agent"}
+                  disabled={stoppingAgent()}
+                  onClick={() => void stopAgent()}
+                >
+                  <Show when={!stoppingAgent()} fallback={<LoaderCircle aria-hidden="true" />}>
+                    <StopIcon />
+                  </Show>
+                </Button>
+              </Show>
               <Show when={voicePhase() === "preparing"}>
                 <span class="voice-model-progress" role="status">
                   Downloading voice model {voiceModelProgress() ?? 0}%
@@ -2995,31 +3055,16 @@ export function ConversationComposer() {
                   <MoreIcon />
                 </fieldset>
               </Show>
-              <Show
-                when={props.activeTurnId && !editingDeliveryId() && !composerHasContent()}
-                fallback={
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    class="voice-button"
-                    aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
-                    disabled={submitting() || selectionSending() || !agentReady()}
-                    onClick={() => void submitMessage()}
-                  >
-                    {submitting() ? "…" : "↑"}
-                  </Button>
-                }
+              <Button
+                variant="ghost"
+                type="button"
+                class="voice-button"
+                aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
+                disabled={submitting() || selectionSending() || !agentReady()}
+                onClick={() => void submitMessage()}
               >
-                <Button
-                  variant="ghost"
-                  type="button"
-                  class="voice-button voice-button-active"
-                  aria-label="Stop agent"
-                  onClick={props.onStop}
-                >
-                  <StopIcon />
-                </Button>
-              </Show>
+                {submitting() ? "…" : "↑"}
+              </Button>
             </div>
           </div>
         </div>

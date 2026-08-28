@@ -22,7 +22,7 @@ export function DownloadIcon() {
 export function StopIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20" class="size-[14px] fill-current">
-      <rect x="6" y="6" width="8" height="8" rx="1.5" />
+      <rect x="4" y="4" width="12" height="12" rx="2" />
     </svg>
   );
 }

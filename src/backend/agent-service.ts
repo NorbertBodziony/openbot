@@ -327,8 +327,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #itemTurns = new Map<string, string>();
   readonly #imageGenerationOperations = new Map<string, ImageGenerationOperation>();
   readonly #interruptedTurns = new Set<string>();
+  readonly #ignoredTurns = new Set<string>();
   readonly #turnAssociations = new Map<string, Promise<void>>();
   readonly #drainingBots = new Set<string>();
+  readonly #stoppingBots = new Set<string>();
   readonly #scheduledDrains = new Set<string>();
   readonly #drainTasks = new Map<string, Promise<void>>();
   readonly #lastConversationSignatures = new Map<string, string>();
@@ -855,6 +857,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     );
     this.#imageGenerationOperations.clear();
     this.#interruptedTurns.clear();
+    this.#ignoredTurns.clear();
     this.#setStatus({ phase: "stopped", message: null });
   }
 
@@ -1038,6 +1041,59 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!session) return;
     this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
     await client.request("turn/interrupt", { threadId: session.externalSessionId, turnId }, decodeRecordResponse);
+  }
+
+  async stopAgent(botId: string): Promise<void> {
+    const bot = this.#store.list().find((candidate) => candidate.id === botId);
+    if (!bot) throw new Error(`Unknown bot: ${botId}`);
+    if (this.#stoppingBots.has(botId)) return;
+    this.#stoppingBots.add(botId);
+    try {
+      const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
+      const session = this.#store.activeProviderSession(botId);
+      const activeTurnId = snapshot.activeTurnId;
+      const pending = await this.#mailbox.stopPending(botId, "Stopped by the user.");
+      const turnIds = new Set(pending.turnIds);
+      if (activeTurnId) turnIds.add(activeTurnId);
+
+      if (session) {
+        for (const turnId of turnIds) {
+          this.#ignoredTurns.add(`${session.externalSessionId}:${turnId}`);
+          this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
+          this.#clearPendingRequestsForTurn(session.externalSessionId, turnId);
+          const client = this.#clientForBot(bot);
+          if (client) {
+            await client
+              .request("turn/interrupt", { threadId: session.externalSessionId, turnId }, decodeRecordResponse, 2_000)
+              .catch((error) => this.#emitError("force_stop_interrupt_failed", error, botId));
+          }
+          this.#browser.endControl(bot.threadId ?? session.externalSessionId, turnId);
+        }
+      }
+
+      snapshot.activeTurnId = null;
+      for (const message of snapshot.messages) {
+        if (message.status !== "streaming") continue;
+        if (turnIds.size > 0 && (!message.turnId || !turnIds.has(message.turnId))) continue;
+        message.status = "interrupted";
+        markIncompleteImageGeneration(message, "interrupted");
+      }
+      this.#syncMailboxMessages(snapshot);
+      this.#emitQueue(botId);
+      this.#emitConversation(snapshot, "agent.stopped", { turnIds: [...turnIds] });
+      for (const turnId of turnIds) {
+        this.#emit({
+          type: "turn-completed",
+          botId,
+          threadId: bot.threadId ?? session?.externalSessionId ?? "",
+          turnId,
+          status: "interrupted",
+          origin: "unknown",
+        });
+      }
+    } finally {
+      this.#stoppingBots.delete(botId);
+    }
   }
 
   async interruptAll(): Promise<void> {
@@ -2358,6 +2414,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #scheduleDrain(botId: string): void {
     if (
       this.#stopping ||
+      this.#stoppingBots.has(botId) ||
       this.#status.phase !== "ready" ||
       this.#drainingBots.has(botId) ||
       this.#scheduledDrains.has(botId) ||
@@ -2379,6 +2436,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async #drainBot(botId: string): Promise<void> {
     if (
       this.#stopping ||
+      this.#stoppingBots.has(botId) ||
       this.#drainingBots.has(botId) ||
       this.#compactingBots.has(botId) ||
       this.#status.phase !== "ready"
@@ -2516,6 +2574,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         decodeTurnResponse,
       );
       await this.#mailbox.markRunning(delivery.id, response.turn.id);
+      const currentDelivery = this.#mailbox.getDelivery(delivery.id);
+      if (!currentDelivery || !["starting", "running"].includes(currentDelivery.delivery.status)) {
+        this.#ignoredTurns.add(`${threadId}:${response.turn.id}`);
+        await client
+          .request("turn/interrupt", { threadId, turnId: response.turn.id }, decodeRecordResponse, 2_000)
+          .catch((error) => this.#emitError("orphaned_turn_interrupt_failed", error, bot.id));
+        return;
+      }
       snapshot.activeTurnId = response.turn.id;
       this.#syncDeliveryMessage(snapshot, delivery.id);
       this.#emitQueue(bot.id);
@@ -2804,6 +2870,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           contextBudget.compactionTurnId = turnId;
           return;
         }
+        const delivery = this.#mailbox.startingDeliveryForBot(botId) ?? this.#mailbox.findDeliveryByTurn(turnId);
+        if (!delivery || !["starting", "running"].includes(delivery.delivery.status)) {
+          this.#ignoredTurns.add(`${threadId}:${turnId}`);
+          void source
+            .request("turn/interrupt", { threadId, turnId }, decodeRecordResponse, 2_000)
+            .catch((error) => this.#emitError("orphaned_turn_interrupt_failed", error, botId));
+          return;
+        }
         const publicThreadId = this.#publicThreadId(botId, threadId);
         const snapshot = this.#ensureSnapshot(botId, publicThreadId);
         snapshot.activeTurnId = turnId;
@@ -2825,6 +2899,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const turnId = getString(params, "turnId");
         const item = getRecord(params, "item");
         if (!turnId || !item) return;
+        if (this.#ignoredTurns.has(`${threadId}:${turnId}`)) return;
         const itemId = getString(item, "id");
         if (itemId) this.#itemTurns.set(itemId, turnId);
         if (item.type === "contextCompaction") {
@@ -2847,6 +2922,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const itemId = getString(params, "itemId");
         const delta = getString(params, "delta");
         if (!turnId || !itemId || delta === null) return;
+        if (this.#ignoredTurns.has(`${threadId}:${turnId}`)) return;
         this.#itemTurns.set(itemId, turnId);
         const publicThreadId = this.#publicThreadId(botId, threadId);
         const snapshot = this.#ensureSnapshot(botId, publicThreadId);
@@ -2874,6 +2950,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const turn = getRecord(params, "turn");
         const turnId = getString(turn, "id");
         if (!turnId) return;
+        if (this.#ignoredTurns.delete(`${threadId}:${turnId}`)) return;
         const status = getString(turn, "status") ?? "completed";
         this.#clearPendingRequestsForTurn(threadId, turnId);
         if (this.#contextBudgets.get(threadId)?.compactionTurnId === turnId) {

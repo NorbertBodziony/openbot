@@ -281,6 +281,7 @@ function createSmokeAgents(events: EventEmitter): SmokeAgents {
     steerQueuedMessage: unimplemented,
     updateQueuedMessage: unimplemented,
     reorderQueue: unimplemented,
+    stopAgent: unimplemented,
     interrupt: unimplemented,
     respondToPrompt: unimplemented,
     respondToApproval: unimplemented,

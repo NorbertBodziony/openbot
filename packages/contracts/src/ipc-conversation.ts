@@ -797,6 +797,10 @@ export interface InterruptTurnInput {
   turnId: string;
 }
 
+export interface StopAgentInput {
+  botId: string;
+}
+
 export interface AgentPromptQuestion {
   id: string;
   header: string;

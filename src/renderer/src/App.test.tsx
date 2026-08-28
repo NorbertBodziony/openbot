@@ -462,6 +462,7 @@ describe("OpenBot connected desktop shell", () => {
           steerQueuedMessage: vi.fn().mockResolvedValue(undefined),
           updateQueuedMessage: vi.fn().mockResolvedValue(undefined),
           reorderQueue: vi.fn().mockResolvedValue(undefined),
+          stop: vi.fn().mockResolvedValue(undefined),
           interrupt: vi.fn().mockResolvedValue(undefined),
           respondToPrompt: vi.fn().mockResolvedValue(undefined),
           respondToApproval: vi.fn().mockResolvedValue(undefined),
@@ -4461,6 +4462,33 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(window.openbot.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"));
     await waitFor(() => expect(screen.queryByRole("button", { name: /Sales Outbound/ })).not.toBeInTheDocument());
+  });
+
+  it("stops queued work when conversation loading and the runtime are unavailable", async () => {
+    vi.mocked(window.openbot.agent.readConversationPage).mockRejectedValue(new Error("OpenBot is not signed in."));
+    vi.mocked(window.openbot.agent.listQueue).mockResolvedValue({
+      botId: "chief",
+      deliveries: [
+        queuedDelivery("running-delivery", "Stuck work", null, {
+          status: "running",
+          turnId: "turn-stuck",
+        }),
+        queuedDelivery("queued-delivery", "Later work", 1),
+      ],
+    });
+
+    render(() => <App />);
+    await confirmOnboardingModel();
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Keep this draft";
+    await fireEvent.input(composer);
+
+    const stopButtons = await screen.findAllByRole("button", { name: "Stop agent" });
+    const composerStopButton = stopButtons.at(-1);
+    if (!composerStopButton) throw new Error("The composer stop control was not rendered.");
+    await fireEvent.click(composerStopButton);
+
+    await waitFor(() => expect(window.openbot.agent.stop).toHaveBeenCalledWith({ botId: "chief" }));
   });
 
   it("shows the server rail and opens the join flow", async () => {

@@ -64,7 +64,7 @@ export interface DesktopAnalyticsEvents {
     failure_code?: string;
   };
   queue_action: {
-    action: "cancel" | "steer" | "edit" | "reorder" | "interrupt";
+    action: "cancel" | "steer" | "edit" | "reorder" | "interrupt" | "stop";
     result: AnalyticsResult;
     failure_code?: string;
   };
@@ -282,7 +282,7 @@ const SAFE_FAILURE_CODES = new Set([
 const EVENT_ACTIONS: Partial<Record<AnalyticsEventName, readonly string[]>> = {
   agent_action: ["create", "update", "delete"],
   agent_input_action: ["prompt", "approval"],
-  queue_action: ["cancel", "steer", "edit", "reorder", "interrupt"],
+  queue_action: ["cancel", "steer", "edit", "reorder", "interrupt", "stop"],
   routine_action: ["create", "update", "delete", "test"],
   team_action: [
     "server_selected",

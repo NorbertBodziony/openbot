@@ -32,6 +32,7 @@ import {
   type SetMessageReactionInput,
   type SidebarLayoutAction,
   type SteerQueuedMessageInput,
+  type StopAgentInput,
   type TestRoutineInput,
   type UpdateBotInput,
   type UpdateBotMemoryInput,
@@ -483,6 +484,11 @@ export function parseInterrupt(value: unknown): InterruptTurnInput {
     botId: requireString(value.botId, "botId"),
     turnId: requireString(value.turnId, "turnId"),
   };
+}
+
+export function parseStopAgent(value: unknown): StopAgentInput {
+  if (!isObject(value)) throw new Error("Invalid stop request.");
+  return { botId: requireString(value.botId, "botId") };
 }
 
 export function parsePromptResponse(value: unknown): RespondToPromptInput {

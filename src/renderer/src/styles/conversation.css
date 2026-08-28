@@ -6025,6 +6025,17 @@
   gap: 6px;
 }
 
+.composer-stop-button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.composer-stop-button svg {
+  width: 16px;
+  height: 16px;
+}
+
 .voice-model-progress {
   color: var(--openbot-text-muted);
   font-size: var(--openbot-text-xs);
