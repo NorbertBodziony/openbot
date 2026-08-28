@@ -143,13 +143,13 @@ interface AgentBrowserHost {
 interface PendingPrompt {
   client: AgentClient;
   id: RequestId;
+  responseKind: "dynamic-tool" | "user-input";
   params: unknown;
   botId: string;
   publicThreadId: string;
   turnId: string;
   messageId: string;
   questions: AgentPromptQuestion[];
-  resolve?: (result: DynamicToolResult) => void;
 }
 
 interface PendingApproval {
@@ -1077,15 +1077,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!pending) throw new Error("This prompt is no longer active.");
     this.#markRoutineRunningForTurn(getString(pending.params, "turnId"));
 
+    const result =
+      pending.responseKind === "dynamic-tool"
+        ? dynamicPromptResult(input.answers)
+        : {
+            answers: Object.fromEntries(Object.entries(input.answers).map(([id, values]) => [id, { answers: values }])),
+          };
+    pending.client.respond(pending.id, result);
     this.#resolvePersistedPrompt(pending, promptResolution(pending.questions, input.answers));
     this.#pendingPrompts.delete(input.requestId);
-    if (pending.resolve) {
-      pending.resolve(dynamicPromptResult(input.answers));
-      return;
-    }
-
-    const answers = Object.fromEntries(Object.entries(input.answers).map(([id, values]) => [id, { answers: values }]));
-    pending.client.respond(pending.id, { answers });
   }
 
   async respondToApproval(input: RespondToApprovalInput): Promise<void> {
@@ -2000,7 +2000,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
           if (request.params.namespace === "openbot") {
             if (request.params.tool === "ask_user") {
-              client.respond(request.id, await this.#surfaceDynamicPrompt(client, request));
+              this.#surfaceDynamicPrompt(client, request);
               return;
             }
             client.respond(request.id, await this.#handleOpenBotTool(request.params));
@@ -3406,7 +3406,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const pendingTurnId = getString(pending.params, "turnId");
       if (pendingThreadId === threadId && pendingTurnId === turnId) {
         this.#resolvePersistedPrompt(pending, { status: "expired" });
-        pending.resolve?.(dynamicPromptResult({}));
         this.#pendingPrompts.delete(requestId);
       }
     }
@@ -3427,7 +3426,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #clearPendingPrompts(): void {
     for (const pending of this.#pendingPrompts.values()) {
       this.#resolvePersistedPrompt(pending, { status: "expired" });
-      pending.resolve?.(dynamicPromptResult({}));
     }
     this.#pendingPrompts.clear();
   }
@@ -3491,15 +3489,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
   }
 
-  #surfaceDynamicPrompt(client: AgentClient, request: AppServerRequest): Promise<DynamicToolResult> {
+  #surfaceDynamicPrompt(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "threadId");
     const turnId = getString(request.params, "turnId");
     const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
     const publicThreadId = threadId && botId ? this.#publicThreadId(botId, threadId) : null;
     const args = getRecord(request.params, "arguments");
     const questions = promptQuestions(args);
-    if (!threadId || !turnId || !botId || !publicThreadId || questions.length === 0) {
-      return Promise.resolve({
+    if (!threadId || !turnId || !botId || !publicThreadId || !validPromptQuestions(questions)) {
+      client.respond(request.id, {
         success: false,
         contentItems: [
           {
@@ -3508,30 +3506,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           },
         ],
       });
+      return;
     }
 
-    return new Promise((resolve) => {
-      const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
-      this.#pendingPrompts.set(request.id, {
-        client,
-        id: request.id,
-        params: request.params,
-        botId,
-        publicThreadId,
-        turnId,
-        messageId,
-        questions,
-        resolve,
-      });
-      this.#markRoutineNeedsAttention(turnId);
-      this.#emit({
-        type: "prompt",
-        requestId: request.id,
-        botId,
-        threadId: publicThreadId,
-        turnId,
-        questions,
-      });
+    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
+    this.#pendingPrompts.set(request.id, {
+      client,
+      id: request.id,
+      responseKind: "dynamic-tool",
+      params: request.params,
+      botId,
+      publicThreadId,
+      turnId,
+      messageId,
+      questions,
+    });
+    this.#markRoutineNeedsAttention(turnId);
+    this.#emit({
+      type: "prompt",
+      requestId: request.id,
+      botId,
+      threadId: publicThreadId,
+      turnId,
+      questions,
     });
   }
 
@@ -3545,11 +3542,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     const questions = promptQuestions(request.params);
+    if (!validPromptQuestions(questions)) {
+      client.respond(request.id, { answers: {} });
+      return;
+    }
     const publicThreadId = this.#publicThreadId(botId, threadId);
     const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
     this.#pendingPrompts.set(request.id, {
       client,
       id: request.id,
+      responseKind: "user-input",
       params: request.params,
       botId,
       publicThreadId,
@@ -3584,7 +3586,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         turnId,
         author: "assistant",
         source: "assistant",
-        text: "",
+        text: questionPromptText(questions, null),
         createdAt: new Date().toISOString(),
         status: "completed",
         itemType: "question_prompt",
@@ -3604,6 +3606,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const message = snapshot.messages.find((candidate) => candidate.id === pending.messageId);
     if (!message?.questionPrompt || message.questionPrompt.resolution !== null) return;
     message.questionPrompt.resolution = structuredClone(resolution);
+    message.text = questionPromptText(message.questionPrompt.questions, resolution);
     this.#emitConversation(snapshot, "prompt.resolved", {
       turnId: pending.turnId,
       requestId: pending.id,
@@ -4366,6 +4369,25 @@ function promptQuestions(params: unknown): AgentPromptQuestion[] {
           }))
         : null,
     }));
+}
+
+function validPromptQuestions(questions: AgentPromptQuestion[]): boolean {
+  return questions.length > 0 && new Set(questions.map((question) => question.id)).size === questions.length;
+}
+
+function questionPromptText(questions: AgentPromptQuestion[], resolution: AgentPromptResolution | null): string {
+  const responses = resolution?.status === "answered" ? resolution.responses : null;
+  return questions
+    .map((question) => {
+      const lines = [`Question: ${question.question}`];
+      if (!responses) return lines.join("\n");
+      const response = responses[question.id];
+      if (!response || response.status === "skipped") lines.push("Answer: Skipped");
+      else if (question.isSecret || !response.answers) lines.push("Answer: Private answer");
+      else lines.push(`Answer: ${response.answers.join(", ")}`);
+      return lines.join("\n");
+    })
+    .join("\n\n");
 }
 
 function promptResolution(questions: AgentPromptQuestion[], answers: Record<string, string[]>): AgentPromptResolution {

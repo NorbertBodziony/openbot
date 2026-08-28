@@ -797,6 +797,7 @@ describe.sequential("AgentService", () => {
     );
     expect(pendingMessage).toMatchObject({
       itemType: "question_prompt",
+      text: expect.stringContaining("What is your favorite color?"),
       questionPrompt: { resolution: null },
     });
 
@@ -829,12 +830,17 @@ describe.sequential("AgentService", () => {
         token: { status: "answered" },
       },
     });
+    expect(resolvedMessage?.text).toContain("Answer: Blue");
+    expect(resolvedMessage?.text).toContain("Answer: Private answer");
     expect(JSON.stringify(resolvedMessage)).not.toContain("super-secret");
     const persisted = store.database.readConversation(
       "chief",
       resolvedMessage?.turnId ? (store.list().find((bot) => bot.id === "chief")?.threadId ?? null) : null,
     );
     expect(JSON.stringify(persisted)).not.toContain("super-secret");
+    expect(service.searchConversationMessages("Blue", "chief").results).toEqual([
+      expect.objectContaining({ message: expect.objectContaining({ id: resolvedMessage?.id }) }),
+    ]);
 
     client.emit("request", {
       method: "item/tool/call",
@@ -879,6 +885,72 @@ describe.sequential("AgentService", () => {
         (message) => message.questionPrompt?.requestId === "cancelled-question-call",
       )?.questionPrompt?.resolution,
     ).toEqual({ status: "cancelled" });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "duplicate-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "duplicate-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [
+            { id: "duplicate", header: "Secret", question: "Private value?", isSecret: true },
+            { id: "duplicate", header: "Public", question: "Public value?" },
+          ],
+        },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "duplicate-question-call"));
+    expect(client.responses.find((response) => response.id === "duplicate-question-call")?.result).toMatchObject({
+      success: false,
+    });
+    expect(events.filter((event) => event.type === "prompt")).toHaveLength(3);
+
+    client.emit("request", {
+      method: "item/tool/requestUserInput",
+      id: "empty-legacy-question",
+      params: { threadId, turnId, questions: [] },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "empty-legacy-question"));
+    expect(client.responses.find((response) => response.id === "empty-legacy-question")?.result).toEqual({
+      answers: {},
+    });
+    expect(events.filter((event) => event.type === "prompt")).toHaveLength(3);
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "retry-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "retry-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "retry", header: "Retry", question: "Can this answer be retried?" }],
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 4);
+    client.responseError = new Error("Provider process is not running.");
+    await expect(
+      service.respondToPrompt({ requestId: "retry-question-call", answers: { retry: ["Yes"] } }),
+    ).rejects.toThrow("Provider process is not running.");
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "retry-question-call",
+      )?.questionPrompt?.resolution,
+    ).toBeNull();
+    client.responseError = null;
+    await service.respondToPrompt({ requestId: "retry-question-call", answers: { retry: ["Yes"] } });
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "retry-question-call",
+      )?.questionPrompt?.resolution,
+    ).toEqual({ status: "answered", responses: { retry: { status: "answered", answers: ["Yes"] } } });
   });
 
   it("pauses a browser tool call until the user resolves the takeover", async () => {
@@ -2816,6 +2888,7 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
   readonly errors: Array<{ id: RequestId; error: RpcError }> = [];
   #threadCounter = 0;
   running = false;
+  responseError: Error | null = null;
 
   constructor(
     readonly provider: AgentProvider,
@@ -2937,6 +3010,7 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
   }
 
   respond(id: RequestId, result: unknown): void {
+    if (this.responseError) throw this.responseError;
     this.responses.push({ id, result: structuredClone(result) });
   }
 

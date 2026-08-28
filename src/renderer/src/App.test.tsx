@@ -4139,54 +4139,68 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("textbox", { name: "Custom answer for: Which account?" })).not.toBeInTheDocument();
   });
 
-  it("walks through questions one at a time and can skip them", async () => {
+  it("keeps an older resolved prompt when a new turn reuses its request ID", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
     emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: null,
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-old:prompt-reused",
+            turnId: "turn-old",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: Which account?\nAnswer: Acme",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-reused",
+              questions: [
+                {
+                  id: "account",
+                  header: "Account",
+                  question: "Which account?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { account: { status: "answered", answers: ["Acme"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+    expect(await screen.findByRole("region", { name: "Answers sent" })).toBeVisible();
+
+    emitAgentEvent?.({
       type: "prompt",
-      requestId: "prompt-steps",
+      requestId: "prompt-reused",
       botId: "chief",
       threadId: "thread-1",
-      turnId: "turn-1",
+      turnId: "turn-new",
       questions: [
-        {
-          id: "environment",
-          header: "Environment",
-          question: "Where should I work?",
-          isSecret: false,
-          options: [
-            { label: "Repository", description: "Use the current project." },
-            { label: "Sandbox", description: "Keep changes isolated." },
-          ],
-        },
         {
           id: "goal",
           header: "Goal",
-          question: "What is the desired outcome?",
+          question: "What should I do next?",
           isSecret: false,
           options: null,
         },
       ],
     });
 
-    expect(await screen.findByRole("heading", { name: "Where should I work?" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("radio", { name: /Repository/ }));
-    await waitFor(() =>
-      expect(screen.getByRole("textbox", { name: /Custom answer for: What is the desired outcome/ })).toBeEnabled(),
-    );
-    await fireEvent.click(screen.getByRole("button", { name: "Previous question" }));
-    await waitFor(() => expect(screen.getByRole("radio", { name: /Repository/ })).toBeEnabled());
-    await fireEvent.click(screen.getByRole("button", { name: "Next question" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Skip" })).toBeEnabled());
-    await fireEvent.click(screen.getByRole("button", { name: "Skip" }));
-
-    await waitFor(() =>
-      expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledWith({
-        requestId: "prompt-steps",
-        answers: { environment: ["Repository"], goal: [] },
-      }),
-    );
+    expect(await screen.findByRole("textbox", { name: "Custom answer for: What should I do next?" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible();
   });
 
   it("renders command approvals and keeps the action pending while submitting", async () => {

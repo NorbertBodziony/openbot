@@ -223,7 +223,7 @@ export interface ConversationProps {
   onOpenSearchMessage?: (messageId: string) => Promise<void>;
   onTypingChange: (botId: string, typing: boolean) => void;
   onAnswerPrompt: (answers: Record<string, string[]>) => Promise<boolean>;
-  onPromptResolutionPresented?: (botId: string, requestId: string | number) => void;
+  onPromptResolutionPresented?: (botId: string, turnId: string, requestId: string | number) => void;
   onRespondToApproval: (decision: "accept" | "decline") => Promise<boolean>;
   onRespondToBrowserTakeover: (decision: "complete" | "cancel") => Promise<boolean>;
   onCancelQueuedMessage: (deliveryId: string) => void;
@@ -2767,7 +2767,9 @@ export function ConversationTimeline() {
                 <QuestionPromptBubble
                   questions={prompt().questions}
                   onSubmit={props.onAnswerPrompt}
-                  onResolutionPresented={() => props.onPromptResolutionPresented?.(prompt().botId, prompt().requestId)}
+                  onResolutionPresented={() =>
+                    props.onPromptResolutionPresented?.(prompt().botId, prompt().turnId, prompt().requestId)
+                  }
                 />
               </Loading>
             )}
