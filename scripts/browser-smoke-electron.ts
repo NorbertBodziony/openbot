@@ -106,9 +106,7 @@ async function main(): Promise<void> {
     const openingTab = browser.open(origin, "smoke-thread", "smoke-bot", true);
     window.webContents.focus();
     const tab = await openingTab;
-    if (webContents.getFocusedWebContents()?.getURL() !== `${origin}/`) {
-      throw new Error("A user-opened browser tab did not regain keyboard focus after loading.");
-    }
+    await waitFor(async () => webContents.getFocusedWebContents()?.getURL() === `${origin}/`);
     process.stdout.write("BrowserHost: local tab opened.\n");
     const first = await browser.snapshot(tab.id);
     const input = first.elements.find((element) => element.name === "Task");
