@@ -61,6 +61,9 @@ async function main(): Promise<void> {
       navigate: async () => undefined,
       reload: async () => undefined,
       close: async () => undefined,
+      capturePreview: async () => {
+        throw new Error("Browser preview is unavailable in the team smoke host.");
+      },
       setVisible: async () => undefined,
     };
     const chat = new TeamChatStore(database);

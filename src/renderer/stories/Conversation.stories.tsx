@@ -7,7 +7,8 @@ import type {
   QueueSnapshot,
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
-import { createEffect, createSignal, onCleanup, onSettled } from "solid-js";
+import { Portal } from "@solidjs/web";
+import { createEffect, createSignal, onCleanup, onSettled, Show } from "solid-js";
 import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { clipboardFiles } from "../../preload/clipboard-files";
@@ -16,8 +17,10 @@ import {
   ConversationControllerProvider,
   createConversationController,
 } from "../src/components/Conversation";
+import { BrowserTakeoverCard } from "../src/components/ConversationPrompts";
 import { ConversationView } from "../src/components/ConversationView";
 import type { BotMessage as RendererBotMessage } from "../src/data";
+import browserTakeoverPreviewUrl from "./assets/browser-takeover-preview.svg";
 import {
   STORY_AGENT_STATUS,
   STORY_ATTACHMENTS,
@@ -773,12 +776,14 @@ function MockedConversation(props: {
   messages?: RendererBotMessage[];
   initialAttachments?: DraftAttachment[];
   voiceModelProgress?: number;
+  takeoverStateGallery?: boolean;
 }) {
   const previousApi = window.openbot;
   const mock = createMockOpenBot();
   const controller = createConversationController({ onTypingChange: props.args.onTypingChange });
   const previewUrls = new Set<string>();
   let storyFrameElement: HTMLDivElement | undefined;
+  let takeoverGalleryScrollTimer: number | undefined;
   const initialBotId = props.args.bot?.id;
   if (initialBotId && props.initialAttachments?.length) {
     onSettled(() => {
@@ -795,6 +800,7 @@ function MockedConversation(props: {
   }
   const [unreadCount, setUnreadCount] = createSignal(0);
   const [firstUnreadMessageId, setFirstUnreadMessageId] = createSignal<string | null>(null);
+  const [takeoverGalleryMount, setTakeoverGalleryMount] = createSignal<HTMLElement | null>(null);
   createEffect(
     () => [props.args.unreadCount, props.args.firstUnreadMessageId] as const,
     ([count, messageId]) => {
@@ -803,6 +809,15 @@ function MockedConversation(props: {
     },
   );
   window.openbot = mock.api;
+  if (props.takeoverStateGallery) {
+    onSettled(() => {
+      const mount = storyFrameElement?.querySelector<HTMLElement>(".conversation-scroll") ?? null;
+      setTakeoverGalleryMount(mount);
+      takeoverGalleryScrollTimer = window.setTimeout(() => {
+        if (mount) mount.scrollTop = 0;
+      }, 200);
+    });
+  }
   const handlePastedImages = (event: ClipboardEvent) => {
     const files = clipboardFiles(event.clipboardData).filter((file) => file.type.startsWith("image/"));
     if (files.length === 0) return;
@@ -838,6 +853,7 @@ function MockedConversation(props: {
   };
   onCleanup(() => {
     storyFrameElement?.removeEventListener("paste", handlePastedImages, true);
+    if (takeoverGalleryScrollTimer !== undefined) window.clearTimeout(takeoverGalleryScrollTimer);
     for (const previewUrl of previewUrls) URL.revokeObjectURL(previewUrl);
     mock.dispose();
     window.openbot = previousApi;
@@ -857,6 +873,30 @@ function MockedConversation(props: {
           }}
         />
       </ConversationControllerProvider>
+      <Show when={props.takeoverStateGallery && takeoverGalleryMount()}>
+        <Portal mount={takeoverGalleryMount() ?? undefined}>
+          <div class="browser-takeover-story-states">
+            <BrowserTakeoverCard
+              botName={props.args.bot?.name ?? "the agent"}
+              tab={props.args.browserTabs[0]}
+              preview={{ dataUrl: browserTakeoverPreviewUrl, width: 960, height: 600 }}
+              previewStatus="ready"
+              decision="complete"
+              onComplete={async () => false}
+              onCancel={async () => false}
+            />
+            <BrowserTakeoverCard
+              botName={props.args.bot?.name ?? "the agent"}
+              tab={props.args.browserTabs[0]}
+              preview={{ dataUrl: browserTakeoverPreviewUrl, width: 960, height: 600 }}
+              previewStatus="ready"
+              decision="cancel"
+              onComplete={async () => false}
+              onCancel={async () => false}
+            />
+          </div>
+        </Portal>
+      </Show>
     </div>
   );
 }
@@ -1257,6 +1297,13 @@ export const BrowserTakeover: Story = {
     ],
     activeBrowserTabId: "tab-login",
     activeTurnId: "turn-takeover",
+    messages: [],
+  },
+  render: (storyArgs) => <MockedConversation args={storyArgs} takeoverStateGallery />,
+  play: async ({ canvas }) => {
+    await expect(canvas.getByRole("region", { name: "Browser takeover" })).toBeVisible();
+    await expect(canvas.getByRole("region", { name: "Browser takeover complete" })).toBeVisible();
+    await expect(canvas.getByRole("region", { name: "Browser takeover cancelled" })).toBeVisible();
   },
 };
 

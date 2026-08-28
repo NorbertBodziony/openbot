@@ -133,6 +133,7 @@ import {
   decodeBotSummaries,
   decodeBotSummary,
   decodeBrowserControlState,
+  decodeBrowserPreview,
   decodeBrowserTab,
   decodeBrowserTabs,
   decodeQueuedMessageReceipt,
@@ -1038,6 +1039,17 @@ function registerIpcHandlers(
       ? browser.getControlState()
       : remoteServers.request("/v1/browser/control", {}, undefined, decodeBrowserControlState),
   );
+  handleTrusted(IPC_CHANNELS.browserCapturePreview, (tabId: unknown) => {
+    const parsedTabId = requireString(tabId, "tabId");
+    return remoteServers.activeServerId === "local"
+      ? browser.capturePreview(parsedTabId)
+      : remoteServers.request(
+          "/v1/browser/preview",
+          { method: "POST", body: { tabId: parsedTabId } },
+          undefined,
+          decodeBrowserPreview,
+        );
+  });
   handleTrusted(IPC_CHANNELS.browserSetVisible, async (input: unknown) => {
     const parsed = parseVisibility(input);
     if (remoteServers.activeServerId === "local") await browser.setVisible(parsed);

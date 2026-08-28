@@ -7,6 +7,12 @@ export interface BrowserTab {
   ownerBotId: string | null;
 }
 
+export interface BrowserPreview {
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
 export type BrowserControlPhase = "acting" | "waiting";
 
 export type BrowserControlAction =

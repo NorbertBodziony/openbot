@@ -271,6 +271,11 @@
   min-height: 0;
 }
 
+.browser-takeover-story-states {
+  display: grid;
+  align-content: start;
+}
+
 .chat-primitives-stage {
   width: min(820px, 100%);
   min-width: 0;

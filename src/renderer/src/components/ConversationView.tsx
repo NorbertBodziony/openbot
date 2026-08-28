@@ -13,6 +13,7 @@ import type {
   AttachmentSummary,
   AvatarImageInput,
   BrowserControlState,
+  BrowserPreview,
   BrowserTab,
   DraftAttachment,
   FilePreview,
@@ -126,6 +127,19 @@ interface RenderedAgentActivity {
   bot: BotProfile | undefined;
   phase: "active" | "exiting";
   presentation: AgentActivityPresentation;
+}
+
+interface BrowserTakeoverPreviewState {
+  status: "idle" | "loading" | "ready" | "failed";
+  preview: BrowserPreview | null;
+}
+
+interface BrowserTakeoverResolutionState {
+  decision: "complete" | "cancel";
+  tab: BrowserTab | undefined;
+  preview: BrowserPreview | null;
+  previewStatus: BrowserTakeoverPreviewState["status"];
+  messageMarker: string | null;
 }
 
 interface RoutineSettingsRequest {
@@ -430,6 +444,83 @@ function createConversationViewScope(props: ConversationProps) {
   const activeBrowserTab = createMemo(
     () => browserTabs().find((tab) => tab.id === props.activeBrowserTabId) ?? browserTabs()[0],
   );
+  const browserTakeoverTab = createMemo(() => {
+    const tabId = props.browserTakeover?.tabId;
+    return tabId ? browserTabs().find((tab) => tab.id === tabId) : undefined;
+  });
+  const [browserTakeoverPreview, setBrowserTakeoverPreview] = createSignal<BrowserTakeoverPreviewState>({
+    status: "idle",
+    preview: null,
+  });
+  let browserTakeoverPreviewKey: string | null = null;
+  let browserTakeoverPreviewGeneration = 0;
+  createEffect(
+    () => ({ request: props.browserTakeover, tab: browserTakeoverTab() }),
+    ({ request, tab }) => {
+      if (!request) {
+        browserTakeoverPreviewKey = null;
+        browserTakeoverPreviewGeneration += 1;
+        setBrowserTakeoverPreview({ status: "idle", preview: null });
+        return;
+      }
+
+      const requestKey = String(request.requestId);
+      if (!tab) {
+        if (browserTakeoverPreviewKey !== requestKey) {
+          setBrowserTakeoverPreview({ status: "loading", preview: null });
+        }
+        return;
+      }
+      if (browserTakeoverPreviewKey === requestKey) return;
+
+      browserTakeoverPreviewKey = requestKey;
+      const generation = ++browserTakeoverPreviewGeneration;
+      setBrowserTakeoverPreview({ status: "loading", preview: null });
+      void window.openbot.browser
+        .capturePreview(tab.id)
+        .then((preview) => {
+          if (browserTakeoverPreviewGeneration !== generation) return;
+          setBrowserTakeoverPreview({ status: "ready", preview });
+        })
+        .catch(() => {
+          if (browserTakeoverPreviewGeneration !== generation) return;
+          setBrowserTakeoverPreview({ status: "failed", preview: null });
+        });
+    },
+  );
+  const latestMessageMarker = createMemo(() => {
+    const message = props.messages.at(-1);
+    return message
+      ? `${message.id}:${message.body.length}:${message.streaming === true ? "streaming" : "settled"}`
+      : null;
+  });
+  const [browserTakeoverResolution, setBrowserTakeoverResolution] = createSignal<BrowserTakeoverResolutionState | null>(
+    null,
+  );
+  createEffect(
+    () => props.browserTakeover?.requestId,
+    (requestId) => {
+      if (requestId !== undefined) setBrowserTakeoverResolution(null);
+    },
+  );
+  createEffect(latestMessageMarker, (messageMarker) => {
+    const resolution = untrack(browserTakeoverResolution);
+    if (resolution && resolution.messageMarker !== messageMarker) setBrowserTakeoverResolution(null);
+  });
+  const respondToBrowserTakeover = async (decision: "complete" | "cancel") => {
+    const request = props.browserTakeover;
+    if (!request) return false;
+    const resolution = {
+      decision,
+      tab: browserTakeoverTab(),
+      preview: browserTakeoverPreview().preview,
+      previewStatus: browserTakeoverPreview().status,
+      messageMarker: latestMessageMarker(),
+    } satisfies BrowserTakeoverResolutionState;
+    const completed = await props.onRespondToBrowserTakeover(decision);
+    if (completed && latestMessageMarker() === resolution.messageMarker) setBrowserTakeoverResolution(resolution);
+    return completed;
+  };
   let previousBrowserTabCount = 0;
   createEffect(
     () => ({ count: browserTabs().length, open: screenOpen() }),
@@ -1987,6 +2078,10 @@ function createConversationViewScope(props: ConversationProps) {
     activeActivityId,
     activeBrowserControl,
     activeBrowserTab,
+    browserTakeoverPreview,
+    browserTakeoverResolution,
+    browserTakeoverTab,
+    respondToBrowserTakeover,
     activeChatSearchIndex,
     activeDeliveries,
     activeRightPanel,
@@ -2315,6 +2410,9 @@ export function ConversationTimeline() {
     agentActivitySpaceReserved,
     agentReady,
     attachmentAction,
+    browserTakeoverPreview,
+    browserTakeoverResolution,
+    browserTakeoverTab,
     chatSearchMatches,
     chatSearchOpen,
     chatSearchQuery,
@@ -2343,6 +2441,7 @@ export function ConversationTimeline() {
     props,
     reactToMessage,
     renderedAgentActivity,
+    respondToBrowserTakeover,
     replyToMessage,
     scheduleUnreadDividerVisibilityUpdate,
     setChatSearchQuery,
@@ -2718,10 +2817,27 @@ export function ConversationTimeline() {
           <Show when={props.browserTakeover}>
             <Loading>
               <BrowserTakeoverCard
-                onComplete={() => props.onRespondToBrowserTakeover("complete")}
-                onCancel={() => props.onRespondToBrowserTakeover("cancel")}
+                botName={props.bot?.name ?? "the agent"}
+                tab={browserTakeoverTab()}
+                preview={browserTakeoverPreview().preview}
+                previewStatus={browserTakeoverPreview().status}
+                onComplete={() => respondToBrowserTakeover("complete")}
+                onCancel={() => respondToBrowserTakeover("cancel")}
               />
             </Loading>
+          </Show>
+          <Show when={!props.browserTakeover && browserTakeoverResolution()}>
+            {(resolution) => (
+              <BrowserTakeoverCard
+                botName={props.bot?.name ?? "the agent"}
+                tab={resolution().tab}
+                preview={resolution().preview}
+                previewStatus={resolution().previewStatus}
+                decision={resolution().decision}
+                onComplete={async () => false}
+                onCancel={async () => false}
+              />
+            )}
           </Show>
         </Show>
       </div>

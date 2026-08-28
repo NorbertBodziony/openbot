@@ -9,6 +9,7 @@ import type {
   BrowserControlSession,
   BrowserControlState,
   BrowserNavigationDirection,
+  BrowserPreview,
   BrowserTab,
   BrowserVisibilityInput,
 } from "@openbot/contracts/ipc";
@@ -369,6 +370,31 @@ export class BrowserHost {
     return this.#enqueue(tabId, async (tab) => {
       const image = await withTimeout(tab.view.webContents.capturePage(), 10_000, "Browser screenshot timed out.");
       return image.toDataURL();
+    });
+  }
+
+  async capturePreview(tabId: string): Promise<BrowserPreview> {
+    return this.#enqueue(tabId, async (tab) => {
+      const image = await withTimeout(tab.view.webContents.capturePage(), 10_000, "Browser preview timed out.");
+      const size = image.getSize();
+      if (size.width <= 0 || size.height <= 0) throw new Error("Browser preview is empty.");
+
+      const targetAspectRatio = 16 / 10;
+      let cropWidth = size.width;
+      let cropHeight = Math.round(cropWidth / targetAspectRatio);
+      if (cropHeight > size.height) {
+        cropHeight = size.height;
+        cropWidth = Math.round(cropHeight * targetAspectRatio);
+      }
+      const cropped = image.crop({
+        x: Math.max(0, Math.floor((size.width - cropWidth) / 2)),
+        y: 0,
+        width: cropWidth,
+        height: cropHeight,
+      });
+      const preview = cropped.resize({ width: 960, height: 600, quality: "good" });
+      const dataUrl = `data:image/jpeg;base64,${preview.toJPEG(72).toString("base64")}`;
+      return { dataUrl, width: 960, height: 600 };
     });
   }
 

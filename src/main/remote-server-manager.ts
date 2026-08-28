@@ -12,6 +12,7 @@ import type {
   BotMemory,
   BotSummary,
   BrowserControlState,
+  BrowserPreview,
   BrowserTab,
   ConversationMessage,
   ConversationPage,
@@ -1151,6 +1152,28 @@ export function decodeBrowserTabs(value: unknown): BrowserTab[] {
 export function decodeBrowserTab(value: unknown): BrowserTab {
   if (!isBrowserTabValue(value)) throw new Error("Invalid remote browser tab.");
   return value;
+}
+
+export function decodeBrowserPreview(value: unknown): BrowserPreview {
+  if (!isBrowserPreviewValue(value)) throw new Error("Invalid remote browser preview.");
+  return value;
+}
+
+function isBrowserPreviewValue(value: unknown): value is BrowserPreview {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.dataUrl) &&
+    value.dataUrl.length <= 2_000_000 &&
+    /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(value.dataUrl) &&
+    isNumber(value.width) &&
+    Number.isSafeInteger(value.width) &&
+    value.width > 0 &&
+    value.width <= 960 &&
+    isNumber(value.height) &&
+    Number.isSafeInteger(value.height) &&
+    value.height > 0 &&
+    value.height <= 600
+  );
 }
 
 function isBrowserTabValue(value: unknown): value is BrowserTab {

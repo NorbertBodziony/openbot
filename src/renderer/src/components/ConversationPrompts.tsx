@@ -1,7 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { AgentApproval, AgentPromptQuestion } from "@openbot/contracts/ipc";
+import type { AgentApproval, AgentPromptQuestion, BrowserPreview, BrowserTab } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { Button, Input, LogIn, RadioGroup } from "./ui";
+import { Badge, Button, Check, Input, Monitor, RadioGroup, Skeleton, TriangleAlert, X } from "./ui";
 
 export function ChoiceCard(props: {
   title: string;
@@ -368,53 +368,147 @@ export function ApprovalCard(props: {
   );
 }
 
-export function BrowserTakeoverCard(props: { onComplete: () => Promise<boolean>; onCancel: () => Promise<boolean> }) {
-  const [submitting, setSubmitting] = createSignal(false);
+export function BrowserTakeoverCard(props: {
+  botName: string;
+  tab: BrowserTab | undefined;
+  preview: BrowserPreview | null;
+  previewStatus: "idle" | "loading" | "ready" | "failed";
+  decision?: "complete" | "cancel" | null;
+  onComplete: () => Promise<boolean>;
+  onCancel: () => Promise<boolean>;
+}) {
+  const [submitting, setSubmitting] = createSignal<"complete" | "cancel" | null>(null);
+  const pageDetails = createMemo(() => browserPageDetails(props.tab));
+  const completed = () => props.decision === "complete";
+  const cancelled = () => props.decision === "cancel";
+  const accessibleLabel = () =>
+    completed() ? "Browser takeover complete" : cancelled() ? "Browser takeover cancelled" : "Browser takeover";
   const submit = async (decision: "complete" | "cancel") => {
-    if (submitting()) return;
-    setSubmitting(true);
+    if (submitting() || props.decision) return;
+    setSubmitting(decision);
     const completed = await (decision === "complete" ? props.onComplete() : props.onCancel());
-    if (!completed) setSubmitting(false);
+    if (!completed) setSubmitting(null);
   };
 
   return (
-    <section class="approval-card approval-card-takeover" aria-label="Browser takeover">
-      <header class="approval-card-header">
-        <span class="approval-card-icon" data-kind="takeover">
-          <LogIn aria-hidden="true" />
-        </span>
-        <div>
-          <strong>Take over</strong>
-        </div>
+    <section
+      class="browser-takeover-card"
+      data-decision={props.decision ?? undefined}
+      aria-label={accessibleLabel()}
+      aria-busy={submitting() ? "true" : undefined}
+    >
+      <header class="browser-takeover-header">
+        <span>Browser</span>
+        <Show
+          when={!props.decision}
+          fallback={
+            <Badge variant={completed() ? "success-light" : "secondary"}>
+              <Show when={completed()} fallback={<X data-icon="inline-start" aria-hidden="true" />}>
+                <Check data-icon="inline-start" aria-hidden="true" />
+              </Show>
+              {completed() ? "Done" : "Cancelled"}
+            </Badge>
+          }
+        >
+          <Badge variant="warning-light">
+            <TriangleAlert data-icon="inline-start" aria-hidden="true" />
+            Action required
+          </Badge>
+        </Show>
       </header>
-      <div class="approval-card-content">
-        <p class="approval-reason">Complete the authorization in the open browser, then let the agent continue.</p>
+      <div class="browser-takeover-copy">
+        <h2>
+          {completed()
+            ? `Step completed on ${pageDetails().host}`
+            : cancelled()
+              ? `Step cancelled on ${pageDetails().host}`
+              : `Complete the step on ${pageDetails().host}`}
+        </h2>
+        <p>
+          {completed()
+            ? `${props.botName} is continuing.`
+            : cancelled()
+              ? "The browser step was cancelled."
+              : `Finish the sign-in, verification, or consent in the open browser. Then let ${props.botName} continue.`}
+        </p>
       </div>
-      <footer class="approval-card-footer approval-card-footer-end">
-        <div class="approval-card-actions">
+
+      <figure class="browser-takeover-preview">
+        <figcaption class="browser-takeover-preview-bar">
+          <Monitor aria-hidden="true" />
+          <span title={pageDetails().title}>{pageDetails().title}</span>
+          <small title={pageDetails().host}>{pageDetails().host}</small>
+        </figcaption>
+        <div class="browser-takeover-preview-viewport">
+          <Show
+            when={props.previewStatus === "ready" ? props.preview : null}
+            fallback={
+              <Show
+                when={props.previewStatus === "loading" || props.previewStatus === "idle"}
+                fallback={
+                  <div class="browser-takeover-preview-fallback">
+                    <Monitor aria-hidden="true" />
+                    <strong>{pageDetails().title}</strong>
+                    <span>{pageDetails().host}</span>
+                  </div>
+                }
+              >
+                <Skeleton class="browser-takeover-preview-skeleton" />
+              </Show>
+            }
+          >
+            {(preview) => (
+              <img
+                src={preview().dataUrl}
+                width={preview().width}
+                height={preview().height}
+                alt={`Preview of ${pageDetails().title}`}
+              />
+            )}
+          </Show>
+        </div>
+      </figure>
+
+      <Show when={!props.decision}>
+        <footer class="browser-takeover-actions">
           <Button
             variant="ghost"
+            size="sm"
             type="button"
-            class="approval-button approval-button-ghost"
-            disabled={submitting()}
+            class="approval-button"
+            loading={submitting() === "cancel"}
+            loadingLabel="Cancelling…"
+            disabled={Boolean(submitting())}
             onClick={() => void submit("cancel")}
           >
             Cancel
           </Button>
           <Button
             variant="default"
+            size="sm"
             type="button"
-            class="approval-button approval-button-primary"
-            disabled={submitting()}
+            class="approval-button"
+            loading={submitting() === "complete"}
+            loadingLabel="Returning…"
+            disabled={Boolean(submitting())}
             onClick={() => void submit("complete")}
           >
-            {submitting() ? "Returning…" : "Done"}
-            <ReturnIcon />
+            I’m done
           </Button>
-        </div>
-      </footer>
+        </footer>
+      </Show>
     </section>
   );
+}
+
+function browserPageDetails(tab: BrowserTab | undefined): { title: string; host: string } {
+  const title = tab?.title.trim() || "Browser page";
+  if (!tab?.url) return { title, host: "the browser" };
+  try {
+    return { title, host: new URL(tab.url).hostname || "the browser" };
+  } catch {
+    return { title, host: tab.url };
+  }
 }
 
 function approvalTitle(approval: AgentApproval | undefined) {

@@ -7221,6 +7221,205 @@
   background: var(--openbot-border);
 }
 
+.browser-takeover-card {
+  display: flex;
+  width: min(460px, 100%);
+  box-sizing: border-box;
+  margin: var(--openbot-space-3) 0 20px;
+  flex-direction: column;
+  gap: var(--openbot-space-3);
+  border: 0;
+  border-radius: var(--openbot-radius-bubble);
+  background: var(--openbot-bg-surface);
+  box-shadow:
+    0 0 0 0.5px var(--openbot-border),
+    0 1px 2px var(--openbot-bg-overlay),
+    0 2px 4px var(--openbot-shadow-popover-key);
+  color: var(--openbot-text-primary);
+  padding: var(--openbot-space-3);
+  animation: browser-takeover-in var(--openbot-duration-slow) var(--openbot-ease-out) both;
+}
+
+.browser-takeover-header {
+  display: flex;
+  height: var(--openbot-control-xs);
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--openbot-space-3);
+}
+
+.browser-takeover-header > span {
+  overflow: hidden;
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-medium);
+  line-height: var(--openbot-leading-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-takeover-header [data-slot="badge"] svg {
+  width: var(--openbot-icon-xs);
+  height: var(--openbot-icon-xs);
+  flex: 0 0 auto;
+  stroke-width: 2;
+}
+
+.browser-takeover-copy {
+  display: grid;
+  gap: var(--openbot-space-1);
+}
+
+.browser-takeover-copy h2,
+.browser-takeover-copy p {
+  margin: 0;
+}
+
+.browser-takeover-copy h2 {
+  font-size: var(--openbot-text-lg);
+  font-weight: var(--openbot-weight-medium);
+  line-height: var(--openbot-leading-lg);
+}
+
+.browser-takeover-copy p {
+  max-width: 54ch;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-md);
+}
+
+.browser-takeover-preview {
+  min-width: 0;
+  overflow: hidden;
+  margin: 0;
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-bg-canvas);
+}
+
+.browser-takeover-preview-bar {
+  display: flex;
+  height: var(--openbot-control-sm);
+  min-width: 0;
+  align-items: center;
+  gap: var(--openbot-space-1-5);
+  border-bottom: 1px solid var(--openbot-border);
+  background: var(--openbot-bg-control);
+  padding: 0 var(--openbot-space-3);
+  color: var(--openbot-text-secondary);
+}
+
+.browser-takeover-preview-bar svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  flex: 0 0 auto;
+  stroke-width: 1.6;
+}
+
+.browser-takeover-preview-bar span,
+.browser-takeover-preview-bar small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-takeover-preview-bar span {
+  min-width: 0;
+  flex: 1;
+  font-size: var(--openbot-text-xs);
+  font-weight: var(--openbot-weight-medium);
+}
+
+.browser-takeover-preview-bar small {
+  max-width: 42%;
+  color: var(--openbot-text-readable);
+  font-size: var(--openbot-text-2xs);
+}
+
+.browser-takeover-preview-viewport {
+  display: grid;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  place-items: stretch;
+  background: var(--openbot-bg-control);
+}
+
+.browser-takeover-preview-viewport img,
+.browser-takeover-preview-skeleton {
+  width: 100%;
+  height: 100%;
+}
+
+.browser-takeover-preview-viewport img {
+  display: block;
+  object-fit: cover;
+}
+
+.browser-takeover-preview-fallback {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: var(--openbot-space-1);
+  color: var(--openbot-text-muted);
+  padding: var(--openbot-space-6);
+  text-align: center;
+}
+
+.browser-takeover-preview-fallback svg {
+  width: var(--openbot-icon-lg);
+  height: var(--openbot-icon-lg);
+  margin-bottom: var(--openbot-space-1);
+  stroke-width: 1.4;
+}
+
+.browser-takeover-preview-fallback strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-takeover-preview-fallback span {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--openbot-text-readable);
+  font-size: var(--openbot-text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-takeover-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--openbot-space-1-5);
+}
+
+.browser-takeover-actions .ui-button {
+  transition: transform var(--openbot-duration-fast) var(--openbot-ease-out);
+}
+
+.browser-takeover-actions .ui-button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+@keyframes browser-takeover-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.99);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .approval-card {
   display: flex;
   width: min(460px, 100%);
