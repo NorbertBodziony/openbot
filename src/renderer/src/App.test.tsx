@@ -4232,6 +4232,44 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("region", { name: "Answers sent" });
 
     emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-first",
+        revision: 21,
+        messages: [
+          {
+            id: "question-prompt:turn-first:prompt-first",
+            turnId: "turn-first",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: First question?\nAnswer: First answer",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-first",
+              questions: [
+                {
+                  id: "first",
+                  header: "First",
+                  question: "First question?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { first: { status: "answered", answers: ["First answer"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    emitAgentEvent?.({
       type: "prompt",
       requestId: "prompt-second",
       botId: "chief",

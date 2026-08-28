@@ -1861,6 +1861,13 @@ export function createAppController(props: AppProps = {}) {
   function presentPromptResolution(botId: string, turnId: string, requestId: string | number): void {
     const requestKey = promptRequestKey(turnId, requestId);
     if (!requestKey) return;
+    const currentPrompt = pendingPrompts()[botId];
+    if (
+      currentPrompt?.type !== "prompt" ||
+      promptRequestKey(currentPrompt.turnId, currentPrompt.requestId) !== requestKey
+    ) {
+      return;
+    }
     const persisted = (liveMessages()[botId] ?? []).some(
       (message) => messagePromptRequestKey(message) === requestKey && message.questionPrompt?.resolution !== null,
     );
