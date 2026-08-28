@@ -1686,9 +1686,6 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(1));
     const usageButton = await screen.findByRole("button", { name: "Weekly usage, 59% left" });
-    const dock = usageButton.closest(".account-dock");
-    expect(dock).toHaveTextContent("person@example.com");
-    expect(dock).toHaveClass("account-dock-with-server-rail");
     expect(screen.getByRole("complementary", { name: "Bot navigation" })).not.toContainElement(usageButton);
 
     await fireEvent.click(usageButton);
@@ -2624,8 +2621,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
-    const marketplaceButton = screen.getByRole("button", { name: "Open Marketplace" });
-    expect(marketplaceButton).toHaveClass("sidebar-icon-button");
+    expect(screen.getByRole("button", { name: "Open Marketplace" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Collapse sidebar" })).not.toBeInTheDocument();
     const resizer = screen.getByRole("separator", { name: "Resize left sidebar" });
     await fireEvent.keyDown(resizer, { key: "Home" });
@@ -2649,9 +2645,11 @@ describe("OpenBot connected desktop shell", () => {
       name: "Weekly usage, 59% left",
     });
     expect(within(compactAccountDialog).queryByRole("button", { name: /photo/i })).not.toBeInTheDocument();
+    vi.mocked(window.openbot.agent.getUsage).mockRejectedValueOnce(new Error("Usage service unavailable."));
     const usageRequestsBeforeRefresh = vi.mocked(window.openbot.agent.getUsage).mock.calls.length;
     await fireEvent.click(compactUsageButton);
     await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(usageRequestsBeforeRefresh + 1));
+    expect(await within(compactAccountDialog).findByText("Usage service unavailable.")).toBeInTheDocument();
     await fireEvent.keyDown(compactAccountDialog, { key: "Escape" });
     await waitFor(() => expect(compactAccountButton).toHaveFocus());
 

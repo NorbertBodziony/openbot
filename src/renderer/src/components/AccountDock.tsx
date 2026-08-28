@@ -291,6 +291,9 @@ export function AccountDock(props: AccountDockProps) {
           <span>{loggingOut() ? "Signing out…" : "Sign out"}</span>
         </Button>
         <Show when={accountMenuError()}>{(message) => <p class="account-popover-error">{message()}</p>}</Show>
+        <Show when={includeDockActions ? usageError() : null}>
+          {(message) => <p class="account-popover-error">{message()}</p>}
+        </Show>
       </>
     );
   }
