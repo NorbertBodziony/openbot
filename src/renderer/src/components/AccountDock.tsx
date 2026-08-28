@@ -20,7 +20,6 @@ import {
   Mail,
   Megaphone,
   Popover,
-  Progress,
   Puzzle,
   RadialProgress,
   RefreshCw,
@@ -438,18 +437,10 @@ export function AccountDock(props: AccountDockProps) {
                 aria-label={usageButtonLabel()}
                 aria-expanded={usageOpen() ? "true" : "false"}
                 data-usage-tone={usageTone()}
-                style={{ "--account-usage-value": `${usageValue()}%` }}
               >
                 <span class="account-dock-usage-chip">
                   <Gauge aria-hidden="true" />
                   <strong>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</strong>
-                </span>
-                <span class="account-dock-usage-ring" aria-hidden="true">
-                  <span>{weeklyUsageRemaining() === null ? "—" : weeklyUsageRemaining()}</span>
-                </span>
-                <span class="account-dock-usage-bar" aria-hidden="true">
-                  <strong>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</strong>
-                  <Progress value={usageValue()} />
                 </span>
               </Popover.Trigger>
               <Popover.Portal>

@@ -3334,18 +3334,12 @@ textarea {
   stroke-width: 2.35;
 }
 
-.account-dock-usage-chip > strong,
-.account-dock-usage-bar > strong {
+.account-dock-usage-chip > strong {
   color: inherit;
   font-size: var(--openbot-text-xs);
   font-weight: var(--openbot-weight-semibold);
   font-variant-numeric: tabular-nums;
   line-height: 14px;
-}
-
-.account-dock-usage-ring,
-.account-dock-usage-bar {
-  display: none;
 }
 
 .account-dock-tooltip {
