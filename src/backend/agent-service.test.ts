@@ -951,6 +951,84 @@ describe.sequential("AgentService", () => {
         (message) => message.questionPrompt?.requestId === "retry-question-call",
       )?.questionPrompt?.resolution,
     ).toEqual({ status: "answered", responses: { retry: { status: "answered", answers: ["Yes"] } } });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "persistence-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "persistence-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "delivery", header: "Delivery", question: "Was the answer delivered?" }],
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 5);
+    const persistenceFailure = vi.spyOn(store.database, "persistConversation").mockImplementationOnce(() => {
+      throw new Error("Database write failed.");
+    });
+    await expect(
+      service.respondToPrompt({ requestId: "persistence-question-call", answers: { delivery: ["Yes"] } }),
+    ).resolves.toBeUndefined();
+    expect(client.responses.filter((response) => response.id === "persistence-question-call")).toHaveLength(1);
+    await expect(
+      service.respondToPrompt({ requestId: "persistence-question-call", answers: { delivery: ["Yes"] } }),
+    ).rejects.toThrow("no longer active");
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "error", code: "prompt_persistence_failed", botId: "chief" }),
+    );
+    persistenceFailure.mockRestore();
+  });
+
+  it("does not use a question prompt summary as the completed assistant reply", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "DONE", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Ask only one question" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The question-only turn did not start.");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "question-only-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "question-only-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "scope", header: "Scope", question: "Which scope should we use?" }],
+        },
+      },
+    });
+    await waitFor(() => events.some((event) => event.type === "prompt"));
+    await service.respondToPrompt({ requestId: "question-only-call", answers: { scope: ["Small"] } });
+    const previewBeforeCompletion = service.listBots().find((bot) => bot.id === "chief")?.preview;
+
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
+    );
+    await waitFor(() => events.some((event) => event.type === "turn-completed"));
+
+    const previewAfterCompletion = service.listBots().find((bot) => bot.id === "chief")?.preview;
+    expect(previewAfterCompletion).toBe(previewBeforeCompletion);
+    expect(previewAfterCompletion).not.toContain("Which scope should we use?");
   });
 
   it("pauses a browser tool call until the user resolves the takeover", async () => {

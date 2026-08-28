@@ -34,6 +34,7 @@ describe("QuestionPromptBubble", () => {
 
     await fireEvent.click(screen.getByRole("radio", { name: /Session cookies/ }));
     await waitFor(() => expect(screen.getByRole("radio", { name: /Gradually/ })).toBeEnabled());
+    expect(screen.getByRole("radio", { name: /Gradually/ })).toHaveFocus();
     expect(onSubmit).not.toHaveBeenCalled();
 
     await fireEvent.click(screen.getByRole("radio", { name: /Gradually/ }));
@@ -170,7 +171,7 @@ describe("QuestionPromptBubble", () => {
         resolution={{
           status: "answered",
           responses: {
-            approach: { status: "answered", answers: ["Session cookies"] },
+            approach: { status: "answered", answers: ["Session cookies", "Bearer token"] },
             rollout: { status: "skipped" },
           },
         }}
@@ -181,6 +182,7 @@ describe("QuestionPromptBubble", () => {
     expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.getByText("Session cookies, Bearer token")).toBeVisible();
     expect(screen.getByText("Skipped")).toBeVisible();
   });
 });

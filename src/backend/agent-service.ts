@@ -1084,8 +1084,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             answers: Object.fromEntries(Object.entries(input.answers).map(([id, values]) => [id, { answers: values }])),
           };
     pending.client.respond(pending.id, result);
-    this.#resolvePersistedPrompt(pending, promptResolution(pending.questions, input.answers));
     this.#pendingPrompts.delete(input.requestId);
+    try {
+      this.#resolvePersistedPrompt(pending, promptResolution(pending.questions, input.answers));
+    } catch (error) {
+      this.#emitError("prompt_persistence_failed", error, pending.botId);
+    }
   }
 
   async respondToApproval(input: RespondToApprovalInput): Promise<void> {
@@ -2955,6 +2959,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           message.author === "assistant" &&
           message.turnId === turnId &&
           message.itemType !== "commentary" &&
+          message.itemType !== "question_prompt" &&
           message.text.trim(),
       );
     if (deliveries.length > 0) {
@@ -3940,11 +3945,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sortConversationMessages(snapshot.messages);
     const signature = conversationContentSignature(snapshot);
     if (this.#lastConversationSignatures.get(snapshot.botId) === signature) return;
-    this.#lastConversationSignatures.set(snapshot.botId, signature);
     if (snapshot.threadId) {
       const persisted = this.#store.database.persistConversation(snapshot, eventType, detail);
       snapshot.revision = persisted.revision;
     }
+    this.#lastConversationSignatures.set(snapshot.botId, signature);
     this.#emit({ type: "conversation", snapshot: structuredClone(snapshot) });
   }
 

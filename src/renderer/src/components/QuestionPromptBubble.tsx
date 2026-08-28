@@ -74,7 +74,7 @@ function CompletedQuestionPrompt(props: { questions: AgentPromptQuestion[]; reso
     const response = props.resolution.responses[question.id];
     if (!response || response.status === "skipped") return "Skipped";
     if (question.isSecret || !response.answers) return "Private answer";
-    return response.answers[0] ?? "Skipped";
+    return response.answers.length > 0 ? response.answers.join(", ") : "Skipped";
   }
 
   return (
@@ -225,9 +225,18 @@ export function QuestionPromptBubble(props: QuestionPromptBubbleProps) {
       setStep(next);
       transitionTo({ kind: "question", index: next }, direction, () => {
         const question = props.questions[next];
-        if (question && (!question.options?.length || customAnswers()[question.id])) {
-          queueMicrotask(() => customInputs.get(question.id)?.focus());
-        }
+        if (!question) return;
+        queueMicrotask(() => {
+          if (!question.options?.length || customAnswers()[question.id]) {
+            customInputs.get(question.id)?.focus();
+            return;
+          }
+          const page = pageElements[activeSlot()];
+          (
+            page?.querySelector<HTMLInputElement>(".ui-questionnaire-choice-input:checked") ??
+            page?.querySelector<HTMLInputElement>(".ui-questionnaire-choice-input:not(:disabled)")
+          )?.focus();
+        });
       });
     });
   }
