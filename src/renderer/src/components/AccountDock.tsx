@@ -27,6 +27,7 @@ import {
   Settings,
   ShieldCheck,
   Tooltip,
+  UserAvatar,
 } from "./ui";
 
 interface AccountDockProps {
@@ -54,7 +55,6 @@ export function AccountDock(props: AccountDockProps) {
   const [usageRefreshAcknowledging, setUsageRefreshAcknowledging] = createSignal(false);
   const [usageError, setUsageError] = createSignal<string | null>(null);
   const [menuError, setMenuError] = createSignal<string | null>(null);
-  const [avatarFailed, setAvatarFailed] = createSignal(false);
   const [loggingOut, setLoggingOut] = createSignal(false);
   let initialUsageRequested = false;
   let usageRefreshTimer: number | undefined;
@@ -67,11 +67,6 @@ export function AccountDock(props: AccountDockProps) {
   const accountName = createMemo(
     () => props.account.name?.trim() || props.account.email.split("@")[0] || props.account.email,
   );
-  const accountInitials = createMemo(() => {
-    const localPart = props.account.email.split("@")[0] ?? "OpenBot";
-    const parts = localPart.split(/[._\-\s]+/).filter(Boolean);
-    return (parts.length > 1 ? `${parts[0]?.[0]}${parts[1]?.[0]}` : localPart.slice(0, 2)).toUpperCase();
-  });
   const weeklyUsage = createMemo(() => {
     const limit =
       props.accountUsage?.limits.find((candidate) => candidate.id === "codex") ?? props.accountUsage?.limits[0];
@@ -118,13 +113,6 @@ export function AccountDock(props: AccountDockProps) {
   const updatePresentation = createMemo(() => presentUpdateStatus(props.updateStatus));
   const accountMenuError = createMemo(
     () => menuError() ?? (props.updateStatus.phase === "error" ? props.updateStatus.message : null),
-  );
-
-  createEffect(
-    () => props.account.avatarUrl,
-    () => {
-      setAvatarFailed(false);
-    },
   );
 
   onCleanup(() => {
@@ -202,16 +190,7 @@ export function AccountDock(props: AccountDockProps) {
   }
 
   function avatar(className: string) {
-    return (
-      <span class={className} aria-hidden="true">
-        <Show
-          when={props.account.avatarUrl && !avatarFailed() ? props.account.avatarUrl : null}
-          fallback={accountInitials()}
-        >
-          {(avatarUrl) => <img src={avatarUrl()} alt="" onError={() => setAvatarFailed(true)} />}
-        </Show>
-      </span>
-    );
+    return <UserAvatar user={props.account} class={className} decorative />;
   }
 
   function accountMenu() {

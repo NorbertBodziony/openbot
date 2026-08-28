@@ -610,6 +610,7 @@ function WorkspaceOverlays(props: {
     revokeServerInvite,
     updateStatus,
     runUpdateAction,
+    updateAccountAvatar,
     providerRuntimeStatuses,
     providerRuntimeDownloadsAvailable,
     downloadProviderRuntime,
@@ -713,6 +714,8 @@ function WorkspaceOverlays(props: {
           appInfo={appInfo()}
           updateStatus={updateStatus()}
           onUpdateAction={runUpdateAction}
+          account={props.account()}
+          onUpdateAccountAvatar={updateAccountAvatar}
           agentStatus={agentStatus()}
           providerRuntimeStatuses={
             activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()

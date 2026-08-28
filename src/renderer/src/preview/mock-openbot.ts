@@ -422,7 +422,15 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         authState = { status: "signed_in", user };
         return clone(authState);
       },
-      updateAvatar: async () => clone(authState),
+      updateAvatar: async (image) => {
+        if (authState.status !== "signed_in") return clone(authState);
+        const avatarUrl = image
+          ? `data:${image.mimeType};base64,${btoa(Array.from(image.bytes, (byte) => String.fromCharCode(byte)).join(""))}`
+          : null;
+        authState = { ...authState, user: { ...authState.user, avatarUrl } };
+        emitAuthState(authState);
+        return clone(authState);
+      },
       logout: async () => {
         authState = { status: "signed_out" };
         emitAuthState(authState);
