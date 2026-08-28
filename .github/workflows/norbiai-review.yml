@@ -19,11 +19,9 @@ jobs:
 
     permissions:
       contents: read
-      pull-requests: write
       issues: write
 
     env:
-      GH_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
       PR_TITLE: ${{ github.event.pull_request.title }}
       PR_DESCRIPTION: ${{ github.event.pull_request.body }}
@@ -35,10 +33,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Load previous findings
         id: previous
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -182,6 +183,7 @@ jobs:
         if: always() && !cancelled() && steps.review.outcome != 'skipped'
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           REVIEW_FILE: ${{ steps.review.outputs.review_file }}
           REVIEW_STATUS: ${{ steps.review.outputs.status }}
           FAILURE_REASON: ${{ steps.review.outputs.failure_reason }}
