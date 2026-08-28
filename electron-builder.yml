@@ -57,7 +57,7 @@ directories:
   output: dist
 mac:
   category: public.app-category.productivity
-  minimumSystemVersion: "12.0"
+  minimumSystemVersion: "13.0"
   notarize: true
   hardenedRuntime: true
   icon: build/icon-production-macos-safe-area.png

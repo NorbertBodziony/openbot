@@ -187,6 +187,7 @@ if (commandLineUserDataDirectory) {
     ),
   );
 }
+app.setName("OpenBot");
 app.enableSandbox();
 if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();

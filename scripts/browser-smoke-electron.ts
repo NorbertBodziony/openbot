@@ -41,6 +41,7 @@ const server = createServer((request, response) => {
         requestHeaders: ${requestHeaders},
         navigatorUserAgent: navigator.userAgent,
         navigatorBrands: navigator.userAgentData?.brands ?? [],
+        navigatorWebdriver: navigator.webdriver,
       });
     </script>`);
     return;
@@ -65,12 +66,17 @@ void main().catch((error) => {
 });
 
 async function main(): Promise<void> {
+  const googleLive = process.argv.includes("--google-live");
   const temporaryRoot = await mkdtemp(join(tmpdir(), "openbot-browser-smoke-"));
+  app.setName("OpenBot");
   app.setPath("userData", join(temporaryRoot, "user-data"));
-  const hardTimeout = setTimeout(() => {
-    process.stderr.write("BrowserHost smoke test timed out.\n");
-    app.exit(1);
-  }, 20_000);
+  const hardTimeout = setTimeout(
+    () => {
+      process.stderr.write("BrowserHost smoke test timed out.\n");
+      app.exit(1);
+    },
+    googleLive ? 60_000 : 20_000,
+  );
 
   try {
     await new Promise<void>((resolve, reject) => {
@@ -138,10 +144,14 @@ async function main(): Promise<void> {
       ? identity.navigatorBrands.filter(isDynamicRecord)
       : [];
     const clientHintBrands = getString(identity.requestHeaders, "sec-ch-ua") ?? "";
+    const chromiumMajorVersion = process.versions.chrome.split(".")[0];
     if (
       headerSnapshot.text.includes("Electron/") ||
-      headerSnapshot.text.includes("OpenBot/") ||
+      !headerSnapshot.text.includes("OpenBot/") ||
+      !navigatorUserAgent?.includes(`Chrome/${chromiumMajorVersion}`) ||
       getString(identity.requestHeaders, "user-agent") !== navigatorUserAgent ||
+      identity.navigatorWebdriver !== false ||
+      headerSnapshot.text.includes("Google Chrome") ||
       (clientHintBrands.length > 0 &&
         navigatorBrands.some(
           (brand) => !clientHintBrands.includes(`"${getString(brand, "brand")}";v="${getString(brand, "version")}"`),
@@ -150,6 +160,7 @@ async function main(): Promise<void> {
       throw new Error(`Browser identity headers are invalid: ${headerSnapshot.text}`);
     }
     process.stdout.write("BrowserHost: matching Chromium page and request identity passed.\n");
+    if (googleLive) await runGoogleLiveProbe(browser);
     await expectFailure(() => browser.act(tab.id, first.revision, { type: "click", ref: save.ref }));
 
     const child = result.elements.find((element) => element.name === "Child");
@@ -308,6 +319,69 @@ async function main(): Promise<void> {
     await rm(temporaryRoot, { recursive: true, force: true });
     app.quit();
   }
+}
+
+async function runGoogleLiveProbe(browser: BrowserHost): Promise<void> {
+  const googleTab = await browser.open(
+    "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fwww.google.com%2F",
+    "google-live-smoke",
+    "google-live-smoke",
+    true,
+  );
+  const identifierPage = await waitForGoogleSnapshot(browser, googleTab.id, (snapshot) =>
+    snapshot.elements.some((element) => element.tag === "input" && !element.disabled),
+  );
+  const identifier = identifierPage.elements.find((element) => element.tag === "input" && !element.disabled);
+  if (!identifier) throw new Error("Google did not show an account identifier field.");
+  await browser.act(googleTab.id, identifierPage.revision, {
+    type: "type",
+    ref: identifier.ref,
+    text: "openbot-google-probe@example.com",
+    submit: true,
+  });
+  const outcome = await waitForGoogleSnapshot(browser, googleTab.id, (snapshot) => {
+    const normalized = snapshot.text.toLowerCase();
+    return (
+      snapshot.url.includes("/signin/rejected") ||
+      normalized.includes("browser or app may not be secure") ||
+      normalized.includes("couldn’t find your google account") ||
+      normalized.includes("couldn't find your google account") ||
+      normalized.includes("couldn’t find this account") ||
+      normalized.includes("couldn't find this account") ||
+      normalized.includes("nie udało się znaleźć tego konta") ||
+      normalized.includes("nie znaleziono konta google")
+    );
+  });
+  const normalized = outcome.text.toLowerCase();
+  if (outcome.url.includes("/signin/rejected") || normalized.includes("browser or app may not be secure")) {
+    throw new Error(`Google rejected the embedded browser: ${outcome.url}`);
+  }
+  if (
+    !normalized.includes("couldn’t find your google account") &&
+    !normalized.includes("couldn't find your google account") &&
+    !normalized.includes("couldn’t find this account") &&
+    !normalized.includes("couldn't find this account") &&
+    !normalized.includes("nie udało się znaleźć tego konta") &&
+    !normalized.includes("nie znaleziono konta google")
+  ) {
+    throw new Error(`Google returned an unexpected identifier result: ${outcome.text.slice(0, 500)}`);
+  }
+  process.stdout.write("BrowserHost: Google identifier step passed without signin/rejected.\n");
+}
+
+async function waitForGoogleSnapshot(
+  browser: BrowserHost,
+  tabId: string,
+  predicate: (snapshot: Awaited<ReturnType<BrowserHost["snapshot"]>>) => boolean,
+): Promise<Awaited<ReturnType<BrowserHost["snapshot"]>>> {
+  const deadline = Date.now() + 20_000;
+  let snapshot = await browser.snapshot(tabId);
+  while (Date.now() < deadline) {
+    if (predicate(snapshot)) return snapshot;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    snapshot = await browser.snapshot(tabId);
+  }
+  throw new Error(`Timed out waiting for Google: ${snapshot.url} ${snapshot.text.slice(0, 500)}`);
 }
 
 async function expectFailure(operation: () => Promise<unknown>): Promise<void> {

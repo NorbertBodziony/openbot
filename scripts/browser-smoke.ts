@@ -20,7 +20,7 @@ try {
   if (buildCode !== 0) throw new Error("Unable to build browser smoke test.");
 
   const electron = join(projectRoot, "node_modules", ".bin", "electron");
-  const exitCode = await run(electron, [outputPath], true);
+  const exitCode = await run(electron, [outputPath, ...process.argv.slice(2)], true);
   if (exitCode !== 0) process.exitCode = exitCode;
 } finally {
   await rm(outputRoot, { recursive: true, force: true });
