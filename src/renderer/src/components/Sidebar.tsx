@@ -1681,7 +1681,7 @@ export function Sidebar(props: SidebarProps) {
                   <Show when={title()}>
                     {(label) => (
                       <Badge class="bot-role-badge" size="sm" title={label()}>
-                        {label()}
+                        <span>{label()}</span>
                       </Badge>
                     )}
                   </Show>
