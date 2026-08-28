@@ -45,10 +45,11 @@ type BadgeProps<T extends ValidComponent = "span"> = PolymorphicProps<T, BadgeRo
     shape?: BadgeRadius;
     /** @deprecated Put a Lucide icon inside the badge. */
     dot?: boolean;
+    role?: JSX.HTMLAttributes<HTMLElement>["role"];
   } & Partial<Pick<ComponentProps<T>, "class" | "children">>;
 
 export function Badge<T extends ValidComponent = "span">(props: BadgeProps<T>): JSX.Element {
-  const others = omit(props, "class", "variant", "tone", "size", "shape", "dot", "children");
+  const others = omit(props, "class", "variant", "tone", "size", "shape", "dot", "children", "role");
   // biome-ignore lint/nursery/noUnsafeTypeAssertion: Solid 2's omit cannot preserve Kobalte's generic polymorphic props.
   const rootProps = others as PolymorphicProps<T, BadgeRootProps<T>>;
   const variant = () => props.variant ?? legacyBadgeVariant(props.tone);
@@ -60,6 +61,7 @@ export function Badge<T extends ValidComponent = "span">(props: BadgeProps<T>): 
       data-variant={variant()}
       data-size={props.size}
       data-shape={props.shape}
+      role={props.role ?? "presentation"}
       {...rootProps}
     >
       <Show when={props.dot}>

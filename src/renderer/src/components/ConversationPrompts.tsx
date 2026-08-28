@@ -402,7 +402,7 @@ export function BrowserTakeoverCard(props: {
         <Show
           when={!props.decision}
           fallback={
-            <Badge variant={completed() ? "success-light" : "secondary"}>
+            <Badge variant={completed() ? "success-light" : "secondary"} role="status">
               <Show when={completed()} fallback={<X data-icon="inline-start" aria-hidden="true" />}>
                 <Check data-icon="inline-start" aria-hidden="true" />
               </Show>
@@ -410,7 +410,7 @@ export function BrowserTakeoverCard(props: {
             </Badge>
           }
         >
-          <Badge variant="warning-light">
+          <Badge variant="warning-light" role="status">
             <TriangleAlert data-icon="inline-start" aria-hidden="true" />
             Action required
           </Badge>
