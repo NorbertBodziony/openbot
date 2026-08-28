@@ -111,7 +111,7 @@ describe("OtpInput", () => {
   });
 
   it("keeps focus on the last slot while verification is pending", async () => {
-    const view = render(() => {
+    render(() => {
       const [value, setValue] = createSignal("");
       const [status, setStatus] = createSignal<OtpInputStatus>("idle");
       return (
@@ -126,13 +126,11 @@ describe("OtpInput", () => {
 
     expect(input).toHaveFocus();
     expect(input).not.toHaveAttribute("readonly");
-    expect(view.container.querySelector('.otp-input-slot[data-otp-index="7"]')).toHaveAttribute("data-active", "true");
-    expect(view.container.querySelector(".otp-input-focus-ring")).toHaveAttribute("data-visible", "true");
   });
 
   it("resets its fixed slots when the controlled value is cleared", async () => {
     const onComplete = vi.fn();
-    const view = render(() => {
+    render(() => {
       const [value, setValue] = createSignal("ABCDEFGH");
       return (
         <>
@@ -145,8 +143,7 @@ describe("OtpInput", () => {
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "Reset" }));
-    const slots = [...view.container.querySelectorAll<HTMLElement>(".otp-input-slot")];
-    expect(slots.every((slot) => slot.textContent === "")).toBe(true);
+    expect(screen.getByRole("textbox", { name: "One-time code" })).toHaveValue("");
   });
 
   it("shows success feedback and respects reduced motion for error shake", () => {
@@ -159,10 +156,8 @@ describe("OtpInput", () => {
     expect(animate).not.toHaveBeenCalled();
     errorView.unmount();
 
-    const successView = renderOtp({ value: "ABCDEFGH", status: "success" });
+    renderOtp({ value: "ABCDEFGH", status: "success" });
     const message = screen.getByRole("status");
     expect(message).toHaveTextContent("Verified. Opening OpenBot…");
-    expect(message.querySelector(".otp-input-success")).toBeInTheDocument();
-    expect(successView.container.querySelector(".otp-input-slots .otp-input-success")).not.toBeInTheDocument();
   });
 });

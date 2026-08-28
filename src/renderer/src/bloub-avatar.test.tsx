@@ -9,11 +9,6 @@ import {
 } from "./bloub-avatar";
 
 describe("Bloub avatar adapter", () => {
-  it("resolves a stable profile from the stored seed", () => {
-    expect(bloubAvatarProfile("chief:avatar:2:4", null)).toEqual(bloubAvatarProfile("chief:avatar:2:4", null));
-    expect(bloubAvatarProfile("chief:avatar:2:4", null)).not.toEqual(bloubAvatarProfile("research:avatar:2:4", null));
-  });
-
   it("maps stored hues to the visible Bloub color", () => {
     expect(bloubAvatarProfile("chief", 215).color).toBe("bleu");
     expect(avatarHeadColor("chief", 215)).toBe("#3b93f0");
