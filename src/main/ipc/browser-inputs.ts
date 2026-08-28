@@ -42,7 +42,17 @@ export function parseVisibility(value: unknown): BrowserVisibilityInput {
   return {
     visible: value.visible,
     bounds: value.bounds === undefined ? undefined : parseBounds(value.bounds),
+    ...(value.target === undefined ? {} : { target: parseBrowserViewTarget(value.target) }),
   };
+}
+
+export function parseBrowserBounds(value: unknown): BrowserBounds {
+  return parseBounds(value);
+}
+
+function parseBrowserViewTarget(value: unknown): "main" | "picture-in-picture" {
+  if (value === "main" || value === "picture-in-picture") return value;
+  throw new Error("Invalid browser view target.");
 }
 
 function parseBounds(value: unknown): BrowserBounds {

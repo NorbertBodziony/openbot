@@ -449,6 +449,11 @@ describe("browser IPC input parsing", () => {
       visible: true,
       bounds: { x: 1, y: 2, width: 3, height: 4 },
     });
+    expect(parseVisibility({ visible: true, target: "picture-in-picture" })).toEqual({
+      visible: true,
+      bounds: undefined,
+      target: "picture-in-picture",
+    });
   });
 
   it("keeps browser input error messages", () => {
@@ -460,6 +465,7 @@ describe("browser IPC input parsing", () => {
       "Invalid browser navigation request.",
     );
     expect(() => parseVisibility({ visible: "yes" })).toThrowError("Invalid browser visibility request.");
+    expect(() => parseVisibility({ visible: true, target: "desktop" })).toThrowError("Invalid browser view target.");
     expect(() => parseVisibility({ visible: true, bounds: { x: 1, y: 2, width: Number.NaN, height: 4 } })).toThrowError(
       "Invalid browser bound: width.",
     );

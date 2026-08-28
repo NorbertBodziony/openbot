@@ -10,6 +10,7 @@ import type {
   BotSummary,
   BrowserControlState,
   BrowserOpenInput,
+  BrowserPictureInPictureEvent,
   BrowserPreview,
   BrowserTab,
   CentralAuthState,
@@ -164,6 +165,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   const models = clone(options.models ?? STORY_MODELS);
   const snapshots = clone(options.snapshots ?? STORY_SNAPSHOTS);
   let browserTabs = clone(options.browserTabs ?? STORY_BROWSER_TABS);
+  let activeBrowserTabId = browserTabs.at(-1)?.id ?? null;
   const browserControlState = clone(options.browserControlState ?? STORY_BROWSER_CONTROL);
   const browserPreview =
     options.browserPreview === undefined
@@ -185,6 +187,8 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let directMessageCounter = 10;
 
   const agentListeners = new Set<Listener<AgentEvent>>();
+  const browserDisplayListeners = new Set<Listener<{ tabs: BrowserTab[]; activeTabId: string | null }>>();
+  const browserPictureInPictureListeners = new Set<Listener<BrowserPictureInPictureEvent>>();
   const authListeners = new Set<Listener<CentralAuthState>>();
   const presenceListeners = new Set<Listener<TeamPresenceSnapshot>>();
   const directMessageListeners = new Set<Listener<DirectMessageRealtimeEvent>>();
@@ -857,27 +861,51 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           ownerBotId: input.ownerBotId ?? null,
         };
         browserTabs = [...browserTabs, tab];
+        activeBrowserTabId = tab.id;
+        emit(browserDisplayListeners, { tabs: browserTabs, activeTabId: tab.id });
         emitAgentEvent({ type: "browser-changed", tabs: browserTabs, activeTabId: tab.id });
         return clone(tab);
       },
-      activate: async () => undefined,
+      activate: async (tabId) => {
+        activeBrowserTabId = tabId;
+        emit(browserDisplayListeners, { tabs: browserTabs, activeTabId: activeBrowserTabId });
+      },
       navigate: async () => undefined,
       reload: async () => undefined,
       close: async (tabId) => {
         browserTabs = browserTabs.filter((tab) => tab.id !== tabId);
+        activeBrowserTabId = browserTabs[0]?.id ?? null;
+        emit(browserDisplayListeners, { tabs: browserTabs, activeTabId: activeBrowserTabId });
         emitAgentEvent({
           type: "browser-changed",
           tabs: browserTabs,
-          activeTabId: browserTabs[0]?.id ?? null,
+          activeTabId: activeBrowserTabId,
         });
       },
       listTabs: async () => clone(browserTabs),
+      getDisplayState: async () => ({ tabs: clone(browserTabs), activeTabId: activeBrowserTabId }),
       getControlState: async () => clone(browserControlState),
       capturePreview: async () => {
         if (!browserPreview) throw new Error("Browser preview is unavailable.");
         return clone(browserPreview);
       },
       setVisible: async () => undefined,
+      onDisplayState: (listener) => {
+        browserDisplayListeners.add(listener);
+        return () => browserDisplayListeners.delete(listener);
+      },
+      openPictureInPicture: async (bounds) => bounds ?? { x: 16, y: 16, width: 420, height: 300 },
+      closePictureInPicture: async () => undefined,
+      dockPictureInPicture: async () => {
+        emit(browserPictureInPictureListeners, { type: "dock" });
+      },
+      hidePictureInPicture: async () => {
+        emit(browserPictureInPictureListeners, { type: "hide" });
+      },
+      onPictureInPictureEvent: (listener) => {
+        browserPictureInPictureListeners.add(listener);
+        return () => browserPictureInPictureListeners.delete(listener);
+      },
     },
     update: {
       getStatus: async () => clone(updateStatus),

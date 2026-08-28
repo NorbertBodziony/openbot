@@ -873,9 +873,24 @@ const openbotApi: OpenBotDesktopApi = {
     reload: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserReload, tabId),
     close: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserClose, tabId),
     listTabs: () => ipcRenderer.invoke(IPC_CHANNELS.browserListTabs),
+    getDisplayState: () => ipcRenderer.invoke(IPC_CHANNELS.browserGetDisplayState),
     getControlState: () => ipcRenderer.invoke(IPC_CHANNELS.browserGetControlState),
     capturePreview: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserCapturePreview, tabId).then(decodeBrowserPreview),
     setVisible: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserSetVisible, input),
+    onDisplayState: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) => listener(state);
+      ipcRenderer.on(IPC_CHANNELS.browserDisplayStateEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.browserDisplayStateEvent, handler);
+    },
+    openPictureInPicture: (bounds) => ipcRenderer.invoke(IPC_CHANNELS.browserPictureInPictureOpen, bounds),
+    closePictureInPicture: () => ipcRenderer.invoke(IPC_CHANNELS.browserPictureInPictureClose),
+    dockPictureInPicture: () => ipcRenderer.invoke(IPC_CHANNELS.browserPictureInPictureDock),
+    hidePictureInPicture: () => ipcRenderer.invoke(IPC_CHANNELS.browserPictureInPictureHide),
+    onPictureInPictureEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: Parameters<typeof listener>[0]) => listener(event);
+      ipcRenderer.on(IPC_CHANNELS.browserPictureInPictureEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.browserPictureInPictureEvent, handler);
+    },
   },
   update: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.updateGetStatus),
