@@ -19,7 +19,7 @@ jobs:
 
     permissions:
       contents: read
-      issues: write
+      pull-requests: write
 
     env:
       PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -207,7 +207,7 @@ jobs:
               --jq '.[]
                 | select(.user.login == "github-actions[bot]" or .user.login == "github-actions")
                 | select((.body | contains("<!-- norbiai-review -->")) or (.body | contains("<!-- norbiai-data:")))
-                | .id' 2>/dev/null
+                | .id'
           )
           review_lookup_exit=$?
           failure_ids=$(
@@ -216,13 +216,13 @@ jobs:
               --jq '.[]
                 | select(.user.login == "github-actions[bot]" or .user.login == "github-actions")
                 | select(.body | contains("<!-- norbiai-review-failure -->"))
-                | .id' 2>/dev/null
+                | .id'
           )
           failure_lookup_exit=$?
 
           if [ "$review_lookup_exit" -ne 0 ] || [ "$failure_lookup_exit" -ne 0 ]; then
             echo "::warning title=NorbiAI comment failed::Could not look up existing PR comment"
-            exit 0
+            exit 1
           fi
 
           if [ "$REVIEW_STATUS" = "success" ]; then
@@ -256,12 +256,12 @@ jobs:
 
             new_comment_id=$(gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-              -f body="$body" --jq .id 2>/dev/null)
+              -f body="$body" --jq .id)
             create_exit=$?
 
             if [ "$create_exit" -ne 0 ] || [ -z "${new_comment_id:-}" ]; then
               echo "::warning title=NorbiAI comment failed::Could not create the new review comment; previous review preserved"
-              exit 0
+              exit 1
             fi
 
             old_ids="$review_ids
@@ -282,12 +282,12 @@ jobs:
 
             new_comment_id=$(gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-              -f body="$body" --jq .id 2>/dev/null)
+              -f body="$body" --jq .id)
             create_exit=$?
 
             if [ "$create_exit" -ne 0 ] || [ -z "${new_comment_id:-}" ]; then
               echo "::warning title=NorbiAI comment failed::Could not create review failure notice"
-              exit 0
+              exit 1
             fi
 
             old_ids="$failure_ids"
