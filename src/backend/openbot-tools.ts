@@ -153,18 +153,18 @@ export const OPENBOT_DYNAMIC_TOOLS = {
             items: {
               type: "object",
               properties: {
-                id: { type: "string" },
-                header: { type: "string" },
-                question: { type: "string" },
+                id: { type: "string", maxLength: INPUT_LIMITS.identifier },
+                header: { type: "string", maxLength: INPUT_LIMITS.promptHeader },
+                question: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.promptQuestion },
                 isSecret: { type: "boolean" },
                 options: {
                   type: "array",
-                  maxItems: 5,
+                  maxItems: INPUT_LIMITS.promptOptions,
                   items: {
                     type: "object",
                     properties: {
-                      label: { type: "string" },
-                      description: { type: "string" },
+                      label: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.promptOptionLabel },
+                      description: { type: "string", maxLength: INPUT_LIMITS.promptOptionDescription },
                     },
                     required: ["label"],
                     additionalProperties: false,

@@ -909,6 +909,51 @@ describe.sequential("AgentService", () => {
     });
     expect(events.filter((event) => event.type === "prompt")).toHaveLength(3);
 
+    const invalidPrompts = [
+      {
+        id: "too-many-questions-call",
+        questions: Array.from({ length: 33 }, (_, index) => ({
+          id: `question-${index}`,
+          header: "Question",
+          question: `Question ${index}?`,
+        })),
+      },
+      {
+        id: "too-many-options-call",
+        questions: [
+          {
+            id: "options",
+            header: "Options",
+            question: "Choose one.",
+            options: Array.from({ length: 6 }, (_, index) => ({ label: `Option ${index}` })),
+          },
+        ],
+      },
+      {
+        id: "long-question-call",
+        questions: [{ id: "long", header: "Long", question: "q".repeat(2_001) }],
+      },
+    ];
+    for (const invalidPrompt of invalidPrompts) {
+      client.emit("request", {
+        method: "item/tool/call",
+        id: invalidPrompt.id,
+        params: {
+          threadId,
+          turnId,
+          callId: invalidPrompt.id,
+          namespace: "openbot",
+          tool: "ask_user",
+          arguments: { questions: invalidPrompt.questions },
+        },
+      });
+      await waitFor(() => client.responses.some((response) => response.id === invalidPrompt.id));
+      expect(client.responses.find((response) => response.id === invalidPrompt.id)?.result).toMatchObject({
+        success: false,
+      });
+    }
+    expect(events.filter((event) => event.type === "prompt")).toHaveLength(3);
+
     client.emit("request", {
       method: "item/tool/requestUserInput",
       id: "empty-legacy-question",

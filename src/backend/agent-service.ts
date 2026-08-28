@@ -4377,7 +4377,27 @@ function promptQuestions(params: unknown): AgentPromptQuestion[] {
 }
 
 function validPromptQuestions(questions: AgentPromptQuestion[]): boolean {
-  return questions.length > 0 && new Set(questions.map((question) => question.id)).size === questions.length;
+  return (
+    questions.length > 0 &&
+    questions.length <= INPUT_LIMITS.promptQuestions &&
+    new Set(questions.map((question) => question.id)).size === questions.length &&
+    questions.every(
+      (question) =>
+        question.id.length > 0 &&
+        question.id.length <= INPUT_LIMITS.identifier &&
+        question.header.length <= INPUT_LIMITS.promptHeader &&
+        question.question.length > 0 &&
+        question.question.length <= INPUT_LIMITS.promptQuestion &&
+        (question.options === null ||
+          (question.options.length <= INPUT_LIMITS.promptOptions &&
+            question.options.every(
+              (option) =>
+                option.label.length > 0 &&
+                option.label.length <= INPUT_LIMITS.promptOptionLabel &&
+                option.description.length <= INPUT_LIMITS.promptOptionDescription,
+            ))),
+    )
+  );
 }
 
 function questionPromptText(questions: AgentPromptQuestion[], resolution: AgentPromptResolution | null): string {
