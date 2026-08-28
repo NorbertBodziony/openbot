@@ -285,8 +285,9 @@ export class BrowserHost {
 
     try {
       await tab.view.webContents.loadURL(normalizedUrl, browserLoadOptions());
-      if (focus && this.#activeTabId === tab.id && tab.view.getVisible()) {
-        tab.view.webContents.focus();
+      if (focus) {
+        this.#focusTab(tab);
+        setImmediate(() => this.#focusTab(tab));
       }
     } catch (error) {
       if (this.#tabs.get(tab.id) === tab) {
@@ -683,6 +684,18 @@ export class BrowserHost {
     if (this.#target !== "picture-in-picture" || !overlay || !window || window.isDestroyed()) return;
     window.contentView.removeChildView(overlay);
     window.contentView.addChildView(overlay);
+  }
+
+  #focusTab(tab: InternalTab): void {
+    if (
+      this.#tabs.get(tab.id) !== tab ||
+      this.#activeTabId !== tab.id ||
+      !tab.view.getVisible() ||
+      tab.view.webContents.isDestroyed()
+    ) {
+      return;
+    }
+    tab.view.webContents.focus();
   }
 
   #mountView(view: WebContentsView, window = this.#window): void {
