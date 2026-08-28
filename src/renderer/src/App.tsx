@@ -1852,7 +1852,8 @@ export function createAppController(props: AppProps = {}) {
         result: "failed",
         failure_code: "response_failed",
       });
-      throw error;
+      appendUiError(bot.id, error, "Answer failed");
+      return false;
     }
   }
 

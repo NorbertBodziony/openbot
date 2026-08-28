@@ -130,6 +130,7 @@ export function QuestionPromptBubble(props: QuestionPromptBubbleProps) {
   let stage: HTMLDivElement | undefined;
   let transitionTimer: number | undefined;
   let queuedInteraction: (() => void) | undefined;
+  let resolutionPresentationPending = false;
 
   const questionCount = () => props.questions.length;
   const showingResolution = () => slotPages()[activeSlot()]?.kind === "resolution";
@@ -139,6 +140,7 @@ export function QuestionPromptBubble(props: QuestionPromptBubbleProps) {
   onCleanup(() => {
     if (transitionTimer !== undefined) window.clearTimeout(transitionTimer);
     queuedInteraction = undefined;
+    if (resolutionPresentationPending) presentResolution();
   });
 
   queueMicrotask(() => {
@@ -261,9 +263,16 @@ export function QuestionPromptBubble(props: QuestionPromptBubbleProps) {
     }
     setSubmitting(false);
     if (!completed) return;
+    resolutionPresentationPending = true;
     transitionTo({ kind: "resolution", resolution: summaryResolution(props.questions, result) }, "forward", () =>
-      props.onResolutionPresented?.(),
+      presentResolution(),
     );
+  }
+
+  function presentResolution(): void {
+    if (!resolutionPresentationPending) return;
+    resolutionPresentationPending = false;
+    props.onResolutionPresented?.();
   }
 
   function finishQuestion(questionIndex: number, nextAnswers: QuestionAnswers, nextSkipped: QuestionFlags): void {

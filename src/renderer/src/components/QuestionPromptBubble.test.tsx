@@ -25,6 +25,7 @@ const questions: AgentPromptQuestion[] = [
     ],
   },
 ];
+const singleQuestion = questions.slice(0, 1);
 
 describe("QuestionPromptBubble", () => {
   it("advances after a choice and submits after the final answer", async () => {
@@ -43,6 +44,37 @@ describe("QuestionPromptBubble", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Answers sent");
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("retries the selected option when the first delivery fails", async () => {
+    const onSubmit = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    render(() => <QuestionPromptBubble questions={singleQuestion} onSubmit={onSubmit} />);
+
+    const option = screen.getByRole("radio", { name: /Session cookies/ });
+    await fireEvent.click(option);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(option).toBeChecked();
+
+    await fireEvent.click(option);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(2));
+    expect(onSubmit).toHaveBeenLastCalledWith({ approach: ["Session cookies"] });
+  });
+
+  it("presents a successful resolution when the bubble unmounts during its transition", async () => {
+    const onResolutionPresented = vi.fn();
+    const view = render(() => (
+      <QuestionPromptBubble
+        questions={singleQuestion}
+        onSubmit={vi.fn(async () => true)}
+        onResolutionPresented={onResolutionPresented}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("radio", { name: /Session cookies/ }));
+    await screen.findByRole("region", { name: "Answers sent" });
+    view.unmount();
+
+    expect(onResolutionPresented).toHaveBeenCalledOnce();
   });
 
   it("returns to the first unresolved question before submitting", async () => {

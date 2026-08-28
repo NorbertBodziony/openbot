@@ -4139,6 +4139,37 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("textbox", { name: "Custom answer for: Which account?" })).not.toBeInTheDocument();
   });
 
+  it("keeps the prompt active and reports a delivery failure", async () => {
+    vi.mocked(window.openbot.agent.respondToPrompt).mockRejectedValueOnce(new Error("Provider is offline."));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-failure",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-failure",
+      questions: [
+        {
+          id: "account",
+          header: "Account",
+          question: "Which account?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    const answer = await screen.findByRole("textbox", { name: "Custom answer for: Which account?" });
+    await fireEvent.input(answer, { target: { value: "Acme" } });
+    await fireEvent.keyDown(answer, { key: "Enter" });
+
+    expect(await screen.findByText("Provider is offline.")).toBeVisible();
+    expect(screen.getByText("Answer failed")).toBeVisible();
+    expect(answer).toBeEnabled();
+  });
+
   it("keeps an older resolved prompt when a new turn reuses its request ID", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });

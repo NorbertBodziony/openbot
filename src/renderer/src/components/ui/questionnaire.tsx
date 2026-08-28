@@ -166,6 +166,9 @@ function QuestionnaireChoice(props: QuestionnaireChoiceProps): JSX.Element {
         value={props.value}
         checked={props.checked}
         disabled={props.disabled}
+        onClick={() => {
+          if (props.checked) props.onChange(props.value);
+        }}
         onChange={() => props.onChange(props.value)}
       />
       {props.children}
