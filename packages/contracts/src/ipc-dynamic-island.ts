@@ -1,6 +1,6 @@
 import type { AgentApprovalKind, AgentApprovalPermissions, BotAvatarHue } from "./ipc-conversation";
 
-export type DynamicIslandMode = "idle" | "working" | "message" | "question" | "approval";
+export type DynamicIslandMode = "idle" | "working" | "message" | "question" | "approval" | "takeover" | "failed";
 
 export interface DynamicIslandPreference {
   enabled: boolean;
@@ -42,7 +42,7 @@ export interface DynamicIslandAttentionItem {
   id: string;
   requestId: string | number;
   bot: DynamicIslandBotIdentity;
-  kind: "prompt" | "approval";
+  kind: "prompt" | "approval" | "takeover" | "failure";
   title: string;
   detail: string | null;
   options: Array<{ label: string; description: string }> | null;
@@ -72,6 +72,7 @@ export type DynamicIslandAction =
   | { type: "open-app" }
   | { type: "open-bot"; serverId: string; botId: string }
   | { type: "open-message"; serverId: string; botId: string; messageId: string }
+  | { type: "open-failure"; serverId: string; botId: string; turnId: string }
   | { type: "review-attention"; serverId: string; botId: string; requestId: string | number }
   | { type: "approve-attention"; serverId: string; botId: string; requestId: string | number }
   | {

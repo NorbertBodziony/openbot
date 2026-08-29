@@ -49,7 +49,15 @@ export function parseDynamicIslandInteractive(input: unknown): { interactive: bo
 export function parseDynamicIslandPresentation(input: unknown): DynamicIslandPresentation {
   if (!isDynamicRecord(input)) throw new Error("Dynamic Island presentation is required.");
   const mode = input.mode;
-  if (mode !== "idle" && mode !== "working" && mode !== "message" && mode !== "question" && mode !== "approval") {
+  if (
+    mode !== "idle" &&
+    mode !== "working" &&
+    mode !== "message" &&
+    mode !== "question" &&
+    mode !== "approval" &&
+    mode !== "takeover" &&
+    mode !== "failed"
+  ) {
     throw new Error("Dynamic Island mode is invalid.");
   }
   if (
@@ -92,6 +100,9 @@ export function parseDynamicIslandAction(input: unknown): DynamicIslandAction {
   }
   if (input.type === "open-message" && isShortString(input.messageId, 160)) {
     return { type: input.type, serverId: input.serverId, botId: input.botId, messageId: input.messageId };
+  }
+  if (input.type === "open-failure" && isShortString(input.turnId, 160)) {
+    return { type: input.type, serverId: input.serverId, botId: input.botId, turnId: input.turnId };
   }
   if (
     (input.type === "review-attention" || input.type === "approve-attention") &&
@@ -154,7 +165,7 @@ function isAttentionItem(value: unknown): value is DynamicIslandAttentionItem {
     !isShortString(value.id, 160) ||
     !isDynamicIslandRequestId(value.requestId) ||
     !isBotIdentity(value.bot) ||
-    (value.kind !== "prompt" && value.kind !== "approval") ||
+    (value.kind !== "prompt" && value.kind !== "approval" && value.kind !== "takeover" && value.kind !== "failure") ||
     !isShortString(value.title, 180) ||
     (value.detail !== null && !isShortString(value.detail, 600)) ||
     !isDynamicIslandOptions(value.options) ||
@@ -163,6 +174,9 @@ function isAttentionItem(value: unknown): value is DynamicIslandAttentionItem {
     return false;
   }
   if (value.kind === "prompt") return value.approval === null;
+  if (value.kind === "takeover" || value.kind === "failure") {
+    return value.options === null && value.questions === null && value.approval === null;
+  }
   return value.options === null && value.questions === null && isDynamicIslandApproval(value.approval);
 }
 

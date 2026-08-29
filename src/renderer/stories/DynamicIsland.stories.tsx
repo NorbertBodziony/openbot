@@ -8,12 +8,14 @@ import { Button, type DynamicIslandViewState } from "../src/components/ui";
 import { DynamicIslandDisplayComparison } from "./DynamicIslandDisplayComparison";
 import { STORY_BOTS } from "./fixtures";
 
-type Scenario = "idle" | "working" | "chat" | "question" | "approval";
+type Scenario = "idle" | "working" | "chat" | "question" | "approval" | "takeover" | "failed";
 type QuestionVariant = "standard" | "short" | "long" | "multiple";
+type WorkingVariant = "single" | "multiple";
 
 interface DynamicIslandDemoProps {
   scenario: Scenario;
   questionVariant?: QuestionVariant;
+  workingVariant?: WorkingVariant;
   defaultState?: DynamicIslandViewState;
   onAction: (action: DynamicIslandAction) => void;
   onSecondaryAction: () => void;
@@ -22,7 +24,9 @@ interface DynamicIslandDemoProps {
 const BOT_IDENTITIES = STORY_BOTS.slice(0, 3).map(toIslandBot);
 
 function DynamicIslandDemo(props: DynamicIslandDemoProps): JSX.Element {
-  const presentation = createMemo(() => presentationFor(props.scenario, props.questionVariant ?? "standard"));
+  const presentation = createMemo(() =>
+    presentationFor(props.scenario, props.questionVariant ?? "standard", props.workingVariant ?? "multiple"),
+  );
 
   return (
     <DynamicIslandDisplayComparison
@@ -51,10 +55,12 @@ function DynamicIslandTransitionDemo(
     { value: "chat", label: "Chat" },
     { value: "question", label: "Question" },
     { value: "approval", label: "Approval" },
+    { value: "takeover", label: "Takeover" },
+    { value: "failed", label: "Failed" },
   ];
   const [scenario, setScenario] = createSignal<Scenario>("idle");
   const [state, setState] = createSignal<DynamicIslandViewState>("compact");
-  const presentation = createMemo(() => presentationFor(scenario(), "standard"));
+  const presentation = createMemo(() => presentationFor(scenario(), "standard", "multiple"));
 
   function selectScenario(next: Scenario): void {
     setScenario(next);
@@ -107,7 +113,11 @@ function DynamicIslandTransitionDemo(
   );
 }
 
-function presentationFor(scenario: Scenario, questionVariant: QuestionVariant): DynamicIslandPresentation {
+function presentationFor(
+  scenario: Scenario,
+  questionVariant: QuestionVariant,
+  workingVariant: WorkingVariant,
+): DynamicIslandPresentation {
   const base = {
     serverId: "local",
     activeCount: 0,
@@ -119,15 +129,17 @@ function presentationFor(scenario: Scenario, questionVariant: QuestionVariant): 
   } satisfies Omit<DynamicIslandPresentation, "mode">;
 
   if (scenario === "working") {
+    const working = [
+      { bot: BOT_IDENTITIES[0], task: "Planning the launch sequence" },
+      { bot: BOT_IDENTITIES[1], task: "Checking primary sources" },
+      { bot: BOT_IDENTITIES[2], task: "Drafting partner follow-ups" },
+    ];
+    const visibleWorking = workingVariant === "single" ? working.slice(0, 1) : working;
     return {
       ...base,
       mode: "working",
-      activeCount: 3,
-      working: [
-        { bot: BOT_IDENTITIES[0], task: "Planning the launch sequence" },
-        { bot: BOT_IDENTITIES[1], task: "Checking primary sources" },
-        { bot: BOT_IDENTITIES[2], task: "Drafting partner follow-ups" },
-      ],
+      activeCount: visibleWorking.length,
+      working: visibleWorking,
     };
   }
 
@@ -178,6 +190,48 @@ function presentationFor(scenario: Scenario, questionVariant: QuestionVariant): 
             grantRoot: null,
             permissions: null,
           },
+        },
+      ],
+    };
+  }
+
+  if (scenario === "takeover") {
+    return {
+      ...base,
+      mode: "takeover",
+      attentionCount: 1,
+      attention: [
+        {
+          id: "chief-browser-takeover",
+          requestId: "chief-browser-takeover",
+          bot: BOT_IDENTITIES[0],
+          kind: "takeover",
+          title: "Browser step needs you",
+          detail: "Complete the sign-in, verification, or consent in the browser.",
+          options: null,
+          questions: null,
+          approval: null,
+        },
+      ],
+    };
+  }
+
+  if (scenario === "failed") {
+    return {
+      ...base,
+      mode: "failed",
+      attentionCount: 1,
+      attention: [
+        {
+          id: "research-failed-turn",
+          requestId: "research-failed-turn",
+          bot: BOT_IDENTITIES[1],
+          kind: "failure",
+          title: "Task failed",
+          detail: "The browser tab closed before Research could finish collecting the sources.",
+          options: null,
+          questions: null,
+          approval: null,
         },
       ],
     };
@@ -340,8 +394,12 @@ const meta = {
     onSecondaryAction: fn(),
   },
   argTypes: {
-    scenario: { control: "select", options: ["idle", "working", "chat", "question", "approval"] },
+    scenario: {
+      control: "select",
+      options: ["idle", "working", "chat", "question", "approval", "takeover", "failed"],
+    },
     questionVariant: { control: "select", options: ["standard", "short", "long", "multiple"] },
+    workingVariant: { control: "select", options: ["single", "multiple"] },
     defaultState: { control: "select", options: ["compact", "expanded"] },
   },
   parameters: { layout: "fullscreen", a11y: { test: "error" } },
@@ -353,7 +411,11 @@ type Story = StoryObj<typeof meta>;
 export const Idle: Story = { args: { scenario: "idle", onAction: fn() } };
 
 export const WorkingBots: Story = {
-  args: { scenario: "working", onAction: fn() },
+  args: { scenario: "working", workingVariant: "multiple", onAction: fn() },
+};
+
+export const WorkingBot: Story = {
+  args: { scenario: "working", workingVariant: "single", onAction: fn() },
 };
 
 export const ChatUpdate: Story = {
@@ -396,6 +458,14 @@ export const QuestionFromAIMultiple: Story = {
 
 export const NeedsApproval: Story = {
   args: { scenario: "approval", onAction: fn() },
+};
+
+export const BrowserTakeover: Story = {
+  args: { scenario: "takeover", onAction: fn() },
+};
+
+export const TaskFailed: Story = {
+  args: { scenario: "failed", onAction: fn() },
 };
 
 export const StateTransitions: Story = {

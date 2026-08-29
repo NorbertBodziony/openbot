@@ -20,6 +20,7 @@ export interface DynamicIslandPresentationInput {
   liveMessages: Record<string, BotMessage[]>;
   pendingPrompts: Record<string, PromptEvent | BrowserTakeoverEvent | undefined>;
   pendingApprovals: Record<string, AgentApproval | undefined>;
+  failedTurns: Record<string, string | undefined>;
 }
 
 export function createDynamicIslandPresentation(input: DynamicIslandPresentationInput): DynamicIslandPresentation {
@@ -42,11 +43,17 @@ export function createDynamicIslandPresentation(input: DynamicIslandPresentation
           createdAt: latestMessage.time,
         }
       : null;
-  const attention = collectAttention(input, botsById).slice(0, 3);
+  const attention = collectAttention(input, botsById)
+    .sort((left, right) => attentionPriority(left.kind) - attentionPriority(right.kind))
+    .slice(0, 3);
   const mode = attention[0]
     ? attention[0].kind === "approval"
       ? "approval"
-      : "question"
+      : attention[0].kind === "takeover"
+        ? "takeover"
+        : attention[0].kind === "failure"
+          ? "failed"
+          : "question"
     : message
       ? "message"
       : working.length > 0
@@ -144,9 +151,27 @@ function collectAttention(
       id: String(event.request.requestId),
       requestId: event.request.requestId,
       bot: botIdentity(bot),
-      kind: "prompt",
-      title: "Browser control is waiting",
-      detail: "Open OpenBot to continue the browser task.",
+      kind: "takeover",
+      title: "Browser step needs you",
+      detail: "Complete the sign-in, verification, or consent in the browser.",
+      options: null,
+      questions: null,
+      approval: null,
+    });
+  }
+  for (const [botId, turnId] of Object.entries(input.failedTurns)) {
+    const bot = botsById.get(botId);
+    if (!bot || !turnId) continue;
+    const delivery = input.queues[botId]?.deliveries.find(
+      (candidate) => candidate.status === "failed" && candidate.turnId === turnId,
+    );
+    items.push({
+      id: turnId,
+      requestId: turnId,
+      bot: botIdentity(bot),
+      kind: "failure",
+      title: "Task failed",
+      detail: failureDetail(delivery?.error),
       options: null,
       questions: null,
       approval: null,
@@ -155,11 +180,23 @@ function collectAttention(
   return items;
 }
 
+function attentionPriority(kind: DynamicIslandAttentionItem["kind"]): 0 | 1 | 2 | 3 {
+  if (kind === "approval") return 0;
+  if (kind === "takeover") return 1;
+  if (kind === "prompt") return 2;
+  return 3;
+}
+
 function countAttention(input: DynamicIslandPresentationInput): number {
   return (
     Object.values(input.pendingPrompts).filter(Boolean).length +
-    Object.values(input.pendingApprovals).filter(Boolean).length
+    Object.values(input.pendingApprovals).filter(Boolean).length +
+    Object.values(input.failedTurns).filter(Boolean).length
   );
+}
+
+function failureDetail(error: string | null | undefined): string {
+  return error?.trim().slice(0, 600) || "The task stopped before it could finish.";
 }
 
 function approvalTitle(approval: AgentApproval) {

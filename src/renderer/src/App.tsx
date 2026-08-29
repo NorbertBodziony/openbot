@@ -257,6 +257,7 @@ export function createAppController(props: AppProps = {}) {
   const [conversationOlderLoading, setConversationOlderLoading] = createSignal<Record<string, boolean>>({});
   const [conversationOlderErrors, setConversationOlderErrors] = createSignal<Record<string, string | null>>({});
   const [activeTurns, setActiveTurns] = createSignal<Record<string, string | null>>({});
+  const [failedTurns, setFailedTurns] = createSignal<Record<string, string | undefined>>({});
   const [unreadReplies, setUnreadReplies] = createSignal<Record<string, number>>({});
   const [conversationReads, setConversationReads] = createSignal<Record<string, ConversationReadState>>({});
   const [recentReplies, setRecentReplies] = createSignal<Record<string, boolean>>({});
@@ -834,6 +835,7 @@ export function createAppController(props: AppProps = {}) {
       case "turn-started":
         completedTurnByBot.delete(event.botId);
         clearRecentReply(event.botId);
+        setFailedTurns((current) => withoutBot(current, event.botId));
         setActiveTurns((current) => ({
           ...current,
           [event.botId]: event.turnId,
@@ -841,6 +843,9 @@ export function createAppController(props: AppProps = {}) {
         return;
       case "turn-completed":
         completedTurnByBot.set(event.botId, event.turnId);
+        setFailedTurns((current) =>
+          event.status === "failed" ? { ...current, [event.botId]: event.turnId } : withoutBot(current, event.botId),
+        );
         setActiveTurns((current) => ({ ...current, [event.botId]: null }));
         setQueues((current) => {
           const snapshot = current[event.botId];
@@ -1740,6 +1745,7 @@ export function createAppController(props: AppProps = {}) {
       setConversationLoaded((current) => withoutBot(current, botId));
       setConversationRevisions((current) => withoutBot(current, botId));
       setActiveTurns((current) => withoutBot(current, botId));
+      setFailedTurns((current) => withoutBot(current, botId));
       setUnreadReplies((current) => withoutBot(current, botId));
       setConversationReads((current) => withoutBot(current, botId));
       setRecentReplies((current) => withoutBot(current, botId));
@@ -2398,6 +2404,7 @@ export function createAppController(props: AppProps = {}) {
     setConversationWindowModes({});
     setUnreadReplies({});
     setQueues({});
+    setFailedTurns({});
     setTeamPresence(EMPTY_TEAM_PRESENCE);
     const browserRequestedAtRevision = browserChangeRevision;
     const [storedBots, layout, reads, status, models, tabs, controlState, presence] = await Promise.all([
@@ -2889,6 +2896,7 @@ export function createAppController(props: AppProps = {}) {
         liveMessages: liveMessages(),
         pendingPrompts: pendingPrompts(),
         pendingApprovals: pendingApprovals(),
+        failedTurns: failedTurns(),
       });
     },
     (presentation) => {
@@ -2925,6 +2933,11 @@ export function createAppController(props: AppProps = {}) {
     if (activeServerSidebarKey() !== action.serverId) await selectServer(action.serverId, false);
     selectBot(action.botId);
     if (action.type === "open-message") await openAgentMessage(action.botId, action.messageId);
+    if (action.type === "open-failure") {
+      setFailedTurns((current) =>
+        current[action.botId] === action.turnId ? withoutBot(current, action.botId) : current,
+      );
+    }
   }
 
   const pinnedSidebarItems = createMemo(() => sidebarPinsByServer()[activeServerSidebarKey()] ?? []);

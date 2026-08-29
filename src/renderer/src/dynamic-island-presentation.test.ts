@@ -39,6 +39,7 @@ function state(): DynamicIslandPresentationInput {
     liveMessages: {},
     pendingPrompts: {},
     pendingApprovals: {},
+    failedTurns: {},
   };
 }
 
@@ -131,6 +132,74 @@ describe("createDynamicIslandPresentation", () => {
 
     expect(presentation.mode).toBe("approval");
     expect(presentation.attention.map((item) => item.kind)).toEqual(["approval", "prompt"]);
+  });
+
+  it("surfaces a browser takeover before a question", () => {
+    const input = state();
+    input.bots = [bot, research];
+    input.pendingPrompts.chief = {
+      type: "prompt",
+      requestId: "prompt-1",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: [{ id: "q1", header: "Choose", question: "Which option?", isSecret: false, options: null }],
+    };
+    input.pendingPrompts.research = {
+      type: "browser-takeover-requested",
+      request: {
+        requestId: "takeover-1",
+        botId: "research",
+        threadId: "thread-2",
+        turnId: "turn-2",
+        tabId: "tab-login",
+      },
+    };
+
+    const presentation = createDynamicIslandPresentation(input);
+
+    expect(presentation.mode).toBe("takeover");
+    expect(presentation.attention[0]).toMatchObject({
+      requestId: "takeover-1",
+      kind: "takeover",
+      bot: { id: "research" },
+      title: "Browser step needs you",
+      detail: "Complete the sign-in, verification, or consent in the browser.",
+    });
+  });
+
+  it("shows a fresh task failure with the delivery error", () => {
+    const input = state();
+    input.failedTurns.chief = "turn-failed";
+    input.queues.chief = {
+      botId: "chief",
+      deliveries: [
+        {
+          id: "delivery-failed",
+          messageId: "message-failed",
+          recipientBotId: "chief",
+          sender: { kind: "user" },
+          text: "Collect the sources",
+          attachments: [],
+          replyToMessageId: null,
+          status: "failed",
+          position: null,
+          turnId: "turn-failed",
+          error: "The browser tab closed unexpectedly.",
+          createdAt: "2026-08-29T10:42:00.000Z",
+        },
+      ],
+    };
+
+    const presentation = createDynamicIslandPresentation(input);
+
+    expect(presentation.mode).toBe("failed");
+    expect(presentation.attentionCount).toBe(1);
+    expect(presentation.attention[0]).toMatchObject({
+      kind: "failure",
+      requestId: "turn-failed",
+      detail: "The browser tab closed unexpectedly.",
+    });
   });
 
   it("counts multiple working bots and unread replies", () => {

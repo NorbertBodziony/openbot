@@ -96,6 +96,48 @@ describe("app IPC input parsing", () => {
     expect(parseDynamicIslandPreference({ enabled: true })).toEqual({ enabled: true });
     expect(parseDynamicIslandInteractive({ interactive: false })).toEqual({ interactive: false });
     expect(parseDynamicIslandPresentation(presentation)).toEqual(presentation);
+    const takeoverPresentation = {
+      ...presentation,
+      mode: "takeover",
+      activeCount: 0,
+      attentionCount: 1,
+      working: [],
+      attention: [
+        {
+          id: "takeover-1",
+          requestId: "takeover-1",
+          bot: presentation.working[0].bot,
+          kind: "takeover",
+          title: "Browser step needs you",
+          detail: "Complete the sign-in in the browser.",
+          options: null,
+          questions: null,
+          approval: null,
+        },
+      ],
+    } as const;
+    expect(parseDynamicIslandPresentation(takeoverPresentation)).toEqual(takeoverPresentation);
+    const failedPresentation = {
+      ...presentation,
+      mode: "failed",
+      activeCount: 0,
+      attentionCount: 1,
+      working: [],
+      attention: [
+        {
+          id: "turn-failed",
+          requestId: "turn-failed",
+          bot: presentation.working[0].bot,
+          kind: "failure",
+          title: "Task failed",
+          detail: "The browser tab closed unexpectedly.",
+          options: null,
+          questions: null,
+          approval: null,
+        },
+      ],
+    } as const;
+    expect(parseDynamicIslandPresentation(failedPresentation)).toEqual(failedPresentation);
     expect(parseDynamicIslandAction({ type: "open-bot", serverId: "local", botId: "chief" })).toEqual({
       type: "open-bot",
       serverId: "local",
@@ -128,6 +170,19 @@ describe("app IPC input parsing", () => {
       botId: "chief",
       requestId: "prompt-1",
       answers: { source: ["Official data"] },
+    });
+    expect(
+      parseDynamicIslandAction({
+        type: "open-failure",
+        serverId: "local",
+        botId: "chief",
+        turnId: "turn-failed",
+      }),
+    ).toEqual({
+      type: "open-failure",
+      serverId: "local",
+      botId: "chief",
+      turnId: "turn-failed",
     });
     expect(() =>
       parseDynamicIslandPresentation({ ...presentation, working: Array(4).fill(presentation.working[0]) }),

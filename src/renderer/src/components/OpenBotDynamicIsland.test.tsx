@@ -39,16 +39,21 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     expect(outgoingControl?.closest("[inert]")).not.toBeNull();
   });
 
-  it("ends a rapid series of updates on the newest mode", async () => {
-    const controller = renderControlledIsland(workingPresentation(), "expanded");
+  it("ends a rapid series of updates and a return to idle on the newest mode", async () => {
+    const controller = renderControlledIsland(workingPresentation(), "compact");
 
     flush(() => controller.setPresentation(messagePresentation("reply-1")));
     flush(() => controller.setPresentation(questionPresentation()));
     flush(() => controller.setPresentation(approvalPresentation()));
+    flush(() => controller.setPresentation(idlePresentation()));
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeVisible());
+    await waitFor(() =>
+      expect(document.querySelector('[data-island-mode-layer="incoming"][data-island-mode="idle"]')).not.toBeNull(),
+    );
+    await waitFor(() => expect(document.querySelector('[data-island-mode-layer="outgoing"]')).toBeNull());
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).not.toBeInTheDocument());
     expect(screen.queryByRole("button", { name: /Official data/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
   });
 
   it("uses fresh data without retaining an outgoing layer for the same mode", async () => {
@@ -65,6 +70,34 @@ describe("OpenBotDynamicIsland mode transitions", () => {
       messageId: "reply-2",
     });
     expect(document.querySelector('[data-island-mode-layer="outgoing"]')).toBeNull();
+  });
+
+  it("opens the full browser takeover context", async () => {
+    const onAction = vi.fn<(action: DynamicIslandAction) => void>();
+    renderControlledIsland(takeoverPresentation(), "expanded", onAction);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Take over" }));
+
+    expect(onAction).toHaveBeenCalledWith({
+      type: "review-attention",
+      serverId: "local",
+      botId: "research",
+      requestId: "takeover-1",
+    });
+  });
+
+  it("opens the failed task details", async () => {
+    const onAction = vi.fn<(action: DynamicIslandAction) => void>();
+    renderControlledIsland(failedPresentation(), "expanded", onAction);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open details" }));
+
+    expect(onAction).toHaveBeenCalledWith({
+      type: "open-failure",
+      serverId: "local",
+      botId: "research",
+      turnId: "turn-failed",
+    });
   });
 });
 
@@ -101,6 +134,13 @@ function basePresentation(): Omit<DynamicIslandPresentation, "mode"> {
     working: [],
     message: null,
     attention: [],
+  };
+}
+
+function idlePresentation(): DynamicIslandPresentation {
+  return {
+    ...basePresentation(),
+    mode: "idle",
   };
 }
 
@@ -183,6 +223,48 @@ function approvalPresentation(): DynamicIslandPresentation {
           grantRoot: null,
           permissions: null,
         },
+      },
+    ],
+  };
+}
+
+function takeoverPresentation(): DynamicIslandPresentation {
+  return {
+    ...basePresentation(),
+    mode: "takeover",
+    attentionCount: 1,
+    attention: [
+      {
+        id: "takeover-1",
+        requestId: "takeover-1",
+        bot: BOT,
+        kind: "takeover",
+        title: "Browser step needs you",
+        detail: "Complete the sign-in, verification, or consent in the browser.",
+        options: null,
+        questions: null,
+        approval: null,
+      },
+    ],
+  };
+}
+
+function failedPresentation(): DynamicIslandPresentation {
+  return {
+    ...basePresentation(),
+    mode: "failed",
+    attentionCount: 1,
+    attention: [
+      {
+        id: "turn-failed",
+        requestId: "turn-failed",
+        bot: BOT,
+        kind: "failure",
+        title: "Task failed",
+        detail: "The browser tab closed unexpectedly.",
+        options: null,
+        questions: null,
+        approval: null,
       },
     ],
   };

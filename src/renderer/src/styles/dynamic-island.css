@@ -21,9 +21,7 @@
   border: 0;
   background: transparent;
   color: var(--openbot-text-primary);
-  filter: drop-shadow(0 0 0 transparent);
   pointer-events: none;
-  transition: filter var(--openbot-duration-normal) var(--openbot-ease-out);
 }
 
 .dynamic-island-shell {
@@ -48,11 +46,6 @@
 .dynamic-island[data-layout-state="expanded"] {
   --dynamic-island-shoulder-size: 19px;
   --dynamic-island-bottom-radius: 24px;
-}
-
-.dynamic-island[data-layout-state="expanded"],
-.dynamic-island[data-hovered="true"] {
-  filter: drop-shadow(0 12px 22px var(--openbot-shadow-dialog));
 }
 
 .dynamic-island-shell[data-resizing] {
@@ -142,16 +135,6 @@
 
 .dynamic-island[data-pointer-toggle="false"] .dynamic-island-toggle {
   cursor: default;
-}
-
-.dynamic-island:has(.dynamic-island-toggle:focus-visible) {
-  filter: drop-shadow(0 0 0.5px var(--openbot-border-strong)) drop-shadow(0 10px 20px var(--openbot-shadow-dialog));
-}
-
-.dynamic-island:has(.dynamic-island-toggle:focus-visible) .dynamic-island-silhouette-body {
-  box-shadow:
-    inset 0 0 0 1px var(--openbot-border-strong),
-    inset 0 -1px 0 var(--openbot-border);
 }
 
 .dynamic-island .dynamic-island-toggle:focus-visible {
@@ -444,28 +427,22 @@
   transform-origin: right center;
 }
 
-.dynamic-island-approval[data-layout-state="expanded"] .dynamic-island-panel,
-.dynamic-island-approval .dynamic-island-panel[data-phase="exiting"],
-.dynamic-island-approval .dynamic-island-panel[data-phase="leaving"] {
-  padding: 14px calc(var(--dynamic-island-expanded-shoulder-size) + 20px);
+.openbot-dynamic-island[data-layout-state="expanded"] .dynamic-island-panel,
+.openbot-dynamic-island .dynamic-island-panel[data-phase="exiting"],
+.openbot-dynamic-island .dynamic-island-panel[data-phase="leaving"] {
+  padding: 14px calc(var(--dynamic-island-expanded-shoulder-size) + 20px) 20px;
 }
 
-.dynamic-island-external.dynamic-island-approval[data-layout-state="expanded"] .dynamic-island-panel,
-.dynamic-island-external.dynamic-island-approval .dynamic-island-panel[data-phase="exiting"],
-.dynamic-island-external.dynamic-island-approval .dynamic-island-panel[data-phase="leaving"] {
-  padding: 14px 20px;
+.dynamic-island-external.openbot-dynamic-island[data-layout-state="expanded"] .dynamic-island-panel,
+.dynamic-island-external.openbot-dynamic-island .dynamic-island-panel[data-phase="exiting"],
+.dynamic-island-external.openbot-dynamic-island .dynamic-island-panel[data-phase="leaving"] {
+  padding: 14px 20px 20px;
 }
 
-.dynamic-island-question[data-layout-state="expanded"] .dynamic-island-panel,
-.dynamic-island-question .dynamic-island-panel[data-phase="exiting"],
-.dynamic-island-question .dynamic-island-panel[data-phase="leaving"] {
-  padding: 14px calc(var(--dynamic-island-expanded-shoulder-size) + 20px);
-}
-
-.dynamic-island-external.dynamic-island-question[data-layout-state="expanded"] .dynamic-island-panel,
-.dynamic-island-external.dynamic-island-question .dynamic-island-panel[data-phase="exiting"],
-.dynamic-island-external.dynamic-island-question .dynamic-island-panel[data-phase="leaving"] {
-  padding: 14px 20px;
+.openbot-dynamic-island.dynamic-island-working[data-layout-state="expanded"] .dynamic-island-panel,
+.openbot-dynamic-island.dynamic-island-working .dynamic-island-panel[data-phase="exiting"],
+.openbot-dynamic-island.dynamic-island-working .dynamic-island-panel[data-phase="leaving"] {
+  padding-bottom: 14px;
 }
 
 .dynamic-island[data-content-motion="spring"] .dynamic-island-trailing-expanded {
@@ -485,8 +462,8 @@
 .dynamic-island-external {
   --dynamic-island-notch-width: 16px;
   --dynamic-island-compact-width: 212px;
+  --dynamic-island-external-inline-inset: 6px;
   padding-top: var(--openbot-space-1);
-  filter: drop-shadow(0 12px 22px var(--openbot-shadow-dialog));
 }
 
 .dynamic-island-external .dynamic-island-shoulder {
@@ -513,7 +490,7 @@
 
 .dynamic-island-external .dynamic-island-toggle {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding-inline: 14px;
+  padding-inline: var(--dynamic-island-external-inline-inset);
 }
 
 .dynamic-island-external .dynamic-island-notch-safe-zone {
@@ -522,7 +499,7 @@
 
 .dynamic-island-external .dynamic-island-ear-leading {
   position: relative;
-  left: -2px;
+  left: 0;
   justify-content: flex-start;
   padding-right: 0;
 }
@@ -541,11 +518,6 @@
   justify-content: flex-start;
   padding-right: 0;
   padding-left: 0;
-}
-
-.dynamic-island-external.dynamic-island-status .dynamic-island-toggle {
-  padding-left: 8px;
-  padding-right: 8px;
 }
 
 .dynamic-island-external.dynamic-island-status .dynamic-island-trailing-expanded {

@@ -677,7 +677,7 @@
 }
 
 .dynamic-island-story-external-screen {
-  background: var(--openbot-bg-canvas);
+  background: var(--openbot-bg-surface);
 }
 
 .dynamic-island-story-display-label {

@@ -162,7 +162,15 @@ function decodeDynamicIslandPreference(value: unknown): DynamicIslandPreference 
 function decodeDynamicIslandPresentation(value: unknown): DynamicIslandPresentation {
   if (!isDynamicRecord(value)) throw new Error("Invalid Dynamic Island presentation.");
   const mode = value.mode;
-  if (mode !== "idle" && mode !== "working" && mode !== "message" && mode !== "question" && mode !== "approval") {
+  if (
+    mode !== "idle" &&
+    mode !== "working" &&
+    mode !== "message" &&
+    mode !== "question" &&
+    mode !== "approval" &&
+    mode !== "takeover" &&
+    mode !== "failed"
+  ) {
     throw new Error("Invalid Dynamic Island presentation.");
   }
   if (
@@ -197,6 +205,9 @@ function decodeDynamicIslandAction(value: unknown): DynamicIslandAction {
   if (value.type === "open-bot") return { type: value.type, serverId: value.serverId, botId: value.botId };
   if (value.type === "open-message" && isString(value.messageId)) {
     return { type: value.type, serverId: value.serverId, botId: value.botId, messageId: value.messageId };
+  }
+  if (value.type === "open-failure" && isString(value.turnId)) {
+    return { type: value.type, serverId: value.serverId, botId: value.botId, turnId: value.turnId };
   }
   if (
     (value.type === "review-attention" || value.type === "approve-attention") &&
@@ -238,7 +249,7 @@ function isDynamicIslandAttentionItem(value: unknown): value is DynamicIslandAtt
     !isString(value.id) ||
     (!isString(value.requestId) && !isNumber(value.requestId)) ||
     !isDynamicIslandBot(value.bot) ||
-    (value.kind !== "prompt" && value.kind !== "approval") ||
+    (value.kind !== "prompt" && value.kind !== "approval" && value.kind !== "takeover" && value.kind !== "failure") ||
     !isString(value.title) ||
     (value.detail !== null && !isString(value.detail)) ||
     !isDynamicIslandOptions(value.options)
@@ -246,6 +257,9 @@ function isDynamicIslandAttentionItem(value: unknown): value is DynamicIslandAtt
     return false;
   }
   if (value.kind === "prompt") return value.approval === null;
+  if (value.kind === "takeover" || value.kind === "failure") {
+    return value.options === null && value.questions === null && value.approval === null;
+  }
   return value.options === null && isDynamicRecord(value.approval);
 }
 
