@@ -369,6 +369,7 @@ describe("OpenBot connected desktop shell", () => {
             },
           ]),
           listBots: vi.fn().mockResolvedValue(BOTS),
+          listBotsForServer: vi.fn().mockResolvedValue(BOTS),
           listMemories: vi.fn().mockResolvedValue([]),
           listRoutines: vi.fn().mockResolvedValue([]),
           createMemory: vi.fn().mockImplementation(async (input) => ({
@@ -489,6 +490,7 @@ describe("OpenBot connected desktop shell", () => {
             emitAgentEvent = listener;
             return () => undefined;
           }),
+          onScopedEvent: vi.fn(() => () => undefined),
         },
         browser: {
           open: vi.fn().mockResolvedValue(undefined),
@@ -1785,6 +1787,18 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(await screen.findByRole("switch", { name: "Share product analytics" }));
 
     await waitFor(() => expect(window.openbot.setAnalyticsPreference).toHaveBeenCalledWith({ enabled: false }));
+  });
+
+  it("persists the MacBook notch preference from settings on macOS", async () => {
+    render(() => <App />);
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const notchSwitch = await screen.findByRole("switch", { name: "Show status in the MacBook notch" });
+    expect(notchSwitch).toBeChecked();
+
+    await fireEvent.click(notchSwitch);
+
+    await waitFor(() => expect(window.openbot.dynamicIsland.setPreference).toHaveBeenCalledWith({ enabled: false }));
+    expect(notchSwitch).not.toBeChecked();
   });
 
   it("does not open desktop analytics when the saved preference is disabled", async () => {
@@ -4477,7 +4491,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByText("Run this command?")).not.toBeInTheDocument());
   });
 
-  it("accepts the current approval from Dynamic Island without changing the selected bot", async () => {
+  it("removes a completed Dynamic Island approval without sending it twice", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
@@ -4506,16 +4520,12 @@ describe("OpenBot connected desktop shell", () => {
       requestId: "approval-island",
     });
 
-    await waitFor(() =>
-      expect(window.openbot.agent.respondToApproval).toHaveBeenCalledWith({
-        requestId: "approval-island",
-        decision: "accept",
-      }),
-    );
+    await Promise.resolve();
+    expect(window.openbot.agent.respondToApproval).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "Chief" })).toBeVisible();
   });
 
-  it("answers the current option prompt from Dynamic Island and rejects an unknown answer", async () => {
+  it("removes a completed Dynamic Island answer without sending it twice", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
@@ -4549,25 +4559,47 @@ describe("OpenBot connected desktop shell", () => {
       answers: { source: ["Official data"] },
     });
 
-    await waitFor(() =>
-      expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledWith({
-        requestId: "prompt-island",
-        answers: { source: ["Official data"] },
-      }),
-    );
-    vi.mocked(window.openbot.agent.respondToPrompt).mockClear();
-
-    emitDynamicIslandAction?.({
-      type: "answer-prompt",
-      serverId: "local",
-      botId: "chief",
-      requestId: "prompt-island",
-      answers: { source: ["Unknown source"] },
-    });
     await Promise.resolve();
 
     expect(window.openbot.agent.respondToPrompt).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "Chief" })).toBeVisible();
+  });
+
+  it("marks the selected Dynamic Island message as read after opening it", async () => {
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-1",
+      activeTurnId: null,
+      revision: 1,
+      messages: [
+        {
+          id: "reply-island",
+          author: "assistant",
+          text: "The result is ready.",
+          createdAt: "2026-08-29T10:42:00.000Z",
+          status: "completed",
+        },
+      ],
+      readState: { unreadCount: 1, firstUnreadMessageId: "reply-island", throughMessageId: null },
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "local",
+      botId: "chief",
+      messageId: "reply-island",
+    });
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "reply-island",
+      }),
+    );
   });
 
   it("rejects a permission approval and keeps the error visible", async () => {

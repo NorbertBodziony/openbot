@@ -1,4 +1,4 @@
-import type { AgentApproval } from "@openbot/contracts/ipc";
+import { type AgentApproval, isDynamicIslandPresentation } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
 import type { BotProfile } from "./data";
 import { createDynamicIslandPresentation, type DynamicIslandPresentationInput } from "./dynamic-island-presentation";
@@ -44,6 +44,63 @@ function state(): DynamicIslandPresentationInput {
 }
 
 describe("createDynamicIslandPresentation", () => {
+  it("uses the bot preview when an unread conversation is not loaded", () => {
+    const input = state();
+    input.bots = [{ ...research, preview: "The source review is ready." }];
+    input.unreadReplies.research = 3;
+    input.unreadMessageIds = { research: "reply-research" };
+
+    expect(createDynamicIslandPresentation(input)).toMatchObject({
+      mode: "message",
+      unreadCount: 3,
+      message: {
+        bot: { id: "research" },
+        messageId: "reply-research",
+        text: "The source review is ready.",
+      },
+    });
+  });
+
+  it("keeps long live data inside the validated overlay contract", () => {
+    const input = state();
+    input.unreadReplies.chief = 1;
+    input.liveMessages.chief = [{ id: "long-message", author: "bot", body: "m".repeat(2_000), time: "" }];
+
+    const message = createDynamicIslandPresentation(input);
+    expect(isDynamicIslandPresentation(message)).toBe(true);
+
+    input.unreadReplies = {};
+    input.liveMessages = {};
+    input.pendingApprovals.chief = {
+      requestId: "long-approval",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      kind: "command",
+      command: "c".repeat(2_000),
+      cwd: null,
+      reason: "r".repeat(2_000),
+      grantRoot: null,
+      permissions: null,
+    };
+
+    expect(isDynamicIslandPresentation(createDynamicIslandPresentation(input))).toBe(true);
+
+    input.pendingApprovals = {};
+    input.pendingPrompts.chief = {
+      type: "prompt",
+      requestId: "long-question",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: [
+        { id: "question", header: "h".repeat(120), question: "q".repeat(2_000), isSecret: false, options: null },
+      ],
+    };
+
+    expect(isDynamicIslandPresentation(createDynamicIslandPresentation(input))).toBe(true);
+  });
+
   it("uses the required priority and returns to idle", () => {
     const input = state();
     expect(createDynamicIslandPresentation(input).mode).toBe("idle");
@@ -62,9 +119,9 @@ describe("createDynamicIslandPresentation", () => {
     };
     const presentation = createDynamicIslandPresentation(input);
     expect(presentation.mode).toBe("question");
-    expect(presentation.attention[0]).toMatchObject({
+    if (presentation.mode !== "question") throw new Error("Expected a question presentation.");
+    expect(presentation.item).toMatchObject({
       requestId: "prompt-1",
-      kind: "prompt",
       detail: "Which source?",
       questions: [
         {
@@ -75,11 +132,10 @@ describe("createDynamicIslandPresentation", () => {
           options: null,
         },
       ],
-      approval: null,
     });
   });
 
-  it("counts approvals and limits visible items", () => {
+  it("maps approvals to the approval presentation", () => {
     const input = state();
     const approval: AgentApproval = {
       requestId: "approval-1",
@@ -95,12 +151,11 @@ describe("createDynamicIslandPresentation", () => {
     };
     input.pendingApprovals.chief = approval;
     const presentation = createDynamicIslandPresentation(input);
-    expect(presentation.attentionCount).toBe(1);
-    expect(presentation.attention).toHaveLength(1);
     expect(presentation.mode).toBe("approval");
-    expect(presentation.attention[0]).toMatchObject({
+    if (presentation.mode !== "approval") throw new Error("Expected an approval presentation.");
+    expect(presentation.remainingCount).toBe(0);
+    expect(presentation.item).toMatchObject({
       requestId: "approval-1",
-      kind: "approval",
       approval: { kind: "command", command: "bun test" },
     });
   });
@@ -131,7 +186,9 @@ describe("createDynamicIslandPresentation", () => {
     const presentation = createDynamicIslandPresentation(input);
 
     expect(presentation.mode).toBe("approval");
-    expect(presentation.attention.map((item) => item.kind)).toEqual(["approval", "prompt"]);
+    if (presentation.mode !== "approval") throw new Error("Expected an approval presentation.");
+    expect(presentation.item.requestId).toBe("approval-1");
+    expect(presentation.remainingCount).toBe(1);
   });
 
   it("surfaces a browser takeover before a question", () => {
@@ -159,9 +216,9 @@ describe("createDynamicIslandPresentation", () => {
     const presentation = createDynamicIslandPresentation(input);
 
     expect(presentation.mode).toBe("takeover");
-    expect(presentation.attention[0]).toMatchObject({
+    if (presentation.mode !== "takeover") throw new Error("Expected a takeover presentation.");
+    expect(presentation.item).toMatchObject({
       requestId: "takeover-1",
-      kind: "takeover",
       bot: { id: "research" },
       title: "Browser step needs you",
       detail: "Complete the sign-in, verification, or consent in the browser.",
@@ -194,15 +251,14 @@ describe("createDynamicIslandPresentation", () => {
     const presentation = createDynamicIslandPresentation(input);
 
     expect(presentation.mode).toBe("failed");
-    expect(presentation.attentionCount).toBe(1);
-    expect(presentation.attention[0]).toMatchObject({
-      kind: "failure",
-      requestId: "turn-failed",
+    if (presentation.mode !== "failed") throw new Error("Expected a failure presentation.");
+    expect(presentation.item).toMatchObject({
+      turnId: "turn-failed",
       detail: "The browser tab closed unexpectedly.",
     });
   });
 
-  it("counts multiple working bots and unread replies", () => {
+  it("aggregates unread replies across working bots", () => {
     const input = state();
     input.bots = [bot, research];
     input.activeTurns = { chief: "turn-1", research: "turn-2" };
@@ -212,8 +268,8 @@ describe("createDynamicIslandPresentation", () => {
       research: [{ id: "m2", author: "bot", body: "Sources ready", time: "now" }],
     };
     const presentation = createDynamicIslandPresentation(input);
-    expect(presentation.activeCount).toBe(2);
-    expect(presentation.unreadCount).toBe(5);
     expect(presentation.mode).toBe("message");
+    if (presentation.mode !== "message") throw new Error("Expected a message presentation.");
+    expect(presentation.unreadCount).toBe(5);
   });
 });

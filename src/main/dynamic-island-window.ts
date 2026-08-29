@@ -1,20 +1,11 @@
 import type { DynamicIslandAction, DynamicIslandPreference, DynamicIslandPresentation } from "@openbot/contracts/ipc";
-import { IPC_CHANNELS } from "@openbot/contracts/ipc";
+import { IDLE_DYNAMIC_ISLAND_PRESENTATION, IPC_CHANNELS } from "@openbot/contracts/ipc";
 import type { BrowserWindow, Display, Rectangle } from "electron";
 import { readDynamicIslandPreference, writeDynamicIslandPreference } from "./dynamic-island-preference-store";
 
 export const DYNAMIC_ISLAND_WINDOW_SIZE = { width: 614, height: 380 } as const;
 
-export const EMPTY_DYNAMIC_ISLAND_PRESENTATION: DynamicIslandPresentation = {
-  serverId: "local",
-  mode: "idle",
-  activeCount: 0,
-  unreadCount: 0,
-  attentionCount: 0,
-  working: [],
-  message: null,
-  attention: [],
-};
+export const EMPTY_DYNAMIC_ISLAND_PRESENTATION = IDLE_DYNAMIC_ISLAND_PRESENTATION;
 
 export interface DynamicIslandWindowControllerOptions {
   platform: NodeJS.Platform;
@@ -23,6 +14,9 @@ export interface DynamicIslandWindowControllerOptions {
   loadWindow: (window: BrowserWindow, display: Display) => Promise<void>;
   getDisplays: () => Display[];
   getMainWindow: () => BrowserWindow | null;
+  performCriticalAction: (
+    action: Extract<DynamicIslandAction, { type: "approve-attention" | "answer-prompt" }>,
+  ) => Promise<void>;
 }
 
 export class DynamicIslandWindowController {
@@ -81,14 +75,17 @@ export class DynamicIslandWindowController {
     window.setIgnoreMouseEvents(!interactive, { forward: true });
   }
 
-  performAction(action: DynamicIslandAction): void {
+  async performAction(action: DynamicIslandAction): Promise<void> {
     const window = this.#options.getMainWindow();
     if (!window || window.isDestroyed()) return;
-    if (action.type !== "approve-attention" && action.type !== "answer-prompt") {
-      if (window.isMinimized()) window.restore();
-      window.show();
-      window.focus();
+    if (action.type === "approve-attention" || action.type === "answer-prompt") {
+      await this.#options.performCriticalAction(action);
+      window.webContents.send(IPC_CHANNELS.dynamicIslandAction, action);
+      return;
     }
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
     if (action.type !== "open-app") window.webContents.send(IPC_CHANNELS.dynamicIslandAction, action);
   }
 

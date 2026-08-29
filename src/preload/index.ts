@@ -16,12 +16,8 @@ import {
   type ConversationWithReadState,
   type DraftAttachment,
   type DynamicIslandAction,
-  type DynamicIslandAttentionItem,
-  type DynamicIslandBotIdentity,
-  type DynamicIslandMessageItem,
   type DynamicIslandPreference,
   type DynamicIslandPresentation,
-  type DynamicIslandWorkingItem,
   type FilePreview,
   type ImportAttachmentsInput,
   type InstalledSkill,
@@ -31,6 +27,9 @@ import {
   isAvatarSeed,
   isBotMemory,
   isConversationMessage,
+  isDynamicIslandAction,
+  isDynamicIslandPreference,
+  isDynamicIslandPresentation,
   isReasoningEffort,
   isRoutine,
   isRoutineRun,
@@ -77,6 +76,16 @@ function invokeAgent<TResult>(
   decoder: (value: unknown) => TResult,
 ): Promise<TResult> {
   const request: AgentIpcRequest = { serverId: selectedServerId, payload };
+  return ipcRenderer.invoke(channel, request).then(decoder);
+}
+
+function invokeAgentForServer<TResult>(
+  serverId: string,
+  channel: string,
+  payload: unknown,
+  decoder: (value: unknown) => TResult,
+): Promise<TResult> {
+  const request: AgentIpcRequest = { serverId, payload };
   return ipcRenderer.invoke(channel, request).then(decoder);
 }
 
@@ -153,122 +162,18 @@ function decodeVoid(value: unknown): undefined {
 }
 
 function decodeDynamicIslandPreference(value: unknown): DynamicIslandPreference {
-  if (!isDynamicRecord(value) || !isBoolean(value.enabled)) {
-    throw new Error("Invalid Dynamic Island preference response.");
-  }
-  return { enabled: value.enabled };
+  if (!isDynamicIslandPreference(value)) throw new Error("Invalid Dynamic Island preference response.");
+  return value;
 }
 
 function decodeDynamicIslandPresentation(value: unknown): DynamicIslandPresentation {
-  if (!isDynamicRecord(value)) throw new Error("Invalid Dynamic Island presentation.");
-  const mode = value.mode;
-  if (
-    mode !== "idle" &&
-    mode !== "working" &&
-    mode !== "message" &&
-    mode !== "question" &&
-    mode !== "approval" &&
-    mode !== "takeover" &&
-    mode !== "failed"
-  ) {
-    throw new Error("Invalid Dynamic Island presentation.");
-  }
-  if (
-    !isString(value.serverId) ||
-    !isNumber(value.activeCount) ||
-    !isNumber(value.unreadCount) ||
-    !isNumber(value.attentionCount) ||
-    !Array.isArray(value.working) ||
-    !value.working.every(isDynamicIslandWorkingItem) ||
-    (value.message !== null && !isDynamicIslandMessageItem(value.message)) ||
-    !Array.isArray(value.attention) ||
-    !value.attention.every(isDynamicIslandAttentionItem)
-  ) {
-    throw new Error("Invalid Dynamic Island presentation.");
-  }
-  return {
-    serverId: value.serverId,
-    mode,
-    activeCount: value.activeCount,
-    unreadCount: value.unreadCount,
-    attentionCount: value.attentionCount,
-    working: value.working,
-    message: value.message,
-    attention: value.attention,
-  };
+  if (!isDynamicIslandPresentation(value)) throw new Error("Invalid Dynamic Island presentation.");
+  return value;
 }
 
 function decodeDynamicIslandAction(value: unknown): DynamicIslandAction {
-  if (!isDynamicRecord(value) || !isString(value.type)) throw new Error("Invalid Dynamic Island action.");
-  if (value.type === "open-app") return { type: "open-app" };
-  if (!isString(value.serverId) || !isString(value.botId)) throw new Error("Invalid Dynamic Island action.");
-  if (value.type === "open-bot") return { type: value.type, serverId: value.serverId, botId: value.botId };
-  if (value.type === "open-message" && isString(value.messageId)) {
-    return { type: value.type, serverId: value.serverId, botId: value.botId, messageId: value.messageId };
-  }
-  if (value.type === "open-failure" && isString(value.turnId)) {
-    return { type: value.type, serverId: value.serverId, botId: value.botId, turnId: value.turnId };
-  }
-  if (
-    (value.type === "review-attention" || value.type === "approve-attention") &&
-    (isString(value.requestId) || isNumber(value.requestId))
-  ) {
-    return { type: value.type, serverId: value.serverId, botId: value.botId, requestId: value.requestId };
-  }
+  if (isDynamicIslandAction(value)) return value;
   throw new Error("Invalid Dynamic Island action.");
-}
-
-function isDynamicIslandBot(value: unknown): value is DynamicIslandBotIdentity {
-  return (
-    isDynamicRecord(value) &&
-    isString(value.id) &&
-    isString(value.name) &&
-    isAvatarSeed(value.avatarSeed) &&
-    (value.avatarHue === null || isAvatarHue(value.avatarHue)) &&
-    (value.avatarUrl === null || isString(value.avatarUrl))
-  );
-}
-
-function isDynamicIslandWorkingItem(value: unknown): value is DynamicIslandWorkingItem {
-  return isDynamicRecord(value) && isDynamicIslandBot(value.bot) && isString(value.task);
-}
-
-function isDynamicIslandMessageItem(value: unknown): value is DynamicIslandMessageItem {
-  return (
-    isDynamicRecord(value) &&
-    isDynamicIslandBot(value.bot) &&
-    isString(value.messageId) &&
-    isString(value.text) &&
-    isString(value.createdAt)
-  );
-}
-
-function isDynamicIslandAttentionItem(value: unknown): value is DynamicIslandAttentionItem {
-  if (
-    !isDynamicRecord(value) ||
-    !isString(value.id) ||
-    (!isString(value.requestId) && !isNumber(value.requestId)) ||
-    !isDynamicIslandBot(value.bot) ||
-    (value.kind !== "prompt" && value.kind !== "approval" && value.kind !== "takeover" && value.kind !== "failure") ||
-    !isString(value.title) ||
-    (value.detail !== null && !isString(value.detail)) ||
-    !isDynamicIslandOptions(value.options)
-  ) {
-    return false;
-  }
-  if (value.kind === "prompt") return value.approval === null;
-  if (value.kind === "takeover" || value.kind === "failure") {
-    return value.options === null && value.questions === null && value.approval === null;
-  }
-  return value.options === null && isDynamicRecord(value.approval);
-}
-
-function isDynamicIslandOptions(value: unknown): value is DynamicIslandAttentionItem["options"] {
-  return (
-    value === null ||
-    (Array.isArray(value) &&
-      value.every((option) => isDynamicRecord(option) && isString(option.label) && isString(option.description)))
-  );
 }
 
 function decodeRoutine(value: unknown): Routine {
@@ -962,6 +867,7 @@ const openbotApi: OpenBotDesktopApi = {
     getUsage: () => invokeAgent(IPC_CHANNELS.agentGetUsage, null, decodeAccountUsage),
     listModels: () => invokeAgent(IPC_CHANNELS.agentListModels, null, decodeAgentModels),
     listBots: () => invokeAgent(IPC_CHANNELS.agentListBots, null, decodeBots),
+    listBotsForServer: (serverId) => invokeAgentForServer(serverId, IPC_CHANNELS.agentListBots, null, decodeBots),
     getSidebarLayout: () => invokeAgent(IPC_CHANNELS.agentGetSidebarLayout, null, decodeSidebarLayout),
     mutateSidebarLayout: (action) => invokeAgent(IPC_CHANNELS.agentMutateSidebarLayout, action, decodeSidebarLayout),
     createBot: (input) => invokeAgent(IPC_CHANNELS.agentCreateBot, input, decodeBot),
@@ -1012,6 +918,11 @@ const openbotApi: OpenBotDesktopApi = {
       const handler = (_event: Electron.IpcRendererEvent, payload: ScopedAgentEvent) => {
         if (payload.serverId === selectedServerId) listener(payload.event);
       };
+      ipcRenderer.on(IPC_CHANNELS.agentEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.agentEvent, handler);
+    },
+    onScopedEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: ScopedAgentEvent) => listener(payload);
       ipcRenderer.on(IPC_CHANNELS.agentEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.agentEvent, handler);
     },

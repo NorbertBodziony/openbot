@@ -218,7 +218,6 @@ describe("DynamicIsland", () => {
         <DynamicIsland
           label="approval request"
           state={state()}
-          contentMotion="spring"
           onStateChange={setState}
           compactLeading={<span>!</span>}
           compactTrailing={<span>1</span>}

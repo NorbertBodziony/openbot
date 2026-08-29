@@ -60,6 +60,7 @@ import type {
   RespondToPromptInput,
   Routine,
   RoutineRun,
+  ScopedAgentEvent,
   SearchConversationMessagesInput,
   SendMessageInput,
   SetAgentAvatarInput,
@@ -140,6 +141,7 @@ export interface AgentDesktopApi {
   getUsage: () => Promise<AccountUsage>;
   listModels: () => Promise<AgentModelOption[]>;
   listBots: () => Promise<BotSummary[]>;
+  listBotsForServer: (serverId: string) => Promise<BotSummary[]>;
   getSidebarLayout: () => Promise<SidebarLayoutSnapshot>;
   mutateSidebarLayout: (action: SidebarLayoutAction) => Promise<SidebarLayoutSnapshot>;
   createBot: (input: CreateBotInput) => Promise<BotSummary>;
@@ -182,6 +184,7 @@ export interface AgentDesktopApi {
   respondToApproval: (input: RespondToApprovalInput) => Promise<void>;
   respondToBrowserTakeover: (input: RespondToBrowserTakeoverInput) => Promise<void>;
   onEvent: (listener: (event: AgentEvent) => void) => () => void;
+  onScopedEvent: (listener: (event: ScopedAgentEvent) => void) => () => void;
 }
 
 export interface MarketplaceAgentsDesktopApi {

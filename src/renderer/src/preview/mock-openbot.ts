@@ -157,16 +157,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let setupState = clone<AppSetupState>(options.setupState ?? { completed: true, preferredProvider: "codex" });
   let analyticsPreference = clone<AnalyticsPreference>(options.analyticsPreference ?? { enabled: true });
   let dynamicIslandPreference = { enabled: true };
-  let dynamicIslandPresentation: DynamicIslandPresentation = {
-    serverId: "local",
-    mode: "idle",
-    activeCount: 0,
-    unreadCount: 0,
-    attentionCount: 0,
-    working: [],
-    message: null,
-    attention: [],
-  };
+  let dynamicIslandPresentation: DynamicIslandPresentation = { serverId: "local", mode: "idle" };
   const agentStatus = clone(options.agentStatus ?? STORY_AGENT_STATUS);
   let bots = clone(options.bots ?? STORY_BOT_SUMMARIES);
   let sidebarLayout: SidebarLayoutSnapshot = {
@@ -505,6 +496,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       getUsage: async () => clone(usage),
       listModels: async () => clone(models),
       listBots: async () => clone(bots),
+      listBotsForServer: async () => clone(bots),
       getSidebarLayout: async () => clone(sidebarLayout),
       mutateSidebarLayout: async (action) => {
         sidebarLayout = applySidebarLayoutAction(sidebarLayout, action);
@@ -885,6 +877,11 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       onEvent: (listener) => {
         agentListeners.add(listener);
         return () => agentListeners.delete(listener);
+      },
+      onScopedEvent: (listener) => {
+        const scopedListener = (event: AgentEvent) => listener({ serverId: "local", event });
+        agentListeners.add(scopedListener);
+        return () => agentListeners.delete(scopedListener);
       },
     },
     browser: {

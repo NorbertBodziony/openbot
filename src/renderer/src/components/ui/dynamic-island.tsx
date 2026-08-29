@@ -3,10 +3,8 @@ import { ChevronUp } from "lucide-solid";
 import { createEffect, createSignal, createUniqueId, onCleanup, onSettled, Show, untrack } from "solid-js";
 import { cx } from "./utils";
 
-export type DynamicIslandTone = "neutral" | "working" | "attention";
 export type DynamicIslandViewState = "compact" | "expanded";
 export type DynamicIslandHoverBehavior = "none" | "grow" | "expand";
-export type DynamicIslandContentMotion = "morph" | "spring";
 export type DynamicIslandDisplayMode = "notch" | "island";
 export type DynamicIslandStateChangeReason = "pointer" | "keyboard" | "hover" | "hover-exit" | "escape";
 
@@ -15,6 +13,17 @@ export interface DynamicIslandHoverContentMotion {
   trailingScale: number;
   outwardTranslateX: number;
   translateY: number;
+}
+
+export interface DynamicIslandSharedElementMotion {
+  x: number;
+  y: number;
+  scale: number;
+}
+
+export interface DynamicIslandSharedMotion {
+  leading?: DynamicIslandSharedElementMotion;
+  trailing?: DynamicIslandSharedElementMotion;
 }
 
 export interface DynamicIslandProps {
@@ -31,17 +40,9 @@ export interface DynamicIslandProps {
   suppressInitialHover?: boolean;
   hoverContentMotion?: DynamicIslandHoverContentMotion;
   pointerToggle?: boolean;
-  contentMotion?: DynamicIslandContentMotion;
-  sharedLeadingMotion?: boolean;
-  sharedLeadingExpandedX?: number;
-  sharedLeadingExpandedY?: number;
-  sharedLeadingExpandedScale?: number;
-  sharedTrailingMotion?: boolean;
-  sharedTrailingExpandedX?: number;
-  sharedTrailingExpandedY?: number;
-  sharedTrailingExpandedScale?: number;
+  sharedMotion?: DynamicIslandSharedMotion;
   displayMode?: DynamicIslandDisplayMode;
-  tone?: DynamicIslandTone;
+  ariaLive?: "off" | "polite" | "assertive";
   class?: string;
 }
 
@@ -204,8 +205,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
         return;
       }
 
-      const shouldStageClose =
-        (local.contentMotion ?? "morph") === "spring" && layout === "expanded" && rendered === "expanded";
+      const shouldStageClose = layout === "expanded" && rendered === "expanded";
       if (!shouldStageClose) {
         setLayoutState("compact");
         return;
@@ -246,22 +246,22 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
     }),
     silhouetteTarget: () => islandSilhouetteTarget(viewState(), isHovering(), local.displayMode ?? "notch"),
     sharedLeading: () => leadingContent,
-    sharedLeadingEnabled: () => local.sharedLeadingMotion ?? false,
+    sharedLeadingEnabled: () => Boolean(local.sharedMotion?.leading),
     sharedLeadingTarget: () =>
       sharedLeadingTarget(
         viewState(),
-        local.sharedLeadingExpandedX ?? 27,
-        local.sharedLeadingExpandedY ?? 54,
-        local.sharedLeadingExpandedScale ?? 2.4,
+        local.sharedMotion?.leading?.x ?? 27,
+        local.sharedMotion?.leading?.y ?? 54,
+        local.sharedMotion?.leading?.scale ?? 2.4,
       ),
     sharedTrailing: () => trailingContent,
-    sharedTrailingEnabled: () => local.sharedTrailingMotion ?? false,
+    sharedTrailingEnabled: () => Boolean(local.sharedMotion?.trailing),
     sharedTrailingTarget: () =>
       sharedLeadingTarget(
         viewState(),
-        local.sharedTrailingExpandedX ?? 0,
-        local.sharedTrailingExpandedY ?? 0,
-        local.sharedTrailingExpandedScale ?? 1,
+        local.sharedMotion?.trailing?.x ?? 0,
+        local.sharedMotion?.trailing?.y ?? 0,
+        local.sharedMotion?.trailing?.scale ?? 1,
       ),
   });
   createHoverContentMotion({
@@ -274,7 +274,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   createSpringContentTransition({
     content: () => panelContent,
     root: () => shell,
-    enabled: () => (local.contentMotion ?? "morph") === "spring",
+    enabled: () => true,
     state: viewState,
     renderedState: renderedPanelState,
   });
@@ -286,20 +286,18 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
 
   return (
     <section
-      class={cx("dynamic-island", local.class)}
+      class={cx("dynamic-island", local.class, local.displayMode === "island" && "dynamic-island-external")}
       style={local.compactWidth === undefined ? undefined : `--dynamic-island-compact-width: ${local.compactWidth}px`}
       data-slot="dynamic-island"
       data-state={viewState()}
       data-layout-state={layoutState()}
-      data-tone={local.tone ?? "neutral"}
       data-hovered={isHovering() ? "true" : undefined}
-      data-content-motion={local.contentMotion ?? "morph"}
-      data-shared-leading={local.sharedLeadingMotion ? "true" : undefined}
-      data-shared-trailing={local.sharedTrailingMotion ? "true" : undefined}
-      data-display-mode={local.displayMode ?? "notch"}
+      data-content-motion="spring"
+      data-shared-leading={local.sharedMotion?.leading ? "true" : undefined}
+      data-shared-trailing={local.sharedMotion?.trailing ? "true" : undefined}
       data-pointer-toggle={local.pointerToggle === false ? "false" : undefined}
       aria-label={local.label}
-      aria-live={local.tone === "attention" ? "polite" : undefined}
+      aria-live={local.ariaLive}
       onPointerEnter={handlePointerEnter}
       onPointerMove={handlePointerMove}
       onPointerLeave={handlePointerLeave}
@@ -318,12 +316,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
       <Show when={local.extendedHoverArea}>
         <span class="dynamic-island-hover-zone" aria-hidden="true" />
       </Show>
-      <div
-        ref={shell}
-        class="dynamic-island-shell"
-        data-state={viewState()}
-        data-content-motion={local.contentMotion ?? "morph"}
-      >
+      <div ref={shell} class="dynamic-island-shell" data-state={viewState()} data-content-motion="spring">
         <span ref={silhouetteRoot} class="dynamic-island-silhouette" aria-hidden="true">
           <span ref={silhouetteBody} class="dynamic-island-silhouette-body" />
           <svg

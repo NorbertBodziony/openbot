@@ -76,6 +76,7 @@ import {
   shouldAutoStartHost,
   shouldShowDevelopmentWindow,
 } from "./development-profile";
+import { performDynamicIslandCriticalAction } from "./dynamic-island-actions";
 import { DynamicIslandWindowController, requireDynamicIslandSender } from "./dynamic-island-window";
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "./file-preview";
 import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
@@ -346,7 +347,7 @@ function registerIpcHandlers(
   });
   handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPerformAction, (event, input: unknown) => {
     requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
-    dynamicIsland.performAction(parseDynamicIslandAction(input));
+    return dynamicIsland.performAction(parseDynamicIslandAction(input));
   });
   handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandSetInteractive, (event, input: unknown) => {
     requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
@@ -1474,6 +1475,10 @@ if (!hasSingleInstanceLock) {
         loadWindow: loadDynamicIslandRenderer,
         getDisplays: () => screen.getAllDisplays(),
         getMainWindow: () => mainWindow,
+        performCriticalAction: async (action) => {
+          if (!agentService || !remoteServerManager) throw new Error("OpenBot is not ready.");
+          await performDynamicIslandCriticalAction(action, agentService, remoteServerManager, decodeVoid);
+        },
       });
       centralAuthManager = new CentralAuthManager({
         apiUrl: readCentralAuthApiUrl(

@@ -78,13 +78,14 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => displays,
       getMainWindow: () => null,
+      performCriticalAction: async () => undefined,
     });
 
     await controller.initialize();
     expect(windows).toHaveLength(2);
     expect(controller.overlayRendererIds).toEqual(new Set([42, 43]));
 
-    controller.publish({ ...controller.presentation, activeCount: 2, mode: "working" });
+    controller.publish({ serverId: "local", mode: "working", working: [] });
     expect(windows[0]?.webContents.send).toHaveBeenCalledOnce();
     expect(windows[1]?.webContents.send).toHaveBeenCalledOnce();
 
@@ -120,6 +121,7 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => [display({ id: 1 }), display({ id: 2, internal: false })],
       getMainWindow: () => null,
+      performCriticalAction: async () => undefined,
     });
 
     await controller.initialize();
@@ -140,13 +142,15 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => [display({})],
       getMainWindow: () => null,
+      performCriticalAction: async () => undefined,
     });
     await controller.initialize();
     expect(createWindow).not.toHaveBeenCalled();
   });
 
-  it("forwards a direct approval without showing or focusing the main window", () => {
+  it("executes and forwards a direct approval without showing or focusing the main window", async () => {
     const mainWindow = new FakeWindow(70, { x: 0, y: 0, width: 1200, height: 800 });
+    const performCriticalAction = vi.fn(async () => undefined);
     const controller = new DynamicIslandWindowController({
       platform: "darwin",
       preferencePath: "/tmp/dynamic-island-preference.json",
@@ -157,6 +161,7 @@ describe("dynamic island window geometry", () => {
       getDisplays: () => [],
       // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
       getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      performCriticalAction,
     });
     const action: DynamicIslandAction = {
       type: "approve-attention",
@@ -165,15 +170,17 @@ describe("dynamic island window geometry", () => {
       requestId: "approval-1",
     };
 
-    controller.performAction(action);
+    await controller.performAction(action);
 
+    expect(performCriticalAction).toHaveBeenCalledWith(action);
     expect(mainWindow.webContents.send).toHaveBeenCalledWith("dynamic-island:action", action);
     expect(mainWindow.show).not.toHaveBeenCalled();
     expect(mainWindow.focus).not.toHaveBeenCalled();
   });
 
-  it("forwards a prompt answer without showing or focusing the main window", () => {
+  it("executes and forwards a prompt answer without showing or focusing the main window", async () => {
     const mainWindow = new FakeWindow(71, { x: 0, y: 0, width: 1200, height: 800 });
+    const performCriticalAction = vi.fn(async () => undefined);
     const controller = new DynamicIslandWindowController({
       platform: "darwin",
       preferencePath: "/tmp/dynamic-island-preference.json",
@@ -184,6 +191,7 @@ describe("dynamic island window geometry", () => {
       getDisplays: () => [],
       // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
       getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      performCriticalAction,
     });
     const action: DynamicIslandAction = {
       type: "answer-prompt",
@@ -193,11 +201,40 @@ describe("dynamic island window geometry", () => {
       answers: { source: ["Official data"] },
     };
 
-    controller.performAction(action);
+    await controller.performAction(action);
 
+    expect(performCriticalAction).toHaveBeenCalledWith(action);
     expect(mainWindow.webContents.send).toHaveBeenCalledWith("dynamic-island:action", action);
     expect(mainWindow.show).not.toHaveBeenCalled();
     expect(mainWindow.focus).not.toHaveBeenCalled();
+  });
+
+  it("does not dismiss a critical action when execution fails", async () => {
+    const mainWindow = new FakeWindow(72, { x: 0, y: 0, width: 1200, height: 800 });
+    const controller = new DynamicIslandWindowController({
+      platform: "darwin",
+      preferencePath: "/tmp/dynamic-island-preference.json",
+      createWindow: () => {
+        throw new Error("An overlay window is not needed for this test.");
+      },
+      loadWindow: async () => undefined,
+      getDisplays: () => [],
+      // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
+      getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      performCriticalAction: async () => {
+        throw new Error("The request is no longer active.");
+      },
+    });
+    const action: DynamicIslandAction = {
+      type: "approve-attention",
+      serverId: "remote",
+      botId: "research",
+      requestId: "approval-stale",
+    };
+
+    await expect(controller.performAction(action)).rejects.toThrow("no longer active");
+    expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+    expect(mainWindow.show).not.toHaveBeenCalled();
   });
 
   it("accepts every overlay renderer and rejects unrelated senders", () => {

@@ -1,74 +1,129 @@
 import type {
   AgentApproval,
   AgentEvent,
-  DynamicIslandAttentionItem,
+  DynamicIslandApprovalItem,
   DynamicIslandBotIdentity,
+  DynamicIslandFailureItem,
   DynamicIslandPresentation,
+  DynamicIslandPromptItem,
+  DynamicIslandTakeoverItem,
   QueueSnapshot,
 } from "@openbot/contracts/ipc";
-import type { BotMessage, BotProfile } from "./data";
 
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-requested" }>;
+type AttentionCandidate =
+  | { mode: "approval"; item: DynamicIslandApprovalItem }
+  | { mode: "takeover"; item: DynamicIslandTakeoverItem }
+  | { mode: "question"; item: DynamicIslandPromptItem }
+  | { mode: "failed"; item: DynamicIslandFailureItem };
 
 export interface DynamicIslandPresentationInput {
   serverId: string;
-  bots: BotProfile[];
+  bots: DynamicIslandBotSource[];
   activeTurns: Record<string, string | null>;
   queues: Record<string, QueueSnapshot>;
   unreadReplies: Record<string, number>;
-  liveMessages: Record<string, BotMessage[]>;
+  unreadMessageIds?: Record<string, string | null>;
+  liveMessages: Record<string, DynamicIslandMessageSource[]>;
   pendingPrompts: Record<string, PromptEvent | BrowserTakeoverEvent | undefined>;
   pendingApprovals: Record<string, AgentApproval | undefined>;
   failedTurns: Record<string, string | undefined>;
 }
 
+export interface DynamicIslandBotSource {
+  id: string;
+  name: string;
+  avatarSeed: string;
+  avatarHue: DynamicIslandBotIdentity["avatarHue"];
+  avatarUrl: string | null;
+  preview?: string;
+  updatedAt?: string | null;
+}
+
+export interface DynamicIslandMessageSource {
+  id: string;
+  author: string;
+  body: string;
+  time: string;
+}
+
+export function selectDynamicIslandPresentation(
+  presentations: readonly DynamicIslandPresentation[],
+): DynamicIslandPresentation {
+  const selected = presentations
+    .map((presentation, index) => ({ presentation, index }))
+    .sort(
+      (left, right) =>
+        presentationPriority(left.presentation.mode) - presentationPriority(right.presentation.mode) ||
+        left.index - right.index,
+    )[0]?.presentation;
+  if (!selected) return { serverId: "local", mode: "idle" };
+  if (selected.mode !== "approval" && selected.mode !== "question") return selected;
+  const attentionCount = presentations.reduce(
+    (total, presentation) => total + presentationAttentionCount(presentation),
+    0,
+  );
+  return { ...selected, remainingCount: Math.max(0, attentionCount - 1) };
+}
+
 export function createDynamicIslandPresentation(input: DynamicIslandPresentationInput): DynamicIslandPresentation {
   const botsById = new Map(input.bots.map((bot) => [bot.id, bot]));
+  const attention = collectAttention(input, botsById).sort(
+    (left, right) => attentionPriority(left.mode) - attentionPriority(right.mode),
+  )[0];
+
+  if (attention?.mode === "approval") {
+    return {
+      serverId: input.serverId,
+      mode: "approval",
+      item: attention.item,
+      remainingCount: Math.max(0, countAttention(input) - 1),
+    };
+  }
+  if (attention?.mode === "takeover") return { serverId: input.serverId, mode: "takeover", item: attention.item };
+  if (attention?.mode === "question") {
+    return {
+      serverId: input.serverId,
+      mode: "question",
+      item: attention.item,
+      remainingCount: Math.max(0, countAttention(input) - 1),
+    };
+  }
+  if (attention?.mode === "failed") return { serverId: input.serverId, mode: "failed", item: attention.item };
+
+  const message = latestUnreadMessage(input);
+  if (message) {
+    return {
+      serverId: input.serverId,
+      mode: "message",
+      unreadCount: Object.values(input.unreadReplies).reduce((total, count) => total + Math.max(0, count), 0),
+      message,
+    };
+  }
+
   const working = input.bots
     .filter((bot) => isBotWorking(bot.id, input))
     .slice(0, 3)
     .map((bot) => ({ bot: botIdentity(bot), task: currentTask(bot.id, input.queues) }));
-  const unreadCount = Object.values(input.unreadReplies).reduce((total, count) => total + Math.max(0, count), 0);
-  const messageBot = input.bots.find((bot) => (input.unreadReplies[bot.id] ?? 0) > 0);
-  const latestMessage = messageBot
-    ? [...(input.liveMessages[messageBot.id] ?? [])].reverse().find((message) => message.author === "bot")
-    : undefined;
-  const message =
-    messageBot && latestMessage
-      ? {
-          bot: botIdentity(messageBot),
-          messageId: latestMessage.id,
-          text: latestMessage.body,
-          createdAt: latestMessage.time,
-        }
-      : null;
-  const attention = collectAttention(input, botsById)
-    .sort((left, right) => attentionPriority(left.kind) - attentionPriority(right.kind))
-    .slice(0, 3);
-  const mode = attention[0]
-    ? attention[0].kind === "approval"
-      ? "approval"
-      : attention[0].kind === "takeover"
-        ? "takeover"
-        : attention[0].kind === "failure"
-          ? "failed"
-          : "question"
-    : message
-      ? "message"
-      : working.length > 0
-        ? "working"
-        : "idle";
+  if (working.length > 0) return { serverId: input.serverId, mode: "working", working };
+  return { serverId: input.serverId, mode: "idle" };
+}
 
+function latestUnreadMessage(input: DynamicIslandPresentationInput) {
+  const bot = input.bots.find((candidate) => (input.unreadReplies[candidate.id] ?? 0) > 0);
+  const message = bot
+    ? [...(input.liveMessages[bot.id] ?? [])].reverse().find((candidate) => candidate.author === "bot")
+    : undefined;
+  if (!bot) return undefined;
+  const messageId = message?.id ?? input.unreadMessageIds?.[bot.id];
+  const text = message?.body.trim() || bot.preview?.trim();
+  if (!messageId || !text) return undefined;
   return {
-    serverId: input.serverId,
-    mode,
-    activeCount: countWorkingBots(input),
-    unreadCount,
-    attentionCount: countAttention(input),
-    working,
-    message,
-    attention,
+    bot: botIdentity(bot),
+    messageId,
+    text: truncate(text, 600),
+    createdAt: message?.time || bot.updatedAt || new Date(0).toISOString(),
   };
 }
 
@@ -76,12 +131,8 @@ function isBotWorking(botId: string, input: DynamicIslandPresentationInput): boo
   return Boolean(input.activeTurns[botId]) || Boolean(runningDelivery(input.queues[botId]));
 }
 
-function countWorkingBots(input: DynamicIslandPresentationInput): number {
-  return input.bots.reduce((count, bot) => count + Number(isBotWorking(bot.id, input)), 0);
-}
-
 function currentTask(botId: string, queues: Record<string, QueueSnapshot>): string {
-  return runningDelivery(queues[botId])?.text.trim() || "Working on your request";
+  return truncate(runningDelivery(queues[botId])?.text.trim() || "Working on your request", 240);
 }
 
 function runningDelivery(snapshot: QueueSnapshot | undefined) {
@@ -90,36 +141,35 @@ function runningDelivery(snapshot: QueueSnapshot | undefined) {
 
 function collectAttention(
   input: DynamicIslandPresentationInput,
-  botsById: Map<string, BotProfile>,
-): DynamicIslandAttentionItem[] {
-  const items: DynamicIslandAttentionItem[] = [];
+  botsById: Map<string, DynamicIslandBotSource>,
+): AttentionCandidate[] {
+  const items: AttentionCandidate[] = [];
   for (const [botId, approval] of Object.entries(input.pendingApprovals)) {
     const bot = botsById.get(botId);
     if (!bot || !approval) continue;
     items.push({
-      id: String(approval.requestId),
-      requestId: approval.requestId,
-      bot: botIdentity(bot),
-      kind: "approval",
-      title: approvalTitle(approval),
-      detail: approval.reason ?? approval.command ?? null,
-      options: null,
-      questions: null,
-      approval: {
-        kind: approval.kind,
-        command: approval.command,
-        cwd: approval.cwd,
-        reason: approval.reason,
-        grantRoot: approval.grantRoot,
-        permissions: approval.permissions
-          ? {
-              fileSystem: {
-                read: approval.permissions.fileSystem.read.slice(0, 3),
-                write: approval.permissions.fileSystem.write.slice(0, 3),
-              },
-              network: approval.permissions.network,
-            }
-          : null,
+      mode: "approval",
+      item: {
+        requestId: approval.requestId,
+        bot: botIdentity(bot),
+        title: approvalTitle(approval),
+        detail: truncateNullable(approval.reason ?? approval.command),
+        approval: {
+          kind: approval.kind,
+          command: truncateNullable(approval.command),
+          cwd: truncateNullable(approval.cwd),
+          reason: truncateNullable(approval.reason),
+          grantRoot: truncateNullable(approval.grantRoot),
+          permissions: approval.permissions
+            ? {
+                fileSystem: {
+                  read: approval.permissions.fileSystem.read.slice(0, 3).map((path) => truncate(path, 600)),
+                  write: approval.permissions.fileSystem.write.slice(0, 3).map((path) => truncate(path, 600)),
+                },
+                network: approval.permissions.network,
+              }
+            : null,
+        },
       },
     });
   }
@@ -129,34 +179,31 @@ function collectAttention(
     if (event.type === "prompt") {
       const question = event.questions[0];
       items.push({
-        id: String(event.requestId),
-        requestId: event.requestId,
-        bot: botIdentity(bot),
-        kind: "prompt",
-        title: question?.header || "Question from your bot",
-        detail: question?.question ?? null,
-        options: question?.options?.slice(0, 4) ?? null,
-        questions: event.questions.map((item) => ({
-          id: item.id,
-          header: item.header || "Question from your bot",
-          question: item.question,
-          isSecret: item.isSecret,
-          options: item.options,
-        })),
-        approval: null,
+        mode: "question",
+        item: {
+          requestId: event.requestId,
+          bot: botIdentity(bot),
+          title: truncate(question?.header || "Question from your bot", 180),
+          detail: truncateNullable(question?.question),
+          questions: event.questions.map((item) => ({
+            id: item.id,
+            header: item.header || "Question from your bot",
+            question: item.question,
+            isSecret: item.isSecret,
+            options: item.options,
+          })),
+        },
       });
       continue;
     }
     items.push({
-      id: String(event.request.requestId),
-      requestId: event.request.requestId,
-      bot: botIdentity(bot),
-      kind: "takeover",
-      title: "Browser step needs you",
-      detail: "Complete the sign-in, verification, or consent in the browser.",
-      options: null,
-      questions: null,
-      approval: null,
+      mode: "takeover",
+      item: {
+        requestId: event.request.requestId,
+        bot: botIdentity(bot),
+        title: "Browser step needs you",
+        detail: "Complete the sign-in, verification, or consent in the browser.",
+      },
     });
   }
   for (const [botId, turnId] of Object.entries(input.failedTurns)) {
@@ -166,24 +213,22 @@ function collectAttention(
       (candidate) => candidate.status === "failed" && candidate.turnId === turnId,
     );
     items.push({
-      id: turnId,
-      requestId: turnId,
-      bot: botIdentity(bot),
-      kind: "failure",
-      title: "Task failed",
-      detail: failureDetail(delivery?.error),
-      options: null,
-      questions: null,
-      approval: null,
+      mode: "failed",
+      item: {
+        turnId,
+        bot: botIdentity(bot),
+        title: "Task failed",
+        detail: failureDetail(delivery?.error),
+      },
     });
   }
   return items;
 }
 
-function attentionPriority(kind: DynamicIslandAttentionItem["kind"]): 0 | 1 | 2 | 3 {
-  if (kind === "approval") return 0;
-  if (kind === "takeover") return 1;
-  if (kind === "prompt") return 2;
+function attentionPriority(mode: AttentionCandidate["mode"]): 0 | 1 | 2 | 3 {
+  if (mode === "approval") return 0;
+  if (mode === "takeover") return 1;
+  if (mode === "question") return 2;
   return 3;
 }
 
@@ -196,7 +241,16 @@ function countAttention(input: DynamicIslandPresentationInput): number {
 }
 
 function failureDetail(error: string | null | undefined): string {
-  return error?.trim().slice(0, 600) || "The task stopped before it could finish.";
+  return truncate(error?.trim() || "The task stopped before it could finish.", 600);
+}
+
+function truncate(value: string, length: number): string {
+  return value.slice(0, length);
+}
+
+function truncateNullable(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return truncate(value, 600);
 }
 
 function approvalTitle(approval: AgentApproval) {
@@ -205,7 +259,23 @@ function approvalTitle(approval: AgentApproval) {
   return "Permissions need review";
 }
 
-function botIdentity(bot: BotProfile): DynamicIslandBotIdentity {
+function presentationPriority(mode: DynamicIslandPresentation["mode"]): 0 | 1 | 2 | 3 | 4 | 5 | 6 {
+  if (mode === "approval") return 0;
+  if (mode === "takeover") return 1;
+  if (mode === "question") return 2;
+  if (mode === "failed") return 3;
+  if (mode === "message") return 4;
+  if (mode === "working") return 5;
+  return 6;
+}
+
+function presentationAttentionCount(presentation: DynamicIslandPresentation): number {
+  if (presentation.mode === "approval" || presentation.mode === "question") return 1 + presentation.remainingCount;
+  if (presentation.mode === "takeover" || presentation.mode === "failed") return 1;
+  return 0;
+}
+
+function botIdentity(bot: DynamicIslandBotSource): DynamicIslandBotIdentity {
   return {
     id: bot.id,
     name: bot.name,

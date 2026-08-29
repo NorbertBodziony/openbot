@@ -81,61 +81,36 @@ describe("app IPC input parsing", () => {
     const presentation = {
       serverId: "local",
       mode: "working",
-      activeCount: 1,
-      unreadCount: 0,
-      attentionCount: 0,
       working: [
         {
           bot: { id: "chief", name: "Chief", avatarSeed: "chief", avatarHue: 215, avatarUrl: null },
           task: "Checking the release",
         },
       ],
-      message: null,
-      attention: [],
     } as const;
     expect(parseDynamicIslandPreference({ enabled: true })).toEqual({ enabled: true });
     expect(parseDynamicIslandInteractive({ interactive: false })).toEqual({ interactive: false });
     expect(parseDynamicIslandPresentation(presentation)).toEqual(presentation);
     const takeoverPresentation = {
-      ...presentation,
+      serverId: "local",
       mode: "takeover",
-      activeCount: 0,
-      attentionCount: 1,
-      working: [],
-      attention: [
-        {
-          id: "takeover-1",
-          requestId: "takeover-1",
-          bot: presentation.working[0].bot,
-          kind: "takeover",
-          title: "Browser step needs you",
-          detail: "Complete the sign-in in the browser.",
-          options: null,
-          questions: null,
-          approval: null,
-        },
-      ],
+      item: {
+        requestId: "takeover-1",
+        bot: presentation.working[0].bot,
+        title: "Browser step needs you",
+        detail: "Complete the sign-in in the browser.",
+      },
     } as const;
     expect(parseDynamicIslandPresentation(takeoverPresentation)).toEqual(takeoverPresentation);
     const failedPresentation = {
-      ...presentation,
+      serverId: "local",
       mode: "failed",
-      activeCount: 0,
-      attentionCount: 1,
-      working: [],
-      attention: [
-        {
-          id: "turn-failed",
-          requestId: "turn-failed",
-          bot: presentation.working[0].bot,
-          kind: "failure",
-          title: "Task failed",
-          detail: "The browser tab closed unexpectedly.",
-          options: null,
-          questions: null,
-          approval: null,
-        },
-      ],
+      item: {
+        turnId: "turn-failed",
+        bot: presentation.working[0].bot,
+        title: "Task failed",
+        detail: "The browser tab closed unexpectedly.",
+      },
     } as const;
     expect(parseDynamicIslandPresentation(failedPresentation)).toEqual(failedPresentation);
     expect(parseDynamicIslandAction({ type: "open-bot", serverId: "local", botId: "chief" })).toEqual({

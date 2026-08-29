@@ -99,6 +99,38 @@ describe("OpenBotDynamicIsland mode transitions", () => {
       turnId: "turn-failed",
     });
   });
+
+  it("opens the selected working bot", async () => {
+    const onAction = vi.fn<(action: DynamicIslandAction) => void>();
+    renderControlledIsland(workingPresentation(), "expanded", onAction);
+
+    await fireEvent.click(screen.getByRole("button", { name: /Research/ }));
+
+    expect(onAction).toHaveBeenCalledWith({ type: "open-bot", serverId: "local", botId: "research" });
+  });
+
+  it("approves the exact pending request", async () => {
+    const onAction = vi.fn<(action: DynamicIslandAction) => void>();
+    renderControlledIsland(approvalPresentation(), "expanded", onAction);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(onAction).toHaveBeenCalledWith({
+      type: "approve-attention",
+      serverId: "local",
+      botId: "research",
+      requestId: "approval-1",
+    });
+  });
+
+  it("opens the main app from Idle", async () => {
+    const onAction = vi.fn<(action: DynamicIslandAction) => void>();
+    renderControlledIsland(idlePresentation(), "compact", onAction);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Expand Open OpenBot" }));
+
+    expect(onAction).toHaveBeenCalledWith({ type: "open-app" });
+  });
 });
 
 function renderControlledIsland(
@@ -118,44 +150,27 @@ function renderControlledIsland(
         state={state()}
         onStateChange={setState}
         onAction={onAction}
-        onLater={() => undefined}
       />
     );
   });
   return { setPresentation };
 }
 
-function basePresentation(): Omit<DynamicIslandPresentation, "mode"> {
-  return {
-    serverId: "local",
-    activeCount: 0,
-    unreadCount: 0,
-    attentionCount: 0,
-    working: [],
-    message: null,
-    attention: [],
-  };
-}
-
-function idlePresentation(): DynamicIslandPresentation {
-  return {
-    ...basePresentation(),
-    mode: "idle",
-  };
+function idlePresentation(): Extract<DynamicIslandPresentation, { mode: "idle" }> {
+  return { serverId: "local", mode: "idle" };
 }
 
 function workingPresentation(): DynamicIslandPresentation {
   return {
-    ...basePresentation(),
+    serverId: "local",
     mode: "working",
-    activeCount: 1,
     working: [{ bot: BOT, task: "Checking sources" }],
   };
 }
 
 function messagePresentation(messageId: string): DynamicIslandPresentation {
   return {
-    ...basePresentation(),
+    serverId: "local",
     mode: "message",
     unreadCount: 1,
     message: {
@@ -173,99 +188,71 @@ function questionPresentation(): DynamicIslandPresentation {
     { label: "Industry report", description: "Use the detailed report" },
   ];
   return {
-    ...basePresentation(),
+    serverId: "local",
     mode: "question",
-    attentionCount: 1,
-    attention: [
-      {
-        id: "source-question",
-        requestId: "source-question",
-        bot: BOT,
-        kind: "prompt",
-        title: "Choose a source",
-        detail: "Which source should I use?",
-        options,
-        questions: [
-          {
-            id: "source",
-            header: "Choose a source",
-            question: "Which source should I use?",
-            isSecret: false,
-            options,
-          },
-        ],
-        approval: null,
-      },
-    ],
+    remainingCount: 0,
+    item: {
+      requestId: "source-question",
+      bot: BOT,
+      title: "Choose a source",
+      detail: "Which source should I use?",
+      questions: [
+        {
+          id: "source",
+          header: "Choose a source",
+          question: "Which source should I use?",
+          isSecret: false,
+          options,
+        },
+      ],
+    },
   };
 }
 
 function approvalPresentation(): DynamicIslandPresentation {
   return {
-    ...basePresentation(),
+    serverId: "local",
     mode: "approval",
-    attentionCount: 1,
-    attention: [
-      {
-        id: "approval-1",
-        requestId: "approval-1",
-        bot: BOT,
-        kind: "approval",
-        title: "Command needs review",
-        detail: "Install the locked dependencies.",
-        options: null,
-        questions: null,
-        approval: {
-          kind: "command",
-          command: "bun install --frozen-lockfile",
-          cwd: "~/Projects/openbot",
-          reason: "Install the locked dependencies.",
-          grantRoot: null,
-          permissions: null,
-        },
+    remainingCount: 0,
+    item: {
+      requestId: "approval-1",
+      bot: BOT,
+      title: "Command needs review",
+      detail: "Install the locked dependencies.",
+      approval: {
+        kind: "command",
+        command: "bun install --frozen-lockfile",
+        cwd: "~/Projects/openbot",
+        reason: "Install the locked dependencies.",
+        grantRoot: null,
+        permissions: null,
       },
-    ],
+    },
   };
 }
 
 function takeoverPresentation(): DynamicIslandPresentation {
   return {
-    ...basePresentation(),
+    serverId: "local",
     mode: "takeover",
-    attentionCount: 1,
-    attention: [
-      {
-        id: "takeover-1",
-        requestId: "takeover-1",
-        bot: BOT,
-        kind: "takeover",
-        title: "Browser step needs you",
-        detail: "Complete the sign-in, verification, or consent in the browser.",
-        options: null,
-        questions: null,
-        approval: null,
-      },
-    ],
+    item: {
+      requestId: "takeover-1",
+      bot: BOT,
+      title: "Browser step needs you",
+      detail: "Complete the sign-in, verification, or consent in the browser.",
+    },
   };
 }
 
 function failedPresentation(): DynamicIslandPresentation {
   return {
-    ...basePresentation(),
+    serverId: "local",
     mode: "failed",
-    attentionCount: 1,
-    attention: [
-      {
-        id: "turn-failed",
-        requestId: "turn-failed",
-        bot: BOT,
-        kind: "failure",
-        title: "Task failed",
-        detail: "The browser tab closed unexpectedly.",
-        options: null,
-        questions: null,
-        approval: null,
-      },
-    ],
+    item: {
+      turnId: "turn-failed",
+      bot: BOT,
+      title: "Task failed",
+      detail: "The browser tab closed unexpectedly.",
+    },
   };
 }

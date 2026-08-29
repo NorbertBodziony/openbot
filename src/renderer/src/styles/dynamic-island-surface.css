@@ -113,6 +113,10 @@ body:has(.dynamic-island-surface),
 .dynamic-island-surface-anchor {
   width: fit-content;
   height: fit-content;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
   pointer-events: none;
 }
 
@@ -286,16 +290,6 @@ body:has(.dynamic-island-surface),
   }
 }
 
-.dynamic-island-surface-count {
-  min-width: 12px;
-  color: var(--openbot-text-secondary);
-  font-size: var(--openbot-text-xs);
-  font-weight: var(--openbot-weight-semibold);
-  font-variant-numeric: tabular-nums;
-  line-height: var(--openbot-leading-xs);
-  text-align: center;
-}
-
 .dynamic-island-surface-approval-badge {
   border-color: var(--openbot-approval-badge-border);
   background: var(--openbot-approval-badge-soft);
@@ -331,8 +325,7 @@ body:has(.dynamic-island-surface),
   gap: 2px;
 }
 
-.dynamic-island-surface-row,
-.dynamic-island-surface-attention-row {
+.dynamic-island-surface-row {
   min-width: 0;
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
@@ -393,8 +386,7 @@ body:has(.dynamic-island-surface),
   gap: 1px;
 }
 
-.dynamic-island-surface-row strong,
-.dynamic-island-surface-attention-row strong {
+.dynamic-island-surface-row strong {
   overflow: hidden;
   font-size: var(--openbot-text-sm);
   font-weight: var(--openbot-weight-medium);
@@ -403,8 +395,7 @@ body:has(.dynamic-island-surface),
   white-space: nowrap;
 }
 
-.dynamic-island-surface-row small,
-.dynamic-island-surface-attention-row small {
+.dynamic-island-surface-row small {
   overflow: hidden;
   color: var(--openbot-text-muted);
   font-size: var(--openbot-text-xs);
@@ -412,18 +403,6 @@ body:has(.dynamic-island-surface),
   line-height: var(--openbot-leading-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.dynamic-island-surface-message {
-  display: -webkit-box;
-  overflow: hidden;
-  margin: 0;
-  color: var(--openbot-text-secondary);
-  font-size: var(--openbot-text-sm);
-  font-weight: var(--openbot-weight-regular);
-  line-height: var(--openbot-leading-lg);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
 }
 
 .dynamic-island-message-first-panel {
@@ -486,14 +465,6 @@ body:has(.dynamic-island-surface),
   text-wrap: pretty;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-.dynamic-island-surface-request-title {
-  color: var(--openbot-text-primary);
-  font-size: var(--openbot-text-sm);
-  font-weight: var(--openbot-weight-medium);
-  line-height: var(--openbot-leading-sm);
-  text-wrap: balance;
 }
 
 .dynamic-island-surface-command {

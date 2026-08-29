@@ -69,7 +69,7 @@ import { readPanelWidth } from "./components/PanelResizer";
 import type { SidebarAgentState } from "./components/Sidebar";
 import { Toaster } from "./components/ui";
 import type { BotMessage, BotProfile } from "./data";
-import { createDynamicIslandPresentation } from "./dynamic-island-presentation";
+import { DynamicIslandCoordinator } from "./dynamic-island-coordinator";
 import {
   normalizeSidebarPeopleOrder,
   readSidebarPeopleOrder,
@@ -362,6 +362,7 @@ export function createAppController(props: AppProps = {}) {
   const queueSnapshotRequests = new Map<string, number>();
   const completedTurnByBot = new Map<string, string>();
   const pendingProviderConnections = new Map<AgentProviderId, ReturnType<typeof desktopAnalytics.scope>>();
+  const dynamicIslandCoordinator = new DynamicIslandCoordinator();
   let conversationFrame: number | undefined;
   let directConversationRequest = 0;
   let serverSettingsRequest = 0;
@@ -560,6 +561,12 @@ export function createAppController(props: AppProps = {}) {
     const unsubscribe = window.openbot.agent.onEvent((event) => {
       flush(() => handleAgentEvent(event));
     });
+    const unsubscribeScopedAgent = window.openbot.agent.onScopedEvent((event) => {
+      flush(() => {
+        dynamicIslandCoordinator.applyEvent(event, activeServerSidebarKey());
+        publishDynamicIslandPresentation();
+      });
+    });
     const unsubscribeUpdate = window.openbot.update.onEvent((status) => {
       flush(() => setUpdateStatus(status));
     });
@@ -609,6 +616,7 @@ export function createAppController(props: AppProps = {}) {
     window.addEventListener("keydown", handleGlobalSearchShortcut);
     const cleanup = () => {
       unsubscribe();
+      unsubscribeScopedAgent();
       unsubscribeUpdate();
       unsubscribeProviderRuntimes();
       unsubscribeAuth();
@@ -1308,6 +1316,22 @@ export function createAppController(props: AppProps = {}) {
       }
       applyConversationPage(page, true, "around");
       setMessageFocusRequest({ botId, messageId, nonce: Date.now() });
+      try {
+        let readBoundary = page.messages.at(-1)?.id ?? messageId;
+        try {
+          const latestPage = await window.openbot.agent.readConversationPage({
+            botId,
+            anchor: { type: "latest" },
+            limit: 1,
+          });
+          readBoundary = latestPage.messages.at(-1)?.id ?? readBoundary;
+        } catch {
+          // The focused page still gives us a safe read boundary when the latest-page refresh fails.
+        }
+        await markAgentMessagesRead(botId, readBoundary);
+      } catch (error) {
+        appendUiError(botId, error, "Read state failed");
+      }
     } catch (error) {
       appendUiError(botId, error, "Message load failed");
     }
@@ -1888,19 +1912,6 @@ export function createAppController(props: AppProps = {}) {
       appendUiError(botId, error, "Answer failed");
       return false;
     }
-  }
-
-  function isDynamicIslandPromptAnswerValid(prompt: PromptEvent, answers: Record<string, string[]>): boolean {
-    if (Object.keys(answers).length !== prompt.questions.length) return false;
-    return prompt.questions.every((question) => {
-      const answer = answers[question.id];
-      return (
-        !question.isSecret &&
-        Boolean(question.options && question.options.length > 0 && question.options.length <= 3) &&
-        answer?.length === 1 &&
-        question.options?.some((option) => option.label === answer[0]) === true
-      );
-    });
   }
 
   function presentPromptResolution(botId: string, turnId: string, requestId: string | number): void {
@@ -2884,24 +2895,56 @@ export function createAppController(props: AppProps = {}) {
   const activeServer = createMemo(() => servers().find((server) => server.active));
   const activeServerSidebarKey = createMemo(() => activeServer()?.id ?? "local");
 
+  function dynamicIslandServerOrder(): string[] {
+    const ids = servers().map((server) => server.id);
+    return ids.length > 0 ? ids : ["local"];
+  }
+
+  function publishDynamicIslandPresentation(): void {
+    if (props.landingPreview) return;
+    const presentation = dynamicIslandCoordinator.presentation(dynamicIslandServerOrder());
+    void window.openbot.dynamicIsland.publishPresentation(presentation).catch(() => undefined);
+  }
+
+  createEffect(
+    () => dynamicIslandServerOrder().join("\u0000"),
+    () => {
+      const serverIds = dynamicIslandServerOrder();
+      dynamicIslandCoordinator.retainServers(serverIds);
+      for (const serverId of serverIds) {
+        void window.openbot.agent
+          .listBotsForServer(serverId)
+          .then((bots) => {
+            dynamicIslandCoordinator.setBots(serverId, bots);
+            publishDynamicIslandPresentation();
+          })
+          .catch(() => undefined);
+      }
+    },
+  );
+
   createEffect(
     () => {
       if (props.landingPreview) return null;
-      return createDynamicIslandPresentation({
+      return {
         serverId: activeServerSidebarKey(),
         bots: botList(),
         activeTurns: activeTurns(),
         queues: queues(),
         unreadReplies: unreadReplies(),
+        unreadMessageIds: Object.fromEntries(
+          Object.entries(conversationReads()).map(([botId, state]) => [botId, state.firstUnreadMessageId]),
+        ),
         liveMessages: liveMessages(),
         pendingPrompts: pendingPrompts(),
         pendingApprovals: pendingApprovals(),
         failedTurns: failedTurns(),
-      });
+      };
     },
-    (presentation) => {
-      if (!presentation) return;
-      void window.openbot.dynamicIsland.publishPresentation(presentation).catch(() => undefined);
+    (input) => {
+      if (!input) return;
+      dynamicIslandCoordinator.replaceServer(input);
+      publishDynamicIslandPresentation();
     },
   );
 
@@ -2913,21 +2956,13 @@ export function createAppController(props: AppProps = {}) {
   async function handleDynamicIslandAction(action: DynamicIslandAction): Promise<void> {
     if (action.type === "open-app") return;
     if (action.type === "approve-attention") {
-      if (activeServerSidebarKey() !== action.serverId) return;
-      await respondToApprovalRequest(action.botId, action.requestId, "accept");
+      dynamicIslandCoordinator.resolveAction(action);
+      publishDynamicIslandPresentation();
       return;
     }
     if (action.type === "answer-prompt") {
-      if (activeServerSidebarKey() !== action.serverId) return;
-      const prompt = pendingPrompts()[action.botId];
-      if (
-        prompt?.type !== "prompt" ||
-        prompt.requestId !== action.requestId ||
-        !isDynamicIslandPromptAnswerValid(prompt, action.answers)
-      ) {
-        return;
-      }
-      await submitPromptAnswers(action.botId, prompt, action.answers);
+      dynamicIslandCoordinator.resolveAction(action);
+      publishDynamicIslandPresentation();
       return;
     }
     if (activeServerSidebarKey() !== action.serverId) await selectServer(action.serverId, false);

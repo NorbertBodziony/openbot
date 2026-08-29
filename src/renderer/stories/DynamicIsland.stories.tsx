@@ -1,4 +1,9 @@
-import type { DynamicIslandAction, DynamicIslandBotIdentity, DynamicIslandPresentation } from "@openbot/contracts/ipc";
+import type {
+  DynamicIslandAction,
+  DynamicIslandBotIdentity,
+  DynamicIslandPresentation,
+  DynamicIslandPromptItem,
+} from "@openbot/contracts/ipc";
 import type { JSX } from "@solidjs/web";
 import { createMemo, createSignal, For } from "solid-js";
 import { fn } from "storybook/test";
@@ -18,10 +23,18 @@ interface DynamicIslandDemoProps {
   workingVariant?: WorkingVariant;
   defaultState?: DynamicIslandViewState;
   onAction: (action: DynamicIslandAction) => void;
-  onSecondaryAction: () => void;
 }
 
 const BOT_IDENTITIES = STORY_BOTS.slice(0, 3).map(toIslandBot);
+const SCENARIO_OPTIONS: Array<{ value: Scenario; label: string }> = [
+  { value: "idle", label: "Idle" },
+  { value: "working", label: "Working" },
+  { value: "chat", label: "Chat" },
+  { value: "question", label: "Question" },
+  { value: "approval", label: "Approval" },
+  { value: "takeover", label: "Takeover" },
+  { value: "failed", label: "Failed" },
+];
 
 function DynamicIslandDemo(props: DynamicIslandDemoProps): JSX.Element {
   const presentation = createMemo(() =>
@@ -39,25 +52,13 @@ function DynamicIslandDemo(props: DynamicIslandDemoProps): JSX.Element {
           suppressInitialHover
           onStateChange={preview.onStateChange}
           onAction={props.onAction}
-          onLater={props.onSecondaryAction}
         />
       )}
     />
   );
 }
 
-function DynamicIslandTransitionDemo(
-  props: Pick<DynamicIslandDemoProps, "onAction" | "onSecondaryAction">,
-): JSX.Element {
-  const scenarios: Array<{ value: Scenario; label: string }> = [
-    { value: "idle", label: "Idle" },
-    { value: "working", label: "Working" },
-    { value: "chat", label: "Chat" },
-    { value: "question", label: "Question" },
-    { value: "approval", label: "Approval" },
-    { value: "takeover", label: "Takeover" },
-    { value: "failed", label: "Failed" },
-  ];
+function DynamicIslandTransitionDemo(props: Pick<DynamicIslandDemoProps, "onAction">): JSX.Element {
   const [scenario, setScenario] = createSignal<Scenario>("idle");
   const [state, setState] = createSignal<DynamicIslandViewState>("compact");
   const presentation = createMemo(() => presentationFor(scenario(), "standard", "multiple"));
@@ -73,15 +74,13 @@ function DynamicIslandTransitionDemo(
       onStateChange={setState}
       controls={
         <fieldset class="dynamic-island-story-mode-controls" aria-label="Dynamic Island mode">
-          <For each={scenarios}>
+          <For each={SCENARIO_OPTIONS}>
             {(option) => (
               <Button
                 size="xs"
                 variant={scenario() === option.value ? "default" : "secondary"}
                 aria-pressed={scenario() === option.value ? "true" : "false"}
-                onClick={() => {
-                  selectScenario(option.value);
-                }}
+                onClick={() => selectScenario(option.value)}
               >
                 {option.label}
               </Button>
@@ -106,7 +105,6 @@ function DynamicIslandTransitionDemo(
           suppressInitialHover
           onStateChange={preview.onStateChange}
           onAction={props.onAction}
-          onLater={props.onSecondaryAction}
         />
       )}
     />
@@ -118,34 +116,21 @@ function presentationFor(
   questionVariant: QuestionVariant,
   workingVariant: WorkingVariant,
 ): DynamicIslandPresentation {
-  const base = {
-    serverId: "local",
-    activeCount: 0,
-    unreadCount: 0,
-    attentionCount: 0,
-    working: [],
-    message: null,
-    attention: [],
-  } satisfies Omit<DynamicIslandPresentation, "mode">;
-
   if (scenario === "working") {
     const working = [
       { bot: BOT_IDENTITIES[0], task: "Planning the launch sequence" },
       { bot: BOT_IDENTITIES[1], task: "Checking primary sources" },
       { bot: BOT_IDENTITIES[2], task: "Drafting partner follow-ups" },
     ];
-    const visibleWorking = workingVariant === "single" ? working.slice(0, 1) : working;
     return {
-      ...base,
+      serverId: "local",
       mode: "working",
-      activeCount: visibleWorking.length,
-      working: visibleWorking,
+      working: workingVariant === "single" ? working.slice(0, 1) : working,
     };
   }
-
   if (scenario === "chat") {
     return {
-      ...base,
+      serverId: "local",
       mode: "message",
       unreadCount: 2,
       message: {
@@ -156,104 +141,68 @@ function presentationFor(
       },
     };
   }
-
   if (scenario === "question") {
-    const question = questionFixture(questionVariant);
-    return {
-      ...base,
-      mode: "question",
-      attentionCount: 1,
-      attention: [question],
-    };
+    return { serverId: "local", mode: "question", remainingCount: 0, item: questionFixture(questionVariant) };
   }
-
   if (scenario === "approval") {
     return {
-      ...base,
+      serverId: "local",
       mode: "approval",
-      attentionCount: 1,
-      attention: [
-        {
-          id: "chief-command-approval",
-          requestId: "chief-command-approval",
-          bot: BOT_IDENTITIES[0],
-          kind: "approval",
-          title: "Command needs review",
-          detail: "Chief needs to install the verified workspace dependencies before tests can run.",
-          options: null,
-          questions: null,
-          approval: {
-            kind: "command",
-            command: "bun install --frozen-lockfile",
-            cwd: "~/Projects/openbot",
-            reason: "Install the locked dependencies before running the test suite.",
-            grantRoot: null,
-            permissions: null,
-          },
+      remainingCount: 0,
+      item: {
+        requestId: "chief-command-approval",
+        bot: BOT_IDENTITIES[0],
+        title: "Command needs review",
+        detail: "Chief needs to install the verified workspace dependencies before tests can run.",
+        approval: {
+          kind: "command",
+          command: "bun install --frozen-lockfile",
+          cwd: "~/Projects/openbot",
+          reason: "Install the locked dependencies before running the test suite.",
+          grantRoot: null,
+          permissions: null,
         },
-      ],
+      },
     };
   }
-
   if (scenario === "takeover") {
     return {
-      ...base,
+      serverId: "local",
       mode: "takeover",
-      attentionCount: 1,
-      attention: [
-        {
-          id: "chief-browser-takeover",
-          requestId: "chief-browser-takeover",
-          bot: BOT_IDENTITIES[0],
-          kind: "takeover",
-          title: "Browser step needs you",
-          detail: "Complete the sign-in, verification, or consent in the browser.",
-          options: null,
-          questions: null,
-          approval: null,
-        },
-      ],
+      item: {
+        requestId: "chief-browser-takeover",
+        bot: BOT_IDENTITIES[0],
+        title: "Browser step needs you",
+        detail: "Complete the sign-in, verification, or consent in the browser.",
+      },
     };
   }
-
   if (scenario === "failed") {
     return {
-      ...base,
+      serverId: "local",
       mode: "failed",
-      attentionCount: 1,
-      attention: [
-        {
-          id: "research-failed-turn",
-          requestId: "research-failed-turn",
-          bot: BOT_IDENTITIES[1],
-          kind: "failure",
-          title: "Task failed",
-          detail: "The browser tab closed before Research could finish collecting the sources.",
-          options: null,
-          questions: null,
-          approval: null,
-        },
-      ],
+      item: {
+        turnId: "research-failed-turn",
+        bot: BOT_IDENTITIES[1],
+        title: "Task failed",
+        detail: "The browser tab closed before Research could finish collecting the sources.",
+      },
     };
   }
-
-  return { ...base, mode: "idle" };
+  return { serverId: "local", mode: "idle" };
 }
 
-function questionFixture(variant: QuestionVariant): DynamicIslandPresentation["attention"][number] {
+function questionFixture(variant: QuestionVariant): DynamicIslandPromptItem {
   if (variant === "short") {
     const options = [
       { label: "Send it", description: "Use this draft" },
       { label: "Revise", description: "Make one more pass" },
     ];
     return {
-      id: "siema-tone-question",
       requestId: "siema-tone-question",
       bot: { ...BOT_IDENTITIES[1], id: "siema", name: "Siema", avatarSeed: "siema" },
-      kind: "prompt",
       title: "Send this version?",
       detail: "The draft is ready.",
-      options,
       questions: [
         {
           id: "send-version",
@@ -263,7 +212,6 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPresentation["a
           options,
         },
       ],
-      approval: null,
     };
   }
 
@@ -283,7 +231,6 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPresentation["a
       },
     ];
     return {
-      id: "international-market-research-source-question",
       requestId: "international-market-research-source-question",
       bot: {
         ...BOT_IDENTITIES[1],
@@ -291,11 +238,9 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPresentation["a
         name: "International Market Research, Competitive Intelligence, and Strategic Operations",
         avatarSeed: "international-market-research",
       },
-      kind: "prompt",
       title: "Choose the primary evidence source for the international market-size estimate.",
       detail:
         "Which source should I cite when the available datasets use different regional definitions and reporting periods?",
-      options,
       questions: [
         {
           id: "primary-evidence-source",
@@ -306,7 +251,6 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPresentation["a
           options,
         },
       ],
-      approval: null,
     };
   }
 
@@ -317,13 +261,10 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPresentation["a
       { label: "Use both", description: "Compare both sources and explain the difference" },
     ];
     return {
-      id: "research-multiple-question",
       requestId: "research-multiple-question",
       bot: BOT_IDENTITIES[1],
-      kind: "prompt",
       title: "Choose a source",
       detail: "Which source should I use for the market-size estimate?",
-      options: sourceOptions,
       questions: [
         {
           id: "source",
@@ -344,7 +285,6 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPresentation["a
           ],
         },
       ],
-      approval: null,
     };
   }
 
@@ -354,13 +294,10 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPresentation["a
     { label: "Use both", description: "Compare both sources and explain the difference" },
   ];
   return {
-    id: "research-source-question",
     requestId: "research-source-question",
     bot: BOT_IDENTITIES[1],
-    kind: "prompt",
     title: "Choose a source",
     detail: "Which source should I use for the market-size estimate?",
-    options,
     questions: [
       {
         id: "source",
@@ -370,7 +307,6 @@ function questionFixture(variant: QuestionVariant): DynamicIslandPresentation["a
         options,
       },
     ],
-    approval: null,
   };
 }
 
@@ -387,17 +323,9 @@ function toIslandBot(bot: (typeof STORY_BOTS)[number]): DynamicIslandBotIdentity
 const meta = {
   title: "Experiments/macOS Dynamic Island",
   component: DynamicIslandDemo,
-  args: {
-    scenario: "working",
-    defaultState: "compact",
-    onAction: fn(),
-    onSecondaryAction: fn(),
-  },
+  args: { scenario: "working", defaultState: "compact", onAction: fn() },
   argTypes: {
-    scenario: {
-      control: "select",
-      options: ["idle", "working", "chat", "question", "approval", "takeover", "failed"],
-    },
+    scenario: { control: "select", options: SCENARIO_OPTIONS.map((option) => option.value) },
     questionVariant: { control: "select", options: ["standard", "short", "long", "multiple"] },
     workingVariant: { control: "select", options: ["single", "multiple"] },
     defaultState: { control: "select", options: ["compact", "expanded"] },
@@ -409,65 +337,22 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Idle: Story = { args: { scenario: "idle", onAction: fn() } };
-
-export const WorkingBots: Story = {
-  args: { scenario: "working", workingVariant: "multiple", onAction: fn() },
-};
-
-export const WorkingBot: Story = {
-  args: { scenario: "working", workingVariant: "single", onAction: fn() },
-};
-
-export const ChatUpdate: Story = {
-  args: { scenario: "chat", defaultState: "compact", onAction: fn() },
-};
-
+export const WorkingBots: Story = { args: { scenario: "working", workingVariant: "multiple", onAction: fn() } };
+export const WorkingBot: Story = { args: { scenario: "working", workingVariant: "single", onAction: fn() } };
+export const ChatUpdate: Story = { args: { scenario: "chat", defaultState: "compact", onAction: fn() } };
 export const QuestionFromAI: Story = {
-  args: { scenario: "question", questionVariant: "standard", onAction: fn(), onSecondaryAction: fn() },
+  args: { scenario: "question", questionVariant: "standard", onAction: fn() },
 };
-
 export const QuestionFromAIShort: Story = {
-  args: {
-    scenario: "question",
-    questionVariant: "short",
-    defaultState: "expanded",
-    onAction: fn(),
-    onSecondaryAction: fn(),
-  },
+  args: { scenario: "question", questionVariant: "short", defaultState: "expanded", onAction: fn() },
 };
-
 export const QuestionFromAILong: Story = {
-  args: {
-    scenario: "question",
-    questionVariant: "long",
-    defaultState: "expanded",
-    onAction: fn(),
-    onSecondaryAction: fn(),
-  },
+  args: { scenario: "question", questionVariant: "long", defaultState: "expanded", onAction: fn() },
 };
-
 export const QuestionFromAIMultiple: Story = {
-  args: {
-    scenario: "question",
-    questionVariant: "multiple",
-    defaultState: "expanded",
-    onAction: fn(),
-    onSecondaryAction: fn(),
-  },
+  args: { scenario: "question", questionVariant: "multiple", defaultState: "expanded", onAction: fn() },
 };
-
-export const NeedsApproval: Story = {
-  args: { scenario: "approval", onAction: fn() },
-};
-
-export const BrowserTakeover: Story = {
-  args: { scenario: "takeover", onAction: fn() },
-};
-
-export const TaskFailed: Story = {
-  args: { scenario: "failed", onAction: fn() },
-};
-
-export const StateTransitions: Story = {
-  render: (args) => <DynamicIslandTransitionDemo onAction={args.onAction} onSecondaryAction={args.onSecondaryAction} />,
-};
+export const NeedsApproval: Story = { args: { scenario: "approval", onAction: fn() } };
+export const BrowserTakeover: Story = { args: { scenario: "takeover", onAction: fn() } };
+export const TaskFailed: Story = { args: { scenario: "failed", onAction: fn() } };
+export const StateTransitions: Story = { render: (args) => <DynamicIslandTransitionDemo onAction={args.onAction} /> };
