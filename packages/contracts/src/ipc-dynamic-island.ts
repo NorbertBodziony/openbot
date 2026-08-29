@@ -7,8 +7,6 @@ import {
 } from "./ipc-conversation";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "./runtime-values";
 
-export type DynamicIslandMode = "idle" | "working" | "message" | "question" | "approval" | "takeover" | "failed";
-
 export interface DynamicIslandPreference {
   enabled: boolean;
   hapticsEnabled: boolean;
@@ -16,12 +14,14 @@ export interface DynamicIslandPreference {
   additionalDisplaysEnabled: boolean;
 }
 
-export interface SetDynamicIslandPreferenceInput {
-  enabled: boolean;
-  hapticsEnabled: boolean;
-  idleVisible: boolean;
-  additionalDisplaysEnabled: boolean;
-}
+export type SetDynamicIslandPreferenceInput = DynamicIslandPreference;
+
+export const DEFAULT_DYNAMIC_ISLAND_PREFERENCE = {
+  enabled: true,
+  hapticsEnabled: true,
+  idleVisible: true,
+  additionalDisplaysEnabled: true,
+} as const satisfies DynamicIslandPreference;
 
 export interface DynamicIslandBotIdentity {
   id: string;

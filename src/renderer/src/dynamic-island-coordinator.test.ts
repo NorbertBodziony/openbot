@@ -6,9 +6,9 @@ import type { DynamicIslandPresentationInput } from "./dynamic-island-presentati
 describe("DynamicIslandCoordinator", () => {
   it("selects the highest-priority notification across hosts and reveals the next item after an action", () => {
     const coordinator = new DynamicIslandCoordinator();
-    coordinator.setBots("local", [bot("chief", "Chief")]);
-    coordinator.setBots("remote-a", [bot("research", "Research")]);
-    coordinator.setBots("remote-b", [bot("sales", "Sales")]);
+    seedBots(coordinator, "local", [bot("chief", "Chief")]);
+    seedBots(coordinator, "remote-a", [bot("research", "Research")]);
+    seedBots(coordinator, "remote-b", [bot("sales", "Sales")]);
     coordinator.applyEvent(scoped("remote-a", prompt("research", "question-1")), "local");
     coordinator.applyEvent(scoped("remote-b", approval("sales", "approval-1")), "local");
 
@@ -36,7 +36,7 @@ describe("DynamicIslandCoordinator", () => {
 
   it("keeps simultaneous requests from different bots and advances after each answer", () => {
     const coordinator = new DynamicIslandCoordinator();
-    coordinator.setBots("local", [bot("chief", "Chief"), bot("research", "Research")]);
+    seedBots(coordinator, "local", [bot("chief", "Chief"), bot("research", "Research")]);
     coordinator.applyEvent(scoped("local", prompt("chief", "question-chief")), "local");
     coordinator.applyEvent(scoped("local", prompt("research", "question-research")), "local");
 
@@ -63,7 +63,7 @@ describe("DynamicIslandCoordinator", () => {
 
   it("removes only the matching failure after it is opened", () => {
     const coordinator = new DynamicIslandCoordinator();
-    coordinator.setBots("local", [bot("chief", "Chief")]);
+    seedBots(coordinator, "local", [bot("chief", "Chief")]);
     coordinator.applyEvent(
       scoped("local", {
         type: "turn-completed",
@@ -94,7 +94,7 @@ describe("DynamicIslandCoordinator", () => {
 
   it("tracks working and unread updates from an inactive host", () => {
     const coordinator = new DynamicIslandCoordinator();
-    coordinator.setBots("remote", [bot("research", "Research")]);
+    seedBots(coordinator, "remote", [bot("research", "Research")]);
     coordinator.applyEvent(
       scoped("remote", { type: "turn-started", botId: "research", threadId: "thread-1", turnId: "turn-1" }),
       "local",
@@ -135,7 +135,7 @@ describe("DynamicIslandCoordinator", () => {
 
   it("seeds an inactive host snapshot without counting historical replies as new", () => {
     const coordinator = new DynamicIslandCoordinator();
-    coordinator.setBots("remote", [bot("research", "Research")]);
+    seedBots(coordinator, "remote", [bot("research", "Research")]);
     const historical = conversation("research", 1, [
       { id: "historical", text: "Historical reply", createdAt: "2026-08-29T09:00:00.000Z" },
     ]);
@@ -173,8 +173,8 @@ describe("DynamicIslandCoordinator", () => {
 
   it("keeps working ahead of an unread message across hosts", () => {
     const coordinator = new DynamicIslandCoordinator();
-    coordinator.setBots("remote-working", [bot("builder", "Builder")]);
-    coordinator.setBots("remote-message", [bot("research", "Research")]);
+    seedBots(coordinator, "remote-working", [bot("builder", "Builder")]);
+    seedBots(coordinator, "remote-message", [bot("research", "Research")]);
     coordinator.applyEvent(
       scoped("remote-working", {
         type: "turn-started",
@@ -216,7 +216,7 @@ describe("DynamicIslandCoordinator", () => {
 
   it("replaces the active server snapshot without deleting pending state from another host", () => {
     const coordinator = new DynamicIslandCoordinator();
-    coordinator.setBots("remote", [bot("research", "Research")]);
+    seedBots(coordinator, "remote", [bot("research", "Research")]);
     coordinator.applyEvent(scoped("remote", prompt("research", "remote-question")), "local");
     coordinator.replaceServer(emptyInput("local", [bot("chief", "Chief")]));
 
@@ -229,8 +229,8 @@ describe("DynamicIslandCoordinator", () => {
 
   it("counts failures hidden behind a takeover on another host", () => {
     const coordinator = new DynamicIslandCoordinator();
-    coordinator.setBots("takeover", [bot("browser", "Browser"), bot("failed", "Failed")]);
-    coordinator.setBots("question", [bot("research", "Research")]);
+    seedBots(coordinator, "takeover", [bot("browser", "Browser"), bot("failed", "Failed")]);
+    seedBots(coordinator, "question", [bot("research", "Research")]);
     coordinator.applyEvent(
       scoped("takeover", {
         type: "browser-takeover-requested",
@@ -265,7 +265,7 @@ describe("DynamicIslandCoordinator", () => {
   it("atomically repairs stale remote state after reconnect", () => {
     const coordinator = new DynamicIslandCoordinator();
     const remoteBot = bot("research", "Research");
-    coordinator.setBots("remote", [remoteBot]);
+    seedBots(coordinator, "remote", [remoteBot]);
     coordinator.applyEvent(scoped("remote", prompt("research", "stale-question")), "local");
     coordinator.applyEvent(
       scoped("remote", {
@@ -278,10 +278,30 @@ describe("DynamicIslandCoordinator", () => {
     );
 
     coordinator.applyEvent(
-      scoped("remote", runtimeSnapshot({ bots: [remoteBot], latestMessages: [runtimeMessage("historical")] })),
+      scoped(
+        "remote",
+        runtimeSnapshot({
+          bots: [remoteBot],
+          activeTurns: [{ botId: "research", threadId: "thread-research", turnId: "turn-current" }],
+          work: [
+            {
+              id: "delivery-current",
+              botId: "research",
+              turnId: "turn-current",
+              status: "running",
+              text: "Review sources",
+              error: null,
+            },
+          ],
+          latestMessages: [runtimeMessage("historical")],
+        }),
+      ),
       "local",
     );
-    expect(coordinator.presentation(["remote"]).mode).toBe("idle");
+    expect(coordinator.presentation(["remote"])).toMatchObject({
+      mode: "working",
+      working: [{ task: "Review sources" }],
+    });
 
     coordinator.applyEvent(
       scoped("remote", runtimeSnapshot({ bots: [remoteBot], latestMessages: [runtimeMessage("missed-reply")] })),
@@ -294,6 +314,10 @@ describe("DynamicIslandCoordinator", () => {
     });
   });
 });
+
+function seedBots(coordinator: DynamicIslandCoordinator, serverId: string, bots: BotSummary[]): void {
+  coordinator.applyEvent(scoped(serverId, { type: "bots-changed", bots }), serverId);
+}
 
 function scoped(serverId: string, event: AgentEvent) {
   return { serverId, event };
@@ -379,7 +403,7 @@ function runtimeSnapshot(
     snapshot: {
       bots: [],
       activeTurns: [],
-      queues: [],
+      work: [],
       latestMessages: [],
       pendingPrompts: [],
       pendingApprovals: [],

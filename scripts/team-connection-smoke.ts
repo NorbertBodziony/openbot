@@ -251,7 +251,7 @@ function createSmokeAgents(events: EventEmitter): SmokeAgents {
     getRuntimeSnapshot: () => ({
       bots: [],
       activeTurns: [],
-      queues: [],
+      work: [],
       latestMessages: [],
       pendingPrompts: [],
       pendingApprovals: [],

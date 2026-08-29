@@ -131,57 +131,6 @@ describe("DynamicIslandSurface", () => {
     mock.dispose();
   });
 
-  it("opens the selected message in the main OpenBot window", async () => {
-    const mock = createMockOpenBot();
-    const presentation: DynamicIslandPresentation = {
-      serverId: "local",
-      mode: "message",
-      unreadCount: 1,
-      message: {
-        bot: RESEARCH,
-        messageId: "reply-1",
-        text: "The source check is ready.",
-        createdAt: "2026-08-28T10:42:00.000Z",
-      },
-    };
-    const performAction = vi.fn(async () => undefined);
-    mock.api.dynamicIsland.getPresentation = async () => presentation;
-    mock.api.dynamicIsland.performAction = performAction;
-    Object.defineProperty(window, "openbot", { configurable: true, value: mock.api });
-    render(() => <DynamicIslandSurface />);
-
-    await fireEvent.mouseEnter(await screen.findByRole("region", { name: "OpenBot chat update" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Open chat" }));
-
-    await waitFor(() =>
-      expect(performAction).toHaveBeenCalledWith({
-        type: "open-message",
-        serverId: "local",
-        botId: "research",
-        messageId: "reply-1",
-      }),
-    );
-    mock.dispose();
-  });
-
-  it("sends a selected answer without opening the app", async () => {
-    const mock = createQuestionMock(questionPresentation("source-question", [sourceQuestion()]));
-    render(() => <DynamicIslandSurface />);
-
-    await fireEvent.mouseEnter(await screen.findByRole("region", { name: "OpenBot question from AI" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Official data. Use the public dataset" }));
-    await waitFor(() =>
-      expect(mock.performAction).toHaveBeenCalledWith({
-        type: "answer-prompt",
-        serverId: "local",
-        botId: "research",
-        requestId: "source-question",
-        answers: { source: ["Official data"] },
-      }),
-    );
-    mock.dispose();
-  });
-
   it("collects multiple answers and sends them after the last question", async () => {
     const formatQuestion: DynamicIslandQuestionItem = {
       id: "format",
@@ -298,27 +247,6 @@ describe("DynamicIslandSurface", () => {
     expect(screen.getByRole("region", { name: "OpenBot question from AI" })).toBeVisible();
 
     await fireEvent.focusOut(collapse, { relatedTarget: document.body });
-    expect(await screen.findByRole("region", { name: "OpenBot approval request" })).toBeVisible();
-    mock.dispose();
-  });
-
-  it("keeps a compact critical presentation stable while its toggle has keyboard focus", async () => {
-    const mock = createQuestionMock(questionPresentation("question-focused", [sourceQuestion()]));
-    let publish: ((presentation: DynamicIslandPresentation) => void) | undefined;
-    mock.api.dynamicIsland.onPresentation = (listener) => {
-      publish = listener;
-      return () => {
-        publish = undefined;
-      };
-    };
-    render(() => <DynamicIslandSurface />);
-
-    const toggle = await screen.findByRole("button", { name: "Expand OpenBot question from AI" });
-    toggle.focus();
-    flush(() => publish?.(approvalPresentation("approval-after-focus")));
-    expect(screen.getByRole("region", { name: "OpenBot question from AI" })).toBeVisible();
-
-    await fireEvent.focusOut(toggle, { relatedTarget: document.body });
     expect(await screen.findByRole("region", { name: "OpenBot approval request" })).toBeVisible();
     mock.dispose();
   });

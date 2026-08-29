@@ -142,7 +142,6 @@ export interface AgentDesktopApi {
   getUsage: () => Promise<AccountUsage>;
   listModels: () => Promise<AgentModelOption[]>;
   listBots: () => Promise<BotSummary[]>;
-  listBotsForServer: (serverId: string) => Promise<BotSummary[]>;
   getSidebarLayout: () => Promise<SidebarLayoutSnapshot>;
   mutateSidebarLayout: (action: SidebarLayoutAction) => Promise<SidebarLayoutSnapshot>;
   createBot: (input: CreateBotInput) => Promise<BotSummary>;

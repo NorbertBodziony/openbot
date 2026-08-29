@@ -1,5 +1,5 @@
 import type { DynamicIslandAction, DynamicIslandPreference, DynamicIslandPresentation } from "@openbot/contracts/ipc";
-import { IDLE_DYNAMIC_ISLAND_PRESENTATION } from "@openbot/contracts/ipc";
+import { DEFAULT_DYNAMIC_ISLAND_PREFERENCE, IDLE_DYNAMIC_ISLAND_PRESENTATION } from "@openbot/contracts/ipc";
 import { createSignal, onSettled, Show } from "solid-js";
 import { OpenBotDynamicIsland } from "./components/OpenBotDynamicIsland";
 import type { DynamicIslandStateChangeReason, DynamicIslandViewState } from "./components/ui";
@@ -8,10 +8,7 @@ export function DynamicIslandSurface() {
   const displayMode = new URLSearchParams(window.location.search).get("display") === "island" ? "island" : "notch";
   const [presentation, setPresentation] = createSignal(IDLE_DYNAMIC_ISLAND_PRESENTATION);
   const [preference, setPreference] = createSignal<DynamicIslandPreference>({
-    enabled: true,
-    hapticsEnabled: true,
-    idleVisible: true,
-    additionalDisplaysEnabled: true,
+    ...DEFAULT_DYNAMIC_ISLAND_PREFERENCE,
   });
   const [viewState, setViewState] = createSignal<DynamicIslandViewState>("compact");
   let pointerInside = false;

@@ -1,8 +1,9 @@
 import type {
   AgentEvent,
-  BotSummary,
+  AgentRuntimeWorkItem,
   DynamicIslandAction,
   DynamicIslandPresentation,
+  QueueSnapshot,
   ScopedAgentEvent,
 } from "@openbot/contracts/ipc";
 import {
@@ -57,10 +58,6 @@ export class DynamicIslandCoordinator {
       resolvedPrompts,
       receivedRuntimeSnapshot: previous?.receivedRuntimeSnapshot ?? false,
     });
-  }
-
-  setBots(serverId: string, bots: BotSummary[]): void {
-    this.#runtime(serverId).bots = bots;
   }
 
   retainServers(serverIds: readonly string[]): void {
@@ -245,7 +242,7 @@ export class DynamicIslandCoordinator {
       serverId,
       bots: snapshot.bots,
       activeTurns: Object.fromEntries(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])),
-      queues: Object.fromEntries(snapshot.queues.map((queue) => [queue.botId, queue])),
+      queues: queueSnapshotsFromRuntimeWork(snapshot.work),
       unreadReplies: { ...runtime.unreadReplies },
       unreadMessageIds: { ...runtime.unreadMessageIds },
       liveMessages,
@@ -255,6 +252,29 @@ export class DynamicIslandCoordinator {
     });
     this.#runtime(serverId).receivedRuntimeSnapshot = true;
   }
+}
+
+export function queueSnapshotsFromRuntimeWork(work: readonly AgentRuntimeWorkItem[]): Record<string, QueueSnapshot> {
+  const queues: Record<string, QueueSnapshot> = {};
+  for (const item of work) {
+    const queue = queues[item.botId] ?? { botId: item.botId, deliveries: [] };
+    queues[item.botId] = queue;
+    queue.deliveries.push({
+      id: item.id,
+      messageId: item.id,
+      recipientBotId: item.botId,
+      sender: { kind: "user" },
+      text: item.text,
+      attachments: [],
+      replyToMessageId: null,
+      status: item.status,
+      position: null,
+      turnId: item.turnId,
+      error: item.error,
+      createdAt: "",
+    });
+  }
+  return queues;
 }
 
 function toDynamicIslandMessage(

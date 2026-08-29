@@ -327,39 +327,32 @@ body:has(.dynamic-island-surface),
 
 .dynamic-island-surface-row {
   min-width: 0;
+  width: calc(100% + 2 * var(--openbot-space-2));
+  height: auto;
+  min-height: 44px;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 32px minmax(0, 1fr);
   align-items: center;
   gap: var(--openbot-space-2);
+  margin-inline: calc(-1 * var(--openbot-space-2));
   border: 0;
   border-radius: var(--openbot-radius-md);
   background: transparent;
   padding: var(--openbot-space-1-5) var(--openbot-space-2);
   color: inherit;
+  cursor: pointer;
   font: inherit;
+  outline: none;
   text-align: left;
-}
-
-.dynamic-island-surface-row {
-  width: calc(100% + 2 * var(--openbot-space-2));
-  height: auto;
-  min-height: 44px;
-  grid-template-columns: 32px minmax(0, 1fr);
-  margin-inline: calc(-1 * var(--openbot-space-2));
+  transition:
+    background-color var(--openbot-duration-normal) var(--openbot-ease-out),
+    transform var(--openbot-duration-normal) var(--openbot-ease-out);
 }
 
 .dynamic-island-surface-row .dynamic-island-surface-avatar,
 .dynamic-island-surface-working-avatar-slot {
   width: 32px;
   height: 32px;
-}
-
-.dynamic-island-surface-row {
-  cursor: pointer;
-  outline: none;
-  transition:
-    background-color var(--openbot-duration-normal) var(--openbot-ease-out),
-    transform var(--openbot-duration-normal) var(--openbot-ease-out);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -452,19 +445,6 @@ body:has(.dynamic-island-surface),
   width: 100%;
   display: grid;
   gap: var(--openbot-space-2);
-}
-
-.dynamic-island-surface-request-copy p {
-  display: -webkit-box;
-  overflow: hidden;
-  margin: 0;
-  color: var(--openbot-text-secondary);
-  font-size: var(--openbot-text-sm);
-  font-weight: var(--openbot-weight-regular);
-  line-height: var(--openbot-leading-lg);
-  text-wrap: pretty;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .dynamic-island-surface-command {

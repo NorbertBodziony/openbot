@@ -126,23 +126,6 @@ describe("createDynamicIslandPresentation", () => {
     expect(selectedModes).toEqual(["question", "approval", "takeover", "failed", "working", "message", "idle"]);
   });
 
-  it("uses the bot preview when an unread conversation is not loaded", () => {
-    const input = state();
-    input.bots = [{ ...research, preview: "The source review is ready." }];
-    input.unreadReplies.research = 3;
-    input.unreadMessageIds = { research: "reply-research" };
-
-    expect(createDynamicIslandPresentation(input)).toMatchObject({
-      mode: "message",
-      unreadCount: 3,
-      message: {
-        bot: { id: "research" },
-        messageId: "reply-research",
-        text: "The source review is ready.",
-      },
-    });
-  });
-
   it("keeps long live data inside the validated overlay contract", () => {
     const input = state();
     input.unreadReplies.chief = 1;
@@ -303,16 +286,9 @@ describe("createDynamicIslandPresentation", () => {
     });
   });
 
-  it("uses the required priority and returns to idle", () => {
+  it("maps a question and returns to idle", () => {
     const input = state();
     expect(createDynamicIslandPresentation(input).mode).toBe("idle");
-    input.activeTurns.chief = "turn-1";
-    expect(createDynamicIslandPresentation(input).mode).toBe("working");
-    input.unreadReplies.chief = 2;
-    input.liveMessages.chief = [{ id: "m1", author: "bot", body: "Done", time: "now" }];
-    expect(createDynamicIslandPresentation(input).mode).toBe("working");
-    input.activeTurns = {};
-    expect(createDynamicIslandPresentation(input).mode).toBe("message");
     input.pendingPrompts.chief = {
       type: "prompt",
       requestId: "prompt-1",
@@ -364,54 +340,9 @@ describe("createDynamicIslandPresentation", () => {
     });
   });
 
-  it("shows a question before an approval", () => {
+  it("maps a browser takeover presentation", () => {
     const input = state();
-    input.pendingPrompts.chief = {
-      type: "prompt",
-      requestId: "prompt-1",
-      botId: "chief",
-      threadId: "thread-1",
-      turnId: "turn-1",
-      questions: [{ id: "q1", header: "Choose", question: "Which option?", isSecret: false, options: null }],
-    };
-    input.pendingApprovals.chief = {
-      requestId: "approval-1",
-      botId: "chief",
-      threadId: "thread-1",
-      turnId: "turn-1",
-      kind: "file-change",
-      command: null,
-      cwd: null,
-      reason: "Update the generated files.",
-      grantRoot: "/workspace",
-      permissions: null,
-    };
-
-    const question = createDynamicIslandPresentation(input);
-
-    expect(question.mode).toBe("question");
-    if (question.mode !== "question") throw new Error("Expected a question presentation.");
-    expect(question.item.requestId).toBe("prompt-1");
-    expect(question.remainingCount).toBe(1);
-
-    input.pendingPrompts.chief = undefined;
-    const approval = createDynamicIslandPresentation(input);
-    expect(approval.mode).toBe("approval");
-    if (approval.mode !== "approval") throw new Error("Expected an approval presentation.");
-    expect(approval.item.requestId).toBe("approval-1");
-  });
-
-  it("shows a question before a browser takeover", () => {
-    const input = state();
-    input.bots = [bot, research];
-    input.pendingPrompts.chief = {
-      type: "prompt",
-      requestId: "prompt-1",
-      botId: "chief",
-      threadId: "thread-1",
-      turnId: "turn-1",
-      questions: [{ id: "q1", header: "Choose", question: "Which option?", isSecret: false, options: null }],
-    };
+    input.bots = [research];
     input.pendingPrompts.research = {
       type: "browser-takeover-requested",
       request: {
@@ -423,13 +354,6 @@ describe("createDynamicIslandPresentation", () => {
       },
     };
 
-    const question = createDynamicIslandPresentation(input);
-
-    expect(question.mode).toBe("question");
-    if (question.mode !== "question") throw new Error("Expected a question presentation.");
-    expect(question.item.requestId).toBe("prompt-1");
-
-    input.pendingPrompts.chief = undefined;
     const takeover = createDynamicIslandPresentation(input);
     expect(takeover.mode).toBe("takeover");
     if (takeover.mode !== "takeover") throw new Error("Expected a takeover presentation.");

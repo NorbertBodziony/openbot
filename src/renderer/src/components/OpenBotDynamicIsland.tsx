@@ -122,10 +122,6 @@ type StatusMode = Extract<
 interface OpenBotIslandModeConfig {
   label: string;
   ariaLive?: "polite";
-  className: string;
-  panelWidth: "standard" | "wide";
-  sharedLeading?: SharedLeadingMotion;
-  sharedTrailing?: SharedLeadingMotion;
   badge?: {
     label: string;
     variant: "success-light" | "info-light" | "warning-light" | "destructive-light";
@@ -152,15 +148,9 @@ const STATUS_SHARED_TRAILING: SharedLeadingMotion = {
 const OPENBOT_ISLAND_MODE_CONFIG: Record<DynamicIslandPresentation["mode"], OpenBotIslandModeConfig> = {
   idle: {
     label: "Open OpenBot",
-    className: "dynamic-island-idle",
-    panelWidth: "standard",
   },
   working: {
     label: "OpenBot working status",
-    className: "dynamic-island-working",
-    panelWidth: "standard",
-    sharedLeading: WORKING_SHARED_LEADING,
-    sharedTrailing: STATUS_SHARED_TRAILING,
     badge: {
       label: "Working",
       variant: "success-light",
@@ -178,10 +168,6 @@ const OPENBOT_ISLAND_MODE_CONFIG: Record<DynamicIslandPresentation["mode"], Open
   },
   message: {
     label: "OpenBot chat update",
-    className: "dynamic-island-message-first",
-    panelWidth: "wide",
-    sharedLeading: QUESTION_SHARED_LEADING,
-    sharedTrailing: STATUS_SHARED_TRAILING,
     badge: {
       label: "Message",
       variant: "info-light",
@@ -193,10 +179,6 @@ const OPENBOT_ISLAND_MODE_CONFIG: Record<DynamicIslandPresentation["mode"], Open
   },
   question: {
     label: "OpenBot question from AI",
-    className: "dynamic-island-question",
-    panelWidth: "wide",
-    sharedLeading: QUESTION_SHARED_LEADING,
-    sharedTrailing: STATUS_SHARED_TRAILING,
     badge: {
       label: "Questions",
       variant: "info-light",
@@ -213,10 +195,6 @@ const OPENBOT_ISLAND_MODE_CONFIG: Record<DynamicIslandPresentation["mode"], Open
   approval: {
     label: "OpenBot approval request",
     ariaLive: "polite",
-    className: "dynamic-island-approval",
-    panelWidth: "wide",
-    sharedLeading: QUESTION_SHARED_LEADING,
-    sharedTrailing: STATUS_SHARED_TRAILING,
     badge: {
       label: "Approval",
       variant: "warning-light",
@@ -229,10 +207,6 @@ const OPENBOT_ISLAND_MODE_CONFIG: Record<DynamicIslandPresentation["mode"], Open
   takeover: {
     label: "OpenBot browser takeover",
     ariaLive: "polite",
-    className: "dynamic-island-takeover",
-    panelWidth: "wide",
-    sharedLeading: QUESTION_SHARED_LEADING,
-    sharedTrailing: STATUS_SHARED_TRAILING,
     badge: {
       label: "Take over",
       variant: "warning-light",
@@ -245,10 +219,6 @@ const OPENBOT_ISLAND_MODE_CONFIG: Record<DynamicIslandPresentation["mode"], Open
   failed: {
     label: "OpenBot task failed",
     ariaLive: "polite",
-    className: "dynamic-island-failed",
-    panelWidth: "wide",
-    sharedLeading: QUESTION_SHARED_LEADING,
-    sharedTrailing: STATUS_SHARED_TRAILING,
     badge: {
       label: "Failed",
       variant: "destructive-light",
@@ -269,8 +239,9 @@ function compactStatusGeometry(presentation: DynamicIslandPresentation): StatusC
     presentation.mode === "working" ? Math.min(COMPACT_INDICES.length, presentation.working.length) : 0;
   if (!bot && workingAvatarCount === 0) return undefined;
 
-  const badgeLabel = OPENBOT_ISLAND_MODE_CONFIG[mode].badge?.label ?? "";
-  const badgeWidth = Math.ceil(measureCompactText(badgeLabel, 600) + STATUS_COMPACT_BADGE_CHROME_WIDTH);
+  const badge = OPENBOT_ISLAND_MODE_CONFIG[mode].badge;
+  if (!badge) return undefined;
+  const badgeWidth = Math.ceil(measureCompactText(badge.label, 600) + STATUS_COMPACT_BADGE_CHROME_WIDTH);
   const measuredNameWidth = bot ? measureCompactText(bot.name, 600) : 0;
   const notchNameWidth = Math.min(STATUS_COMPACT_NAME_MAX_WIDTH.notch, Math.ceil(measuredNameWidth));
   const islandNameWidth = Math.min(STATUS_COMPACT_NAME_MAX_WIDTH.island, Math.ceil(measuredNameWidth));
@@ -364,15 +335,16 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
     return props.displayMode === "island" ? geometry.island.width : geometry.notch.width;
   };
   const sharedLeading = createMemo(() => {
-    const motion = config().sharedLeading;
+    const mode = statusMode(visiblePresentation().mode);
+    const motion = mode === "working" ? WORKING_SHARED_LEADING : mode ? QUESTION_SHARED_LEADING : undefined;
     const geometry = compactGeometry();
-    if (!motion || !geometry || !config().badge) return motion;
+    if (!motion || !geometry) return motion;
     return adjustSharedMotion(motion, geometry, "leading");
   });
   const sharedTrailing = createMemo(() => {
-    const motion = config().sharedTrailing;
+    const motion = statusMode(visiblePresentation().mode) ? STATUS_SHARED_TRAILING : undefined;
     const geometry = compactGeometry();
-    if (!motion || !geometry || !config().badge) return motion;
+    if (!motion || !geometry) return motion;
     return adjustSharedMotion(motion, geometry, "trailing");
   });
 
@@ -508,9 +480,11 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
         pointerToggle={config().badge ? false : undefined}
         class={[
           "openbot-dynamic-island",
-          config().className,
+          `dynamic-island-${visiblePresentation().mode === "message" ? "message-first" : visiblePresentation().mode}`,
           config().badge ? "dynamic-island-status" : undefined,
-          config().panelWidth === "wide" ? "dynamic-island-panel-wide" : undefined,
+          visiblePresentation().mode !== "idle" && visiblePresentation().mode !== "working"
+            ? "dynamic-island-panel-wide"
+            : undefined,
         ]
           .filter(Boolean)
           .join(" ")}
@@ -647,9 +621,8 @@ function CompactLeading(props: {
 }
 
 function CompactTrailing(props: { presentation: DynamicIslandPresentation }): JSX.Element {
-  const key = () => compactTrailingKey(props.presentation);
   return (
-    <IslandContentSwap contentKey={key()} class="dynamic-island-surface-compact-swap">
+    <IslandContentSwap contentKey={props.presentation.mode} class="dynamic-island-surface-compact-swap">
       <Switch>
         <Match when={statusMode(props.presentation.mode)}>{(mode) => <CompactStatusBadge mode={mode()} />}</Match>
         <Match when={props.presentation.mode === "idle"}>
@@ -1372,44 +1345,15 @@ function IslandContentSwap(props: {
 }
 
 function compactStatusBot(presentation: DynamicIslandPresentation): DynamicIslandBotIdentity | undefined {
-  if (presentation.mode === "working" && presentation.working.length === 1) {
-    return presentation.working[0]?.bot;
-  }
+  if (presentation.mode === "idle") return undefined;
+  if (presentation.mode === "working")
+    return presentation.working.length === 1 ? presentation.working[0]?.bot : undefined;
   if (presentation.mode === "message") return presentation.message.bot;
-  if (
-    presentation.mode === "question" ||
-    presentation.mode === "approval" ||
-    presentation.mode === "takeover" ||
-    presentation.mode === "failed"
-  ) {
-    return presentation.item.bot;
-  }
-  return undefined;
+  return presentation.item.bot;
 }
 
 function statusMode(mode: DynamicIslandPresentation["mode"]): StatusMode | undefined {
-  return mode === "working" ||
-    mode === "message" ||
-    mode === "question" ||
-    mode === "approval" ||
-    mode === "takeover" ||
-    mode === "failed"
-    ? mode
-    : undefined;
-}
-
-function compactTrailingKey(presentation: DynamicIslandPresentation): DynamicIslandPresentation["mode"] {
-  if (presentation.mode === "working") return "working";
-  if (
-    presentation.mode === "message" ||
-    presentation.mode === "question" ||
-    presentation.mode === "approval" ||
-    presentation.mode === "takeover" ||
-    presentation.mode === "failed"
-  ) {
-    return presentation.mode;
-  }
-  return "idle";
+  return mode === "idle" ? undefined : mode;
 }
 
 function permissionSummary(permissions: NonNullable<DynamicIslandApprovalItem["approval"]["permissions"]>) {

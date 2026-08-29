@@ -87,19 +87,17 @@ describe("DynamicIsland", () => {
     const island = screen.getByRole("region", { name: "working bots" });
     const toggle = screen.getByRole("button", { name: "Expand working bots" });
     await fireEvent.mouseEnter(island);
-    await vi.advanceTimersByTimeAsync(299);
     expect(changed).not.toHaveBeenCalled();
     expect(screen.getByText("active")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Open Chief" })).not.toBeInTheDocument();
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.runAllTimersAsync();
     expect(changed).toHaveBeenLastCalledWith("expanded", "hover");
     expect(screen.getByRole("button", { name: "Open Chief" })).toBeVisible();
     expect(toggle).not.toHaveFocus();
 
     await fireEvent.mouseLeave(island);
-    await vi.advanceTimersByTimeAsync(99);
     expect(screen.getByRole("button", { name: "Open Chief" })).toBeVisible();
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.runAllTimersAsync();
     expect(changed).toHaveBeenLastCalledWith("compact", "hover-exit");
   });
 

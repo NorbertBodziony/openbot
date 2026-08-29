@@ -1,5 +1,4 @@
 import type { JSX } from "@solidjs/web";
-import { ChevronUp } from "lucide-solid";
 import { createEffect, createSignal, createUniqueId, onCleanup, onSettled, Show, untrack } from "solid-js";
 import { cx } from "./utils";
 
@@ -32,9 +31,8 @@ export interface DynamicIslandProps {
   compactTrailing?: JSX.Element;
   compactWidth?: number;
   expandedContent: JSX.Element;
-  state?: DynamicIslandViewState;
-  defaultState?: DynamicIslandViewState;
-  onStateChange?: (state: DynamicIslandViewState, reason: DynamicIslandStateChangeReason) => void;
+  state: DynamicIslandViewState;
+  onStateChange: (state: DynamicIslandViewState, reason: DynamicIslandStateChangeReason) => void;
   hoverBehavior?: DynamicIslandHoverBehavior;
   extendedHoverArea?: boolean;
   suppressInitialHover?: boolean;
@@ -79,9 +77,6 @@ const DEFAULT_HOVER_CONTENT_MOTION: DynamicIslandHoverContentMotion = {
  */
 export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   const local = props;
-  const [internalState, setInternalState] = createSignal<DynamicIslandViewState>(
-    untrack(() => local.defaultState ?? "compact"),
-  );
   const panelId = `dynamic-island-${createUniqueId()}`;
   let shell: HTMLDivElement | undefined;
   let sizeTarget: HTMLDivElement | undefined;
@@ -104,7 +99,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   let hoverOpenedState: Exclude<DynamicIslandViewState, "compact"> | null = null;
   const [isHovering, setIsHovering] = createSignal(false);
 
-  const viewState = () => local.state ?? internalState();
+  const viewState = () => local.state;
   const isExpanded = () => viewState() === "expanded";
   const initialViewState = untrack(viewState);
   const [layoutState, setLayoutState] = createSignal<DynamicIslandViewState>(initialViewState);
@@ -114,8 +109,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
 
   function setState(next: DynamicIslandViewState, reason: DynamicIslandStateChangeReason): void {
     if (next === viewState()) return;
-    if (local.state === undefined) setInternalState(next);
-    local.onStateChange?.(next, reason);
+    local.onStateChange(next, reason);
   }
 
   function clearHoverTimers(): void {
@@ -244,7 +238,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
       leadingShoulder,
       trailingShoulder,
     }),
-    silhouetteTarget: () => islandSilhouetteTarget(viewState(), isHovering(), local.displayMode ?? "notch"),
+    silhouetteTarget: () => islandSilhouetteTarget(viewState(), local.displayMode ?? "notch"),
     sharedLeading: () => leadingContent,
     sharedLeadingEnabled: () => Boolean(local.sharedMotion?.leading),
     sharedLeadingTarget: () =>
@@ -274,7 +268,6 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   createSpringContentTransition({
     content: () => panelContent,
     root: () => shell,
-    enabled: () => true,
     state: viewState,
     renderedState: renderedPanelState,
   });
@@ -292,9 +285,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
       data-state={viewState()}
       data-layout-state={layoutState()}
       data-hovered={isHovering() ? "true" : undefined}
-      data-content-motion="spring"
       data-shared-leading={local.sharedMotion?.leading ? "true" : undefined}
-      data-shared-trailing={local.sharedMotion?.trailing ? "true" : undefined}
       data-pointer-toggle={local.pointerToggle === false ? "false" : undefined}
       aria-label={local.label}
       aria-live={local.ariaLive}
@@ -316,7 +307,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
       <Show when={local.extendedHoverArea}>
         <span class="dynamic-island-hover-zone" aria-hidden="true" />
       </Show>
-      <div ref={shell} class="dynamic-island-shell" data-state={viewState()} data-content-motion="spring">
+      <div ref={shell} class="dynamic-island-shell" data-state={viewState()}>
         <span ref={silhouetteRoot} class="dynamic-island-silhouette" aria-hidden="true">
           <span ref={silhouetteBody} class="dynamic-island-silhouette-body" />
           <svg
@@ -366,15 +357,12 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
                     {local.compactTrailing}
                   </span>
                 </span>
-                <span class="dynamic-island-trailing-expanded">
-                  <ChevronUp class="dynamic-island-collapse-icon" />
-                </span>
               </span>
             </span>
           </button>
 
           <Show keyed when={renderedPanelState()}>
-            {(contentState) => (
+            {(_contentState) => (
               <div
                 id={panelId}
                 class="dynamic-island-panel"
@@ -382,11 +370,10 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
                 data-phase={
                   viewState() === "compact" ? (layoutState() === "compact" ? "leaving" : "exiting") : "entering"
                 }
-                data-content-state={contentState}
                 aria-hidden={viewState() === "compact" ? "true" : undefined}
                 inert={viewState() === "compact" ? true : undefined}
               >
-                <div ref={panelContent} class="dynamic-island-content" data-content-state={contentState}>
+                <div ref={panelContent} class="dynamic-island-content">
                   {local.expandedContent}
                 </div>
               </div>
@@ -424,16 +411,13 @@ interface IslandSilhouetteGeometry {
 
 function islandSilhouetteTarget(
   state: DynamicIslandViewState,
-  hovering: boolean,
   displayMode: DynamicIslandDisplayMode,
 ): IslandSilhouetteGeometry {
   if (displayMode === "island") {
     if (state === "expanded") return { topRadius: 0, bottomRadius: 0, capsuleRadius: 24 };
-    if (hovering) return { topRadius: 0, bottomRadius: 0, capsuleRadius: 16 };
     return { topRadius: 0, bottomRadius: 0, capsuleRadius: 16 };
   }
   if (state === "expanded") return { topRadius: 19, bottomRadius: 24 };
-  if (hovering) return { topRadius: 6, bottomRadius: 14 };
   return { topRadius: 6, bottomRadius: 14 };
 }
 
@@ -558,7 +542,6 @@ function createSmoothSizeResize(options: SmoothSizeResizeOptions): void {
     animations = [];
     const container = options.container();
     container?.removeAttribute("data-resizing");
-    container?.removeAttribute("data-resize-direction");
   }
 
   onSettled(() => {
@@ -622,7 +605,6 @@ function createSmoothSizeResize(options: SmoothSizeResizeOptions): void {
         nextSize.width > start.width ||
         nextSize.height > start.height ||
         (targetGeometry.capsuleRadius ?? 0) > (startGeometry.capsuleRadius ?? 0);
-      container.setAttribute("data-resize-direction", opening ? "opening" : "closing");
       const spring = resizeSpring(container, start, nextSize, opening);
       const animationOptions: KeyframeAnimationOptions = {
         duration: spring.response * 1_000,
@@ -893,7 +875,6 @@ function resizeSpring(
 interface SpringContentTransitionOptions {
   content: () => HTMLDivElement | undefined;
   root: () => HTMLDivElement | undefined;
-  enabled: () => boolean;
   state: () => DynamicIslandViewState;
   renderedState: () => Exclude<DynamicIslandViewState, "compact"> | null;
 }
@@ -908,13 +889,12 @@ function createSpringContentTransition(options: SpringContentTransitionOptions):
       const state = options.state();
       const renderedState = options.renderedState();
       return {
-        enabled: options.enabled(),
         entering: state !== "compact",
         phase: `${state}:${renderedState ?? "none"}`,
       };
     },
-    ({ enabled, entering, phase }) => {
-      if (!enabled || phase === previousPhase) return;
+    ({ entering, phase }) => {
+      if (phase === previousPhase) return;
       previousPhase = phase;
       const content = options.content();
       if (!content) return;

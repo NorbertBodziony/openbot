@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_RUNTIME_ATTENTION_LIMIT,
-  AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
+  AGENT_RUNTIME_WORKING_ITEMS_LIMIT,
   isAgentEvent,
   isAvatarHue,
   isAvatarSeed,
@@ -146,7 +146,7 @@ describe("runtime snapshot event validation", () => {
     const snapshot = {
       bots: [],
       activeTurns: [],
-      queues: [],
+      work: [],
       latestMessages: [],
       pendingPrompts: [],
       pendingApprovals: [],
@@ -156,7 +156,7 @@ describe("runtime snapshot event validation", () => {
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot })).toBe(true);
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, failedTurns: null } })).toBe(false);
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, bots: [{}] } })).toBe(false);
-    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, queues: [{}] } })).toBe(false);
+    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, work: [{}] } })).toBe(false);
     expect(
       isAgentEvent({
         type: "runtime-snapshot",
@@ -182,25 +182,17 @@ describe("runtime snapshot event validation", () => {
         type: "runtime-snapshot",
         snapshot: {
           ...snapshot,
-          queues: [
-            {
-              botId: "chief",
-              deliveries: Array.from({ length: AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT + 1 }, (_, index) => ({
-                id: `delivery-${index}`,
-                messageId: `message-${index}`,
-                recipientBotId: "chief",
-                sender: { kind: "user" },
-                text: "Work",
-                attachments: [],
-                replyToMessageId: null,
-                status: "running",
-                position: null,
-                turnId: `turn-${index}`,
-                error: null,
-                createdAt: "2026-08-29T10:00:00.000Z",
-              })),
-            },
-          ],
+          work: Array.from(
+            { length: AGENT_RUNTIME_WORKING_ITEMS_LIMIT + AGENT_RUNTIME_ATTENTION_LIMIT + 1 },
+            (_, index) => ({
+              id: `delivery-${index}`,
+              botId: `bot-${index}`,
+              text: "Work",
+              status: "running",
+              turnId: `turn-${index}`,
+              error: null,
+            }),
+          ),
         },
       }),
     ).toBe(false);

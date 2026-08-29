@@ -974,7 +974,7 @@ export interface AgentApproval {
 export interface AgentRuntimeSnapshot {
   bots: AgentRuntimeBotSummary[];
   activeTurns: Array<{ botId: string; threadId: string; turnId: string }>;
-  queues: QueueSnapshot[];
+  work: AgentRuntimeWorkItem[];
   latestMessages: Array<{ botId: string; id: string; text: string; createdAt: string }>;
   pendingPrompts: Array<{
     requestId: string | number;
@@ -991,7 +991,7 @@ export interface AgentRuntimeSnapshot {
 export const AGENT_RUNTIME_TEXT_LIMIT = 240;
 export const AGENT_RUNTIME_QUESTION_HEADER_LIMIT = 80;
 export const AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT = 120;
-export const AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT = 2;
+export const AGENT_RUNTIME_WORKING_ITEMS_LIMIT = 3;
 export const AGENT_RUNTIME_ATTENTION_LIMIT = 4;
 export const AGENT_RUNTIME_PERMISSION_PATHS_LIMIT = 3;
 export const AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT = 256 * 1024;
@@ -1005,6 +1005,15 @@ export interface AgentRuntimeBotSummary {
   avatarSeed: string;
   avatarHue: BotAvatarHue | null;
   avatarUrl: string | null;
+}
+
+export interface AgentRuntimeWorkItem {
+  id: string;
+  botId: string;
+  turnId: string | null;
+  status: "starting" | "running" | "failed";
+  text: string;
+  error: string | null;
 }
 
 export interface AgentRuntimePromptQuestion {
@@ -1157,9 +1166,9 @@ function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
       (turn) =>
         isDynamicRecord(turn) && isIdentifier(turn.botId) && isIdentifier(turn.threadId) && isIdentifier(turn.turnId),
     ) &&
-    Array.isArray(value.queues) &&
-    value.queues.length <= INPUT_LIMITS.agents &&
-    value.queues.every(isRuntimeQueueSnapshot) &&
+    Array.isArray(value.work) &&
+    value.work.length <= AGENT_RUNTIME_WORKING_ITEMS_LIMIT + AGENT_RUNTIME_ATTENTION_LIMIT &&
+    value.work.every(isRuntimeWorkItem) &&
     Array.isArray(value.latestMessages) &&
     value.latestMessages.length <= INPUT_LIMITS.agents &&
     value.latestMessages.every(
@@ -1248,19 +1257,15 @@ function isQueueSnapshot(value: unknown): value is QueueSnapshot {
   );
 }
 
-function isRuntimeQueueSnapshot(value: unknown): value is QueueSnapshot {
+function isRuntimeWorkItem(value: unknown): value is AgentRuntimeWorkItem {
   return (
     isDynamicRecord(value) &&
+    isIdentifier(value.id) &&
     isIdentifier(value.botId) &&
-    Array.isArray(value.deliveries) &&
-    value.deliveries.length <= AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT &&
-    value.deliveries.every(
-      (delivery) =>
-        isQueueDelivery(delivery) &&
-        delivery.attachments.length === 0 &&
-        delivery.text.length <= AGENT_RUNTIME_TEXT_LIMIT &&
-        (delivery.error === null || delivery.error.length <= AGENT_RUNTIME_TEXT_LIMIT),
-    )
+    (value.turnId === null || isIdentifier(value.turnId)) &&
+    isOneOf(["starting", "running", "failed"] as const, value.status) &&
+    isBoundedString(value.text, AGENT_RUNTIME_TEXT_LIMIT) &&
+    isNullableBoundedString(value.error, AGENT_RUNTIME_TEXT_LIMIT)
   );
 }
 

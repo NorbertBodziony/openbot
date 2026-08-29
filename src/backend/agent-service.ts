@@ -481,7 +481,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return fitRuntimeSnapshot({
       bots: runtimeBots,
       activeTurns,
-      queues: this.#mailbox.listRuntimeQueues(
+      work: this.#mailbox.listRuntimeWork(
         bots.map((bot) => bot.id),
         this.#failedTurns,
       ),
@@ -4107,7 +4107,7 @@ function compactRuntimeApproval(approval: AgentApproval): AgentRuntimeSnapshot["
 function fitRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): AgentRuntimeSnapshot {
   if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
 
-  snapshot.queues = snapshot.queues.map((queue) => ({ ...queue, deliveries: [] }));
+  snapshot.work = [];
   if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
 
   snapshot.latestMessages = [];
@@ -4154,7 +4154,6 @@ function fitRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): AgentRuntimeSnapsho
     avatarSeed: bot.id,
     avatarUrl: null,
   }));
-  snapshot.queues = [];
   return snapshot;
 }
 

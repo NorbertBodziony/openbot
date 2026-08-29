@@ -1,12 +1,14 @@
 import { isDeepStrictEqual } from "node:util";
 import type { DynamicIslandAction, DynamicIslandPreference, DynamicIslandPresentation } from "@openbot/contracts/ipc";
-import { IDLE_DYNAMIC_ISLAND_PRESENTATION, IPC_CHANNELS } from "@openbot/contracts/ipc";
+import {
+  DEFAULT_DYNAMIC_ISLAND_PREFERENCE,
+  IDLE_DYNAMIC_ISLAND_PRESENTATION,
+  IPC_CHANNELS,
+} from "@openbot/contracts/ipc";
 import type { BrowserWindow, Display, Rectangle } from "electron";
 import { readDynamicIslandPreference, writeDynamicIslandPreference } from "./dynamic-island-preference-store";
 
 export const DYNAMIC_ISLAND_WINDOW_SIZE = { width: 614, height: 380 } as const;
-
-export const EMPTY_DYNAMIC_ISLAND_PRESENTATION = IDLE_DYNAMIC_ISLAND_PRESENTATION;
 
 export interface DynamicIslandWindowControllerOptions {
   platform: NodeJS.Platform;
@@ -22,13 +24,8 @@ export interface DynamicIslandWindowControllerOptions {
 
 export class DynamicIslandWindowController {
   readonly #options: DynamicIslandWindowControllerOptions;
-  #preference: DynamicIslandPreference = {
-    enabled: true,
-    hapticsEnabled: true,
-    idleVisible: true,
-    additionalDisplaysEnabled: true,
-  };
-  #presentation = EMPTY_DYNAMIC_ISLAND_PRESENTATION;
+  #preference: DynamicIslandPreference = { ...DEFAULT_DYNAMIC_ISLAND_PREFERENCE };
+  #presentation = IDLE_DYNAMIC_ISLAND_PRESENTATION;
   readonly #windows = new Map<number, BrowserWindow>();
   readonly #criticalActions = new Map<string, Promise<void>>();
   #preferenceMutation = Promise.resolve();

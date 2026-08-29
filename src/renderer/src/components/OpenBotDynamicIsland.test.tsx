@@ -102,41 +102,36 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     expect(document.activeElement).toBe(openChat);
   });
 
-  it("opens the full browser takeover context", async () => {
+  it.each([
+    [
+      "browser takeover",
+      takeoverPresentation(),
+      "expanded",
+      "Take over",
+      { type: "review-attention", serverId: "local", botId: "research", requestId: "takeover-1" },
+    ],
+    [
+      "failed task",
+      failedPresentation(),
+      "expanded",
+      "Open details",
+      { type: "open-failure", serverId: "local", botId: "research", turnId: "turn-failed" },
+    ],
+    [
+      "working bot",
+      workingPresentation(),
+      "expanded",
+      /Research/,
+      { type: "open-bot", serverId: "local", botId: "research" },
+    ],
+    ["idle app", idlePresentation(), "compact", "Expand Open OpenBot", { type: "open-app" }],
+  ] as const)("maps the %s action", async (_name, presentation, state, buttonName, action) => {
     const onAction = vi.fn<(action: DynamicIslandAction) => void>();
-    renderControlledIsland(takeoverPresentation(), "expanded", onAction);
+    renderControlledIsland(presentation, state, onAction);
 
-    await fireEvent.click(screen.getByRole("button", { name: "Take over" }));
+    await fireEvent.click(screen.getByRole("button", { name: buttonName }));
 
-    expect(onAction).toHaveBeenCalledWith({
-      type: "review-attention",
-      serverId: "local",
-      botId: "research",
-      requestId: "takeover-1",
-    });
-  });
-
-  it("opens the failed task details", async () => {
-    const onAction = vi.fn<(action: DynamicIslandAction) => void>();
-    renderControlledIsland(failedPresentation(), "expanded", onAction);
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open details" }));
-
-    expect(onAction).toHaveBeenCalledWith({
-      type: "open-failure",
-      serverId: "local",
-      botId: "research",
-      turnId: "turn-failed",
-    });
-  });
-
-  it("opens the selected working bot", async () => {
-    const onAction = vi.fn<(action: DynamicIslandAction) => void>();
-    renderControlledIsland(workingPresentation(), "expanded", onAction);
-
-    await fireEvent.click(screen.getByRole("button", { name: /Research/ }));
-
-    expect(onAction).toHaveBeenCalledWith({ type: "open-bot", serverId: "local", botId: "research" });
+    expect(onAction).toHaveBeenCalledWith(action);
   });
 
   it("opens approvals in the main app without authorizing hidden details", async () => {
@@ -152,15 +147,6 @@ describe("OpenBotDynamicIsland mode transitions", () => {
       botId: "research",
       requestId: "approval-1",
     });
-  });
-
-  it("opens the main app from Idle", async () => {
-    const onAction = vi.fn<(action: DynamicIslandAction) => void>();
-    renderControlledIsland(idlePresentation(), "compact", onAction);
-
-    await fireEvent.click(screen.getByRole("button", { name: "Expand Open OpenBot" }));
-
-    expect(onAction).toHaveBeenCalledWith({ type: "open-app" });
   });
 
   it("requests feedback when an intermediate prompt answer advances the question", async () => {

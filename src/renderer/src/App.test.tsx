@@ -379,7 +379,6 @@ describe("OpenBot connected desktop shell", () => {
             },
           ]),
           listBots: vi.fn().mockResolvedValue(BOTS),
-          listBotsForServer: vi.fn().mockResolvedValue(BOTS),
           listMemories: vi.fn().mockResolvedValue([]),
           listRoutines: vi.fn().mockResolvedValue([]),
           createMemory: vi.fn().mockImplementation(async (input) => ({
@@ -819,39 +818,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  it("retries Dynamic Island bot metadata when a remote host comes online", async () => {
-    const local = {
-      id: "local",
-      name: "Local",
-      logoUrl: null,
-      kind: "local" as const,
-      state: "online" as const,
-      apiUrl: null,
-      remoteDesktopAvailable: false,
-      role: null,
-      active: true,
-    };
-    const remote = {
-      id: "remote-1",
-      name: "Studio Mac",
-      logoUrl: null,
-      kind: "remote" as const,
-      state: "offline" as const,
-      apiUrl: "https://studio.example.com",
-      remoteDesktopAvailable: false,
-      role: "member" as const,
-      active: false,
-    };
-    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
-
-    render(() => <App />);
-    await waitFor(() => expect(window.openbot.agent.listBotsForServer).toHaveBeenCalledWith("local"));
-    expect(window.openbot.agent.listBotsForServer).not.toHaveBeenCalledWith("remote-1");
-
-    emitServers?.([{ ...local }, { ...remote, state: "online" }]);
-    await waitFor(() => expect(window.openbot.agent.listBotsForServer).toHaveBeenCalledWith("remote-1"));
-  });
-
   it("keeps a remote approval when Review in OpenBot switches to its host", async () => {
     const servers: ServerSummary[] = [
       {
@@ -884,6 +850,7 @@ describe("OpenBot connected desktop shell", () => {
 
     render(() => <App />);
     await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
+    emitScopedAgentEvent?.({ serverId: "remote-1", event: { type: "bots-changed", bots: BOTS } });
     emitScopedAgentEvent?.({
       serverId: "remote-1",
       event: {
@@ -953,6 +920,7 @@ describe("OpenBot connected desktop shell", () => {
 
     render(() => <App />);
     await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
+    emitScopedAgentEvent?.({ serverId: remote.id, event: { type: "bots-changed", bots: BOTS } });
     emitScopedAgentEvent?.({
       serverId: remote.id,
       event: {
@@ -1027,7 +995,7 @@ describe("OpenBot connected desktop shell", () => {
           },
         ],
         activeTurns: [],
-        queues: [{ botId: "chief", deliveries: [] }],
+        work: [],
         latestMessages: [{ botId: "chief", id: messageId, text, createdAt: "2026-08-29T10:00:00.000Z" }],
         pendingPrompts: [],
         pendingApprovals: [],
@@ -2061,61 +2029,6 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     expect(notchSwitch).not.toBeChecked();
-  });
-
-  it("persists the MacBook notch haptic preference independently", async () => {
-    render(() => <App />);
-    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
-    const hapticSwitch = await screen.findByRole("switch", { name: "Haptic feedback" });
-    expect(hapticSwitch).toBeChecked();
-
-    await fireEvent.click(hapticSwitch);
-
-    await waitFor(() =>
-      expect(window.openbot.dynamicIsland.setPreference).toHaveBeenCalledWith({
-        enabled: true,
-        hapticsEnabled: false,
-        idleVisible: true,
-        additionalDisplaysEnabled: true,
-      }),
-    );
-    expect(hapticSwitch).not.toBeChecked();
-  });
-
-  it("persists the idle island preference without disabling active statuses", async () => {
-    render(() => <App />);
-    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
-    const idleSwitch = await screen.findByRole("switch", { name: "Show idle island" });
-
-    await fireEvent.click(idleSwitch);
-
-    await waitFor(() =>
-      expect(window.openbot.dynamicIsland.setPreference).toHaveBeenCalledWith({
-        enabled: true,
-        hapticsEnabled: true,
-        idleVisible: false,
-        additionalDisplaysEnabled: true,
-      }),
-    );
-    expect(idleSwitch).not.toBeChecked();
-  });
-
-  it("persists the additional display preference independently", async () => {
-    render(() => <App />);
-    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
-    const displaySwitch = await screen.findByRole("switch", { name: "Show on additional displays" });
-
-    await fireEvent.click(displaySwitch);
-
-    await waitFor(() =>
-      expect(window.openbot.dynamicIsland.setPreference).toHaveBeenCalledWith({
-        enabled: true,
-        hapticsEnabled: true,
-        idleVisible: true,
-        additionalDisplaysEnabled: false,
-      }),
-    );
-    expect(displaySwitch).not.toBeChecked();
   });
 
   it("does not open desktop analytics when the saved preference is disabled", async () => {

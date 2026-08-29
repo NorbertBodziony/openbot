@@ -154,7 +154,7 @@ describe.sequential("AgentService", () => {
     expect(service.getRuntimeSnapshot()).toMatchObject({
       bots: [expect.objectContaining({ id: "chief" })],
       activeTurns: [],
-      queues: [{ botId: "chief", deliveries: [] }],
+      work: [],
       pendingPrompts: [],
       pendingApprovals: [],
       pendingBrowserTakeovers: [],
@@ -3065,12 +3065,12 @@ describe.sequential("AgentService", () => {
     const failedRuntime = service.getRuntimeSnapshot();
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot: failedRuntime })).toBe(true);
     expect(failedRuntime.failedTurns).toEqual([{ botId: bot.id, turnId: running.turnId }]);
-    expect(failedRuntime.queues.find((snapshot) => snapshot.botId === bot.id)?.deliveries).toEqual([
-      expect.objectContaining({ id: running.id, status: "failed", turnId: running.turnId }),
+    expect(failedRuntime.work).toEqual([
+      expect.objectContaining({ id: running.id, botId: bot.id, status: "failed", turnId: running.turnId }),
     ]);
     service.acknowledgeFailedTurn(bot.id, running.turnId);
     expect(service.getRuntimeSnapshot().failedTurns).toEqual([]);
-    expect(service.getRuntimeSnapshot().queues.find((snapshot) => snapshot.botId === bot.id)?.deliveries).toEqual([]);
+    expect(service.getRuntimeSnapshot().work).toEqual([]);
 
     await service.testRoutine({ botId: bot.id, routineId: routine.id });
     await waitFor(

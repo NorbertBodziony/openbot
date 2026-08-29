@@ -25,6 +25,7 @@ import type {
   DirectMessageRealtimeEvent,
   DirectThreadSummary,
   DirectTypingRealtimeEvent,
+  DynamicIslandPreference,
   DynamicIslandPresentation,
   HostStatus,
   InviteSummary,
@@ -60,7 +61,11 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
-import { SIDEBAR_PEOPLE_SECTION_ID, SIDEBAR_UNASSIGNED_SECTION_ID } from "@openbot/contracts/ipc";
+import {
+  DEFAULT_DYNAMIC_ISLAND_PREFERENCE,
+  SIDEBAR_PEOPLE_SECTION_ID,
+  SIDEBAR_UNASSIGNED_SECTION_ID,
+} from "@openbot/contracts/ipc";
 import browserTakeoverPreviewUrl from "../../stories/assets/browser-takeover-preview.svg";
 import {
   STORY_AGENT_STATUS,
@@ -156,12 +161,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let authState = clone<CentralAuthState>(options.authState ?? defaultAuthState);
   let setupState = clone<AppSetupState>(options.setupState ?? { completed: true, preferredProvider: "codex" });
   let analyticsPreference = clone<AnalyticsPreference>(options.analyticsPreference ?? { enabled: true });
-  let dynamicIslandPreference = {
-    enabled: true,
-    hapticsEnabled: true,
-    idleVisible: true,
-    additionalDisplaysEnabled: true,
-  };
+  let dynamicIslandPreference: DynamicIslandPreference = { ...DEFAULT_DYNAMIC_ISLAND_PREFERENCE };
   let dynamicIslandPresentation: DynamicIslandPresentation = { serverId: "local", mode: "idle" };
   const agentStatus = clone(options.agentStatus ?? STORY_AGENT_STATUS);
   let bots = clone(options.bots ?? STORY_BOT_SUMMARIES);
@@ -503,7 +503,6 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       getUsage: async () => clone(usage),
       listModels: async () => clone(models),
       listBots: async () => clone(bots),
-      listBotsForServer: async () => clone(bots),
       getSidebarLayout: async () => clone(sidebarLayout),
       mutateSidebarLayout: async (action) => {
         sidebarLayout = applySidebarLayoutAction(sidebarLayout, action);

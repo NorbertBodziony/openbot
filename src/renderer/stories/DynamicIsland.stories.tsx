@@ -5,11 +5,11 @@ import type {
   DynamicIslandPromptItem,
 } from "@openbot/contracts/ipc";
 import type { JSX } from "@solidjs/web";
-import { createMemo, createSignal, For } from "solid-js";
+import { createMemo } from "solid-js";
 import { fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { OpenBotDynamicIsland } from "../src/components/OpenBotDynamicIsland";
-import { Button, type DynamicIslandViewState } from "../src/components/ui";
+import type { DynamicIslandViewState } from "../src/components/ui";
 import { DynamicIslandDisplayComparison } from "./DynamicIslandDisplayComparison";
 import { STORY_BOTS } from "./fixtures";
 
@@ -26,15 +26,7 @@ interface DynamicIslandDemoProps {
 }
 
 const BOT_IDENTITIES = STORY_BOTS.slice(0, 3).map(toIslandBot);
-const SCENARIO_OPTIONS: Array<{ value: Scenario; label: string }> = [
-  { value: "idle", label: "Idle" },
-  { value: "working", label: "Working" },
-  { value: "chat", label: "Chat" },
-  { value: "question", label: "Question" },
-  { value: "approval", label: "Approval" },
-  { value: "takeover", label: "Takeover" },
-  { value: "failed", label: "Failed" },
-];
+const SCENARIOS: Scenario[] = ["idle", "working", "chat", "question", "approval", "takeover", "failed"];
 
 function DynamicIslandDemo(props: DynamicIslandDemoProps): JSX.Element {
   const presentation = createMemo(() =>
@@ -44,59 +36,6 @@ function DynamicIslandDemo(props: DynamicIslandDemoProps): JSX.Element {
   return (
     <DynamicIslandDisplayComparison
       defaultState={props.defaultState}
-      renderIsland={(preview) => (
-        <OpenBotDynamicIsland
-          presentation={presentation()}
-          state={preview.state()}
-          displayMode={preview.displayMode}
-          suppressInitialHover
-          onStateChange={preview.onStateChange}
-          onAction={props.onAction}
-        />
-      )}
-    />
-  );
-}
-
-function DynamicIslandTransitionDemo(props: Pick<DynamicIslandDemoProps, "onAction">): JSX.Element {
-  const [scenario, setScenario] = createSignal<Scenario>("idle");
-  const [state, setState] = createSignal<DynamicIslandViewState>("compact");
-  const presentation = createMemo(() => presentationFor(scenario(), "standard", "multiple"));
-
-  function selectScenario(next: Scenario): void {
-    setScenario(next);
-    if (next === "idle") setState("compact");
-  }
-
-  return (
-    <DynamicIslandDisplayComparison
-      state={state}
-      onStateChange={setState}
-      controls={
-        <fieldset class="dynamic-island-story-mode-controls" aria-label="Dynamic Island mode">
-          <For each={SCENARIO_OPTIONS}>
-            {(option) => (
-              <Button
-                size="xs"
-                variant={scenario() === option.value ? "default" : "secondary"}
-                aria-pressed={scenario() === option.value ? "true" : "false"}
-                onClick={() => selectScenario(option.value)}
-              >
-                {option.label}
-              </Button>
-            )}
-          </For>
-          <span class="dynamic-island-story-mode-divider" aria-hidden="true" />
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={scenario() === "idle"}
-            onClick={() => setState(state() === "expanded" ? "compact" : "expanded")}
-          >
-            {state() === "expanded" ? "Show compact" : "Show expanded"}
-          </Button>
-        </fieldset>
-      }
       renderIsland={(preview) => (
         <OpenBotDynamicIsland
           presentation={presentation()}
@@ -325,7 +264,7 @@ const meta = {
   component: DynamicIslandDemo,
   args: { scenario: "working", defaultState: "compact", onAction: fn() },
   argTypes: {
-    scenario: { control: "select", options: SCENARIO_OPTIONS.map((option) => option.value) },
+    scenario: { control: "select", options: SCENARIOS },
     questionVariant: { control: "select", options: ["standard", "short", "long", "multiple"] },
     workingVariant: { control: "select", options: ["single", "multiple"] },
     defaultState: { control: "select", options: ["compact", "expanded"] },
@@ -336,23 +275,4 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Idle: Story = { args: { scenario: "idle", onAction: fn() } };
-export const WorkingBots: Story = { args: { scenario: "working", workingVariant: "multiple", onAction: fn() } };
-export const WorkingBot: Story = { args: { scenario: "working", workingVariant: "single", onAction: fn() } };
-export const ChatUpdate: Story = { args: { scenario: "chat", defaultState: "compact", onAction: fn() } };
-export const QuestionFromAI: Story = {
-  args: { scenario: "question", questionVariant: "standard", onAction: fn() },
-};
-export const QuestionFromAIShort: Story = {
-  args: { scenario: "question", questionVariant: "short", defaultState: "expanded", onAction: fn() },
-};
-export const QuestionFromAILong: Story = {
-  args: { scenario: "question", questionVariant: "long", defaultState: "expanded", onAction: fn() },
-};
-export const QuestionFromAIMultiple: Story = {
-  args: { scenario: "question", questionVariant: "multiple", defaultState: "expanded", onAction: fn() },
-};
-export const NeedsApproval: Story = { args: { scenario: "approval", onAction: fn() } };
-export const BrowserTakeover: Story = { args: { scenario: "takeover", onAction: fn() } };
-export const TaskFailed: Story = { args: { scenario: "failed", onAction: fn() } };
-export const StateTransitions: Story = { render: (args) => <DynamicIslandTransitionDemo onAction={args.onAction} /> };
+export const Playground: Story = {};

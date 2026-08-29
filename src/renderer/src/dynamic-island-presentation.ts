@@ -56,13 +56,11 @@ export function selectDynamicIslandPresentation(
   presentations: readonly DynamicIslandPresentation[],
   attentionCount = presentations.reduce((total, presentation) => total + presentationAttentionCount(presentation), 0),
 ): DynamicIslandPresentation {
-  const selected = presentations
-    .map((presentation, index) => ({ presentation, index }))
-    .sort(
-      (left, right) =>
-        presentationPriority(left.presentation.mode) - presentationPriority(right.presentation.mode) ||
-        left.index - right.index,
-    )[0]?.presentation;
+  const selected = presentations.reduce<DynamicIslandPresentation | undefined>(
+    (current, presentation) =>
+      !current || presentationPriority(presentation.mode) < presentationPriority(current.mode) ? presentation : current,
+    undefined,
+  );
   if (!selected) return { serverId: "local", mode: "idle" };
   if (selected.mode !== "approval" && selected.mode !== "question") return selected;
   return { ...selected, remainingCount: Math.max(0, attentionCount - 1) };
@@ -77,7 +75,7 @@ export function createDynamicIslandPresentation(input: DynamicIslandPresentation
   const visibleBots = input.bots.filter((bot) => bot.notifications);
   const botsById = new Map(visibleBots.map((bot) => [bot.id, bot]));
   const attentionItems = collectAttention(input, botsById).sort(
-    (left, right) => attentionPriority(left.mode) - attentionPriority(right.mode),
+    (left, right) => presentationPriority(left.mode) - presentationPriority(right.mode),
   );
   const attention = attentionItems[0];
 
@@ -228,13 +226,6 @@ function collectAttention(
     });
   }
   return items;
-}
-
-function attentionPriority(mode: AttentionCandidate["mode"]): 0 | 1 | 2 | 3 {
-  if (mode === "question") return 0;
-  if (mode === "approval") return 1;
-  if (mode === "takeover") return 2;
-  return 3;
 }
 
 function failureDetail(error: string | null | undefined): string {

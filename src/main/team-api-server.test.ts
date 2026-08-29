@@ -56,7 +56,7 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     getRuntimeSnapshot: () => ({
       bots: [],
       activeTurns: [],
-      queues: [],
+      work: [],
       latestMessages: [],
       pendingPrompts: [],
       pendingApprovals: [],
@@ -156,7 +156,7 @@ describe("TeamApiServer administration", () => {
     const getRuntimeSnapshot = vi.fn<TestAgents["getRuntimeSnapshot"]>(() => ({
       bots: [],
       activeTurns: [],
-      queues: [],
+      work: [],
       latestMessages: [],
       pendingPrompts: [],
       pendingApprovals: [],
@@ -247,7 +247,7 @@ describe("TeamApiServer administration", () => {
       getRuntimeSnapshot.mockImplementationOnce(() => ({
         bots: [],
         activeTurns: [],
-        queues: [],
+        work: [],
         latestMessages: [
           {
             botId: "chief",

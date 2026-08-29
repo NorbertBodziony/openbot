@@ -79,16 +79,6 @@ function invokeAgent<TResult>(
   return ipcRenderer.invoke(channel, request).then(decoder);
 }
 
-function invokeAgentForServer<TResult>(
-  serverId: string,
-  channel: string,
-  payload: unknown,
-  decoder: (value: unknown) => TResult,
-): Promise<TResult> {
-  const request: AgentIpcRequest = { serverId, payload };
-  return ipcRenderer.invoke(channel, request).then(decoder);
-}
-
 function rememberActiveServer<T extends { id: string; active: boolean }[]>(servers: T): T {
   selectedServerId = servers.find((server) => server.active)?.id ?? "local";
   return servers;
@@ -874,7 +864,6 @@ const openbotApi: OpenBotDesktopApi = {
     getUsage: () => invokeAgent(IPC_CHANNELS.agentGetUsage, null, decodeAccountUsage),
     listModels: () => invokeAgent(IPC_CHANNELS.agentListModels, null, decodeAgentModels),
     listBots: () => invokeAgent(IPC_CHANNELS.agentListBots, null, decodeBots),
-    listBotsForServer: (serverId) => invokeAgentForServer(serverId, IPC_CHANNELS.agentListBots, null, decodeBots),
     getSidebarLayout: () => invokeAgent(IPC_CHANNELS.agentGetSidebarLayout, null, decodeSidebarLayout),
     mutateSidebarLayout: (action) => invokeAgent(IPC_CHANNELS.agentMutateSidebarLayout, action, decodeSidebarLayout),
     createBot: (input) => invokeAgent(IPC_CHANNELS.agentCreateBot, input, decodeBot),
