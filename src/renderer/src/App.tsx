@@ -1065,6 +1065,7 @@ export function createAppController(props: AppProps = {}) {
         author: "bot",
         body: event.delta,
         time: formatTime(event.createdAt),
+        createdAt: event.createdAt,
         streaming: true,
         animate: conversationLoaded()[event.botId] === true,
         kind: "text",

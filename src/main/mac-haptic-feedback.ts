@@ -59,11 +59,6 @@ export class MacHapticFeedback {
     this.#spawnProcess = options.spawnProcess ?? spawnHapticProcess;
   }
 
-  prepare(): void {
-    if (this.#platform !== "darwin" || this.#process) return;
-    this.#start();
-  }
-
   performAlignment(): void {
     if (this.#platform !== "darwin") return;
     const now = this.#now();

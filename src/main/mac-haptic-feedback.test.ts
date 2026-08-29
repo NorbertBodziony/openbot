@@ -4,18 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { type HapticProcess, MacHapticFeedback } from "./mac-haptic-feedback";
 
 describe("MacHapticFeedback", () => {
-  it("prewarms one macOS helper without performing feedback", () => {
-    const process = fakeHapticProcess();
-    const spawnProcess = vi.fn(() => process.api);
-    const feedback = new MacHapticFeedback({ platform: "darwin", spawnProcess });
-
-    feedback.prepare();
-    feedback.prepare();
-
-    expect(spawnProcess).toHaveBeenCalledOnce();
-    expect(process.writes).toEqual([]);
-  });
-
   it("keeps one macOS helper alive and throttles alignment feedback", () => {
     let now = 1_000;
     const process = fakeHapticProcess();
@@ -36,7 +24,6 @@ describe("MacHapticFeedback", () => {
     const spawnProcess = vi.fn(() => fakeHapticProcess().api);
     const feedback = new MacHapticFeedback({ platform: "linux", spawnProcess });
 
-    feedback.prepare();
     feedback.performAlignment();
 
     expect(spawnProcess).not.toHaveBeenCalled();

@@ -67,8 +67,19 @@ export class DynamicIslandCoordinator {
       case "conversation": {
         runtime.activeTurns[event.snapshot.botId] = event.snapshot.activeTurnId;
         const messages = event.snapshot.messages.flatMap(toDynamicIslandMessage);
+        const previousMessages = runtime.liveMessages[event.snapshot.botId];
         runtime.liveMessages[event.snapshot.botId] = messages;
-        if (serverId !== activeServerId) this.#recordIncoming(runtime, event.snapshot.botId, messages);
+        if (serverId !== activeServerId) {
+          if (previousMessages === undefined) this.#seedIncoming(runtime, messages);
+          else {
+            const previousIds = new Set(previousMessages.map((message) => message.id));
+            this.#recordIncoming(
+              runtime,
+              event.snapshot.botId,
+              messages.filter((message) => !previousIds.has(message.id)),
+            );
+          }
+        }
         return;
       }
       case "conversation-delta": {
@@ -76,7 +87,13 @@ export class DynamicIslandCoordinator {
         const existing = messages.find((message) => message.id === event.messageId);
         if (existing) existing.body += event.delta;
         else {
-          const message = { id: event.messageId, author: "bot", body: event.delta, time: event.createdAt };
+          const message = {
+            id: event.messageId,
+            author: "bot",
+            body: event.delta,
+            time: event.createdAt,
+            createdAt: event.createdAt,
+          };
           runtime.liveMessages[event.botId] = [...messages, message];
           if (serverId !== activeServerId) this.#recordIncoming(runtime, event.botId, [message]);
         }
@@ -178,11 +195,17 @@ export class DynamicIslandCoordinator {
       runtime.unreadMessageIds[botId] ??= message.id;
     }
   }
+
+  #seedIncoming(runtime: ServerRuntime, messages: DynamicIslandMessageSource[]): void {
+    for (const message of messages) {
+      if (message.author === "bot") runtime.seenIncomingMessageIds.add(message.id);
+    }
+  }
 }
 
 function toDynamicIslandMessage(
   message: Extract<AgentEvent, { type: "conversation" }>["snapshot"]["messages"][number],
 ) {
   if (message.author !== "assistant" && message.author !== "agent") return [];
-  return [{ id: message.id, author: "bot", body: message.text, time: message.createdAt }];
+  return [{ id: message.id, author: "bot", body: message.text, time: message.createdAt, createdAt: message.createdAt }];
 }

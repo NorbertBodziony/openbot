@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DynamicIslandAction, DynamicIslandPreference } from "@openbot/contracts/ipc";
+import type { DynamicIslandAction, DynamicIslandPreference, DynamicIslandPresentation } from "@openbot/contracts/ipc";
 import type { BrowserWindow, Display, Rectangle } from "electron";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as preferenceStore from "./dynamic-island-preference-store";
@@ -23,6 +23,48 @@ function preference(overrides: Partial<DynamicIslandPreference> = {}): DynamicIs
     idleVisible: true,
     additionalDisplaysEnabled: true,
     ...overrides,
+  };
+}
+
+function criticalPresentation(
+  mode: "approval" | "question",
+  requestId: string,
+  serverId = "local",
+  botId = "chief",
+): DynamicIslandPresentation {
+  const bot = { id: botId, name: "Chief", avatarSeed: botId, avatarHue: 215 as const, avatarUrl: null };
+  if (mode === "approval") {
+    return {
+      serverId,
+      mode,
+      remainingCount: 0,
+      item: {
+        requestId,
+        bot,
+        title: "Approve",
+        detail: "Review the request.",
+        approval: {
+          kind: "command",
+          command: "bun test",
+          cwd: null,
+          reason: null,
+          grantRoot: null,
+          permissions: null,
+        },
+      },
+    };
+  }
+  return {
+    serverId,
+    mode,
+    remainingCount: 0,
+    item: {
+      requestId,
+      bot,
+      title: "Choose",
+      detail: "Choose an option.",
+      questions: [{ id: "choice", header: "Choose", question: "Choose an option.", isSecret: false, options: null }],
+    },
   };
 }
 
@@ -290,6 +332,7 @@ describe("dynamic island window geometry", () => {
       botId: "chief",
       requestId: "approval-1",
     };
+    controller.publish(criticalPresentation("approval", "approval-1"));
 
     await controller.performAction(action);
 
@@ -322,6 +365,7 @@ describe("dynamic island window geometry", () => {
       requestId: "prompt-1",
       answers: { source: ["Official data"] },
     };
+    controller.publish(criticalPresentation("question", "prompt-1", "local", "research"));
 
     await controller.performAction(action);
 
@@ -329,6 +373,74 @@ describe("dynamic island window geometry", () => {
     expect(mainWindow.webContents.send).toHaveBeenCalledWith("dynamic-island:action", action);
     expect(mainWindow.show).not.toHaveBeenCalled();
     expect(mainWindow.focus).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates the same critical action across overlay displays", async () => {
+    const mainWindow = new FakeWindow(73, { x: 0, y: 0, width: 1200, height: 800 });
+    let completeAction: () => void = () => undefined;
+    const performCriticalAction = vi.fn(
+      async () =>
+        new Promise<void>((resolve) => {
+          completeAction = resolve;
+        }),
+    );
+    const controller = new DynamicIslandWindowController({
+      platform: "darwin",
+      preferencePath: "/tmp/dynamic-island-preference.json",
+      createWindow: () => {
+        throw new Error("An overlay window is not needed for this test.");
+      },
+      loadWindow: async () => undefined,
+      getDisplays: () => [],
+      // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
+      getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      performHaptic: () => undefined,
+      performCriticalAction,
+    });
+    const action = {
+      type: "approve-attention",
+      serverId: "local",
+      botId: "chief",
+      requestId: "approval-shared",
+    } satisfies DynamicIslandAction;
+    controller.publish(criticalPresentation("approval", "approval-shared"));
+
+    const first = controller.performAction(action);
+    const second = controller.performAction(action);
+    await vi.waitFor(() => expect(performCriticalAction).toHaveBeenCalledOnce());
+    completeAction();
+    await Promise.all([first, second]);
+
+    expect(mainWindow.webContents.send).toHaveBeenCalledOnce();
+  });
+
+  it("ignores a critical action that does not match the published request", async () => {
+    const mainWindow = new FakeWindow(74, { x: 0, y: 0, width: 1200, height: 800 });
+    const performCriticalAction = vi.fn(async () => undefined);
+    const controller = new DynamicIslandWindowController({
+      platform: "darwin",
+      preferencePath: "/tmp/dynamic-island-preference.json",
+      createWindow: () => {
+        throw new Error("An overlay window is not needed for this test.");
+      },
+      loadWindow: async () => undefined,
+      getDisplays: () => [],
+      // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
+      getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      performHaptic: () => undefined,
+      performCriticalAction,
+    });
+    controller.publish(criticalPresentation("approval", "approval-current"));
+
+    await controller.performAction({
+      type: "approve-attention",
+      serverId: "local",
+      botId: "chief",
+      requestId: "approval-stale",
+    });
+
+    expect(performCriticalAction).not.toHaveBeenCalled();
+    expect(mainWindow.webContents.send).not.toHaveBeenCalled();
   });
 
   it("does not dismiss a critical action when execution fails", async () => {
@@ -354,6 +466,7 @@ describe("dynamic island window geometry", () => {
       botId: "research",
       requestId: "approval-stale",
     };
+    controller.publish(criticalPresentation("approval", "approval-stale", "remote", "research"));
 
     await expect(controller.performAction(action)).rejects.toThrow("no longer active");
     expect(mainWindow.webContents.send).not.toHaveBeenCalled();

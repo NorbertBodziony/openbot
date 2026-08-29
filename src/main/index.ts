@@ -1788,11 +1788,10 @@ if (!hasSingleInstanceLock) {
         dynamicIslandController,
       );
       configureApplicationMenu(service, updateService);
-      macHapticFeedback.prepare();
-      await loadRenderer(mainWindow);
       await dynamicIslandController
         .initialize()
         .catch((error) => console.error("Unable to initialize Dynamic Island:", error));
+      await loadRenderer(mainWindow);
       const reconcileDynamicIsland = () =>
         void dynamicIslandController
           ?.reconcileWindow()

@@ -19,7 +19,9 @@ export function DynamicIslandSurface() {
   let queuedPresentation: DynamicIslandPresentation | undefined;
 
   function applyPresentation(next: DynamicIslandPresentation): void {
-    if (interactionLocksPresentation(presentation(), next, pointerInside || viewState() === "expanded")) {
+    if (
+      interactionLocksPresentation(presentation(), next, pointerInside || focusInside || viewState() === "expanded")
+    ) {
       queuedPresentation = next;
       return;
     }
@@ -45,7 +47,7 @@ export function DynamicIslandSurface() {
   function changeViewState(next: DynamicIslandViewState, reason: DynamicIslandStateChangeReason): void {
     if (reason === "pointer" || reason === "keyboard" || reason === "escape") performHaptic();
     setViewState(next);
-    if (next === "compact" && !pointerInside) applyQueuedPresentation();
+    if (next === "compact" && !pointerInside && !focusInside) applyQueuedPresentation();
   }
 
   function applyQueuedPresentation(): void {
@@ -65,7 +67,7 @@ export function DynamicIslandSurface() {
 
   function endPointerInteraction(): void {
     pointerInside = false;
-    if (viewState() === "compact") applyQueuedPresentation();
+    if (viewState() === "compact" && !focusInside) applyQueuedPresentation();
     syncInteractive();
   }
 
@@ -76,6 +78,7 @@ export function DynamicIslandSurface() {
 
   function endFocusInteraction(): void {
     focusInside = false;
+    if (viewState() === "compact" && !pointerInside) applyQueuedPresentation();
     syncInteractive();
   }
 
@@ -154,7 +157,9 @@ export function DynamicIslandSurface() {
           onMouseOver={enterInteraction}
           onMouseOut={leaveInteraction}
           onFocus={beginFocusInteraction}
+          onFocusIn={beginFocusInteraction}
           onBlur={leaveFocusInteraction}
+          onFocusOut={leaveFocusInteraction}
         >
           <OpenBotDynamicIsland
             presentation={presentation()}

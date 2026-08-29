@@ -271,7 +271,7 @@ describe("DynamicIslandSurface", () => {
     mock.dispose();
   });
 
-  it("releases a queued critical presentation when keyboard focus collapses the panel", async () => {
+  it("releases a queued critical presentation when keyboard focus leaves the collapsed panel", async () => {
     const mock = createQuestionMock(questionPresentation("question-keyboard", [sourceQuestion()]));
     let publish: ((presentation: DynamicIslandPresentation) => void) | undefined;
     mock.api.dynamicIsland.onPresentation = (listener) => {
@@ -293,7 +293,32 @@ describe("DynamicIslandSurface", () => {
     flush(() => publish?.(approvalPresentation("approval-after-keyboard")));
     expect(screen.getByRole("region", { name: "OpenBot question from AI" })).toBeVisible();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Collapse OpenBot question from AI" }), { detail: 0 });
+    const collapse = screen.getByRole("button", { name: "Collapse OpenBot question from AI" });
+    await fireEvent.click(collapse, { detail: 0 });
+    expect(screen.getByRole("region", { name: "OpenBot question from AI" })).toBeVisible();
+
+    await fireEvent.focusOut(collapse, { relatedTarget: document.body });
+    expect(await screen.findByRole("region", { name: "OpenBot approval request" })).toBeVisible();
+    mock.dispose();
+  });
+
+  it("keeps a compact critical presentation stable while its toggle has keyboard focus", async () => {
+    const mock = createQuestionMock(questionPresentation("question-focused", [sourceQuestion()]));
+    let publish: ((presentation: DynamicIslandPresentation) => void) | undefined;
+    mock.api.dynamicIsland.onPresentation = (listener) => {
+      publish = listener;
+      return () => {
+        publish = undefined;
+      };
+    };
+    render(() => <DynamicIslandSurface />);
+
+    const toggle = await screen.findByRole("button", { name: "Expand OpenBot question from AI" });
+    toggle.focus();
+    flush(() => publish?.(approvalPresentation("approval-after-focus")));
+    expect(screen.getByRole("region", { name: "OpenBot question from AI" })).toBeVisible();
+
+    await fireEvent.focusOut(toggle, { relatedTarget: document.body });
     expect(await screen.findByRole("region", { name: "OpenBot approval request" })).toBeVisible();
     mock.dispose();
   });

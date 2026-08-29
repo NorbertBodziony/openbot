@@ -49,6 +49,7 @@ export interface DynamicIslandMessageSource {
   author: string;
   body: string;
   time: string;
+  createdAt?: string;
 }
 
 export function selectDynamicIslandPresentation(
@@ -123,7 +124,7 @@ function latestUnreadMessage(input: DynamicIslandPresentationInput, bots: readon
       const messageId = message?.id ?? input.unreadMessageIds?.[bot.id];
       const text = message?.body.trim() || bot.preview?.trim();
       if (!messageId || !text) return [];
-      const createdAt = message?.time || bot.updatedAt || new Date(0).toISOString();
+      const createdAt = message?.createdAt || bot.updatedAt || message?.time || new Date(0).toISOString();
       return [{ bot: botIdentity(bot), messageId, text: truncate(text, 600), createdAt }];
     })
     .sort((left, right) => messageTimestamp(right.createdAt) - messageTimestamp(left.createdAt))[0];

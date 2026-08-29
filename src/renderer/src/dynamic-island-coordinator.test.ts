@@ -102,6 +102,44 @@ describe("DynamicIslandCoordinator", () => {
     });
   });
 
+  it("seeds an inactive host snapshot without counting historical replies as new", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    coordinator.setBots("remote", [bot("research", "Research")]);
+    const historical = conversation("research", 1, [
+      { id: "historical", text: "Historical reply", createdAt: "2026-08-29T09:00:00.000Z" },
+    ]);
+
+    coordinator.applyEvent(scoped("remote", historical), "local");
+    expect(coordinator.presentation(["remote"]).mode).toBe("idle");
+
+    coordinator.applyEvent(
+      scoped(
+        "remote",
+        conversation("research", 2, [
+          { id: "historical", text: "Historical reply", createdAt: "2026-08-29T09:00:00.000Z" },
+          { id: "new-reply", text: "Fresh reply", createdAt: "2026-08-29T10:00:00.000Z" },
+        ]),
+      ),
+      "local",
+    );
+    coordinator.applyEvent(
+      scoped(
+        "remote",
+        conversation("research", 3, [
+          { id: "historical", text: "Historical reply", createdAt: "2026-08-29T09:00:00.000Z" },
+          { id: "new-reply", text: "Fresh reply", createdAt: "2026-08-29T10:00:00.000Z" },
+        ]),
+      ),
+      "local",
+    );
+
+    expect(coordinator.presentation(["remote"])).toMatchObject({
+      mode: "message",
+      unreadCount: 1,
+      message: { messageId: "new-reply", text: "Fresh reply" },
+    });
+  });
+
   it("keeps working ahead of an unread message across hosts", () => {
     const coordinator = new DynamicIslandCoordinator();
     coordinator.setBots("remote-working", [bot("builder", "Builder")]);
@@ -196,6 +234,27 @@ function approval(botId: string, requestId: string): Extract<AgentEvent, { type:
       reason: "Access the project files.",
       grantRoot: "/workspace",
       permissions: { fileSystem: { read: ["/workspace"], write: ["/workspace"] }, network: false },
+    },
+  };
+}
+
+function conversation(
+  botId: string,
+  revision: number,
+  messages: Array<{ id: string; text: string; createdAt: string }>,
+): Extract<AgentEvent, { type: "conversation" }> {
+  return {
+    type: "conversation",
+    snapshot: {
+      botId,
+      threadId: `thread-${botId}`,
+      activeTurnId: null,
+      revision,
+      messages: messages.map((message) => ({
+        ...message,
+        author: "assistant",
+        status: "completed",
+      })),
     },
   };
 }

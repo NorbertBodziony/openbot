@@ -31,6 +31,7 @@ export class DynamicIslandWindowController {
   };
   #presentation = EMPTY_DYNAMIC_ISLAND_PRESENTATION;
   readonly #windows = new Map<number, BrowserWindow>();
+  readonly #criticalActions = new Map<string, Promise<void>>();
   #preferenceMutation = Promise.resolve();
 
   constructor(options: DynamicIslandWindowControllerOptions) {
@@ -82,6 +83,7 @@ export class DynamicIslandWindowController {
   publish(presentation: DynamicIslandPresentation): void {
     if (isDeepStrictEqual(this.#presentation, presentation)) return;
     this.#presentation = presentation;
+    this.#criticalActions.clear();
     for (const window of this.#windows.values()) {
       if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.dynamicIslandPresentation, presentation);
     }
@@ -100,8 +102,20 @@ export class DynamicIslandWindowController {
     const window = this.#options.getMainWindow();
     if (!window || window.isDestroyed()) return;
     if (action.type === "approve-attention" || action.type === "answer-prompt") {
-      await this.#options.performCriticalAction(action);
-      window.webContents.send(IPC_CHANNELS.dynamicIslandAction, action);
+      if (!this.matchesCriticalAction(action)) return;
+      const key = criticalActionKey(action);
+      const existing = this.#criticalActions.get(key);
+      if (existing) return existing;
+      const pending = this.#options.performCriticalAction(action).then(() => {
+        if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.dynamicIslandAction, action);
+      });
+      this.#criticalActions.set(key, pending);
+      try {
+        await pending;
+      } catch (error) {
+        if (this.#criticalActions.get(key) === pending) this.#criticalActions.delete(key);
+        throw error;
+      }
       return;
     }
     if (window.isMinimized()) window.restore();
@@ -180,6 +194,20 @@ export class DynamicIslandWindowController {
     }
   }
 
+  private matchesCriticalAction(
+    action: Extract<DynamicIslandAction, { type: "approve-attention" | "answer-prompt" }>,
+  ): boolean {
+    const presentation = this.#presentation;
+    if (action.type === "approve-attention" && presentation.mode !== "approval") return false;
+    if (action.type === "answer-prompt" && presentation.mode !== "question") return false;
+    if (presentation.mode !== "approval" && presentation.mode !== "question") return false;
+    return (
+      presentation.serverId === action.serverId &&
+      presentation.item.bot.id === action.botId &&
+      String(presentation.item.requestId) === String(action.requestId)
+    );
+  }
+
   private destroyWindows(): void {
     const windows = [...this.#windows.values()];
     this.#windows.clear();
@@ -187,6 +215,12 @@ export class DynamicIslandWindowController {
       if (!window.isDestroyed()) window.destroy();
     }
   }
+}
+
+function criticalActionKey(
+  action: Extract<DynamicIslandAction, { type: "approve-attention" | "answer-prompt" }>,
+): string {
+  return [action.type, action.serverId, action.botId, String(action.requestId)].join("\u0000");
 }
 
 export function dynamicIslandWindowBounds(display: Pick<Display, "bounds">): Rectangle {

@@ -262,13 +262,44 @@ describe("createDynamicIslandPresentation", () => {
     input.bots = [bot, research];
     input.unreadReplies = { chief: 1, research: 1 };
     input.liveMessages = {
-      chief: [{ id: "older", author: "bot", body: "Older", time: "2026-08-29T10:00:00Z" }],
-      research: [{ id: "newer", author: "bot", body: "Newer", time: "2026-08-29T11:00:00Z" }],
+      chief: [
+        {
+          id: "older",
+          author: "bot",
+          body: "Older",
+          time: "10:00 AM",
+          createdAt: "2026-08-29T10:00:00Z",
+        },
+      ],
+      research: [
+        {
+          id: "newer",
+          author: "bot",
+          body: "Newer",
+          time: "11:00 AM",
+          createdAt: "2026-08-29T11:00:00Z",
+        },
+      ],
     };
 
     expect(createDynamicIslandPresentation(input)).toMatchObject({
       mode: "message",
       message: { messageId: "newer", bot: { id: "research" } },
+    });
+  });
+
+  it("selects the newest unread preview before conversations are loaded", () => {
+    const input = state();
+    input.bots = [
+      { ...bot, preview: "Older preview", updatedAt: "2026-08-29T10:00:00Z" },
+      { ...research, preview: "Newer preview", updatedAt: "2026-08-29T11:00:00Z" },
+    ];
+    input.unreadReplies = { chief: 1, research: 1 };
+    input.unreadMessageIds = { chief: "older-preview", research: "newer-preview" };
+
+    expect(createDynamicIslandPresentation(input)).toMatchObject({
+      mode: "message",
+      message: { messageId: "newer-preview", bot: { id: "research" } },
     });
   });
 
