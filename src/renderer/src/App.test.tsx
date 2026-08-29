@@ -987,6 +987,79 @@ describe("OpenBot connected desktop shell", () => {
     );
   });
 
+  it("reports a remote reply that arrives while its host is offline", async () => {
+    const local: ServerSummary = {
+      id: "local",
+      name: "Local",
+      logoUrl: null,
+      kind: "local",
+      state: "online",
+      apiUrl: null,
+      remoteDesktopAvailable: false,
+      role: null,
+      active: true,
+    };
+    const remote: ServerSummary = {
+      id: "remote-1",
+      name: "Studio Mac",
+      logoUrl: null,
+      kind: "remote",
+      state: "online",
+      apiUrl: "https://studio.example.com",
+      remoteDesktopAvailable: false,
+      role: "member",
+      active: false,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    const snapshot = (messageId: string, text: string) => ({
+      type: "runtime-snapshot" as const,
+      snapshot: {
+        bots: [
+          {
+            id: "chief",
+            name: "Chief",
+            notifications: true,
+            preview: "",
+            updatedAt: null,
+            avatarSeed: "chief",
+            avatarHue: null,
+            avatarUrl: null,
+          },
+        ],
+        activeTurns: [],
+        queues: [{ botId: "chief", deliveries: [] }],
+        latestMessages: [{ botId: "chief", id: messageId, text, createdAt: "2026-08-29T10:00:00.000Z" }],
+        pendingPrompts: [],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    });
+
+    render(() => <App />);
+    await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
+    emitScopedAgentEvent?.({ serverId: remote.id, event: snapshot("reply-old", "Earlier reply") });
+    emitServers?.([local, { ...remote, state: "offline" }]);
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "local",
+        mode: "idle",
+      }),
+    );
+
+    emitServers?.([local, remote]);
+    emitScopedAgentEvent?.({ serverId: remote.id, event: snapshot("reply-new", "Reply from offline work") });
+
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: remote.id,
+        mode: "message",
+        unreadCount: 1,
+        message: { messageId: "reply-new", text: "Reply from offline work" },
+      }),
+    );
+  });
+
   it("shows the first-run onboarding before starting agents", async () => {
     vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
       completed: false,

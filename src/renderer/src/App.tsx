@@ -3020,7 +3020,7 @@ export function createAppController(props: AppProps = {}) {
         }
       }
       dynamicIslandConnectedServers.add("local");
-      dynamicIslandCoordinator.retainServers([...dynamicIslandConnectedServers]);
+      dynamicIslandCoordinator.retainServers([...configuredServerIds]);
       publishDynamicIslandPresentation();
       for (const server of currentServers) {
         if (server.kind === "remote" && server.state !== "online") continue;
