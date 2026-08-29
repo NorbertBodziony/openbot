@@ -66,6 +66,7 @@ import {
   AGENT_RUNTIME_PERMISSION_PATHS_LIMIT,
   AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
   AGENT_RUNTIME_QUESTION_HEADER_LIMIT,
+  AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
   isImageGenerationAspectRatio,
   isMessageReaction,
@@ -477,7 +478,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const pendingBrowserTakeovers = [...this.#pendingBrowserTakeovers.values()]
       .slice(0, remainingAttention)
       .map((pending) => structuredClone(pending.request));
-    return {
+    return fitRuntimeSnapshot({
       bots: runtimeBots,
       activeTurns,
       queues: this.#mailbox.listRuntimeQueues(
@@ -489,7 +490,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       pendingApprovals,
       pendingBrowserTakeovers,
       failedTurns: [...this.#failedTurns].map(([botId, turnId]) => ({ botId, turnId })),
-    };
+    });
   }
 
   listMemories(botId: string): BotMemory[] {
@@ -4101,6 +4102,64 @@ function compactRuntimeApproval(approval: AgentApproval): AgentRuntimeSnapshot["
         }
       : null,
   };
+}
+
+function fitRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): AgentRuntimeSnapshot {
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.queues = snapshot.queues.map((queue) => ({ ...queue, deliveries: [] }));
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.latestMessages = [];
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.bots = snapshot.bots.map((bot) => ({ ...bot, preview: "", avatarUrl: null }));
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.pendingPrompts = snapshot.pendingPrompts.map((prompt) => ({
+    ...prompt,
+    questions: prompt.questions.map((question) => ({
+      ...question,
+      header: question.header.slice(0, 40),
+      question: question.question.slice(0, 80),
+      options: question.options?.map((option) => ({ label: option.label.slice(0, 40), description: "" })) ?? null,
+    })),
+  }));
+  snapshot.pendingApprovals = snapshot.pendingApprovals.map((approval) => ({
+    ...approval,
+    command: approval.command?.slice(0, 80) ?? null,
+    cwd: approval.cwd?.slice(0, 80) ?? null,
+    reason: approval.reason?.slice(0, 80) ?? null,
+    grantRoot: approval.grantRoot?.slice(0, 80) ?? null,
+    permissions: approval.permissions
+      ? { fileSystem: { read: [], write: [] }, network: approval.permissions.network }
+      : null,
+  }));
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  while (
+    runtimeSnapshotBytes(snapshot) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT &&
+    snapshot.pendingPrompts.length + snapshot.pendingApprovals.length + snapshot.pendingBrowserTakeovers.length > 0
+  ) {
+    if (snapshot.pendingBrowserTakeovers.length > 0) snapshot.pendingBrowserTakeovers.pop();
+    else if (snapshot.pendingApprovals.length > 0) snapshot.pendingApprovals.pop();
+    else snapshot.pendingPrompts.pop();
+  }
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.bots = snapshot.bots.map((bot) => ({
+    ...bot,
+    name: bot.name.slice(0, 40),
+    preview: "",
+    avatarSeed: bot.id,
+    avatarUrl: null,
+  }));
+  snapshot.queues = [];
+  return snapshot;
+}
+
+function runtimeSnapshotBytes(snapshot: AgentRuntimeSnapshot): number {
+  return Buffer.byteLength(JSON.stringify({ type: "runtime-snapshot", snapshot }));
 }
 
 function routineToolArguments(value: unknown, allowedKeys: readonly string[]): DynamicRecord {
