@@ -6,13 +6,14 @@ import { cx } from "./utils";
 export type DynamicIslandTone = "neutral" | "working" | "attention";
 export type DynamicIslandViewState = "compact" | "expanded";
 export type DynamicIslandHoverBehavior = "none" | "grow" | "expand";
-export type DynamicIslandContentMotion = "morph" | "atoll";
+export type DynamicIslandContentMotion = "morph" | "spring";
 export type DynamicIslandDisplayMode = "notch" | "island";
 export type DynamicIslandStateChangeReason = "pointer" | "keyboard" | "hover" | "hover-exit" | "escape";
 
 export interface DynamicIslandHoverContentMotion {
   leadingScale: number;
   trailingScale: number;
+  outwardTranslateX: number;
   translateY: number;
 }
 
@@ -43,25 +44,28 @@ export interface DynamicIslandProps {
 
 const HOVER_EXPAND_DELAY = 300;
 const HOVER_EXIT_DELAY = 100;
-const ATOLL_CONTENT_EXIT_LEAD = 90;
-const PANEL_EXIT_DURATION = ATOLL_CONTENT_EXIT_LEAD + 450;
-const ATOLL_OPEN_SPRING = { response: 0.42, dampingFraction: 1 } as const;
-const ATOLL_CLOSE_SPRING = { response: 0.45, dampingFraction: 1 } as const;
-const ATOLL_HOVER_SPRING = {
+const HOVER_WIDTH_GROWTH = 32;
+const HOVER_HEIGHT_GROWTH = 8;
+const CONTENT_EXIT_LEAD = 90;
+const PANEL_EXIT_DURATION = CONTENT_EXIT_LEAD + 450;
+const OPEN_SPRING = { response: 0.42, dampingFraction: 1 } as const;
+const CLOSE_SPRING = { response: 0.45, dampingFraction: 1 } as const;
+const HOVER_SPRING = {
   response: 0.5 / 1.2,
   dampingFraction: 0.7,
 } as const;
-const ATOLL_CONTENT_SPRING = { response: 0.34, dampingFraction: 0.88 } as const;
-const ATOLL_CONTENT_EXIT_DURATION = 280;
-const ATOLL_CONTENT_BLUR = 4;
-const ATOLL_CONTENT_ENTER_DELAY = 90;
-const ATOLL_BLUR_OPEN_DURATION = 460;
-const ATOLL_BLUR_CLOSE_DURATION = 450;
-const ATOLL_COMPACT_RETURN_DURATION = 450;
+const CONTENT_SPRING = { response: 0.34, dampingFraction: 0.88 } as const;
+const CONTENT_EXIT_DURATION = 280;
+const CONTENT_BLUR = 4;
+const CONTENT_ENTER_DELAY = 90;
+const CONTENT_BLUR_OPEN_DURATION = 460;
+const CONTENT_BLUR_CLOSE_DURATION = 450;
+const COMPACT_RETURN_DURATION = 450;
 const REDUCED_CONTENT_FADE_DURATION = 150;
 const DEFAULT_HOVER_CONTENT_MOTION: DynamicIslandHoverContentMotion = {
   leadingScale: 1.08,
   trailingScale: 1.08,
+  outwardTranslateX: 10,
   translateY: 6,
 };
 
@@ -185,7 +189,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
       }
 
       const shouldStageClose =
-        (local.contentMotion ?? "morph") === "atoll" && layout === "expanded" && rendered === "expanded";
+        (local.contentMotion ?? "morph") === "spring" && layout === "expanded" && rendered === "expanded";
       if (!shouldStageClose) {
         setLayoutState("compact");
         return;
@@ -194,7 +198,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
       layoutCloseTimer = setTimeout(() => {
         layoutCloseTimer = undefined;
         if (viewState() === "compact") setLayoutState("compact");
-      }, ATOLL_CONTENT_EXIT_LEAD);
+      }, CONTENT_EXIT_LEAD);
     },
   );
 
@@ -251,10 +255,10 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
     state: viewState,
     motion: () => local.hoverContentMotion ?? DEFAULT_HOVER_CONTENT_MOTION,
   });
-  createAtollContentTransition({
+  createSpringContentTransition({
     content: () => panelContent,
     root: () => shell,
-    enabled: () => (local.contentMotion ?? "morph") === "atoll",
+    enabled: () => (local.contentMotion ?? "morph") === "spring",
     state: viewState,
     renderedState: renderedPanelState,
   });
@@ -410,7 +414,7 @@ function islandSilhouetteTarget(
 ): IslandSilhouetteGeometry {
   if (displayMode === "island") {
     if (state === "expanded") return { topRadius: 0, bottomRadius: 0, capsuleRadius: 24 };
-    if (hovering) return { topRadius: 0, bottomRadius: 0, capsuleRadius: 20 };
+    if (hovering) return { topRadius: 0, bottomRadius: 0, capsuleRadius: 16 };
     return { topRadius: 0, bottomRadius: 0, capsuleRadius: 16 };
   }
   if (state === "expanded") return { topRadius: 19, bottomRadius: 24 };
@@ -454,12 +458,12 @@ function createHoverContentMotion(options: HoverContentMotionOptions): void {
       if (!leading || !trailing) return;
 
       const leadingTarget = active
-        ? { x: 0, y: motion.translateY, scale: motion.leadingScale }
+        ? { x: -motion.outwardTranslateX, y: motion.translateY, scale: motion.leadingScale }
         : { x: 0, y: 0, scale: 1 };
       const trailingTarget = active
-        ? { x: 0, y: motion.translateY, scale: motion.trailingScale }
+        ? { x: motion.outwardTranslateX, y: motion.translateY, scale: motion.trailingScale }
         : { x: 0, y: 0, scale: 1 };
-      const spring = state === "expanded" ? ATOLL_OPEN_SPRING : ATOLL_HOVER_SPRING;
+      const spring = state === "expanded" ? OPEN_SPRING : HOVER_SPRING;
       const leadingStart = readCurrentTransform(leading, { x: 0, y: 0, scale: 1 });
       const trailingStart = readCurrentTransform(trailing, { x: 0, y: 0, scale: 1 });
 
@@ -484,7 +488,7 @@ function animateHoverContent(
 ): Animation | undefined {
   writeSharedTransform(element, target);
   const animate = element.animate?.bind(element);
-  if (!animate || transformsMatch(start, target)) return undefined;
+  if (prefersReducedMotion() || !animate || transformsMatch(start, target)) return undefined;
   const animation = animate(sharedElementKeyframes(start, target, spring), {
     duration: spring.response * 1_000,
     easing: "linear",
@@ -594,6 +598,10 @@ function createSmoothSizeResize(options: SmoothSizeResizeOptions): void {
       writeSilhouetteGeometry(silhouette, targetGeometry);
       if (sharedLeading) writeSharedTransform(sharedLeading, targetSharedLeading);
       if (sharedTrailing) writeSharedTransform(sharedTrailing, targetSharedTrailing);
+      if (prefersReducedMotion()) {
+        finishAnimation();
+        return;
+      }
       container.setAttribute("data-resizing", "true");
       const opening =
         nextSize.width > start.width ||
@@ -861,13 +869,13 @@ function resizeSpring(
 ) {
   const isHoverResize =
     container.dataset.state === "compact" &&
-    Math.abs(end.height - start.height) <= 12 &&
-    Math.abs(end.width - start.width) <= 12;
-  if (isHoverResize) return ATOLL_HOVER_SPRING;
-  return opening ? ATOLL_OPEN_SPRING : ATOLL_CLOSE_SPRING;
+    Math.abs(end.height - start.height) <= HOVER_HEIGHT_GROWTH + 0.5 &&
+    Math.abs(end.width - start.width) <= HOVER_WIDTH_GROWTH + 0.5;
+  if (isHoverResize) return HOVER_SPRING;
+  return opening ? OPEN_SPRING : CLOSE_SPRING;
 }
 
-interface AtollContentTransitionOptions {
+interface SpringContentTransitionOptions {
   content: () => HTMLDivElement | undefined;
   root: () => HTMLDivElement | undefined;
   enabled: () => boolean;
@@ -875,7 +883,7 @@ interface AtollContentTransitionOptions {
   renderedState: () => Exclude<DynamicIslandViewState, "compact"> | null;
 }
 
-function createAtollContentTransition(options: AtollContentTransitionOptions): void {
+function createSpringContentTransition(options: SpringContentTransitionOptions): void {
   let animations: Animation[] = [];
   let knownContent: HTMLDivElement | undefined;
   let previousPhase = "";
@@ -922,7 +930,7 @@ function createAtollContentTransition(options: AtollContentTransitionOptions): v
             ],
             {
               duration: REDUCED_CONTENT_FADE_DURATION,
-              delay: entering && isNewContent ? ATOLL_CONTENT_ENTER_DELAY : 0,
+              delay: entering && isNewContent ? CONTENT_ENTER_DELAY : 0,
               easing: "linear",
               fill: "both",
             },
@@ -931,9 +939,9 @@ function createAtollContentTransition(options: AtollContentTransitionOptions): v
       } else {
         current.push(
           entering
-            ? animate(atollContentEntranceKeyframes(startOpacity, startScale), {
-                duration: ATOLL_CONTENT_SPRING.response * 1_000,
-                delay: isNewContent ? ATOLL_CONTENT_ENTER_DELAY : 0,
+            ? animate(springContentEntranceKeyframes(startOpacity, startScale), {
+                duration: CONTENT_SPRING.response * 1_000,
+                delay: isNewContent ? CONTENT_ENTER_DELAY : 0,
                 easing: "linear",
                 fill: "both",
               })
@@ -943,7 +951,7 @@ function createAtollContentTransition(options: AtollContentTransitionOptions): v
                   { opacity: 0, transform: "translateY(-4px) scale(0.985)" },
                 ],
                 {
-                  duration: ATOLL_CONTENT_EXIT_DURATION,
+                  duration: CONTENT_EXIT_DURATION,
                   easing: "ease-in-out",
                   fill: "both",
                 },
@@ -953,24 +961,24 @@ function createAtollContentTransition(options: AtollContentTransitionOptions): v
         if (entering) {
           current.push(
             ...animateIslandBlur(expandedTargets, 0, {
-              duration: ATOLL_BLUR_OPEN_DURATION,
-              delay: isNewContent ? ATOLL_CONTENT_ENTER_DELAY : 0,
-              initialBlur: ATOLL_CONTENT_BLUR,
+              duration: CONTENT_BLUR_OPEN_DURATION,
+              delay: isNewContent ? CONTENT_ENTER_DELAY : 0,
+              initialBlur: CONTENT_BLUR,
             }),
-            ...animateIslandBlur(compactTargets, ATOLL_CONTENT_BLUR, {
-              duration: ATOLL_BLUR_OPEN_DURATION,
+            ...animateIslandBlur(compactTargets, CONTENT_BLUR, {
+              duration: CONTENT_BLUR_OPEN_DURATION,
               initialBlurs: currentBlurs,
             }),
           );
         } else {
           current.push(
-            ...animateIslandBlur(expandedTargets, ATOLL_CONTENT_BLUR, {
-              duration: ATOLL_BLUR_CLOSE_DURATION,
+            ...animateIslandBlur(expandedTargets, CONTENT_BLUR, {
+              duration: CONTENT_BLUR_CLOSE_DURATION,
               initialBlurs: currentBlurs,
             }),
             ...animateIslandBlur(compactTargets, 0, {
-              duration: ATOLL_COMPACT_RETURN_DURATION,
-              delay: ATOLL_CONTENT_EXIT_LEAD,
+              duration: COMPACT_RETURN_DURATION,
+              delay: CONTENT_EXIT_LEAD,
               initialBlurs: currentBlurs,
             }),
           );
@@ -982,10 +990,10 @@ function createAtollContentTransition(options: AtollContentTransitionOptions): v
           if (animations !== current) return;
           for (const target of expandedTargets) {
             if (entering) target.style.removeProperty("filter");
-            else target.style.filter = `blur(${ATOLL_CONTENT_BLUR}px)`;
+            else target.style.filter = `blur(${CONTENT_BLUR}px)`;
           }
           for (const target of compactTargets) {
-            if (entering && !reducedMotion) target.style.filter = `blur(${ATOLL_CONTENT_BLUR}px)`;
+            if (entering && !reducedMotion) target.style.filter = `blur(${CONTENT_BLUR}px)`;
             else target.style.removeProperty("filter");
           }
           animations = [];
@@ -1000,12 +1008,12 @@ function createAtollContentTransition(options: AtollContentTransitionOptions): v
   });
 }
 
-function atollContentEntranceKeyframes(startOpacity: number, startScale: number): Keyframe[] {
+function springContentEntranceKeyframes(startOpacity: number, startScale: number): Keyframe[] {
   const sampleCount = 20;
-  const finalProgress = springProgress(ATOLL_CONTENT_SPRING.response, ATOLL_CONTENT_SPRING);
+  const finalProgress = springProgress(CONTENT_SPRING.response, CONTENT_SPRING);
   return Array.from({ length: sampleCount + 1 }, (_, index) => {
     const offset = index / sampleCount;
-    const rawProgress = springProgress(offset * ATOLL_CONTENT_SPRING.response, ATOLL_CONTENT_SPRING);
+    const rawProgress = springProgress(offset * CONTENT_SPRING.response, CONTENT_SPRING);
     const progress = index === sampleCount ? 1 : rawProgress / finalProgress;
     return {
       opacity: Math.min(1, startOpacity + (1 - startOpacity) * progress),
@@ -1056,7 +1064,7 @@ function captureIslandBlurs(targets: HTMLElement[]): Map<HTMLElement, number> {
 }
 
 function prefersReducedMotion(): boolean {
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
 }
 
 function computedScale(transform: string): number {

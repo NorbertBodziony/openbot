@@ -704,55 +704,6 @@
   animation-delay: 0ms;
 }
 
-/* Storybook can deliver its ResizeObserver update one frame after hover styles.
-   Keep Idle's shared content on one CSS timeline so the preview does not flash
-   or lose the Atoll-style grow while the production WAAPI animation catches up. */
-.dynamic-island-story-stage
-  .dynamic-island-idle[data-shared-motion="css"][data-content-motion="atoll"][data-shared-leading="true"]
-  .dynamic-island-ear-leading
-  .dynamic-island-ear-content,
-.dynamic-island-story-stage
-  .dynamic-island-idle[data-shared-motion="css"][data-content-motion="atoll"][data-shared-trailing="true"]
-  .dynamic-island-ear-trailing
-  .dynamic-island-ear-content {
-  opacity: 1;
-  filter: none;
-  transform: translate3d(0, 0, 0) scale(1);
-  transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.dynamic-island-story-stage
-  .dynamic-island-idle[data-shared-motion="css"][data-shared-leading="true"]:is(
-    [data-hovered="true"],
-    [data-layout-state="peek"]
-  )
-  .dynamic-island-ear-leading
-  .dynamic-island-ear-content,
-.dynamic-island-story-stage
-  .dynamic-island-idle[data-shared-motion="css"][data-shared-trailing="true"]:is(
-    [data-hovered="true"],
-    [data-layout-state="peek"]
-  )
-  .dynamic-island-ear-trailing
-  .dynamic-island-ear-content {
-  transform: translate3d(0, 6px, 0) scale(1.375);
-}
-
-.dynamic-island-story-stage
-  .dynamic-island-idle[data-shared-motion="css"][data-content-motion="atoll"]
-  .dynamic-island-trailing-compact {
-  opacity: 1;
-  filter: none;
-  transform: none;
-  transition: none;
-}
-
-.dynamic-island-story-stage[data-reduced-motion="true"]
-  .dynamic-island-idle[data-shared-motion="css"]
-  .dynamic-island-ear-content {
-  transition: none;
-}
-
 @media (max-width: 1279px) {
   .dynamic-island-story-display-grid {
     grid-template-columns: 1fr;

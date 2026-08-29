@@ -1,7 +1,7 @@
 import type { DynamicIslandAction, DynamicIslandBotIdentity, DynamicIslandPresentation } from "@openbot/contracts/ipc";
 import type { JSX } from "@solidjs/web";
 import { createMemo } from "solid-js";
-import { expect, fn, waitFor, within } from "storybook/test";
+import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { OpenBotDynamicIsland } from "../src/components/OpenBotDynamicIsland";
 import type { DynamicIslandViewState } from "../src/components/ui";
@@ -356,10 +356,14 @@ export const NeedsApproval: Story = {
   args: { scenario: "approval", onAction: fn() },
   play: async ({ args, canvas, userEvent }) => {
     const builtIn = within(canvas.getByRole("region", { name: "Built-in display preview" }));
-    await userEvent.hover(builtIn.getByRole("button", { name: "Expand OpenBot approval request" }));
+    const island = builtIn.getByRole("region", { name: "OpenBot approval request" });
+    const toggle = within(island).getByRole("button", { name: "Expand OpenBot approval request" });
+    toggle.focus();
+    await userEvent.keyboard("{Enter}");
     await waitFor(() => expect(builtIn.getByText("Chief needs approval")).toBeVisible());
     await waitFor(() => expect(builtIn.getByText("bun install --frozen-lockfile")).toBeVisible());
-    await userEvent.click(builtIn.getByRole("button", { name: "Approve" }));
+    const approve = builtIn.getByRole("button", { name: "Approve" });
+    await fireEvent.click(approve);
     await expect(args.onAction).toHaveBeenCalledWith({
       type: "approve-attention",
       serverId: "local",

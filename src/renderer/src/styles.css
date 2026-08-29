@@ -103,6 +103,11 @@
   --openbot-question-badge-text: #8bdee8;
   --openbot-question-badge-soft: rgba(107, 199, 217, 0.16);
   --openbot-question-badge-border: rgba(107, 199, 217, 0.24);
+  --openbot-message-badge-text: #91c8ff;
+  --openbot-message-badge-soft: rgba(116, 185, 255, 0.16);
+  --openbot-message-badge-border: rgba(116, 185, 255, 0.24);
+  --openbot-approval-badge-soft: rgba(227, 184, 102, 0.18);
+  --openbot-approval-badge-border: rgba(227, 184, 102, 0.3);
   --openbot-danger: #e47d75;
   --openbot-danger-soft: rgba(228, 125, 117, 0.13);
   --openbot-danger-strong: #ff4058;

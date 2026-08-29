@@ -6,7 +6,7 @@ import type {
   DynamicIslandPresentation,
 } from "@openbot/contracts/ipc";
 import { Dynamic, type JSX } from "@solidjs/web";
-import { Check, MessageCircle, MessageCircleQuestionMark, ShieldAlert } from "lucide-solid";
+import { Check, MessageCircle, MessageCircleQuestionMark } from "lucide-solid";
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, onSettled, Show, Switch } from "solid-js";
 import { AgentAvatar } from "./AgentAvatar";
 import {
@@ -38,8 +38,9 @@ const QUESTION_SWAP_BLUR = 6;
 const QUESTION_SWAP_MIDPOINT_OPACITY = 0.55;
 const OPENBOT_COMPACT_HOVER_MOTION = {
   leadingScale: 1.22,
-  trailingScale: 1.22,
-  translateY: 6,
+  trailingScale: 1.08,
+  outwardTranslateX: 10,
+  translateY: 4,
 } as const;
 const QUESTION_PROGRESS_DURATION = 300;
 const QUESTION_PROGRESS_BLUR = 2;
@@ -75,28 +76,24 @@ const WORKING_SHARED_LEADING: SharedLeadingMotion = {
 
 const QUESTION_SHARED_LEADING: SharedLeadingMotion = {
   notch: { x: -48.5, y: 49.5, scale: 35 / COMPACT_LEADING_SIZE },
-  island: { x: -128, y: 51, scale: 38 / COMPACT_LEADING_SIZE },
+  island: { x: -115, y: 51, scale: 38 / COMPACT_LEADING_SIZE },
 };
 
 const QUESTION_SHARED_TRAILING: SharedLeadingMotion = {
   notch: { x: 33.75, y: 49.5, scale: 1.08 },
-  island: { x: 130, y: 51, scale: 1.08 },
+  island: { x: 124, y: 51, scale: 1.08 },
 };
 
 const MESSAGE_SHARED_LEADING: SharedLeadingMotion = {
-  notch: { x: -43.5, y: 49.5, scale: 35 / COMPACT_LEADING_SIZE },
-  island: { x: -89, y: 51, scale: 38 / COMPACT_LEADING_SIZE },
+  notch: { x: -68.5, y: 49.5, scale: 35 / COMPACT_LEADING_SIZE },
+  island: { x: -151, y: 51, scale: 38 / COMPACT_LEADING_SIZE },
 };
 
 const APPROVAL_SHARED_LEADING: SharedLeadingMotion = {
-  notch: { x: -70, y: 36, scale: 24 / COMPACT_LEADING_SIZE },
-  island: { x: -98, y: 36, scale: 24 / COMPACT_LEADING_SIZE },
+  notch: { x: 10.5, y: 43.5, scale: 35 / COMPACT_LEADING_SIZE },
+  island: { x: -87, y: 41, scale: 38 / COMPACT_LEADING_SIZE },
 };
 
-/**
- * OpenBot's own presentation layer. Motion behavior is informed by Atoll's macOS interaction model,
- * without copying its GPL-licensed source or assets: https://github.com/Ebullioscopic/Atoll
- */
 export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Element {
   function changeState(next: DynamicIslandViewState, reason: DynamicIslandStateChangeReason): void {
     if (props.presentation.mode === "idle" && next === "expanded") {
@@ -120,7 +117,7 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
       displayMode={props.displayMode}
       onStateChange={changeState}
       compactWidth={props.presentation.mode === "question" ? "wide" : "standard"}
-      panelWidth={props.presentation.mode === "question" ? "wide" : "standard"}
+      panelWidth={props.presentation.mode === "question" || props.presentation.mode === "message" ? "wide" : "standard"}
       sharedLeading={
         props.presentation.mode === "working"
           ? WORKING_SHARED_LEADING
@@ -178,7 +175,7 @@ function OpenBotDynamicIslandFrame(props: OpenBotDynamicIslandFrameProps): JSX.E
       hoverBehavior={props.autoExpand === false ? "grow" : "expand"}
       hoverContentMotion={props.hoverContentMotion ?? OPENBOT_COMPACT_HOVER_MOTION}
       pointerToggle={props.autoExpand === false ? undefined : false}
-      contentMotion="atoll"
+      contentMotion="spring"
       sharedLeadingMotion={Boolean(props.sharedLeading)}
       sharedLeadingExpandedX={sharedLeading()?.x}
       sharedLeadingExpandedY={sharedLeading()?.y}
@@ -226,25 +223,33 @@ function CompactLeading(props: { presentation: DynamicIslandPresentation }): JSX
         </Match>
         <Match when={props.presentation.mode === "message" && props.presentation.message}>
           {(message) => (
-            <span class="dynamic-island-surface-leading-anchor">
+            <span class="dynamic-island-surface-leading-anchor dynamic-island-surface-compact-identity">
               <IslandAvatar bot={message().bot} />
+              <span class="dynamic-island-surface-compact-name" data-island-motion-content>
+                {message().bot.name}
+              </span>
             </span>
           )}
         </Match>
         <Match when={props.presentation.mode === "question" && props.presentation.attention[0]}>
           {(item) => (
-            <span class="dynamic-island-surface-leading-anchor dynamic-island-surface-question-identity">
+            <span class="dynamic-island-surface-leading-anchor dynamic-island-surface-compact-identity">
               <IslandAvatar bot={item().bot} />
-              <span class="dynamic-island-surface-question-name" data-island-motion-content>
+              <span class="dynamic-island-surface-compact-name" data-island-motion-content>
                 {item().bot.name}
               </span>
             </span>
           )}
         </Match>
-        <Match when={props.presentation.mode === "approval"}>
-          <span class="dynamic-island-surface-leading-anchor">
-            <ShieldAlert class="dynamic-island-surface-attention" strokeWidth={2} data-island-motion-content />
-          </span>
+        <Match when={props.presentation.mode === "approval" && props.presentation.attention[0]}>
+          {(item) => (
+            <span class="dynamic-island-surface-leading-anchor dynamic-island-surface-compact-identity">
+              <IslandAvatar bot={item().bot} />
+              <span class="dynamic-island-surface-compact-name" data-island-motion-content>
+                {item().bot.name}
+              </span>
+            </span>
+          )}
         </Match>
       </Switch>
     </IslandContentSwap>
@@ -262,9 +267,19 @@ function CompactTrailing(props: { presentation: DynamicIslandPresentation }): JS
           </span>
         </Match>
         <Match when={props.presentation.mode === "message"}>
-          <span class="dynamic-island-surface-count" data-island-motion-content>
-            {props.presentation.unreadCount}
-          </span>
+          <Badge
+            variant="info-light"
+            class="dynamic-island-surface-message-badge"
+            data-island-motion-content
+            aria-hidden="true"
+          >
+            <MessageCircle
+              data-icon="inline-start"
+              class="dynamic-island-surface-message-badge-icon"
+              aria-hidden="true"
+            />
+            <span>Message</span>
+          </Badge>
         </Match>
         <Match when={props.presentation.mode === "question"}>
           <Badge variant="info-light" class="dynamic-island-surface-question-badge" data-island-motion-content>
@@ -277,9 +292,15 @@ function CompactTrailing(props: { presentation: DynamicIslandPresentation }): JS
           </Badge>
         </Match>
         <Match when={props.presentation.mode === "approval"}>
-          <span class="dynamic-island-surface-count dynamic-island-surface-count-attention" data-island-motion-content>
-            {props.presentation.attentionCount}
-          </span>
+          <Badge
+            variant="warning-light"
+            class="dynamic-island-surface-approval-badge"
+            data-island-motion-content
+            aria-hidden="true"
+          >
+            <Check data-icon="inline-start" class="dynamic-island-surface-approval-badge-icon" aria-hidden="true" />
+            <span>Approve</span>
+          </Badge>
         </Match>
         <Match when={props.presentation.mode === "idle"}>
           <IdleGreetingEmoji />
@@ -559,10 +580,18 @@ function AttentionContent(props: {
       when={props.item.kind === "prompt"}
       fallback={
         <div class="dynamic-island-surface-panel dynamic-island-surface-attention-panel">
-          <PanelHeading title="Approval needed" sharedLeading />
+          <div class="dynamic-island-surface-approval-summary">
+            <span
+              class="dynamic-island-surface-shared-leading-slot dynamic-island-surface-approval-avatar-slot"
+              aria-hidden="true"
+            />
+            <div class="dynamic-island-surface-approval-copy" data-island-motion-content>
+              <h1>{props.item.bot.name} needs approval</h1>
+              <p>{props.item.approval?.reason ?? props.item.detail ?? "Review the requested action before it runs."}</p>
+            </div>
+          </div>
           <IslandContentSwap contentKey={`${props.item.id}:${props.item.detail ?? ""}`} block>
             <div class="dynamic-island-surface-request-copy" data-island-motion-content>
-              <Show when={props.item.approval?.reason}>{(reason) => <p>{reason()}</p>}</Show>
               <ApprovalContext item={props.item} />
               <Show when={props.remainingCount > 0}>
                 <small class="dynamic-island-surface-more">
@@ -573,7 +602,7 @@ function AttentionContent(props: {
           </IslandContentSwap>
           <div class="dynamic-island-surface-actions" data-island-motion-content>
             <Button size="sm" variant="ghost" onClick={openInOpenBot}>
-              Open in OpenBot
+              Review in OpenBot
             </Button>
             <Button
               size="sm"
@@ -821,8 +850,11 @@ function ApprovalContext(props: { item: DynamicIslandAttentionItem }): JSX.Eleme
           <Show when={approval().command}>
             {(command) => (
               <div class="dynamic-island-surface-command">
-                <Show when={approval().cwd}>{(cwd) => <small>{cwd()}</small>}</Show>
-                <code>{command()}</code>
+                <div class="dynamic-island-surface-command-meta">
+                  <small>Command</small>
+                  <Show when={approval().cwd}>{(cwd) => <span>{cwd()}</span>}</Show>
+                </div>
+                <code title={command()}>{command()}</code>
               </div>
             )}
           </Show>
