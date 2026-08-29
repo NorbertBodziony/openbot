@@ -138,6 +138,23 @@ describe.sequential("AgentService", () => {
     ).toEqual(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
   });
 
+  it("creates a bounded runtime snapshot for reconnecting clients", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+
+    expect(service.getRuntimeSnapshot()).toMatchObject({
+      bots: [expect.objectContaining({ id: "chief" })],
+      activeTurns: [],
+      queues: [{ botId: "chief", deliveries: [] }],
+      pendingPrompts: [],
+      pendingApprovals: [],
+      pendingBrowserTakeovers: [],
+      failedTurns: [],
+    });
+  });
+
   it("resolves only regular files inside the shared directory", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());

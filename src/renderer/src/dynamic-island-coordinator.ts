@@ -6,6 +6,7 @@ import type {
   ScopedAgentEvent,
 } from "@openbot/contracts/ipc";
 import {
+  countDynamicIslandAttention,
   createDynamicIslandPresentation,
   type DynamicIslandMessageSource,
   type DynamicIslandPresentationInput,
@@ -16,10 +17,28 @@ type ServerRuntime = DynamicIslandPresentationInput & {
   seenIncomingMessageIds: Set<string>;
   resolvedApprovals: Map<string, string>;
   resolvedPrompts: Map<string, string>;
+  receivedRuntimeSnapshot: boolean;
 };
 
 export class DynamicIslandCoordinator {
   readonly #servers = new Map<string, ServerRuntime>();
+
+  serverState(
+    serverId: string,
+  ): Pick<
+    DynamicIslandPresentationInput,
+    "activeTurns" | "queues" | "pendingPrompts" | "pendingApprovals" | "failedTurns"
+  > | null {
+    const runtime = this.#servers.get(serverId);
+    if (!runtime) return null;
+    return structuredClone({
+      activeTurns: runtime.activeTurns,
+      queues: runtime.queues,
+      pendingPrompts: runtime.pendingPrompts,
+      pendingApprovals: runtime.pendingApprovals,
+      failedTurns: runtime.failedTurns,
+    });
+  }
 
   replaceServer(input: DynamicIslandPresentationInput): void {
     const previous = this.#servers.get(input.serverId);
@@ -44,6 +63,7 @@ export class DynamicIslandCoordinator {
       seenIncomingMessageIds: previous?.seenIncomingMessageIds ?? new Set(),
       resolvedApprovals,
       resolvedPrompts,
+      receivedRuntimeSnapshot: previous?.receivedRuntimeSnapshot ?? false,
     });
   }
 
@@ -63,6 +83,9 @@ export class DynamicIslandCoordinator {
     switch (event.type) {
       case "bots-changed":
         runtime.bots = event.bots;
+        return;
+      case "runtime-snapshot":
+        this.#replaceRuntimeSnapshot(serverId, runtime, event.snapshot, serverId !== activeServerId);
         return;
       case "conversation": {
         runtime.activeTurns[event.snapshot.botId] = event.snapshot.activeTurnId;
@@ -157,11 +180,13 @@ export class DynamicIslandCoordinator {
   }
 
   presentation(serverOrder: readonly string[]): DynamicIslandPresentation {
+    let attentionCount = 0;
     const ordered = serverOrder.flatMap((serverId) => {
       const runtime = this.#servers.get(serverId);
+      if (runtime) attentionCount += countDynamicIslandAttention(runtime);
       return runtime ? [createDynamicIslandPresentation(runtime)] : [];
     });
-    return selectDynamicIslandPresentation(ordered);
+    return selectDynamicIslandPresentation(ordered, attentionCount);
   }
 
   #runtime(serverId: string): ServerRuntime {
@@ -181,6 +206,7 @@ export class DynamicIslandCoordinator {
       seenIncomingMessageIds: new Set(),
       resolvedApprovals: new Map(),
       resolvedPrompts: new Map(),
+      receivedRuntimeSnapshot: false,
     };
     this.#servers.set(serverId, runtime);
     return runtime;
@@ -200,6 +226,48 @@ export class DynamicIslandCoordinator {
     for (const message of messages) {
       if (message.author === "bot") runtime.seenIncomingMessageIds.add(message.id);
     }
+  }
+
+  #replaceRuntimeSnapshot(
+    serverId: string,
+    runtime: ServerRuntime,
+    snapshot: Extract<AgentEvent, { type: "runtime-snapshot" }>["snapshot"],
+    trackIncoming: boolean,
+  ): void {
+    const liveMessages: Record<string, DynamicIslandMessageSource[]> = {};
+    for (const message of snapshot.latestMessages) {
+      const converted = {
+        id: message.id,
+        author: "bot",
+        body: message.text,
+        time: message.createdAt,
+        createdAt: message.createdAt,
+      };
+      liveMessages[message.botId] = [converted];
+      if (!trackIncoming) continue;
+      if (!runtime.receivedRuntimeSnapshot) this.#seedIncoming(runtime, [converted]);
+      else if (!(runtime.liveMessages[message.botId] ?? []).some((previous) => previous.id === message.id)) {
+        this.#recordIncoming(runtime, message.botId, [converted]);
+      }
+    }
+    const pendingPrompts: DynamicIslandPresentationInput["pendingPrompts"] = {};
+    for (const prompt of snapshot.pendingPrompts) pendingPrompts[prompt.botId] = { type: "prompt", ...prompt };
+    for (const request of snapshot.pendingBrowserTakeovers) {
+      pendingPrompts[request.botId] = { type: "browser-takeover-requested", request };
+    }
+    this.replaceServer({
+      serverId,
+      bots: snapshot.bots,
+      activeTurns: Object.fromEntries(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])),
+      queues: Object.fromEntries(snapshot.queues.map((queue) => [queue.botId, queue])),
+      unreadReplies: { ...runtime.unreadReplies },
+      unreadMessageIds: { ...runtime.unreadMessageIds },
+      liveMessages,
+      pendingPrompts,
+      pendingApprovals: Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])),
+      failedTurns: Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])),
+    });
+    this.#runtime(serverId).receivedRuntimeSnapshot = true;
   }
 }
 

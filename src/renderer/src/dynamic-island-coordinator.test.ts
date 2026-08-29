@@ -1,4 +1,4 @@
-import type { AgentEvent, BotSummary } from "@openbot/contracts/ipc";
+import type { AgentEvent, AgentRuntimeSnapshot, BotSummary } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
 import { DynamicIslandCoordinator } from "./dynamic-island-coordinator";
 import type { DynamicIslandPresentationInput } from "./dynamic-island-presentation";
@@ -195,6 +195,73 @@ describe("DynamicIslandCoordinator", () => {
       item: { requestId: "remote-question" },
     });
   });
+
+  it("counts failures hidden behind a takeover on another host", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    coordinator.setBots("takeover", [bot("browser", "Browser"), bot("failed", "Failed")]);
+    coordinator.setBots("question", [bot("research", "Research")]);
+    coordinator.applyEvent(
+      scoped("takeover", {
+        type: "browser-takeover-requested",
+        request: {
+          requestId: "takeover-1",
+          botId: "browser",
+          threadId: "thread-browser",
+          turnId: "turn-browser",
+          tabId: "tab-1",
+        },
+      }),
+      "local",
+    );
+    coordinator.applyEvent(
+      scoped("takeover", {
+        type: "turn-completed",
+        botId: "failed",
+        threadId: "thread-failed",
+        turnId: "turn-failed",
+        status: "failed",
+      }),
+      "local",
+    );
+    coordinator.applyEvent(scoped("question", prompt("research", "question-1")), "local");
+
+    expect(coordinator.presentation(["takeover", "question"])).toMatchObject({
+      mode: "question",
+      remainingCount: 2,
+    });
+  });
+
+  it("atomically repairs stale remote state after reconnect", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    const remoteBot = bot("research", "Research");
+    coordinator.setBots("remote", [remoteBot]);
+    coordinator.applyEvent(scoped("remote", prompt("research", "stale-question")), "local");
+    coordinator.applyEvent(
+      scoped("remote", {
+        type: "turn-started",
+        botId: "research",
+        threadId: "thread-research",
+        turnId: "stale-turn",
+      }),
+      "local",
+    );
+
+    coordinator.applyEvent(
+      scoped("remote", runtimeSnapshot({ bots: [remoteBot], latestMessages: [runtimeMessage("historical")] })),
+      "local",
+    );
+    expect(coordinator.presentation(["remote"]).mode).toBe("idle");
+
+    coordinator.applyEvent(
+      scoped("remote", runtimeSnapshot({ bots: [remoteBot], latestMessages: [runtimeMessage("missed-reply")] })),
+      "local",
+    );
+    expect(coordinator.presentation(["remote"])).toMatchObject({
+      mode: "message",
+      unreadCount: 1,
+      message: { messageId: "missed-reply" },
+    });
+  });
 });
 
 function scoped(serverId: string, event: AgentEvent) {
@@ -271,6 +338,29 @@ function emptyInput(serverId: string, bots: BotSummary[]): DynamicIslandPresenta
     pendingApprovals: {},
     failedTurns: {},
   };
+}
+
+function runtimeSnapshot(
+  overrides: Partial<AgentRuntimeSnapshot> = {},
+): Extract<AgentEvent, { type: "runtime-snapshot" }> {
+  return {
+    type: "runtime-snapshot",
+    snapshot: {
+      bots: [],
+      activeTurns: [],
+      queues: [],
+      latestMessages: [],
+      pendingPrompts: [],
+      pendingApprovals: [],
+      pendingBrowserTakeovers: [],
+      failedTurns: [],
+      ...overrides,
+    },
+  };
+}
+
+function runtimeMessage(id: string): AgentRuntimeSnapshot["latestMessages"][number] {
+  return { botId: "research", id, text: id, createdAt: "2026-08-29T10:00:00.000Z" };
 }
 
 function bot(id: string, name: string): BotSummary {

@@ -12,6 +12,7 @@ import type {
   DirectTypingRealtimeEvent,
   DynamicIslandAction,
   QueueDelivery,
+  ScopedAgentEvent,
   ServerSummary,
   TeamPresenceSnapshot,
   UpdateStatus,
@@ -38,6 +39,7 @@ vi.spyOn(desktopAnalytics, "anonymousScope").mockImplementation(() => ({
 const defaultMatchMedia = window.matchMedia;
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
+let emitScopedAgentEvent: ((event: ScopedAgentEvent) => void) | undefined;
 let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
 let emitBrowserPictureInPicture: ((event: BrowserPictureInPictureEvent) => void) | undefined;
 let emitUpdateStatus: ((status: UpdateStatus) => void) | undefined;
@@ -116,6 +118,7 @@ function queuedDelivery(
 describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {
     emitAgentEvent = undefined;
+    emitScopedAgentEvent = undefined;
     emitAttachmentImport = undefined;
     emitBrowserPictureInPicture = undefined;
     emitUpdateStatus = undefined;
@@ -497,7 +500,10 @@ describe("OpenBot connected desktop shell", () => {
             emitAgentEvent = listener;
             return () => undefined;
           }),
-          onScopedEvent: vi.fn(() => () => undefined),
+          onScopedEvent: vi.fn((listener) => {
+            emitScopedAgentEvent = listener;
+            return () => undefined;
+          }),
         },
         browser: {
           open: vi.fn().mockResolvedValue(undefined),
@@ -810,6 +816,113 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByRole("heading", { name: "Remote Chief" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("retries Dynamic Island bot metadata when a remote host comes online", async () => {
+    const local = {
+      id: "local",
+      name: "Local",
+      logoUrl: null,
+      kind: "local" as const,
+      state: "online" as const,
+      apiUrl: null,
+      remoteDesktopAvailable: false,
+      role: null,
+      active: true,
+    };
+    const remote = {
+      id: "remote-1",
+      name: "Studio Mac",
+      logoUrl: null,
+      kind: "remote" as const,
+      state: "offline" as const,
+      apiUrl: "https://studio.example.com",
+      remoteDesktopAvailable: false,
+      role: "member" as const,
+      active: false,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+
+    render(() => <App />);
+    await waitFor(() => expect(window.openbot.agent.listBotsForServer).toHaveBeenCalledWith("local"));
+    expect(window.openbot.agent.listBotsForServer).not.toHaveBeenCalledWith("remote-1");
+
+    emitServers?.([{ ...local }, { ...remote, state: "online" }]);
+    await waitFor(() => expect(window.openbot.agent.listBotsForServer).toHaveBeenCalledWith("remote-1"));
+  });
+
+  it("keeps a remote approval when Review in OpenBot switches to its host", async () => {
+    const servers: ServerSummary[] = [
+      {
+        id: "local",
+        name: "Local",
+        logoUrl: null,
+        kind: "local",
+        state: "online",
+        apiUrl: null,
+        remoteDesktopAvailable: false,
+        role: null,
+        active: true,
+      },
+      {
+        id: "remote-1",
+        name: "Studio Mac",
+        logoUrl: null,
+        kind: "remote",
+        state: "online",
+        apiUrl: "https://studio.example.com",
+        remoteDesktopAvailable: false,
+        role: "member",
+        active: false,
+      },
+    ];
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce(servers);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce(
+      servers.map((server) => ({ ...server, active: server.id === "remote-1" })),
+    );
+
+    render(() => <App />);
+    await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
+    emitScopedAgentEvent?.({
+      serverId: "remote-1",
+      event: {
+        type: "approval",
+        approval: {
+          requestId: "approval-remote",
+          botId: "chief",
+          threadId: "thread-chief",
+          turnId: "turn-remote",
+          kind: "permissions",
+          command: null,
+          cwd: null,
+          reason: "Review remote access.",
+          grantRoot: null,
+          permissions: { fileSystem: { read: ["/workspace"], write: [] }, network: false },
+        },
+      },
+    });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "remote-1",
+        mode: "approval",
+        item: { requestId: "approval-remote" },
+      }),
+    );
+
+    emitDynamicIslandAction?.({
+      type: "review-attention",
+      serverId: "remote-1",
+      botId: "chief",
+      requestId: "approval-remote",
+    });
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "remote-1",
+        mode: "approval",
+        item: { requestId: "approval-remote" },
+      }),
+    );
   });
 
   it("shows the first-run onboarding before starting agents", async () => {

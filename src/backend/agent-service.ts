@@ -17,6 +17,7 @@ import type {
   AgentPromptQuestion,
   AgentPromptResolution,
   AgentProviderStatus,
+  AgentRuntimeSnapshot,
   AgentStatus,
   AttachmentDataInput,
   AttachmentSummary,
@@ -330,6 +331,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingPrompts = new Map<RequestId, PendingPrompt>();
   readonly #pendingApprovals = new Map<RequestId, PendingApproval>();
   readonly #pendingBrowserTakeovers = new Map<RequestId, PendingBrowserTakeover>();
+  readonly #failedTurns = new Map<string, string>();
   readonly #itemTurns = new Map<string, string>();
   readonly #imageGenerationOperations = new Map<string, ImageGenerationOperation>();
   readonly #interruptedTurns = new Set<string>();
@@ -415,6 +417,48 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   listBots(): BotSummary[] {
     return this.#store.list();
+  }
+
+  getRuntimeSnapshot(): AgentRuntimeSnapshot {
+    const bots = this.listBots();
+    const activeTurns: AgentRuntimeSnapshot["activeTurns"] = [];
+    const latestMessages: AgentRuntimeSnapshot["latestMessages"] = [];
+    for (const bot of bots) {
+      const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
+      this.#syncMailboxMessages(snapshot);
+      if (snapshot.activeTurnId && snapshot.threadId) {
+        activeTurns.push({ botId: bot.id, threadId: snapshot.threadId, turnId: snapshot.activeTurnId });
+      }
+      const latest = [...snapshot.messages]
+        .reverse()
+        .find((message) => message.author === "assistant" || message.author === "agent");
+      if (latest) {
+        latestMessages.push({
+          botId: bot.id,
+          id: latest.id,
+          text: latest.text.slice(0, 600),
+          createdAt: latest.createdAt,
+        });
+      }
+    }
+    return {
+      bots,
+      activeTurns,
+      queues: bots.map((bot) => this.#mailbox.listQueue(bot.id)),
+      latestMessages,
+      pendingPrompts: [...this.#pendingPrompts.values()].map((pending) => ({
+        requestId: pending.id,
+        botId: pending.botId,
+        threadId: pending.publicThreadId,
+        turnId: pending.turnId,
+        questions: structuredClone(pending.questions),
+      })),
+      pendingApprovals: [...this.#pendingApprovals.values()].map((pending) => structuredClone(pending.approval)),
+      pendingBrowserTakeovers: [...this.#pendingBrowserTakeovers.values()].map((pending) =>
+        structuredClone(pending.request),
+      ),
+      failedTurns: [...this.#failedTurns].map(([botId, turnId]) => ({ botId, turnId })),
+    };
   }
 
   listMemories(botId: string): BotMemory[] {
@@ -689,6 +733,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       errors.push(error);
     }
     this.#snapshots.delete(bot.id);
+    this.#failedTurns.delete(bot.id);
     this.#lastConversationSignatures.delete(bot.id);
     this.#drainingBots.delete(bot.id);
     this.#scheduledDrains.delete(bot.id);
@@ -832,6 +877,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#clearPendingPrompts();
     this.#clearPendingBrowserTakeovers();
     this.#pendingApprovals.clear();
+    this.#failedTurns.clear();
     const pendingLogin = this.#codexLogin;
     this.#codexLogin = null;
     const claudeLogin = this.#claudeLogin;
@@ -2831,6 +2877,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const publicThreadId = this.#publicThreadId(botId, threadId);
         const snapshot = this.#ensureSnapshot(botId, publicThreadId);
         snapshot.activeTurnId = turnId;
+        this.#failedTurns.delete(botId);
         const origin = this.#mailbox.startingDeliveryForBot(botId)?.delivery.sender.kind ?? "unknown";
         const association = this.#associateStartedTurn(botId, turnId, snapshot);
         this.#turnAssociations.set(turnId, association);
@@ -2950,6 +2997,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#browser.endControl(this.#publicThreadId(botId, threadId), turnId);
     const snapshot = this.#ensureSnapshot(botId, threadId);
     snapshot.activeTurnId = null;
+    if (status === "failed") this.#failedTurns.set(botId, turnId);
+    else this.#failedTurns.delete(botId);
     for (const message of snapshot.messages) {
       if (this.#itemTurns.get(message.id) !== turnId || message.status !== "streaming") continue;
       message.status = normalizeCompletionStatus(status);

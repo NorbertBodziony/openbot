@@ -899,6 +899,23 @@ export interface AgentApproval {
   permissions: AgentApprovalPermissions | null;
 }
 
+export interface AgentRuntimeSnapshot {
+  bots: BotSummary[];
+  activeTurns: Array<{ botId: string; threadId: string; turnId: string }>;
+  queues: QueueSnapshot[];
+  latestMessages: Array<{ botId: string; id: string; text: string; createdAt: string }>;
+  pendingPrompts: Array<{
+    requestId: string | number;
+    botId: string;
+    threadId: string;
+    turnId: string;
+    questions: AgentPromptQuestion[];
+  }>;
+  pendingApprovals: AgentApproval[];
+  pendingBrowserTakeovers: BrowserTakeoverRequest[];
+  failedTurns: Array<{ botId: string; turnId: string }>;
+}
+
 export interface RespondToApprovalInput {
   requestId: string | number;
   decision: "accept" | "decline";
@@ -945,6 +962,7 @@ export type AgentEvent =
   | { type: "browser-takeover-requested"; request: BrowserTakeoverRequest }
   | { type: "browser-takeover-resolved"; requestId: string | number; botId: string }
   | { type: "approval"; approval: AgentApproval }
+  | { type: "runtime-snapshot"; snapshot: AgentRuntimeSnapshot }
   | { type: "browser-changed"; tabs: BrowserTab[]; activeTabId: string | null }
   | { type: "browser-control-changed"; state: BrowserControlState }
   | { type: "error"; botId?: string; code: string; message: string };
@@ -1000,6 +1018,8 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
       return (isString(value.requestId) || isNumber(value.requestId)) && isString(value.botId);
     case "approval":
       return isDynamicRecord(value.approval);
+    case "runtime-snapshot":
+      return isAgentRuntimeSnapshot(value.snapshot);
     case "browser-changed":
       return Array.isArray(value.tabs) && (value.activeTabId === null || isString(value.activeTabId));
     case "browser-control-changed":
@@ -1009,6 +1029,45 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
     default:
       return false;
   }
+}
+
+function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
+  if (!isDynamicRecord(value)) return false;
+  return (
+    Array.isArray(value.bots) &&
+    value.bots.every(isDynamicRecord) &&
+    Array.isArray(value.activeTurns) &&
+    value.activeTurns.every(
+      (turn) => isDynamicRecord(turn) && isString(turn.botId) && isString(turn.threadId) && isString(turn.turnId),
+    ) &&
+    Array.isArray(value.queues) &&
+    value.queues.every(isDynamicRecord) &&
+    Array.isArray(value.latestMessages) &&
+    value.latestMessages.every(
+      (message) =>
+        isDynamicRecord(message) &&
+        isString(message.botId) &&
+        isString(message.id) &&
+        isString(message.text) &&
+        isString(message.createdAt),
+    ) &&
+    Array.isArray(value.pendingPrompts) &&
+    value.pendingPrompts.every(
+      (prompt) =>
+        isDynamicRecord(prompt) &&
+        (isString(prompt.requestId) || isNumber(prompt.requestId)) &&
+        isString(prompt.botId) &&
+        isString(prompt.threadId) &&
+        isString(prompt.turnId) &&
+        Array.isArray(prompt.questions),
+    ) &&
+    Array.isArray(value.pendingApprovals) &&
+    value.pendingApprovals.every(isDynamicRecord) &&
+    Array.isArray(value.pendingBrowserTakeovers) &&
+    value.pendingBrowserTakeovers.every(isDynamicRecord) &&
+    Array.isArray(value.failedTurns) &&
+    value.failedTurns.every((turn) => isDynamicRecord(turn) && isString(turn.botId) && isString(turn.turnId))
+  );
 }
 
 function isAgentTurnOrigin(value: unknown): value is AgentTurnOrigin {

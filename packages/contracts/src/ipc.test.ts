@@ -131,6 +131,23 @@ describe("sidebar layout event validation", () => {
   });
 });
 
+describe("runtime snapshot event validation", () => {
+  it("accepts a complete snapshot and rejects malformed collections", () => {
+    const snapshot = {
+      bots: [],
+      activeTurns: [],
+      queues: [],
+      latestMessages: [],
+      pendingPrompts: [],
+      pendingApprovals: [],
+      pendingBrowserTakeovers: [],
+      failedTurns: [],
+    };
+    expect(isAgentEvent({ type: "runtime-snapshot", snapshot })).toBe(true);
+    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, failedTurns: null } })).toBe(false);
+  });
+});
+
 describe("memory event validation", () => {
   it("accepts only a memory event with a bot id", () => {
     expect(isAgentEvent({ type: "memories-changed", botId: "chief" })).toBe(true);

@@ -63,6 +63,7 @@ const webSockets: typeof Ws = requireModule(join(dirname(requireModule.resolve("
 type TeamApiAgentMethods = Pick<
   AgentService,
   | "getStatus"
+  | "getRuntimeSnapshot"
   | "getUsage"
   | "listModels"
   | "listBots"
@@ -1136,6 +1137,7 @@ export class TeamApiServer {
       // Protocol errors, including maxPayload violations, also close the socket.
       // Consume the emitted error so malformed input cannot become an uncaught exception.
     });
+    client.send(JSON.stringify({ type: "runtime-snapshot", snapshot: this.#options.agents.getRuntimeSnapshot() }));
     client.on("message", (data, isBinary) => {
       if (isBinary) {
         client.close(1003, "Text events are required");

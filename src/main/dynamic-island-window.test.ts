@@ -417,7 +417,7 @@ describe("dynamic island window geometry", () => {
     expect(mainWindow.webContents.send).toHaveBeenCalledOnce();
   });
 
-  it("ignores a critical action that does not match the published request", async () => {
+  it("rejects a critical action that does not match the published request", async () => {
     const mainWindow = new FakeWindow(74, { x: 0, y: 0, width: 1200, height: 800 });
     const performCriticalAction = vi.fn(async () => undefined);
     const controller = new DynamicIslandWindowController({
@@ -435,12 +435,14 @@ describe("dynamic island window geometry", () => {
     });
     controller.publish(criticalPresentation("approval", "approval-current"));
 
-    await controller.performAction({
-      type: "approve-attention",
-      serverId: "local",
-      botId: "chief",
-      requestId: "approval-stale",
-    });
+    await expect(
+      controller.performAction({
+        type: "approve-attention",
+        serverId: "local",
+        botId: "chief",
+        requestId: "approval-stale",
+      }),
+    ).rejects.toThrow("no longer active");
 
     expect(performCriticalAction).not.toHaveBeenCalled();
     expect(mainWindow.webContents.send).not.toHaveBeenCalled();

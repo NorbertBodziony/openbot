@@ -105,7 +105,9 @@ export class DynamicIslandWindowController {
     const window = this.#options.getMainWindow();
     if (!window || window.isDestroyed()) return;
     if (action.type === "approve-attention" || action.type === "answer-prompt") {
-      if (!this.matchesCriticalAction(action)) return;
+      if (!this.matchesCriticalAction(action)) {
+        throw new Error("This Dynamic Island request is no longer active.");
+      }
       const key = criticalActionKey(action);
       const existing = this.#criticalActions.get(key);
       if (existing) return existing;

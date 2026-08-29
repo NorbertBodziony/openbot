@@ -1764,7 +1764,6 @@ if (!hasSingleInstanceLock) {
       remoteServers.on("presence", forwardTeamPresence);
       remoteServers.on("directMessage", forwardDirectMessage);
       remoteServers.on("directTyping", forwardDirectTyping);
-      remoteServers.startEventConnections();
       updateService.on("status", forwardUpdateStatus);
       updateService.start();
       const agentInitialization = new AgentInitializationGate(() => service.initialize());
@@ -1793,6 +1792,8 @@ if (!hasSingleInstanceLock) {
         .initialize()
         .catch((error) => console.error("Unable to initialize Dynamic Island:", error));
       await loadRenderer(mainWindow);
+      remoteServers.startEventConnections();
+      remoteServers.replayRuntimeSnapshots();
       const reconcileDynamicIsland = () =>
         void dynamicIslandController
           ?.reconcileWindow()
@@ -1823,7 +1824,7 @@ if (!hasSingleInstanceLock) {
           return;
         }
         mainWindow = createWindow();
-        void loadRenderer(mainWindow);
+        void loadRenderer(mainWindow).then(() => remoteServers.replayRuntimeSnapshots());
       });
     })
     .catch((error) => {

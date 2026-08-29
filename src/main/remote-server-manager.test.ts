@@ -346,6 +346,27 @@ describe("remote event connections", () => {
         "server-1",
         expect.objectContaining({ type: "turn-started", botId: "research" }),
       );
+
+      sockets[2]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "runtime-snapshot",
+            snapshot: {
+              bots: [],
+              activeTurns: [],
+              queues: [],
+              latestMessages: [],
+              pendingPrompts: [],
+              pendingApprovals: [],
+              pendingBrowserTakeovers: [],
+              failedTurns: [],
+            },
+          }),
+        }),
+      );
+      agentEvent.mockClear();
+      manager.replayRuntimeSnapshots();
+      expect(agentEvent).toHaveBeenCalledWith("server-1", expect.objectContaining({ type: "runtime-snapshot" }));
     } finally {
       manager.stop();
       await rm(directory, { recursive: true, force: true });

@@ -52,6 +52,16 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
       events.off(event, listener);
     },
     getStatus: unimplemented,
+    getRuntimeSnapshot: () => ({
+      bots: [],
+      activeTurns: [],
+      queues: [],
+      latestMessages: [],
+      pendingPrompts: [],
+      pendingApprovals: [],
+      pendingBrowserTakeovers: [],
+      failedTurns: [],
+    }),
     getUsage: unimplemented,
     listModels: unimplemented,
     listBots: unimplemented,
@@ -178,12 +188,17 @@ describe("TeamApiServer administration", () => {
         "openbot-events",
         `openbot-token.${member.sessionToken}`,
       ]);
-      const initialPresence = nextJsonEvent(socket);
+      const initialEvents = nextJsonEvents(socket, 2);
       await new Promise<void>((resolve, reject) => {
         socket.addEventListener("open", () => resolve(), { once: true });
         socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
       });
-      await expect(initialPresence).resolves.toMatchObject({ type: "team-presence" });
+      const [initialSnapshot, initialPresence] = await initialEvents;
+      expect(initialSnapshot).toMatchObject({
+        type: "runtime-snapshot",
+        snapshot: { bots: [], activeTurns: [], pendingApprovals: [] },
+      });
+      expect(initialPresence).toMatchObject({ type: "team-presence" });
 
       for (const [index, token] of [owner.sessionToken, admin.sessionToken, member.sessionToken].entries()) {
         const event = nextJsonEvent(socket);
@@ -435,14 +450,16 @@ describe("TeamApiServer administration", () => {
         "openbot-events",
         `openbot-token.${joined.sessionToken}`,
       ]);
-      const initialPresence = nextJsonEvent(socket);
+      const initialEvents = nextJsonEvents(socket, 2);
       await new Promise<void>((resolve, reject) => {
         socket.addEventListener("open", () => resolve(), { once: true });
         socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), {
           once: true,
         });
       });
-      await expect(initialPresence).resolves.toMatchObject({
+      const [initialSnapshot, initialPresence] = await initialEvents;
+      expect(initialSnapshot).toMatchObject({ type: "runtime-snapshot" });
+      expect(initialPresence).toMatchObject({
         type: "team-presence",
         snapshot: {
           members: expect.arrayContaining([
@@ -1329,6 +1346,19 @@ function nextJsonEvent(websocket: WebSocket): Promise<TestRealtimeEvent> {
       (message) => resolve(decodeTestRealtimeEvent(JSON.parse(String(message.data)))),
       { once: true },
     );
+    websocket.addEventListener("error", () => reject(new Error("WebSocket event failed.")), {
+      once: true,
+    });
+  });
+}
+
+function nextJsonEvents(websocket: WebSocket, count: number): Promise<TestRealtimeEvent[]> {
+  return new Promise((resolve, reject) => {
+    const events: TestRealtimeEvent[] = [];
+    websocket.addEventListener("message", (message) => {
+      events.push(decodeTestRealtimeEvent(JSON.parse(String(message.data))));
+      if (events.length === count) resolve(events);
+    });
     websocket.addEventListener("error", () => reject(new Error("WebSocket event failed.")), {
       once: true,
     });

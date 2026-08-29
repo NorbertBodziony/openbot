@@ -155,6 +155,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #eventSockets = new Map<string, WebSocket>();
   #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #eventsEnabled = false;
+  #runtimeSnapshots = new Map<string, Extract<AgentEvent, { type: "runtime-snapshot" }>>();
   #presence = new Map<string, TeamPresenceSnapshot>();
   #writeChain = Promise.resolve();
 
@@ -216,6 +217,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   startEventConnections(): void {
     this.#eventsEnabled = true;
     for (const server of this.#state.servers) this.#ensureEventConnection(server.id);
+  }
+
+  replayRuntimeSnapshots(): void {
+    for (const [serverId, event] of this.#runtimeSnapshots) {
+      this.emit("agent", serverId, structuredClone(event));
+    }
   }
 
   async select(serverId: string): Promise<ServerSummary[]> {
@@ -369,6 +376,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventReconnectTimers.delete(serverId);
     this.#states.delete(serverId);
     this.#eventSockets.delete(serverId);
+    this.#runtimeSnapshots.delete(serverId);
     this.#presence.delete(serverId);
     this.#state.servers = this.#state.servers.filter((server) => server.id !== serverId);
     if (this.#state.activeServerId === serverId) this.#state.activeServerId = "local";
@@ -815,7 +823,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
                 this.emit("directTyping", serverId, event);
               }
             } else if (isAgentEvent(event)) {
-              this.emit("agent", serverId, addRemotePreviewUrls(event, serverId));
+              const remoteEvent = addRemotePreviewUrls(event, serverId);
+              if (remoteEvent.type === "runtime-snapshot") {
+                this.#runtimeSnapshots.set(serverId, structuredClone(remoteEvent));
+              }
+              this.emit("agent", serverId, remoteEvent);
             } else {
               throw new Error("Invalid agent event payload.");
             }
@@ -823,9 +835,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             socket.close(1003, "Invalid event payload");
           }
         });
-        socket.addEventListener("error", () => reject(new Error("Remote events are unavailable.")), {
-          once: true,
-        });
+        socket.addEventListener(
+          "error",
+          () => {
+            socket.close(1011, "Remote events are unavailable");
+            reject(new Error("Remote events are unavailable."));
+          },
+          { once: true },
+        );
         socket.addEventListener(
           "close",
           () => {

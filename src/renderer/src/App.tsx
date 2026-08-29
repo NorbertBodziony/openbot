@@ -4,6 +4,7 @@ import type {
   AgentEvent,
   AgentModelOption,
   AgentProviderId,
+  AgentRuntimeSnapshot,
   AgentStatus,
   AppInfo,
   AppSetupState,
@@ -318,6 +319,7 @@ export function createAppController(props: AppProps = {}) {
   const [appSettingsOpen, setAppSettingsOpen] = createSignal(false);
   const [generalSettings, setGeneralSettings] = createSignal<GeneralSettingsValue>(DEFAULT_GENERAL_SETTINGS);
   const [servers, setServers] = createSignal<ServerSummary[]>([]);
+  const [dynamicIslandLoadedServerId, setDynamicIslandLoadedServerId] = createSignal<string | null>(null);
   const [joinServerOpen, setJoinServerOpen] = createSignal(false);
   const [pendingInviteUrl, setPendingInviteUrl] = createSignal("");
   const [serverSettingsTargetId, setServerSettingsTargetId] = createSignal<string | null>(null);
@@ -733,6 +735,7 @@ export function createAppController(props: AppProps = {}) {
       .then(setServers)
       .catch(() => undefined);
     void initialServerReady.then(() => {
+      const loadingServerId = activeServerSidebarKey();
       void Promise.all([
         window.openbot.agent
           .getStatus()
@@ -756,7 +759,9 @@ export function createAppController(props: AppProps = {}) {
           .listConversationReads()
           .then(applyConversationReads)
           .catch(() => undefined),
-      ]);
+      ]).finally(() => {
+        if (activeServerSidebarKey() === loadingServerId) setDynamicIslandLoadedServerId(loadingServerId);
+      });
       if (!props.landingPreview) {
         const requestedAtRevision = browserChangeRevision;
         void window.openbot.browser
@@ -932,6 +937,9 @@ export function createAppController(props: AppProps = {}) {
           [event.approval.botId]: event.approval,
         }));
         return;
+      case "runtime-snapshot":
+        applyAgentRuntimeSnapshot(event.snapshot);
+        return;
       case "browser-takeover-requested":
         setPendingPrompts((current) => ({
           ...current,
@@ -949,6 +957,41 @@ export function createAppController(props: AppProps = {}) {
       case "error":
         if (event.botId) appendUiError(event.botId, event.message, "Error");
     }
+  }
+
+  function applyAgentRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): void {
+    applyStoredBots(snapshot.bots);
+    setActiveTurns(Object.fromEntries(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])));
+    setQueues(Object.fromEntries(snapshot.queues.map((queue) => [queue.botId, queue])));
+    setPendingPrompts({
+      ...Object.fromEntries(snapshot.pendingPrompts.map((prompt) => [prompt.botId, { type: "prompt", ...prompt }])),
+      ...Object.fromEntries(
+        snapshot.pendingBrowserTakeovers.map((request) => [
+          request.botId,
+          { type: "browser-takeover-requested", request },
+        ]),
+      ),
+    });
+    setPendingApprovals(Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])));
+    setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])));
+    setLiveMessages((current) => {
+      const next = { ...current };
+      for (const message of snapshot.latestMessages) {
+        const messages = next[message.botId] ?? [];
+        if (messages.some((candidate) => candidate.id === message.id)) continue;
+        next[message.botId] = [
+          ...messages,
+          {
+            id: message.id,
+            author: "bot",
+            body: message.text,
+            time: message.createdAt,
+            createdAt: message.createdAt,
+          },
+        ];
+      }
+      return next;
+    });
   }
 
   function applyAgentStatus(status: AgentStatus): void {
@@ -2412,6 +2455,8 @@ export function createAppController(props: AppProps = {}) {
       await disconnectRemoteDesktopWorkspace(false);
     }
     directConversationRequest += 1;
+    const previousDynamicIslandLoadedServerId = dynamicIslandLoadedServerId();
+    setDynamicIslandLoadedServerId(null);
     let nextServers: ServerSummary[];
     try {
       nextServers = await window.openbot.servers.select(serverId);
@@ -2430,8 +2475,10 @@ export function createAppController(props: AppProps = {}) {
           failure_code: "server_select_failed",
         });
       }
+      setDynamicIslandLoadedServerId(previousDynamicIslandLoadedServerId);
       throw error;
     }
+    const dynamicIslandState = dynamicIslandCoordinator.serverState(serverId);
     setServers(nextServers);
     setBotSetupOpen(false);
     setBotSetupError(null);
@@ -2451,8 +2498,11 @@ export function createAppController(props: AppProps = {}) {
     setConversationReads({});
     setConversationWindowModes({});
     setUnreadReplies({});
-    setQueues({});
-    setFailedTurns({});
+    setActiveTurns(dynamicIslandState?.activeTurns ?? {});
+    setQueues(dynamicIslandState?.queues ?? {});
+    setPendingPrompts(dynamicIslandState?.pendingPrompts ?? {});
+    setPendingApprovals(dynamicIslandState?.pendingApprovals ?? {});
+    setFailedTurns(dynamicIslandState?.failedTurns ?? {});
     setTeamPresence(EMPTY_TEAM_PRESENCE);
     const browserRequestedAtRevision = browserChangeRevision;
     const [storedBots, layout, reads, status, models, tabs, controlState, presence] = await Promise.all([
@@ -2476,6 +2526,7 @@ export function createAppController(props: AppProps = {}) {
     setSidebarLayout(layout);
     applyStoredBots(storedBots);
     applyConversationReads(reads);
+    setDynamicIslandLoadedServerId(serverId);
   }
 
   async function openInstalledMarketplaceAgent(bot: BotSummary): Promise<void> {
@@ -2947,15 +2998,21 @@ export function createAppController(props: AppProps = {}) {
   }
 
   createEffect(
-    () => dynamicIslandServerOrder().join("\u0000"),
+    () =>
+      servers()
+        .map((server) => `${server.id}:${server.state}`)
+        .join("\u0000"),
     () => {
-      const serverIds = dynamicIslandServerOrder();
+      const currentServers = servers();
+      const serverIds = currentServers.map((server) => server.id);
       dynamicIslandCoordinator.retainServers(serverIds);
-      for (const serverId of serverIds) {
+      for (const server of currentServers) {
+        if (server.kind === "remote" && server.state !== "online") continue;
         void window.openbot.agent
-          .listBotsForServer(serverId)
+          .listBotsForServer(server.id)
           .then((bots) => {
-            dynamicIslandCoordinator.setBots(serverId, bots);
+            if (!servers().some((candidate) => candidate.id === server.id)) return;
+            dynamicIslandCoordinator.setBots(server.id, bots);
             publishDynamicIslandPresentation();
           })
           .catch(() => undefined);
@@ -2966,8 +3023,10 @@ export function createAppController(props: AppProps = {}) {
   createEffect(
     () => {
       if (props.landingPreview) return null;
+      const serverId = dynamicIslandLoadedServerId();
+      if (!serverId || serverId !== activeServerSidebarKey()) return null;
       return {
-        serverId: activeServerSidebarKey(),
+        serverId,
         bots: botList(),
         activeTurns: activeTurns(),
         queues: queues(),

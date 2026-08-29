@@ -54,6 +54,7 @@ export interface DynamicIslandMessageSource {
 
 export function selectDynamicIslandPresentation(
   presentations: readonly DynamicIslandPresentation[],
+  attentionCount = presentations.reduce((total, presentation) => total + presentationAttentionCount(presentation), 0),
 ): DynamicIslandPresentation {
   const selected = presentations
     .map((presentation, index) => ({ presentation, index }))
@@ -64,11 +65,12 @@ export function selectDynamicIslandPresentation(
     )[0]?.presentation;
   if (!selected) return { serverId: "local", mode: "idle" };
   if (selected.mode !== "approval" && selected.mode !== "question") return selected;
-  const attentionCount = presentations.reduce(
-    (total, presentation) => total + presentationAttentionCount(presentation),
-    0,
-  );
   return { ...selected, remainingCount: Math.max(0, attentionCount - 1) };
+}
+
+export function countDynamicIslandAttention(input: DynamicIslandPresentationInput): number {
+  const visibleBots = input.bots.filter((bot) => bot.notifications);
+  return collectAttention(input, new Map(visibleBots.map((bot) => [bot.id, bot]))).length;
 }
 
 export function createDynamicIslandPresentation(input: DynamicIslandPresentationInput): DynamicIslandPresentation {
