@@ -4735,40 +4735,6 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByText("Run this command?")).not.toBeInTheDocument());
   });
 
-  it("removes a completed Dynamic Island approval without sending it twice", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    await confirmOnboardingModel();
-    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
-    emitAgentEvent?.({
-      type: "approval",
-      approval: {
-        requestId: "approval-island",
-        botId: "chief",
-        threadId: "thread-1",
-        turnId: "turn-1",
-        kind: "command",
-        command: "bun test",
-        cwd: "/workspace",
-        reason: "Run the test suite.",
-        grantRoot: null,
-        permissions: null,
-      },
-    });
-    await screen.findByText("bun test");
-
-    emitDynamicIslandAction?.({
-      type: "approve-attention",
-      serverId: "local",
-      botId: "chief",
-      requestId: "approval-island",
-    });
-
-    await Promise.resolve();
-    expect(window.openbot.agent.respondToApproval).not.toHaveBeenCalled();
-    expect(screen.getByRole("heading", { name: "Chief" })).toBeVisible();
-  });
-
   it("removes a completed Dynamic Island answer without sending it twice", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });

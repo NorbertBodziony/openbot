@@ -115,7 +115,6 @@ export type DynamicIslandAction =
   | { type: "open-message"; serverId: string; botId: string; messageId: string }
   | { type: "open-failure"; serverId: string; botId: string; turnId: string }
   | { type: "review-attention"; serverId: string; botId: string; requestId: string | number }
-  | { type: "approve-attention"; serverId: string; botId: string; requestId: string | number }
   | {
       type: "answer-prompt";
       serverId: string;
@@ -165,7 +164,7 @@ export function isDynamicIslandAction(value: unknown): value is DynamicIslandAct
   if (value.type === "open-bot") return true;
   if (value.type === "open-message") return isShortString(value.messageId, 160);
   if (value.type === "open-failure") return isShortString(value.turnId, 160);
-  if (value.type === "review-attention" || value.type === "approve-attention") {
+  if (value.type === "review-attention") {
     return isDynamicIslandRequestId(value.requestId);
   }
   return (

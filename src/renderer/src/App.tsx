@@ -367,7 +367,7 @@ export function createAppController(props: AppProps = {}) {
   const dynamicIslandCoordinator = new DynamicIslandCoordinator();
   const dynamicIslandConnectedServers = new Set(["local"]);
   let conversationFrame: number | undefined;
-  let dynamicIslandPresentationFrame: number | undefined;
+  let dynamicIslandPresentationScheduled = false;
   let directConversationRequest = 0;
   let serverSettingsRequest = 0;
   let serverSettingsRestoreTarget: HTMLElement | null = null;
@@ -662,7 +662,6 @@ export function createAppController(props: AppProps = {}) {
       unsubscribeRemoteDesktop();
       window.removeEventListener("keydown", handleGlobalSearchShortcut);
       if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
-      if (dynamicIslandPresentationFrame !== undefined) cancelAnimationFrame(dynamicIslandPresentationFrame);
       for (const timer of recentReplyTimers.values()) clearTimeout(timer);
       recentReplyTimers.clear();
       completedTurnByBot.clear();
@@ -964,7 +963,6 @@ export function createAppController(props: AppProps = {}) {
   }
 
   function applyAgentRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): void {
-    applyStoredBots(snapshot.bots);
     setActiveTurns(Object.fromEntries(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])));
     setQueues(Object.fromEntries(snapshot.queues.map((queue) => [queue.botId, queue])));
     setPendingPrompts({
@@ -2998,9 +2996,10 @@ export function createAppController(props: AppProps = {}) {
   }
 
   function publishDynamicIslandPresentation(): void {
-    if (props.landingPreview || dynamicIslandPresentationFrame !== undefined) return;
-    dynamicIslandPresentationFrame = requestAnimationFrame(() => {
-      dynamicIslandPresentationFrame = undefined;
+    if (props.landingPreview || dynamicIslandPresentationScheduled) return;
+    dynamicIslandPresentationScheduled = true;
+    queueMicrotask(() => {
+      dynamicIslandPresentationScheduled = false;
       const presentation = dynamicIslandCoordinator.presentation(dynamicIslandServerOrder());
       void window.openbot.dynamicIsland.publishPresentation(presentation).catch(() => undefined);
     });
@@ -3071,11 +3070,6 @@ export function createAppController(props: AppProps = {}) {
 
   async function handleDynamicIslandAction(action: DynamicIslandAction): Promise<void> {
     if (action.type === "open-app") return;
-    if (action.type === "approve-attention") {
-      dynamicIslandCoordinator.resolveAction(action);
-      publishDynamicIslandPresentation();
-      return;
-    }
     if (action.type === "answer-prompt") {
       dynamicIslandCoordinator.resolveAction(action);
       publishDynamicIslandPresentation();

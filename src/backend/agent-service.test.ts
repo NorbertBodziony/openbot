@@ -153,6 +153,8 @@ describe.sequential("AgentService", () => {
       pendingBrowserTakeovers: [],
       failedTurns: [],
     });
+    expect(service.getRuntimeSnapshot().bots[0]).not.toHaveProperty("workspacePath");
+    expect(service.getRuntimeSnapshot().bots[0]).not.toHaveProperty("description");
   });
 
   it("resolves only regular files inside the shared directory", async () => {

@@ -665,8 +665,9 @@ function isAgentPromptResolution(value: unknown): value is AgentPromptResolution
 function isConversationQuestionPrompt(value: unknown): value is ConversationQuestionPrompt {
   if (!isDynamicRecord(value)) return false;
   return (
-    (isString(value.requestId) || isNumber(value.requestId)) &&
+    isRequestId(value.requestId) &&
     Array.isArray(value.questions) &&
+    value.questions.length <= INPUT_LIMITS.promptQuestions &&
     value.questions.every(isAgentPromptQuestion) &&
     (value.resolution === null || isAgentPromptResolution(value.resolution))
   );
@@ -677,32 +678,80 @@ export function isConversationMessage(value: unknown): value is ConversationMess
   const author = value.author;
   const status = value.status;
   return (
-    isString(value.id) &&
-    isString(value.text) &&
-    isString(value.createdAt) &&
+    isIdentifier(value.id) &&
+    isBoundedString(value.text, INPUT_LIMITS.messageText) &&
+    isBoundedString(value.createdAt, 160) &&
     (author === "user" || author === "assistant" || author === "agent" || author === "system") &&
     (status === "streaming" || status === "completed" || status === "failed" || status === "interrupted") &&
-    (value.turnId === undefined || isString(value.turnId)) &&
-    (value.itemType === undefined || isString(value.itemType)) &&
+    (value.turnId === undefined || isIdentifier(value.turnId)) &&
+    (value.itemType === undefined || isBoundedString(value.itemType, INPUT_LIMITS.identifier)) &&
     (value.source === undefined ||
       value.source === "user" ||
       value.source === "assistant" ||
       value.source === "agent" ||
       value.source === "system" ||
       value.source === "routine") &&
-    (value.senderBotId === undefined || isString(value.senderBotId)) &&
-    (value.replyToMessageId === undefined || value.replyToMessageId === null || isString(value.replyToMessageId)) &&
+    (value.senderBotId === undefined || isIdentifier(value.senderBotId)) &&
+    (value.replyToMessageId === undefined || value.replyToMessageId === null || isIdentifier(value.replyToMessageId)) &&
+    (value.attachments === undefined ||
+      (Array.isArray(value.attachments) &&
+        value.attachments.length <= INPUT_LIMITS.attachments &&
+        value.attachments.every(isAttachmentSummary))) &&
+    (value.delivery === undefined || isConversationDelivery(value.delivery)) &&
+    (value.exchange === undefined || isAgentExchangeSummary(value.exchange)) &&
     (value.reaction === undefined || value.reaction === null || isMessageReaction(value.reaction)) &&
     (value.reactions === undefined ||
-      (Array.isArray(value.reactions) && value.reactions.every(isConversationReaction))) &&
+      (Array.isArray(value.reactions) &&
+        value.reactions.length <= INPUT_LIMITS.teamMembers &&
+        value.reactions.every(isConversationReaction))) &&
     (value.routine === undefined ||
       (isDynamicRecord(value.routine) &&
-        isString(value.routine.routineId) &&
-        isString(value.routine.runId) &&
-        isString(value.routine.name) &&
-        isString(value.routine.scheduledFor))) &&
+        isIdentifier(value.routine.routineId) &&
+        isIdentifier(value.routine.runId) &&
+        isBoundedString(value.routine.name, INPUT_LIMITS.routineName) &&
+        isBoundedString(value.routine.scheduledFor, 160))) &&
     (value.imageGeneration === undefined || isImageGenerationInfo(value.imageGeneration)) &&
     (value.questionPrompt === undefined || isConversationQuestionPrompt(value.questionPrompt))
+  );
+}
+
+function isConversationDelivery(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.id) &&
+    isOneOf(
+      ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"] as const,
+      value.status,
+    ) &&
+    (value.position === null || (isNumber(value.position) && Number.isInteger(value.position) && value.position >= 1))
+  );
+}
+
+function isAgentExchangeSummary(value: unknown): value is AgentExchangeSummary {
+  return (
+    isDynamicRecord(value) &&
+    isOneOf(["incoming", "outgoing"] as const, value.direction) &&
+    isIdentifier(value.messageId) &&
+    isIdentifier(value.senderBotId) &&
+    Array.isArray(value.recipientBotIds) &&
+    value.recipientBotIds.length <= INPUT_LIMITS.messageRecipients &&
+    value.recipientBotIds.every(isIdentifier) &&
+    (value.replyToMessageId === null || isIdentifier(value.replyToMessageId)) &&
+    Array.isArray(value.deliveries) &&
+    value.deliveries.length <= INPUT_LIMITS.messageRecipients &&
+    value.deliveries.every(
+      (delivery) =>
+        isDynamicRecord(delivery) &&
+        isIdentifier(delivery.id) &&
+        isIdentifier(delivery.recipientBotId) &&
+        isOneOf(
+          ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"] as const,
+          delivery.status,
+        ) &&
+        (delivery.position === null ||
+          (isNumber(delivery.position) && Number.isInteger(delivery.position) && delivery.position >= 1)) &&
+        (delivery.error === null || isBoundedString(delivery.error, INPUT_LIMITS.messageText)),
+    )
   );
 }
 
@@ -748,6 +797,23 @@ export interface ConversationSnapshot {
   activeTurnId: string | null;
   revision: number;
   messages: ConversationMessage[];
+}
+
+const CONVERSATION_EVENT_MESSAGES_LIMIT = 10_000;
+
+function isConversationSnapshot(value: unknown): value is ConversationSnapshot {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.botId) &&
+    (value.threadId === null || isIdentifier(value.threadId)) &&
+    (value.activeTurnId === null || isIdentifier(value.activeTurnId)) &&
+    isNumber(value.revision) &&
+    Number.isInteger(value.revision) &&
+    value.revision >= 0 &&
+    Array.isArray(value.messages) &&
+    value.messages.length <= CONVERSATION_EVENT_MESSAGES_LIMIT &&
+    value.messages.every(isConversationMessage)
+  );
 }
 
 export interface ConversationReadState {
@@ -909,7 +975,7 @@ export interface AgentApproval {
 }
 
 export interface AgentRuntimeSnapshot {
-  bots: BotSummary[];
+  bots: AgentRuntimeBotSummary[];
   activeTurns: Array<{ botId: string; threadId: string; turnId: string }>;
   queues: QueueSnapshot[];
   latestMessages: Array<{ botId: string; id: string; text: string; createdAt: string }>;
@@ -923,6 +989,20 @@ export interface AgentRuntimeSnapshot {
   pendingApprovals: AgentApproval[];
   pendingBrowserTakeovers: BrowserTakeoverRequest[];
   failedTurns: Array<{ botId: string; turnId: string }>;
+}
+
+export const AGENT_RUNTIME_TEXT_LIMIT = 600;
+export const AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT = 4;
+
+export interface AgentRuntimeBotSummary {
+  id: string;
+  name: string;
+  notifications: boolean;
+  preview: string;
+  updatedAt: string | null;
+  avatarSeed: string;
+  avatarHue: BotAvatarHue | null;
+  avatarUrl: string | null;
 }
 
 export interface RespondToApprovalInput {
@@ -992,7 +1072,7 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
     case "sidebar-layout-changed":
       return isSidebarLayoutSnapshot(value.layout);
     case "conversation":
-      return isDynamicRecord(value.snapshot);
+      return isConversationSnapshot(value.snapshot);
     case "conversation-delta":
       return (
         isString(value.botId) &&
@@ -1047,7 +1127,7 @@ function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
   return (
     Array.isArray(value.bots) &&
     value.bots.length <= INPUT_LIMITS.agents &&
-    value.bots.every(isBotSummary) &&
+    value.bots.every(isAgentRuntimeBotSummary) &&
     Array.isArray(value.activeTurns) &&
     value.activeTurns.length <= INPUT_LIMITS.agents &&
     value.activeTurns.every(
@@ -1056,7 +1136,7 @@ function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
     ) &&
     Array.isArray(value.queues) &&
     value.queues.length <= INPUT_LIMITS.agents &&
-    value.queues.every(isQueueSnapshot) &&
+    value.queues.every(isRuntimeQueueSnapshot) &&
     Array.isArray(value.latestMessages) &&
     value.latestMessages.length <= INPUT_LIMITS.agents &&
     value.latestMessages.every(
@@ -1064,7 +1144,7 @@ function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
         isDynamicRecord(message) &&
         isIdentifier(message.botId) &&
         isIdentifier(message.id) &&
-        isBoundedString(message.text, 600) &&
+        isBoundedString(message.text, AGENT_RUNTIME_TEXT_LIMIT) &&
         isBoundedString(message.createdAt, 160),
     ) &&
     Array.isArray(value.pendingPrompts) &&
@@ -1079,6 +1159,20 @@ function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
     Array.isArray(value.failedTurns) &&
     value.failedTurns.length <= INPUT_LIMITS.agents &&
     value.failedTurns.every((turn) => isDynamicRecord(turn) && isIdentifier(turn.botId) && isIdentifier(turn.turnId))
+  );
+}
+
+function isAgentRuntimeBotSummary(value: unknown): value is AgentRuntimeBotSummary {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.id) &&
+    isBoundedString(value.name, INPUT_LIMITS.agentName) &&
+    isBoolean(value.notifications) &&
+    isBoundedString(value.preview, AGENT_RUNTIME_TEXT_LIMIT) &&
+    (value.updatedAt === null || isBoundedString(value.updatedAt, 160)) &&
+    isAvatarSeed(value.avatarSeed) &&
+    (value.avatarHue === null || isAvatarHue(value.avatarHue)) &&
+    (value.avatarUrl === null || isBoundedString(value.avatarUrl, INPUT_LIMITS.avatarUrl))
   );
 }
 
@@ -1126,6 +1220,22 @@ function isQueueSnapshot(value: unknown): value is QueueSnapshot {
     isIdentifier(value.botId) &&
     Array.isArray(value.deliveries) &&
     value.deliveries.every(isQueueDelivery)
+  );
+}
+
+function isRuntimeQueueSnapshot(value: unknown): value is QueueSnapshot {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.botId) &&
+    Array.isArray(value.deliveries) &&
+    value.deliveries.length <= AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT &&
+    value.deliveries.every(
+      (delivery) =>
+        isQueueDelivery(delivery) &&
+        delivery.attachments.length === 0 &&
+        delivery.text.length <= AGENT_RUNTIME_TEXT_LIMIT &&
+        (delivery.error === null || delivery.error.length <= AGENT_RUNTIME_TEXT_LIMIT),
+    )
   );
 }
 

@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { isAgentEvent, isAvatarHue, isAvatarSeed, isBotMemory, isConversationMessage, isMessageReaction } from "./ipc";
+import {
+  AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT,
+  AGENT_RUNTIME_TEXT_LIMIT,
+  isAgentEvent,
+  isAvatarHue,
+  isAvatarSeed,
+  isBotMemory,
+  isConversationMessage,
+  isMessageReaction,
+} from "./ipc";
 
 describe("question prompt message validation", () => {
   const message = {
@@ -152,6 +161,53 @@ describe("runtime snapshot event validation", () => {
         type: "runtime-snapshot",
         snapshot: {
           ...snapshot,
+          bots: [
+            {
+              id: "chief",
+              name: "Chief",
+              notifications: true,
+              preview: "x".repeat(AGENT_RUNTIME_TEXT_LIMIT + 1),
+              updatedAt: null,
+              avatarSeed: "chief",
+              avatarHue: null,
+              avatarUrl: null,
+            },
+          ],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isAgentEvent({
+        type: "runtime-snapshot",
+        snapshot: {
+          ...snapshot,
+          queues: [
+            {
+              botId: "chief",
+              deliveries: Array.from({ length: AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT + 1 }, (_, index) => ({
+                id: `delivery-${index}`,
+                messageId: `message-${index}`,
+                recipientBotId: "chief",
+                sender: { kind: "user" },
+                text: "Work",
+                attachments: [],
+                replyToMessageId: null,
+                status: "running",
+                position: null,
+                turnId: `turn-${index}`,
+                error: null,
+                createdAt: "2026-08-29T10:00:00.000Z",
+              })),
+            },
+          ],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isAgentEvent({
+        type: "runtime-snapshot",
+        snapshot: {
+          ...snapshot,
           pendingPrompts: [
             {
               requestId: "prompt-1",
@@ -168,6 +224,30 @@ describe("runtime snapshot event validation", () => {
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, pendingBrowserTakeovers: [{}] } })).toBe(
       false,
     );
+  });
+});
+
+describe("conversation event validation", () => {
+  it("accepts complete snapshots and rejects malformed messages", () => {
+    const snapshot = {
+      botId: "chief",
+      threadId: "thread-1",
+      activeTurnId: null,
+      revision: 1,
+      messages: [
+        {
+          id: "message-1",
+          author: "assistant",
+          text: "Done",
+          createdAt: "2026-08-29T10:00:00.000Z",
+          status: "completed",
+        },
+      ],
+    };
+
+    expect(isAgentEvent({ type: "conversation", snapshot })).toBe(true);
+    expect(isAgentEvent({ type: "conversation", snapshot: {} })).toBe(false);
+    expect(isAgentEvent({ type: "conversation", snapshot: { ...snapshot, messages: [null] } })).toBe(false);
   });
 });
 

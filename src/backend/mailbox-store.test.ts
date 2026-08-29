@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT, AGENT_RUNTIME_TEXT_LIMIT } from "@openbot/contracts/ipc";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MailboxStore } from "./mailbox-store";
 
@@ -22,6 +23,34 @@ afterEach(async () => {
 });
 
 describe("MailboxStore", () => {
+  it("keeps runtime queues small and excludes queued work", async () => {
+    const source = join(root, "runtime.txt");
+    await writeFile(source, "runtime attachment");
+    const [draft] = await store.prepareAttachments([source]);
+    for (let index = 0; index < AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT + 2; index += 1) {
+      const receipt = await store.enqueue({
+        sender: { kind: "user" },
+        recipientBotIds: ["chief"],
+        text: index === 0 ? "x".repeat(AGENT_RUNTIME_TEXT_LIMIT + 100) : `Work ${index}`,
+        draftIds: index === 0 ? [draft.id] : undefined,
+      });
+      const deliveryId = receipt.deliveries[0].id;
+      await store.markStarting(deliveryId);
+      await store.markRunning(deliveryId, `turn-${index}`);
+    }
+    await store.enqueue({ sender: { kind: "user" }, recipientBotIds: ["chief"], text: "Still queued" });
+
+    const runtime = store.listRuntimeQueues(["chief"], new Map())[0];
+
+    expect(runtime.deliveries).toHaveLength(AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT);
+    expect(runtime.deliveries[0]).toMatchObject({
+      text: "x".repeat(AGENT_RUNTIME_TEXT_LIMIT),
+      attachments: [],
+      status: "running",
+    });
+    expect(runtime.deliveries.some((delivery) => delivery.text === "Still queued")).toBe(false);
+  });
+
   it("imports mailbox.json once and keeps a legacy backup", async () => {
     const userData = join(root, "legacy-user-data");
     await mkdir(userData, { recursive: true });

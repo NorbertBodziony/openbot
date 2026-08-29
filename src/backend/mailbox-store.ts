@@ -23,7 +23,11 @@ import type {
   QueuedMessageReceipt,
   QueueSnapshot,
 } from "@openbot/contracts/ipc";
-import { isMessageReaction } from "@openbot/contracts/ipc";
+import {
+  AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT,
+  AGENT_RUNTIME_TEXT_LIMIT,
+  isMessageReaction,
+} from "@openbot/contracts/ipc";
 import { isNumber, isString } from "@openbot/contracts/runtime-values";
 import { OpenBotDatabase } from "./openbot-database";
 import { isRecord } from "./protocol";
@@ -397,19 +401,11 @@ export class MailboxStore {
     const included = this.#state.deliveries.filter((delivery) => {
       if (!targetBotIds.has(delivery.recipientBotId)) return false;
       return (
-        delivery.status === "queued" ||
         delivery.status === "starting" ||
         delivery.status === "running" ||
         (delivery.status === "failed" && delivery.turnId === failedTurns.get(delivery.recipientBotId))
       );
     });
-    const positions = new Map<string, number>();
-    const counts = new Map<string, number>();
-    for (const delivery of included.filter((item) => item.status === "queued").sort(compareQueueOrder)) {
-      const position = (counts.get(delivery.recipientBotId) ?? 0) + 1;
-      counts.set(delivery.recipientBotId, position);
-      positions.set(delivery.id, position);
-    }
     const messageIds = new Set(included.map((delivery) => delivery.messageId));
     const messages = new Map(
       this.#state.messages.filter((message) => messageIds.has(message.id)).map((message) => [message.id, message]),
@@ -419,7 +415,14 @@ export class MailboxStore {
       const message = messages.get(delivery.messageId);
       if (!message) throw new Error(`Mailbox message is missing: ${delivery.messageId}`);
       const items = deliveries.get(delivery.recipientBotId) ?? [];
-      items.push(this.#publicDelivery(delivery, positions, message));
+      if (items.length >= AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT) continue;
+      const publicDelivery = this.#publicDelivery(delivery, new Map(), message);
+      items.push({
+        ...publicDelivery,
+        text: publicDelivery.text.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
+        attachments: [],
+        error: publicDelivery.error?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+      });
       deliveries.set(delivery.recipientBotId, items);
     }
     return botIds.map((botId) => ({ botId, deliveries: deliveries.get(botId) ?? [] }));

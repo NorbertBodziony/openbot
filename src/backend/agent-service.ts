@@ -62,6 +62,7 @@ import type {
   UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
 import {
+  AGENT_RUNTIME_TEXT_LIMIT,
   isImageGenerationAspectRatio,
   isMessageReaction,
   isReasoningEffort,
@@ -421,6 +422,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   getRuntimeSnapshot(): AgentRuntimeSnapshot {
     const bots = this.listBots();
+    const runtimeBots: AgentRuntimeSnapshot["bots"] = bots.map((bot) => ({
+      id: bot.id,
+      name: bot.name,
+      notifications: bot.notifications,
+      preview: bot.preview.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
+      updatedAt: bot.updatedAt,
+      avatarSeed: bot.avatarSeed,
+      avatarHue: bot.avatarHue,
+      avatarUrl: bot.avatarUrl,
+    }));
     const activeTurns: AgentRuntimeSnapshot["activeTurns"] = [];
     const latestMessages: AgentRuntimeSnapshot["latestMessages"] = [];
     for (const bot of bots) {
@@ -441,13 +452,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         latestMessages.push({
           botId: bot.id,
           id: latest.id,
-          text: latest.text.slice(0, 600),
+          text: latest.text.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
           createdAt: latest.createdAt,
         });
       }
     }
     return {
-      bots,
+      bots: runtimeBots,
       activeTurns,
       queues: this.#mailbox.listRuntimeQueues(
         bots.map((bot) => bot.id),

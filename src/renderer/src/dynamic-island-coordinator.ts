@@ -15,7 +15,6 @@ import {
 
 type ServerRuntime = DynamicIslandPresentationInput & {
   seenIncomingMessageIds: Set<string>;
-  resolvedApprovals: Map<string, string>;
   resolvedPrompts: Map<string, string>;
   receivedRuntimeSnapshot: boolean;
 };
@@ -42,15 +41,9 @@ export class DynamicIslandCoordinator {
 
   replaceServer(input: DynamicIslandPresentationInput): void {
     const previous = this.#servers.get(input.serverId);
-    const resolvedApprovals = previous?.resolvedApprovals ?? new Map();
     const resolvedPrompts = previous?.resolvedPrompts ?? new Map();
     const pendingApprovals = { ...input.pendingApprovals };
     const pendingPrompts = { ...input.pendingPrompts };
-    for (const [botId, requestId] of resolvedApprovals) {
-      const approval = pendingApprovals[botId];
-      if (approval && String(approval.requestId) === requestId) pendingApprovals[botId] = undefined;
-      else resolvedApprovals.delete(botId);
-    }
     for (const [botId, requestId] of resolvedPrompts) {
       const prompt = pendingPrompts[botId];
       if (prompt?.type === "prompt" && String(prompt.requestId) === requestId) pendingPrompts[botId] = undefined;
@@ -61,7 +54,6 @@ export class DynamicIslandCoordinator {
       pendingApprovals,
       pendingPrompts,
       seenIncomingMessageIds: previous?.seenIncomingMessageIds ?? new Set(),
-      resolvedApprovals,
       resolvedPrompts,
       receivedRuntimeSnapshot: previous?.receivedRuntimeSnapshot ?? false,
     });
@@ -141,7 +133,6 @@ export class DynamicIslandCoordinator {
         runtime.pendingPrompts[event.botId] = event;
         return;
       case "approval":
-        runtime.resolvedApprovals.delete(event.approval.botId);
         runtime.pendingApprovals[event.approval.botId] = event.approval;
         return;
       case "browser-takeover-requested":
@@ -163,13 +154,6 @@ export class DynamicIslandCoordinator {
     if (action.type === "open-app") return;
     const runtime = this.#servers.get(action.serverId);
     if (!runtime) return;
-    if (action.type === "approve-attention") {
-      const approval = runtime.pendingApprovals[action.botId];
-      if (approval && String(approval.requestId) === String(action.requestId)) {
-        runtime.pendingApprovals[action.botId] = undefined;
-        runtime.resolvedApprovals.set(action.botId, String(action.requestId));
-      }
-    }
     if (action.type === "answer-prompt") {
       const prompt = runtime.pendingPrompts[action.botId];
       if (prompt?.type === "prompt" && String(prompt.requestId) === String(action.requestId)) {
@@ -207,7 +191,6 @@ export class DynamicIslandCoordinator {
       pendingApprovals: {},
       failedTurns: {},
       seenIncomingMessageIds: new Set(),
-      resolvedApprovals: new Map(),
       resolvedPrompts: new Map(),
       receivedRuntimeSnapshot: false,
     };

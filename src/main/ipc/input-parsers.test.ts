@@ -136,19 +136,6 @@ describe("app IPC input parsing", () => {
     });
     expect(
       parseDynamicIslandAction({
-        type: "approve-attention",
-        serverId: "local",
-        botId: "chief",
-        requestId: "approval-1",
-      }),
-    ).toEqual({
-      type: "approve-attention",
-      serverId: "local",
-      botId: "chief",
-      requestId: "approval-1",
-    });
-    expect(
-      parseDynamicIslandAction({
         type: "answer-prompt",
         serverId: "local",
         botId: "chief",

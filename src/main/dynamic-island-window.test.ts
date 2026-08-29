@@ -310,38 +310,6 @@ describe("dynamic island window geometry", () => {
     expect(createWindow).not.toHaveBeenCalled();
   });
 
-  it("rejects direct approval when security-critical details require review", async () => {
-    const mainWindow = new FakeWindow(70, { x: 0, y: 0, width: 1200, height: 800 });
-    const performCriticalAction = vi.fn(async () => undefined);
-    const controller = new DynamicIslandWindowController({
-      platform: "darwin",
-      preferencePath: "/tmp/dynamic-island-preference.json",
-      createWindow: () => {
-        throw new Error("An overlay window is not needed for this test.");
-      },
-      loadWindow: async () => undefined,
-      getDisplays: () => [],
-      // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
-      getMainWindow: () => mainWindow as unknown as BrowserWindow,
-      performHaptic: () => undefined,
-      performCriticalAction,
-    });
-    const action: DynamicIslandAction = {
-      type: "approve-attention",
-      serverId: "local",
-      botId: "chief",
-      requestId: "approval-1",
-    };
-    controller.publish(criticalPresentation("approval", "approval-1"));
-
-    await expect(controller.performAction(action)).rejects.toThrow("reviewed in OpenBot");
-
-    expect(performCriticalAction).not.toHaveBeenCalled();
-    expect(mainWindow.webContents.send).not.toHaveBeenCalled();
-    expect(mainWindow.show).not.toHaveBeenCalled();
-    expect(mainWindow.focus).not.toHaveBeenCalled();
-  });
-
   it("executes and forwards a prompt answer without showing or focusing the main window", async () => {
     const mainWindow = new FakeWindow(71, { x: 0, y: 0, width: 1200, height: 800 });
     // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
