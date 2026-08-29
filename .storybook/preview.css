@@ -636,8 +636,29 @@
 }
 
 .dynamic-island-story-stage-comparison {
+  grid-template-rows: auto 1fr;
   place-items: center;
   padding: var(--openbot-space-4);
+}
+
+.dynamic-island-story-mode-controls {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--openbot-space-2);
+  margin: 0;
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-panel);
+  padding: var(--openbot-space-2);
+}
+
+.dynamic-island-story-mode-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--openbot-border);
 }
 
 .dynamic-island-story-display-grid {

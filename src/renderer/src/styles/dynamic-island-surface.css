@@ -18,6 +18,85 @@ body:has(.dynamic-island-surface),
   user-select: none;
 }
 
+.openbot-dynamic-island-transition-root {
+  display: contents;
+}
+
+.dynamic-island-mode-swap {
+  position: relative;
+  min-width: 0;
+  display: inline-grid;
+  align-items: center;
+}
+
+.dynamic-island-mode-swap-block {
+  width: 100%;
+  display: grid;
+  align-items: stretch;
+}
+
+.dynamic-island-mode-layer {
+  min-width: 0;
+  display: inline-flex;
+  grid-area: 1 / 1;
+  align-items: center;
+  transform-origin: center;
+}
+
+.dynamic-island-mode-swap-block > .dynamic-island-mode-layer {
+  width: 100%;
+  display: block;
+}
+
+.dynamic-island-mode-layer-outgoing {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  pointer-events: none;
+}
+
+.dynamic-island-mode-swap[data-island-mode-slot="compact-leading"] > .dynamic-island-mode-layer-outgoing {
+  right: 0;
+}
+
+.dynamic-island-external
+  .dynamic-island-mode-swap[data-island-mode-slot="compact-leading"]
+  > .dynamic-island-mode-layer-outgoing {
+  right: auto;
+  left: 0;
+}
+
+.dynamic-island-mode-swap[data-island-mode-slot="compact-trailing"] > .dynamic-island-mode-layer-outgoing {
+  left: 0;
+}
+
+.dynamic-island-external
+  .dynamic-island-mode-swap[data-island-mode-slot="compact-trailing"]
+  > .dynamic-island-mode-layer-outgoing {
+  right: 0;
+  left: auto;
+}
+
+.dynamic-island-mode-swap-block > .dynamic-island-mode-layer-outgoing {
+  inset: 0;
+}
+
+.openbot-dynamic-island-transition-root[data-mode-transitioning="true"] .dynamic-island-mode-layer {
+  will-change: opacity, transform;
+}
+
+.openbot-dynamic-island-transition-root[data-mode-transitioning="true"]
+  .dynamic-island-mode-layer[data-island-mode-layer="incoming"] {
+  opacity: 0;
+  transform: scale(0.965);
+}
+
+.openbot-dynamic-island-transition-root[data-mode-transitioning="true"]
+  .dynamic-island-mode-layer[data-island-mode-layer="incoming"]
+  [data-island-motion-content] {
+  filter: blur(4px);
+}
+
 .dynamic-island-surface-anchor {
   width: fit-content;
   height: fit-content;
@@ -48,7 +127,7 @@ body:has(.dynamic-island-surface),
   display: block;
   flex: 0 0 auto;
   font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
-  font-size: 13px;
+  font-size: var(--openbot-text-md);
   line-height: 1;
 }
 
@@ -113,7 +192,7 @@ body:has(.dynamic-island-surface),
   position: absolute;
   top: 50%;
   left: calc(100% + var(--openbot-space-1-5));
-  width: 72px;
+  width: max-content;
   overflow: hidden;
   color: var(--openbot-text-secondary);
   font-size: var(--openbot-text-xs);
@@ -125,34 +204,24 @@ body:has(.dynamic-island-surface),
   transition: opacity var(--openbot-duration-fast) var(--openbot-ease-out);
 }
 
-.dynamic-island-approval:not(.dynamic-island-external) .dynamic-island-surface-compact-name {
-  width: 56px;
+.dynamic-island-surface-status-badge {
+  font-weight: var(--openbot-weight-semibold);
 }
 
-.dynamic-island-message-first .dynamic-island-surface-compact-name {
-  width: 60px;
+.dynamic-island-surface-status-badge-icon {
+  stroke-width: 2.25;
 }
 
 .dynamic-island-surface-question-badge {
   border-color: var(--openbot-question-badge-border);
   background: var(--openbot-question-badge-soft);
   color: var(--openbot-question-badge-text);
-  font-weight: var(--openbot-weight-semibold);
-}
-
-.dynamic-island-surface-question-badge-icon {
-  stroke-width: 2.25;
 }
 
 .dynamic-island-surface-message-badge {
   border-color: var(--openbot-message-badge-border);
   background: var(--openbot-message-badge-soft);
   color: var(--openbot-message-badge-text);
-  font-weight: var(--openbot-weight-semibold);
-}
-
-.dynamic-island-surface-message-badge-icon {
-  stroke-width: 2.25;
 }
 
 .dynamic-island[data-layout-state="expanded"] .dynamic-island-surface-compact-name {
@@ -187,11 +256,6 @@ body:has(.dynamic-island-surface),
   border-color: var(--openbot-approval-badge-border);
   background: var(--openbot-approval-badge-soft);
   color: var(--openbot-warning);
-  font-weight: var(--openbot-weight-semibold);
-}
-
-.dynamic-island-surface-approval-badge-icon {
-  stroke-width: 2.25;
 }
 
 .dynamic-island-surface-content-swap {
@@ -344,12 +408,16 @@ body:has(.dynamic-island-surface),
   gap: var(--openbot-space-3);
 }
 
-.dynamic-island-message-first[data-layout-state="expanded"] .dynamic-island-panel {
-  padding: 14px calc(var(--dynamic-island-shoulder-size) + 18px) 16px;
+.dynamic-island-message-first[data-layout-state="expanded"] .dynamic-island-panel,
+.dynamic-island-message-first .dynamic-island-panel[data-phase="exiting"],
+.dynamic-island-message-first .dynamic-island-panel[data-phase="leaving"] {
+  padding: 14px calc(var(--dynamic-island-expanded-shoulder-size) + 20px) 16px;
 }
 
-.dynamic-island-external.dynamic-island-message-first[data-layout-state="expanded"] .dynamic-island-panel {
-  padding-inline: 18px;
+.dynamic-island-external.dynamic-island-message-first[data-layout-state="expanded"] .dynamic-island-panel,
+.dynamic-island-external.dynamic-island-message-first .dynamic-island-panel[data-phase="exiting"],
+.dynamic-island-external.dynamic-island-message-first .dynamic-island-panel[data-phase="leaving"] {
+  padding-inline: 20px;
 }
 
 .dynamic-island-message-first-summary {
@@ -638,7 +706,7 @@ div.dynamic-island-surface-context-line span {
   align-items: center;
   gap: var(--openbot-space-2);
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--openbot-radius-md);
   background: var(--openbot-question-option-soft);
   padding: 7px 10px;
   color: inherit;
@@ -684,10 +752,10 @@ div.dynamic-island-surface-context-line span {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--openbot-radius-sm);
   background: var(--openbot-question-option-hover);
   color: var(--openbot-question-option);
-  font-size: 10px;
+  font-size: var(--openbot-text-2xs);
   font-weight: var(--openbot-weight-semibold);
   font-variant-numeric: tabular-nums;
   line-height: 1;

@@ -11,6 +11,9 @@ export interface DynamicIslandStoryPreviewContext {
 
 interface DynamicIslandDisplayComparisonProps {
   defaultState?: DynamicIslandViewState;
+  state?: Accessor<DynamicIslandViewState>;
+  onStateChange?: (state: DynamicIslandViewState) => void;
+  controls?: JSX.Element;
   renderIsland: (context: DynamicIslandStoryPreviewContext) => JSX.Element;
 }
 
@@ -21,19 +24,26 @@ export function DynamicIslandDisplayComparison(props: DynamicIslandDisplayCompar
 
   return (
     <main class="dynamic-island-story-stage dynamic-island-story-stage-comparison">
+      {props.controls}
       <div class="dynamic-island-story-display-grid">
         <DisplayPreview title="Built-in display" detail="Physical MacBook notch" label="Built-in display preview">
           {props.renderIsland({
             displayMode: "notch",
-            state: notchState,
-            onStateChange: (next) => setNotchState(next),
+            state: props.state ?? notchState,
+            onStateChange: (next) => {
+              setNotchState(next);
+              props.onStateChange?.(next);
+            },
           })}
         </DisplayPreview>
         <DisplayPreview title="External display" detail="Floating island" label="External display preview" external>
           {props.renderIsland({
             displayMode: "island",
-            state: islandState,
-            onStateChange: (next) => setIslandState(next),
+            state: props.state ?? islandState,
+            onStateChange: (next) => {
+              setIslandState(next);
+              props.onStateChange?.(next);
+            },
           })}
         </DisplayPreview>
       </div>

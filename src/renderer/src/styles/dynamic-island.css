@@ -8,6 +8,8 @@
   --dynamic-island-shoulder-size: 6px;
   --dynamic-island-expanded-shoulder-size: 19px;
   --dynamic-island-bottom-radius: 14px;
+  --dynamic-island-external-compact-radius: 16px;
+  --dynamic-island-external-expanded-radius: 24px;
   --dynamic-island-shared-duration: 180ms;
   --dynamic-island-shared-ease: cubic-bezier(0.22, 1, 0.36, 1);
   position: relative;
@@ -181,7 +183,7 @@
   padding-left: var(--openbot-space-2);
 }
 
-.dynamic-island:not(.dynamic-island-external):not(.dynamic-island-question) .dynamic-island-ear-leading {
+.dynamic-island:not(.dynamic-island-external):not(.dynamic-island-status) .dynamic-island-ear-leading {
   padding-right: 6px;
 }
 
@@ -208,7 +210,7 @@
   transform-origin: center;
 }
 
-.dynamic-island-question .dynamic-island-hover-leading {
+.dynamic-island-status .dynamic-island-hover-leading {
   width: 100%;
 }
 
@@ -241,14 +243,14 @@
   transform: translateY(0) scale(1);
 }
 
-.dynamic-island-question .dynamic-island-trailing-compact {
+.dynamic-island-status .dynamic-island-trailing-compact {
   right: auto;
   left: 0;
   justify-content: flex-start;
   transform-origin: left center;
 }
 
-.dynamic-island-external.dynamic-island-question .dynamic-island-trailing-compact {
+.dynamic-island-external.dynamic-island-status .dynamic-island-trailing-compact {
   right: 0;
   left: auto;
   justify-content: flex-end;
@@ -323,8 +325,8 @@
 .dynamic-island[data-content-motion="spring"] .dynamic-island-ear-content {
   transition:
     color var(--openbot-duration-normal) var(--openbot-ease-out),
-    opacity 340ms cubic-bezier(0.22, 1.08, 0.36, 1),
-    transform 340ms cubic-bezier(0.22, 1.08, 0.36, 1);
+    opacity var(--openbot-duration-island-content) cubic-bezier(0.22, 1.08, 0.36, 1),
+    transform var(--openbot-duration-island-content) cubic-bezier(0.22, 1.08, 0.36, 1);
 }
 
 .dynamic-island[data-content-motion="spring"][data-shared-leading="true"]
@@ -334,7 +336,7 @@
   filter: none;
   transition:
     color var(--openbot-duration-normal) var(--openbot-ease-out),
-    opacity 220ms var(--dynamic-island-shared-ease);
+    opacity var(--openbot-duration-island-content-exit) var(--dynamic-island-shared-ease);
 }
 
 .dynamic-island[data-content-motion="spring"]:not([data-shared-leading="true"])[data-layout-state="expanded"]
@@ -343,7 +345,9 @@
   opacity: 0;
   filter: none;
   transform: scale(0.92);
-  transition-duration: var(--openbot-duration-normal), 220ms, 220ms;
+  transition-duration:
+    var(--openbot-duration-normal), var(--openbot-duration-island-content-exit),
+    var(--openbot-duration-island-content-exit);
   transition-timing-function:
     var(--openbot-ease-out), var(--dynamic-island-shared-ease), var(--dynamic-island-shared-ease);
 }
@@ -353,8 +357,8 @@
   filter: none;
   transform: scale(1);
   transition:
-    opacity 340ms cubic-bezier(0.22, 1.08, 0.36, 1),
-    transform 340ms cubic-bezier(0.22, 1.08, 0.36, 1);
+    opacity var(--openbot-duration-island-content) cubic-bezier(0.22, 1.08, 0.36, 1),
+    transform var(--openbot-duration-island-content) cubic-bezier(0.22, 1.08, 0.36, 1);
 }
 
 .dynamic-island[data-content-motion="spring"][data-layout-state="expanded"]
@@ -369,50 +373,36 @@
   opacity: 0;
   filter: none;
   transform: scale(0.92);
-  transition-duration: 220ms;
+  transition-duration: var(--openbot-duration-island-content-exit);
   transition-timing-function: var(--dynamic-island-shared-ease);
 }
 
-.dynamic-island-question[data-content-motion="spring"] .dynamic-island-trailing-compact {
+.dynamic-island-status[data-content-motion="spring"] .dynamic-island-trailing-compact {
   transform: scale(1);
-  transition: opacity 340ms var(--dynamic-island-shared-ease);
+  transition: opacity var(--openbot-duration-island-content) var(--dynamic-island-shared-ease);
 }
 
-.dynamic-island-question[data-content-motion="spring"][data-layout-state="expanded"] .dynamic-island-trailing-compact {
+.dynamic-island-status[data-content-motion="spring"][data-layout-state="expanded"] .dynamic-island-trailing-compact {
   opacity: 0;
   transform: scale(1);
 }
 
-.dynamic-island-question .dynamic-island-trailing-content {
+.dynamic-island-status .dynamic-island-trailing-content {
   transform-origin: left center;
 }
 
-.dynamic-island-external.dynamic-island-question .dynamic-island-trailing-content {
-  transform-origin: right center;
+.dynamic-island-status .dynamic-island-trailing-compact,
+.dynamic-island-status .dynamic-island-hover-trailing,
+.dynamic-island-status .dynamic-island-mode-swap[data-island-mode-slot="compact-trailing"] {
+  width: max-content;
 }
 
-.dynamic-island-compact-wide {
-  --dynamic-island-compact-width: 424px;
+.dynamic-island-external.dynamic-island-status .dynamic-island-trailing-content {
+  transform-origin: right center;
 }
 
 .dynamic-island-panel-wide {
   --dynamic-island-expanded-width: 590px;
-}
-
-.dynamic-island-message-first {
-  --dynamic-island-compact-width: 388px;
-}
-
-.dynamic-island-message-first .dynamic-island-trailing-content {
-  width: 80px;
-}
-
-.dynamic-island-approval {
-  --dynamic-island-compact-width: 380px;
-}
-
-.dynamic-island-approval .dynamic-island-trailing-content {
-  width: 78px;
 }
 
 .dynamic-island-idle .dynamic-island-ear-trailing {
@@ -431,13 +421,27 @@
   transform: translateX(-50%);
 }
 
-.dynamic-island:is(.dynamic-island-question, .dynamic-island-message-first, .dynamic-island-approval):not(
-    .dynamic-island-external
-  )
-  .dynamic-island-ear-leading {
+.dynamic-island-status:not(.dynamic-island-external) .dynamic-island-ear-leading {
   justify-content: flex-start;
   padding-right: 0;
   padding-left: 12px;
+}
+
+.dynamic-island-status:not(.dynamic-island-external) .dynamic-island-ear-trailing {
+  justify-content: flex-end;
+  padding-right: 12px;
+  padding-left: 0;
+}
+
+.dynamic-island-status:not(.dynamic-island-external) .dynamic-island-trailing-compact {
+  right: 0;
+  left: auto;
+  justify-content: flex-end;
+  transform-origin: right center;
+}
+
+.dynamic-island-status:not(.dynamic-island-external) .dynamic-island-trailing-content {
+  transform-origin: right center;
 }
 
 .dynamic-island-approval[data-layout-state="expanded"] .dynamic-island-panel,
@@ -490,7 +494,7 @@
 }
 
 .dynamic-island-external .dynamic-island-silhouette {
-  border-radius: 16px;
+  border-radius: var(--dynamic-island-external-compact-radius);
   background: var(--openbot-bg-notch);
   box-shadow: inset 0 -1px 0 var(--openbot-shadow-ring);
 }
@@ -500,7 +504,7 @@
 }
 
 .dynamic-island-external[data-layout-state="expanded"] .dynamic-island-silhouette {
-  border-radius: 24px;
+  border-radius: var(--dynamic-island-external-expanded-radius);
 }
 
 .dynamic-island-external.dynamic-island-idle::before {
@@ -523,59 +527,28 @@
   padding-right: 0;
 }
 
-.dynamic-island-external.dynamic-island-question .dynamic-island-ear-leading {
-  left: 0;
-}
-
 .dynamic-island-external .dynamic-island-ear-trailing {
   justify-content: flex-end;
   padding-left: 0;
-}
-
-.dynamic-island-external.dynamic-island-compact-wide {
-  --dynamic-island-compact-width: 280px;
-}
-
-.dynamic-island-external.dynamic-island-message-first {
-  --dynamic-island-compact-width: 212px;
-}
-
-.dynamic-island-external.dynamic-island-message-first .dynamic-island-toggle {
-  padding-inline: 8px;
-}
-
-.dynamic-island-external.dynamic-island-message-first .dynamic-island-ear-leading {
-  left: 0;
-}
-
-.dynamic-island-external.dynamic-island-approval {
-  --dynamic-island-compact-width: 212px;
-}
-
-.dynamic-island-external.dynamic-island-approval .dynamic-island-toggle {
-  padding-inline: 8px;
-}
-
-.dynamic-island-external.dynamic-island-approval .dynamic-island-ear-leading {
-  left: 0;
 }
 
 .dynamic-island-external.dynamic-island-panel-wide {
   --dynamic-island-expanded-width: 552px;
 }
 
-.dynamic-island-external.dynamic-island-question .dynamic-island-ear-leading {
+.dynamic-island-external.dynamic-island-status .dynamic-island-ear-leading {
+  left: 0;
   justify-content: flex-start;
   padding-right: 0;
   padding-left: 0;
 }
 
-.dynamic-island-external.dynamic-island-question .dynamic-island-toggle {
+.dynamic-island-external.dynamic-island-status .dynamic-island-toggle {
   padding-left: 8px;
   padding-right: 8px;
 }
 
-.dynamic-island-external.dynamic-island-question .dynamic-island-trailing-expanded {
+.dynamic-island-external.dynamic-island-status .dynamic-island-trailing-expanded {
   display: none;
 }
 

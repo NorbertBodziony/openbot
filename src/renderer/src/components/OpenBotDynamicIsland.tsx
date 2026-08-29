@@ -6,16 +6,29 @@ import type {
   DynamicIslandPresentation,
 } from "@openbot/contracts/ipc";
 import { Dynamic, type JSX } from "@solidjs/web";
-import { Check, MessageCircle, MessageCircleQuestionMark } from "lucide-solid";
-import { createEffect, createMemo, createSignal, For, Match, onCleanup, onSettled, Show, Switch } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  Match,
+  onCleanup,
+  onSettled,
+  Show,
+  Switch,
+  untrack,
+} from "solid-js";
 import { AgentAvatar } from "./AgentAvatar";
 import {
   Badge,
   Button,
+  Check,
   DynamicIsland,
   type DynamicIslandHoverContentMotion,
   type DynamicIslandStateChangeReason,
   type DynamicIslandViewState,
+  MessageCircle,
+  MessageCircleQuestionMark,
 } from "./ui";
 
 export interface OpenBotDynamicIslandProps {
@@ -45,6 +58,24 @@ const OPENBOT_COMPACT_HOVER_MOTION = {
 const QUESTION_PROGRESS_DURATION = 300;
 const QUESTION_PROGRESS_BLUR = 2;
 const COMPACT_LEADING_SIZE = 20;
+const MODE_SWAP_EXIT_DURATION = 160;
+const MODE_SWAP_ENTER_DELAY = 40;
+const MODE_SWAP_ENTER_DURATION = 240;
+const MODE_SWAP_REDUCED_DURATION = 120;
+const MODE_SWAP_BLUR = 4;
+const MODE_SWAP_OUTGOING_SCALE = 0.985;
+const MODE_SWAP_INCOMING_SCALE = 0.965;
+const MODE_SWAP_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
+const STATUS_COMPACT_BASE_WIDTH = { notch: 412, island: 280 } as const;
+const STATUS_COMPACT_NOTCH_WIDTH = 192;
+const STATUS_COMPACT_AVATAR_WIDTH = 20;
+const STATUS_COMPACT_IDENTITY_GAP = 6;
+const STATUS_COMPACT_NOTCH_EDGE_PADDING = 12;
+const STATUS_COMPACT_ISLAND_INLINE_PADDING = 8;
+const STATUS_COMPACT_BADGE_CHROME_WIDTH = 32;
+const STATUS_COMPACT_NOTCH_MIN_WIDTH = 360;
+const STATUS_COMPACT_ISLAND_MIN_WIDTH = 212;
+const STATUS_COMPACT_NAME_MAX_WIDTH = { notch: 72, island: 96 } as const;
 
 interface OpenBotDynamicIslandFrameProps {
   label: string;
@@ -54,7 +85,7 @@ interface OpenBotDynamicIslandFrameProps {
   compactLeading: JSX.Element;
   compactTrailing: JSX.Element;
   expandedContent: JSX.Element;
-  compactWidth?: "standard" | "wide";
+  compactWidth?: number;
   panelWidth?: "standard" | "wide";
   sharedLeading?: SharedLeadingMotion;
   sharedTrailing?: SharedLeadingMotion;
@@ -69,32 +100,300 @@ interface SharedLeadingMotion {
   island: { x: number; y: number; scale: number };
 }
 
+interface StatusCompactGeometry {
+  notch: { width: number };
+  island: { width: number };
+}
+
+type IslandModeSwapSlot = "compact-leading" | "compact-trailing" | "expanded";
+
+interface CapturedModeLayerState {
+  opacity: number;
+  scale: number;
+  contentBlurs: number[];
+}
+
+interface IslandModeSwapProps {
+  slot: IslandModeSwapSlot;
+  presentation: DynamicIslandPresentation;
+  outgoingPresentation: DynamicIslandPresentation | undefined;
+  block?: boolean;
+  render: (presentation: DynamicIslandPresentation) => JSX.Element;
+}
+
+type StatusMode = Extract<DynamicIslandPresentation["mode"], "message" | "question" | "approval">;
+
+interface OpenBotIslandModeConfig {
+  label: string;
+  tone: OpenBotDynamicIslandFrameProps["tone"];
+  className: string;
+  panelWidth: NonNullable<OpenBotDynamicIslandFrameProps["panelWidth"]>;
+  sharedLeading?: SharedLeadingMotion;
+  sharedTrailing?: SharedLeadingMotion;
+  autoExpand: boolean;
+  status: boolean;
+}
+
 const WORKING_SHARED_LEADING: SharedLeadingMotion = {
   notch: { x: -58, y: 76, scale: 32 / COMPACT_LEADING_SIZE },
   island: { x: -86, y: 76, scale: 32 / COMPACT_LEADING_SIZE },
 };
 
 const QUESTION_SHARED_LEADING: SharedLeadingMotion = {
-  notch: { x: -48.5, y: 49.5, scale: 35 / COMPACT_LEADING_SIZE },
+  notch: { x: -54.5, y: 49.5, scale: 35 / COMPACT_LEADING_SIZE },
   island: { x: -115, y: 51, scale: 38 / COMPACT_LEADING_SIZE },
 };
 
-const QUESTION_SHARED_TRAILING: SharedLeadingMotion = {
+const STATUS_SHARED_TRAILING: SharedLeadingMotion = {
   notch: { x: 33.75, y: 49.5, scale: 1.08 },
   island: { x: 124, y: 51, scale: 1.08 },
 };
 
-const MESSAGE_SHARED_LEADING: SharedLeadingMotion = {
-  notch: { x: -68.5, y: 49.5, scale: 35 / COMPACT_LEADING_SIZE },
-  island: { x: -151, y: 51, scale: 38 / COMPACT_LEADING_SIZE },
+const APPROVAL_SHARED_LEADING: SharedLeadingMotion = {
+  notch: { x: -58.5, y: 43.5, scale: 35 / COMPACT_LEADING_SIZE },
+  island: { x: -119, y: 41, scale: 38 / COMPACT_LEADING_SIZE },
 };
 
-const APPROVAL_SHARED_LEADING: SharedLeadingMotion = {
-  notch: { x: 10.5, y: 43.5, scale: 35 / COMPACT_LEADING_SIZE },
-  island: { x: -87, y: 41, scale: 38 / COMPACT_LEADING_SIZE },
+const OPENBOT_ISLAND_MODE_CONFIG: Record<DynamicIslandPresentation["mode"], OpenBotIslandModeConfig> = {
+  idle: {
+    label: "Open OpenBot",
+    tone: "neutral",
+    className: "dynamic-island-idle",
+    panelWidth: "standard",
+    autoExpand: false,
+    status: false,
+  },
+  working: {
+    label: "OpenBot working status",
+    tone: "working",
+    className: "dynamic-island-working",
+    panelWidth: "standard",
+    sharedLeading: WORKING_SHARED_LEADING,
+    autoExpand: true,
+    status: false,
+  },
+  message: {
+    label: "OpenBot chat update",
+    tone: "neutral",
+    className: "dynamic-island-message-first",
+    panelWidth: "wide",
+    sharedLeading: QUESTION_SHARED_LEADING,
+    sharedTrailing: STATUS_SHARED_TRAILING,
+    autoExpand: true,
+    status: true,
+  },
+  question: {
+    label: "OpenBot question from AI",
+    tone: "neutral",
+    className: "dynamic-island-question",
+    panelWidth: "wide",
+    sharedLeading: QUESTION_SHARED_LEADING,
+    sharedTrailing: STATUS_SHARED_TRAILING,
+    autoExpand: true,
+    status: true,
+  },
+  approval: {
+    label: "OpenBot approval request",
+    tone: "attention",
+    className: "dynamic-island-approval",
+    panelWidth: "wide",
+    sharedLeading: APPROVAL_SHARED_LEADING,
+    sharedTrailing: STATUS_SHARED_TRAILING,
+    autoExpand: true,
+    status: true,
+  },
 };
+
+const STATUS_BADGE_CONFIG = {
+  message: {
+    label: "Message",
+    variant: "info-light",
+    icon: MessageCircle,
+    className: "dynamic-island-surface-message-badge",
+  },
+  question: {
+    label: "Questions",
+    variant: "info-light",
+    icon: MessageCircleQuestionMark,
+    className: "dynamic-island-surface-question-badge",
+  },
+  approval: {
+    label: "Approve",
+    variant: "warning-light",
+    icon: Check,
+    className: "dynamic-island-surface-approval-badge",
+  },
+} as const;
+
+function compactStatusGeometry(presentation: DynamicIslandPresentation): StatusCompactGeometry | undefined {
+  const mode = statusMode(presentation.mode);
+  const bot = compactStatusBot(presentation);
+  if (!mode || !bot) return undefined;
+
+  const badgeLabel = STATUS_BADGE_CONFIG[mode].label;
+  const badgeWidth = Math.ceil(
+    measureCompactText(badgeLabel, varFontWeight("semibold")) + STATUS_COMPACT_BADGE_CHROME_WIDTH,
+  );
+  const notchNameWidth = Math.min(
+    STATUS_COMPACT_NAME_MAX_WIDTH.notch,
+    Math.ceil(measureCompactText(bot.name, varFontWeight("medium"))),
+  );
+  const islandNameWidth = Math.min(
+    STATUS_COMPACT_NAME_MAX_WIDTH.island,
+    Math.ceil(measureCompactText(bot.name, varFontWeight("medium"))),
+  );
+  const notchLeadingWidth =
+    STATUS_COMPACT_NOTCH_EDGE_PADDING + STATUS_COMPACT_AVATAR_WIDTH + STATUS_COMPACT_IDENTITY_GAP + notchNameWidth;
+  const notchTrailingWidth = STATUS_COMPACT_NOTCH_EDGE_PADDING + badgeWidth;
+  const notchWidth = clampCompactWidth(
+    STATUS_COMPACT_NOTCH_WIDTH + 2 * Math.max(notchLeadingWidth, notchTrailingWidth),
+    STATUS_COMPACT_NOTCH_MIN_WIDTH,
+    STATUS_COMPACT_BASE_WIDTH.notch,
+  );
+  const islandSideWidth = Math.max(
+    STATUS_COMPACT_AVATAR_WIDTH + STATUS_COMPACT_IDENTITY_GAP + islandNameWidth,
+    badgeWidth,
+  );
+  const islandWidth = clampCompactWidth(
+    STATUS_COMPACT_ISLAND_INLINE_PADDING * 2 + islandSideWidth * 2,
+    STATUS_COMPACT_ISLAND_MIN_WIDTH,
+    STATUS_COMPACT_BASE_WIDTH.island,
+  );
+
+  return { notch: { width: notchWidth }, island: { width: islandWidth } };
+}
+
+function adjustSharedMotion(
+  motion: SharedLeadingMotion,
+  geometry: StatusCompactGeometry,
+  side: "leading" | "trailing",
+): SharedLeadingMotion {
+  const direction = side === "leading" ? -1 : 1;
+  return {
+    notch: {
+      ...motion.notch,
+      x: motion.notch.x + direction * ((STATUS_COMPACT_BASE_WIDTH.notch - geometry.notch.width) / 2),
+    },
+    island: {
+      ...motion.island,
+      x: motion.island.x + direction * ((STATUS_COMPACT_BASE_WIDTH.island - geometry.island.width) / 2),
+    },
+  };
+}
+
+function clampCompactWidth(width: number, minimum: number, maximum: number): number {
+  const evenWidth = Math.ceil(width / 2) * 2;
+  return Math.min(maximum, Math.max(minimum, evenWidth));
+}
+
+function measureCompactText(text: string, weight: number): number {
+  const hasCanvas = !navigator.userAgent.includes("jsdom");
+  if (hasCanvas) {
+    try {
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      if (context) {
+        context.font = `${weight} 11px Inter, -apple-system, BlinkMacSystemFont, sans-serif`;
+        return context.measureText(text).width;
+      }
+    } catch {
+      // Test renderers can omit the Canvas 2D context. The estimate below keeps geometry deterministic.
+    }
+  }
+  return Array.from(text).reduce((width, character) => {
+    if (character === " ") return width + 3;
+    if (/[ilI1.,'`]/.test(character)) return width + 3.5;
+    if (/[mwMW@%]/.test(character)) return width + 8.5;
+    return width + 6;
+  }, 0);
+}
+
+function varFontWeight(weight: "medium" | "semibold"): 500 | 600 {
+  return weight === "semibold" ? 600 : 500;
+}
 
 export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Element {
+  const config = () => OPENBOT_ISLAND_MODE_CONFIG[props.presentation.mode];
+  const [visiblePresentation, setVisiblePresentation] = createSignal(untrack(() => props.presentation));
+  const [outgoingPresentation, setOutgoingPresentation] = createSignal<DynamicIslandPresentation>();
+  const [modeTransitioning, setModeTransitioning] = createSignal(false);
+  let transitionRoot: HTMLDivElement | undefined;
+  let modeAnimations: Animation[] = [];
+  let modeTransitionVersion = 0;
+  let modeTransitionFrame: number | undefined;
+  let modeTransitionDisposed = false;
+  const compactGeometry = createMemo(() => compactStatusGeometry(visiblePresentation()));
+  const compactWidth = () => {
+    const geometry = compactGeometry();
+    if (!geometry) return undefined;
+    return props.displayMode === "island" ? geometry.island.width : geometry.notch.width;
+  };
+  const compactNameMaxWidth = () =>
+    props.displayMode === "island" ? STATUS_COMPACT_NAME_MAX_WIDTH.island : STATUS_COMPACT_NAME_MAX_WIDTH.notch;
+  const sharedLeading = createMemo(() => {
+    const motion = config().sharedLeading;
+    const geometry = compactGeometry();
+    if (!motion || !geometry || !config().status) return motion;
+    return adjustSharedMotion(motion, geometry, "leading");
+  });
+  const sharedTrailing = createMemo(() => {
+    const motion = config().sharedTrailing;
+    const geometry = compactGeometry();
+    if (!motion || !geometry || !config().status) return motion;
+    return adjustSharedMotion(motion, geometry, "trailing");
+  });
+
+  createEffect(
+    () => ({ nextPresentation: props.presentation, currentPresentation: visiblePresentation() }),
+    ({ nextPresentation, currentPresentation }) => {
+      if (nextPresentation.mode === currentPresentation.mode) {
+        setVisiblePresentation(nextPresentation);
+        return;
+      }
+
+      const capturedLayers = captureModeLayerStates(transitionRoot);
+      restoreModeTransitionFocus(transitionRoot);
+      cancelModeTransition();
+      const transitionVersion = ++modeTransitionVersion;
+      setOutgoingPresentation(currentPresentation);
+      setVisiblePresentation(nextPresentation);
+      setModeTransitioning(true);
+
+      modeTransitionFrame = requestAnimationFrame(() => {
+        modeTransitionFrame = undefined;
+        if (modeTransitionDisposed || transitionVersion !== modeTransitionVersion) return;
+        modeAnimations = animateModeLayers(transitionRoot, capturedLayers, prefersReducedMotion());
+        if (modeAnimations.length === 0) {
+          finishModeTransition(transitionVersion);
+          return;
+        }
+        void waitForAnimations(modeAnimations).then(() => finishModeTransition(transitionVersion));
+      });
+    },
+  );
+
+  function cancelModeTransition(): void {
+    if (modeTransitionFrame !== undefined) {
+      cancelAnimationFrame(modeTransitionFrame);
+      modeTransitionFrame = undefined;
+    }
+    for (const animation of modeAnimations) animation.cancel();
+    modeAnimations = [];
+  }
+
+  function finishModeTransition(version: number): void {
+    if (modeTransitionDisposed || version !== modeTransitionVersion) return;
+    cancelModeTransition();
+    setOutgoingPresentation(undefined);
+    setModeTransitioning(false);
+  }
+
+  onCleanup(() => {
+    modeTransitionDisposed = true;
+    modeTransitionVersion += 1;
+    cancelModeTransition();
+  });
+
   function changeState(next: DynamicIslandViewState, reason: DynamicIslandStateChangeReason): void {
     if (props.presentation.mode === "idle" && next === "expanded") {
       void props.onAction({ type: "open-app" });
@@ -104,61 +403,98 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
   }
 
   return (
-    <OpenBotDynamicIslandFrame
-      label={`${labelForMode(props.presentation.mode)}${props.displayMode === "island" ? " on external display" : ""}`}
-      tone={
-        props.presentation.mode === "approval"
-          ? "attention"
-          : props.presentation.mode === "working"
-            ? "working"
-            : "neutral"
-      }
-      state={props.state}
-      displayMode={props.displayMode}
-      onStateChange={changeState}
-      compactWidth={props.presentation.mode === "question" ? "wide" : "standard"}
-      panelWidth={props.presentation.mode === "question" || props.presentation.mode === "message" ? "wide" : "standard"}
-      sharedLeading={
-        props.presentation.mode === "working"
-          ? WORKING_SHARED_LEADING
-          : props.presentation.mode === "message"
-            ? MESSAGE_SHARED_LEADING
-            : props.presentation.mode === "question"
-              ? QUESTION_SHARED_LEADING
-              : props.presentation.mode === "approval"
-                ? APPROVAL_SHARED_LEADING
-                : undefined
-      }
-      sharedTrailing={props.presentation.mode === "question" ? QUESTION_SHARED_TRAILING : undefined}
-      autoExpand={props.presentation.mode !== "idle"}
-      hoverContentMotion={OPENBOT_COMPACT_HOVER_MOTION}
-      class={
-        props.presentation.mode === "question"
-          ? "dynamic-island-question"
-          : props.presentation.mode === "idle"
-            ? "dynamic-island-idle"
-            : props.presentation.mode === "message"
-              ? "dynamic-island-message-first"
-              : props.presentation.mode === "working"
-                ? "dynamic-island-working"
-                : props.presentation.mode === "approval"
-                  ? "dynamic-island-approval"
-                  : undefined
-      }
-      compactLeading={<CompactLeading presentation={props.presentation} />}
-      compactTrailing={<CompactTrailing presentation={props.presentation} />}
-      expandedContent={
-        <ExpandedContent
-          presentation={props.presentation}
-          displayMode={props.displayMode}
-          onAction={props.onAction}
-          onLater={() => {
-            props.onLater();
-            props.onStateChange("compact", "pointer");
-          }}
-        />
-      }
-    />
+    <div
+      ref={transitionRoot}
+      class="openbot-dynamic-island-transition-root"
+      data-mode-transitioning={modeTransitioning() ? "true" : undefined}
+    >
+      <OpenBotDynamicIslandFrame
+        label={`${config().label}${props.displayMode === "island" ? " on external display" : ""}`}
+        tone={config().tone}
+        state={props.state}
+        displayMode={props.displayMode}
+        onStateChange={changeState}
+        compactWidth={compactWidth()}
+        panelWidth={config().panelWidth}
+        sharedLeading={sharedLeading()}
+        sharedTrailing={sharedTrailing()}
+        autoExpand={config().autoExpand}
+        hoverContentMotion={OPENBOT_COMPACT_HOVER_MOTION}
+        class={[config().className, config().status ? "dynamic-island-status" : undefined].filter(Boolean).join(" ")}
+        compactLeading={
+          <IslandModeSwap
+            slot="compact-leading"
+            presentation={visiblePresentation()}
+            outgoingPresentation={outgoingPresentation()}
+            render={(presentation) => (
+              <CompactLeading presentation={presentation} nameMaxWidth={compactNameMaxWidth()} />
+            )}
+          />
+        }
+        compactTrailing={
+          <IslandModeSwap
+            slot="compact-trailing"
+            presentation={visiblePresentation()}
+            outgoingPresentation={outgoingPresentation()}
+            render={(presentation) => <CompactTrailing presentation={presentation} />}
+          />
+        }
+        expandedContent={
+          <IslandModeSwap
+            slot="expanded"
+            presentation={visiblePresentation()}
+            outgoingPresentation={outgoingPresentation()}
+            block
+            render={(presentation) => (
+              <ExpandedContent
+                presentation={presentation}
+                displayMode={props.displayMode}
+                onAction={props.onAction}
+                onLater={() => {
+                  props.onLater();
+                  props.onStateChange("compact", "pointer");
+                }}
+              />
+            )}
+          />
+        }
+      />
+    </div>
+  );
+}
+
+function IslandModeSwap(props: IslandModeSwapProps): JSX.Element {
+  return (
+    <Dynamic
+      component={props.block ? "div" : "span"}
+      class={["dynamic-island-mode-swap", props.block ? "dynamic-island-mode-swap-block" : undefined]
+        .filter(Boolean)
+        .join(" ")}
+      data-island-mode-slot={props.slot}
+    >
+      <Dynamic
+        component={props.block ? "div" : "span"}
+        class="dynamic-island-mode-layer"
+        data-island-mode-layer="incoming"
+        data-island-mode={props.presentation.mode}
+      >
+        {props.render(props.presentation)}
+      </Dynamic>
+      <Show when={props.outgoingPresentation}>
+        {(outgoing) => (
+          <Dynamic
+            component={props.block ? "div" : "span"}
+            class="dynamic-island-mode-layer dynamic-island-mode-layer-outgoing"
+            data-island-mode-layer="outgoing"
+            data-island-mode={outgoing().mode}
+            aria-hidden="true"
+            inert={true}
+          >
+            {props.render(outgoing())}
+          </Dynamic>
+        )}
+      </Show>
+    </Dynamic>
   );
 }
 
@@ -171,6 +507,7 @@ function OpenBotDynamicIslandFrame(props: OpenBotDynamicIslandFrameProps): JSX.E
       tone={props.tone}
       state={props.state}
       displayMode={props.displayMode}
+      compactWidth={props.compactWidth}
       onStateChange={props.onStateChange}
       hoverBehavior={props.autoExpand === false ? "grow" : "expand"}
       hoverContentMotion={props.hoverContentMotion ?? OPENBOT_COMPACT_HOVER_MOTION}
@@ -186,7 +523,6 @@ function OpenBotDynamicIslandFrame(props: OpenBotDynamicIslandFrameProps): JSX.E
       sharedTrailingExpandedScale={sharedTrailing()?.scale}
       class={[
         props.class,
-        props.compactWidth === "wide" ? "dynamic-island-compact-wide" : undefined,
         props.panelWidth === "wide" ? "dynamic-island-panel-wide" : undefined,
         props.displayMode === "island" ? "dynamic-island-external" : undefined,
       ]
@@ -199,8 +535,9 @@ function OpenBotDynamicIslandFrame(props: OpenBotDynamicIslandFrameProps): JSX.E
   );
 }
 
-function CompactLeading(props: { presentation: DynamicIslandPresentation }): JSX.Element {
+function CompactLeading(props: { presentation: DynamicIslandPresentation; nameMaxWidth: number }): JSX.Element {
   const key = () => compactLeadingKey(props.presentation);
+  const statusBot = () => compactStatusBot(props.presentation);
   return (
     <IslandContentSwap contentKey={key()} class="dynamic-island-surface-compact-swap">
       <Switch
@@ -221,35 +558,8 @@ function CompactLeading(props: { presentation: DynamicIslandPresentation }): JSX
             </span>
           </span>
         </Match>
-        <Match when={props.presentation.mode === "message" && props.presentation.message}>
-          {(message) => (
-            <span class="dynamic-island-surface-leading-anchor dynamic-island-surface-compact-identity">
-              <IslandAvatar bot={message().bot} />
-              <span class="dynamic-island-surface-compact-name" data-island-motion-content>
-                {message().bot.name}
-              </span>
-            </span>
-          )}
-        </Match>
-        <Match when={props.presentation.mode === "question" && props.presentation.attention[0]}>
-          {(item) => (
-            <span class="dynamic-island-surface-leading-anchor dynamic-island-surface-compact-identity">
-              <IslandAvatar bot={item().bot} />
-              <span class="dynamic-island-surface-compact-name" data-island-motion-content>
-                {item().bot.name}
-              </span>
-            </span>
-          )}
-        </Match>
-        <Match when={props.presentation.mode === "approval" && props.presentation.attention[0]}>
-          {(item) => (
-            <span class="dynamic-island-surface-leading-anchor dynamic-island-surface-compact-identity">
-              <IslandAvatar bot={item().bot} />
-              <span class="dynamic-island-surface-compact-name" data-island-motion-content>
-                {item().bot.name}
-              </span>
-            </span>
-          )}
+        <Match when={statusBot()}>
+          {(bot) => <CompactBotIdentity bot={bot()} nameMaxWidth={props.nameMaxWidth} />}
         </Match>
       </Switch>
     </IslandContentSwap>
@@ -266,47 +576,47 @@ function CompactTrailing(props: { presentation: DynamicIslandPresentation }): JS
             {props.presentation.activeCount}
           </span>
         </Match>
-        <Match when={props.presentation.mode === "message"}>
-          <Badge
-            variant="info-light"
-            class="dynamic-island-surface-message-badge"
-            data-island-motion-content
-            aria-hidden="true"
-          >
-            <MessageCircle
-              data-icon="inline-start"
-              class="dynamic-island-surface-message-badge-icon"
-              aria-hidden="true"
-            />
-            <span>Message</span>
-          </Badge>
-        </Match>
-        <Match when={props.presentation.mode === "question"}>
-          <Badge variant="info-light" class="dynamic-island-surface-question-badge" data-island-motion-content>
-            <MessageCircleQuestionMark
-              data-icon="inline-start"
-              class="dynamic-island-surface-question-badge-icon"
-              aria-hidden="true"
-            />
-            <span>Questions</span>
-          </Badge>
-        </Match>
-        <Match when={props.presentation.mode === "approval"}>
-          <Badge
-            variant="warning-light"
-            class="dynamic-island-surface-approval-badge"
-            data-island-motion-content
-            aria-hidden="true"
-          >
-            <Check data-icon="inline-start" class="dynamic-island-surface-approval-badge-icon" aria-hidden="true" />
-            <span>Approve</span>
-          </Badge>
-        </Match>
+        <Match when={statusMode(props.presentation.mode)}>{(mode) => <CompactStatusBadge mode={mode()} />}</Match>
         <Match when={props.presentation.mode === "idle"}>
           <IdleGreetingEmoji />
         </Match>
       </Switch>
     </IslandContentSwap>
+  );
+}
+
+function CompactBotIdentity(props: { bot: DynamicIslandBotIdentity; nameMaxWidth: number }): JSX.Element {
+  return (
+    <span class="dynamic-island-surface-leading-anchor dynamic-island-surface-compact-identity">
+      <IslandAvatar bot={props.bot} />
+      <span
+        class="dynamic-island-surface-compact-name"
+        style={{ "max-width": `${props.nameMaxWidth}px` }}
+        data-island-motion-content
+      >
+        {props.bot.name}
+      </span>
+    </span>
+  );
+}
+
+function CompactStatusBadge(props: { mode: StatusMode }): JSX.Element {
+  const config = () => STATUS_BADGE_CONFIG[props.mode];
+  return (
+    <Badge
+      variant={config().variant}
+      class={["dynamic-island-surface-status-badge", config().className].join(" ")}
+      data-island-motion-content
+      aria-hidden="true"
+    >
+      <Dynamic
+        component={config().icon}
+        data-icon="inline-start"
+        class="dynamic-island-surface-status-badge-icon"
+        aria-hidden="true"
+      />
+      <span>{config().label}</span>
+    </Badge>
   );
 }
 
@@ -359,9 +669,9 @@ function ExpandedContent(props: {
               {(index) => (
                 <Show when={props.presentation.working[index]}>
                   {(item) => (
-                    <button
+                    <Button
+                      variant="ghost"
                       class="dynamic-island-surface-row dynamic-island-surface-animated-row"
-                      type="button"
                       onClick={() =>
                         props.onAction({
                           type: "open-bot",
@@ -379,7 +689,7 @@ function ExpandedContent(props: {
                           <small>{item().task}</small>
                         </span>
                       </IslandContentSwap>
-                    </button>
+                    </Button>
                   )}
                 </Show>
               )}
@@ -652,8 +962,8 @@ function AttentionContent(props: {
                 <For each={currentQuestion()?.options ?? []}>
                   {(option, index) => (
                     <li>
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
                         aria-label={`${option.label}. ${option.description}`}
                         onClick={() => answerWith(option.label)}
                       >
@@ -664,7 +974,7 @@ function AttentionContent(props: {
                           <strong>{option.label}</strong>
                           <small>{option.description}</small>
                         </span>
-                      </button>
+                      </Button>
                     </li>
                   )}
                 </For>
@@ -953,20 +1263,142 @@ function compactLeadingKey(presentation: DynamicIslandPresentation): string {
   return "idle";
 }
 
+function compactStatusBot(presentation: DynamicIslandPresentation): DynamicIslandBotIdentity | undefined {
+  if (presentation.mode === "message") return presentation.message?.bot;
+  if (presentation.mode === "question" || presentation.mode === "approval") {
+    return presentation.attention[0]?.bot;
+  }
+  return undefined;
+}
+
+function statusMode(mode: DynamicIslandPresentation["mode"]): StatusMode | undefined {
+  return mode === "message" || mode === "question" || mode === "approval" ? mode : undefined;
+}
+
 function compactTrailingKey(presentation: DynamicIslandPresentation): string {
   if (presentation.mode === "working") return `working:${presentation.activeCount}`;
-  if (presentation.mode === "message") return `message:${presentation.unreadCount}`;
-  if (presentation.mode === "question") return "question";
-  if (presentation.mode === "approval") return `approval:${presentation.attentionCount}`;
+  if (presentation.mode === "message" || presentation.mode === "question" || presentation.mode === "approval") {
+    return presentation.mode;
+  }
   return "idle";
 }
 
-function labelForMode(mode: DynamicIslandPresentation["mode"]) {
-  if (mode === "working") return "OpenBot working status";
-  if (mode === "message") return "OpenBot chat update";
-  if (mode === "question") return "OpenBot question from AI";
-  if (mode === "approval") return "OpenBot approval request";
-  return "Open OpenBot";
+function captureModeLayerStates(root: HTMLElement | undefined): Map<string, CapturedModeLayerState> {
+  const captured = new Map<string, CapturedModeLayerState>();
+  if (!root) return captured;
+  for (const slot of root.querySelectorAll<HTMLElement>("[data-island-mode-slot]")) {
+    const slotName = slot.dataset.islandModeSlot;
+    if (!slotName) continue;
+    for (const layer of slot.querySelectorAll<HTMLElement>(":scope > [data-island-mode-layer]")) {
+      const mode = layer.dataset.islandMode;
+      if (!mode) continue;
+      const style = getComputedStyle(layer);
+      const contentBlurs = Array.from(layer.querySelectorAll<HTMLElement>("[data-island-motion-content]"), (content) =>
+        readBlur(getComputedStyle(content).filter),
+      );
+      captured.set(`${slotName}:${mode}`, {
+        opacity: readOpacity(style.opacity),
+        scale: readScale(style.transform),
+        contentBlurs,
+      });
+    }
+  }
+  return captured;
+}
+
+function restoreModeTransitionFocus(root: HTMLElement | undefined): void {
+  if (!root || !(document.activeElement instanceof HTMLElement)) return;
+  const activeLayer = document.activeElement.closest<HTMLElement>("[data-island-mode-layer]");
+  if (!activeLayer || !root.contains(activeLayer)) return;
+  root.querySelector<HTMLButtonElement>(".dynamic-island-toggle")?.focus();
+}
+
+function animateModeLayers(
+  root: HTMLElement | undefined,
+  captured: Map<string, CapturedModeLayerState>,
+  reducedMotion: boolean,
+): Animation[] {
+  if (!root) return [];
+  const animations: Animation[] = [];
+  for (const slot of root.querySelectorAll<HTMLElement>("[data-island-mode-slot]")) {
+    const slotName = slot.dataset.islandModeSlot;
+    if (!slotName) continue;
+    for (const layer of slot.querySelectorAll<HTMLElement>(":scope > [data-island-mode-layer]")) {
+      const role = layer.dataset.islandModeLayer;
+      const mode = layer.dataset.islandMode;
+      const animate = layer.animate?.bind(layer);
+      if (!role || !mode || !animate) continue;
+      const previous = captured.get(`${slotName}:${mode}`);
+      const outgoing = role === "outgoing";
+      const startOpacity = previous?.opacity ?? (outgoing ? 1 : 0);
+      const startScale = previous?.scale ?? (outgoing ? 1 : MODE_SWAP_INCOMING_SCALE);
+      const endOpacity = outgoing ? 0 : 1;
+      const endScale = outgoing ? MODE_SWAP_OUTGOING_SCALE : 1;
+      const duration = reducedMotion
+        ? MODE_SWAP_REDUCED_DURATION
+        : outgoing
+          ? MODE_SWAP_EXIT_DURATION
+          : MODE_SWAP_ENTER_DURATION;
+      const delay = reducedMotion || outgoing ? 0 : MODE_SWAP_ENTER_DELAY;
+      animations.push(
+        animate(
+          reducedMotion
+            ? [{ opacity: startOpacity }, { opacity: endOpacity }]
+            : [
+                { opacity: startOpacity, transform: `scale(${startScale})` },
+                { opacity: endOpacity, transform: `scale(${endScale})` },
+              ],
+          { duration, delay, easing: MODE_SWAP_EASING, fill: "both" },
+        ),
+      );
+
+      if (reducedMotion) continue;
+      const contentElements = layer.querySelectorAll<HTMLElement>("[data-island-motion-content]");
+      for (const [index, content] of Array.from(contentElements).entries()) {
+        const animateContent = content.animate?.bind(content);
+        if (!animateContent) continue;
+        const startBlur = previous?.contentBlurs[index] ?? (outgoing ? 0 : MODE_SWAP_BLUR);
+        const endBlur = outgoing ? MODE_SWAP_BLUR : 0;
+        animations.push(
+          animateContent([{ filter: `blur(${startBlur}px)` }, { filter: `blur(${endBlur}px)` }], {
+            duration,
+            delay,
+            easing: MODE_SWAP_EASING,
+            fill: "both",
+          }),
+        );
+      }
+    }
+  }
+  return animations;
+}
+
+function waitForAnimations(animations: Animation[]): Promise<undefined[]> {
+  return Promise.all(animations.map((animation) => animation.finished.then(() => undefined).catch(() => undefined)));
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+}
+
+function readOpacity(value: string): number {
+  const opacity = Number.parseFloat(value);
+  return Number.isFinite(opacity) ? opacity : 1;
+}
+
+function readScale(transform: string): number {
+  if (!transform || transform === "none") return 1;
+  const matrix = transform.match(/^matrix\(([^)]+)\)$/)?.[1]?.split(",");
+  if (!matrix) return 1;
+  const scale = Number.parseFloat(matrix[0] ?? "1");
+  return Number.isFinite(scale) ? scale : 1;
+}
+
+function readBlur(filter: string): number {
+  const blur = filter.match(/blur\(([-\d.]+)px\)/)?.[1];
+  if (!blur) return 0;
+  const value = Number.parseFloat(blur);
+  return Number.isFinite(value) ? value : 0;
 }
 
 function permissionSummary(

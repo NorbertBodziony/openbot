@@ -1,10 +1,10 @@
 import type { DynamicIslandAction, DynamicIslandBotIdentity, DynamicIslandPresentation } from "@openbot/contracts/ipc";
 import type { JSX } from "@solidjs/web";
-import { createMemo } from "solid-js";
+import { createMemo, createSignal, For } from "solid-js";
 import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { OpenBotDynamicIsland } from "../src/components/OpenBotDynamicIsland";
-import type { DynamicIslandViewState } from "../src/components/ui";
+import { Button, type DynamicIslandViewState } from "../src/components/ui";
 import { DynamicIslandDisplayComparison } from "./DynamicIslandDisplayComparison";
 import { STORY_BOTS } from "./fixtures";
 
@@ -27,6 +27,70 @@ function DynamicIslandDemo(props: DynamicIslandDemoProps): JSX.Element {
   return (
     <DynamicIslandDisplayComparison
       defaultState={props.defaultState}
+      renderIsland={(preview) => (
+        <OpenBotDynamicIsland
+          presentation={presentation()}
+          state={preview.state()}
+          displayMode={preview.displayMode}
+          onStateChange={preview.onStateChange}
+          onAction={props.onAction}
+          onLater={props.onSecondaryAction}
+        />
+      )}
+    />
+  );
+}
+
+function DynamicIslandTransitionDemo(
+  props: Pick<DynamicIslandDemoProps, "onAction" | "onSecondaryAction">,
+): JSX.Element {
+  const scenarios: Array<{ value: Scenario; label: string }> = [
+    { value: "idle", label: "Idle" },
+    { value: "working", label: "Working" },
+    { value: "chat", label: "Chat" },
+    { value: "question", label: "Question" },
+    { value: "approval", label: "Approval" },
+  ];
+  const [scenario, setScenario] = createSignal<Scenario>("idle");
+  const [state, setState] = createSignal<DynamicIslandViewState>("compact");
+  const presentation = createMemo(() => presentationFor(scenario(), "standard"));
+
+  function selectScenario(next: Scenario): void {
+    setScenario(next);
+    if (next === "idle") setState("compact");
+  }
+
+  return (
+    <DynamicIslandDisplayComparison
+      state={state}
+      onStateChange={setState}
+      controls={
+        <fieldset class="dynamic-island-story-mode-controls" aria-label="Dynamic Island mode">
+          <For each={scenarios}>
+            {(option) => (
+              <Button
+                size="xs"
+                variant={scenario() === option.value ? "default" : "secondary"}
+                aria-pressed={scenario() === option.value ? "true" : "false"}
+                onClick={() => {
+                  selectScenario(option.value);
+                }}
+              >
+                {option.label}
+              </Button>
+            )}
+          </For>
+          <span class="dynamic-island-story-mode-divider" aria-hidden="true" />
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={scenario() === "idle"}
+            onClick={() => setState(state() === "expanded" ? "compact" : "expanded")}
+          >
+            {state() === "expanded" ? "Show compact" : "Show expanded"}
+          </Button>
+        </fieldset>
+      }
       renderIsland={(preview) => (
         <OpenBotDynamicIsland
           presentation={presentation()}
@@ -372,4 +436,8 @@ export const NeedsApproval: Story = {
     });
     await userEvent.keyboard("{Escape}");
   },
+};
+
+export const StateTransitions: Story = {
+  render: (args) => <DynamicIslandTransitionDemo onAction={args.onAction} onSecondaryAction={args.onSecondaryAction} />,
 };

@@ -21,6 +21,7 @@ export interface DynamicIslandProps {
   label: string;
   compactLeading?: JSX.Element;
   compactTrailing?: JSX.Element;
+  compactWidth?: number;
   expandedContent: JSX.Element;
   state?: DynamicIslandViewState;
   defaultState?: DynamicIslandViewState;
@@ -271,6 +272,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   return (
     <section
       class={cx("dynamic-island", local.class)}
+      style={local.compactWidth === undefined ? undefined : `--dynamic-island-compact-width: ${local.compactWidth}px`}
       data-slot="dynamic-island"
       data-state={viewState()}
       data-layout-state={layoutState()}
