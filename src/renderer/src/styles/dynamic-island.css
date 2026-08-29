@@ -6,7 +6,7 @@
   --dynamic-island-hover-width-growth: 32px;
   --dynamic-island-hover-height-growth: 8px;
   --dynamic-island-hover-hit-top: 6px;
-  --dynamic-island-hover-hit-bottom: 14px;
+  --dynamic-island-hover-hit-bottom: 12px;
   --dynamic-island-hover-hit-inline-growth: 28px;
   --dynamic-island-hover-retention-bottom: 6px;
   --dynamic-island-hover-retention-inline-growth: 24px;
@@ -405,10 +405,11 @@
   transition: none;
 }
 
-.dynamic-island[data-layout-state="compact"]::before {
+.dynamic-island-hover-zone {
   position: absolute;
   top: calc(-1 * var(--dynamic-island-hover-hit-top));
   left: 50%;
+  display: none;
   width: min(
     calc(var(--dynamic-island-compact-width) + var(--dynamic-island-hover-hit-inline-growth)),
     calc(100vw - var(--openbot-space-6))
@@ -418,12 +419,15 @@
     var(--dynamic-island-hover-hit-top) +
     var(--dynamic-island-hover-hit-bottom)
   );
-  content: "";
   pointer-events: auto;
   transform: translateX(-50%);
 }
 
-.dynamic-island[data-layout-state="compact"][data-hovered="true"]::before {
+.dynamic-island[data-layout-state="compact"] > .dynamic-island-hover-zone {
+  display: block;
+}
+
+.dynamic-island[data-layout-state="compact"][data-hovered="true"] > .dynamic-island-hover-zone {
   width: min(
     calc(
       var(--dynamic-island-compact-width) +
@@ -520,7 +524,7 @@
   border-radius: var(--dynamic-island-external-expanded-radius);
 }
 
-.dynamic-island-external[data-layout-state="compact"]::before {
+.dynamic-island-external > .dynamic-island-hover-zone {
   top: 0;
 }
 

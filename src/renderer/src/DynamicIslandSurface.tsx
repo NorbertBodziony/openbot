@@ -63,6 +63,7 @@ export function DynamicIslandSurface() {
           presentation={presentation()}
           state={viewState()}
           displayMode={displayMode}
+          extendedHoverArea
           onStateChange={changeViewState}
           onAction={perform}
           onLater={() => undefined}

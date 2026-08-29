@@ -27,6 +27,7 @@ export interface DynamicIslandProps {
   defaultState?: DynamicIslandViewState;
   onStateChange?: (state: DynamicIslandViewState, reason: DynamicIslandStateChangeReason) => void;
   hoverBehavior?: DynamicIslandHoverBehavior;
+  extendedHoverArea?: boolean;
   suppressInitialHover?: boolean;
   hoverContentMotion?: DynamicIslandHoverContentMotion;
   pointerToggle?: boolean;
@@ -314,6 +315,9 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
         queueMicrotask(() => toggleButton?.focus());
       }}
     >
+      <Show when={local.extendedHoverArea}>
+        <span class="dynamic-island-hover-zone" aria-hidden="true" />
+      </Show>
       <div
         ref={shell}
         class="dynamic-island-shell"

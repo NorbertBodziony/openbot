@@ -40,6 +40,7 @@ export interface OpenBotDynamicIslandProps {
   presentation: DynamicIslandPresentation;
   state: DynamicIslandViewState;
   displayMode?: "notch" | "island";
+  extendedHoverArea?: boolean;
   suppressInitialHover?: boolean;
   onStateChange: (state: DynamicIslandViewState, reason: DynamicIslandStateChangeReason) => void;
   onAction: (action: DynamicIslandAction) => void | Promise<void>;
@@ -91,6 +92,7 @@ interface OpenBotDynamicIslandFrameProps {
   tone: "neutral" | "working" | "attention";
   state: DynamicIslandViewState;
   displayMode?: "notch" | "island";
+  extendedHoverArea?: boolean;
   suppressInitialHover?: boolean;
   compactLeading: JSX.Element;
   compactTrailing: JSX.Element;
@@ -517,6 +519,7 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
         tone={config().tone}
         state={props.state}
         displayMode={props.displayMode}
+        extendedHoverArea={props.extendedHoverArea}
         suppressInitialHover={props.suppressInitialHover}
         onStateChange={changeState}
         compactWidth={compactWidth()}
@@ -610,6 +613,7 @@ function OpenBotDynamicIslandFrame(props: OpenBotDynamicIslandFrameProps): JSX.E
       tone={props.tone}
       state={props.state}
       displayMode={props.displayMode}
+      extendedHoverArea={props.extendedHoverArea}
       suppressInitialHover={props.suppressInitialHover}
       compactWidth={props.compactWidth}
       onStateChange={props.onStateChange}
