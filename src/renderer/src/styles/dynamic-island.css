@@ -652,6 +652,22 @@
   }
 }
 
+[data-reduced-motion="true"] .dynamic-island,
+[data-reduced-motion="true"] .dynamic-island-silhouette-body,
+[data-reduced-motion="true"] .dynamic-island-ear,
+[data-reduced-motion="true"] .dynamic-island-ear-content,
+[data-reduced-motion="true"] .dynamic-island-trailing-compact,
+[data-reduced-motion="true"] .dynamic-island-trailing-expanded {
+  transition: none;
+}
+
+[data-reduced-motion="true"] .dynamic-island-content,
+[data-reduced-motion="true"] .dynamic-island-panel[data-phase="leaving"] .dynamic-island-content,
+[data-reduced-motion="true"] .dynamic-island[data-content-motion="atoll"] .dynamic-island-content {
+  animation: dynamic-island-reduced-fade var(--openbot-duration-fast) ease-out both;
+  animation-delay: 0ms;
+}
+
 @keyframes dynamic-island-reduced-fade {
   from {
     opacity: 0;
