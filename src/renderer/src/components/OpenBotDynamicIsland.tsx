@@ -61,13 +61,13 @@ const QUESTION_PROGRESS_DURATION = 300;
 const QUESTION_PROGRESS_BLUR = 2;
 const COMPACT_LEADING_SIZE = 20;
 const MODE_SWAP_EXIT_DURATION = 160;
-const MODE_SWAP_ENTER_DELAY = 40;
-const MODE_SWAP_ENTER_DURATION = 240;
+const MODE_SWAP_ENTER_DURATION = 420;
 const MODE_SWAP_REDUCED_DURATION = 120;
 const MODE_SWAP_BLUR = 4;
 const MODE_SWAP_OUTGOING_SCALE = 0.985;
 const MODE_SWAP_INCOMING_SCALE = 0.965;
 const MODE_SWAP_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
+const MODE_SWAP_SPRING_SAMPLE_COUNT = 24;
 const STATUS_COMPACT_BASE_WIDTH = { notch: 412, island: 280 } as const;
 const STATUS_COMPACT_NOTCH_WIDTH = 192;
 const STATUS_COMPACT_AVATAR_WIDTH = 20;
@@ -507,6 +507,7 @@ function OpenBotDynamicIslandFrame(props: OpenBotDynamicIslandFrameProps): JSX.E
       sharedTrailingExpandedY={sharedTrailing()?.y}
       sharedTrailingExpandedScale={sharedTrailing()?.scale}
       class={[
+        "openbot-dynamic-island",
         props.class,
         props.panelWidth === "wide" ? "dynamic-island-panel-wide" : undefined,
         props.displayMode === "island" ? "dynamic-island-external" : undefined,
@@ -1292,16 +1293,17 @@ function animateModeLayers(
         : outgoing
           ? MODE_SWAP_EXIT_DURATION
           : MODE_SWAP_ENTER_DURATION;
-      const delay = reducedMotion || outgoing ? 0 : MODE_SWAP_ENTER_DELAY;
       animations.push(
         animate(
           reducedMotion
             ? [{ opacity: startOpacity }, { opacity: endOpacity }]
-            : [
-                { opacity: startOpacity, transform: `scale(${startScale})` },
-                { opacity: endOpacity, transform: `scale(${endScale})` },
-              ],
-          { duration, delay, easing: MODE_SWAP_EASING, fill: "both" },
+            : outgoing
+              ? [
+                  { opacity: startOpacity, transform: `scale(${startScale})` },
+                  { opacity: endOpacity, transform: `scale(${endScale})` },
+                ]
+              : modeSwapEntranceKeyframes(startOpacity, startScale),
+          { duration, easing: reducedMotion || outgoing ? MODE_SWAP_EASING : "linear", fill: "both" },
         ),
       );
 
@@ -1313,17 +1315,53 @@ function animateModeLayers(
         const startBlur = previous?.contentBlurs[index] ?? (outgoing ? 0 : MODE_SWAP_BLUR);
         const endBlur = outgoing ? MODE_SWAP_BLUR : 0;
         animations.push(
-          animateContent([{ filter: `blur(${startBlur}px)` }, { filter: `blur(${endBlur}px)` }], {
-            duration,
-            delay,
-            easing: MODE_SWAP_EASING,
-            fill: "both",
-          }),
+          animateContent(
+            outgoing
+              ? [{ filter: `blur(${startBlur}px)` }, { filter: `blur(${endBlur}px)` }]
+              : modeSwapBlurEntranceKeyframes(startBlur),
+            {
+              duration,
+              easing: outgoing ? MODE_SWAP_EASING : "linear",
+              fill: "both",
+            },
+          ),
         );
       }
     }
   }
   return animations;
+}
+
+function modeSwapEntranceKeyframes(startOpacity: number, startScale: number): Keyframe[] {
+  return modeSwapSpringKeyframes((progress) => ({
+    opacity: mixModeSwapValue(startOpacity, 1, progress),
+    transform: `scale(${mixModeSwapValue(startScale, 1, progress)})`,
+  }));
+}
+
+function modeSwapBlurEntranceKeyframes(startBlur: number): Keyframe[] {
+  return modeSwapSpringKeyframes((progress) => ({
+    filter: `blur(${mixModeSwapValue(startBlur, 0, progress)}px)`,
+  }));
+}
+
+function modeSwapSpringKeyframes(frame: (progress: number) => Keyframe): Keyframe[] {
+  const finalProgress = criticalModeSwapSpringProgress(1);
+  return Array.from({ length: MODE_SWAP_SPRING_SAMPLE_COUNT + 1 }, (_, index) => {
+    const offset = index / MODE_SWAP_SPRING_SAMPLE_COUNT;
+    const progress =
+      index === MODE_SWAP_SPRING_SAMPLE_COUNT ? 1 : criticalModeSwapSpringProgress(offset) / finalProgress;
+    return { ...frame(progress), offset };
+  });
+}
+
+function criticalModeSwapSpringProgress(offset: number): number {
+  const phase = 2 * Math.PI * offset;
+  return 1 - Math.exp(-phase) * (1 + phase);
+}
+
+function mixModeSwapValue(start: number, end: number, progress: number): number {
+  return start + (end - start) * progress;
 }
 
 function waitForAnimations(animations: Animation[]): Promise<undefined[]> {
