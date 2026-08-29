@@ -217,9 +217,9 @@ body:has(.dynamic-island-surface),
   left: calc(100% + var(--openbot-space-1-5));
   width: max-content;
   overflow: hidden;
-  color: var(--openbot-text-secondary);
+  color: var(--openbot-island-compact-name);
   font-size: var(--openbot-text-xs);
-  font-weight: var(--openbot-weight-medium);
+  font-weight: var(--openbot-weight-semibold);
   line-height: var(--openbot-leading-xs);
   text-align: left;
   text-overflow: ellipsis;

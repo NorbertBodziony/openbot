@@ -1,6 +1,7 @@
 import type {
   AgentProviderId,
   DynamicIslandAction,
+  DynamicIslandPreference,
   DynamicIslandPresentation,
   ExternalDestination,
   MacPermissionId,
@@ -31,7 +32,7 @@ export function parseAnalyticsPreference(input: unknown): SetAnalyticsPreference
   return { enabled: input.enabled };
 }
 
-export function parseDynamicIslandPreference(input: unknown): { enabled: boolean } {
+export function parseDynamicIslandPreference(input: unknown): DynamicIslandPreference {
   if (!isDynamicIslandPreference(input)) {
     throw new Error("Dynamic Island preference is required.");
   }

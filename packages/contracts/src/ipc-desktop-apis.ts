@@ -240,8 +240,10 @@ export interface DynamicIslandDesktopApi {
   setPreference: (input: SetDynamicIslandPreferenceInput) => Promise<DynamicIslandPreference>;
   publishPresentation: (presentation: DynamicIslandPresentation) => Promise<void>;
   getPresentation: () => Promise<DynamicIslandPresentation>;
+  onPreference: (listener: (preference: DynamicIslandPreference) => void) => () => void;
   onPresentation: (listener: (presentation: DynamicIslandPresentation) => void) => () => void;
   performAction: (action: DynamicIslandAction) => Promise<void>;
+  performHaptic: () => Promise<void>;
   onAction: (listener: (action: DynamicIslandAction) => void) => () => void;
   setInteractive: (input: SetDynamicIslandInteractiveInput) => Promise<void>;
 }

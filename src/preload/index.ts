@@ -779,6 +779,12 @@ const openbotApi: OpenBotDesktopApi = {
       ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandPublishPresentation, presentation).then(decodeVoid),
     getPresentation: () =>
       ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandGetPresentation).then(decodeDynamicIslandPresentation),
+    onPreference: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, preference: unknown) =>
+        listener(decodeDynamicIslandPreference(preference));
+      ipcRenderer.on(IPC_CHANNELS.dynamicIslandPreference, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.dynamicIslandPreference, handler);
+    },
     onPresentation: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, presentation: unknown) =>
         listener(decodeDynamicIslandPresentation(presentation));
@@ -786,6 +792,7 @@ const openbotApi: OpenBotDesktopApi = {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.dynamicIslandPresentation, handler);
     },
     performAction: (action) => ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandPerformAction, action).then(decodeVoid),
+    performHaptic: () => ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandPerformHaptic).then(decodeVoid),
     onAction: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, action: unknown) =>
         listener(decodeDynamicIslandAction(action));

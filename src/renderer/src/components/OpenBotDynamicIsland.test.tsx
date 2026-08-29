@@ -72,6 +72,36 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     expect(document.querySelector('[data-island-mode-layer="outgoing"]')).toBeNull();
   });
 
+  it("keeps the working row mounted while its task updates", async () => {
+    const controller = renderControlledIsland(workingPresentation(), "expanded");
+    const row = screen.getByRole("button", { name: /Research/ });
+    row.focus();
+
+    const next = workingPresentation();
+    if (next.mode !== "working" || !next.working[0]) throw new Error("Working fixture is missing.");
+    next.working[0] = { ...next.working[0], task: "Writing the summary" };
+    flush(() => controller.setPresentation(next));
+
+    expect(screen.getByText("Writing the summary")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Research/ })).toBe(row);
+    expect(document.activeElement).toBe(row);
+  });
+
+  it("keeps message controls mounted while a message streams", () => {
+    const controller = renderControlledIsland(messagePresentation("reply-1"), "expanded");
+    const openChat = screen.getByRole("button", { name: "Open chat" });
+    openChat.focus();
+
+    const next = messagePresentation("reply-1");
+    if (next.mode !== "message") throw new Error("Message fixture is missing.");
+    next.message = { ...next.message, text: "The source check is ready with one more detail." };
+    flush(() => controller.setPresentation(next));
+
+    expect(screen.getByText("The source check is ready with one more detail.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open chat" })).toBe(openChat);
+    expect(document.activeElement).toBe(openChat);
+  });
+
   it("opens the full browser takeover context", async () => {
     const onAction = vi.fn<(action: DynamicIslandAction) => void>();
     renderControlledIsland(takeoverPresentation(), "expanded", onAction);
@@ -131,12 +161,33 @@ describe("OpenBotDynamicIsland mode transitions", () => {
 
     expect(onAction).toHaveBeenCalledWith({ type: "open-app" });
   });
+
+  it("requests feedback when an intermediate prompt answer advances the question", async () => {
+    const onAction = vi.fn<(action: DynamicIslandAction) => void>();
+    const onHaptic = vi.fn();
+    const presentation = questionPresentation();
+    presentation.item.questions.push({
+      id: "format",
+      header: "Choose a format",
+      question: "How should I present it?",
+      isSecret: false,
+      options: [{ label: "Summary", description: "Keep it concise" }],
+    });
+    renderControlledIsland(presentation, "expanded", onAction, onHaptic);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Official data. Use the public dataset" }));
+
+    expect(onHaptic).toHaveBeenCalledOnce();
+    expect(onAction).not.toHaveBeenCalled();
+    expect(await screen.findByText("How should I present it?")).toBeVisible();
+  });
 });
 
 function renderControlledIsland(
   initialPresentation: DynamicIslandPresentation,
   initialState: DynamicIslandViewState,
   onAction: (action: DynamicIslandAction) => void = () => undefined,
+  onHaptic: () => void = () => undefined,
 ) {
   let setPresentation: (presentation: DynamicIslandPresentation) => DynamicIslandPresentation = () =>
     initialPresentation;
@@ -150,6 +201,7 @@ function renderControlledIsland(
         state={state()}
         onStateChange={setState}
         onAction={onAction}
+        onHaptic={onHaptic}
       />
     );
   });
@@ -182,7 +234,7 @@ function messagePresentation(messageId: string): DynamicIslandPresentation {
   };
 }
 
-function questionPresentation(): DynamicIslandPresentation {
+function questionPresentation(): Extract<DynamicIslandPresentation, { mode: "question" }> {
   const options = [
     { label: "Official data", description: "Use the public dataset" },
     { label: "Industry report", description: "Use the detailed report" },

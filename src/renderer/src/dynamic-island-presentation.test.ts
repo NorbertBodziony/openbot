@@ -1,7 +1,15 @@
-import { type AgentApproval, isDynamicIslandPresentation } from "@openbot/contracts/ipc";
+import {
+  type AgentApproval,
+  type DynamicIslandPresentation,
+  isDynamicIslandPresentation,
+} from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
 import type { BotProfile } from "./data";
-import { createDynamicIslandPresentation, type DynamicIslandPresentationInput } from "./dynamic-island-presentation";
+import {
+  createDynamicIslandPresentation,
+  type DynamicIslandPresentationInput,
+  selectDynamicIslandPresentation,
+} from "./dynamic-island-presentation";
 
 const bot: BotProfile = {
   id: "chief",
@@ -44,6 +52,79 @@ function state(): DynamicIslandPresentationInput {
 }
 
 describe("createDynamicIslandPresentation", () => {
+  it("selects the complete production priority order", () => {
+    const identity = {
+      id: bot.id,
+      name: bot.name,
+      avatarSeed: bot.avatarSeed,
+      avatarHue: bot.avatarHue,
+      avatarUrl: bot.avatarUrl,
+    };
+    const candidates: DynamicIslandPresentation[] = [
+      { serverId: "idle", mode: "idle" },
+      {
+        serverId: "message",
+        mode: "message",
+        unreadCount: 1,
+        message: { bot: identity, messageId: "message-1", text: "Ready", createdAt: "now" },
+      },
+      { serverId: "working", mode: "working", working: [{ bot: identity, task: "Running checks" }] },
+      {
+        serverId: "failed",
+        mode: "failed",
+        item: { turnId: "turn-failed", bot: identity, title: "Failed", detail: "The task failed." },
+      },
+      {
+        serverId: "takeover",
+        mode: "takeover",
+        item: { requestId: "takeover-1", bot: identity, title: "Take over", detail: "Complete the step." },
+      },
+      {
+        serverId: "approval",
+        mode: "approval",
+        remainingCount: 0,
+        item: {
+          requestId: "approval-1",
+          bot: identity,
+          title: "Approve access",
+          detail: "Review access.",
+          approval: {
+            kind: "permissions",
+            command: null,
+            cwd: null,
+            reason: "Review access.",
+            grantRoot: null,
+            permissions: { fileSystem: { read: ["/workspace"], write: [] }, network: false },
+          },
+        },
+      },
+      {
+        serverId: "question",
+        mode: "question",
+        remainingCount: 0,
+        item: {
+          requestId: "question-1",
+          bot: identity,
+          title: "Choose",
+          detail: "Which option?",
+          questions: [{ id: "choice", header: "Choose", question: "Which option?", isSecret: false, options: null }],
+        },
+      },
+    ];
+    const selectedModes: DynamicIslandPresentation["mode"][] = [];
+
+    while (candidates.length > 0) {
+      const selected = selectDynamicIslandPresentation(candidates);
+      selectedModes.push(selected.mode);
+      candidates.splice(
+        candidates.findIndex((candidate) => candidate.mode === selected.mode),
+        1,
+      );
+    }
+
+    expect(selectedModes).toEqual(["question", "approval", "takeover", "failed", "working", "message", "idle"]);
+  });
+
   it("uses the bot preview when an unread conversation is not loaded", () => {
     const input = state();
     input.bots = [{ ...research, preview: "The source review is ready." }];
@@ -108,6 +189,8 @@ describe("createDynamicIslandPresentation", () => {
     expect(createDynamicIslandPresentation(input).mode).toBe("working");
     input.unreadReplies.chief = 2;
     input.liveMessages.chief = [{ id: "m1", author: "bot", body: "Done", time: "now" }];
+    expect(createDynamicIslandPresentation(input).mode).toBe("working");
+    input.activeTurns = {};
     expect(createDynamicIslandPresentation(input).mode).toBe("message");
     input.pendingPrompts.chief = {
       type: "prompt",
@@ -160,7 +243,7 @@ describe("createDynamicIslandPresentation", () => {
     });
   });
 
-  it("shows an approval before a question", () => {
+  it("shows a question before an approval", () => {
     const input = state();
     input.pendingPrompts.chief = {
       type: "prompt",
@@ -183,15 +266,21 @@ describe("createDynamicIslandPresentation", () => {
       permissions: null,
     };
 
-    const presentation = createDynamicIslandPresentation(input);
+    const question = createDynamicIslandPresentation(input);
 
-    expect(presentation.mode).toBe("approval");
-    if (presentation.mode !== "approval") throw new Error("Expected an approval presentation.");
-    expect(presentation.item.requestId).toBe("approval-1");
-    expect(presentation.remainingCount).toBe(1);
+    expect(question.mode).toBe("question");
+    if (question.mode !== "question") throw new Error("Expected a question presentation.");
+    expect(question.item.requestId).toBe("prompt-1");
+    expect(question.remainingCount).toBe(1);
+
+    input.pendingPrompts.chief = undefined;
+    const approval = createDynamicIslandPresentation(input);
+    expect(approval.mode).toBe("approval");
+    if (approval.mode !== "approval") throw new Error("Expected an approval presentation.");
+    expect(approval.item.requestId).toBe("approval-1");
   });
 
-  it("surfaces a browser takeover before a question", () => {
+  it("shows a question before a browser takeover", () => {
     const input = state();
     input.bots = [bot, research];
     input.pendingPrompts.chief = {
@@ -213,11 +302,17 @@ describe("createDynamicIslandPresentation", () => {
       },
     };
 
-    const presentation = createDynamicIslandPresentation(input);
+    const question = createDynamicIslandPresentation(input);
 
-    expect(presentation.mode).toBe("takeover");
-    if (presentation.mode !== "takeover") throw new Error("Expected a takeover presentation.");
-    expect(presentation.item).toMatchObject({
+    expect(question.mode).toBe("question");
+    if (question.mode !== "question") throw new Error("Expected a question presentation.");
+    expect(question.item.requestId).toBe("prompt-1");
+
+    input.pendingPrompts.chief = undefined;
+    const takeover = createDynamicIslandPresentation(input);
+    expect(takeover.mode).toBe("takeover");
+    if (takeover.mode !== "takeover") throw new Error("Expected a takeover presentation.");
+    expect(takeover.item).toMatchObject({
       requestId: "takeover-1",
       bot: { id: "research" },
       title: "Browser step needs you",
@@ -258,7 +353,7 @@ describe("createDynamicIslandPresentation", () => {
     });
   });
 
-  it("aggregates unread replies across working bots", () => {
+  it("keeps working ahead of unread replies and preserves their aggregate", () => {
     const input = state();
     input.bots = [bot, research];
     input.activeTurns = { chief: "turn-1", research: "turn-2" };
@@ -267,6 +362,9 @@ describe("createDynamicIslandPresentation", () => {
       chief: [{ id: "m1", author: "bot", body: "Launch plan ready", time: "now" }],
       research: [{ id: "m2", author: "bot", body: "Sources ready", time: "now" }],
     };
+    expect(createDynamicIslandPresentation(input).mode).toBe("working");
+
+    input.activeTurns = {};
     const presentation = createDynamicIslandPresentation(input);
     expect(presentation.mode).toBe("message");
     if (presentation.mode !== "message") throw new Error("Expected a message presentation.");

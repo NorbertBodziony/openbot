@@ -17,6 +17,7 @@ import {
   Match,
   onCleanup,
   onSettled,
+  children as resolveChildren,
   Show,
   Switch,
   untrack,
@@ -61,6 +62,7 @@ export interface OpenBotDynamicIslandProps {
   suppressInitialHover?: boolean;
   onStateChange: (state: DynamicIslandViewState, reason: DynamicIslandStateChangeReason) => void;
   onAction: (action: DynamicIslandAction) => void | Promise<void>;
+  onHaptic?: () => void;
 }
 
 const COMPACT_INDICES = [0, 1, 2] as const;
@@ -108,7 +110,8 @@ interface IslandModeSwapProps {
   presentation: DynamicIslandPresentation;
   outgoingPresentation: DynamicIslandPresentation | undefined;
   block?: boolean;
-  render: (presentation: DynamicIslandPresentation) => JSX.Element;
+  children: JSX.Element;
+  renderOutgoing: (presentation: DynamicIslandPresentation) => JSX.Element;
 }
 
 type StatusMode = Extract<
@@ -268,7 +271,7 @@ function compactStatusGeometry(presentation: DynamicIslandPresentation): StatusC
 
   const badgeLabel = OPENBOT_ISLAND_MODE_CONFIG[mode].badge?.label ?? "";
   const badgeWidth = Math.ceil(measureCompactText(badgeLabel, 600) + STATUS_COMPACT_BADGE_CHROME_WIDTH);
-  const measuredNameWidth = bot ? measureCompactText(bot.name, 500) : 0;
+  const measuredNameWidth = bot ? measureCompactText(bot.name, 600) : 0;
   const notchNameWidth = Math.min(STATUS_COMPACT_NAME_MAX_WIDTH.notch, Math.ceil(measuredNameWidth));
   const islandNameWidth = Math.min(STATUS_COMPACT_NAME_MAX_WIDTH.island, Math.ceil(measuredNameWidth));
   const workingAvatarStackWidth =
@@ -516,16 +519,22 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
             slot="compact-leading"
             presentation={visiblePresentation()}
             outgoingPresentation={outgoingPresentation()}
-            render={(presentation) => <CompactLeading presentation={presentation} displayMode={props.displayMode} />}
-          />
+            renderOutgoing={(presentation) => (
+              <CompactLeading presentation={presentation} displayMode={props.displayMode} />
+            )}
+          >
+            <CompactLeading presentation={visiblePresentation()} displayMode={props.displayMode} />
+          </IslandModeSwap>
         }
         compactTrailing={
           <IslandModeSwap
             slot="compact-trailing"
             presentation={visiblePresentation()}
             outgoingPresentation={outgoingPresentation()}
-            render={(presentation) => <CompactTrailing presentation={presentation} />}
-          />
+            renderOutgoing={(presentation) => <CompactTrailing presentation={presentation} />}
+          >
+            <CompactTrailing presentation={visiblePresentation()} />
+          </IslandModeSwap>
         }
         expandedContent={
           <IslandModeSwap
@@ -533,15 +542,24 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
             presentation={visiblePresentation()}
             outgoingPresentation={outgoingPresentation()}
             block
-            render={(presentation) => (
+            renderOutgoing={(presentation) => (
               <ExpandedContent
                 presentation={presentation}
                 displayMode={props.displayMode}
                 onAction={props.onAction}
+                onHaptic={props.onHaptic}
                 onClose={() => props.onStateChange("compact", "pointer")}
               />
             )}
-          />
+          >
+            <ExpandedContent
+              presentation={visiblePresentation()}
+              displayMode={props.displayMode}
+              onAction={props.onAction}
+              onHaptic={props.onHaptic}
+              onClose={() => props.onStateChange("compact", "pointer")}
+            />
+          </IslandModeSwap>
         }
       />
     </div>
@@ -549,6 +567,7 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
 }
 
 function IslandModeSwap(props: IslandModeSwapProps): JSX.Element {
+  const incoming = resolveChildren(() => props.children);
   return (
     <Dynamic
       component={props.block ? "div" : "span"}
@@ -563,7 +582,7 @@ function IslandModeSwap(props: IslandModeSwapProps): JSX.Element {
         data-island-mode-layer="incoming"
         data-island-mode={props.presentation.mode}
       >
-        {props.render(props.presentation)}
+        {incoming()}
       </Dynamic>
       <Show when={props.outgoingPresentation}>
         {(outgoing) => (
@@ -575,7 +594,7 @@ function IslandModeSwap(props: IslandModeSwapProps): JSX.Element {
             aria-hidden="true"
             inert={true}
           >
-            {props.render(outgoing())}
+            {props.renderOutgoing(outgoing())}
           </Dynamic>
         )}
       </Show>
@@ -587,11 +606,10 @@ function CompactLeading(props: {
   presentation: DynamicIslandPresentation;
   displayMode?: "notch" | "island";
 }): JSX.Element {
-  const key = () => compactLeadingKey(props.presentation);
   const statusBot = () => compactStatusBot(props.presentation);
   const working = () => (props.presentation.mode === "working" ? props.presentation.working : []);
   return (
-    <IslandContentSwap contentKey={key()} class="dynamic-island-surface-compact-swap">
+    <span class="dynamic-island-surface-content-swap dynamic-island-surface-compact-swap">
       <Switch
         fallback={
           <span class="dynamic-island-surface-leading-anchor" data-island-spatial-anchor="center">
@@ -600,32 +618,31 @@ function CompactLeading(props: {
         }
       >
         <Match when={props.presentation.mode === "working"}>
-          <Show
-            when={working().length === 1 ? working()[0] : undefined}
-            fallback={
-              <span class="dynamic-island-surface-leading-anchor" data-island-spatial-anchor="center">
-                <span class="dynamic-island-surface-avatar-stack">
-                  <For each={COMPACT_INDICES}>
-                    {(index) => (
-                      <Show when={working()[index]}>
-                        {(item) => (
-                          <span class="dynamic-island-surface-avatar-stack-item">
-                            <IslandAvatar bot={item().bot} />
-                          </span>
-                        )}
-                      </Show>
-                    )}
-                  </For>
-                </span>
-              </span>
-            }
+          <span
+            class="dynamic-island-surface-leading-anchor dynamic-island-surface-compact-identity"
+            data-island-spatial-anchor="center"
           >
-            {(item) => <CompactBotIdentity bot={item().bot} displayMode={props.displayMode} />}
-          </Show>
+            <span class="dynamic-island-surface-avatar-stack">
+              <For each={COMPACT_INDICES}>
+                {(index) => (
+                  <Show when={working()[index]}>
+                    {(item) => (
+                      <span class="dynamic-island-surface-avatar-stack-item">
+                        <IslandAvatar bot={item().bot} working />
+                      </span>
+                    )}
+                  </Show>
+                )}
+              </For>
+            </span>
+            <Show when={working().length === 1 ? working()[0] : undefined}>
+              {(item) => <CompactBotName name={item().bot.name} displayMode={props.displayMode} />}
+            </Show>
+          </span>
         </Match>
         <Match when={statusBot()}>{(bot) => <CompactBotIdentity bot={bot()} displayMode={props.displayMode} />}</Match>
       </Switch>
-    </IslandContentSwap>
+    </span>
   );
 }
 
@@ -643,22 +660,32 @@ function CompactTrailing(props: { presentation: DynamicIslandPresentation }): JS
   );
 }
 
-function CompactBotIdentity(props: { bot: DynamicIslandBotIdentity; displayMode?: "notch" | "island" }): JSX.Element {
-  const nameMaxWidth = () =>
-    props.displayMode === "island" ? STATUS_COMPACT_NAME_MAX_WIDTH.island : STATUS_COMPACT_NAME_MAX_WIDTH.notch;
+function CompactBotIdentity(props: {
+  bot: DynamicIslandBotIdentity;
+  displayMode?: "notch" | "island";
+  working?: boolean;
+}): JSX.Element {
   return (
     <span
       class="dynamic-island-surface-leading-anchor dynamic-island-surface-compact-identity"
       data-island-spatial-anchor="center"
     >
-      <IslandAvatar bot={props.bot} />
-      <span
-        class="dynamic-island-surface-compact-name"
-        style={{ "max-width": `${nameMaxWidth()}px` }}
-        data-island-motion-content
-      >
-        {props.bot.name}
-      </span>
+      <IslandAvatar bot={props.bot} working={props.working} />
+      <CompactBotName name={props.bot.name} displayMode={props.displayMode} />
+    </span>
+  );
+}
+
+function CompactBotName(props: { name: string; displayMode?: "notch" | "island" }): JSX.Element {
+  const nameMaxWidth = () =>
+    props.displayMode === "island" ? STATUS_COMPACT_NAME_MAX_WIDTH.island : STATUS_COMPACT_NAME_MAX_WIDTH.notch;
+  return (
+    <span
+      class="dynamic-island-surface-compact-name"
+      style={{ "max-width": `${nameMaxWidth()}px` }}
+      data-island-motion-content
+    >
+      {props.name}
     </span>
   );
 }
@@ -726,6 +753,7 @@ function ExpandedContent(props: {
   presentation: DynamicIslandPresentation;
   displayMode?: "notch" | "island";
   onAction: (action: DynamicIslandAction) => void | Promise<void>;
+  onHaptic?: () => void;
   onClose: () => void;
 }): JSX.Element {
   const working = () => (props.presentation.mode === "working" ? props.presentation.working : []);
@@ -808,6 +836,7 @@ function ExpandedContent(props: {
             serverId={presentation().serverId}
             remainingCount={presentation().remainingCount}
             onAction={props.onAction}
+            onHaptic={props.onHaptic}
             onClose={props.onClose}
           />
         )}
@@ -963,6 +992,7 @@ function QuestionContent(props: {
   serverId: string;
   remainingCount: number;
   onAction: (action: DynamicIslandAction) => void | Promise<void>;
+  onHaptic?: () => void;
   onClose: () => void;
 }): JSX.Element {
   const [questionIndex, setQuestionIndex] = createSignal(0);
@@ -1009,6 +1039,7 @@ function QuestionContent(props: {
     if (!question || !directAnswerAvailable() || questionTransitioning()) return;
     const nextAnswers = { ...answers(), [question.id]: [label] };
     if (questionIndex() < questions().length - 1) {
+      props.onHaptic?.();
       void showNextQuestion(nextAnswers);
       return;
     }
@@ -1316,11 +1347,11 @@ function ApprovalContext(props: { item: DynamicIslandApprovalItem }): JSX.Elemen
   );
 }
 
-function IslandAvatar(props: { bot: DynamicIslandBotIdentity }): JSX.Element {
+function IslandAvatar(props: { bot: DynamicIslandBotIdentity; working?: boolean }): JSX.Element {
   return (
     <AgentAvatar
       bot={props.bot}
-      motion="idle"
+      motion={props.working ? "working" : "idle"}
       ignoreReducedMotion
       shape="cercle"
       class="dynamic-island-surface-avatar"
@@ -1352,22 +1383,6 @@ function IslandContentSwap(props: {
       }}
     </Show>
   );
-}
-
-function compactLeadingKey(presentation: DynamicIslandPresentation): string {
-  if (presentation.mode === "working") {
-    return `working:${presentation.working.map((item) => item.bot.id).join(",")}`;
-  }
-  if (presentation.mode === "message") return `message:${presentation.message?.bot.id ?? ""}`;
-  if (
-    presentation.mode === "question" ||
-    presentation.mode === "approval" ||
-    presentation.mode === "takeover" ||
-    presentation.mode === "failed"
-  ) {
-    return `${presentation.mode}:${presentation.item.bot.id}`;
-  }
-  return "idle";
 }
 
 function compactStatusBot(presentation: DynamicIslandPresentation): DynamicIslandBotIdentity | undefined {

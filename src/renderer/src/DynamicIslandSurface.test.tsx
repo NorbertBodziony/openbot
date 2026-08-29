@@ -1,4 +1,8 @@
-import type { DynamicIslandPresentation, DynamicIslandQuestionItem } from "@openbot/contracts/ipc";
+import type {
+  DynamicIslandPreference,
+  DynamicIslandPresentation,
+  DynamicIslandQuestionItem,
+} from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { flush } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +24,76 @@ const SOURCE_OPTIONS = [
 afterEach(() => vi.useRealTimers());
 
 describe("DynamicIslandSurface", () => {
+  it("hides only the idle island when that preference changes", async () => {
+    const mock = createMockOpenBot();
+    let updatePreference: ((preference: DynamicIslandPreference) => void) | undefined;
+    let publish: ((presentation: DynamicIslandPresentation) => void) | undefined;
+    mock.api.dynamicIsland.onPreference = (listener) => {
+      updatePreference = listener;
+      return () => {
+        updatePreference = undefined;
+      };
+    };
+    mock.api.dynamicIsland.onPresentation = (listener) => {
+      publish = listener;
+      return () => {
+        publish = undefined;
+      };
+    };
+    Object.defineProperty(window, "openbot", { configurable: true, value: mock.api });
+    render(() => <DynamicIslandSurface />);
+
+    expect(await screen.findByRole("button", { name: "Expand Open OpenBot" })).toBeVisible();
+    flush(() =>
+      updatePreference?.({
+        enabled: true,
+        hapticsEnabled: true,
+        idleVisible: false,
+        additionalDisplaysEnabled: true,
+      }),
+    );
+    expect(screen.queryByRole("button", { name: "Expand Open OpenBot" })).not.toBeInTheDocument();
+
+    flush(() => publish?.({ serverId: "local", mode: "working", working: [] }));
+    expect(screen.getByRole("button", { name: "Expand OpenBot working status" })).toBeVisible();
+    mock.dispose();
+  });
+
+  it("requests haptics for direct interactions but not presentation updates", async () => {
+    const mock = createMockOpenBot();
+    const performHaptic = vi.fn(async () => undefined);
+    let publish: ((presentation: DynamicIslandPresentation) => void) | undefined;
+    mock.api.dynamicIsland.performHaptic = performHaptic;
+    mock.api.dynamicIsland.onPresentation = (listener) => {
+      publish = listener;
+      return () => {
+        publish = undefined;
+      };
+    };
+    Object.defineProperty(window, "openbot", { configurable: true, value: mock.api });
+    render(() => <DynamicIslandSurface />);
+    await waitFor(() => expect(publish).toBeDefined());
+
+    flush(() => publish?.({ serverId: "local", mode: "working", working: [] }));
+    expect(performHaptic).not.toHaveBeenCalled();
+
+    const anchor = document.querySelector(".dynamic-island-surface-anchor");
+    if (!anchor) throw new Error("Dynamic Island interaction area is missing.");
+    await fireEvent.mouseOver(anchor);
+    expect(performHaptic).toHaveBeenCalledOnce();
+
+    const toggle = screen.getByRole("button", { name: "Expand OpenBot working status" });
+    await fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    performHaptic.mockClear();
+
+    await fireEvent.mouseOut(anchor);
+    await fireEvent.mouseOver(anchor);
+    expect(performHaptic).toHaveBeenCalledOnce();
+
+    mock.dispose();
+  });
+
   it("keeps a new working presentation compact until hover intent", async () => {
     const mock = createMockOpenBot();
     let publish: ((presentation: DynamicIslandPresentation) => void) | undefined;
@@ -193,6 +267,33 @@ describe("DynamicIslandSurface", () => {
     expect(screen.queryByRole("region", { name: "OpenBot approval needed" })).not.toBeInTheDocument();
 
     await fireEvent.mouseOut(anchor);
+    expect(await screen.findByRole("region", { name: "OpenBot approval request" })).toBeVisible();
+    mock.dispose();
+  });
+
+  it("releases a queued critical presentation when keyboard focus collapses the panel", async () => {
+    const mock = createQuestionMock(questionPresentation("question-keyboard", [sourceQuestion()]));
+    let publish: ((presentation: DynamicIslandPresentation) => void) | undefined;
+    mock.api.dynamicIsland.onPresentation = (listener) => {
+      publish = listener;
+      return () => {
+        publish = undefined;
+      };
+    };
+    render(() => <DynamicIslandSurface />);
+
+    const expand = await screen.findByRole("button", { name: "Expand OpenBot question from AI" });
+    expand.focus();
+    await fireEvent.click(expand, { detail: 0 });
+    expect(screen.getByRole("button", { name: "Collapse OpenBot question from AI" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+
+    flush(() => publish?.(approvalPresentation("approval-after-keyboard")));
+    expect(screen.getByRole("region", { name: "OpenBot question from AI" })).toBeVisible();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Collapse OpenBot question from AI" }), { detail: 0 });
     expect(await screen.findByRole("region", { name: "OpenBot approval request" })).toBeVisible();
     mock.dispose();
   });

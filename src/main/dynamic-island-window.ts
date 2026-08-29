@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { DynamicIslandAction, DynamicIslandPreference, DynamicIslandPresentation } from "@openbot/contracts/ipc";
 import { IDLE_DYNAMIC_ISLAND_PRESENTATION, IPC_CHANNELS } from "@openbot/contracts/ipc";
 import type { BrowserWindow, Display, Rectangle } from "electron";
@@ -14,6 +15,7 @@ export interface DynamicIslandWindowControllerOptions {
   loadWindow: (window: BrowserWindow, display: Display) => Promise<void>;
   getDisplays: () => Display[];
   getMainWindow: () => BrowserWindow | null;
+  performHaptic: () => void;
   performCriticalAction: (
     action: Extract<DynamicIslandAction, { type: "approve-attention" | "answer-prompt" }>,
   ) => Promise<void>;
@@ -21,7 +23,12 @@ export interface DynamicIslandWindowControllerOptions {
 
 export class DynamicIslandWindowController {
   readonly #options: DynamicIslandWindowControllerOptions;
-  #preference: DynamicIslandPreference = { enabled: true };
+  #preference: DynamicIslandPreference = {
+    enabled: true,
+    hapticsEnabled: true,
+    idleVisible: true,
+    additionalDisplaysEnabled: true,
+  };
   #presentation = EMPTY_DYNAMIC_ISLAND_PRESENTATION;
   readonly #windows = new Map<number, BrowserWindow>();
 
@@ -53,13 +60,20 @@ export class DynamicIslandWindowController {
     );
   }
 
-  async setPreference(enabled: boolean): Promise<DynamicIslandPreference> {
-    this.#preference = await writeDynamicIslandPreference(this.#options.preferencePath, enabled);
+  async setPreference(preference: DynamicIslandPreference): Promise<DynamicIslandPreference> {
+    this.#preference = await writeDynamicIslandPreference(this.#options.preferencePath, preference);
     await this.reconcileWindow();
+    this.publishPreference();
     return this.preference;
   }
 
+  performHaptic(): void {
+    if (!this.#preference.enabled || !this.#preference.hapticsEnabled) return;
+    this.#options.performHaptic();
+  }
+
   publish(presentation: DynamicIslandPresentation): void {
+    if (isDeepStrictEqual(this.#presentation, presentation)) return;
     this.#presentation = presentation;
     for (const window of this.#windows.values()) {
       if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.dynamicIslandPresentation, presentation);
@@ -95,7 +109,9 @@ export class DynamicIslandWindowController {
       return;
     }
 
-    const displays = this.#options.getDisplays();
+    const displays = this.#options
+      .getDisplays()
+      .filter((display) => this.#preference.additionalDisplaysEnabled || display.internal);
     const displayIds = new Set(displays.map((display) => display.id));
     for (const [displayId, window] of this.#windows) {
       if (displayIds.has(displayId) && !window.isDestroyed()) continue;
@@ -128,6 +144,7 @@ export class DynamicIslandWindowController {
       if (this.#windows.get(display.id) !== window || window.isDestroyed()) return;
       window.showInactive();
       window.webContents.send(IPC_CHANNELS.dynamicIslandPresentation, this.#presentation);
+      window.webContents.send(IPC_CHANNELS.dynamicIslandPreference, this.#preference);
     });
     window.on("blur", () => this.setInteractive(window.webContents.id, false));
     window.on("closed", () => {
@@ -144,6 +161,12 @@ export class DynamicIslandWindowController {
 
   destroy(): void {
     this.destroyWindows();
+  }
+
+  private publishPreference(): void {
+    for (const window of this.#windows.values()) {
+      if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.dynamicIslandPreference, this.#preference);
+    }
   }
 
   private destroyWindows(): void {

@@ -150,12 +150,19 @@ describe("OpenBot connected desktop shell", () => {
         getAnalyticsPreference: vi.fn().mockResolvedValue({ enabled: true }),
         setAnalyticsPreference: vi.fn(async ({ enabled }) => ({ enabled })),
         dynamicIsland: {
-          getPreference: vi.fn().mockResolvedValue({ enabled: true }),
-          setPreference: vi.fn(async ({ enabled }) => ({ enabled })),
+          getPreference: vi.fn().mockResolvedValue({
+            enabled: true,
+            hapticsEnabled: true,
+            idleVisible: true,
+            additionalDisplaysEnabled: true,
+          }),
+          setPreference: vi.fn(async (preference) => ({ ...preference })),
           publishPresentation: vi.fn().mockResolvedValue(undefined),
           getPresentation: vi.fn().mockResolvedValue(null),
+          onPreference: vi.fn().mockReturnValue(() => undefined),
           onPresentation: vi.fn().mockReturnValue(() => undefined),
           performAction: vi.fn().mockResolvedValue(undefined),
+          performHaptic: vi.fn().mockResolvedValue(undefined),
           onAction: vi.fn((listener) => {
             emitDynamicIslandAction = listener;
             return () => undefined;
@@ -1797,8 +1804,70 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(notchSwitch);
 
-    await waitFor(() => expect(window.openbot.dynamicIsland.setPreference).toHaveBeenCalledWith({ enabled: false }));
+    await waitFor(() =>
+      expect(window.openbot.dynamicIsland.setPreference).toHaveBeenCalledWith({
+        enabled: false,
+        hapticsEnabled: true,
+        idleVisible: true,
+        additionalDisplaysEnabled: true,
+      }),
+    );
     expect(notchSwitch).not.toBeChecked();
+  });
+
+  it("persists the MacBook notch haptic preference independently", async () => {
+    render(() => <App />);
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const hapticSwitch = await screen.findByRole("switch", { name: "Haptic feedback" });
+    expect(hapticSwitch).toBeChecked();
+
+    await fireEvent.click(hapticSwitch);
+
+    await waitFor(() =>
+      expect(window.openbot.dynamicIsland.setPreference).toHaveBeenCalledWith({
+        enabled: true,
+        hapticsEnabled: false,
+        idleVisible: true,
+        additionalDisplaysEnabled: true,
+      }),
+    );
+    expect(hapticSwitch).not.toBeChecked();
+  });
+
+  it("persists the idle island preference without disabling active statuses", async () => {
+    render(() => <App />);
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const idleSwitch = await screen.findByRole("switch", { name: "Show idle island" });
+
+    await fireEvent.click(idleSwitch);
+
+    await waitFor(() =>
+      expect(window.openbot.dynamicIsland.setPreference).toHaveBeenCalledWith({
+        enabled: true,
+        hapticsEnabled: true,
+        idleVisible: false,
+        additionalDisplaysEnabled: true,
+      }),
+    );
+    expect(idleSwitch).not.toBeChecked();
+  });
+
+  it("persists the additional display preference independently", async () => {
+    render(() => <App />);
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const displaySwitch = await screen.findByRole("switch", { name: "Show on additional displays" });
+
+    await fireEvent.click(displaySwitch);
+
+    await waitFor(() =>
+      expect(window.openbot.dynamicIsland.setPreference).toHaveBeenCalledWith({
+        enabled: true,
+        hapticsEnabled: true,
+        idleVisible: true,
+        additionalDisplaysEnabled: false,
+      }),
+    );
+    expect(displaySwitch).not.toBeChecked();
   });
 
   it("does not open desktop analytics when the saved preference is disabled", async () => {

@@ -13,23 +13,24 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.applyEvent(scoped("remote-b", approval("sales", "approval-1")), "local");
 
     expect(coordinator.presentation(["local", "remote-a", "remote-b"])).toMatchObject({
-      serverId: "remote-b",
-      mode: "approval",
+      serverId: "remote-a",
+      mode: "question",
       remainingCount: 1,
-      item: { requestId: "approval-1" },
+      item: { requestId: "question-1" },
     });
 
     coordinator.resolveAction({
-      type: "approve-attention",
-      serverId: "remote-b",
-      botId: "sales",
-      requestId: "approval-1",
+      type: "answer-prompt",
+      serverId: "remote-a",
+      botId: "research",
+      requestId: "question-1",
+      answers: { source: ["Official data"] },
     });
 
     expect(coordinator.presentation(["local", "remote-a", "remote-b"])).toMatchObject({
-      serverId: "remote-a",
-      mode: "question",
-      item: { requestId: "question-1" },
+      serverId: "remote-b",
+      mode: "approval",
+      item: { requestId: "approval-1" },
     });
   });
 
@@ -101,6 +102,49 @@ describe("DynamicIslandCoordinator", () => {
     });
   });
 
+  it("keeps working ahead of an unread message across hosts", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    coordinator.setBots("remote-working", [bot("builder", "Builder")]);
+    coordinator.setBots("remote-message", [bot("research", "Research")]);
+    coordinator.applyEvent(
+      scoped("remote-working", {
+        type: "turn-started",
+        botId: "builder",
+        threadId: "thread-builder",
+        turnId: "turn-builder",
+      }),
+      "local",
+    );
+    coordinator.applyEvent(
+      scoped("remote-message", {
+        type: "conversation-delta",
+        botId: "research",
+        threadId: "thread-research",
+        turnId: "turn-research",
+        messageId: "message-research",
+        delta: "The source review is ready.",
+        createdAt: "2026-08-29T10:00:00.000Z",
+        revision: 1,
+      }),
+      "local",
+    );
+    coordinator.applyEvent(
+      scoped("remote-message", {
+        type: "turn-completed",
+        botId: "research",
+        threadId: "thread-research",
+        turnId: "turn-research",
+        status: "completed",
+      }),
+      "local",
+    );
+
+    expect(coordinator.presentation(["remote-message", "remote-working"])).toMatchObject({
+      serverId: "remote-working",
+      mode: "working",
+    });
+  });
+
   it("replaces the active server snapshot without deleting pending state from another host", () => {
     const coordinator = new DynamicIslandCoordinator();
     coordinator.setBots("remote", [bot("research", "Research")]);
@@ -146,12 +190,12 @@ function approval(botId: string, requestId: string): Extract<AgentEvent, { type:
       botId,
       threadId: `thread-${botId}`,
       turnId: `turn-${botId}`,
-      kind: "command",
-      command: "bun test",
-      cwd: "/workspace",
-      reason: "Run the test suite.",
-      grantRoot: null,
-      permissions: null,
+      kind: "permissions",
+      command: null,
+      cwd: null,
+      reason: "Access the project files.",
+      grantRoot: "/workspace",
+      permissions: { fileSystem: { read: ["/workspace"], write: ["/workspace"] }, network: false },
     },
   };
 }

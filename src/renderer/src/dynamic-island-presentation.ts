@@ -92,6 +92,12 @@ export function createDynamicIslandPresentation(input: DynamicIslandPresentation
   }
   if (attention?.mode === "failed") return { serverId: input.serverId, mode: "failed", item: attention.item };
 
+  const working = input.bots
+    .filter((bot) => isBotWorking(bot.id, input))
+    .slice(0, 3)
+    .map((bot) => ({ bot: botIdentity(bot), task: currentTask(bot.id, input.queues) }));
+  if (working.length > 0) return { serverId: input.serverId, mode: "working", working };
+
   const message = latestUnreadMessage(input);
   if (message) {
     return {
@@ -101,12 +107,6 @@ export function createDynamicIslandPresentation(input: DynamicIslandPresentation
       message,
     };
   }
-
-  const working = input.bots
-    .filter((bot) => isBotWorking(bot.id, input))
-    .slice(0, 3)
-    .map((bot) => ({ bot: botIdentity(bot), task: currentTask(bot.id, input.queues) }));
-  if (working.length > 0) return { serverId: input.serverId, mode: "working", working };
   return { serverId: input.serverId, mode: "idle" };
 }
 
@@ -226,9 +226,9 @@ function collectAttention(
 }
 
 function attentionPriority(mode: AttentionCandidate["mode"]): 0 | 1 | 2 | 3 {
-  if (mode === "approval") return 0;
-  if (mode === "takeover") return 1;
-  if (mode === "question") return 2;
+  if (mode === "question") return 0;
+  if (mode === "approval") return 1;
+  if (mode === "takeover") return 2;
   return 3;
 }
 
@@ -260,12 +260,12 @@ function approvalTitle(approval: AgentApproval) {
 }
 
 function presentationPriority(mode: DynamicIslandPresentation["mode"]): 0 | 1 | 2 | 3 | 4 | 5 | 6 {
-  if (mode === "approval") return 0;
-  if (mode === "takeover") return 1;
-  if (mode === "question") return 2;
+  if (mode === "question") return 0;
+  if (mode === "approval") return 1;
+  if (mode === "takeover") return 2;
   if (mode === "failed") return 3;
-  if (mode === "message") return 4;
-  if (mode === "working") return 5;
+  if (mode === "working") return 4;
+  if (mode === "message") return 5;
   return 6;
 }
 

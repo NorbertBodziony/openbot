@@ -156,7 +156,12 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let authState = clone<CentralAuthState>(options.authState ?? defaultAuthState);
   let setupState = clone<AppSetupState>(options.setupState ?? { completed: true, preferredProvider: "codex" });
   let analyticsPreference = clone<AnalyticsPreference>(options.analyticsPreference ?? { enabled: true });
-  let dynamicIslandPreference = { enabled: true };
+  let dynamicIslandPreference = {
+    enabled: true,
+    hapticsEnabled: true,
+    idleVisible: true,
+    additionalDisplaysEnabled: true,
+  };
   let dynamicIslandPresentation: DynamicIslandPresentation = { serverId: "local", mode: "idle" };
   const agentStatus = clone(options.agentStatus ?? STORY_AGENT_STATUS);
   let bots = clone(options.bots ?? STORY_BOT_SUMMARIES);
@@ -369,16 +374,18 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     },
     dynamicIsland: {
       getPreference: async () => clone(dynamicIslandPreference),
-      setPreference: async ({ enabled }) => {
-        dynamicIslandPreference = { enabled };
+      setPreference: async (preference) => {
+        dynamicIslandPreference = { ...preference };
         return clone(dynamicIslandPreference);
       },
       publishPresentation: async (presentation) => {
         dynamicIslandPresentation = clone(presentation);
       },
       getPresentation: async () => clone(dynamicIslandPresentation),
+      onPreference: () => () => undefined,
       onPresentation: () => () => undefined,
       performAction: async () => undefined,
+      performHaptic: async () => undefined,
       onAction: () => () => undefined,
       setInteractive: async () => undefined,
     },

@@ -7,6 +7,9 @@ export interface GeneralSettingsValue {
   externalLinkTarget: ExternalLinkTarget;
   desktopNotifications: boolean;
   macBookNotch: boolean;
+  macBookNotchHaptics: boolean;
+  macBookNotchIdle: boolean;
+  macBookNotchAdditionalDisplays: boolean;
   taskCompletionSound: boolean;
   autoDownloadUpdates: boolean;
   productAnalytics: boolean;
@@ -19,6 +22,9 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettingsValue = {
   externalLinkTarget: "Default browser",
   desktopNotifications: true,
   macBookNotch: true,
+  macBookNotchHaptics: true,
+  macBookNotchIdle: true,
+  macBookNotchAdditionalDisplays: true,
   taskCompletionSound: false,
   autoDownloadUpdates: true,
   productAnalytics: true,

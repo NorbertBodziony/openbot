@@ -11,10 +11,16 @@ export type DynamicIslandMode = "idle" | "working" | "message" | "question" | "a
 
 export interface DynamicIslandPreference {
   enabled: boolean;
+  hapticsEnabled: boolean;
+  idleVisible: boolean;
+  additionalDisplaysEnabled: boolean;
 }
 
 export interface SetDynamicIslandPreferenceInput {
   enabled: boolean;
+  hapticsEnabled: boolean;
+  idleVisible: boolean;
+  additionalDisplaysEnabled: boolean;
 }
 
 export interface DynamicIslandBotIdentity {
@@ -125,7 +131,13 @@ export interface SetDynamicIslandInteractiveInput {
 export const IDLE_DYNAMIC_ISLAND_PRESENTATION: DynamicIslandPresentation = { serverId: "local", mode: "idle" };
 
 export function isDynamicIslandPreference(value: unknown): value is DynamicIslandPreference {
-  return isDynamicRecord(value) && isBoolean(value.enabled);
+  return (
+    isDynamicRecord(value) &&
+    isBoolean(value.enabled) &&
+    isBoolean(value.hapticsEnabled) &&
+    isBoolean(value.idleVisible) &&
+    isBoolean(value.additionalDisplaysEnabled)
+  );
 }
 
 export function isDynamicIslandInteractive(value: unknown): value is SetDynamicIslandInteractiveInput {

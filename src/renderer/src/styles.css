@@ -101,6 +101,7 @@
   --openbot-question-option-hover: rgba(107, 199, 217, 0.2);
   --openbot-question-option-pressed: rgba(107, 199, 217, 0.26);
   --openbot-island-identity-name: var(--openbot-text-primary);
+  --openbot-island-compact-name: #fff;
   --openbot-question-badge-text: #8bdee8;
   --openbot-question-badge-soft: rgba(107, 199, 217, 0.16);
   --openbot-question-badge-border: rgba(107, 199, 217, 0.24);

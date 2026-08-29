@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DynamicIslandAction } from "@openbot/contracts/ipc";
+import type { DynamicIslandAction, DynamicIslandPreference } from "@openbot/contracts/ipc";
 import type { BrowserWindow, Display, Rectangle } from "electron";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -14,6 +14,16 @@ import {
 } from "./dynamic-island-window";
 
 const roots: string[] = [];
+
+function preference(overrides: Partial<DynamicIslandPreference> = {}): DynamicIslandPreference {
+  return {
+    enabled: true,
+    hapticsEnabled: true,
+    idleVisible: true,
+    additionalDisplaysEnabled: true,
+    ...overrides,
+  };
+}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -78,6 +88,7 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => displays,
       getMainWindow: () => null,
+      performHaptic: () => undefined,
       performCriticalAction: async () => undefined,
     });
 
@@ -85,6 +96,7 @@ describe("dynamic island window geometry", () => {
     expect(windows).toHaveLength(2);
     expect(controller.overlayRendererIds).toEqual(new Set([42, 43]));
 
+    controller.publish({ serverId: "local", mode: "working", working: [] });
     controller.publish({ serverId: "local", mode: "working", working: [] });
     expect(windows[0]?.webContents.send).toHaveBeenCalledOnce();
     expect(windows[1]?.webContents.send).toHaveBeenCalledOnce();
@@ -106,9 +118,10 @@ describe("dynamic island window geometry", () => {
     expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 380 }, false);
   });
 
-  it("destroys and recreates all display windows with the preference", async () => {
+  it("applies the window and haptic preferences independently", async () => {
     const root = await temporaryRoot();
     const windows: FakeWindow[] = [];
+    const performHaptic = vi.fn();
     const controller = new DynamicIslandWindowController({
       platform: "darwin",
       preferencePath: join(root, "preference.json"),
@@ -121,15 +134,52 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => [display({ id: 1 }), display({ id: 2, internal: false })],
       getMainWindow: () => null,
+      performHaptic,
       performCriticalAction: async () => undefined,
     });
 
     await controller.initialize();
-    await controller.setPreference(false);
+    controller.performHaptic();
+    expect(performHaptic).toHaveBeenCalledOnce();
+    await controller.setPreference(preference({ enabled: false }));
     expect(windows[0]?.destroy).toHaveBeenCalledOnce();
     expect(windows[1]?.destroy).toHaveBeenCalledOnce();
-    await controller.setPreference(true);
+    controller.performHaptic();
+    expect(performHaptic).toHaveBeenCalledOnce();
+    await controller.setPreference(preference({ hapticsEnabled: false }));
     expect(windows).toHaveLength(4);
+    controller.performHaptic();
+    expect(performHaptic).toHaveBeenCalledOnce();
+    await controller.setPreference(preference());
+    controller.performHaptic();
+    expect(performHaptic).toHaveBeenCalledTimes(2);
+  });
+
+  it("removes external display overlays independently of the built-in display", async () => {
+    const root = await temporaryRoot();
+    const windows: FakeWindow[] = [];
+    const controller = new DynamicIslandWindowController({
+      platform: "darwin",
+      preferencePath: join(root, "preference.json"),
+      createWindow: (bounds) => {
+        const window = new FakeWindow(60 + windows.length, bounds);
+        windows.push(window);
+        // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
+        return window as unknown as BrowserWindow;
+      },
+      loadWindow: async () => undefined,
+      getDisplays: () => [display({ id: 1 }), display({ id: 2, internal: false })],
+      getMainWindow: () => null,
+      performHaptic: () => undefined,
+      performCriticalAction: async () => undefined,
+    });
+
+    await controller.initialize();
+    await controller.setPreference(preference({ additionalDisplaysEnabled: false }));
+
+    expect(windows[0]?.destroy).not.toHaveBeenCalled();
+    expect(windows[1]?.destroy).toHaveBeenCalledOnce();
+    expect(controller.overlayRendererIds).toEqual(new Set([60]));
   });
 
   it("does not create a window outside macOS", async () => {
@@ -142,6 +192,7 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => [display({})],
       getMainWindow: () => null,
+      performHaptic: () => undefined,
       performCriticalAction: async () => undefined,
     });
     await controller.initialize();
@@ -161,6 +212,7 @@ describe("dynamic island window geometry", () => {
       getDisplays: () => [],
       // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
       getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      performHaptic: () => undefined,
       performCriticalAction,
     });
     const action: DynamicIslandAction = {
@@ -191,6 +243,7 @@ describe("dynamic island window geometry", () => {
       getDisplays: () => [],
       // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
       getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      performHaptic: () => undefined,
       performCriticalAction,
     });
     const action: DynamicIslandAction = {
@@ -221,6 +274,7 @@ describe("dynamic island window geometry", () => {
       getDisplays: () => [],
       // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
       getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      performHaptic: () => undefined,
       performCriticalAction: async () => {
         throw new Error("The request is no longer active.");
       },

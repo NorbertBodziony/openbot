@@ -364,6 +364,7 @@ export function createAppController(props: AppProps = {}) {
   const pendingProviderConnections = new Map<AgentProviderId, ReturnType<typeof desktopAnalytics.scope>>();
   const dynamicIslandCoordinator = new DynamicIslandCoordinator();
   let conversationFrame: number | undefined;
+  let dynamicIslandPresentationFrame: number | undefined;
   let directConversationRequest = 0;
   let serverSettingsRequest = 0;
   let serverSettingsRestoreTarget: HTMLElement | null = null;
@@ -460,11 +461,37 @@ export function createAppController(props: AppProps = {}) {
           setGeneralSettings((current) => ({ ...current, productAnalytics: previous.productAnalytics }));
         });
     }
-    if (previous.macBookNotch !== value.macBookNotch) {
+    if (
+      previous.macBookNotch !== value.macBookNotch ||
+      previous.macBookNotchHaptics !== value.macBookNotchHaptics ||
+      previous.macBookNotchIdle !== value.macBookNotchIdle ||
+      previous.macBookNotchAdditionalDisplays !== value.macBookNotchAdditionalDisplays
+    ) {
       void window.openbot.dynamicIsland
-        .setPreference({ enabled: value.macBookNotch })
-        .then((preference) => setGeneralSettings((current) => ({ ...current, macBookNotch: preference.enabled })))
-        .catch(() => setGeneralSettings((current) => ({ ...current, macBookNotch: previous.macBookNotch })));
+        .setPreference({
+          enabled: value.macBookNotch,
+          hapticsEnabled: value.macBookNotchHaptics,
+          idleVisible: value.macBookNotchIdle,
+          additionalDisplaysEnabled: value.macBookNotchAdditionalDisplays,
+        })
+        .then((preference) =>
+          setGeneralSettings((current) => ({
+            ...current,
+            macBookNotch: preference.enabled,
+            macBookNotchHaptics: preference.hapticsEnabled,
+            macBookNotchIdle: preference.idleVisible,
+            macBookNotchAdditionalDisplays: preference.additionalDisplaysEnabled,
+          })),
+        )
+        .catch(() =>
+          setGeneralSettings((current) => ({
+            ...current,
+            macBookNotch: previous.macBookNotch,
+            macBookNotchHaptics: previous.macBookNotchHaptics,
+            macBookNotchIdle: previous.macBookNotchIdle,
+            macBookNotchAdditionalDisplays: previous.macBookNotchAdditionalDisplays,
+          })),
+        );
     }
   }
 
@@ -629,6 +656,7 @@ export function createAppController(props: AppProps = {}) {
       unsubscribeRemoteDesktop();
       window.removeEventListener("keydown", handleGlobalSearchShortcut);
       if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
+      if (dynamicIslandPresentationFrame !== undefined) cancelAnimationFrame(dynamicIslandPresentationFrame);
       for (const timer of recentReplyTimers.values()) clearTimeout(timer);
       recentReplyTimers.clear();
       completedTurnByBot.clear();
@@ -671,7 +699,15 @@ export function createAppController(props: AppProps = {}) {
       });
     void window.openbot.dynamicIsland
       .getPreference()
-      .then((preference) => setGeneralSettings((current) => ({ ...current, macBookNotch: preference.enabled })))
+      .then((preference) =>
+        setGeneralSettings((current) => ({
+          ...current,
+          macBookNotch: preference.enabled,
+          macBookNotchHaptics: preference.hapticsEnabled,
+          macBookNotchIdle: preference.idleVisible,
+          macBookNotchAdditionalDisplays: preference.additionalDisplaysEnabled,
+        })),
+      )
       .catch(() => undefined);
     void window.openbot.servers
       .takePendingInvite()
@@ -2901,9 +2937,12 @@ export function createAppController(props: AppProps = {}) {
   }
 
   function publishDynamicIslandPresentation(): void {
-    if (props.landingPreview) return;
-    const presentation = dynamicIslandCoordinator.presentation(dynamicIslandServerOrder());
-    void window.openbot.dynamicIsland.publishPresentation(presentation).catch(() => undefined);
+    if (props.landingPreview || dynamicIslandPresentationFrame !== undefined) return;
+    dynamicIslandPresentationFrame = requestAnimationFrame(() => {
+      dynamicIslandPresentationFrame = undefined;
+      const presentation = dynamicIslandCoordinator.presentation(dynamicIslandServerOrder());
+      void window.openbot.dynamicIsland.publishPresentation(presentation).catch(() => undefined);
+    });
   }
 
   createEffect(

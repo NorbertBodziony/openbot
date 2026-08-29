@@ -129,6 +129,7 @@ import { parseBrowserBounds, parseBrowserNavigate, parseBrowserOpen, parseVisibi
 import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
 import { isObject, requireString } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
+import { MacHapticFeedback } from "./mac-haptic-feedback";
 import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
 import { ProviderRuntimeManager } from "./provider-runtime-manager";
 import { RemoteDesktopManager } from "./remote-desktop-manager";
@@ -253,6 +254,7 @@ let centralAuthManager: CentralAuthManager | null = null;
 let hostAnalytics: HostAnalytics | null = null;
 let voiceTranscriptionService: VoiceTranscriptionService | null = null;
 let dynamicIslandController: DynamicIslandWindowController | null = null;
+const macHapticFeedback = new MacHapticFeedback();
 let isQuitting = false;
 let shutdownStarted = false;
 let systemSessionEnding = false;
@@ -330,12 +332,16 @@ function registerIpcHandlers(
     return preference;
   });
   handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandGetPreference, (event) => {
-    requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer");
+    requireDynamicIslandSender(
+      event.sender.id,
+      new Set([...dynamicIsland.mainRendererIds, ...dynamicIsland.overlayRendererIds]),
+      "main or Dynamic Island renderer",
+    );
     return dynamicIsland.preference;
   });
   handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandSetPreference, (event, input: unknown) => {
     requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer");
-    return dynamicIsland.setPreference(parseDynamicIslandPreference(input).enabled);
+    return dynamicIsland.setPreference(parseDynamicIslandPreference(input));
   });
   handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPublishPresentation, (event, input: unknown) => {
     requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer");
@@ -348,6 +354,10 @@ function registerIpcHandlers(
   handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPerformAction, (event, input: unknown) => {
     requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
     return dynamicIsland.performAction(parseDynamicIslandAction(input));
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPerformHaptic, (event) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
+    dynamicIsland.performHaptic();
   });
   handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandSetInteractive, (event, input: unknown) => {
     requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
@@ -1475,6 +1485,7 @@ if (!hasSingleInstanceLock) {
         loadWindow: loadDynamicIslandRenderer,
         getDisplays: () => screen.getAllDisplays(),
         getMainWindow: () => mainWindow,
+        performHaptic: () => macHapticFeedback.performAlignment(),
         performCriticalAction: async (action) => {
           if (!agentService || !remoteServerManager) throw new Error("OpenBot is not ready.");
           await performDynamicIslandCriticalAction(action, agentService, remoteServerManager, decodeVoid);
@@ -1778,6 +1789,7 @@ if (!hasSingleInstanceLock) {
       );
       configureApplicationMenu(service, updateService);
       await dynamicIslandController.initialize();
+      macHapticFeedback.prepare();
       await loadRenderer(mainWindow);
       const reconcileDynamicIsland = () => void dynamicIslandController?.reconcileWindow();
       screen.on("display-added", reconcileDynamicIsland);
@@ -1935,6 +1947,7 @@ async function prepareForShutdown(): Promise<void> {
   updateService?.stop();
   dynamicIslandController?.destroy();
   dynamicIslandController = null;
+  macHapticFeedback.destroy();
   await (providerRuntimeManager?.stop() ?? Promise.resolve());
   remoteServerManager?.stop();
   voiceTranscriptionService?.shutdown();
