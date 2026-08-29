@@ -84,10 +84,6 @@ export class DynamicIslandWindowController {
   publish(presentation: DynamicIslandPresentation): void {
     if (isDeepStrictEqual(this.#presentation, presentation)) return;
     this.#presentation = presentation;
-    const currentCriticalAction = presentationCriticalActionKey(presentation);
-    for (const key of this.#criticalActions.keys()) {
-      if (key !== currentCriticalAction) this.#criticalActions.delete(key);
-    }
     for (const window of this.#windows.values()) {
       if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.dynamicIslandPresentation, presentation);
     }
@@ -107,9 +103,6 @@ export class DynamicIslandWindowController {
       throw new Error("Approval requests must be reviewed in OpenBot.");
     }
     if (action.type === "answer-prompt") {
-      if (!this.matchesCriticalAction(action)) {
-        throw new Error("This Dynamic Island request is no longer active.");
-      }
       const key = criticalActionKey(action);
       const existing = this.#criticalActions.get(key);
       if (existing) return existing;
@@ -120,9 +113,8 @@ export class DynamicIslandWindowController {
       this.#criticalActions.set(key, pending);
       try {
         await pending;
-      } catch (error) {
+      } finally {
         if (this.#criticalActions.get(key) === pending) this.#criticalActions.delete(key);
-        throw error;
       }
       return;
     }
@@ -211,20 +203,6 @@ export class DynamicIslandWindowController {
     }
   }
 
-  private matchesCriticalAction(
-    action: Extract<DynamicIslandAction, { type: "approve-attention" | "answer-prompt" }>,
-  ): boolean {
-    const presentation = this.#presentation;
-    if (action.type === "approve-attention" && presentation.mode !== "approval") return false;
-    if (action.type === "answer-prompt" && presentation.mode !== "question") return false;
-    if (presentation.mode !== "approval" && presentation.mode !== "question") return false;
-    return (
-      presentation.serverId === action.serverId &&
-      presentation.item.bot.id === action.botId &&
-      String(presentation.item.requestId) === String(action.requestId)
-    );
-  }
-
   private destroyWindows(): void {
     const windows = [...this.#windows.values()];
     this.#windows.clear();
@@ -238,16 +216,6 @@ function criticalActionKey(
   action: Extract<DynamicIslandAction, { type: "approve-attention" | "answer-prompt" }>,
 ): string {
   return [action.type, action.serverId, action.botId, String(action.requestId)].join("\u0000");
-}
-
-function presentationCriticalActionKey(presentation: DynamicIslandPresentation): string | null {
-  if (presentation.mode !== "approval" && presentation.mode !== "question") return null;
-  return [
-    presentation.mode === "approval" ? "approve-attention" : "answer-prompt",
-    presentation.serverId,
-    presentation.item.bot.id,
-    String(presentation.item.requestId),
-  ].join("\u0000");
 }
 
 export function dynamicIslandWindowBounds(display: Pick<Display, "bounds">): Rectangle {

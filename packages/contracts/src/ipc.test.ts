@@ -145,6 +145,29 @@ describe("runtime snapshot event validation", () => {
     };
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot })).toBe(true);
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, failedTurns: null } })).toBe(false);
+    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, bots: [{}] } })).toBe(false);
+    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, queues: [{}] } })).toBe(false);
+    expect(
+      isAgentEvent({
+        type: "runtime-snapshot",
+        snapshot: {
+          ...snapshot,
+          pendingPrompts: [
+            {
+              requestId: "prompt-1",
+              botId: "chief",
+              threadId: "thread-1",
+              turnId: "turn-1",
+              questions: [null],
+            },
+          ],
+        },
+      }),
+    ).toBe(false);
+    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, pendingApprovals: [{}] } })).toBe(false);
+    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, pendingBrowserTakeovers: [{}] } })).toBe(
+      false,
+    );
   });
 });
 

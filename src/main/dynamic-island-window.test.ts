@@ -421,7 +421,7 @@ describe("dynamic island window geometry", () => {
     expect(mainWindow.webContents.send).toHaveBeenCalledOnce();
   });
 
-  it("rejects a critical action that does not match the published request", async () => {
+  it("forwards a pinned question after global selection moves to another request", async () => {
     const mainWindow = new FakeWindow(74, { x: 0, y: 0, width: 1200, height: 800 });
     const performCriticalAction = vi.fn(async () => undefined);
     const controller = new DynamicIslandWindowController({
@@ -439,18 +439,17 @@ describe("dynamic island window geometry", () => {
     });
     controller.publish(criticalPresentation("question", "prompt-current"));
 
-    await expect(
-      controller.performAction({
-        type: "answer-prompt",
-        serverId: "local",
-        botId: "chief",
-        requestId: "prompt-stale",
-        answers: { source: ["Official data"] },
-      }),
-    ).rejects.toThrow("no longer active");
+    const action = {
+      type: "answer-prompt",
+      serverId: "local",
+      botId: "chief",
+      requestId: "prompt-pinned",
+      answers: { source: ["Official data"] },
+    } satisfies DynamicIslandAction;
+    await controller.performAction(action);
 
-    expect(performCriticalAction).not.toHaveBeenCalled();
-    expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+    expect(performCriticalAction).toHaveBeenCalledWith(action);
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith("dynamic-island:action", action);
   });
 
   it("does not dismiss a critical action when execution fails", async () => {
