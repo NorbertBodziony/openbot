@@ -365,6 +365,104 @@ describe("remote event connections", () => {
     }
   });
 
+  it("backs off repeated event connection failures", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const directory = await mkdtemp(join(tmpdir(), "openbot-remote-backoff-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "backoff");
+    const sockets: TestFailingEventSocket[] = [];
+    const connectionTimes: number[] = [];
+    class TestFailingEventSocket extends EventTarget {
+      static readonly OPEN = 1;
+      readonly close = vi.fn();
+      readonly protocol = "";
+      readonly readyState = 0;
+      readonly send = vi.fn();
+
+      constructor() {
+        super();
+        sockets.push(this);
+        connectionTimes.push(Date.now());
+        queueMicrotask(() => this.dispatchEvent(new Event("error")));
+      }
+    }
+    vi.stubGlobal("WebSocket", TestFailingEventSocket);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "Unavailable" }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    const manager = remoteEventManager(statePath);
+
+    try {
+      await manager.initialize();
+      manager.startEventConnections();
+      await vi.waitFor(() => expect(sockets).toHaveLength(1));
+      await vi.waitFor(() => expect(manager.list().find((server) => server.id === "backoff")?.state).toBe("offline"));
+      manager.refreshRuntimeSnapshots();
+      expect(sockets).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.waitFor(() => expect(sockets).toHaveLength(3));
+      expect(connectionTimes[1] - connectionTimes[0]).toBeGreaterThanOrEqual(1_000);
+      expect(connectionTimes[2] - connectionTimes[1]).toBeGreaterThanOrEqual(2_000);
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("pauses event reconnects after credentials are rejected", async () => {
+    vi.useFakeTimers();
+    const directory = await mkdtemp(join(tmpdir(), "openbot-remote-auth-pause-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "auth-paused");
+    const sockets: EventTarget[] = [];
+    class TestRejectedEventSocket extends EventTarget {
+      static readonly OPEN = 1;
+      readonly close = vi.fn();
+      readonly protocol = "";
+      readonly readyState = 0;
+      readonly send = vi.fn();
+
+      constructor() {
+        super();
+        sockets.push(this);
+        queueMicrotask(() => this.dispatchEvent(new Event("error")));
+      }
+    }
+    vi.stubGlobal("WebSocket", TestRejectedEventSocket);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "Authentication required." }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    const manager = remoteEventManager(statePath);
+
+    try {
+      await manager.initialize();
+      manager.startEventConnections();
+      await vi.waitFor(() => expect(manager.list().find((server) => server.id === "auth-paused")?.state).toBe("error"));
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      manager.refreshRuntimeSnapshots();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(sockets).toHaveLength(1);
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("falls back to explicit state reads when an older host selects the legacy protocol", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-legacy-remote-events-"));
     const statePath = join(directory, "servers.json");
@@ -464,7 +562,43 @@ describe("remote event connections", () => {
   });
 });
 
-const REMOTE_EVENT_RECONNECT_TEST_MS = 1_000;
+const REMOTE_EVENT_RECONNECT_TEST_MS = 1_250;
+
+async function writeRemoteEventState(path: string, serverId: string): Promise<void> {
+  await writeFile(
+    path,
+    JSON.stringify({
+      version: 2,
+      activeServerId: serverId,
+      servers: [
+        {
+          id: serverId,
+          name: serverId,
+          apiUrl: `https://${serverId}.trycloudflare.com/`,
+          fingerprint: "fingerprint",
+          username: "person@example.com",
+          encryptedToken: Buffer.from(`token-${serverId}`).toString("base64"),
+          remoteDesktopAvailable: false,
+          role: "member",
+        },
+      ],
+    }),
+  );
+}
+
+function remoteEventManager(statePath: string): RemoteServerManager {
+  return new RemoteServerManager(
+    statePath,
+    {
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+    },
+    {
+      createTeamAuthTicket: async () => "ticket",
+      getEmail: () => "person@example.com",
+    },
+  );
+}
 
 describe("remote control capability discovery", () => {
   it("joins a server when remote control is unavailable", async () => {

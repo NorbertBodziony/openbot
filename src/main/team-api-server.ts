@@ -57,6 +57,7 @@ const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1_000;
 const RATE_LIMIT_SWEEP_MS = 60_000;
 const RATE_LIMIT_ATTEMPTS = 5;
 const RATE_LIMIT_CAPACITY = 10_000;
+const RUNTIME_SNAPSHOT_REQUEST_INTERVAL_MS = 1_000;
 const EVENT_PROTOCOL = "openbot-events";
 const EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 const requireModule = createRequire(import.meta.url);
@@ -170,6 +171,8 @@ interface EventClientState {
   typingTimer: ReturnType<typeof setTimeout> | null;
   directTypingRecipientId: string | null;
   directTypingTimer: ReturnType<typeof setTimeout> | null;
+  snapshotResponsePending: boolean;
+  nextSnapshotRequestAt: number;
 }
 
 interface RateEntry {
@@ -1150,6 +1153,8 @@ export class TeamApiServer {
       typingTimer: null,
       directTypingRecipientId: null,
       directTypingTimer: null,
+      snapshotResponsePending: false,
+      nextSnapshotRequestAt: 0,
     };
     this.#eventClients.set(client, connection);
     client.on("error", () => {
@@ -1157,7 +1162,7 @@ export class TeamApiServer {
       // Consume the emitted error so malformed input cannot become an uncaught exception.
     });
     if (supportsRuntimeSnapshot) {
-      client.send(JSON.stringify({ type: "runtime-snapshot", snapshot: this.#options.agents.getRuntimeSnapshot() }));
+      this.#sendRuntimeSnapshot(client, connection, false);
     }
     client.on("message", (data, isBinary) => {
       if (isBinary) {
@@ -1176,9 +1181,7 @@ export class TeamApiServer {
           throw new Error("Unsupported team event.");
         }
         if (event.type === "runtime-snapshot-request" && supportsRuntimeSnapshot) {
-          client.send(
-            JSON.stringify({ type: "runtime-snapshot", snapshot: this.#options.agents.getRuntimeSnapshot() }),
-          );
+          this.#sendRuntimeSnapshot(client, connection, true);
           return;
         }
         if (event.type === "team-direct-typing") {
@@ -1220,6 +1223,32 @@ export class TeamApiServer {
       this.#publishPresence();
     });
     this.#publishPresence();
+  }
+
+  #sendRuntimeSnapshot(client: Ws.WebSocket, connection: EventClientState, rateLimited: boolean): void {
+    const now = this.#now();
+    if (
+      client.readyState !== webSockets.WebSocket.OPEN ||
+      connection.snapshotResponsePending ||
+      client.bufferedAmount > EVENT_PAYLOAD_LIMIT ||
+      (rateLimited && now < connection.nextSnapshotRequestAt)
+    ) {
+      return;
+    }
+    connection.snapshotResponsePending = true;
+    if (rateLimited) connection.nextSnapshotRequestAt = now + RUNTIME_SNAPSHOT_REQUEST_INTERVAL_MS;
+    try {
+      const payload = JSON.stringify({ type: "runtime-snapshot", snapshot: this.#options.agents.getRuntimeSnapshot() });
+      client.send(payload, (error) => {
+        connection.snapshotResponsePending = false;
+        if (error && client.readyState === webSockets.WebSocket.OPEN) {
+          client.close(1011, "Runtime snapshot could not be sent");
+        }
+      });
+    } catch {
+      connection.snapshotResponsePending = false;
+      client.close(1011, "Runtime snapshot could not be created");
+    }
   }
 
   #setClientTyping(connection: EventClientState, botId: string | null): void {

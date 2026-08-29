@@ -152,7 +152,18 @@ describe("TeamApiServer administration", () => {
     });
     const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
     await sidebarLayout.initialize();
+    const getRuntimeSnapshot = vi.fn(() => ({
+      bots: [],
+      activeTurns: [],
+      queues: [],
+      latestMessages: [],
+      pendingPrompts: [],
+      pendingApprovals: [],
+      pendingBrowserTakeovers: [],
+      failedTurns: [],
+    }));
     const agents = createAgents({
+      getRuntimeSnapshot,
       listBots: () => [
         {
           id: "chief",
@@ -204,6 +215,11 @@ describe("TeamApiServer administration", () => {
       const refreshedSnapshot = nextJsonEvent(socket);
       socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
       await expect(refreshedSnapshot).resolves.toMatchObject({ type: "runtime-snapshot" });
+      for (let index = 0; index < 20; index += 1) {
+        socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(getRuntimeSnapshot).toHaveBeenCalledTimes(2);
 
       for (const [index, token] of [owner.sessionToken, admin.sessionToken, member.sessionToken].entries()) {
         const event = nextJsonEvent(socket);

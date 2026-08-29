@@ -130,7 +130,9 @@ export interface DevelopmentRemoteServerConnection {
 }
 
 const REMOTE_REQUEST_TIMEOUT_MS = 15_000;
-const REMOTE_EVENT_RECONNECT_MS = 1_000;
+const REMOTE_EVENT_RECONNECT_BASE_MS = 1_000;
+const REMOTE_EVENT_RECONNECT_MAX_MS = 60_000;
+const REMOTE_EVENT_RECONNECT_JITTER = 0.2;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 
@@ -156,6 +158,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #eventControllers = new Map<string, AbortController>();
   #eventSockets = new Map<string, WebSocket>();
   #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  #eventReconnectAttempts = new Map<string, number>();
+  #eventAuthenticationPaused = new Set<string>();
   #eventsEnabled = false;
   #presence = new Map<string, TeamPresenceSnapshot>();
   #writeChain = Promise.resolve();
@@ -224,7 +228,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     for (const server of this.#state.servers) {
       const socket = this.#eventSockets.get(server.id);
       if (socket?.readyState !== WebSocket.OPEN) {
-        this.#restartEventConnection(server.id);
+        this.#ensureEventConnection(server.id);
         continue;
       }
       if (socket.protocol === REMOTE_EVENT_SNAPSHOT_PROTOCOL) {
@@ -300,7 +304,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     await this.#refreshRemoteDesktop(stored);
     await this.#persist();
     this.#emitChanged();
-    this.#restartEventConnection(stored.id);
+    this.#restartEventConnection(stored.id, true);
     return requiredServerSummary(this.list(), stored.id);
   }
 
@@ -327,7 +331,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     await this.#refreshRemoteDesktop(stored);
     await this.#persist();
     this.#emitChanged();
-    this.#restartEventConnection(stored.id);
+    this.#restartEventConnection(stored.id, true);
     return requiredServerSummary(this.list(), stored.id);
   }
 
@@ -367,7 +371,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#states.set(server.id, "online");
       await this.#refreshRemoteDesktop(server);
       await this.#persist();
-      this.#restartEventConnection(server.id);
+      this.#restartEventConnection(server.id, true);
     } catch (error) {
       this.#states.set(server.id, "error");
       this.#emitChanged();
@@ -384,6 +388,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const reconnectTimer = this.#eventReconnectTimers.get(serverId);
     if (reconnectTimer) clearTimeout(reconnectTimer);
     this.#eventReconnectTimers.delete(serverId);
+    this.#eventReconnectAttempts.delete(serverId);
+    this.#eventAuthenticationPaused.delete(serverId);
     this.#states.delete(serverId);
     this.#eventSockets.delete(serverId);
     this.#presence.delete(serverId);
@@ -749,6 +755,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventControllers.clear();
     for (const timer of this.#eventReconnectTimers.values()) clearTimeout(timer);
     this.#eventReconnectTimers.clear();
+    this.#eventReconnectAttempts.clear();
+    this.#eventAuthenticationPaused.clear();
   }
 
   async #verifyIdentity(
@@ -797,6 +805,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const server = this.#requireServer(serverId);
     const controller = new AbortController();
     this.#eventControllers.set(serverId, controller);
+    let opened = false;
+    let authenticationFailed = false;
     try {
       const eventsUrl = new URL("/v1/events", server.apiUrl);
       eventsUrl.protocol = eventsUrl.protocol === "https:" ? "wss:" : "ws:";
@@ -812,6 +822,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         socket.addEventListener(
           "open",
           () => {
+            opened = true;
             this.#eventSockets.set(serverId, socket);
             this.#states.set(serverId, "online");
             this.#emitChanged();
@@ -844,6 +855,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             } else {
               throw new Error("Invalid agent event payload.");
             }
+            this.#eventReconnectAttempts.delete(serverId);
           } catch {
             socket.close(1003, "Invalid event payload");
           }
@@ -874,40 +886,73 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
     } catch {
       if (!controller.signal.aborted) {
-        this.#states.set(serverId, "offline");
+        authenticationFailed = !opened && (await this.#hasRejectedEventCredentials(server));
+        if (authenticationFailed) this.#eventAuthenticationPaused.add(serverId);
+        this.#states.set(serverId, authenticationFailed ? "error" : "offline");
         this.#setPresenceOffline(serverId);
         this.#emitChanged();
       }
     }
     if (this.#eventControllers.get(serverId) === controller) this.#eventControllers.delete(serverId);
-    if (!controller.signal.aborted) this.#scheduleEventReconnect(serverId);
+    if (!controller.signal.aborted && !authenticationFailed) this.#scheduleEventReconnect(serverId);
   }
 
   #ensureEventConnection(serverId: string): void {
-    if (!this.#eventsEnabled || this.#eventControllers.has(serverId)) return;
-    const reconnectTimer = this.#eventReconnectTimers.get(serverId);
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    this.#eventReconnectTimers.delete(serverId);
+    if (
+      !this.#eventsEnabled ||
+      this.#eventControllers.has(serverId) ||
+      this.#eventReconnectTimers.has(serverId) ||
+      this.#eventAuthenticationPaused.has(serverId)
+    ) {
+      return;
+    }
     void this.#connectEvents(serverId);
   }
 
-  #restartEventConnection(serverId: string): void {
+  #restartEventConnection(serverId: string, resetBackoff = false): void {
     this.#eventControllers.get(serverId)?.abort();
     this.#eventControllers.delete(serverId);
     const reconnectTimer = this.#eventReconnectTimers.get(serverId);
     if (reconnectTimer) clearTimeout(reconnectTimer);
     this.#eventReconnectTimers.delete(serverId);
+    if (resetBackoff) {
+      this.#eventReconnectAttempts.delete(serverId);
+      this.#eventAuthenticationPaused.delete(serverId);
+    }
     this.#ensureEventConnection(serverId);
   }
 
   #scheduleEventReconnect(serverId: string): void {
     if (!this.#eventsEnabled || this.#eventReconnectTimers.has(serverId)) return;
     if (!this.#state.servers.some((server) => server.id === serverId)) return;
+    if (this.#eventAuthenticationPaused.has(serverId)) return;
+    const attempt = (this.#eventReconnectAttempts.get(serverId) ?? 0) + 1;
+    this.#eventReconnectAttempts.set(serverId, attempt);
+    const exponentialDelay = Math.min(
+      REMOTE_EVENT_RECONNECT_MAX_MS,
+      REMOTE_EVENT_RECONNECT_BASE_MS * 2 ** (attempt - 1),
+    );
+    const jitter = exponentialDelay * REMOTE_EVENT_RECONNECT_JITTER * (Math.random() * 2 - 1);
+    const delay = Math.min(
+      REMOTE_EVENT_RECONNECT_MAX_MS,
+      Math.max(REMOTE_EVENT_RECONNECT_BASE_MS, Math.round(exponentialDelay + jitter)),
+    );
     const timer = setTimeout(() => {
       this.#eventReconnectTimers.delete(serverId);
       this.#ensureEventConnection(serverId);
-    }, REMOTE_EVENT_RECONNECT_MS);
+    }, delay);
     this.#eventReconnectTimers.set(serverId, timer);
+  }
+
+  async #hasRejectedEventCredentials(server: StoredRemoteServer): Promise<boolean> {
+    try {
+      await requestJson(server.apiUrl, "/v1/me", (value) => decodeRecord(value, "team member"), {
+        token: this.#token(server),
+      });
+      return false;
+    } catch (error) {
+      return error instanceof RemoteRequestError && (error.status === 401 || error.status === 403);
+    }
   }
 
   async #refreshLegacyAgentState(serverId: string): Promise<void> {
