@@ -455,6 +455,14 @@
   transform: none;
 }
 
+.dynamic-island.dynamic-island-idle[data-content-motion="atoll"][data-layout-state="peek"]
+  .dynamic-island-ear-leading
+  .dynamic-island-ear-content {
+  opacity: 1;
+  filter: none;
+  transform: none;
+}
+
 .dynamic-island-question .dynamic-island-ear-leading {
   padding-left: 10px;
 }
