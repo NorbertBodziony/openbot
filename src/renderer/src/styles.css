@@ -144,6 +144,7 @@
   --openbot-shadow-popover-ambient: rgba(0, 0, 0, 0.1);
   --openbot-shadow-popover-key: rgba(0, 0, 0, 0.1);
   --openbot-shadow-dialog: rgba(0, 0, 0, 0.48);
+  --openbot-shadow-dynamic-island: rgba(0, 0, 0, 0.6);
   --openbot-shadow-ring: rgba(228, 228, 228, 0.04);
   --openbot-border-on-light: rgba(20, 20, 20, 0.14);
   --openbot-white: var(--openbot-text-primary);
