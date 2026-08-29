@@ -1219,6 +1219,7 @@ function createWindow(): BrowserWindow {
   window.webContents.on("will-navigate", (event, targetUrl) => {
     if (!isTrustedRendererUrl(targetUrl)) event.preventDefault();
   });
+  window.webContents.on("did-finish-load", () => remoteServerManager?.refreshRuntimeSnapshots());
 
   return window;
 }
@@ -1793,7 +1794,6 @@ if (!hasSingleInstanceLock) {
         .catch((error) => console.error("Unable to initialize Dynamic Island:", error));
       await loadRenderer(mainWindow);
       remoteServers.startEventConnections();
-      remoteServers.replayRuntimeSnapshots();
       const reconcileDynamicIsland = () =>
         void dynamicIslandController
           ?.reconcileWindow()
@@ -1824,7 +1824,7 @@ if (!hasSingleInstanceLock) {
           return;
         }
         mainWindow = createWindow();
-        void loadRenderer(mainWindow).then(() => remoteServers.replayRuntimeSnapshots());
+        void loadRenderer(mainWindow);
       });
     })
     .catch((error) => {

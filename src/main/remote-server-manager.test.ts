@@ -295,10 +295,18 @@ describe("remote event connections", () => {
     );
     const sockets: TestEventSocket[] = [];
     class TestEventSocket extends EventTarget {
+      static readonly OPEN = 1;
       readonly close = vi.fn(() => this.dispatchEvent(new Event("close")));
+      readonly protocol: string;
+      readonly readyState = TestEventSocket.OPEN;
+      readonly send = vi.fn();
 
-      constructor(readonly url: string | URL) {
+      constructor(
+        readonly url: string | URL,
+        protocols: string[] = [],
+      ) {
         super();
+        this.protocol = protocols[0] ?? "";
         sockets.push(this);
         queueMicrotask(() => this.dispatchEvent(new Event("open")));
       }
@@ -347,26 +355,108 @@ describe("remote event connections", () => {
         expect.objectContaining({ type: "turn-started", botId: "research" }),
       );
 
-      sockets[2]?.dispatchEvent(
-        new MessageEvent("message", {
-          data: JSON.stringify({
-            type: "runtime-snapshot",
-            snapshot: {
-              bots: [],
-              activeTurns: [],
-              queues: [],
-              latestMessages: [],
-              pendingPrompts: [],
-              pendingApprovals: [],
-              pendingBrowserTakeovers: [],
-              failedTurns: [],
-            },
-          }),
-        }),
-      );
-      agentEvent.mockClear();
-      manager.replayRuntimeSnapshots();
-      expect(agentEvent).toHaveBeenCalledWith("server-1", expect.objectContaining({ type: "runtime-snapshot" }));
+      manager.refreshRuntimeSnapshots();
+      expect(sockets).toHaveLength(3);
+      expect(sockets[1]?.send).toHaveBeenCalledWith(JSON.stringify({ type: "runtime-snapshot-request" }));
+      expect(sockets[2]?.send).toHaveBeenCalledWith(JSON.stringify({ type: "runtime-snapshot-request" }));
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to explicit state reads when an older host selects the legacy protocol", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-legacy-remote-events-"));
+    const statePath = join(directory, "servers.json");
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        version: 2,
+        activeServerId: "legacy",
+        servers: [
+          {
+            id: "legacy",
+            name: "Legacy",
+            apiUrl: "https://legacy.trycloudflare.com/",
+            fingerprint: "fingerprint",
+            username: "person@example.com",
+            encryptedToken: Buffer.from("token-legacy").toString("base64"),
+            remoteDesktopAvailable: false,
+            role: "member",
+          },
+        ],
+      }),
+    );
+    const bot = {
+      id: "research",
+      name: "Research",
+      title: "Researcher",
+      description: "Researches topics.",
+      notifications: true,
+      provider: "codex",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
+      threadId: "thread-research",
+      workspacePath: "/workspace/research",
+      preview: "Ready",
+      updatedAt: "2026-08-29T10:00:00.000Z",
+      avatarSeed: "research",
+      avatarHue: null,
+      avatarUrl: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+        if (path === "/v1/agents") return Response.json([bot]);
+        if (path.endsWith("/conversation")) {
+          return Response.json({
+            botId: bot.id,
+            threadId: bot.threadId,
+            activeTurnId: "turn-1",
+            revision: 1,
+            messages: [],
+            readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+          });
+        }
+        return Response.json({ botId: bot.id, deliveries: [] });
+      }),
+    );
+    class LegacyEventSocket extends EventTarget {
+      static readonly OPEN = 1;
+      readonly protocol = "openbot-events";
+      readonly readyState = LegacyEventSocket.OPEN;
+      readonly send = vi.fn();
+      readonly close = vi.fn(() => this.dispatchEvent(new Event("close")));
+
+      constructor() {
+        super();
+        queueMicrotask(() => this.dispatchEvent(new Event("open")));
+      }
+    }
+    vi.stubGlobal("WebSocket", LegacyEventSocket);
+    const manager = new RemoteServerManager(
+      statePath,
+      {
+        encrypt: (value) => Buffer.from(value),
+        decrypt: (value) => value.toString(),
+      },
+      {
+        createTeamAuthTicket: async () => "ticket",
+        getEmail: () => "person@example.com",
+      },
+    );
+    const agentEvent = vi.fn();
+    manager.on("agent", agentEvent);
+
+    try {
+      await manager.initialize();
+      manager.startEventConnections();
+      await vi.waitFor(() => {
+        expect(agentEvent).toHaveBeenCalledWith("legacy", expect.objectContaining({ type: "bots-changed" }));
+        expect(agentEvent).toHaveBeenCalledWith("legacy", expect.objectContaining({ type: "conversation" }));
+        expect(agentEvent).toHaveBeenCalledWith("legacy", expect.objectContaining({ type: "queue-changed" }));
+      });
     } finally {
       manager.stop();
       await rm(directory, { recursive: true, force: true });

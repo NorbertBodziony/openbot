@@ -424,14 +424,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const activeTurns: AgentRuntimeSnapshot["activeTurns"] = [];
     const latestMessages: AgentRuntimeSnapshot["latestMessages"] = [];
     for (const bot of bots) {
-      const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
-      this.#syncMailboxMessages(snapshot);
-      if (snapshot.activeTurnId && snapshot.threadId) {
-        activeTurns.push({ botId: bot.id, threadId: snapshot.threadId, turnId: snapshot.activeTurnId });
-      }
-      const latest = [...snapshot.messages]
+      const live = this.#snapshots.get(bot.id);
+      const liveLatest = [...(live?.messages ?? [])]
         .reverse()
         .find((message) => message.author === "assistant" || message.author === "agent");
+      const persisted =
+        !live || !liveLatest
+          ? this.#store.database.readConversationRuntime(bot.id, bot.threadId)
+          : { activeTurnId: null, latestMessage: null };
+      const activeTurnId = live ? live.activeTurnId : persisted.activeTurnId;
+      if (activeTurnId && bot.threadId) {
+        activeTurns.push({ botId: bot.id, threadId: bot.threadId, turnId: activeTurnId });
+      }
+      const latest = liveLatest ?? persisted.latestMessage;
       if (latest) {
         latestMessages.push({
           botId: bot.id,

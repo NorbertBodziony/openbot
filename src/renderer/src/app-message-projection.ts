@@ -124,7 +124,9 @@ export function botProfilesEqual(left: BotProfile, right: BotProfile): boolean {
     left.threadId === right.threadId &&
     left.avatarSeed === right.avatarSeed &&
     left.avatarHue === right.avatarHue &&
+    left.avatarUrl === right.avatarUrl &&
     marketplaceSourcesEqual(left.marketplaceSource, right.marketplaceSource) &&
+    left.updatedAt === right.updatedAt &&
     left.time === right.time &&
     left.preview === right.preview
   );

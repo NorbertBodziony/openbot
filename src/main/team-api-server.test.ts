@@ -185,7 +185,7 @@ describe("TeamApiServer administration", () => {
     try {
       const owner = await store.login("owner", "correct horse battery");
       const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
-        "openbot-events",
+        "openbot-events-v2",
         `openbot-token.${member.sessionToken}`,
       ]);
       const initialEvents = nextJsonEvents(socket, 2);
@@ -199,6 +199,10 @@ describe("TeamApiServer administration", () => {
         snapshot: { bots: [], activeTurns: [], pendingApprovals: [] },
       });
       expect(initialPresence).toMatchObject({ type: "team-presence" });
+
+      const refreshedSnapshot = nextJsonEvent(socket);
+      socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
+      await expect(refreshedSnapshot).resolves.toMatchObject({ type: "runtime-snapshot" });
 
       for (const [index, token] of [owner.sessionToken, admin.sessionToken, member.sessionToken].entries()) {
         const event = nextJsonEvent(socket);
@@ -220,6 +224,39 @@ describe("TeamApiServer administration", () => {
       });
       socket.close();
     } finally {
+      await api.stop();
+    }
+  });
+
+  it("keeps legacy event clients connected without sending runtime snapshots", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-legacy-events-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const login = await store.login("owner", "correct horse battery");
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents(),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
+      "openbot-events",
+      `openbot-token.${login.sessionToken}`,
+    ]);
+    const firstEvent = nextJsonEvent(socket);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.addEventListener("open", () => resolve(), { once: true });
+        socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
+      });
+      await expect(firstEvent).resolves.toMatchObject({ type: "team-presence" });
+      expect(socket.protocol).toBe("openbot-events");
+    } finally {
+      socket.close();
       await api.stop();
     }
   });
@@ -447,7 +484,7 @@ describe("TeamApiServer administration", () => {
       expect(store.authenticate(ownerConnection.sessionToken)?.email).toBe("owner@example.com");
 
       const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
-        "openbot-events",
+        "openbot-events-v2",
         `openbot-token.${joined.sessionToken}`,
       ]);
       const initialEvents = nextJsonEvents(socket, 2);

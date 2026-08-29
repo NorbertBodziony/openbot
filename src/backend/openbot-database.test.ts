@@ -175,6 +175,44 @@ describe("OpenBotDatabase", () => {
     restored.close();
   });
 
+  it("reads bounded runtime metadata without loading a full conversation", async () => {
+    const database = await createDatabase();
+    const bot = testBot();
+    database.replaceAgents("agents-runtime", [bot], "agents.imported");
+    database.persistConversation(
+      {
+        botId: bot.id,
+        threadId: bot.threadId,
+        activeTurnId: "turn-active",
+        revision: 0,
+        messages: [
+          {
+            id: "assistant-latest",
+            author: "assistant",
+            text: "Latest answer",
+            createdAt: "2026-08-29T10:00:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "user-after",
+            author: "user",
+            text: "Follow-up",
+            createdAt: "2026-08-29T10:01:00.000Z",
+            status: "completed",
+          },
+        ],
+      },
+      "turn.started",
+      { turnId: "turn-active" },
+    );
+
+    expect(database.readConversationRuntime(bot.id, bot.threadId)).toEqual({
+      activeTurnId: "turn-active",
+      latestMessage: expect.objectContaining({ id: "assistant-latest", text: "Latest answer" }),
+    });
+    database.close();
+  });
+
   it("pages and searches a 1,000-message conversation without gaps", async () => {
     const database = await createDatabase();
     const bot = testBot();

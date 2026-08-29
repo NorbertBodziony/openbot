@@ -57,6 +57,8 @@ const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1_000;
 const RATE_LIMIT_SWEEP_MS = 60_000;
 const RATE_LIMIT_ATTEMPTS = 5;
 const RATE_LIMIT_CAPACITY = 10_000;
+const EVENT_PROTOCOL = "openbot-events";
+const EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 const requireModule = createRequire(import.meta.url);
 const webSockets: typeof Ws = requireModule(join(dirname(requireModule.resolve("ws/package.json")), "index.js"));
 
@@ -180,7 +182,12 @@ export class TeamApiServer {
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
     maxPayload: EVENT_PAYLOAD_LIMIT,
-    handleProtocols: (protocols) => (protocols.has("openbot-events") ? "openbot-events" : false),
+    handleProtocols: (protocols) =>
+      protocols.has(EVENT_SNAPSHOT_PROTOCOL)
+        ? EVENT_SNAPSHOT_PROTOCOL
+        : protocols.has(EVENT_PROTOCOL)
+          ? EVENT_PROTOCOL
+          : false,
   });
   readonly #rateLimitCapacity: number;
   readonly #now: () => number;
@@ -220,9 +227,12 @@ export class TeamApiServer {
         socket.destroy();
         return;
       }
-      if (url.pathname === "/v1/events" && protocols.includes("openbot-events")) {
+      if (
+        url.pathname === "/v1/events" &&
+        (protocols.includes(EVENT_SNAPSHOT_PROTOCOL) || protocols.includes(EVENT_PROTOCOL))
+      ) {
         this.#webSockets.handleUpgrade(request, socket, head, (client) => {
-          this.#connectEvents(client, token, member.id);
+          this.#connectEvents(client, token, member.id, client.protocol === EVENT_SNAPSHOT_PROTOCOL);
         });
         return;
       }
@@ -1123,7 +1133,7 @@ export class TeamApiServer {
     }
   }
 
-  #connectEvents(client: Ws.WebSocket, token: string, memberId: string): void {
+  #connectEvents(client: Ws.WebSocket, token: string, memberId: string, supportsRuntimeSnapshot: boolean): void {
     const connection: EventClientState = {
       token,
       memberId,
@@ -1137,7 +1147,9 @@ export class TeamApiServer {
       // Protocol errors, including maxPayload violations, also close the socket.
       // Consume the emitted error so malformed input cannot become an uncaught exception.
     });
-    client.send(JSON.stringify({ type: "runtime-snapshot", snapshot: this.#options.agents.getRuntimeSnapshot() }));
+    if (supportsRuntimeSnapshot) {
+      client.send(JSON.stringify({ type: "runtime-snapshot", snapshot: this.#options.agents.getRuntimeSnapshot() }));
+    }
     client.on("message", (data, isBinary) => {
       if (isBinary) {
         client.close(1003, "Text events are required");
@@ -1153,6 +1165,12 @@ export class TeamApiServer {
         const event = JSON.parse(text);
         if (!isDynamicRecord(event)) {
           throw new Error("Unsupported team event.");
+        }
+        if (event.type === "runtime-snapshot-request" && supportsRuntimeSnapshot) {
+          client.send(
+            JSON.stringify({ type: "runtime-snapshot", snapshot: this.#options.agents.getRuntimeSnapshot() }),
+          );
+          return;
         }
         if (event.type === "team-direct-typing") {
           const typing = event.typing;

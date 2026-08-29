@@ -131,6 +131,8 @@ export interface DevelopmentRemoteServerConnection {
 
 const REMOTE_REQUEST_TIMEOUT_MS = 15_000;
 const REMOTE_EVENT_RECONNECT_MS = 1_000;
+const REMOTE_EVENT_PROTOCOL = "openbot-events";
+const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 
 type ResponseDecoder<T> = (value: unknown) => T;
 
@@ -155,7 +157,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #eventSockets = new Map<string, WebSocket>();
   #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #eventsEnabled = false;
-  #runtimeSnapshots = new Map<string, Extract<AgentEvent, { type: "runtime-snapshot" }>>();
   #presence = new Map<string, TeamPresenceSnapshot>();
   #writeChain = Promise.resolve();
 
@@ -219,9 +220,18 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     for (const server of this.#state.servers) this.#ensureEventConnection(server.id);
   }
 
-  replayRuntimeSnapshots(): void {
-    for (const [serverId, event] of this.#runtimeSnapshots) {
-      this.emit("agent", serverId, structuredClone(event));
+  refreshRuntimeSnapshots(): void {
+    for (const server of this.#state.servers) {
+      const socket = this.#eventSockets.get(server.id);
+      if (socket?.readyState !== WebSocket.OPEN) {
+        this.#restartEventConnection(server.id);
+        continue;
+      }
+      if (socket.protocol === REMOTE_EVENT_SNAPSHOT_PROTOCOL) {
+        socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
+      } else {
+        void this.#refreshLegacyAgentState(server.id).catch(() => undefined);
+      }
     }
   }
 
@@ -376,7 +386,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventReconnectTimers.delete(serverId);
     this.#states.delete(serverId);
     this.#eventSockets.delete(serverId);
-    this.#runtimeSnapshots.delete(serverId);
     this.#presence.delete(serverId);
     this.#state.servers = this.#state.servers.filter((server) => server.id !== serverId);
     if (this.#state.activeServerId === serverId) this.#state.activeServerId = "local";
@@ -791,7 +800,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     try {
       const eventsUrl = new URL("/v1/events", server.apiUrl);
       eventsUrl.protocol = eventsUrl.protocol === "https:" ? "wss:" : "ws:";
-      const socket = new WebSocket(eventsUrl, ["openbot-events", `openbot-token.${this.#token(server)}`]);
+      const socket = new WebSocket(eventsUrl, [
+        REMOTE_EVENT_SNAPSHOT_PROTOCOL,
+        REMOTE_EVENT_PROTOCOL,
+        `openbot-token.${this.#token(server)}`,
+      ]);
       controller.signal.addEventListener("abort", () => socket.close(1000, "Client stopped"), {
         once: true,
       });
@@ -802,6 +815,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             this.#eventSockets.set(serverId, socket);
             this.#states.set(serverId, "online");
             this.#emitChanged();
+            if (socket.protocol !== REMOTE_EVENT_SNAPSHOT_PROTOCOL) {
+              void this.#refreshLegacyAgentState(serverId).catch(() => undefined);
+            }
           },
           { once: true },
         );
@@ -824,9 +840,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               }
             } else if (isAgentEvent(event)) {
               const remoteEvent = addRemotePreviewUrls(event, serverId);
-              if (remoteEvent.type === "runtime-snapshot") {
-                this.#runtimeSnapshots.set(serverId, structuredClone(remoteEvent));
-              }
               this.emit("agent", serverId, remoteEvent);
             } else {
               throw new Error("Invalid agent event payload.");
@@ -897,6 +910,21 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventReconnectTimers.set(serverId, timer);
   }
 
+  async #refreshLegacyAgentState(serverId: string): Promise<void> {
+    const bots = await this.request("/v1/agents", {}, serverId, decodeBotSummaries);
+    this.emit("agent", serverId, { type: "bots-changed", bots });
+    await Promise.all(
+      bots.map(async (bot) => {
+        const [conversation, queue] = await Promise.all([
+          this.readAgentConversation(bot.id, serverId),
+          this.request(`/v1/agents/${encodeURIComponent(bot.id)}/queue`, {}, serverId, decodeQueueSnapshot),
+        ]);
+        this.emit("agent", serverId, { type: "conversation", snapshot: conversation });
+        this.emit("agent", serverId, { type: "queue-changed", snapshot: queue });
+      }),
+    );
+  }
+
   #token(server: StoredRemoteServer): string {
     return this.#cipher.decrypt(Buffer.from(server.encryptedToken, "base64"));
   }
@@ -952,7 +980,7 @@ async function requestJson<T>(
   decoder: ResponseDecoder<T>,
   options: { method?: string; body?: unknown; token?: string } = {},
 ): Promise<T> {
-  const response = await remoteFetch(`${apiUrl}${path}`, {
+  const response = await remoteFetch(new URL(path, apiUrl), {
     method: options.method ?? (options.body === undefined ? "GET" : "POST"),
     headers: {
       Accept: "application/json",
