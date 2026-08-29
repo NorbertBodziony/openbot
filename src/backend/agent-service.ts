@@ -449,7 +449,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return {
       bots,
       activeTurns,
-      queues: bots.map((bot) => this.#mailbox.listQueue(bot.id)),
+      queues: bots.map((bot) => {
+        const failedTurnId = this.#failedTurns.get(bot.id);
+        const queue = this.#mailbox.listQueue(bot.id);
+        return {
+          ...queue,
+          deliveries: queue.deliveries.filter(
+            (delivery) =>
+              delivery.status === "queued" ||
+              delivery.status === "starting" ||
+              delivery.status === "running" ||
+              (delivery.status === "failed" && delivery.turnId === failedTurnId),
+          ),
+        };
+      }),
       latestMessages,
       pendingPrompts: [...this.#pendingPrompts.values()].map((pending) => ({
         requestId: pending.id,
@@ -983,6 +996,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   listQueue(botId: string): QueueSnapshot {
     return this.#mailbox.listQueue(botId);
+  }
+
+  acknowledgeFailedTurn(botId: string, turnId: string): void {
+    if (this.#failedTurns.get(botId) !== turnId) return;
+    this.#failedTurns.delete(botId);
+    this.#emit({ type: "runtime-snapshot", snapshot: this.getRuntimeSnapshot() });
   }
 
   async cancelQueuedMessage(botId: string, deliveryId: string): Promise<void> {

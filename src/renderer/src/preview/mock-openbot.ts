@@ -833,6 +833,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         });
       },
       listQueue: async (botId) => clone(queues.get(botId) ?? emptyQueue(botId)),
+      acknowledgeFailedTurn: async () => undefined,
       cancelQueuedMessage: async (input) => {
         const queue = queues.get(input.botId) ?? emptyQueue(input.botId);
         queue.deliveries = queue.deliveries.map((delivery) =>

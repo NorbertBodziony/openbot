@@ -365,6 +365,7 @@ export function createAppController(props: AppProps = {}) {
   const completedTurnByBot = new Map<string, string>();
   const pendingProviderConnections = new Map<AgentProviderId, ReturnType<typeof desktopAnalytics.scope>>();
   const dynamicIslandCoordinator = new DynamicIslandCoordinator();
+  const dynamicIslandConnectedServers = new Set(["local"]);
   let conversationFrame: number | undefined;
   let dynamicIslandPresentationFrame: number | undefined;
   let directConversationRequest = 0;
@@ -592,6 +593,9 @@ export function createAppController(props: AppProps = {}) {
     });
     const unsubscribeScopedAgent = window.openbot.agent.onScopedEvent((event) => {
       flush(() => {
+        const server = servers().find((candidate) => candidate.id === event.serverId);
+        if (server?.kind === "remote" && server.state !== "online") return;
+        dynamicIslandConnectedServers.add(event.serverId);
         dynamicIslandCoordinator.applyEvent(event, activeServerSidebarKey());
         publishDynamicIslandPresentation();
       });
@@ -2984,7 +2988,12 @@ export function createAppController(props: AppProps = {}) {
   const activeServerSidebarKey = createMemo(() => activeServer()?.id ?? "local");
 
   function dynamicIslandServerOrder(): string[] {
-    const ids = servers().map((server) => server.id);
+    const ids = servers()
+      .filter(
+        (server) =>
+          dynamicIslandConnectedServers.has(server.id) && (server.kind === "local" || server.state === "online"),
+      )
+      .map((server) => server.id);
     return ids.length > 0 ? ids : ["local"];
   }
 
@@ -3004,8 +3013,16 @@ export function createAppController(props: AppProps = {}) {
         .join("\u0000"),
     () => {
       const currentServers = servers();
-      const serverIds = currentServers.map((server) => server.id);
-      dynamicIslandCoordinator.retainServers(serverIds);
+      const configuredServerIds = new Set(currentServers.map((server) => server.id));
+      for (const serverId of dynamicIslandConnectedServers) {
+        const server = currentServers.find((candidate) => candidate.id === serverId);
+        if (!configuredServerIds.has(serverId) || (server?.kind === "remote" && server.state !== "online")) {
+          dynamicIslandConnectedServers.delete(serverId);
+        }
+      }
+      dynamicIslandConnectedServers.add("local");
+      dynamicIslandCoordinator.retainServers([...dynamicIslandConnectedServers]);
+      publishDynamicIslandPresentation();
       for (const server of currentServers) {
         if (server.kind === "remote" && server.state !== "online") continue;
         void window.openbot.agent
@@ -3068,9 +3085,14 @@ export function createAppController(props: AppProps = {}) {
     selectBot(action.botId);
     if (action.type === "open-message") await openAgentMessage(action.botId, action.messageId);
     if (action.type === "open-failure") {
+      dynamicIslandCoordinator.resolveAction(action);
+      publishDynamicIslandPresentation();
       setFailedTurns((current) =>
         current[action.botId] === action.turnId ? withoutBot(current, action.botId) : current,
       );
+      await window.openbot.agent
+        .acknowledgeFailedTurn({ botId: action.botId, turnId: action.turnId })
+        .catch(() => undefined);
     }
   }
 

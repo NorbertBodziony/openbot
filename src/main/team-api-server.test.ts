@@ -92,6 +92,7 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     resolveWorkspaceFile: unimplemented,
     sendMessage: unimplemented,
     listQueue: unimplemented,
+    acknowledgeFailedTurn: unimplemented,
     setMessageReaction: unimplemented,
     cancelQueuedMessage: unimplemented,
     steerQueuedMessage: unimplemented,
@@ -235,9 +236,10 @@ describe("TeamApiServer administration", () => {
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
     const login = await store.login("owner", "correct horse battery");
+    const agentEvents = new EventEmitter();
     const api = new TeamApiServer({
       store,
-      agents: createAgents(),
+      agents: createAgents({}, agentEvents),
       mailbox: createMailbox(),
       browser: createBrowser(),
     });
@@ -255,6 +257,10 @@ describe("TeamApiServer administration", () => {
       });
       await expect(firstEvent).resolves.toMatchObject({ type: "team-presence" });
       expect(socket.protocol).toBe("openbot-events");
+      const supportedEvent = nextJsonEvent(socket);
+      agentEvents.emit("event", { type: "runtime-snapshot", snapshot: createAgents().getRuntimeSnapshot() });
+      agentEvents.emit("event", { type: "bots-changed", bots: [] });
+      await expect(supportedEvent).resolves.toMatchObject({ type: "bots-changed" });
     } finally {
       socket.close();
       await api.stop();
@@ -1128,9 +1134,13 @@ describe("TeamApiServer administration", () => {
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
     const approvals: unknown[] = [];
+    const failures: unknown[] = [];
     const takeovers: unknown[] = [];
     const prompts: unknown[] = [];
     const agents = createAgents({
+      acknowledgeFailedTurn: (botId, turnId) => {
+        failures.push({ botId, turnId });
+      },
       respondToPrompt: async (input: unknown) => {
         prompts.push(input);
       },
@@ -1169,6 +1179,11 @@ describe("TeamApiServer administration", () => {
         body: { requestId: "prompt-17", answers: { scope: ["Small"] } },
       });
       expect(prompts).toEqual([{ requestId: "prompt-17", answers: { scope: ["Small"] } }]);
+      await emptyRequest(base, "/v1/agents/chief/failures/acknowledge", {
+        token: login.sessionToken,
+        body: { turnId: "turn-failed" },
+      });
+      expect(failures).toEqual([{ botId: "chief", turnId: "turn-failed" }]);
 
       const oversizedPrompt = await fetch(`${base}/v1/prompts/respond`, {
         method: "POST",

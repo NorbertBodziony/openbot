@@ -81,6 +81,7 @@ import { DynamicIslandWindowController, requireDynamicIslandSender } from "./dyn
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "./file-preview";
 import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
 import {
+  parseAcknowledgeFailedTurn,
   parseAgentRequest,
   parseApprovalResponse,
   parseBrowserTakeoverResponse,
@@ -934,6 +935,18 @@ function registerIpcHandlers(
     const scoped = parseAgentRequest(input);
     return routeListQueue(service, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
   });
+  handleTrusted(IPC_CHANNELS.agentAcknowledgeFailedTurn, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseAcknowledgeFailedTurn(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.acknowledgeFailedTurn(parsed.botId, parsed.turnId)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/failures/acknowledge`,
+          { method: "POST", body: { turnId: parsed.turnId } },
+          scoped.serverId,
+          decodeVoid,
+        );
+  });
   handleTrusted(IPC_CHANNELS.agentCancelQueuedMessage, (input: unknown) => {
     const scoped = parseAgentRequest(input);
     const parsed = parseCancelQueuedMessage(scoped.payload);
@@ -1219,7 +1232,11 @@ function createWindow(): BrowserWindow {
   window.webContents.on("will-navigate", (event, targetUrl) => {
     if (!isTrustedRendererUrl(targetUrl)) event.preventDefault();
   });
-  window.webContents.on("did-finish-load", () => remoteServerManager?.refreshRuntimeSnapshots());
+  window.webContents.on("did-finish-load", () => {
+    const service = agentService;
+    if (service) forwardAgentEvent("local", { type: "runtime-snapshot", snapshot: service.getRuntimeSnapshot() });
+    remoteServerManager?.refreshRuntimeSnapshots();
+  });
 
   return window;
 }

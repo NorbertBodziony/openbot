@@ -96,6 +96,7 @@ type TeamApiAgentMethods = Pick<
   | "resolveWorkspaceFile"
   | "sendMessage"
   | "listQueue"
+  | "acknowledgeFailedTurn"
   | "setMessageReaction"
   | "cancelQueuedMessage"
   | "steerQueuedMessage"
@@ -164,6 +165,7 @@ interface TeamApiOptions {
 interface EventClientState {
   token: string;
   memberId: string;
+  supportsRuntimeSnapshot: boolean;
   typingBotId: string | null;
   typingTimer: ReturnType<typeof setTimeout> | null;
   directTypingRecipientId: string | null;
@@ -1011,6 +1013,11 @@ export class TeamApiServer {
         if (method === "GET" && action === "queue") {
           return this.#json(response, 200, this.#options.agents.listQueue(botId));
         }
+        if (method === "POST" && action === "failures/acknowledge") {
+          const body = await readJson(request);
+          this.#options.agents.acknowledgeFailedTurn(botId, stringField(body, "turnId"));
+          return this.#empty(response, 204);
+        }
         if (method === "POST" && action === "reactions") {
           const body = await readJson(request);
           const emoji = body.emoji;
@@ -1128,7 +1135,8 @@ export class TeamApiServer {
 
   #broadcastAgentEvent(event: AgentEvent): void {
     const payload = JSON.stringify(event);
-    for (const client of this.#eventClients.keys()) {
+    for (const [client, connection] of this.#eventClients) {
+      if (event.type === "runtime-snapshot" && !connection.supportsRuntimeSnapshot) continue;
       if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
     }
   }
@@ -1137,6 +1145,7 @@ export class TeamApiServer {
     const connection: EventClientState = {
       token,
       memberId,
+      supportsRuntimeSnapshot,
       typingBotId: null,
       typingTimer: null,
       directTypingRecipientId: null,

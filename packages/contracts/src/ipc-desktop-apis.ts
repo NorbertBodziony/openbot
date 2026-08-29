@@ -25,6 +25,7 @@ import type {
 } from "./ipc-browser";
 import type {
   AccountUsage,
+  AcknowledgeFailedTurnInput,
   AgentEvent,
   AgentModelOption,
   AgentProviderId,
@@ -175,6 +176,7 @@ export interface AgentDesktopApi {
   sendMessage: (input: SendMessageInput) => Promise<QueuedMessageReceipt>;
   setMessageReaction: (input: SetMessageReactionInput) => Promise<void>;
   listQueue: (botId: string) => Promise<QueueSnapshot>;
+  acknowledgeFailedTurn: (input: AcknowledgeFailedTurnInput) => Promise<void>;
   cancelQueuedMessage: (input: CancelQueuedMessageInput) => Promise<void>;
   steerQueuedMessage: (input: SteerQueuedMessageInput) => Promise<void>;
   updateQueuedMessage: (input: UpdateQueuedMessageInput) => Promise<void>;

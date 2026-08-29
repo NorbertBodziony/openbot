@@ -834,6 +834,11 @@ export interface CancelQueuedMessageInput {
   deliveryId: string;
 }
 
+export interface AcknowledgeFailedTurnInput {
+  botId: string;
+  turnId: string;
+}
+
 export interface SteerQueuedMessageInput {
   botId: string;
   deliveryId: string;

@@ -61,6 +61,37 @@ describe("DynamicIslandCoordinator", () => {
     });
   });
 
+  it("removes only the matching failure after it is opened", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    coordinator.setBots("local", [bot("chief", "Chief")]);
+    coordinator.applyEvent(
+      scoped("local", {
+        type: "turn-completed",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-failed",
+        status: "failed",
+      }),
+      "local",
+    );
+
+    coordinator.resolveAction({
+      type: "open-failure",
+      serverId: "local",
+      botId: "chief",
+      turnId: "another-turn",
+    });
+    expect(coordinator.presentation(["local"]).mode).toBe("failed");
+
+    coordinator.resolveAction({
+      type: "open-failure",
+      serverId: "local",
+      botId: "chief",
+      turnId: "turn-failed",
+    });
+    expect(coordinator.presentation(["local"]).mode).toBe("idle");
+  });
+
   it("tracks working and unread updates from an inactive host", () => {
     const coordinator = new DynamicIslandCoordinator();
     coordinator.setBots("remote", [bot("research", "Research")]);

@@ -1,5 +1,6 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
+  type AcknowledgeFailedTurnInput,
   type AgentIpcRequest,
   type CancelQueuedMessageInput,
   type ChooseAttachmentsInput,
@@ -426,6 +427,14 @@ export function parseCancelQueuedMessage(value: unknown): CancelQueuedMessageInp
   return {
     botId: requireString(value.botId, "botId"),
     deliveryId: requireString(value.deliveryId, "deliveryId"),
+  };
+}
+
+export function parseAcknowledgeFailedTurn(value: unknown): AcknowledgeFailedTurnInput {
+  if (!isObject(value)) throw new Error("Invalid failed turn acknowledgement.");
+  return {
+    botId: requireString(value.botId, "botId"),
+    turnId: requireString(value.turnId, "turnId"),
   };
 }
 

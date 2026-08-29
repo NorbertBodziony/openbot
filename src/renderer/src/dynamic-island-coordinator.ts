@@ -177,6 +177,9 @@ export class DynamicIslandCoordinator {
         runtime.resolvedPrompts.set(action.botId, String(action.requestId));
       }
     }
+    if (action.type === "open-failure" && runtime.failedTurns[action.botId] === action.turnId) {
+      delete runtime.failedTurns[action.botId];
+    }
   }
 
   presentation(serverOrder: readonly string[]): DynamicIslandPresentation {

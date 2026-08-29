@@ -3040,6 +3040,14 @@ describe.sequential("AgentService", () => {
         ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
         .some((run) => run.status === "failed"),
     );
+    const failedRuntime = service.getRuntimeSnapshot();
+    expect(failedRuntime.failedTurns).toEqual([{ botId: bot.id, turnId: running.turnId }]);
+    expect(failedRuntime.queues.find((snapshot) => snapshot.botId === bot.id)?.deliveries).toEqual([
+      expect.objectContaining({ id: running.id, status: "failed", turnId: running.turnId }),
+    ]);
+    service.acknowledgeFailedTurn(bot.id, running.turnId);
+    expect(service.getRuntimeSnapshot().failedTurns).toEqual([]);
+    expect(service.getRuntimeSnapshot().queues.find((snapshot) => snapshot.botId === bot.id)?.deliveries).toEqual([]);
 
     await service.testRoutine({ botId: bot.id, routineId: routine.id });
     await waitFor(

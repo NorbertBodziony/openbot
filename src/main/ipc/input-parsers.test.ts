@@ -3,6 +3,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { describe, expect, it } from "vitest";
 import {
+  parseAcknowledgeFailedTurn,
   parseAgentRequest,
   parseApprovalResponse,
   parseBrowserTakeoverResponse,
@@ -299,6 +300,10 @@ describe("agent IPC input parsing", () => {
       emoji: "👨‍👩‍👧‍👦",
     });
     expect(parseInterrupt({ botId: "bot-1", turnId: "turn-1" })).toEqual({
+      botId: "bot-1",
+      turnId: "turn-1",
+    });
+    expect(parseAcknowledgeFailedTurn({ botId: "bot-1", turnId: "turn-1" })).toEqual({
       botId: "bot-1",
       turnId: "turn-1",
     });

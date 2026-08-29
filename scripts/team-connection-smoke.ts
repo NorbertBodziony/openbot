@@ -289,6 +289,7 @@ function createSmokeAgents(events: EventEmitter): SmokeAgents {
     discardDraftAttachment: unimplemented,
     sendMessage: unimplemented,
     listQueue: unimplemented,
+    acknowledgeFailedTurn: unimplemented,
     setMessageReaction: unimplemented,
     cancelQueuedMessage: unimplemented,
     steerQueuedMessage: unimplemented,

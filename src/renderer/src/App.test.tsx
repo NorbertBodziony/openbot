@@ -488,6 +488,7 @@ describe("OpenBot connected desktop shell", () => {
           }),
           setMessageReaction: vi.fn().mockResolvedValue(undefined),
           listQueue: vi.fn().mockImplementation(async (botId) => ({ botId, deliveries: [] })),
+          acknowledgeFailedTurn: vi.fn().mockResolvedValue(undefined),
           cancelQueuedMessage: vi.fn().mockResolvedValue(undefined),
           steerQueuedMessage: vi.fn().mockResolvedValue(undefined),
           updateQueuedMessage: vi.fn().mockResolvedValue(undefined),
@@ -921,6 +922,67 @@ describe("OpenBot connected desktop shell", () => {
         serverId: "remote-1",
         mode: "approval",
         item: { requestId: "approval-remote" },
+      }),
+    );
+  });
+
+  it("removes stale Dynamic Island attention when a remote host goes offline", async () => {
+    const local: ServerSummary = {
+      id: "local",
+      name: "Local",
+      logoUrl: null,
+      kind: "local",
+      state: "online",
+      apiUrl: null,
+      remoteDesktopAvailable: false,
+      role: null,
+      active: true,
+    };
+    const remote: ServerSummary = {
+      id: "remote-1",
+      name: "Studio Mac",
+      logoUrl: null,
+      kind: "remote",
+      state: "online",
+      apiUrl: "https://studio.example.com",
+      remoteDesktopAvailable: false,
+      role: "member",
+      active: false,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+
+    render(() => <App />);
+    await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
+    emitScopedAgentEvent?.({
+      serverId: remote.id,
+      event: {
+        type: "approval",
+        approval: {
+          requestId: "stale-approval",
+          botId: "chief",
+          threadId: "thread-chief",
+          turnId: "turn-remote",
+          kind: "permissions",
+          command: null,
+          cwd: null,
+          reason: "Review remote access.",
+          grantRoot: null,
+          permissions: { fileSystem: { read: ["/workspace"], write: [] }, network: false },
+        },
+      },
+    });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: remote.id,
+        mode: "approval",
+      }),
+    );
+
+    emitServers?.([local, { ...remote, state: "offline" }]);
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "local",
+        mode: "idle",
       }),
     );
   });
@@ -4745,6 +4807,37 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(window.openbot.agent.respondToPrompt).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "Chief" })).toBeVisible();
+  });
+
+  it("acknowledges a Dynamic Island failure after opening it", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    emitScopedAgentEvent?.({
+      serverId: "local",
+      event: {
+        type: "turn-completed",
+        botId: "chief",
+        threadId: "thread-1",
+        turnId: "turn-failed",
+        status: "failed",
+      },
+    });
+
+    emitDynamicIslandAction?.({
+      type: "open-failure",
+      serverId: "local",
+      botId: "chief",
+      turnId: "turn-failed",
+    });
+
+    await waitFor(() =>
+      expect(window.openbot.agent.acknowledgeFailedTurn).toHaveBeenCalledWith({
+        botId: "chief",
+        turnId: "turn-failed",
+      }),
+    );
   });
 
   it("marks the selected Dynamic Island message as read after opening it", async () => {
