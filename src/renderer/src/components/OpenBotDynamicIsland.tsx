@@ -1352,7 +1352,6 @@ function IslandAvatar(props: { bot: DynamicIslandBotIdentity; working?: boolean 
     <AgentAvatar
       bot={props.bot}
       motion={props.working ? "working" : "idle"}
-      ignoreReducedMotion
       shape="cercle"
       class="dynamic-island-surface-avatar"
     />

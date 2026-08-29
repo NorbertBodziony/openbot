@@ -37,6 +37,32 @@ describe("DynamicIsland", () => {
     expect(screen.getByRole("button", { name: "Expand working bots" })).toHaveFocus();
   });
 
+  it("makes the mounted panel inert as soon as it collapses", async () => {
+    vi.useFakeTimers();
+    render(() => {
+      const [state, setState] = createSignal<DynamicIslandViewState>("expanded");
+      return (
+        <DynamicIsland
+          label="question from AI"
+          state={state()}
+          onStateChange={setState}
+          compactLeading={<span>Research</span>}
+          compactTrailing={<span>Question</span>}
+          expandedContent={<button type="button">Answer question</button>}
+        />
+      );
+    });
+
+    const answer = screen.getByRole("button", { name: "Answer question" });
+    const panel = answer.closest("[data-slot='dynamic-island-panel']");
+    expect(panel).not.toHaveAttribute("inert");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Collapse question from AI" }), { detail: 1 });
+
+    expect(panel).toHaveAttribute("inert");
+    expect(panel).toHaveAttribute("aria-hidden", "true");
+  });
+
   it("keeps compact content during hover intent and opens the full panel after it", async () => {
     vi.useFakeTimers();
     const changed = vi.fn();

@@ -384,6 +384,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
                 }
                 data-content-state={contentState}
                 aria-hidden={viewState() === "compact" ? "true" : undefined}
+                inert={viewState() === "compact" ? true : undefined}
               >
                 <div ref={panelContent} class="dynamic-island-content" data-content-state={contentState}>
                   {local.expandedContent}

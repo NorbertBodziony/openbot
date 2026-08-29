@@ -31,6 +31,7 @@ export class DynamicIslandWindowController {
   };
   #presentation = EMPTY_DYNAMIC_ISLAND_PRESENTATION;
   readonly #windows = new Map<number, BrowserWindow>();
+  #preferenceMutation = Promise.resolve();
 
   constructor(options: DynamicIslandWindowControllerOptions) {
     this.#options = options;
@@ -61,10 +62,16 @@ export class DynamicIslandWindowController {
   }
 
   async setPreference(preference: DynamicIslandPreference): Promise<DynamicIslandPreference> {
-    this.#preference = await writeDynamicIslandPreference(this.#options.preferencePath, preference);
-    await this.reconcileWindow();
-    this.publishPreference();
-    return this.preference;
+    let savedPreference: DynamicIslandPreference | undefined;
+    const mutation = this.#preferenceMutation.then(async () => {
+      savedPreference = await writeDynamicIslandPreference(this.#options.preferencePath, preference);
+      this.#preference = savedPreference;
+      await this.reconcileWindow();
+      this.publishPreference();
+    });
+    this.#preferenceMutation = mutation.catch(() => undefined);
+    await mutation;
+    return { ...(savedPreference ?? preference) };
   }
 
   performHaptic(): void {
@@ -127,7 +134,11 @@ export class DynamicIslandWindowController {
         current.showInactive();
         continue;
       }
-      await this.createDisplayWindow(display, bounds);
+      try {
+        await this.createDisplayWindow(display, bounds);
+      } catch (error) {
+        console.error(`Unable to load Dynamic Island on display ${display.id}:`, error);
+      }
     }
   }
 

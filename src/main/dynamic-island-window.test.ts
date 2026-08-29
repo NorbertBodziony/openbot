@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { DynamicIslandAction, DynamicIslandPreference } from "@openbot/contracts/ipc";
 import type { BrowserWindow, Display, Rectangle } from "electron";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as preferenceStore from "./dynamic-island-preference-store";
 import {
   DynamicIslandWindowController,
   dynamicIslandWindowBounds,
@@ -26,6 +27,7 @@ function preference(overrides: Partial<DynamicIslandPreference> = {}): DynamicIs
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -116,6 +118,73 @@ describe("dynamic island window geometry", () => {
     await controller.reconcileWindow();
     expect(windows[0]?.destroy).toHaveBeenCalledOnce();
     expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 380 }, false);
+  });
+
+  it("continues loading other displays when one overlay fails", async () => {
+    const root = await temporaryRoot();
+    const windows: FakeWindow[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const controller = new DynamicIslandWindowController({
+      platform: "darwin",
+      preferencePath: join(root, "preference.json"),
+      createWindow: (bounds) => {
+        const window = new FakeWindow(80 + windows.length, bounds);
+        windows.push(window);
+        // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
+        return window as unknown as BrowserWindow;
+      },
+      loadWindow: async (_window, targetDisplay) => {
+        if (targetDisplay.id === 1) throw new Error("overlay failed");
+      },
+      getDisplays: () => [display({ id: 1 }), display({ id: 2, internal: false })],
+      getMainWindow: () => null,
+      performHaptic: () => undefined,
+      performCriticalAction: async () => undefined,
+    });
+
+    await expect(controller.initialize()).resolves.toBeUndefined();
+
+    expect(windows).toHaveLength(2);
+    expect(windows[0]?.destroy).toHaveBeenCalledOnce();
+    expect(controller.overlayRendererIds).toEqual(new Set([81]));
+    expect(error).toHaveBeenCalledWith("Unable to load Dynamic Island on display 1:", expect.any(Error));
+  });
+
+  it("serializes preference writes in invocation order", async () => {
+    const root = await temporaryRoot();
+    const writes: Array<{
+      preference: DynamicIslandPreference;
+      resolve: (preference: DynamicIslandPreference) => void;
+    }> = [];
+    vi.spyOn(preferenceStore, "writeDynamicIslandPreference").mockImplementation(
+      async (_path, nextPreference) => new Promise((resolve) => writes.push({ preference: nextPreference, resolve })),
+    );
+    const controller = new DynamicIslandWindowController({
+      platform: "linux",
+      preferencePath: join(root, "preference.json"),
+      createWindow: () => {
+        throw new Error("An overlay window is not expected.");
+      },
+      loadWindow: async () => undefined,
+      getDisplays: () => [],
+      getMainWindow: () => null,
+      performHaptic: () => undefined,
+      performCriticalAction: async () => undefined,
+    });
+    const firstPreference = preference({ hapticsEnabled: false });
+    const latestPreference = preference({ idleVisible: false });
+
+    const first = controller.setPreference(firstPreference);
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    const second = controller.setPreference(latestPreference);
+    await Promise.resolve();
+    expect(writes).toHaveLength(1);
+
+    writes[0]?.resolve(firstPreference);
+    await vi.waitFor(() => expect(writes).toHaveLength(2));
+    writes[1]?.resolve(latestPreference);
+    await expect(Promise.all([first, second])).resolves.toEqual([firstPreference, latestPreference]);
+    expect(controller.preference).toEqual(latestPreference);
   });
 
   it("applies the window and haptic preferences independently", async () => {

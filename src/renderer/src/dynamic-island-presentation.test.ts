@@ -1,3 +1,4 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   type AgentApproval,
   type DynamicIslandPresentation,
@@ -180,6 +181,95 @@ describe("createDynamicIslandPresentation", () => {
     };
 
     expect(isDynamicIslandPresentation(createDynamicIslandPresentation(input))).toBe(true);
+  });
+
+  it("normalizes malformed and oversized prompt display fields before publication", () => {
+    const input = state();
+    input.pendingPrompts.chief = {
+      type: "prompt",
+      requestId: "normalized-question",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: Array.from({ length: INPUT_LIMITS.promptQuestions + 4 }, (_, index) => ({
+        id: index === 0 ? "" : `question-${index}`.repeat(20),
+        header: index === 0 ? "" : "h".repeat(INPUT_LIMITS.promptHeader + 20),
+        question: index === 0 ? "" : "q".repeat(INPUT_LIMITS.promptQuestion + 20),
+        isSecret: false,
+        options: Array.from({ length: INPUT_LIMITS.promptOptions + 2 }, (_, optionIndex) => ({
+          label: optionIndex === 0 ? "" : "l".repeat(INPUT_LIMITS.promptOptionLabel + 20),
+          description: optionIndex === 0 ? "" : "d".repeat(INPUT_LIMITS.promptOptionDescription + 20),
+        })),
+      })),
+    };
+
+    const presentation = createDynamicIslandPresentation(input);
+
+    expect(isDynamicIslandPresentation(presentation)).toBe(true);
+    expect(presentation.mode).toBe("question");
+    if (presentation.mode !== "question") throw new Error("Expected a question presentation.");
+    expect(presentation.item.questions).toHaveLength(INPUT_LIMITS.promptQuestions);
+    const firstQuestion = presentation.item.questions[0];
+    expect(firstQuestion).toMatchObject({
+      id: "question-1",
+      header: "Question from your bot",
+      question: "Open OpenBot to answer this question.",
+    });
+    expect(firstQuestion?.options).toHaveLength(INPUT_LIMITS.promptOptions);
+    expect(firstQuestion?.options?.[0]).toEqual({ label: "Option 1", description: "Option 1" });
+  });
+
+  it("excludes bots with notifications disabled from presentations and aggregate counts", () => {
+    const input = state();
+    input.bots = [{ ...bot, notifications: false }, research];
+    input.pendingPrompts.chief = {
+      type: "prompt",
+      requestId: "hidden-question",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: [{ id: "hidden", header: "Hidden", question: "Hidden?", isSecret: false, options: null }],
+    };
+    input.pendingPrompts.research = {
+      type: "prompt",
+      requestId: "visible-question",
+      botId: "research",
+      threadId: "thread-2",
+      turnId: "turn-2",
+      questions: [{ id: "visible", header: "Visible", question: "Visible?", isSecret: false, options: null }],
+    };
+
+    const question = createDynamicIslandPresentation(input);
+    expect(question).toMatchObject({ mode: "question", remainingCount: 0, item: { requestId: "visible-question" } });
+
+    input.pendingPrompts = {};
+    input.activeTurns.chief = "hidden-turn";
+    input.unreadReplies = { chief: 5, research: 1 };
+    input.liveMessages = {
+      chief: [{ id: "hidden-message", author: "bot", body: "Hidden", time: "2026-08-29T10:00:00Z" }],
+      research: [{ id: "visible-message", author: "bot", body: "Visible", time: "2026-08-29T09:00:00Z" }],
+    };
+
+    expect(createDynamicIslandPresentation(input)).toMatchObject({
+      mode: "message",
+      unreadCount: 1,
+      message: { messageId: "visible-message", bot: { id: "research" } },
+    });
+  });
+
+  it("selects the newest unread reply across bots", () => {
+    const input = state();
+    input.bots = [bot, research];
+    input.unreadReplies = { chief: 1, research: 1 };
+    input.liveMessages = {
+      chief: [{ id: "older", author: "bot", body: "Older", time: "2026-08-29T10:00:00Z" }],
+      research: [{ id: "newer", author: "bot", body: "Newer", time: "2026-08-29T11:00:00Z" }],
+    };
+
+    expect(createDynamicIslandPresentation(input)).toMatchObject({
+      mode: "message",
+      message: { messageId: "newer", bot: { id: "research" } },
+    });
   });
 
   it("uses the required priority and returns to idle", () => {
