@@ -83,7 +83,10 @@ export class DynamicIslandWindowController {
   publish(presentation: DynamicIslandPresentation): void {
     if (isDeepStrictEqual(this.#presentation, presentation)) return;
     this.#presentation = presentation;
-    this.#criticalActions.clear();
+    const currentCriticalAction = presentationCriticalActionKey(presentation);
+    for (const key of this.#criticalActions.keys()) {
+      if (key !== currentCriticalAction) this.#criticalActions.delete(key);
+    }
     for (const window of this.#windows.values()) {
       if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.dynamicIslandPresentation, presentation);
     }
@@ -221,6 +224,16 @@ function criticalActionKey(
   action: Extract<DynamicIslandAction, { type: "approve-attention" | "answer-prompt" }>,
 ): string {
   return [action.type, action.serverId, action.botId, String(action.requestId)].join("\u0000");
+}
+
+function presentationCriticalActionKey(presentation: DynamicIslandPresentation): string | null {
+  if (presentation.mode !== "approval" && presentation.mode !== "question") return null;
+  return [
+    presentation.mode === "approval" ? "approve-attention" : "answer-prompt",
+    presentation.serverId,
+    presentation.item.bot.id,
+    String(presentation.item.requestId),
+  ].join("\u0000");
 }
 
 export function dynamicIslandWindowBounds(display: Pick<Display, "bounds">): Rectangle {

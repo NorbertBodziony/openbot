@@ -130,6 +130,7 @@ export interface DevelopmentRemoteServerConnection {
 }
 
 const REMOTE_REQUEST_TIMEOUT_MS = 15_000;
+const REMOTE_EVENT_RECONNECT_MS = 1_000;
 
 type ResponseDecoder<T> = (value: unknown) => T;
 
@@ -152,6 +153,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #states = new Map<string, ServerSummary["state"]>();
   #eventControllers = new Map<string, AbortController>();
   #eventSockets = new Map<string, WebSocket>();
+  #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  #eventsEnabled = false;
   #presence = new Map<string, TeamPresenceSnapshot>();
   #writeChain = Promise.resolve();
 
@@ -210,20 +213,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return this.#state.activeServerId;
   }
 
+  startEventConnections(): void {
+    this.#eventsEnabled = true;
+    for (const server of this.#state.servers) this.#ensureEventConnection(server.id);
+  }
+
   async select(serverId: string): Promise<ServerSummary[]> {
     if (serverId !== "local" && !this.#state.servers.some((server) => server.id === serverId)) {
       throw new Error("Remote server not found.");
     }
     this.#state.activeServerId = serverId;
-    for (const [connectedServerId, controller] of this.#eventControllers) {
-      if (connectedServerId === serverId) continue;
-      controller.abort();
-      this.#eventControllers.delete(connectedServerId);
-      this.#eventSockets.delete(connectedServerId);
-    }
     await this.#persist();
     this.#emitChanged();
-    if (serverId !== "local") void this.#connectEvents(serverId);
+    this.startEventConnections();
     return this.list();
   }
 
@@ -281,7 +283,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     await this.#refreshRemoteDesktop(stored);
     await this.#persist();
     this.#emitChanged();
-    void this.#connectEvents(stored.id);
+    this.#restartEventConnection(stored.id);
     return requiredServerSummary(this.list(), stored.id);
   }
 
@@ -308,7 +310,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     await this.#refreshRemoteDesktop(stored);
     await this.#persist();
     this.#emitChanged();
-    void this.#connectEvents(stored.id);
+    this.#restartEventConnection(stored.id);
     return requiredServerSummary(this.list(), stored.id);
   }
 
@@ -348,7 +350,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#states.set(server.id, "online");
       await this.#refreshRemoteDesktop(server);
       await this.#persist();
-      void this.#connectEvents(server.id);
+      this.#restartEventConnection(server.id);
     } catch (error) {
       this.#states.set(server.id, "error");
       this.#emitChanged();
@@ -362,6 +364,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (serverId === "local") throw new Error("The local server cannot be removed.");
     this.#eventControllers.get(serverId)?.abort();
     this.#eventControllers.delete(serverId);
+    const reconnectTimer = this.#eventReconnectTimers.get(serverId);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    this.#eventReconnectTimers.delete(serverId);
     this.#states.delete(serverId);
     this.#eventSockets.delete(serverId);
     this.#presence.delete(serverId);
@@ -722,8 +727,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   stop(): void {
+    this.#eventsEnabled = false;
     for (const controller of this.#eventControllers.values()) controller.abort();
     this.#eventControllers.clear();
+    for (const timer of this.#eventReconnectTimers.values()) clearTimeout(timer);
+    this.#eventReconnectTimers.clear();
   }
 
   async #verifyIdentity(
@@ -768,8 +776,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async #connectEvents(serverId: string): Promise<void> {
+    if (!this.#eventsEnabled || this.#eventControllers.has(serverId)) return;
     const server = this.#requireServer(serverId);
-    this.#eventControllers.get(serverId)?.abort();
     const controller = new AbortController();
     this.#eventControllers.set(serverId, controller);
     try {
@@ -841,6 +849,35 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         this.#emitChanged();
       }
     }
+    if (this.#eventControllers.get(serverId) === controller) this.#eventControllers.delete(serverId);
+    if (!controller.signal.aborted) this.#scheduleEventReconnect(serverId);
+  }
+
+  #ensureEventConnection(serverId: string): void {
+    if (!this.#eventsEnabled || this.#eventControllers.has(serverId)) return;
+    const reconnectTimer = this.#eventReconnectTimers.get(serverId);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    this.#eventReconnectTimers.delete(serverId);
+    void this.#connectEvents(serverId);
+  }
+
+  #restartEventConnection(serverId: string): void {
+    this.#eventControllers.get(serverId)?.abort();
+    this.#eventControllers.delete(serverId);
+    const reconnectTimer = this.#eventReconnectTimers.get(serverId);
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    this.#eventReconnectTimers.delete(serverId);
+    this.#ensureEventConnection(serverId);
+  }
+
+  #scheduleEventReconnect(serverId: string): void {
+    if (!this.#eventsEnabled || this.#eventReconnectTimers.has(serverId)) return;
+    if (!this.#state.servers.some((server) => server.id === serverId)) return;
+    const timer = setTimeout(() => {
+      this.#eventReconnectTimers.delete(serverId);
+      this.#ensureEventConnection(serverId);
+    }, REMOTE_EVENT_RECONNECT_MS);
+    this.#eventReconnectTimers.set(serverId, timer);
   }
 
   #token(server: StoredRemoteServer): string {

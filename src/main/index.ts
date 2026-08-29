@@ -1764,6 +1764,7 @@ if (!hasSingleInstanceLock) {
       remoteServers.on("presence", forwardTeamPresence);
       remoteServers.on("directMessage", forwardDirectMessage);
       remoteServers.on("directTyping", forwardDirectTyping);
+      remoteServers.startEventConnections();
       updateService.on("status", forwardUpdateStatus);
       updateService.start();
       const agentInitialization = new AgentInitializationGate(() => service.initialize());

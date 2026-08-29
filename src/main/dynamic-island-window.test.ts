@@ -403,9 +403,12 @@ describe("dynamic island window geometry", () => {
       botId: "chief",
       requestId: "approval-shared",
     } satisfies DynamicIslandAction;
-    controller.publish(criticalPresentation("approval", "approval-shared"));
+    const presentation = criticalPresentation("approval", "approval-shared");
+    controller.publish(presentation);
 
     const first = controller.performAction(action);
+    if (presentation.mode !== "approval") throw new Error("Expected an approval presentation.");
+    controller.publish({ ...presentation, remainingCount: 2 });
     const second = controller.performAction(action);
     await vi.waitFor(() => expect(performCriticalAction).toHaveBeenCalledOnce());
     completeAction();

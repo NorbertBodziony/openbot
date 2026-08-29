@@ -16,6 +16,7 @@ import {
 import { fingerprint } from "./team-store";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -269,6 +270,90 @@ describe("remote server order", () => {
     }
   });
 });
+
+describe("remote event connections", () => {
+  it("keeps every configured host connected across selection and reconnects independently", async () => {
+    vi.useFakeTimers();
+    const directory = await mkdtemp(join(tmpdir(), "openbot-remote-events-"));
+    const statePath = join(directory, "servers.json");
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        version: 2,
+        activeServerId: "server-1",
+        servers: ["server-1", "server-2"].map((id) => ({
+          id,
+          name: id,
+          apiUrl: `https://${id}.trycloudflare.com/`,
+          fingerprint: "fingerprint",
+          username: "person@example.com",
+          encryptedToken: Buffer.from(`token-${id}`).toString("base64"),
+          remoteDesktopAvailable: false,
+          role: "member",
+        })),
+      }),
+    );
+    const sockets: TestEventSocket[] = [];
+    class TestEventSocket extends EventTarget {
+      readonly close = vi.fn(() => this.dispatchEvent(new Event("close")));
+
+      constructor(readonly url: string | URL) {
+        super();
+        sockets.push(this);
+        queueMicrotask(() => this.dispatchEvent(new Event("open")));
+      }
+    }
+    vi.stubGlobal("WebSocket", TestEventSocket);
+    const manager = new RemoteServerManager(
+      statePath,
+      {
+        encrypt: (value) => Buffer.from(value),
+        decrypt: (value) => value.toString(),
+      },
+      {
+        createTeamAuthTicket: async () => "ticket",
+        getEmail: () => "person@example.com",
+      },
+    );
+    const agentEvent = vi.fn();
+    manager.on("agent", agentEvent);
+
+    try {
+      await manager.initialize();
+      manager.startEventConnections();
+      await vi.waitFor(() => expect(sockets).toHaveLength(2));
+
+      await manager.select("server-2");
+      expect(sockets).toHaveLength(2);
+      expect(sockets.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
+
+      sockets[0]?.close();
+      await vi.advanceTimersByTimeAsync(REMOTE_EVENT_RECONNECT_TEST_MS);
+      expect(sockets).toHaveLength(3);
+      expect(String(sockets[2]?.url)).toContain("server-1.trycloudflare.com");
+
+      sockets[2]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "turn-started",
+            botId: "research",
+            threadId: "thread-research",
+            turnId: "turn-research",
+          }),
+        }),
+      );
+      expect(agentEvent).toHaveBeenCalledWith(
+        "server-1",
+        expect.objectContaining({ type: "turn-started", botId: "research" }),
+      );
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+const REMOTE_EVENT_RECONNECT_TEST_MS = 1_000;
 
 describe("remote control capability discovery", () => {
   it("joins a server when remote control is unavailable", async () => {
