@@ -27,6 +27,7 @@ export interface DynamicIslandProps {
   defaultState?: DynamicIslandViewState;
   onStateChange?: (state: DynamicIslandViewState, reason: DynamicIslandStateChangeReason) => void;
   hoverBehavior?: DynamicIslandHoverBehavior;
+  suppressInitialHover?: boolean;
   hoverContentMotion?: DynamicIslandHoverContentMotion;
   pointerToggle?: boolean;
   contentMotion?: DynamicIslandContentMotion;
@@ -97,6 +98,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   let panelExitTimer: ReturnType<typeof setTimeout> | undefined;
   let layoutCloseTimer: ReturnType<typeof setTimeout> | undefined;
   let pointerInside = false;
+  let initialHoverReady = !local.suppressInitialHover;
   let hoverOpenedState: Exclude<DynamicIslandViewState, "compact"> | null = null;
   const [isHovering, setIsHovering] = createSignal(false);
 
@@ -132,7 +134,15 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
     beginHover();
   }
 
+  function handlePointerMove(event: PointerEvent): void {
+    if (event.pointerType && event.pointerType !== "mouse") return;
+    if (initialHoverReady) return;
+    initialHoverReady = true;
+    beginHover();
+  }
+
   function beginHover(): void {
+    if (!initialHoverReady) return;
     if (pointerInside) return;
     pointerInside = true;
     setIsHovering(true);
@@ -156,6 +166,10 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   }
 
   function endHover(): void {
+    if (!initialHoverReady) {
+      initialHoverReady = true;
+      return;
+    }
     if (!pointerInside) return;
     pointerInside = false;
     if (hoverExpandTimer !== undefined) clearTimeout(hoverExpandTimer);
@@ -286,6 +300,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
       aria-label={local.label}
       aria-live={local.tone === "attention" ? "polite" : undefined}
       onPointerEnter={handlePointerEnter}
+      onPointerMove={handlePointerMove}
       onPointerLeave={handlePointerLeave}
       onMouseEnter={beginHover}
       onMouseLeave={endHover}

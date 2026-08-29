@@ -447,13 +447,13 @@
 .dynamic-island-approval[data-layout-state="expanded"] .dynamic-island-panel,
 .dynamic-island-approval .dynamic-island-panel[data-phase="exiting"],
 .dynamic-island-approval .dynamic-island-panel[data-phase="leaving"] {
-  padding-inline: calc(var(--dynamic-island-expanded-shoulder-size) + var(--openbot-space-4));
+  padding: 14px calc(var(--dynamic-island-expanded-shoulder-size) + 20px);
 }
 
 .dynamic-island-external.dynamic-island-approval[data-layout-state="expanded"] .dynamic-island-panel,
 .dynamic-island-external.dynamic-island-approval .dynamic-island-panel[data-phase="exiting"],
 .dynamic-island-external.dynamic-island-approval .dynamic-island-panel[data-phase="leaving"] {
-  padding-inline: var(--openbot-space-4);
+  padding: 14px 20px;
 }
 
 .dynamic-island-question[data-layout-state="expanded"] .dynamic-island-panel,

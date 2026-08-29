@@ -116,6 +116,41 @@ describe("DynamicIsland", () => {
     expect(changed).toHaveBeenLastCalledWith("compact", "hover-exit");
   });
 
+  it("ignores a hover inherited from the mounting pointer position", async () => {
+    vi.useFakeTimers();
+    const changed = vi.fn();
+    render(() => {
+      const [state, setState] = createSignal<DynamicIslandViewState>("compact");
+      return (
+        <DynamicIsland
+          label="storybook status"
+          state={state()}
+          hoverBehavior="expand"
+          suppressInitialHover
+          onStateChange={(next, reason) => {
+            changed(next, reason);
+            setState(next);
+          }}
+          compactLeading={<span>OpenBot</span>}
+          compactTrailing={<span>Message</span>}
+          expandedContent={<button type="button">Open message</button>}
+        />
+      );
+    });
+
+    const island = screen.getByRole("region", { name: "storybook status" });
+    await fireEvent.mouseEnter(island);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(changed).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Open message" })).not.toBeInTheDocument();
+
+    await fireEvent.mouseLeave(island);
+    await fireEvent.mouseEnter(island);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(changed).toHaveBeenLastCalledWith("expanded", "hover");
+    expect(screen.getByRole("button", { name: "Open message" })).toBeVisible();
+  });
+
   it("keeps the compact state for grow-only hover", async () => {
     vi.useFakeTimers();
     const changed = vi.fn();

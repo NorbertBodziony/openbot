@@ -25,6 +25,7 @@ import {
   Check,
   DynamicIsland,
   type DynamicIslandHoverContentMotion,
+  DynamicIslandIdentity,
   type DynamicIslandStateChangeReason,
   type DynamicIslandViewState,
   MessageCircle,
@@ -35,6 +36,7 @@ export interface OpenBotDynamicIslandProps {
   presentation: DynamicIslandPresentation;
   state: DynamicIslandViewState;
   displayMode?: "notch" | "island";
+  suppressInitialHover?: boolean;
   onStateChange: (state: DynamicIslandViewState, reason: DynamicIslandStateChangeReason) => void;
   onAction: (action: DynamicIslandAction) => void | Promise<void>;
   onLater: () => void;
@@ -82,6 +84,7 @@ interface OpenBotDynamicIslandFrameProps {
   tone: "neutral" | "working" | "attention";
   state: DynamicIslandViewState;
   displayMode?: "notch" | "island";
+  suppressInitialHover?: boolean;
   compactLeading: JSX.Element;
   compactTrailing: JSX.Element;
   expandedContent: JSX.Element;
@@ -149,11 +152,6 @@ const STATUS_SHARED_TRAILING: SharedLeadingMotion = {
   island: { x: 124, y: 51, scale: 1.08 },
 };
 
-const APPROVAL_SHARED_LEADING: SharedLeadingMotion = {
-  notch: { x: -58.5, y: 43.5, scale: 35 / COMPACT_LEADING_SIZE },
-  island: { x: -119, y: 41, scale: 38 / COMPACT_LEADING_SIZE },
-};
-
 const OPENBOT_ISLAND_MODE_CONFIG: Record<DynamicIslandPresentation["mode"], OpenBotIslandModeConfig> = {
   idle: {
     label: "Open OpenBot",
@@ -197,7 +195,7 @@ const OPENBOT_ISLAND_MODE_CONFIG: Record<DynamicIslandPresentation["mode"], Open
     tone: "attention",
     className: "dynamic-island-approval",
     panelWidth: "wide",
-    sharedLeading: APPROVAL_SHARED_LEADING,
+    sharedLeading: QUESTION_SHARED_LEADING,
     sharedTrailing: STATUS_SHARED_TRAILING,
     autoExpand: true,
     status: true,
@@ -400,6 +398,7 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
         tone={config().tone}
         state={props.state}
         displayMode={props.displayMode}
+        suppressInitialHover={props.suppressInitialHover}
         onStateChange={changeState}
         compactWidth={compactWidth()}
         panelWidth={config().panelWidth}
@@ -492,6 +491,7 @@ function OpenBotDynamicIslandFrame(props: OpenBotDynamicIslandFrameProps): JSX.E
       tone={props.tone}
       state={props.state}
       displayMode={props.displayMode}
+      suppressInitialHover={props.suppressInitialHover}
       compactWidth={props.compactWidth}
       onStateChange={props.onStateChange}
       hoverBehavior={props.autoExpand === false ? "grow" : "expand"}
@@ -688,21 +688,14 @@ function ExpandedContent(props: {
       <Match when={props.presentation.mode === "message" && props.presentation.message}>
         {(message) => (
           <article class="dynamic-island-message-first-panel">
-            <div class="dynamic-island-message-first-summary">
-              <span class="dynamic-island-message-first-avatar-slot" aria-hidden="true" />
-              <div class="dynamic-island-message-first-copy" data-island-motion-content>
-                <header class="dynamic-island-message-first-heading">
-                  <h1>
-                    <span>{message().bot.name}</span>
-                    <small>replied</small>
-                  </h1>
-                  <time datetime={message().createdAt}>now</time>
-                </header>
-                <IslandContentSwap contentKey={message().messageId} block>
-                  <p>{message().text}</p>
-                </IslandContentSwap>
-              </div>
-            </div>
+            <IslandContentSwap contentKey={message().messageId} block>
+              <DynamicIslandIdentity
+                name={message().bot.name}
+                status="replied"
+                description={message().text}
+                trailing={<time datetime={message().createdAt}>now</time>}
+              />
+            </IslandContentSwap>
             <footer class="dynamic-island-message-first-footer" data-island-motion-content>
               <span class="dynamic-island-message-first-unread">{props.presentation.unreadCount} unread</span>
               <Button
@@ -754,8 +747,7 @@ function AttentionContent(props: {
   const [questionIndex, setQuestionIndex] = createSignal(0);
   const [answers, setAnswers] = createSignal<Record<string, string[]>>({});
   const [questionTransitioning, setQuestionTransitioning] = createSignal(false);
-  const [questionLineLayout, setQuestionLineLayout] = createSignal<"single" | "multiple">("multiple");
-  let questionPrompt: HTMLParagraphElement | undefined;
+  let questionPrompt: HTMLSpanElement | undefined;
   let questionStep: HTMLDivElement | undefined;
   let questionAnimations: Animation[] = [];
   let questionDisposed = false;
@@ -859,35 +851,18 @@ function AttentionContent(props: {
     clearQuestionHidden(questionTransitionElements());
   });
 
-  onSettled(() => {
-    const prompt = questionPrompt;
-    if (!prompt) return;
-    const updateLineLayout = (): void => {
-      const lineHeight = Number.parseFloat(getComputedStyle(prompt).lineHeight);
-      if (!Number.isFinite(lineHeight)) return;
-      setQuestionLineLayout(prompt.getBoundingClientRect().height < lineHeight * 1.5 ? "single" : "multiple");
-    };
-    const observer = new ResizeObserver(updateLineLayout);
-    observer.observe(prompt);
-    updateLineLayout();
-    return () => observer.disconnect();
-  });
-
   return (
     <Show
       when={props.item.kind === "prompt"}
       fallback={
         <div class="dynamic-island-surface-panel dynamic-island-surface-attention-panel">
-          <div class="dynamic-island-surface-approval-summary">
-            <span
-              class="dynamic-island-surface-shared-leading-slot dynamic-island-surface-approval-avatar-slot"
-              aria-hidden="true"
-            />
-            <div class="dynamic-island-surface-approval-copy" data-island-motion-content>
-              <h1>{props.item.bot.name} needs approval</h1>
-              <p>{props.item.approval?.reason ?? props.item.detail ?? "Review the requested action before it runs."}</p>
-            </div>
-          </div>
+          <DynamicIslandIdentity
+            name={props.item.bot.name}
+            status="needs approval"
+            description={
+              props.item.approval?.reason ?? props.item.detail ?? "Review the requested action before it runs."
+            }
+          />
           <IslandContentSwap contentKey={`${props.item.id}:${props.item.detail ?? ""}`} block>
             <div class="dynamic-island-surface-request-copy" data-island-motion-content>
               <ApprovalContext item={props.item} />
@@ -920,29 +895,19 @@ function AttentionContent(props: {
       }
     >
       <div class="dynamic-island-surface-panel dynamic-island-surface-question-panel">
-        <div class="dynamic-island-surface-question-summary">
-          <span class="dynamic-island-surface-question-avatar-slot" aria-hidden="true" />
-          <div
-            class="dynamic-island-surface-question-copy"
-            data-question-lines={questionLineLayout()}
-            data-island-motion-content
-          >
-            <header class="dynamic-island-surface-question-heading">
-              <h1>
-                <span class="dynamic-island-surface-question-bot-name">{props.item.bot.name}</span>
-                <span class="dynamic-island-surface-question-asks">asks</span>
-              </h1>
-            </header>
-            <p ref={questionPrompt} class="dynamic-island-surface-question-prompt">
-              {questionText()}
-            </p>
-          </div>
-          <Show when={directAnswerAvailable() && questions().length > 1}>
-            <span data-island-motion-content>
+        <DynamicIslandIdentity
+          name={props.item.bot.name}
+          status="asks"
+          description={questionText()}
+          descriptionRef={(element) => {
+            questionPrompt = element;
+          }}
+          trailing={
+            <Show when={directAnswerAvailable() && questions().length > 1}>
               <QuestionProgress current={questionIndex() + 1} total={questions().length} />
-            </span>
-          </Show>
-        </div>
+            </Show>
+          }
+        />
         <div data-island-motion-content>
           <div ref={questionStep} class="dynamic-island-surface-question-step">
             <Show when={directAnswerAvailable()}>

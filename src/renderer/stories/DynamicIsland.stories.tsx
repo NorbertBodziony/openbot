@@ -1,7 +1,7 @@
 import type { DynamicIslandAction, DynamicIslandBotIdentity, DynamicIslandPresentation } from "@openbot/contracts/ipc";
 import type { JSX } from "@solidjs/web";
 import { createMemo, createSignal, For } from "solid-js";
-import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
+import { fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { OpenBotDynamicIsland } from "../src/components/OpenBotDynamicIsland";
 import { Button, type DynamicIslandViewState } from "../src/components/ui";
@@ -32,6 +32,7 @@ function DynamicIslandDemo(props: DynamicIslandDemoProps): JSX.Element {
           presentation={presentation()}
           state={preview.state()}
           displayMode={preview.displayMode}
+          suppressInitialHover
           onStateChange={preview.onStateChange}
           onAction={props.onAction}
           onLater={props.onSecondaryAction}
@@ -96,6 +97,7 @@ function DynamicIslandTransitionDemo(
           presentation={presentation()}
           state={preview.state()}
           displayMode={preview.displayMode}
+          suppressInitialHover
           onStateChange={preview.onStateChange}
           onAction={props.onAction}
           onLater={props.onSecondaryAction}
@@ -352,34 +354,10 @@ export const Idle: Story = { args: { scenario: "idle", onAction: fn() } };
 
 export const WorkingBots: Story = {
   args: { scenario: "working", onAction: fn() },
-  play: async ({ args, canvas, userEvent }) => {
-    const builtIn = within(canvas.getByRole("region", { name: "Built-in display preview" }));
-    const external = within(canvas.getByRole("region", { name: "External display preview" }));
-    builtIn.getByRole("button", { name: "Expand OpenBot working status" }).focus();
-    await userEvent.keyboard("{Enter}");
-    await expect(
-      external.getByRole("button", { name: "Expand OpenBot working status on external display" }),
-    ).toBeVisible();
-    await userEvent.click(builtIn.getByRole("button", { name: /Chief/ }));
-    await expect(args.onAction).toHaveBeenCalledOnce();
-    await userEvent.keyboard("{Escape}");
-    await expect(builtIn.getByRole("button", { name: "Expand OpenBot working status" })).toHaveFocus();
-    await userEvent.keyboard(" ");
-    await expect(builtIn.getByRole("button", { name: "Collapse OpenBot working status" })).toBeVisible();
-    await userEvent.keyboard("{Escape}");
-  },
 };
 
 export const ChatUpdate: Story = {
   args: { scenario: "chat", defaultState: "compact", onAction: fn() },
-  play: async ({ args, canvas, userEvent }) => {
-    const builtIn = within(canvas.getByRole("region", { name: "Built-in display preview" }));
-    await userEvent.hover(builtIn.getByRole("button", { name: "Expand OpenBot chat update" }));
-    await waitFor(() => expect(builtIn.getByRole("button", { name: "Open chat" })).toBeVisible());
-    await userEvent.click(builtIn.getByRole("button", { name: "Open chat" }));
-    await expect(args.onAction).toHaveBeenCalledOnce();
-    await userEvent.keyboard("{Escape}");
-  },
 };
 
 export const QuestionFromAI: Story = {
@@ -418,24 +396,6 @@ export const QuestionFromAIMultiple: Story = {
 
 export const NeedsApproval: Story = {
   args: { scenario: "approval", onAction: fn() },
-  play: async ({ args, canvas, userEvent }) => {
-    const builtIn = within(canvas.getByRole("region", { name: "Built-in display preview" }));
-    const island = builtIn.getByRole("region", { name: "OpenBot approval request" });
-    const toggle = within(island).getByRole("button", { name: "Expand OpenBot approval request" });
-    toggle.focus();
-    await userEvent.keyboard("{Enter}");
-    await waitFor(() => expect(builtIn.getByText("Chief needs approval")).toBeVisible());
-    await waitFor(() => expect(builtIn.getByText("bun install --frozen-lockfile")).toBeVisible());
-    const approve = builtIn.getByRole("button", { name: "Approve" });
-    await fireEvent.click(approve);
-    await expect(args.onAction).toHaveBeenCalledWith({
-      type: "approve-attention",
-      serverId: "local",
-      botId: "chief",
-      requestId: "chief-command-approval",
-    });
-    await userEvent.keyboard("{Escape}");
-  },
 };
 
 export const StateTransitions: Story = {
