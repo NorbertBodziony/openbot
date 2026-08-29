@@ -246,6 +246,18 @@ describe("conversation event validation", () => {
     };
 
     expect(isAgentEvent({ type: "conversation", snapshot })).toBe(true);
+    expect(
+      isAgentEvent({
+        type: "conversation",
+        snapshot: {
+          ...snapshot,
+          messages: [
+            { ...snapshot.messages[0], text: "x".repeat(100_001) },
+            ...Array.from({ length: 10_000 }, () => snapshot.messages[0]),
+          ],
+        },
+      }),
+    ).toBe(true);
     expect(isAgentEvent({ type: "conversation", snapshot: {} })).toBe(false);
     expect(isAgentEvent({ type: "conversation", snapshot: { ...snapshot, messages: [null] } })).toBe(false);
   });

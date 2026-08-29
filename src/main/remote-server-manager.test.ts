@@ -502,24 +502,34 @@ describe("remote event connections", () => {
       avatarHue: null,
       avatarUrl: null,
     };
+    let deferConversation = false;
+    let resolveConversation: ((response: Response) => void) | undefined;
+    const conversationResponse = () =>
+      Response.json({
+        botId: bot.id,
+        threadId: bot.threadId,
+        activeTurnId: "turn-1",
+        revision: 1,
+        messages: [],
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+      });
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string | URL | Request) => {
         const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
         if (path === "/v1/agents") return Response.json([bot]);
         if (path.endsWith("/conversation")) {
-          return Response.json({
-            botId: bot.id,
-            threadId: bot.threadId,
-            activeTurnId: "turn-1",
-            revision: 1,
-            messages: [],
-            readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
-          });
+          if (deferConversation) {
+            return new Promise<Response>((resolve) => {
+              resolveConversation = resolve;
+            });
+          }
+          return conversationResponse();
         }
         return Response.json({ botId: bot.id, deliveries: [] });
       }),
     );
+    let legacySocket: LegacyEventSocket | undefined;
     class LegacyEventSocket extends EventTarget {
       static readonly OPEN = 1;
       readonly protocol = "openbot-events";
@@ -529,6 +539,7 @@ describe("remote event connections", () => {
 
       constructor() {
         super();
+        legacySocket = this;
         queueMicrotask(() => this.dispatchEvent(new Event("open")));
       }
     }
@@ -555,6 +566,46 @@ describe("remote event connections", () => {
         expect(agentEvent).toHaveBeenCalledWith("legacy", expect.objectContaining({ type: "conversation" }));
         expect(agentEvent).toHaveBeenCalledWith("legacy", expect.objectContaining({ type: "queue-changed" }));
       });
+
+      deferConversation = true;
+      manager.refreshRuntimeSnapshots();
+      await vi.waitFor(() => expect(resolveConversation).toBeTypeOf("function"));
+      legacySocket?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "conversation",
+            snapshot: {
+              botId: bot.id,
+              threadId: bot.threadId,
+              activeTurnId: null,
+              revision: 2,
+              messages: [
+                {
+                  id: "live-reply",
+                  author: "assistant",
+                  text: "New live reply",
+                  createdAt: "2026-08-29T10:01:00.000Z",
+                  status: "completed",
+                },
+              ],
+            },
+          }),
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(agentEvent).toHaveBeenCalledWith(
+          "legacy",
+          expect.objectContaining({ type: "conversation", snapshot: expect.objectContaining({ revision: 2 }) }),
+        ),
+      );
+      resolveConversation?.(conversationResponse());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(
+        agentEvent.mock.calls
+          .map(([, event]) => event)
+          .filter((event) => event.type === "conversation")
+          .map((event) => event.snapshot.revision),
+      ).toEqual([1, 2]);
     } finally {
       manager.stop();
       await rm(directory, { recursive: true, force: true });

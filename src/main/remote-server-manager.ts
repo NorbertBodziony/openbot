@@ -160,6 +160,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #eventReconnectAttempts = new Map<string, number>();
   #eventAuthenticationPaused = new Set<string>();
+  #eventGenerations = new Map<string, number>();
   #eventsEnabled = false;
   #presence = new Map<string, TeamPresenceSnapshot>();
   #writeChain = Promise.resolve();
@@ -390,6 +391,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventReconnectTimers.delete(serverId);
     this.#eventReconnectAttempts.delete(serverId);
     this.#eventAuthenticationPaused.delete(serverId);
+    this.#eventGenerations.delete(serverId);
     this.#states.delete(serverId);
     this.#eventSockets.delete(serverId);
     this.#presence.delete(serverId);
@@ -757,6 +759,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventReconnectTimers.clear();
     this.#eventReconnectAttempts.clear();
     this.#eventAuthenticationPaused.clear();
+    this.#eventGenerations.clear();
   }
 
   async #verifyIdentity(
@@ -850,6 +853,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
                 this.emit("directTyping", serverId, event);
               }
             } else if (isAgentEvent(event)) {
+              this.#advanceEventGeneration(serverId);
               const remoteEvent = addRemotePreviewUrls(event, serverId);
               this.emit("agent", serverId, remoteEvent);
             } else {
@@ -956,18 +960,29 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async #refreshLegacyAgentState(serverId: string): Promise<void> {
+    const generation = this.#advanceEventGeneration(serverId);
     const bots = await this.request("/v1/agents", {}, serverId, decodeBotSummaries);
-    this.emit("agent", serverId, { type: "bots-changed", bots });
-    await Promise.all(
+    const snapshots = await Promise.all(
       bots.map(async (bot) => {
         const [conversation, queue] = await Promise.all([
           this.readAgentConversation(bot.id, serverId),
           this.request(`/v1/agents/${encodeURIComponent(bot.id)}/queue`, {}, serverId, decodeQueueSnapshot),
         ]);
-        this.emit("agent", serverId, { type: "conversation", snapshot: conversation });
-        this.emit("agent", serverId, { type: "queue-changed", snapshot: queue });
+        return { conversation, queue };
       }),
     );
+    if (this.#eventGenerations.get(serverId) !== generation) return;
+    this.emit("agent", serverId, { type: "bots-changed", bots });
+    for (const { conversation, queue } of snapshots) {
+      this.emit("agent", serverId, { type: "conversation", snapshot: conversation });
+      this.emit("agent", serverId, { type: "queue-changed", snapshot: queue });
+    }
+  }
+
+  #advanceEventGeneration(serverId: string): number {
+    const generation = (this.#eventGenerations.get(serverId) ?? 0) + 1;
+    this.#eventGenerations.set(serverId, generation);
+    return generation;
   }
 
   #token(server: StoredRemoteServer): string {

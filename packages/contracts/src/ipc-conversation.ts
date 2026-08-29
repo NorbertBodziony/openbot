@@ -679,7 +679,7 @@ export function isConversationMessage(value: unknown): value is ConversationMess
   const status = value.status;
   return (
     isIdentifier(value.id) &&
-    isBoundedString(value.text, INPUT_LIMITS.messageText) &&
+    isString(value.text) &&
     isBoundedString(value.createdAt, 160) &&
     (author === "user" || author === "assistant" || author === "agent" || author === "system") &&
     (status === "streaming" || status === "completed" || status === "failed" || status === "interrupted") &&
@@ -799,8 +799,6 @@ export interface ConversationSnapshot {
   messages: ConversationMessage[];
 }
 
-const CONVERSATION_EVENT_MESSAGES_LIMIT = 10_000;
-
 function isConversationSnapshot(value: unknown): value is ConversationSnapshot {
   return (
     isDynamicRecord(value) &&
@@ -811,7 +809,6 @@ function isConversationSnapshot(value: unknown): value is ConversationSnapshot {
     Number.isInteger(value.revision) &&
     value.revision >= 0 &&
     Array.isArray(value.messages) &&
-    value.messages.length <= CONVERSATION_EVENT_MESSAGES_LIMIT &&
     value.messages.every(isConversationMessage)
   );
 }
