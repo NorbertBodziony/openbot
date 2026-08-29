@@ -218,7 +218,7 @@ const OPENBOT_ISLAND_MODE_CONFIG: Record<DynamicIslandPresentation["mode"], Open
     sharedLeading: QUESTION_SHARED_LEADING,
     sharedTrailing: STATUS_SHARED_TRAILING,
     badge: {
-      label: "Approve",
+      label: "Approval",
       variant: "warning-light",
       icon: () => (
         <Check data-icon="inline-start" class="dynamic-island-surface-status-badge-icon" aria-hidden="true" />
@@ -966,21 +966,8 @@ function ApprovalContent(props: {
         </div>
       </IslandContentSwap>
       <div class="dynamic-island-surface-actions" data-island-motion-content>
-        <Button size="sm" variant="ghost" onClick={openInOpenBot}>
+        <Button size="sm" onClick={openInOpenBot}>
           Review in OpenBot
-        </Button>
-        <Button
-          size="sm"
-          onClick={() =>
-            props.onAction({
-              type: "approve-attention",
-              serverId: props.serverId,
-              botId: props.item.bot.id,
-              requestId: props.item.requestId,
-            })
-          }
-        >
-          <Check aria-hidden="true" /> Approve
         </Button>
       </div>
     </div>

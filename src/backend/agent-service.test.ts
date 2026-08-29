@@ -739,6 +739,9 @@ describe.sequential("AgentService", () => {
 
     await service.respondToApproval({ requestId: "approval-command", decision: "accept" });
     expect(client.responses).toEqual([{ id: "approval-command", result: { decision: "accept" } }]);
+    expect(events.findLast((event) => event.type === "runtime-snapshot")).toMatchObject({
+      snapshot: { pendingApprovals: [] },
+    });
 
     client.emit("request", {
       method: "item/permissions/requestApproval",
@@ -821,6 +824,9 @@ describe.sequential("AgentService", () => {
     await service.respondToPrompt({
       requestId: "question-call",
       answers: { favorite: ["Blue"], token: ["super-secret"] },
+    });
+    expect(events.findLast((event) => event.type === "runtime-snapshot")).toMatchObject({
+      snapshot: { pendingPrompts: [] },
     });
     await waitFor(() => client.responses.length === 1);
     expect(client.responses[0]).toMatchObject({

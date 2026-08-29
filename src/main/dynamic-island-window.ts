@@ -15,6 +15,7 @@ export interface DynamicIslandWindowControllerOptions {
   loadWindow: (window: BrowserWindow, display: Display) => Promise<void>;
   getDisplays: () => Display[];
   getMainWindow: () => BrowserWindow | null;
+  ensureMainWindow?: () => Promise<BrowserWindow>;
   performHaptic: () => void;
   performCriticalAction: (
     action: Extract<DynamicIslandAction, { type: "approve-attention" | "answer-prompt" }>,
@@ -102,16 +103,18 @@ export class DynamicIslandWindowController {
   }
 
   async performAction(action: DynamicIslandAction): Promise<void> {
-    const window = this.#options.getMainWindow();
-    if (!window || window.isDestroyed()) return;
-    if (action.type === "approve-attention" || action.type === "answer-prompt") {
+    if (action.type === "approve-attention") {
+      throw new Error("Approval requests must be reviewed in OpenBot.");
+    }
+    if (action.type === "answer-prompt") {
       if (!this.matchesCriticalAction(action)) {
         throw new Error("This Dynamic Island request is no longer active.");
       }
       const key = criticalActionKey(action);
       const existing = this.#criticalActions.get(key);
       if (existing) return existing;
-      const pending = this.#options.performCriticalAction(action).then(() => {
+      const pending = this.#ensureMainWindow().then(async (window) => {
+        await this.#options.performCriticalAction(action);
         if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.dynamicIslandAction, action);
       });
       this.#criticalActions.set(key, pending);
@@ -123,10 +126,19 @@ export class DynamicIslandWindowController {
       }
       return;
     }
+    const window = await this.#ensureMainWindow();
     if (window.isMinimized()) window.restore();
     window.show();
     window.focus();
     if (action.type !== "open-app") window.webContents.send(IPC_CHANNELS.dynamicIslandAction, action);
+  }
+
+  async #ensureMainWindow(): Promise<BrowserWindow> {
+    const current = this.#options.getMainWindow();
+    if (current && !current.isDestroyed()) return current;
+    const created = await this.#options.ensureMainWindow?.();
+    if (!created || created.isDestroyed()) throw new Error("The OpenBot window is unavailable.");
+    return created;
   }
 
   async reconcileWindow(): Promise<void> {

@@ -449,20 +449,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return {
       bots,
       activeTurns,
-      queues: bots.map((bot) => {
-        const failedTurnId = this.#failedTurns.get(bot.id);
-        const queue = this.#mailbox.listQueue(bot.id);
-        return {
-          ...queue,
-          deliveries: queue.deliveries.filter(
-            (delivery) =>
-              delivery.status === "queued" ||
-              delivery.status === "starting" ||
-              delivery.status === "running" ||
-              (delivery.status === "failed" && delivery.turnId === failedTurnId),
-          ),
-        };
-      }),
+      queues: this.#mailbox.listRuntimeQueues(
+        bots.map((bot) => bot.id),
+        this.#failedTurns,
+      ),
       latestMessages,
       pendingPrompts: [...this.#pendingPrompts.values()].map((pending) => ({
         requestId: pending.id,
@@ -1001,7 +991,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   acknowledgeFailedTurn(botId: string, turnId: string): void {
     if (this.#failedTurns.get(botId) !== turnId) return;
     this.#failedTurns.delete(botId);
-    this.#emit({ type: "runtime-snapshot", snapshot: this.getRuntimeSnapshot() });
+    this.#emitRuntimeSnapshot();
   }
 
   async cancelQueuedMessage(botId: string, deliveryId: string): Promise<void> {
@@ -1164,6 +1154,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } catch (error) {
       this.#emitError("prompt_persistence_failed", error, pending.botId);
     }
+    this.#emitRuntimeSnapshot();
   }
 
   async respondToApproval(input: RespondToApprovalInput): Promise<void> {
@@ -1186,6 +1177,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       pending.client.respond(pending.id, { decision: input.decision });
     }
     this.#pendingApprovals.delete(input.requestId);
+    this.#emitRuntimeSnapshot();
   }
 
   async respondToBrowserTakeover(input: RespondToBrowserTakeoverInput): Promise<void> {
@@ -4038,6 +4030,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       code,
       message: error instanceof Error ? error.message : String(error),
     });
+  }
+
+  #emitRuntimeSnapshot(): void {
+    this.#emit({ type: "runtime-snapshot", snapshot: this.getRuntimeSnapshot() });
   }
 
   #emit(event: AgentEvent): void {

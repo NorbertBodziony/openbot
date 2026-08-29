@@ -242,6 +242,7 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow: BrowserWindow | null = null;
+let mainWindowLoad: Promise<BrowserWindow> | null = null;
 let browserHost: BrowserHost | null = null;
 let browserPictureInPicture: BrowserPictureInPicture | null = null;
 let agentService: AgentService | null = null;
@@ -1279,6 +1280,24 @@ function loadRenderer(window: BrowserWindow): Promise<void> {
   return developmentUrl ? window.loadURL(developmentUrl) : window.loadURL("openbot-app://app/index.html");
 }
 
+async function ensureMainWindow(): Promise<BrowserWindow> {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+  if (mainWindowLoad) return mainWindowLoad;
+  const window = createWindow();
+  mainWindow = window;
+  mainWindowLoad = loadRenderer(window)
+    .then(() => window)
+    .catch((error) => {
+      if (!window.isDestroyed()) window.destroy();
+      if (mainWindow === window) mainWindow = null;
+      throw error;
+    })
+    .finally(() => {
+      mainWindowLoad = null;
+    });
+  return mainWindowLoad;
+}
+
 function loadDynamicIslandRenderer(window: BrowserWindow, display: Display): Promise<void> {
   const displayMode = display.internal ? "notch" : "island";
   const developmentUrl = process.env.ELECTRON_RENDERER_URL;
@@ -1503,6 +1522,7 @@ if (!hasSingleInstanceLock) {
         loadWindow: loadDynamicIslandRenderer,
         getDisplays: () => screen.getAllDisplays(),
         getMainWindow: () => mainWindow,
+        ensureMainWindow,
         performHaptic: () => macHapticFeedback.performAlignment(),
         performCriticalAction: async (action) => {
           if (!agentService || !remoteServerManager) throw new Error("OpenBot is not ready.");
@@ -1840,8 +1860,9 @@ if (!hasSingleInstanceLock) {
           mainWindow.show();
           return;
         }
-        mainWindow = createWindow();
-        void loadRenderer(mainWindow);
+        void ensureMainWindow()
+          .then((window) => window.show())
+          .catch((error) => console.error("Unable to open the main window:", error));
       });
     })
     .catch((error) => {

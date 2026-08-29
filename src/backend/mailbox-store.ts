@@ -392,6 +392,39 @@ export class MailboxStore {
     };
   }
 
+  listRuntimeQueues(botIds: readonly string[], failedTurns: ReadonlyMap<string, string>): QueueSnapshot[] {
+    const targetBotIds = new Set(botIds);
+    const included = this.#state.deliveries.filter((delivery) => {
+      if (!targetBotIds.has(delivery.recipientBotId)) return false;
+      return (
+        delivery.status === "queued" ||
+        delivery.status === "starting" ||
+        delivery.status === "running" ||
+        (delivery.status === "failed" && delivery.turnId === failedTurns.get(delivery.recipientBotId))
+      );
+    });
+    const positions = new Map<string, number>();
+    const counts = new Map<string, number>();
+    for (const delivery of included.filter((item) => item.status === "queued").sort(compareQueueOrder)) {
+      const position = (counts.get(delivery.recipientBotId) ?? 0) + 1;
+      counts.set(delivery.recipientBotId, position);
+      positions.set(delivery.id, position);
+    }
+    const messageIds = new Set(included.map((delivery) => delivery.messageId));
+    const messages = new Map(
+      this.#state.messages.filter((message) => messageIds.has(message.id)).map((message) => [message.id, message]),
+    );
+    const deliveries = new Map<string, QueueDelivery[]>();
+    for (const delivery of included) {
+      const message = messages.get(delivery.messageId);
+      if (!message) throw new Error(`Mailbox message is missing: ${delivery.messageId}`);
+      const items = deliveries.get(delivery.recipientBotId) ?? [];
+      items.push(this.#publicDelivery(delivery, positions, message));
+      deliveries.set(delivery.recipientBotId, items);
+    }
+    return botIds.map((botId) => ({ botId, deliveries: deliveries.get(botId) ?? [] }));
+  }
+
   conversationMessages(botId: string): ConversationMessage[] {
     const messages: ConversationMessage[] = [];
     const deliveriesByMessage = new Map<string, StoredDelivery[]>();
@@ -998,8 +1031,11 @@ export class MailboxStore {
     );
   }
 
-  #publicDelivery(delivery: StoredDelivery, positions = this.#queuedPositions()): QueueDelivery {
-    const message = this.#requireMessage(delivery.messageId);
+  #publicDelivery(
+    delivery: StoredDelivery,
+    positions = this.#queuedPositions(),
+    message = this.#requireMessage(delivery.messageId),
+  ): QueueDelivery {
     return {
       ...delivery,
       sender: structuredClone(message.sender),

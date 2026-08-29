@@ -310,7 +310,7 @@ describe("dynamic island window geometry", () => {
     expect(createWindow).not.toHaveBeenCalled();
   });
 
-  it("executes and forwards a direct approval without showing or focusing the main window", async () => {
+  it("rejects direct approval when security-critical details require review", async () => {
     const mainWindow = new FakeWindow(70, { x: 0, y: 0, width: 1200, height: 800 });
     const performCriticalAction = vi.fn(async () => undefined);
     const controller = new DynamicIslandWindowController({
@@ -334,16 +334,18 @@ describe("dynamic island window geometry", () => {
     };
     controller.publish(criticalPresentation("approval", "approval-1"));
 
-    await controller.performAction(action);
+    await expect(controller.performAction(action)).rejects.toThrow("reviewed in OpenBot");
 
-    expect(performCriticalAction).toHaveBeenCalledWith(action);
-    expect(mainWindow.webContents.send).toHaveBeenCalledWith("dynamic-island:action", action);
+    expect(performCriticalAction).not.toHaveBeenCalled();
+    expect(mainWindow.webContents.send).not.toHaveBeenCalled();
     expect(mainWindow.show).not.toHaveBeenCalled();
     expect(mainWindow.focus).not.toHaveBeenCalled();
   });
 
   it("executes and forwards a prompt answer without showing or focusing the main window", async () => {
     const mainWindow = new FakeWindow(71, { x: 0, y: 0, width: 1200, height: 800 });
+    // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
+    const ensureMainWindow = vi.fn(async () => mainWindow as unknown as BrowserWindow);
     const performCriticalAction = vi.fn(async () => undefined);
     const controller = new DynamicIslandWindowController({
       platform: "darwin",
@@ -353,8 +355,8 @@ describe("dynamic island window geometry", () => {
       },
       loadWindow: async () => undefined,
       getDisplays: () => [],
-      // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
-      getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      getMainWindow: () => null,
+      ensureMainWindow,
       performHaptic: () => undefined,
       performCriticalAction,
     });
@@ -370,6 +372,7 @@ describe("dynamic island window geometry", () => {
     await controller.performAction(action);
 
     expect(performCriticalAction).toHaveBeenCalledWith(action);
+    expect(ensureMainWindow).toHaveBeenCalledOnce();
     expect(mainWindow.webContents.send).toHaveBeenCalledWith("dynamic-island:action", action);
     expect(mainWindow.show).not.toHaveBeenCalled();
     expect(mainWindow.focus).not.toHaveBeenCalled();
@@ -398,16 +401,17 @@ describe("dynamic island window geometry", () => {
       performCriticalAction,
     });
     const action = {
-      type: "approve-attention",
+      type: "answer-prompt",
       serverId: "local",
       botId: "chief",
-      requestId: "approval-shared",
+      requestId: "prompt-shared",
+      answers: { source: ["Official data"] },
     } satisfies DynamicIslandAction;
-    const presentation = criticalPresentation("approval", "approval-shared");
+    const presentation = criticalPresentation("question", "prompt-shared");
     controller.publish(presentation);
 
     const first = controller.performAction(action);
-    if (presentation.mode !== "approval") throw new Error("Expected an approval presentation.");
+    if (presentation.mode !== "question") throw new Error("Expected a question presentation.");
     controller.publish({ ...presentation, remainingCount: 2 });
     const second = controller.performAction(action);
     await vi.waitFor(() => expect(performCriticalAction).toHaveBeenCalledOnce());
@@ -433,14 +437,15 @@ describe("dynamic island window geometry", () => {
       performHaptic: () => undefined,
       performCriticalAction,
     });
-    controller.publish(criticalPresentation("approval", "approval-current"));
+    controller.publish(criticalPresentation("question", "prompt-current"));
 
     await expect(
       controller.performAction({
-        type: "approve-attention",
+        type: "answer-prompt",
         serverId: "local",
         botId: "chief",
-        requestId: "approval-stale",
+        requestId: "prompt-stale",
+        answers: { source: ["Official data"] },
       }),
     ).rejects.toThrow("no longer active");
 
@@ -466,12 +471,13 @@ describe("dynamic island window geometry", () => {
       },
     });
     const action: DynamicIslandAction = {
-      type: "approve-attention",
+      type: "answer-prompt",
       serverId: "remote",
       botId: "research",
-      requestId: "approval-stale",
+      requestId: "prompt-stale",
+      answers: { source: ["Official data"] },
     };
-    controller.publish(criticalPresentation("approval", "approval-stale", "remote", "research"));
+    controller.publish(criticalPresentation("question", "prompt-stale", "remote", "research"));
 
     await expect(controller.performAction(action)).rejects.toThrow("no longer active");
     expect(mainWindow.webContents.send).not.toHaveBeenCalled();
