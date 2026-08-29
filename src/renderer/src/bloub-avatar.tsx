@@ -12,12 +12,17 @@ import { render } from "@solidjs/web";
 import { flush } from "solid-js";
 
 export type AvatarMotion = "hover" | "always" | "idle" | "working" | "connecting";
+export type AvatarSilhouetteId = Exclude<ShapeId, "goutte">;
 
 export interface BloubAvatarProfile {
-  shape: ShapeId;
+  shape: AvatarSilhouetteId;
   color: ColorId;
   expression: ExpressionId;
 }
+
+export const AVATAR_SHAPE_IDS: readonly AvatarSilhouetteId[] = SHAPES.map((shape) => shape.id).filter(
+  (shape): shape is AvatarSilhouetteId => shape !== "goutte",
+);
 
 const AUTOMATIC_COLORS = ["rouge", "orange", "ambre", "vert", "turquoise", "bleu", "violet", "rose"] as const;
 
@@ -51,7 +56,8 @@ export const AVATAR_HUE_OPTIONS: ReadonlyArray<{
 ];
 
 export function bloubAvatarProfile(seed: string, hue: BotAvatarHue | null): BloubAvatarProfile {
-  const silhouetteId = requiredItem(SHAPES, stableIndex(`${seed}:shape`, SHAPES.length)).id;
+  const generatedSilhouette = requiredItem(SHAPES, stableIndex(`${seed}:shape`, SHAPES.length)).id;
+  const silhouetteId = generatedSilhouette === "goutte" ? "cercle" : generatedSilhouette;
   const expression = requiredItem(EXPRESSIONS, stableIndex(`${seed}:expression`, EXPRESSIONS.length)).id;
   return {
     shape: silhouetteId,
@@ -74,7 +80,7 @@ export function avatarHeadColor(seed: string, hue: BotAvatarHue | null): string 
 export function avatarCandidateSeeds(botId: string, currentSeed: string, batch: number): string[] {
   const candidates = [currentSeed];
   const firstProfile = bloubAvatarProfile(currentSeed, null);
-  const unseenSilhouetteIds = new Set<ShapeId>(SHAPES.map((option) => option.id));
+  const unseenSilhouetteIds = new Set<AvatarSilhouetteId>(AVATAR_SHAPE_IDS);
   const usedExpressions = new Set<ExpressionId>([firstProfile.expression]);
   unseenSilhouetteIds.delete(firstProfile.shape);
   let index = 1;

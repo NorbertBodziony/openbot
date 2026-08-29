@@ -15,7 +15,6 @@ interface DynamicIslandDemoProps {
   scenario: Scenario;
   questionVariant?: QuestionVariant;
   defaultState?: DynamicIslandViewState;
-  reducedMotion?: boolean;
   onAction: (action: DynamicIslandAction) => void;
   onSecondaryAction: () => void;
 }
@@ -28,7 +27,6 @@ function DynamicIslandDemo(props: DynamicIslandDemoProps): JSX.Element {
   return (
     <DynamicIslandDisplayComparison
       defaultState={props.defaultState}
-      reducedMotion={props.reducedMotion}
       renderIsland={(preview) => (
         <OpenBotDynamicIsland
           presentation={presentation()}
@@ -272,15 +270,13 @@ const meta = {
   args: {
     scenario: "working",
     defaultState: "compact",
-    reducedMotion: false,
     onAction: fn(),
     onSecondaryAction: fn(),
   },
   argTypes: {
     scenario: { control: "select", options: ["idle", "working", "chat", "question", "approval"] },
     questionVariant: { control: "select", options: ["standard", "short", "long", "multiple"] },
-    defaultState: { control: "select", options: ["compact", "peek", "expanded"] },
-    reducedMotion: { control: "boolean" },
+    defaultState: { control: "select", options: ["compact", "expanded"] },
   },
   parameters: { layout: "fullscreen", a11y: { test: "error" } },
 } satisfies Meta<typeof DynamicIslandDemo>;
@@ -311,16 +307,14 @@ export const WorkingBots: Story = {
 };
 
 export const ChatUpdate: Story = {
-  args: { scenario: "chat", defaultState: "peek", onAction: fn() },
+  args: { scenario: "chat", defaultState: "compact", onAction: fn() },
   play: async ({ args, canvas, userEvent }) => {
     const builtIn = within(canvas.getByRole("region", { name: "Built-in display preview" }));
-    await userEvent.hover(builtIn.getByRole("region", { name: "OpenBot chat update" }));
+    await userEvent.hover(builtIn.getByRole("button", { name: "Expand OpenBot chat update" }));
     await waitFor(() => expect(builtIn.getByRole("button", { name: "Open chat" })).toBeVisible());
     await userEvent.click(builtIn.getByRole("button", { name: "Open chat" }));
     await expect(args.onAction).toHaveBeenCalledOnce();
     await userEvent.keyboard("{Escape}");
-    await userEvent.hover(builtIn.getByRole("region", { name: "OpenBot chat update" }));
-    await waitFor(() => expect(builtIn.getByText("Research")).toBeVisible());
   },
 };
 
@@ -362,7 +356,8 @@ export const NeedsApproval: Story = {
   args: { scenario: "approval", onAction: fn() },
   play: async ({ args, canvas, userEvent }) => {
     const builtIn = within(canvas.getByRole("region", { name: "Built-in display preview" }));
-    await userEvent.hover(builtIn.getByRole("region", { name: "OpenBot approval request" }));
+    await userEvent.hover(builtIn.getByRole("button", { name: "Expand OpenBot approval request" }));
+    await waitFor(() => expect(builtIn.getByText("Chief needs approval")).toBeVisible());
     await waitFor(() => expect(builtIn.getByText("bun install --frozen-lockfile")).toBeVisible());
     await userEvent.click(builtIn.getByRole("button", { name: "Approve" }));
     await expect(args.onAction).toHaveBeenCalledWith({
@@ -373,9 +368,4 @@ export const NeedsApproval: Story = {
     });
     await userEvent.keyboard("{Escape}");
   },
-};
-
-export const ReducedMotion: Story = {
-  args: { scenario: "working", defaultState: "peek", reducedMotion: true },
-  parameters: { chromatic: { prefersReducedMotion: "reduce" } },
 };

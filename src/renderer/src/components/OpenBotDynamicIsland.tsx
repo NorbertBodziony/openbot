@@ -6,10 +6,11 @@ import type {
   DynamicIslandPresentation,
 } from "@openbot/contracts/ipc";
 import { Dynamic, type JSX } from "@solidjs/web";
-import { Check, MessageCircle, ShieldAlert } from "lucide-solid";
-import { createEffect, createMemo, createSignal, For, Match, onSettled, Show, Switch } from "solid-js";
+import { Check, MessageCircle, MessageCircleQuestionMark, ShieldAlert } from "lucide-solid";
+import { createEffect, createMemo, createSignal, For, Match, onCleanup, onSettled, Show, Switch } from "solid-js";
 import { AgentAvatar } from "./AgentAvatar";
 import {
+  Badge,
   Button,
   DynamicIsland,
   type DynamicIslandHoverContentMotion,
@@ -31,13 +32,66 @@ const ROW_INDICES = [0, 1, 2] as const;
 const IDLE_GREETING_EMOJIS = ["👋", "😊", "🙌", "✨"] as const;
 type IdleGreetingEmoji = (typeof IDLE_GREETING_EMOJIS)[number];
 const IDLE_GREETING_INTERVAL = 8_000;
-const HOVER_CONTENT_MOTION = {
-  idle: { leadingScale: 1.375, trailingScale: 1.375, translateY: 6 },
-  working: { leadingScale: 1.11, trailingScale: 1.08, translateY: 6 },
-  message: { leadingScale: 1.22, trailingScale: 1.08, translateY: 6 },
-  question: { leadingScale: 1.08, trailingScale: 1, translateY: 6 },
-  approval: { leadingScale: 1.25, trailingScale: 1.08, translateY: 6 },
-} satisfies Record<DynamicIslandPresentation["mode"], DynamicIslandHoverContentMotion>;
+const QUESTION_SWAP_EXIT_DURATION = 200;
+const QUESTION_SWAP_ENTER_DURATION = 320;
+const QUESTION_SWAP_BLUR = 6;
+const QUESTION_SWAP_MIDPOINT_OPACITY = 0.55;
+const OPENBOT_COMPACT_HOVER_MOTION = {
+  leadingScale: 1.22,
+  trailingScale: 1.22,
+  translateY: 6,
+} as const;
+const QUESTION_PROGRESS_DURATION = 300;
+const QUESTION_PROGRESS_BLUR = 2;
+const COMPACT_LEADING_SIZE = 20;
+
+interface OpenBotDynamicIslandFrameProps {
+  label: string;
+  tone: "neutral" | "working" | "attention";
+  state: DynamicIslandViewState;
+  displayMode?: "notch" | "island";
+  compactLeading: JSX.Element;
+  compactTrailing: JSX.Element;
+  expandedContent: JSX.Element;
+  compactWidth?: "standard" | "wide";
+  panelWidth?: "standard" | "wide";
+  sharedLeading?: SharedLeadingMotion;
+  sharedTrailing?: SharedLeadingMotion;
+  autoExpand?: boolean;
+  hoverContentMotion?: DynamicIslandHoverContentMotion;
+  class?: string;
+  onStateChange: (state: DynamicIslandViewState, reason: DynamicIslandStateChangeReason) => void;
+}
+
+interface SharedLeadingMotion {
+  notch: { x: number; y: number; scale: number };
+  island: { x: number; y: number; scale: number };
+}
+
+const WORKING_SHARED_LEADING: SharedLeadingMotion = {
+  notch: { x: -58, y: 76, scale: 32 / COMPACT_LEADING_SIZE },
+  island: { x: -86, y: 76, scale: 32 / COMPACT_LEADING_SIZE },
+};
+
+const QUESTION_SHARED_LEADING: SharedLeadingMotion = {
+  notch: { x: -48.5, y: 49.5, scale: 35 / COMPACT_LEADING_SIZE },
+  island: { x: -128, y: 51, scale: 38 / COMPACT_LEADING_SIZE },
+};
+
+const QUESTION_SHARED_TRAILING: SharedLeadingMotion = {
+  notch: { x: 33.75, y: 49.5, scale: 1.08 },
+  island: { x: 130, y: 51, scale: 1.08 },
+};
+
+const MESSAGE_SHARED_LEADING: SharedLeadingMotion = {
+  notch: { x: -43.5, y: 49.5, scale: 35 / COMPACT_LEADING_SIZE },
+  island: { x: -89, y: 51, scale: 38 / COMPACT_LEADING_SIZE },
+};
+
+const APPROVAL_SHARED_LEADING: SharedLeadingMotion = {
+  notch: { x: -70, y: 36, scale: 24 / COMPACT_LEADING_SIZE },
+  island: { x: -98, y: 36, scale: 24 / COMPACT_LEADING_SIZE },
+};
 
 /**
  * OpenBot's own presentation layer. Motion behavior is informed by Atoll's macOS interaction model,
@@ -53,7 +107,7 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
   }
 
   return (
-    <DynamicIsland
+    <OpenBotDynamicIslandFrame
       label={`${labelForMode(props.presentation.mode)}${props.displayMode === "island" ? " on external display" : ""}`}
       tone={
         props.presentation.mode === "approval"
@@ -65,31 +119,37 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
       state={props.state}
       displayMode={props.displayMode}
       onStateChange={changeState}
-      hoverBehavior={props.presentation.mode === "idle" ? "peek" : "expand"}
-      hoverContentMotion={HOVER_CONTENT_MOTION[props.presentation.mode]}
-      pointerToggle={false}
-      contentMotion={props.presentation.mode === "question" || props.presentation.mode === "idle" ? "atoll" : "morph"}
-      morphCompactContent={props.presentation.mode !== "idle"}
-      sharedLeadingMotion={props.presentation.mode === "question"}
-      sharedLeadingExpandedX={
-        props.presentation.mode === "question" ? (props.displayMode === "island" ? -128 : -33.75) : undefined
+      compactWidth={props.presentation.mode === "question" ? "wide" : "standard"}
+      panelWidth={props.presentation.mode === "question" ? "wide" : "standard"}
+      sharedLeading={
+        props.presentation.mode === "working"
+          ? WORKING_SHARED_LEADING
+          : props.presentation.mode === "message"
+            ? MESSAGE_SHARED_LEADING
+            : props.presentation.mode === "question"
+              ? QUESTION_SHARED_LEADING
+              : props.presentation.mode === "approval"
+                ? APPROVAL_SHARED_LEADING
+                : undefined
       }
-      sharedLeadingExpandedY={
-        props.presentation.mode === "question" ? (props.displayMode === "island" ? 51 : 49.5) : undefined
+      sharedTrailing={props.presentation.mode === "question" ? QUESTION_SHARED_TRAILING : undefined}
+      autoExpand={props.presentation.mode !== "idle"}
+      hoverContentMotion={OPENBOT_COMPACT_HOVER_MOTION}
+      class={
+        props.presentation.mode === "question"
+          ? "dynamic-island-question"
+          : props.presentation.mode === "idle"
+            ? "dynamic-island-idle"
+            : props.presentation.mode === "message"
+              ? "dynamic-island-message-first"
+              : props.presentation.mode === "working"
+                ? "dynamic-island-working"
+                : props.presentation.mode === "approval"
+                  ? "dynamic-island-approval"
+                  : undefined
       }
-      sharedLeadingExpandedScale={
-        props.presentation.mode === "question" ? (props.displayMode === "island" ? 1.9 : 1.75) : undefined
-      }
-      class={[
-        props.presentation.mode === "question" ? "dynamic-island-question" : undefined,
-        props.presentation.mode === "idle" ? "dynamic-island-idle" : undefined,
-        props.displayMode === "island" ? "dynamic-island-external" : undefined,
-      ]
-        .filter(Boolean)
-        .join(" ")}
       compactLeading={<CompactLeading presentation={props.presentation} />}
       compactTrailing={<CompactTrailing presentation={props.presentation} />}
-      peekContent={<PeekContent presentation={props.presentation} />}
       expandedContent={
         <ExpandedContent
           presentation={props.presentation}
@@ -105,33 +165,86 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
   );
 }
 
+function OpenBotDynamicIslandFrame(props: OpenBotDynamicIslandFrameProps): JSX.Element {
+  const sharedLeading = () => props.sharedLeading?.[props.displayMode === "island" ? "island" : "notch"];
+  const sharedTrailing = () => props.sharedTrailing?.[props.displayMode === "island" ? "island" : "notch"];
+  return (
+    <DynamicIsland
+      label={props.label}
+      tone={props.tone}
+      state={props.state}
+      displayMode={props.displayMode}
+      onStateChange={props.onStateChange}
+      hoverBehavior={props.autoExpand === false ? "grow" : "expand"}
+      hoverContentMotion={props.hoverContentMotion ?? OPENBOT_COMPACT_HOVER_MOTION}
+      pointerToggle={props.autoExpand === false ? undefined : false}
+      contentMotion="atoll"
+      sharedLeadingMotion={Boolean(props.sharedLeading)}
+      sharedLeadingExpandedX={sharedLeading()?.x}
+      sharedLeadingExpandedY={sharedLeading()?.y}
+      sharedLeadingExpandedScale={sharedLeading()?.scale}
+      sharedTrailingMotion={Boolean(props.sharedTrailing)}
+      sharedTrailingExpandedX={sharedTrailing()?.x}
+      sharedTrailingExpandedY={sharedTrailing()?.y}
+      sharedTrailingExpandedScale={sharedTrailing()?.scale}
+      class={[
+        props.class,
+        props.compactWidth === "wide" ? "dynamic-island-compact-wide" : undefined,
+        props.panelWidth === "wide" ? "dynamic-island-panel-wide" : undefined,
+        props.displayMode === "island" ? "dynamic-island-external" : undefined,
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      compactLeading={props.compactLeading}
+      compactTrailing={props.compactTrailing}
+      expandedContent={props.expandedContent}
+    />
+  );
+}
+
 function CompactLeading(props: { presentation: DynamicIslandPresentation }): JSX.Element {
   const key = () => compactLeadingKey(props.presentation);
   return (
     <IslandContentSwap contentKey={key()} class="dynamic-island-surface-compact-swap">
-      <Switch fallback={<AppLogo variant="production" animation="blink" class="dynamic-island-surface-logo" />}>
+      <Switch
+        fallback={
+          <span class="dynamic-island-surface-leading-anchor">
+            <AppLogo variant="production" animation="blink" class="dynamic-island-surface-logo" />
+          </span>
+        }
+      >
         <Match when={props.presentation.mode === "working"}>
-          <span class="dynamic-island-surface-avatar-stack">
-            <For each={COMPACT_INDICES}>
-              {(index) => (
-                <Show when={props.presentation.working[index]}>{(item) => <IslandAvatar bot={item().bot} />}</Show>
-              )}
-            </For>
+          <span class="dynamic-island-surface-leading-anchor">
+            <span class="dynamic-island-surface-avatar-stack">
+              <For each={COMPACT_INDICES}>
+                {(index) => (
+                  <Show when={props.presentation.working[index]}>{(item) => <IslandAvatar bot={item().bot} />}</Show>
+                )}
+              </For>
+            </span>
           </span>
         </Match>
         <Match when={props.presentation.mode === "message" && props.presentation.message}>
-          {(message) => <IslandAvatar bot={message().bot} />}
+          {(message) => (
+            <span class="dynamic-island-surface-leading-anchor">
+              <IslandAvatar bot={message().bot} />
+            </span>
+          )}
         </Match>
         <Match when={props.presentation.mode === "question" && props.presentation.attention[0]}>
           {(item) => (
-            <span class="dynamic-island-surface-question-identity">
-              <IslandAvatar bot={item().bot} roundBlob />
-              <span class="dynamic-island-surface-question-name">{item().bot.name}</span>
+            <span class="dynamic-island-surface-leading-anchor dynamic-island-surface-question-identity">
+              <IslandAvatar bot={item().bot} />
+              <span class="dynamic-island-surface-question-name" data-island-motion-content>
+                {item().bot.name}
+              </span>
             </span>
           )}
         </Match>
         <Match when={props.presentation.mode === "approval"}>
-          <ShieldAlert class="dynamic-island-surface-attention" strokeWidth={2} />
+          <span class="dynamic-island-surface-leading-anchor">
+            <ShieldAlert class="dynamic-island-surface-attention" strokeWidth={2} data-island-motion-content />
+          </span>
         </Match>
       </Switch>
     </IslandContentSwap>
@@ -144,14 +257,27 @@ function CompactTrailing(props: { presentation: DynamicIslandPresentation }): JS
     <IslandContentSwap contentKey={key()} class="dynamic-island-surface-compact-swap">
       <Switch>
         <Match when={props.presentation.mode === "working"}>
-          <span class="dynamic-island-surface-count">{props.presentation.activeCount}</span>
+          <span class="dynamic-island-surface-count" data-island-motion-content>
+            {props.presentation.activeCount}
+          </span>
         </Match>
         <Match when={props.presentation.mode === "message"}>
-          <span class="dynamic-island-surface-count">{props.presentation.unreadCount}</span>
+          <span class="dynamic-island-surface-count" data-island-motion-content>
+            {props.presentation.unreadCount}
+          </span>
         </Match>
-        <Match when={props.presentation.mode === "question"}>{null}</Match>
+        <Match when={props.presentation.mode === "question"}>
+          <Badge variant="info-light" class="dynamic-island-surface-question-badge" data-island-motion-content>
+            <MessageCircleQuestionMark
+              data-icon="inline-start"
+              class="dynamic-island-surface-question-badge-icon"
+              aria-hidden="true"
+            />
+            <span>Questions</span>
+          </Badge>
+        </Match>
         <Match when={props.presentation.mode === "approval"}>
-          <span class="dynamic-island-surface-count dynamic-island-surface-count-attention">
+          <span class="dynamic-island-surface-count dynamic-island-surface-count-attention" data-island-motion-content>
             {props.presentation.attentionCount}
           </span>
         </Match>
@@ -196,38 +322,6 @@ function IdleGreetingEmoji(): JSX.Element {
   );
 }
 
-function PeekContent(props: { presentation: DynamicIslandPresentation }): JSX.Element {
-  return (
-    <IslandContentSwap contentKey={peekKey(props.presentation)} class="dynamic-island-surface-peek-swap">
-      <div class="dynamic-island-surface-peek dynamic-island-surface-peek-with-corners">
-        <Switch fallback={<strong>Open OpenBot</strong>}>
-          <Match when={props.presentation.mode === "idle"}>{null}</Match>
-          <Match when={props.presentation.mode === "working"}>
-            <strong>{workingLabel(props.presentation.activeCount)}</strong>
-          </Match>
-          <Match when={props.presentation.mode === "message" && props.presentation.message}>
-            {(message) => (
-              <>
-                <strong>{message().bot.name}</strong>
-                <span>{message().text}</span>
-              </>
-            )}
-          </Match>
-          <Match when={props.presentation.mode === "question" && props.presentation.attention[0]}>{null}</Match>
-          <Match when={props.presentation.mode === "approval" && props.presentation.attention[0]}>
-            {(item) => (
-              <>
-                <strong>{item().bot.name} needs approval</strong>
-                <span>{item().title}</span>
-              </>
-            )}
-          </Match>
-        </Switch>
-      </div>
-    </IslandContentSwap>
-  );
-}
-
 function ExpandedContent(props: {
   presentation: DynamicIslandPresentation;
   displayMode?: "notch" | "island";
@@ -255,9 +349,11 @@ function ExpandedContent(props: {
                         })
                       }
                     >
-                      <IslandAvatar bot={item().bot} />
+                      <Show when={index === 0} fallback={<IslandAvatar bot={item().bot} />}>
+                        <span class="dynamic-island-surface-working-avatar-slot" aria-hidden="true" />
+                      </Show>
                       <IslandContentSwap contentKey={`${item().bot.id}:${item().task}`}>
-                        <span class="dynamic-island-surface-row-copy">
+                        <span class="dynamic-island-surface-row-copy" data-island-motion-content>
                           <strong>{item().bot.name}</strong>
                           <small>{item().task}</small>
                         </span>
@@ -272,12 +368,24 @@ function ExpandedContent(props: {
       </Match>
       <Match when={props.presentation.mode === "message" && props.presentation.message}>
         {(message) => (
-          <div class="dynamic-island-surface-panel">
-            <PanelHeading title="New reply" withLeading />
-            <IslandContentSwap contentKey={message().messageId} block>
-              <p class="dynamic-island-surface-message">{message().text}</p>
-            </IslandContentSwap>
-            <div class="dynamic-island-surface-actions">
+          <article class="dynamic-island-message-first-panel">
+            <div class="dynamic-island-message-first-summary">
+              <span class="dynamic-island-message-first-avatar-slot" aria-hidden="true" />
+              <div class="dynamic-island-message-first-copy" data-island-motion-content>
+                <header class="dynamic-island-message-first-heading">
+                  <h1>
+                    <span>{message().bot.name}</span>
+                    <small>replied</small>
+                  </h1>
+                  <time datetime={message().createdAt}>now</time>
+                </header>
+                <IslandContentSwap contentKey={message().messageId} block>
+                  <p>{message().text}</p>
+                </IslandContentSwap>
+              </div>
+            </div>
+            <footer class="dynamic-island-message-first-footer" data-island-motion-content>
+              <span class="dynamic-island-message-first-unread">{props.presentation.unreadCount} unread</span>
               <Button
                 size="sm"
                 onClick={() =>
@@ -291,8 +399,8 @@ function ExpandedContent(props: {
               >
                 <MessageCircle aria-hidden="true" /> Open chat
               </Button>
-            </div>
-          </div>
+            </footer>
+          </article>
         )}
       </Match>
       <Match
@@ -326,9 +434,20 @@ function AttentionContent(props: {
 }): JSX.Element {
   const [questionIndex, setQuestionIndex] = createSignal(0);
   const [answers, setAnswers] = createSignal<Record<string, string[]>>({});
+  const [questionTransitioning, setQuestionTransitioning] = createSignal(false);
+  const [questionLineLayout, setQuestionLineLayout] = createSignal<"single" | "multiple">("multiple");
+  let questionPrompt: HTMLParagraphElement | undefined;
+  let questionStep: HTMLDivElement | undefined;
+  let questionAnimations: Animation[] = [];
+  let questionDisposed = false;
+  let questionTransitionVersion = 0;
   createEffect(
     () => `${props.item.id}:${props.item.questions?.map((question) => question.id).join(",") ?? ""}`,
     () => {
+      questionTransitionVersion += 1;
+      cancelQuestionAnimations();
+      clearQuestionHidden(questionTransitionElements());
+      setQuestionTransitioning(false);
       setQuestionIndex(0);
       setAnswers({});
     },
@@ -345,7 +464,6 @@ function AttentionContent(props: {
   );
   const currentQuestion = () => questions()[questionIndex()];
   const questionText = () => currentQuestion()?.question ?? props.item.detail ?? props.item.title;
-  const questionKey = () => `${props.item.id}:${currentQuestion()?.id ?? "fallback"}`;
   const openInOpenBot = () =>
     props.onAction({
       type: "review-attention",
@@ -356,11 +474,10 @@ function AttentionContent(props: {
 
   function answerWith(label: string): void {
     const question = currentQuestion();
-    if (!question || !directAnswerAvailable()) return;
+    if (!question || !directAnswerAvailable() || questionTransitioning()) return;
     const nextAnswers = { ...answers(), [question.id]: [label] };
     if (questionIndex() < questions().length - 1) {
-      setAnswers(nextAnswers);
-      setQuestionIndex((index) => index + 1);
+      void showNextQuestion(nextAnswers);
       return;
     }
     void props.onAction({
@@ -372,14 +489,79 @@ function AttentionContent(props: {
     });
   }
 
+  async function showNextQuestion(nextAnswers: Record<string, string[]>): Promise<void> {
+    const elements = questionTransitionElements();
+    if (elements.length === 0) {
+      setAnswers(nextAnswers);
+      setQuestionIndex((index) => index + 1);
+      return;
+    }
+
+    setQuestionTransitioning(true);
+    const transitionVersion = ++questionTransitionVersion;
+    const exitAnimations = animateQuestionElements(elements, "exit");
+    if (!exitAnimations) {
+      setAnswers(nextAnswers);
+      setQuestionIndex((index) => index + 1);
+      setQuestionTransitioning(false);
+      return;
+    }
+    questionAnimations = exitAnimations;
+    await waitForQuestionAnimations(questionAnimations);
+    if (questionDisposed || transitionVersion !== questionTransitionVersion) return;
+    setQuestionHidden(elements);
+    cancelQuestionAnimations();
+    setAnswers(nextAnswers);
+    setQuestionIndex((index) => index + 1);
+    await nextAnimationFrame();
+    if (questionDisposed || transitionVersion !== questionTransitionVersion) return;
+    questionAnimations = animateQuestionElements(elements, "enter") ?? [];
+    await waitForQuestionAnimations(questionAnimations);
+    if (questionDisposed || transitionVersion !== questionTransitionVersion) return;
+    clearQuestionHidden(elements);
+    cancelQuestionAnimations();
+    setQuestionTransitioning(false);
+  }
+
+  function questionTransitionElements(): HTMLElement[] {
+    const elements: Array<HTMLElement | undefined> = [questionPrompt, questionStep];
+    return elements.filter((element): element is HTMLElement => element !== undefined);
+  }
+
+  function cancelQuestionAnimations(): void {
+    for (const animation of questionAnimations) animation.cancel();
+    questionAnimations = [];
+  }
+
+  onCleanup(() => {
+    questionDisposed = true;
+    questionTransitionVersion += 1;
+    cancelQuestionAnimations();
+    clearQuestionHidden(questionTransitionElements());
+  });
+
+  onSettled(() => {
+    const prompt = questionPrompt;
+    if (!prompt) return;
+    const updateLineLayout = (): void => {
+      const lineHeight = Number.parseFloat(getComputedStyle(prompt).lineHeight);
+      if (!Number.isFinite(lineHeight)) return;
+      setQuestionLineLayout(prompt.getBoundingClientRect().height < lineHeight * 1.5 ? "single" : "multiple");
+    };
+    const observer = new ResizeObserver(updateLineLayout);
+    observer.observe(prompt);
+    updateLineLayout();
+    return () => observer.disconnect();
+  });
+
   return (
     <Show
       when={props.item.kind === "prompt"}
       fallback={
         <div class="dynamic-island-surface-panel dynamic-island-surface-attention-panel">
-          <PanelHeading title="Approval needed" withLeading />
+          <PanelHeading title="Approval needed" sharedLeading />
           <IslandContentSwap contentKey={`${props.item.id}:${props.item.detail ?? ""}`} block>
-            <div class="dynamic-island-surface-request-copy">
+            <div class="dynamic-island-surface-request-copy" data-island-motion-content>
               <Show when={props.item.approval?.reason}>{(reason) => <p>{reason()}</p>}</Show>
               <ApprovalContext item={props.item} />
               <Show when={props.remainingCount > 0}>
@@ -389,7 +571,7 @@ function AttentionContent(props: {
               </Show>
             </div>
           </IslandContentSwap>
-          <div class="dynamic-island-surface-actions">
+          <div class="dynamic-island-surface-actions" data-island-motion-content>
             <Button size="sm" variant="ghost" onClick={openInOpenBot}>
               Open in OpenBot
             </Button>
@@ -413,25 +595,29 @@ function AttentionContent(props: {
       <div class="dynamic-island-surface-panel dynamic-island-surface-question-panel">
         <div class="dynamic-island-surface-question-summary">
           <span class="dynamic-island-surface-question-avatar-slot" aria-hidden="true" />
-          <div class="dynamic-island-surface-question-copy">
+          <div
+            class="dynamic-island-surface-question-copy"
+            data-question-lines={questionLineLayout()}
+            data-island-motion-content
+          >
             <header class="dynamic-island-surface-question-heading">
               <h1>
                 <span class="dynamic-island-surface-question-bot-name">{props.item.bot.name}</span>
                 <span class="dynamic-island-surface-question-asks">asks</span>
               </h1>
             </header>
-            <IslandContentSwap contentKey={questionKey()} block>
-              <p class="dynamic-island-surface-question-prompt">{questionText()}</p>
-            </IslandContentSwap>
+            <p ref={questionPrompt} class="dynamic-island-surface-question-prompt">
+              {questionText()}
+            </p>
           </div>
           <Show when={directAnswerAvailable() && questions().length > 1}>
-            <span class="dynamic-island-surface-question-progress">
-              {questionIndex() + 1} / {questions().length}
+            <span data-island-motion-content>
+              <QuestionProgress current={questionIndex() + 1} total={questions().length} />
             </span>
           </Show>
         </div>
-        <IslandContentSwap contentKey={questionKey()} block>
-          <div class="dynamic-island-surface-question-step">
+        <div data-island-motion-content>
+          <div ref={questionStep} class="dynamic-island-surface-question-step">
             <Show when={directAnswerAvailable()}>
               <ul class="dynamic-island-surface-question-options" aria-label="Suggested answers">
                 <For each={currentQuestion()?.options ?? []}>
@@ -456,8 +642,8 @@ function AttentionContent(props: {
               </ul>
             </Show>
           </div>
-        </IslandContentSwap>
-        <div class="dynamic-island-surface-actions dynamic-island-surface-question-actions">
+        </div>
+        <div class="dynamic-island-surface-actions dynamic-island-surface-question-actions" data-island-motion-content>
           <Show when={props.remainingCount > 0}>
             <small class="dynamic-island-surface-more">
               +{props.remainingCount} more {props.remainingCount === 1 ? "request" : "requests"}
@@ -473,6 +659,158 @@ function AttentionContent(props: {
       </div>
     </Show>
   );
+}
+
+function QuestionProgress(props: { current: number; total: number }): JSX.Element {
+  let stack: HTMLSpanElement | undefined;
+  let currentDigit: HTMLSpanElement | undefined;
+  let outgoingDigit: HTMLSpanElement | undefined;
+  let previous = props.current;
+  let transitionVersion = 0;
+  let animations: Animation[] = [];
+
+  const cancelTransition = (): void => {
+    for (const animation of animations) animation.cancel();
+    animations = [];
+    outgoingDigit?.remove();
+    outgoingDigit = undefined;
+  };
+
+  createEffect(
+    () => props.current,
+    (current) => {
+      const outgoing = previous;
+      previous = current;
+      if (current === outgoing || !stack || !currentDigit) return;
+
+      const version = ++transitionVersion;
+      cancelTransition();
+      const direction = current > outgoing ? 1 : -1;
+      outgoingDigit = document.createElement("span");
+      outgoingDigit.className = "dynamic-island-surface-question-progress-digit is-outgoing";
+      outgoingDigit.textContent = String(outgoing);
+      outgoingDigit.setAttribute("aria-hidden", "true");
+      stack.prepend(outgoingDigit);
+
+      const animateOutgoing = outgoingDigit.animate?.bind(outgoingDigit);
+      const animateCurrent = currentDigit.animate?.bind(currentDigit);
+      if (!animateOutgoing || !animateCurrent) {
+        cancelTransition();
+        return;
+      }
+
+      const visibleFrame: Keyframe = { opacity: 1, filter: "blur(0px)", transform: "translateY(0)" };
+      const hiddenOpacity = 0.35;
+      animations = [
+        animateOutgoing(
+          [
+            visibleFrame,
+            {
+              opacity: hiddenOpacity,
+              filter: `blur(${QUESTION_PROGRESS_BLUR}px)`,
+              transform: `translateY(${direction * -70}%)`,
+            },
+          ],
+          {
+            duration: QUESTION_PROGRESS_DURATION,
+            easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+            fill: "both",
+          },
+        ),
+        animateCurrent(
+          [
+            {
+              opacity: hiddenOpacity,
+              filter: `blur(${QUESTION_PROGRESS_BLUR}px)`,
+              transform: `translateY(${direction * 70}%)`,
+            },
+            visibleFrame,
+          ],
+          {
+            duration: QUESTION_PROGRESS_DURATION,
+            easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+            fill: "both",
+          },
+        ),
+      ];
+
+      void waitForQuestionAnimations(animations).then(() => {
+        if (version !== transitionVersion) return;
+        cancelTransition();
+      });
+    },
+  );
+
+  onCleanup(() => {
+    transitionVersion += 1;
+    cancelTransition();
+  });
+
+  return (
+    <span class="dynamic-island-surface-question-progress">
+      <span class="sr-only">
+        Question {props.current} of {props.total}
+      </span>
+      <span ref={stack} class="dynamic-island-surface-question-progress-stack" aria-hidden="true">
+        <span ref={currentDigit} class="dynamic-island-surface-question-progress-digit">
+          {props.current}
+        </span>
+      </span>
+      <span aria-hidden="true"> / {props.total}</span>
+    </span>
+  );
+}
+
+type QuestionSwapPhase = "exit" | "enter";
+
+function animateQuestionElements(elements: HTMLElement[], phase: QuestionSwapPhase): Animation[] | undefined {
+  const entering = phase === "enter";
+  const hiddenFrame: Keyframe = {
+    opacity: QUESTION_SWAP_MIDPOINT_OPACITY,
+    filter: `blur(${QUESTION_SWAP_BLUR}px)`,
+    transform: "none",
+  };
+  const visibleFrame: Keyframe = { opacity: 1, filter: "blur(0px)", transform: "none" };
+  const animations: Animation[] = [];
+  for (const element of elements) {
+    const animate = element.animate?.bind(element);
+    if (!animate) {
+      for (const animation of animations) animation.cancel();
+      return undefined;
+    }
+    animations.push(
+      animate(entering ? [hiddenFrame, visibleFrame] : [visibleFrame, hiddenFrame], {
+        duration: entering ? QUESTION_SWAP_ENTER_DURATION : QUESTION_SWAP_EXIT_DURATION,
+        easing: entering ? "cubic-bezier(0.22, 1, 0.36, 1)" : "cubic-bezier(0.4, 0, 0.6, 1)",
+        fill: "both",
+      }),
+    );
+  }
+  return animations;
+}
+
+function waitForQuestionAnimations(animations: Animation[]): Promise<undefined[]> {
+  return Promise.all(animations.map((animation) => animation.finished.then(() => undefined).catch(() => undefined)));
+}
+
+function setQuestionHidden(elements: HTMLElement[]): void {
+  for (const element of elements) {
+    element.style.opacity = String(QUESTION_SWAP_MIDPOINT_OPACITY);
+    element.style.filter = `blur(${QUESTION_SWAP_BLUR}px)`;
+    element.style.transform = "none";
+  }
+}
+
+function clearQuestionHidden(elements: HTMLElement[]): void {
+  for (const element of elements) {
+    element.style.removeProperty("opacity");
+    element.style.removeProperty("filter");
+    element.style.removeProperty("transform");
+  }
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 function ApprovalContext(props: { item: DynamicIslandAttentionItem }): JSX.Element {
@@ -516,6 +854,7 @@ function PanelHeading(props: {
 }): JSX.Element {
   return (
     <header
+      data-island-motion-content
       class={[
         "dynamic-island-surface-heading",
         props.withLeading ? "dynamic-island-surface-heading-with-leading" : undefined,
@@ -533,12 +872,13 @@ function PanelHeading(props: {
   );
 }
 
-function IslandAvatar(props: { bot: DynamicIslandBotIdentity; roundBlob?: boolean }): JSX.Element {
+function IslandAvatar(props: { bot: DynamicIslandBotIdentity }): JSX.Element {
   return (
     <AgentAvatar
       bot={props.bot}
       motion="idle"
-      shape={props.roundBlob ? "cercle" : undefined}
+      ignoreReducedMotion
+      shape="cercle"
       class="dynamic-island-surface-avatar"
     />
   );
@@ -586,15 +926,6 @@ function compactTrailingKey(presentation: DynamicIslandPresentation): string {
   if (presentation.mode === "message") return `message:${presentation.unreadCount}`;
   if (presentation.mode === "question") return "question";
   if (presentation.mode === "approval") return `approval:${presentation.attentionCount}`;
-  return "idle";
-}
-
-function peekKey(presentation: DynamicIslandPresentation): string {
-  if (presentation.mode === "working") return `working:${presentation.activeCount}`;
-  if (presentation.mode === "message") return `message:${presentation.message?.messageId ?? ""}`;
-  if (presentation.mode === "question" || presentation.mode === "approval") {
-    return `${presentation.mode}:${presentation.attention[0]?.id ?? ""}`;
-  }
   return "idle";
 }
 

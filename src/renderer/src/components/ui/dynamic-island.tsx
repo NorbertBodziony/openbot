@@ -4,8 +4,8 @@ import { createEffect, createSignal, createUniqueId, onCleanup, onSettled, Show,
 import { cx } from "./utils";
 
 export type DynamicIslandTone = "neutral" | "working" | "attention";
-export type DynamicIslandViewState = "compact" | "peek" | "expanded";
-export type DynamicIslandHoverBehavior = "none" | "peek" | "expand";
+export type DynamicIslandViewState = "compact" | "expanded";
+export type DynamicIslandHoverBehavior = "none" | "grow" | "expand";
 export type DynamicIslandContentMotion = "morph" | "atoll";
 export type DynamicIslandDisplayMode = "notch" | "island";
 export type DynamicIslandStateChangeReason = "pointer" | "keyboard" | "hover" | "hover-exit" | "escape";
@@ -20,7 +20,6 @@ export interface DynamicIslandProps {
   label: string;
   compactLeading?: JSX.Element;
   compactTrailing?: JSX.Element;
-  peekContent?: JSX.Element;
   expandedContent: JSX.Element;
   state?: DynamicIslandViewState;
   defaultState?: DynamicIslandViewState;
@@ -29,24 +28,23 @@ export interface DynamicIslandProps {
   hoverContentMotion?: DynamicIslandHoverContentMotion;
   pointerToggle?: boolean;
   contentMotion?: DynamicIslandContentMotion;
-  morphCompactContent?: boolean;
   sharedLeadingMotion?: boolean;
-  sharedLeadingPeekScale?: number;
-  sharedLeadingPeekY?: number;
   sharedLeadingExpandedX?: number;
   sharedLeadingExpandedY?: number;
   sharedLeadingExpandedScale?: number;
   sharedTrailingMotion?: boolean;
-  sharedTrailingPeekScale?: number;
-  sharedTrailingPeekY?: number;
+  sharedTrailingExpandedX?: number;
+  sharedTrailingExpandedY?: number;
+  sharedTrailingExpandedScale?: number;
   displayMode?: DynamicIslandDisplayMode;
   tone?: DynamicIslandTone;
   class?: string;
 }
 
-const HOVER_PEEK_DELAY = 300;
+const HOVER_EXPAND_DELAY = 300;
 const HOVER_EXIT_DELAY = 100;
-const PANEL_EXIT_DURATION = 450;
+const ATOLL_CONTENT_EXIT_LEAD = 90;
+const PANEL_EXIT_DURATION = ATOLL_CONTENT_EXIT_LEAD + 450;
 const ATOLL_OPEN_SPRING = { response: 0.42, dampingFraction: 1 } as const;
 const ATOLL_CLOSE_SPRING = { response: 0.45, dampingFraction: 1 } as const;
 const ATOLL_HOVER_SPRING = {
@@ -54,7 +52,13 @@ const ATOLL_HOVER_SPRING = {
   dampingFraction: 0.7,
 } as const;
 const ATOLL_CONTENT_SPRING = { response: 0.34, dampingFraction: 0.88 } as const;
-const ATOLL_CONTENT_EXIT_DURATION = 220;
+const ATOLL_CONTENT_EXIT_DURATION = 280;
+const ATOLL_CONTENT_BLUR = 4;
+const ATOLL_CONTENT_ENTER_DELAY = 90;
+const ATOLL_BLUR_OPEN_DURATION = 460;
+const ATOLL_BLUR_CLOSE_DURATION = 450;
+const ATOLL_COMPACT_RETURN_DURATION = 450;
+const REDUCED_CONTENT_FADE_DURATION = 150;
 const DEFAULT_HOVER_CONTENT_MOTION: DynamicIslandHoverContentMotion = {
   leadingScale: 1.08,
   trailingScale: 1.08,
@@ -83,9 +87,10 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   let hoverTrailingContent: HTMLSpanElement | undefined;
   let panelContent: HTMLDivElement | undefined;
   let toggleButton: HTMLButtonElement | undefined;
-  let hoverPeekTimer: ReturnType<typeof setTimeout> | undefined;
+  let hoverExpandTimer: ReturnType<typeof setTimeout> | undefined;
   let hoverExitTimer: ReturnType<typeof setTimeout> | undefined;
   let panelExitTimer: ReturnType<typeof setTimeout> | undefined;
+  let layoutCloseTimer: ReturnType<typeof setTimeout> | undefined;
   let pointerInside = false;
   let hoverOpenedState: Exclude<DynamicIslandViewState, "compact"> | null = null;
   const [isHovering, setIsHovering] = createSignal(false);
@@ -93,10 +98,10 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   const viewState = () => local.state ?? internalState();
   const isExpanded = () => viewState() === "expanded";
   const initialViewState = untrack(viewState);
+  const [layoutState, setLayoutState] = createSignal<DynamicIslandViewState>(initialViewState);
   const [renderedPanelState, setRenderedPanelState] = createSignal<Exclude<DynamicIslandViewState, "compact"> | null>(
     initialViewState === "compact" ? null : initialViewState,
   );
-  const layoutState = (): DynamicIslandViewState => viewState();
 
   function setState(next: DynamicIslandViewState, reason: DynamicIslandStateChangeReason): void {
     if (next === viewState()) return;
@@ -105,9 +110,9 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   }
 
   function clearHoverTimers(): void {
-    if (hoverPeekTimer !== undefined) clearTimeout(hoverPeekTimer);
+    if (hoverExpandTimer !== undefined) clearTimeout(hoverExpandTimer);
     if (hoverExitTimer !== undefined) clearTimeout(hoverExitTimer);
-    hoverPeekTimer = undefined;
+    hoverExpandTimer = undefined;
     hoverExitTimer = undefined;
   }
 
@@ -129,18 +134,15 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
     if (hoverExitTimer !== undefined) clearTimeout(hoverExitTimer);
     hoverExitTimer = undefined;
     const hoverBehavior = local.hoverBehavior ?? "none";
-    if (hoverBehavior === "none" || viewState() === "expanded") return;
-    const nextState = hoverBehavior === "expand" ? "expanded" : "peek";
-    if (nextState === viewState()) return;
+    if (hoverBehavior !== "expand" || viewState() === "expanded") return;
 
-    if (hoverPeekTimer !== undefined) clearTimeout(hoverPeekTimer);
-    hoverPeekTimer = setTimeout(() => {
-      hoverPeekTimer = undefined;
+    if (hoverExpandTimer !== undefined) clearTimeout(hoverExpandTimer);
+    hoverExpandTimer = setTimeout(() => {
+      hoverExpandTimer = undefined;
       if (!isHovering() || viewState() === "expanded") return;
-      if (hoverBehavior === "peek" && viewState() !== "compact") return;
-      hoverOpenedState = nextState;
-      setState(nextState, "hover");
-    }, HOVER_PEEK_DELAY);
+      hoverOpenedState = "expanded";
+      setState("expanded", "hover");
+    }, HOVER_EXPAND_DELAY);
   }
 
   function handlePointerLeave(event: PointerEvent): void {
@@ -151,8 +153,8 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   function endHover(): void {
     if (!pointerInside) return;
     pointerInside = false;
-    if (hoverPeekTimer !== undefined) clearTimeout(hoverPeekTimer);
-    hoverPeekTimer = undefined;
+    if (hoverExpandTimer !== undefined) clearTimeout(hoverExpandTimer);
+    hoverExpandTimer = undefined;
     const openedState = hoverOpenedState;
 
     if (hoverExitTimer !== undefined) clearTimeout(hoverExitTimer);
@@ -167,9 +169,32 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   }
 
   createEffect(
-    () => viewState(),
-    (state) => {
+    () => ({
+      layout: layoutState(),
+      rendered: renderedPanelState(),
+      state: viewState(),
+    }),
+    ({ layout, rendered, state }) => {
       if (hoverOpenedState && state !== hoverOpenedState) hoverOpenedState = null;
+
+      if (layoutCloseTimer !== undefined) clearTimeout(layoutCloseTimer);
+      layoutCloseTimer = undefined;
+      if (state !== "compact") {
+        setLayoutState(state);
+        return;
+      }
+
+      const shouldStageClose =
+        (local.contentMotion ?? "morph") === "atoll" && layout === "expanded" && rendered === "expanded";
+      if (!shouldStageClose) {
+        setLayoutState("compact");
+        return;
+      }
+
+      layoutCloseTimer = setTimeout(() => {
+        layoutCloseTimer = undefined;
+        if (viewState() === "compact") setLayoutState("compact");
+      }, ATOLL_CONTENT_EXIT_LEAD);
     },
   );
 
@@ -205,8 +230,6 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
     sharedLeadingTarget: () =>
       sharedLeadingTarget(
         viewState(),
-        local.sharedLeadingPeekScale ?? 1.08,
-        local.sharedLeadingPeekY ?? -2,
         local.sharedLeadingExpandedX ?? 27,
         local.sharedLeadingExpandedY ?? 54,
         local.sharedLeadingExpandedScale ?? 2.4,
@@ -214,7 +237,12 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
     sharedTrailing: () => trailingContent,
     sharedTrailingEnabled: () => local.sharedTrailingMotion ?? false,
     sharedTrailingTarget: () =>
-      sharedLeadingTarget(viewState(), local.sharedTrailingPeekScale ?? 1.08, local.sharedTrailingPeekY ?? -2, 0, 0, 1),
+      sharedLeadingTarget(
+        viewState(),
+        local.sharedTrailingExpandedX ?? 0,
+        local.sharedTrailingExpandedY ?? 0,
+        local.sharedTrailingExpandedScale ?? 1,
+      ),
   });
   createHoverContentMotion({
     leading: () => hoverLeadingContent,
@@ -225,6 +253,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   });
   createAtollContentTransition({
     content: () => panelContent,
+    root: () => shell,
     enabled: () => (local.contentMotion ?? "morph") === "atoll",
     state: viewState,
     renderedState: renderedPanelState,
@@ -232,6 +261,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   onCleanup(() => {
     clearHoverTimers();
     if (panelExitTimer !== undefined) clearTimeout(panelExitTimer);
+    if (layoutCloseTimer !== undefined) clearTimeout(layoutCloseTimer);
   });
 
   return (
@@ -243,7 +273,6 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
       data-tone={local.tone ?? "neutral"}
       data-hovered={isHovering() ? "true" : undefined}
       data-content-motion={local.contentMotion ?? "morph"}
-      data-morph-compact={local.morphCompactContent ? "true" : undefined}
       data-shared-leading={local.sharedLeadingMotion ? "true" : undefined}
       data-shared-trailing={local.sharedTrailingMotion ? "true" : undefined}
       data-display-mode={local.displayMode ?? "notch"}
@@ -332,11 +361,14 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
                 id={panelId}
                 class="dynamic-island-panel"
                 data-slot="dynamic-island-panel"
-                data-phase={viewState() === "compact" ? "leaving" : "entering"}
+                data-phase={
+                  viewState() === "compact" ? (layoutState() === "compact" ? "leaving" : "exiting") : "entering"
+                }
                 data-content-state={contentState}
+                aria-hidden={viewState() === "compact" ? "true" : undefined}
               >
                 <div ref={panelContent} class="dynamic-island-content" data-content-state={contentState}>
-                  {contentState === "expanded" ? local.expandedContent : local.peekContent}
+                  {local.expandedContent}
                 </div>
               </div>
             )}
@@ -378,11 +410,11 @@ function islandSilhouetteTarget(
 ): IslandSilhouetteGeometry {
   if (displayMode === "island") {
     if (state === "expanded") return { topRadius: 0, bottomRadius: 0, capsuleRadius: 24 };
-    if (state === "peek" || hovering) return { topRadius: 0, bottomRadius: 0, capsuleRadius: 20 };
+    if (hovering) return { topRadius: 0, bottomRadius: 0, capsuleRadius: 20 };
     return { topRadius: 0, bottomRadius: 0, capsuleRadius: 16 };
   }
   if (state === "expanded") return { topRadius: 19, bottomRadius: 24 };
-  if (state === "peek" || hovering) return { topRadius: 6, bottomRadius: 14 };
+  if (hovering) return { topRadius: 6, bottomRadius: 14 };
   return { topRadius: 6, bottomRadius: 14 };
 }
 
@@ -394,14 +426,11 @@ interface SharedElementTransform {
 
 function sharedLeadingTarget(
   state: DynamicIslandViewState,
-  peekScale: number,
-  peekY: number,
   expandedX: number,
   expandedY: number,
   expandedScale: number,
 ): SharedElementTransform {
   if (state === "expanded") return { x: expandedX, y: expandedY, scale: expandedScale };
-  if (state === "peek") return { x: 0, y: peekY, scale: peekScale };
   return { x: 0, y: 0, scale: 1 };
 }
 
@@ -455,7 +484,7 @@ function animateHoverContent(
 ): Animation | undefined {
   writeSharedTransform(element, target);
   const animate = element.animate?.bind(element);
-  if (!animate || prefersReducedMotion(element) || transformsMatch(start, target)) return undefined;
+  if (!animate || transformsMatch(start, target)) return undefined;
   const animation = animate(sharedElementKeyframes(start, target, spring), {
     duration: spring.response * 1_000,
     easing: "linear",
@@ -540,16 +569,6 @@ function createSmoothSizeResize(options: SmoothSizeResizeOptions): void {
         return;
       }
       if (sizesMatch(previous, nextSize) && silhouetteGeometryMatches(previousGeometry, targetGeometry)) return;
-      if (prefersReducedMotion(container)) {
-        for (const active of animations) active.cancel();
-        writeContainerSize(container, nextSize);
-        writeSilhouetteGeometry(silhouette, targetGeometry);
-        if (sharedLeading) writeSharedTransform(sharedLeading, targetSharedLeading);
-        if (sharedTrailing) writeSharedTransform(sharedTrailing, targetSharedTrailing);
-        finishAnimation();
-        return;
-      }
-
       const computed = getComputedStyle(container);
       const animatedWidth = Number.parseFloat(computed.width);
       const animatedHeight = Number.parseFloat(computed.height);
@@ -750,11 +769,6 @@ function silhouetteGeometryMatches(
   );
 }
 
-function prefersReducedMotion(element?: Element): boolean {
-  if (element?.closest('[data-reduced-motion="true"]')) return true;
-  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-}
-
 function resizeKeyframes(
   start: { width: number; height: number },
   end: { width: number; height: number },
@@ -855,6 +869,7 @@ function resizeSpring(
 
 interface AtollContentTransitionOptions {
   content: () => HTMLDivElement | undefined;
+  root: () => HTMLDivElement | undefined;
   enabled: () => boolean;
   state: () => DynamicIslandViewState;
   renderedState: () => Exclude<DynamicIslandViewState, "compact"> | null;
@@ -885,39 +900,96 @@ function createAtollContentTransition(options: AtollContentTransitionOptions): v
       const style = getComputedStyle(content);
       const startOpacity = isNewContent && entering ? 0 : Number.parseFloat(style.opacity);
       const startScale = isNewContent && entering ? 0.965 : computedScale(style.transform);
+      const expandedTargets = islandMotionTargets(content);
+      const compactTargets = islandMotionTargets(options.root()?.querySelector(".dynamic-island-toggle") ?? undefined);
+      const currentBlurs = captureIslandBlurs([...expandedTargets, ...compactTargets]);
       knownContent = content;
       for (const active of animations) active.cancel();
       animations = [];
       const animate = content.animate?.bind(content);
-      if (prefersReducedMotion(content) || !animate) return;
+      if (!animate) return;
 
-      const current: Animation[] = [
-        entering
-          ? animate(atollContentEntranceKeyframes(startOpacity, startScale), {
-              duration: ATOLL_CONTENT_SPRING.response * 1_000,
+      const reducedMotion = prefersReducedMotion();
+      const current: Animation[] = [];
+
+      if (reducedMotion) {
+        for (const target of [...expandedTargets, ...compactTargets]) target.style.removeProperty("filter");
+        current.push(
+          animate(
+            [
+              { opacity: startOpacity, transform: "none" },
+              { opacity: entering ? 1 : 0, transform: "none" },
+            ],
+            {
+              duration: REDUCED_CONTENT_FADE_DURATION,
+              delay: entering && isNewContent ? ATOLL_CONTENT_ENTER_DELAY : 0,
               easing: "linear",
               fill: "both",
-            })
-          : animate(
-              [
-                { opacity: startOpacity, transform: `scale(${startScale})` },
-                { opacity: 0, transform: "scale(0.92)" },
-              ],
-              {
-                duration: ATOLL_CONTENT_EXIT_DURATION,
-                easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+            },
+          ),
+        );
+      } else {
+        current.push(
+          entering
+            ? animate(atollContentEntranceKeyframes(startOpacity, startScale), {
+                duration: ATOLL_CONTENT_SPRING.response * 1_000,
+                delay: isNewContent ? ATOLL_CONTENT_ENTER_DELAY : 0,
+                easing: "linear",
                 fill: "both",
-              },
-            ),
-      ];
+              })
+            : animate(
+                [
+                  { opacity: startOpacity, transform: `translateY(0px) scale(${startScale})` },
+                  { opacity: 0, transform: "translateY(-4px) scale(0.985)" },
+                ],
+                {
+                  duration: ATOLL_CONTENT_EXIT_DURATION,
+                  easing: "ease-in-out",
+                  fill: "both",
+                },
+              ),
+        );
+
+        if (entering) {
+          current.push(
+            ...animateIslandBlur(expandedTargets, 0, {
+              duration: ATOLL_BLUR_OPEN_DURATION,
+              delay: isNewContent ? ATOLL_CONTENT_ENTER_DELAY : 0,
+              initialBlur: ATOLL_CONTENT_BLUR,
+            }),
+            ...animateIslandBlur(compactTargets, ATOLL_CONTENT_BLUR, {
+              duration: ATOLL_BLUR_OPEN_DURATION,
+              initialBlurs: currentBlurs,
+            }),
+          );
+        } else {
+          current.push(
+            ...animateIslandBlur(expandedTargets, ATOLL_CONTENT_BLUR, {
+              duration: ATOLL_BLUR_CLOSE_DURATION,
+              initialBlurs: currentBlurs,
+            }),
+            ...animateIslandBlur(compactTargets, 0, {
+              duration: ATOLL_COMPACT_RETURN_DURATION,
+              delay: ATOLL_CONTENT_EXIT_LEAD,
+              initialBlurs: currentBlurs,
+            }),
+          );
+        }
+      }
       animations = current;
       void Promise.all(current.map((active) => active.finished))
         .then(() => {
           if (animations !== current) return;
-          if (entering) {
-            animations = [];
-            for (const active of current) active.cancel();
+          for (const target of expandedTargets) {
+            if (entering) target.style.removeProperty("filter");
+            else target.style.filter = `blur(${ATOLL_CONTENT_BLUR}px)`;
           }
+          for (const target of compactTargets) {
+            if (entering && !reducedMotion) target.style.filter = `blur(${ATOLL_CONTENT_BLUR}px)`;
+            else target.style.removeProperty("filter");
+          }
+          animations = [];
+          for (const active of current) active.cancel();
         })
         .catch(() => undefined);
     },
@@ -943,11 +1015,62 @@ function atollContentEntranceKeyframes(startOpacity: number, startScale: number)
   });
 }
 
+interface IslandBlurAnimationOptions {
+  duration: number;
+  delay?: number;
+  initialBlur?: number;
+  initialBlurs?: ReadonlyMap<HTMLElement, number>;
+}
+
+function islandMotionTargets(root: ParentNode | undefined): HTMLElement[] {
+  if (!root) return [];
+  return Array.from(root.querySelectorAll<HTMLElement>("[data-island-motion-content]"));
+}
+
+function animateIslandBlur(targets: HTMLElement[], endBlur: number, options: IslandBlurAnimationOptions): Animation[] {
+  const animations: Animation[] = [];
+  const smoothBlur = "ease-in-out";
+  for (const target of targets) {
+    const animate = target.animate?.bind(target);
+    if (!animate) continue;
+    const resolvedStartBlur =
+      options.initialBlur ?? options.initialBlurs?.get(target) ?? computedBlur(getComputedStyle(target).filter);
+    const keyframes: Keyframe[] = [
+      { filter: `blur(${resolvedStartBlur}px)`, offset: 0, easing: smoothBlur },
+      { filter: `blur(${endBlur}px)`, offset: 1 },
+    ];
+    animations.push(
+      animate(keyframes, {
+        duration: options.duration,
+        delay: options.delay ?? 0,
+        easing: "linear",
+        fill: "both",
+      }),
+    );
+  }
+  return animations;
+}
+
+function captureIslandBlurs(targets: HTMLElement[]): Map<HTMLElement, number> {
+  return new Map(targets.map((target) => [target, computedBlur(getComputedStyle(target).filter)]));
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 function computedScale(transform: string): number {
   if (!transform || transform === "none") return 1;
   const match = transform.match(/^matrix\(([^,]+)/);
   const scale = match ? Number.parseFloat(match[1]) : Number.NaN;
   return Number.isFinite(scale) ? scale : 1;
+}
+
+function computedBlur(filter: string): number {
+  if (!filter || filter === "none") return 0;
+  const match = filter.match(/blur\(([-\d.]+)px\)/);
+  const blur = match ? Number.parseFloat(match[1]) : Number.NaN;
+  return Number.isFinite(blur) ? blur : 0;
 }
 
 function springProgress(time: number, spring: { response: number; dampingFraction: number }): number {

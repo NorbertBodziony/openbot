@@ -20,7 +20,6 @@ describe("DynamicIsland", () => {
           }}
           compactLeading={<span>3</span>}
           compactTrailing={<span>active</span>}
-          peekContent={<span>3 bots working</span>}
           expandedContent={<button type="button">Open Chief</button>}
         />
       );
@@ -38,7 +37,7 @@ describe("DynamicIsland", () => {
     expect(screen.getByRole("button", { name: "Expand working bots" })).toHaveFocus();
   });
 
-  it("opens a hover peek after intent and closes only that peek after exit", async () => {
+  it("keeps compact content during hover intent and opens the full panel after it", async () => {
     vi.useFakeTimers();
     const changed = vi.fn();
     render(() => {
@@ -47,14 +46,13 @@ describe("DynamicIsland", () => {
         <DynamicIsland
           label="working bots"
           state={state()}
-          hoverBehavior="peek"
+          hoverBehavior="expand"
           onStateChange={(next, reason) => {
             changed(next, reason);
             setState(next);
           }}
           compactLeading={<span>3</span>}
           compactTrailing={<span>active</span>}
-          peekContent={<span>3 bots working</span>}
           expandedContent={<button type="button">Open Chief</button>}
         />
       );
@@ -65,19 +63,16 @@ describe("DynamicIsland", () => {
     await fireEvent.mouseEnter(island);
     await vi.advanceTimersByTimeAsync(299);
     expect(changed).not.toHaveBeenCalled();
+    expect(screen.getByText("active")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Open Chief" })).not.toBeInTheDocument();
     await vi.advanceTimersByTimeAsync(1);
-    expect(changed).toHaveBeenLastCalledWith("peek", "hover");
+    expect(changed).toHaveBeenLastCalledWith("expanded", "hover");
+    expect(screen.getByRole("button", { name: "Open Chief" })).toBeVisible();
     expect(toggle).not.toHaveFocus();
 
     await fireEvent.mouseLeave(island);
-    await vi.advanceTimersByTimeAsync(50);
-    await fireEvent.mouseEnter(island);
-    await vi.advanceTimersByTimeAsync(100);
-    expect(changed).toHaveBeenLastCalledWith("peek", "hover");
-
-    await fireEvent.mouseLeave(island);
     await vi.advanceTimersByTimeAsync(99);
-    expect(screen.getByText("3 bots working")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Open Chief" })).toBeVisible();
     await vi.advanceTimersByTimeAsync(1);
     expect(changed).toHaveBeenLastCalledWith("compact", "hover-exit");
   });
@@ -91,14 +86,13 @@ describe("DynamicIsland", () => {
         <DynamicIsland
           label="idle status"
           state={state()}
-          hoverBehavior="peek"
+          hoverBehavior="expand"
           onStateChange={(next, reason) => {
             changed(next, reason);
             setState(next);
           }}
           compactLeading={<span>OpenBot</span>}
           compactTrailing={<span>Wave</span>}
-          peekContent={<span />}
           expandedContent={<span />}
         />
       );
@@ -111,7 +105,7 @@ describe("DynamicIsland", () => {
     await vi.advanceTimersByTimeAsync(150);
 
     expect(changed).toHaveBeenCalledTimes(1);
-    expect(changed).toHaveBeenLastCalledWith("peek", "hover");
+    expect(changed).toHaveBeenLastCalledWith("expanded", "hover");
 
     await fireEvent.pointerLeave(island, { pointerType: "mouse" });
     await vi.advanceTimersByTimeAsync(50);
@@ -122,61 +116,28 @@ describe("DynamicIsland", () => {
     expect(changed).toHaveBeenLastCalledWith("compact", "hover-exit");
   });
 
-  it("does not close an externally controlled peek on pointer exit", async () => {
+  it("keeps the compact state for grow-only hover", async () => {
     vi.useFakeTimers();
     const changed = vi.fn();
     render(() => (
       <DynamicIsland
-        label="chat update"
-        state="peek"
-        hoverBehavior="peek"
+        label="idle status"
+        state="compact"
+        hoverBehavior="grow"
         onStateChange={changed}
-        compactLeading={<span>Research</span>}
-        compactTrailing={<span>1</span>}
-        peekContent={<span>New reply</span>}
-        expandedContent={<button type="button">Open chat</button>}
+        compactLeading={<span>OpenBot</span>}
+        compactTrailing={<span>Wave</span>}
+        expandedContent={<button type="button">Open app</button>}
       />
     ));
 
-    const island = screen.getByRole("region", { name: "chat update" });
+    const island = screen.getByRole("region", { name: "idle status" });
     await fireEvent.pointerEnter(island, { pointerType: "mouse" });
-    await fireEvent.pointerLeave(island, { pointerType: "mouse" });
     await vi.advanceTimersByTimeAsync(500);
     expect(changed).not.toHaveBeenCalled();
-    expect(screen.getByText("New reply")).toBeVisible();
-  });
-
-  it("promotes a hover peek to the full panel on click", async () => {
-    vi.useFakeTimers();
-    const changed = vi.fn();
-    render(() => {
-      const [state, setState] = createSignal<DynamicIslandViewState>("compact");
-      return (
-        <DynamicIsland
-          label="question from AI"
-          state={state()}
-          hoverBehavior="peek"
-          onStateChange={(next, reason) => {
-            changed(next, reason);
-            setState(next);
-          }}
-          compactLeading={<span>Research</span>}
-          compactTrailing={<span>?</span>}
-          peekContent={<span>Question preview</span>}
-          expandedContent={<button type="button">Answer question</button>}
-        />
-      );
-    });
-
-    const island = screen.getByRole("region", { name: "question from AI" });
-    await fireEvent.mouseEnter(island);
-    await vi.advanceTimersByTimeAsync(300);
-    await fireEvent.click(screen.getByRole("button", { name: "Expand question from AI" }), { detail: 1 });
-    expect(changed).toHaveBeenLastCalledWith("expanded", "pointer");
-
-    await fireEvent.mouseLeave(island);
-    await vi.advanceTimersByTimeAsync(100);
-    expect(screen.getByRole("button", { name: "Answer question" })).toBeVisible();
+    expect(screen.getByText("OpenBot")).toBeVisible();
+    expect(screen.getByText("Wave")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Open app" })).not.toBeInTheDocument();
   });
 
   it("ignores pointer clicks and opens the full panel from hover when pointer toggle is disabled", async () => {
@@ -196,7 +157,6 @@ describe("DynamicIsland", () => {
           }}
           compactLeading={<span>Research</span>}
           compactTrailing={<span>?</span>}
-          peekContent={<span>Question preview</span>}
           expandedContent={<button type="button">Answer question</button>}
         />
       );
@@ -227,7 +187,6 @@ describe("DynamicIsland", () => {
           onStateChange={setState}
           compactLeading={<span>!</span>}
           compactTrailing={<span>1</span>}
-          peekContent={<span>Approval needed</span>}
           expandedContent={<button type="button">Review request</button>}
         />
       );

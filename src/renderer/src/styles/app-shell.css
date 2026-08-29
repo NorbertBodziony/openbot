@@ -2664,7 +2664,7 @@ textarea {
   width: 128%;
   height: 128%;
   overflow: visible;
-  translate: 0 var(--bot-avatar-optical-offset, 0);
+  translate: var(--bot-avatar-optical-offset-x, 0) var(--bot-avatar-optical-offset, 0);
 }
 
 .bot-avatar-custom {

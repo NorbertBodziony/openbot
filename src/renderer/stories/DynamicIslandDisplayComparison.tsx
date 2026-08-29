@@ -11,7 +11,6 @@ export interface DynamicIslandStoryPreviewContext {
 
 interface DynamicIslandDisplayComparisonProps {
   defaultState?: DynamicIslandViewState;
-  reducedMotion?: boolean;
   renderIsland: (context: DynamicIslandStoryPreviewContext) => JSX.Element;
 }
 
@@ -21,10 +20,7 @@ export function DynamicIslandDisplayComparison(props: DynamicIslandDisplayCompar
   const [islandState, setIslandState] = createSignal<DynamicIslandViewState>(initialState);
 
   return (
-    <main
-      class="dynamic-island-story-stage dynamic-island-story-stage-comparison"
-      data-reduced-motion={props.reducedMotion ? "true" : undefined}
-    >
+    <main class="dynamic-island-story-stage dynamic-island-story-stage-comparison">
       <div class="dynamic-island-story-display-grid">
         <DisplayPreview title="Built-in display" detail="Physical MacBook notch" label="Built-in display preview">
           {props.renderIsland({

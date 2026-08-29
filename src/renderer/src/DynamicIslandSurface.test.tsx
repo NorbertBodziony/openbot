@@ -8,7 +8,7 @@ import { createMockOpenBot } from "./preview/mock-openbot";
 afterEach(() => vi.useRealTimers());
 
 describe("DynamicIslandSurface", () => {
-  it("shows and closes the working smart peek without taking an action", async () => {
+  it("keeps a new working presentation compact until hover intent", async () => {
     const mock = createMockOpenBot();
     let publish: ((presentation: DynamicIslandPresentation) => void) | undefined;
     mock.api.dynamicIsland.onPresentation = (listener) => {
@@ -39,21 +39,17 @@ describe("DynamicIslandSurface", () => {
         attention: [],
       });
     });
-    expect(screen.getByText("1 bot working")).toBeInTheDocument();
-
-    const island = screen.getByRole("region", { name: "OpenBot working status" });
-    await fireEvent.pointerEnter(island, { pointerType: "mouse" });
-    await fireEvent.pointerLeave(island, { pointerType: "mouse" });
-    await vi.advanceTimersByTimeAsync(100);
-    expect(screen.getByText("1 bot working")).toBeVisible();
-
-    await vi.advanceTimersByTimeAsync(2_250);
+    expect(screen.queryByText("1 bot working")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expand OpenBot working status" })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
-    await vi.advanceTimersByTimeAsync(450);
+    await vi.advanceTimersByTimeAsync(7_000);
     expect(screen.queryByText("1 bot working")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand OpenBot working status" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     mock.dispose();
   });
 
@@ -80,10 +76,7 @@ describe("DynamicIslandSurface", () => {
     Object.defineProperty(window, "openbot", { configurable: true, value: mock.api });
     render(() => <DynamicIslandSurface />);
 
-    const toggle = await screen.findByRole("button", { name: "Expand OpenBot chat update" });
-    await fireEvent.click(toggle, { detail: 1 });
-    expect(screen.queryByRole("button", { name: "Open chat" })).not.toBeInTheDocument();
-    await fireEvent.mouseEnter(screen.getByRole("region", { name: "OpenBot chat update" }));
+    await fireEvent.mouseEnter(await screen.findByRole("region", { name: "OpenBot chat update" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Open chat" }));
 
     await waitFor(() =>

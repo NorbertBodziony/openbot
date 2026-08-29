@@ -1,15 +1,7 @@
-import {
-  type Block,
-  BloubBot,
-  defaultCycle,
-  makeBlock,
-  POSES,
-  type ShapeId,
-  type StateId,
-} from "@norbert_bodziony/bloub";
+import { type Block, BloubBot, defaultCycle, makeBlock, POSES, type StateId } from "@norbert_bodziony/bloub";
 import type { BotAvatarHue } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, onSettled, Show } from "solid-js";
-import { type AvatarMotion, bloubAvatarProfile } from "../bloub-avatar";
+import { type AvatarMotion, type AvatarSilhouetteId, bloubAvatarProfile } from "../bloub-avatar";
 import type { BotProfile } from "../data";
 
 const DEFAULT_CYCLE: Block[] = defaultCycle().blocks;
@@ -32,7 +24,8 @@ interface AgentAvatarProps {
   cycleOffset?: number;
   animationOffset?: number;
   animationState?: StateId;
-  shape?: ShapeId;
+  ignoreReducedMotion?: boolean;
+  shape?: AvatarSilhouetteId;
   class?: string;
   style?: Record<string, string>;
 }
@@ -61,6 +54,7 @@ export function AgentAvatar(props: AgentAvatarProps) {
           cycleOffset={props.cycleOffset}
           animationOffset={props.animationOffset}
           animationState={props.animationState}
+          ignoreReducedMotion={props.ignoreReducedMotion}
           shape={props.shape}
           class={className()}
           style={props.style}
@@ -81,18 +75,20 @@ function GeneratedAvatar(props: {
   cycleOffset?: number;
   animationOffset?: number;
   animationState?: StateId;
-  shape?: ShapeId;
+  ignoreReducedMotion?: boolean;
+  shape?: AvatarSilhouetteId;
   class: string;
   style?: Record<string, string>;
 }) {
   let element: HTMLSpanElement | undefined;
   const [interacting, setInteracting] = createSignal(false);
-  const [reducedMotion, setReducedMotion] = createSignal(prefersReducedMotion());
+  const [reducedMotion, setReducedMotion] = createSignal(props.ignoreReducedMotion ? false : prefersReducedMotion());
   const frozenAt = props.animationState ? POSES[props.animationState] : 0;
   const profile = createMemo(() => bloubAvatarProfile(props.seed, props.hue));
   const cycle = createMemo(() => offsetCycle(DEFAULT_CYCLE, props.cycleOffset ?? 0));
   const animated = () =>
-    !reducedMotion() && (Boolean(props.animationState) || props.motion !== "hover" || interacting());
+    (props.ignoreReducedMotion || !reducedMotion()) &&
+    (Boolean(props.animationState) || props.motion !== "hover" || interacting());
   const motionCycle = () => {
     if (props.animationState) return [slowerBlock(props.animationState)];
     if (props.motion === "connecting") return CONNECTING_CYCLE;
@@ -102,7 +98,7 @@ function GeneratedAvatar(props: {
   };
 
   onSettled(() => {
-    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const media = props.ignoreReducedMotion ? undefined : window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const syncReducedMotion = () => setReducedMotion(media?.matches ?? false);
     syncReducedMotion();
     media?.addEventListener?.("change", syncReducedMotion);
