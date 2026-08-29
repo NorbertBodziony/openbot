@@ -62,6 +62,10 @@ import type {
   UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
 import {
+  AGENT_RUNTIME_ATTENTION_LIMIT,
+  AGENT_RUNTIME_PERMISSION_PATHS_LIMIT,
+  AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
+  AGENT_RUNTIME_QUESTION_HEADER_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
   isImageGenerationAspectRatio,
   isMessageReaction,
@@ -457,6 +461,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         });
       }
     }
+    let remainingAttention = AGENT_RUNTIME_ATTENTION_LIMIT;
+    const pendingPrompts = [...this.#pendingPrompts.values()].slice(0, remainingAttention).map((pending) => ({
+      requestId: pending.id,
+      botId: pending.botId,
+      threadId: pending.publicThreadId,
+      turnId: pending.turnId,
+      questions: pending.questions.map(compactRuntimeQuestion),
+    }));
+    remainingAttention -= pendingPrompts.length;
+    const pendingApprovals = [...this.#pendingApprovals.values()]
+      .slice(0, remainingAttention)
+      .map((pending) => compactRuntimeApproval(pending.approval));
+    remainingAttention -= pendingApprovals.length;
+    const pendingBrowserTakeovers = [...this.#pendingBrowserTakeovers.values()]
+      .slice(0, remainingAttention)
+      .map((pending) => structuredClone(pending.request));
     return {
       bots: runtimeBots,
       activeTurns,
@@ -465,17 +485,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.#failedTurns,
       ),
       latestMessages,
-      pendingPrompts: [...this.#pendingPrompts.values()].map((pending) => ({
-        requestId: pending.id,
-        botId: pending.botId,
-        threadId: pending.publicThreadId,
-        turnId: pending.turnId,
-        questions: structuredClone(pending.questions),
-      })),
-      pendingApprovals: [...this.#pendingApprovals.values()].map((pending) => structuredClone(pending.approval)),
-      pendingBrowserTakeovers: [...this.#pendingBrowserTakeovers.values()].map((pending) =>
-        structuredClone(pending.request),
-      ),
+      pendingPrompts,
+      pendingApprovals,
+      pendingBrowserTakeovers,
       failedTurns: [...this.#failedTurns].map(([botId, turnId]) => ({ botId, turnId })),
     };
   }
@@ -4050,6 +4062,45 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #emit(event: AgentEvent): void {
     this.emit("event", event);
   }
+}
+
+function compactRuntimeQuestion(
+  question: AgentPromptQuestion,
+): AgentRuntimeSnapshot["pendingPrompts"][number]["questions"][number] {
+  return {
+    id: question.id,
+    header: question.header.slice(0, AGENT_RUNTIME_QUESTION_HEADER_LIMIT),
+    question: question.question.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
+    isSecret: question.isSecret,
+    options:
+      question.options?.map((option) => ({
+        label: option.label.slice(0, AGENT_RUNTIME_QUESTION_HEADER_LIMIT),
+        description: option.description.slice(0, AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT),
+      })) ?? null,
+  };
+}
+
+function compactRuntimeApproval(approval: AgentApproval): AgentRuntimeSnapshot["pendingApprovals"][number] {
+  return {
+    ...approval,
+    command: approval.command?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+    cwd: approval.cwd?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+    reason: approval.reason?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+    grantRoot: approval.grantRoot?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+    permissions: approval.permissions
+      ? {
+          fileSystem: {
+            read: approval.permissions.fileSystem.read
+              .slice(0, AGENT_RUNTIME_PERMISSION_PATHS_LIMIT)
+              .map((path) => path.slice(0, AGENT_RUNTIME_TEXT_LIMIT)),
+            write: approval.permissions.fileSystem.write
+              .slice(0, AGENT_RUNTIME_PERMISSION_PATHS_LIMIT)
+              .map((path) => path.slice(0, AGENT_RUNTIME_TEXT_LIMIT)),
+          },
+          network: approval.permissions.network,
+        }
+      : null,
+  };
 }
 
 function routineToolArguments(value: unknown, allowedKeys: readonly string[]): DynamicRecord {

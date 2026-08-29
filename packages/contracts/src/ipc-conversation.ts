@@ -981,15 +981,20 @@ export interface AgentRuntimeSnapshot {
     botId: string;
     threadId: string;
     turnId: string;
-    questions: AgentPromptQuestion[];
+    questions: AgentRuntimePromptQuestion[];
   }>;
-  pendingApprovals: AgentApproval[];
+  pendingApprovals: AgentRuntimeApproval[];
   pendingBrowserTakeovers: BrowserTakeoverRequest[];
   failedTurns: Array<{ botId: string; turnId: string }>;
 }
 
-export const AGENT_RUNTIME_TEXT_LIMIT = 600;
-export const AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT = 4;
+export const AGENT_RUNTIME_TEXT_LIMIT = 240;
+export const AGENT_RUNTIME_QUESTION_HEADER_LIMIT = 80;
+export const AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT = 120;
+export const AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT = 2;
+export const AGENT_RUNTIME_ATTENTION_LIMIT = 8;
+export const AGENT_RUNTIME_PERMISSION_PATHS_LIMIT = 3;
+export const AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT = 256 * 1024;
 
 export interface AgentRuntimeBotSummary {
   id: string;
@@ -1000,6 +1005,27 @@ export interface AgentRuntimeBotSummary {
   avatarSeed: string;
   avatarHue: BotAvatarHue | null;
   avatarUrl: string | null;
+}
+
+export interface AgentRuntimePromptQuestion {
+  id: string;
+  header: string;
+  question: string;
+  isSecret: boolean;
+  options: Array<{ label: string; description: string }> | null;
+}
+
+export interface AgentRuntimeApproval {
+  requestId: string | number;
+  botId: string;
+  threadId: string;
+  turnId: string;
+  kind: AgentApprovalKind;
+  command: string | null;
+  cwd: string | null;
+  reason: string | null;
+  grantRoot: string | null;
+  permissions: AgentApprovalPermissions | null;
 }
 
 export interface RespondToApprovalInput {
@@ -1145,14 +1171,16 @@ function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
         isBoundedString(message.createdAt, 160),
     ) &&
     Array.isArray(value.pendingPrompts) &&
-    value.pendingPrompts.length <= INPUT_LIMITS.agents &&
+    value.pendingPrompts.length <= AGENT_RUNTIME_ATTENTION_LIMIT &&
     value.pendingPrompts.every(isRuntimePrompt) &&
     Array.isArray(value.pendingApprovals) &&
-    value.pendingApprovals.length <= INPUT_LIMITS.agents &&
-    value.pendingApprovals.every(isAgentApproval) &&
+    value.pendingApprovals.length <= AGENT_RUNTIME_ATTENTION_LIMIT &&
+    value.pendingApprovals.every(isRuntimeApproval) &&
     Array.isArray(value.pendingBrowserTakeovers) &&
-    value.pendingBrowserTakeovers.length <= INPUT_LIMITS.agents &&
+    value.pendingBrowserTakeovers.length <= AGENT_RUNTIME_ATTENTION_LIMIT &&
     value.pendingBrowserTakeovers.every(isBrowserTakeoverRequest) &&
+    value.pendingPrompts.length + value.pendingApprovals.length + value.pendingBrowserTakeovers.length <=
+      AGENT_RUNTIME_ATTENTION_LIMIT &&
     Array.isArray(value.failedTurns) &&
     value.failedTurns.length <= INPUT_LIMITS.agents &&
     value.failedTurns.every((turn) => isDynamicRecord(turn) && isIdentifier(turn.botId) && isIdentifier(turn.turnId))
@@ -1296,7 +1324,60 @@ function isRuntimePrompt(value: unknown): value is AgentRuntimeSnapshot["pending
     isIdentifier(value.turnId) &&
     Array.isArray(value.questions) &&
     value.questions.length <= INPUT_LIMITS.promptQuestions &&
-    value.questions.every(isAgentPromptQuestion)
+    value.questions.every(isRuntimePromptQuestion)
+  );
+}
+
+function isRuntimePromptQuestion(value: unknown): value is AgentRuntimePromptQuestion {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.id) &&
+    isBoundedString(value.header, AGENT_RUNTIME_QUESTION_HEADER_LIMIT) &&
+    isBoundedString(value.question, AGENT_RUNTIME_TEXT_LIMIT) &&
+    isBoolean(value.isSecret) &&
+    (value.options === null ||
+      (Array.isArray(value.options) &&
+        value.options.length <= INPUT_LIMITS.promptOptions &&
+        value.options.every(
+          (option) =>
+            isDynamicRecord(option) &&
+            isBoundedString(option.label, AGENT_RUNTIME_QUESTION_HEADER_LIMIT) &&
+            isBoundedString(option.description, AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT),
+        )))
+  );
+}
+
+function isRuntimeApproval(value: unknown): value is AgentRuntimeApproval {
+  if (!isDynamicRecord(value)) return false;
+  return (
+    isRequestId(value.requestId) &&
+    isIdentifier(value.botId) &&
+    isIdentifier(value.threadId) &&
+    isIdentifier(value.turnId) &&
+    isOneOf(["command", "file-change", "permissions"] as const, value.kind) &&
+    isNullableBoundedString(value.command, AGENT_RUNTIME_TEXT_LIMIT) &&
+    isNullableBoundedString(value.cwd, AGENT_RUNTIME_TEXT_LIMIT) &&
+    isNullableBoundedString(value.reason, AGENT_RUNTIME_TEXT_LIMIT) &&
+    isNullableBoundedString(value.grantRoot, AGENT_RUNTIME_TEXT_LIMIT) &&
+    (value.permissions === null || isRuntimeApprovalPermissions(value.permissions))
+  );
+}
+
+function isRuntimeApprovalPermissions(value: unknown): value is AgentApprovalPermissions {
+  return (
+    isDynamicRecord(value) &&
+    isDynamicRecord(value.fileSystem) &&
+    isRuntimePathList(value.fileSystem.read) &&
+    isRuntimePathList(value.fileSystem.write) &&
+    isBoolean(value.network)
+  );
+}
+
+function isRuntimePathList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= AGENT_RUNTIME_PERMISSION_PATHS_LIMIT &&
+    value.every((path) => isBoundedString(path, AGENT_RUNTIME_TEXT_LIMIT))
   );
 }
 

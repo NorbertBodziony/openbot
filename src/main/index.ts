@@ -1167,6 +1167,7 @@ function createWindow(): BrowserWindow {
   });
   window.on("close", (event) => {
     if (process.platform === "darwin" && !isQuitting) {
+      // The hidden renderer owns the cross-host Dynamic Island coordinator and must outlive its visible window.
       event.preventDefault();
       window.hide();
     }

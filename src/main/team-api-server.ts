@@ -5,6 +5,7 @@ import { basename, dirname, join } from "node:path";
 import { isAvatarMimeType } from "@openbot/contracts/avatar-images";
 import { ATTACHMENT_LIMITS, AVATAR_IMAGE_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
+  AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
   type AgentEvent,
   type CentralAuthUser,
   type ConversationPageAnchor,
@@ -1138,6 +1139,7 @@ export class TeamApiServer {
 
   #broadcastAgentEvent(event: AgentEvent): void {
     const payload = JSON.stringify(event);
+    if (event.type === "runtime-snapshot" && Buffer.byteLength(payload) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return;
     for (const [client, connection] of this.#eventClients) {
       if (event.type === "runtime-snapshot" && !connection.supportsRuntimeSnapshot) continue;
       if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
@@ -1239,6 +1241,9 @@ export class TeamApiServer {
     if (rateLimited) connection.nextSnapshotRequestAt = now + RUNTIME_SNAPSHOT_REQUEST_INTERVAL_MS;
     try {
       const payload = JSON.stringify({ type: "runtime-snapshot", snapshot: this.#options.agents.getRuntimeSnapshot() });
+      if (Buffer.byteLength(payload) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) {
+        throw new Error("Runtime snapshot exceeds its transport budget.");
+      }
       client.send(payload, (error) => {
         connection.snapshotResponsePending = false;
         if (error && client.readyState === webSockets.WebSocket.OPEN) {

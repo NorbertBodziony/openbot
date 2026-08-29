@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AGENT_RUNTIME_ATTENTION_LIMIT,
   AGENT_RUNTIME_QUEUE_DELIVERIES_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
   isAgentEvent,
@@ -224,6 +225,21 @@ describe("runtime snapshot event validation", () => {
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, pendingBrowserTakeovers: [{}] } })).toBe(
       false,
     );
+    expect(
+      isAgentEvent({
+        type: "runtime-snapshot",
+        snapshot: {
+          ...snapshot,
+          pendingBrowserTakeovers: Array.from({ length: AGENT_RUNTIME_ATTENTION_LIMIT + 1 }, (_, index) => ({
+            requestId: `takeover-${index}`,
+            botId: `bot-${index}`,
+            threadId: `thread-${index}`,
+            turnId: `turn-${index}`,
+            tabId: `tab-${index}`,
+          })),
+        },
+      }),
+    ).toBe(false);
   });
 });
 

@@ -6,7 +6,14 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
-import { type AgentEvent, type BrowserControlState, type BrowserTab, isAgentEvent } from "@openbot/contracts/ipc";
+import {
+  AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
+  AGENT_RUNTIME_TEXT_LIMIT,
+  type AgentEvent,
+  type BrowserControlState,
+  type BrowserTab,
+  isAgentEvent,
+} from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentClient, AgentProvider } from "./agent-client";
@@ -721,7 +728,7 @@ describe.sequential("AgentService", () => {
         turnId,
         command: ["npm", "test"],
         cwd: "/tmp/openbot",
-        reason: "Run tests.",
+        reason: "r".repeat(1_000),
       },
     });
     await waitFor(() => events.some((event) => event.type === "approval"));
@@ -739,6 +746,7 @@ describe.sequential("AgentService", () => {
       }),
     );
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot: service.getRuntimeSnapshot() })).toBe(true);
+    expect(service.getRuntimeSnapshot().pendingApprovals[0]?.reason).toHaveLength(AGENT_RUNTIME_TEXT_LIMIT);
 
     await service.respondToApproval({ requestId: "approval-command", decision: "accept" });
     expect(client.responses).toEqual([{ id: "approval-command", result: { decision: "accept" } }]);
@@ -801,7 +809,7 @@ describe.sequential("AgentService", () => {
               id: "favorite",
               header: "Favorite",
               question: "What is your favorite color?",
-              options: [{ label: "Blue", description: "A calm choice." }],
+              options: [{ label: "Blue", description: "d".repeat(1_000) }],
             },
             {
               id: "token",
@@ -814,7 +822,11 @@ describe.sequential("AgentService", () => {
       },
     });
     await waitFor(() => events.some((event) => event.type === "prompt"));
-    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: service.getRuntimeSnapshot() })).toBe(true);
+    const runtimeSnapshot = service.getRuntimeSnapshot();
+    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: runtimeSnapshot })).toBe(true);
+    expect(runtimeSnapshot.pendingPrompts[0]?.questions[0]?.options?.[0]?.description).toHaveLength(
+      AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
+    );
     expect(client.responses).toHaveLength(0);
     const pendingMessage = (await service.readConversation("chief")).messages.find(
       (message) => message.questionPrompt?.requestId === "question-call",

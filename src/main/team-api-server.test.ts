@@ -14,6 +14,7 @@ import type {
   RoutineRun,
   TeamPresenceSnapshot,
 } from "@openbot/contracts/ipc";
+import { AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
@@ -152,7 +153,7 @@ describe("TeamApiServer administration", () => {
     });
     const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
     await sidebarLayout.initialize();
-    const getRuntimeSnapshot = vi.fn(() => ({
+    const getRuntimeSnapshot = vi.fn<TestAgents["getRuntimeSnapshot"]>(() => ({
       bots: [],
       activeTurns: [],
       queues: [],
@@ -184,12 +185,14 @@ describe("TeamApiServer administration", () => {
         } satisfies BotSummary,
       ],
     });
+    let now = 0;
     const api = new TeamApiServer({
       store,
       agents,
       sidebarLayout,
       mailbox: createMailbox(),
       browser: createBrowser(),
+      now: () => now,
     });
     const port = await api.start();
     const base = `http://127.0.0.1:${port}`;
@@ -239,7 +242,27 @@ describe("TeamApiServer administration", () => {
         revision: 3,
         sections: [{ name: "Shared 1" }, { name: "Shared 2" }, { name: "Shared 3" }],
       });
-      socket.close();
+      const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close", resolve, { once: true }));
+      now = 1_000;
+      getRuntimeSnapshot.mockImplementationOnce(() => ({
+        bots: [],
+        activeTurns: [],
+        queues: [],
+        latestMessages: [
+          {
+            botId: "chief",
+            id: "oversized",
+            text: "x".repeat(AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT),
+            createdAt: "2026-08-29T10:00:00.000Z",
+          },
+        ],
+        pendingPrompts: [],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      }));
+      socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
+      expect((await closed).code).toBe(1011);
     } finally {
       await api.stop();
     }
