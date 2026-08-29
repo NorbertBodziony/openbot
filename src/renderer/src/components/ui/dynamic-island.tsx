@@ -431,11 +431,13 @@ function createHoverContentMotion(options: HoverContentMotionOptions): void {
         ? { x: 0, y: motion.translateY, scale: motion.trailingScale }
         : { x: 0, y: 0, scale: 1 };
       const spring = state === "expanded" ? ATOLL_OPEN_SPRING : ATOLL_HOVER_SPRING;
+      const leadingStart = readCurrentTransform(leading, { x: 0, y: 0, scale: 1 });
+      const trailingStart = readCurrentTransform(trailing, { x: 0, y: 0, scale: 1 });
 
       leadingAnimation?.cancel();
       trailingAnimation?.cancel();
-      leadingAnimation = animateHoverContent(leading, leadingTarget, spring);
-      trailingAnimation = animateHoverContent(trailing, trailingTarget, spring);
+      leadingAnimation = animateHoverContent(leading, leadingStart, leadingTarget, spring);
+      trailingAnimation = animateHoverContent(trailing, trailingStart, trailingTarget, spring);
     },
   );
 
@@ -447,10 +449,10 @@ function createHoverContentMotion(options: HoverContentMotionOptions): void {
 
 function animateHoverContent(
   element: HTMLElement,
+  start: SharedElementTransform,
   target: SharedElementTransform,
   spring: Spring,
 ): Animation | undefined {
-  const start = readCurrentTransform(element, { x: 0, y: 0, scale: 1 });
   writeSharedTransform(element, target);
   const animate = element.animate?.bind(element);
   if (!animate || prefersReducedMotion(element) || transformsMatch(start, target)) return undefined;
@@ -823,7 +825,7 @@ interface Spring {
 }
 
 function springKeyframes(spring: Spring, frame: (progress: number) => Keyframe): Keyframe[] {
-  const sampleCount = 24;
+  const sampleCount = 32;
   const finalProgress = springProgress(spring.response, spring);
   return Array.from({ length: sampleCount + 1 }, (_, index) => {
     const offset = index / sampleCount;
