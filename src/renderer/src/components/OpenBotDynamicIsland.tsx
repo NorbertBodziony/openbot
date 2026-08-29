@@ -231,17 +231,10 @@ function compactStatusGeometry(presentation: DynamicIslandPresentation): StatusC
   if (!mode || !bot) return undefined;
 
   const badgeLabel = STATUS_BADGE_CONFIG[mode].label;
-  const badgeWidth = Math.ceil(
-    measureCompactText(badgeLabel, varFontWeight("semibold")) + STATUS_COMPACT_BADGE_CHROME_WIDTH,
-  );
-  const notchNameWidth = Math.min(
-    STATUS_COMPACT_NAME_MAX_WIDTH.notch,
-    Math.ceil(measureCompactText(bot.name, varFontWeight("medium"))),
-  );
-  const islandNameWidth = Math.min(
-    STATUS_COMPACT_NAME_MAX_WIDTH.island,
-    Math.ceil(measureCompactText(bot.name, varFontWeight("medium"))),
-  );
+  const badgeWidth = Math.ceil(measureCompactText(badgeLabel, 600) + STATUS_COMPACT_BADGE_CHROME_WIDTH);
+  const measuredNameWidth = measureCompactText(bot.name, 500);
+  const notchNameWidth = Math.min(STATUS_COMPACT_NAME_MAX_WIDTH.notch, Math.ceil(measuredNameWidth));
+  const islandNameWidth = Math.min(STATUS_COMPACT_NAME_MAX_WIDTH.island, Math.ceil(measuredNameWidth));
   const notchLeadingWidth =
     STATUS_COMPACT_NOTCH_EDGE_PADDING + STATUS_COMPACT_AVATAR_WIDTH + STATUS_COMPACT_IDENTITY_GAP + notchNameWidth;
   const notchTrailingWidth = STATUS_COMPACT_NOTCH_EDGE_PADDING + badgeWidth;
@@ -308,10 +301,6 @@ function measureCompactText(text: string, weight: number): number {
   }, 0);
 }
 
-function varFontWeight(weight: "medium" | "semibold"): 500 | 600 {
-  return weight === "semibold" ? 600 : 500;
-}
-
 export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Element {
   const config = () => OPENBOT_ISLAND_MODE_CONFIG[props.presentation.mode];
   const [visiblePresentation, setVisiblePresentation] = createSignal(untrack(() => props.presentation));
@@ -328,8 +317,6 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
     if (!geometry) return undefined;
     return props.displayMode === "island" ? geometry.island.width : geometry.notch.width;
   };
-  const compactNameMaxWidth = () =>
-    props.displayMode === "island" ? STATUS_COMPACT_NAME_MAX_WIDTH.island : STATUS_COMPACT_NAME_MAX_WIDTH.notch;
   const sharedLeading = createMemo(() => {
     const motion = config().sharedLeading;
     const geometry = compactGeometry();
@@ -426,9 +413,7 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
             slot="compact-leading"
             presentation={visiblePresentation()}
             outgoingPresentation={outgoingPresentation()}
-            render={(presentation) => (
-              <CompactLeading presentation={presentation} nameMaxWidth={compactNameMaxWidth()} />
-            )}
+            render={(presentation) => <CompactLeading presentation={presentation} displayMode={props.displayMode} />}
           />
         }
         compactTrailing={
@@ -535,7 +520,10 @@ function OpenBotDynamicIslandFrame(props: OpenBotDynamicIslandFrameProps): JSX.E
   );
 }
 
-function CompactLeading(props: { presentation: DynamicIslandPresentation; nameMaxWidth: number }): JSX.Element {
+function CompactLeading(props: {
+  presentation: DynamicIslandPresentation;
+  displayMode?: "notch" | "island";
+}): JSX.Element {
   const key = () => compactLeadingKey(props.presentation);
   const statusBot = () => compactStatusBot(props.presentation);
   return (
@@ -558,9 +546,7 @@ function CompactLeading(props: { presentation: DynamicIslandPresentation; nameMa
             </span>
           </span>
         </Match>
-        <Match when={statusBot()}>
-          {(bot) => <CompactBotIdentity bot={bot()} nameMaxWidth={props.nameMaxWidth} />}
-        </Match>
+        <Match when={statusBot()}>{(bot) => <CompactBotIdentity bot={bot()} displayMode={props.displayMode} />}</Match>
       </Switch>
     </IslandContentSwap>
   );
@@ -585,13 +571,15 @@ function CompactTrailing(props: { presentation: DynamicIslandPresentation }): JS
   );
 }
 
-function CompactBotIdentity(props: { bot: DynamicIslandBotIdentity; nameMaxWidth: number }): JSX.Element {
+function CompactBotIdentity(props: { bot: DynamicIslandBotIdentity; displayMode?: "notch" | "island" }): JSX.Element {
+  const nameMaxWidth = () =>
+    props.displayMode === "island" ? STATUS_COMPACT_NAME_MAX_WIDTH.island : STATUS_COMPACT_NAME_MAX_WIDTH.notch;
   return (
     <span class="dynamic-island-surface-leading-anchor dynamic-island-surface-compact-identity">
       <IslandAvatar bot={props.bot} />
       <span
         class="dynamic-island-surface-compact-name"
-        style={{ "max-width": `${props.nameMaxWidth}px` }}
+        style={{ "max-width": `${nameMaxWidth()}px` }}
         data-island-motion-content
       >
         {props.bot.name}
