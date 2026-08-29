@@ -4,6 +4,7 @@ export * from "./bubble";
 export * from "./button";
 export * from "./checkbox";
 export * from "./complex";
+export * from "./dynamic-island";
 export * from "./form";
 export * from "./icons";
 export * from "./image-remove-button";

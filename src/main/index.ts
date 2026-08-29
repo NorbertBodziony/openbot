@@ -34,13 +34,16 @@ import { isNumber, isString } from "@openbot/contracts/runtime-values";
 import {
   app,
   BrowserWindow,
+  type Display,
   desktopCapturer,
   dialog,
   Menu,
   Notification,
   autoUpdater as nativeAutoUpdater,
   type OpenDialogOptions,
+  powerMonitor,
   protocol,
+  type Rectangle,
   safeStorage,
   screen,
   session,
@@ -73,6 +76,7 @@ import {
   shouldAutoStartHost,
   shouldShowDevelopmentWindow,
 } from "./development-profile";
+import { DynamicIslandWindowController, requireDynamicIslandSender } from "./dynamic-island-window";
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "./file-preview";
 import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
 import {
@@ -110,6 +114,10 @@ import {
 } from "./ipc/agent-inputs";
 import {
   parseAnalyticsPreference,
+  parseDynamicIslandAction,
+  parseDynamicIslandInteractive,
+  parseDynamicIslandPreference,
+  parseDynamicIslandPresentation,
   parseExternalDestination,
   parseMacPermission,
   parseProvider,
@@ -152,7 +160,7 @@ import { canCheckRendererPermission, canRequestRendererPermission } from "./rend
 import { readSetupState, writeSetupState } from "./setup-store";
 import { SkillMarketplaceService } from "./skill-marketplace-service";
 import { TeamStore } from "./team-store";
-import { handleTrusted } from "./trusted-ipc";
+import { handleTrusted, handleTrustedWithEvent } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 import { supportsInstalledUpdates, UpdateService } from "./update-service";
 import { WHISPER_MODEL_NAME, WHISPER_MODEL_URL } from "./voice-model-service";
@@ -243,6 +251,7 @@ let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
 let hostAnalytics: HostAnalytics | null = null;
 let voiceTranscriptionService: VoiceTranscriptionService | null = null;
+let dynamicIslandController: DynamicIslandWindowController | null = null;
 let isQuitting = false;
 let shutdownStarted = false;
 let systemSessionEnding = false;
@@ -251,6 +260,7 @@ let inviteReceiverReady = false;
 
 const SETUP_FILE = "openbot-setup-v2.json";
 const ANALYTICS_PREFERENCE_FILE = "openbot-analytics-preference-v1.json";
+const DYNAMIC_ISLAND_PREFERENCE_FILE = "openbot-dynamic-island-preference-v1.json";
 const BROWSER_STATE_FILE = "openbot-browser-state-v1.json";
 const SIDEBAR_LAYOUT_FILE = "openbot-sidebar-layout-v1.json";
 const TEAM_FILE = "openbot-team-server-v1.json";
@@ -302,6 +312,7 @@ function registerIpcHandlers(
   skills: SkillMarketplaceService,
   marketplaceAgents: AgentMarketplaceService,
   voice: VoiceTranscriptionService,
+  dynamicIsland: DynamicIslandWindowController,
 ): void {
   handleTrusted(IPC_CHANNELS.getAppInfo, (): AppInfo => {
     const platform = process.platform;
@@ -316,6 +327,30 @@ function registerIpcHandlers(
     const preference = await writeAnalyticsPreference(analyticsPreferenceFile, parseAnalyticsPreference(input).enabled);
     hostAnalytics?.setTrackingEnabled(preference.enabled);
     return preference;
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandGetPreference, (event) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer");
+    return dynamicIsland.preference;
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandSetPreference, (event, input: unknown) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer");
+    return dynamicIsland.setPreference(parseDynamicIslandPreference(input).enabled);
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPublishPresentation, (event, input: unknown) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer");
+    dynamicIsland.publish(parseDynamicIslandPresentation(input));
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandGetPresentation, (event) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
+    return dynamicIsland.presentation;
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPerformAction, (event, input: unknown) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
+    dynamicIsland.performAction(parseDynamicIslandAction(input));
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandSetInteractive, (event, input: unknown) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
+    dynamicIsland.setInteractive(event.sender.id, parseDynamicIslandInteractive(input).interactive);
   });
   handleTrusted(IPC_CHANNELS.saveSetup, async (input: unknown): Promise<AppSetupState> => {
     const preferredProvider = parseProvider(input);
@@ -1177,10 +1212,54 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
+function createDynamicIslandWindow(bounds: Rectangle, _display: Display): BrowserWindow {
+  const window = new BrowserWindow({
+    ...bounds,
+    show: false,
+    transparent: true,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    enableLargerThanScreen: true,
+    hasShadow: false,
+    skipTaskbar: true,
+    type: "panel",
+    backgroundColor: "#00000000",
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      devTools: true,
+      sandbox: true,
+      nodeIntegration: false,
+      webSecurity: true,
+    },
+  });
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event, targetUrl) => {
+    if (!isTrustedRendererUrl(targetUrl)) event.preventDefault();
+  });
+  return window;
+}
+
 function loadRenderer(window: BrowserWindow): Promise<void> {
   inviteReceiverReady = false;
   const developmentUrl = process.env.ELECTRON_RENDERER_URL;
   return developmentUrl ? window.loadURL(developmentUrl) : window.loadURL("openbot-app://app/index.html");
+}
+
+function loadDynamicIslandRenderer(window: BrowserWindow, display: Display): Promise<void> {
+  const displayMode = display.internal ? "notch" : "island";
+  const developmentUrl = process.env.ELECTRON_RENDERER_URL;
+  if (developmentUrl) {
+    const url = new URL(developmentUrl);
+    url.searchParams.set("surface", "dynamic-island");
+    url.searchParams.set("display", displayMode);
+    return window.loadURL(url.toString());
+  }
+  return window.loadURL(`openbot-app://app/index.html?surface=dynamic-island&display=${displayMode}`);
 }
 
 function configureApplicationMenu(service: AgentService, updater: UpdateService): void {
@@ -1388,6 +1467,14 @@ if (!hasSingleInstanceLock) {
       configureContentSecurityPolicy();
       configureRendererPermissions();
       mainWindow = createWindow();
+      dynamicIslandController = new DynamicIslandWindowController({
+        platform: process.platform,
+        preferencePath: join(app.getPath("userData"), DYNAMIC_ISLAND_PREFERENCE_FILE),
+        createWindow: createDynamicIslandWindow,
+        loadWindow: loadDynamicIslandRenderer,
+        getDisplays: () => screen.getAllDisplays(),
+        getMainWindow: () => mainWindow,
+      });
       centralAuthManager = new CentralAuthManager({
         apiUrl: readCentralAuthApiUrl(
           process.env.OPENBOT_AUTH_API_URL,
@@ -1682,9 +1769,16 @@ if (!hasSingleInstanceLock) {
         skillMarketplace,
         agentMarketplace,
         voiceTranscriptionService,
+        dynamicIslandController,
       );
       configureApplicationMenu(service, updateService);
+      await dynamicIslandController.initialize();
       await loadRenderer(mainWindow);
+      const reconcileDynamicIsland = () => void dynamicIslandController?.reconcileWindow();
+      screen.on("display-added", reconcileDynamicIsland);
+      screen.on("display-removed", reconcileDynamicIsland);
+      screen.on("display-metrics-changed", reconcileDynamicIsland);
+      powerMonitor.on("resume", reconcileDynamicIsland);
       const teamIdentity = teamStore.getIdentity();
       if (
         !developmentRemoteRole &&
@@ -1834,6 +1928,8 @@ async function prepareForShutdown(): Promise<void> {
   shutdownStarted = true;
   isQuitting = true;
   updateService?.stop();
+  dynamicIslandController?.destroy();
+  dynamicIslandController = null;
   await (providerRuntimeManager?.stop() ?? Promise.resolve());
   remoteServerManager?.stop();
   voiceTranscriptionService?.shutdown();

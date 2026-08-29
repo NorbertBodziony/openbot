@@ -25,6 +25,7 @@ import type {
   DirectMessageRealtimeEvent,
   DirectThreadSummary,
   DirectTypingRealtimeEvent,
+  DynamicIslandPresentation,
   HostStatus,
   InviteSummary,
   JoinServerInput,
@@ -155,6 +156,17 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let authState = clone<CentralAuthState>(options.authState ?? defaultAuthState);
   let setupState = clone<AppSetupState>(options.setupState ?? { completed: true, preferredProvider: "codex" });
   let analyticsPreference = clone<AnalyticsPreference>(options.analyticsPreference ?? { enabled: true });
+  let dynamicIslandPreference = { enabled: true };
+  let dynamicIslandPresentation: DynamicIslandPresentation = {
+    serverId: "local",
+    mode: "idle",
+    activeCount: 0,
+    unreadCount: 0,
+    attentionCount: 0,
+    working: [],
+    message: null,
+    attention: [],
+  };
   const agentStatus = clone(options.agentStatus ?? STORY_AGENT_STATUS);
   let bots = clone(options.bots ?? STORY_BOT_SUMMARIES);
   let sidebarLayout: SidebarLayoutSnapshot = {
@@ -363,6 +375,21 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     setAnalyticsPreference: async ({ enabled }) => {
       analyticsPreference = { enabled };
       return clone(analyticsPreference);
+    },
+    dynamicIsland: {
+      getPreference: async () => clone(dynamicIslandPreference),
+      setPreference: async ({ enabled }) => {
+        dynamicIslandPreference = { enabled };
+        return clone(dynamicIslandPreference);
+      },
+      publishPresentation: async (presentation) => {
+        dynamicIslandPresentation = clone(presentation);
+      },
+      getPresentation: async () => clone(dynamicIslandPresentation),
+      onPresentation: () => () => undefined,
+      performAction: async () => undefined,
+      onAction: () => () => undefined,
+      setInteractive: async () => undefined,
     },
     getMacPermissions: async (): Promise<MacPermissionsState> => ({
       screenRecording: "granted",

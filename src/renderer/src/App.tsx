@@ -22,6 +22,7 @@ import type {
   DirectMessageRealtimeEvent,
   DirectThreadSummary,
   DirectTypingRealtimeEvent,
+  DynamicIslandAction,
   HostStatus,
   InviteSummary,
   ProviderRuntimeSnapshot,
@@ -68,6 +69,7 @@ import { readPanelWidth } from "./components/PanelResizer";
 import type { SidebarAgentState } from "./components/Sidebar";
 import { Toaster } from "./components/ui";
 import type { BotMessage, BotProfile } from "./data";
+import { createDynamicIslandPresentation } from "./dynamic-island-presentation";
 import {
   normalizeSidebarPeopleOrder,
   readSidebarPeopleOrder,
@@ -440,21 +442,28 @@ export function createAppController(props: AppProps = {}) {
   function updateGeneralSettings(value: GeneralSettingsValue): void {
     const previous = generalSettings();
     setGeneralSettings(value);
-    if (previous.productAnalytics === value.productAnalytics) return;
-    desktopAnalytics.setTrackingEnabled(value.productAnalytics);
-    setAnalyticsPreferenceLoaded(value.productAnalytics);
-    void window.openbot
-      .setAnalyticsPreference({ enabled: value.productAnalytics })
-      .then((preference) => {
-        desktopAnalytics.setTrackingEnabled(preference.enabled);
-        setAnalyticsPreferenceLoaded(preference.enabled);
-        setGeneralSettings((current) => ({ ...current, productAnalytics: preference.enabled }));
-      })
-      .catch(() => {
-        desktopAnalytics.setTrackingEnabled(previous.productAnalytics);
-        setAnalyticsPreferenceLoaded(previous.productAnalytics);
-        setGeneralSettings(previous);
-      });
+    if (previous.productAnalytics !== value.productAnalytics) {
+      desktopAnalytics.setTrackingEnabled(value.productAnalytics);
+      setAnalyticsPreferenceLoaded(value.productAnalytics);
+      void window.openbot
+        .setAnalyticsPreference({ enabled: value.productAnalytics })
+        .then((preference) => {
+          desktopAnalytics.setTrackingEnabled(preference.enabled);
+          setAnalyticsPreferenceLoaded(preference.enabled);
+          setGeneralSettings((current) => ({ ...current, productAnalytics: preference.enabled }));
+        })
+        .catch(() => {
+          desktopAnalytics.setTrackingEnabled(previous.productAnalytics);
+          setAnalyticsPreferenceLoaded(previous.productAnalytics);
+          setGeneralSettings((current) => ({ ...current, productAnalytics: previous.productAnalytics }));
+        });
+    }
+    if (previous.macBookNotch !== value.macBookNotch) {
+      void window.openbot.dynamicIsland
+        .setPreference({ enabled: value.macBookNotch })
+        .then((preference) => setGeneralSettings((current) => ({ ...current, macBookNotch: preference.enabled })))
+        .catch(() => setGeneralSettings((current) => ({ ...current, macBookNotch: previous.macBookNotch })));
+    }
   }
 
   const leftPanelCompact = createMemo(() => leftPanelCollapsed() || leftPanelAutoCompact());
@@ -651,6 +660,10 @@ export function createAppController(props: AppProps = {}) {
         setAnalyticsPreferenceLoaded(false);
         setGeneralSettings((current) => ({ ...current, productAnalytics: false }));
       });
+    void window.openbot.dynamicIsland
+      .getPreference()
+      .then((preference) => setGeneralSettings((current) => ({ ...current, macBookNotch: preference.enabled })))
+      .catch(() => undefined);
     void window.openbot.servers
       .takePendingInvite()
       .then((inviteUrl) => inviteUrl && receiveInvite(inviteUrl))
@@ -1834,10 +1847,18 @@ export function createAppController(props: AppProps = {}) {
     const bot = activeBot();
     const prompt = bot ? pendingPrompts()[bot.id] : undefined;
     if (!bot || prompt?.type !== "prompt") return false;
+    return submitPromptAnswers(bot.id, prompt, answers);
+  }
+
+  async function submitPromptAnswers(
+    botId: string,
+    prompt: PromptEvent,
+    answers: Record<string, string[]>,
+  ): Promise<boolean> {
     const analytics = desktopAnalytics.scope();
     setSubmittedPromptRequests((current) => ({
       ...current,
-      [bot.id]: promptRequestKey(prompt.turnId, prompt.requestId) ?? undefined,
+      [botId]: promptRequestKey(prompt.turnId, prompt.requestId) ?? undefined,
     }));
     try {
       await window.openbot.agent.respondToPrompt({
@@ -1851,16 +1872,29 @@ export function createAppController(props: AppProps = {}) {
       });
       return true;
     } catch (error) {
-      setSubmittedPromptRequests((current) => ({ ...current, [bot.id]: undefined }));
+      setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
       analytics.track("agent_input_action", {
         kind: "prompt",
         decision: "answered",
         result: "failed",
         failure_code: "response_failed",
       });
-      appendUiError(bot.id, error, "Answer failed");
+      appendUiError(botId, error, "Answer failed");
       return false;
     }
+  }
+
+  function isDynamicIslandPromptAnswerValid(prompt: PromptEvent, answers: Record<string, string[]>): boolean {
+    if (Object.keys(answers).length !== prompt.questions.length) return false;
+    return prompt.questions.every((question) => {
+      const answer = answers[question.id];
+      return (
+        !question.isSecret &&
+        Boolean(question.options && question.options.length > 0 && question.options.length <= 3) &&
+        answer?.length === 1 &&
+        question.options?.some((option) => option.label === answer[0]) === true
+      );
+    });
   }
 
   function presentPromptResolution(botId: string, turnId: string, requestId: string | number): void {
@@ -1885,17 +1919,20 @@ export function createAppController(props: AppProps = {}) {
     setPresentedPromptResolutions((current) => ({ ...current, [botId]: requestKey }));
   }
 
-  async function respondToApproval(decision: "accept" | "decline"): Promise<boolean> {
-    const bot = activeBot();
-    const approval = bot ? pendingApprovals()[bot.id] : undefined;
-    if (!bot || !approval) return false;
+  async function respondToApprovalRequest(
+    botId: string,
+    requestId: string | number,
+    decision: "accept" | "decline",
+  ): Promise<boolean> {
+    const approval = pendingApprovals()[botId];
+    if (!approval || String(approval.requestId) !== String(requestId)) return false;
     const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.agent.respondToApproval({
         requestId: approval.requestId,
         decision,
       });
-      setPendingApprovals((current) => ({ ...current, [bot.id]: undefined }));
+      setPendingApprovals((current) => ({ ...current, [botId]: undefined }));
       analytics.track("agent_input_action", { kind: "approval", decision, result: "succeeded" });
       return true;
     } catch (error) {
@@ -1905,9 +1942,16 @@ export function createAppController(props: AppProps = {}) {
         result: "failed",
         failure_code: "response_failed",
       });
-      appendUiError(bot.id, error, "Approval failed");
+      appendUiError(botId, error, "Approval failed");
       return false;
     }
+  }
+
+  async function respondToApproval(decision: "accept" | "decline"): Promise<boolean> {
+    const bot = activeBot();
+    const approval = bot ? pendingApprovals()[bot.id] : undefined;
+    if (!bot || !approval) return false;
+    return respondToApprovalRequest(bot.id, approval.requestId, decision);
   }
 
   async function respondToBrowserTakeover(decision: "complete" | "cancel"): Promise<boolean> {
@@ -2832,6 +2876,57 @@ export function createAppController(props: AppProps = {}) {
 
   const activeServer = createMemo(() => servers().find((server) => server.active));
   const activeServerSidebarKey = createMemo(() => activeServer()?.id ?? "local");
+
+  createEffect(
+    () => {
+      if (props.landingPreview) return null;
+      return createDynamicIslandPresentation({
+        serverId: activeServerSidebarKey(),
+        bots: botList(),
+        activeTurns: activeTurns(),
+        queues: queues(),
+        unreadReplies: unreadReplies(),
+        liveMessages: liveMessages(),
+        pendingPrompts: pendingPrompts(),
+        pendingApprovals: pendingApprovals(),
+      });
+    },
+    (presentation) => {
+      if (!presentation) return;
+      void window.openbot.dynamicIsland.publishPresentation(presentation).catch(() => undefined);
+    },
+  );
+
+  onSettled(() => {
+    if (props.landingPreview) return;
+    return window.openbot.dynamicIsland.onAction((action) => void handleDynamicIslandAction(action));
+  });
+
+  async function handleDynamicIslandAction(action: DynamicIslandAction): Promise<void> {
+    if (action.type === "open-app") return;
+    if (action.type === "approve-attention") {
+      if (activeServerSidebarKey() !== action.serverId) return;
+      await respondToApprovalRequest(action.botId, action.requestId, "accept");
+      return;
+    }
+    if (action.type === "answer-prompt") {
+      if (activeServerSidebarKey() !== action.serverId) return;
+      const prompt = pendingPrompts()[action.botId];
+      if (
+        prompt?.type !== "prompt" ||
+        prompt.requestId !== action.requestId ||
+        !isDynamicIslandPromptAnswerValid(prompt, action.answers)
+      ) {
+        return;
+      }
+      await submitPromptAnswers(action.botId, prompt, action.answers);
+      return;
+    }
+    if (activeServerSidebarKey() !== action.serverId) await selectServer(action.serverId, false);
+    selectBot(action.botId);
+    if (action.type === "open-message") await openAgentMessage(action.botId, action.messageId);
+  }
+
   const pinnedSidebarItems = createMemo(() => sidebarPinsByServer()[activeServerSidebarKey()] ?? []);
   const sidebarPeopleOrder = createMemo(() => sidebarPeopleOrderByServer()[activeServerSidebarKey()] ?? []);
   const collapsedSidebarSectionIds = createMemo(() => sidebarCollapsedByServer()[activeServerSidebarKey()] ?? []);

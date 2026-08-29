@@ -304,6 +304,19 @@ export function SettingsModal(props: SettingsModalProps) {
             </ItemGroup>
           </SettingsSection>
 
+          <Show when={props.appInfo?.platform === "darwin"}>
+            <SettingsSection title="MacBook notch">
+              <ItemGroup class="settings-modal-card" surface="subtle">
+                <SwitchField
+                  checked={props.value.macBookNotch}
+                  onChange={(checked) => updateSetting("macBookNotch", checked)}
+                  label="Show status in the MacBook notch"
+                  description="Show bot activity and items that need attention at the top of each display."
+                />
+              </ItemGroup>
+            </SettingsSection>
+          </Show>
+
           <SettingsSection title="Updates">
             <ItemGroup class="settings-modal-card" surface="subtle">
               <SwitchField

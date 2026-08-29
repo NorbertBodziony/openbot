@@ -1,6 +1,6 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { AgentPromptQuestion, AgentPromptResolution } from "@openbot/contracts/ipc";
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import {
   Bubble,
   BubbleContent,
@@ -114,6 +114,8 @@ export function QuestionPromptBubble(props: QuestionPromptBubbleProps) {
     if (props.resolution) return { kind: "resolution", resolution: props.resolution };
     return props.questions.length > 0 ? { kind: "question", index: 0 } : null;
   };
+  const initialPage = untrack(initialContent);
+  const initialQuestion = untrack(() => (props.resolution ? undefined : props.questions[0]));
   const [step, setStep] = createSignal(0);
   const [answers, setAnswers] = createSignal<QuestionAnswers>({});
   const [customAnswers, setCustomAnswers] = createSignal<QuestionFlags>({});
@@ -123,7 +125,7 @@ export function QuestionPromptBubble(props: QuestionPromptBubbleProps) {
   const [transitioning, setTransitioning] = createSignal(false);
   const [activeSlot, setActiveSlot] = createSignal<0 | 1>(0);
   const [visiblePage, setVisiblePage] = createSignal<1 | 2>(1);
-  const [slotPages, setSlotPages] = createSignal<[PageContent | null, PageContent | null]>([initialContent(), null]);
+  const [slotPages, setSlotPages] = createSignal<[PageContent | null, PageContent | null]>([initialPage, null]);
   const [slotPageIds, setSlotPageIds] = createSignal<[1 | 2, 1 | 2]>([1, 2]);
   const customInputs = new Map<string, HTMLInputElement>();
   const pageElements: Array<HTMLElement | undefined> = [];
@@ -144,17 +146,16 @@ export function QuestionPromptBubble(props: QuestionPromptBubbleProps) {
   });
 
   queueMicrotask(() => {
-    const element = pageElements[activeSlot()];
+    const element = pageElements[0];
     if (stage && element) stage.style.height = `${element.scrollHeight}px`;
-    const question = props.resolution ? undefined : props.questions[0];
-    if (question && !question.options?.length) customInputs.get(question.id)?.focus();
+    if (initialQuestion && !initialQuestion.options?.length) customInputs.get(initialQuestion.id)?.focus();
   });
 
   createEffect(
-    () => ({ count: questionCount(), resolution: props.resolution }),
-    ({ count, resolution }) => {
+    () => ({ count: questionCount(), resolution: props.resolution, step: step() }),
+    ({ count, resolution, step: currentStep }) => {
       if (count === 0 || resolution) return;
-      if (step() >= count) setStep(Math.max(0, count - 1));
+      if (currentStep >= count) setStep(Math.max(0, count - 1));
     },
   );
 

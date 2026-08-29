@@ -6,6 +6,8 @@
 @import "./styles/transitions.css";
 @import "./styles/sliding-tabs.css";
 @import "./styles/action-menu.css";
+@import "./styles/dynamic-island.css";
+@import "./styles/dynamic-island-surface.css";
 @import "./styles/base.css";
 @import "./styles/auth.css";
 @import "./styles/onboarding.css";
@@ -40,6 +42,7 @@
   --openbot-bg-host-canvas: #14161b;
   --openbot-bg-host-header: #15171c;
   --openbot-bg-host-inset: #101216;
+  --openbot-bg-notch: #000000;
   --openbot-queue-surface: var(--openbot-bg-surface);
   --openbot-queue-border: var(--openbot-border-strong);
   --openbot-queue-text: var(--openbot-text-primary);
@@ -93,6 +96,10 @@
   --openbot-success-wash: rgba(111, 205, 188, 0.045);
   --openbot-warning: #e3b866;
   --openbot-warning-soft: rgba(227, 184, 102, 0.12);
+  --openbot-question-option: #6bc7d9;
+  --openbot-question-option-soft: rgba(107, 199, 217, 0.14);
+  --openbot-question-option-hover: rgba(107, 199, 217, 0.2);
+  --openbot-question-option-pressed: rgba(107, 199, 217, 0.26);
   --openbot-danger: #e47d75;
   --openbot-danger-soft: rgba(228, 125, 117, 0.13);
   --openbot-danger-strong: #ff4058;

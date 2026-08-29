@@ -10,6 +10,7 @@ import type {
   DirectConversationSnapshot,
   DirectMessageRealtimeEvent,
   DirectTypingRealtimeEvent,
+  DynamicIslandAction,
   QueueDelivery,
   ServerSummary,
   TeamPresenceSnapshot,
@@ -46,6 +47,7 @@ let emitPresence: ((snapshot: TeamPresenceSnapshot) => void) | undefined;
 let emitDirectMessage: ((event: DirectMessageRealtimeEvent) => void) | undefined;
 let emitDirectTyping: ((event: DirectTypingRealtimeEvent) => void) | undefined;
 let emitInvite: ((inviteUrl: string) => void) | undefined;
+let emitDynamicIslandAction: ((action: DynamicIslandAction) => void) | undefined;
 
 const BOTS: BotSummary[] = [
   {
@@ -123,6 +125,7 @@ describe("OpenBot connected desktop shell", () => {
     emitDirectMessage = undefined;
     emitDirectTyping = undefined;
     emitInvite = undefined;
+    emitDynamicIslandAction = undefined;
     trackAnalytics.mockClear();
     window.localStorage.clear();
     Object.defineProperty(window, "matchMedia", {
@@ -146,6 +149,19 @@ describe("OpenBot connected desktop shell", () => {
         getSetupState: vi.fn().mockResolvedValue({ completed: true, preferredProvider: "codex" }),
         getAnalyticsPreference: vi.fn().mockResolvedValue({ enabled: true }),
         setAnalyticsPreference: vi.fn(async ({ enabled }) => ({ enabled })),
+        dynamicIsland: {
+          getPreference: vi.fn().mockResolvedValue({ enabled: true }),
+          setPreference: vi.fn(async ({ enabled }) => ({ enabled })),
+          publishPresentation: vi.fn().mockResolvedValue(undefined),
+          getPresentation: vi.fn().mockResolvedValue(null),
+          onPresentation: vi.fn().mockReturnValue(() => undefined),
+          performAction: vi.fn().mockResolvedValue(undefined),
+          onAction: vi.fn((listener) => {
+            emitDynamicIslandAction = listener;
+            return () => undefined;
+          }),
+          setInteractive: vi.fn().mockResolvedValue(undefined),
+        },
         saveSetup: vi.fn().mockImplementation(async ({ preferredProvider }) => ({
           completed: true,
           preferredProvider,
@@ -4459,6 +4475,99 @@ describe("OpenBot connected desktop shell", () => {
 
     resolveApproval?.();
     await waitFor(() => expect(screen.queryByText("Run this command?")).not.toBeInTheDocument());
+  });
+
+  it("accepts the current approval from Dynamic Island without changing the selected bot", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    emitAgentEvent?.({
+      type: "approval",
+      approval: {
+        requestId: "approval-island",
+        botId: "chief",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        kind: "command",
+        command: "bun test",
+        cwd: "/workspace",
+        reason: "Run the test suite.",
+        grantRoot: null,
+        permissions: null,
+      },
+    });
+    await screen.findByText("bun test");
+
+    emitDynamicIslandAction?.({
+      type: "approve-attention",
+      serverId: "local",
+      botId: "chief",
+      requestId: "approval-island",
+    });
+
+    await waitFor(() =>
+      expect(window.openbot.agent.respondToApproval).toHaveBeenCalledWith({
+        requestId: "approval-island",
+        decision: "accept",
+      }),
+    );
+    expect(screen.getByRole("heading", { name: "Chief" })).toBeVisible();
+  });
+
+  it("answers the current option prompt from Dynamic Island and rejects an unknown answer", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-island",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: [
+        {
+          id: "source",
+          header: "Choose a source",
+          question: "Which source should I use?",
+          isSecret: false,
+          options: [
+            { label: "Official data", description: "Use the public dataset" },
+            { label: "Industry report", description: "Use the detailed report" },
+          ],
+        },
+      ],
+    });
+    await screen.findByText("Which source should I use?");
+
+    emitDynamicIslandAction?.({
+      type: "answer-prompt",
+      serverId: "local",
+      botId: "chief",
+      requestId: "prompt-island",
+      answers: { source: ["Official data"] },
+    });
+
+    await waitFor(() =>
+      expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledWith({
+        requestId: "prompt-island",
+        answers: { source: ["Official data"] },
+      }),
+    );
+    vi.mocked(window.openbot.agent.respondToPrompt).mockClear();
+
+    emitDynamicIslandAction?.({
+      type: "answer-prompt",
+      serverId: "local",
+      botId: "chief",
+      requestId: "prompt-island",
+      answers: { source: ["Unknown source"] },
+    });
+    await Promise.resolve();
+
+    expect(window.openbot.agent.respondToPrompt).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Chief" })).toBeVisible();
   });
 
   it("rejects a permission approval and keeps the error visible", async () => {

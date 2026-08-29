@@ -15,6 +15,13 @@ import {
   type ConversationSearchPage,
   type ConversationWithReadState,
   type DraftAttachment,
+  type DynamicIslandAction,
+  type DynamicIslandAttentionItem,
+  type DynamicIslandBotIdentity,
+  type DynamicIslandMessageItem,
+  type DynamicIslandPreference,
+  type DynamicIslandPresentation,
+  type DynamicIslandWorkingItem,
   type FilePreview,
   type ImportAttachmentsInput,
   type InstalledSkill,
@@ -143,6 +150,111 @@ function nullableString(value: unknown, label: string): value is string | null {
 function decodeVoid(value: unknown): undefined {
   if (value !== undefined && value !== null) throw new Error("IPC returned unexpected data.");
   return undefined;
+}
+
+function decodeDynamicIslandPreference(value: unknown): DynamicIslandPreference {
+  if (!isDynamicRecord(value) || !isBoolean(value.enabled)) {
+    throw new Error("Invalid Dynamic Island preference response.");
+  }
+  return { enabled: value.enabled };
+}
+
+function decodeDynamicIslandPresentation(value: unknown): DynamicIslandPresentation {
+  if (!isDynamicRecord(value)) throw new Error("Invalid Dynamic Island presentation.");
+  const mode = value.mode;
+  if (mode !== "idle" && mode !== "working" && mode !== "message" && mode !== "question" && mode !== "approval") {
+    throw new Error("Invalid Dynamic Island presentation.");
+  }
+  if (
+    !isString(value.serverId) ||
+    !isNumber(value.activeCount) ||
+    !isNumber(value.unreadCount) ||
+    !isNumber(value.attentionCount) ||
+    !Array.isArray(value.working) ||
+    !value.working.every(isDynamicIslandWorkingItem) ||
+    (value.message !== null && !isDynamicIslandMessageItem(value.message)) ||
+    !Array.isArray(value.attention) ||
+    !value.attention.every(isDynamicIslandAttentionItem)
+  ) {
+    throw new Error("Invalid Dynamic Island presentation.");
+  }
+  return {
+    serverId: value.serverId,
+    mode,
+    activeCount: value.activeCount,
+    unreadCount: value.unreadCount,
+    attentionCount: value.attentionCount,
+    working: value.working,
+    message: value.message,
+    attention: value.attention,
+  };
+}
+
+function decodeDynamicIslandAction(value: unknown): DynamicIslandAction {
+  if (!isDynamicRecord(value) || !isString(value.type)) throw new Error("Invalid Dynamic Island action.");
+  if (value.type === "open-app") return { type: "open-app" };
+  if (!isString(value.serverId) || !isString(value.botId)) throw new Error("Invalid Dynamic Island action.");
+  if (value.type === "open-bot") return { type: value.type, serverId: value.serverId, botId: value.botId };
+  if (value.type === "open-message" && isString(value.messageId)) {
+    return { type: value.type, serverId: value.serverId, botId: value.botId, messageId: value.messageId };
+  }
+  if (
+    (value.type === "review-attention" || value.type === "approve-attention") &&
+    (isString(value.requestId) || isNumber(value.requestId))
+  ) {
+    return { type: value.type, serverId: value.serverId, botId: value.botId, requestId: value.requestId };
+  }
+  throw new Error("Invalid Dynamic Island action.");
+}
+
+function isDynamicIslandBot(value: unknown): value is DynamicIslandBotIdentity {
+  return (
+    isDynamicRecord(value) &&
+    isString(value.id) &&
+    isString(value.name) &&
+    isAvatarSeed(value.avatarSeed) &&
+    (value.avatarHue === null || isAvatarHue(value.avatarHue)) &&
+    (value.avatarUrl === null || isString(value.avatarUrl))
+  );
+}
+
+function isDynamicIslandWorkingItem(value: unknown): value is DynamicIslandWorkingItem {
+  return isDynamicRecord(value) && isDynamicIslandBot(value.bot) && isString(value.task);
+}
+
+function isDynamicIslandMessageItem(value: unknown): value is DynamicIslandMessageItem {
+  return (
+    isDynamicRecord(value) &&
+    isDynamicIslandBot(value.bot) &&
+    isString(value.messageId) &&
+    isString(value.text) &&
+    isString(value.createdAt)
+  );
+}
+
+function isDynamicIslandAttentionItem(value: unknown): value is DynamicIslandAttentionItem {
+  if (
+    !isDynamicRecord(value) ||
+    !isString(value.id) ||
+    (!isString(value.requestId) && !isNumber(value.requestId)) ||
+    !isDynamicIslandBot(value.bot) ||
+    (value.kind !== "prompt" && value.kind !== "approval") ||
+    !isString(value.title) ||
+    (value.detail !== null && !isString(value.detail)) ||
+    !isDynamicIslandOptions(value.options)
+  ) {
+    return false;
+  }
+  if (value.kind === "prompt") return value.approval === null;
+  return value.options === null && isDynamicRecord(value.approval);
+}
+
+function isDynamicIslandOptions(value: unknown): value is DynamicIslandAttentionItem["options"] {
+  return (
+    value === null ||
+    (Array.isArray(value) &&
+      value.every((option) => isDynamicRecord(option) && isString(option.label) && isString(option.description)))
+  );
 }
 
 function decodeRoutine(value: unknown): Routine {
@@ -739,6 +851,30 @@ const openbotApi: OpenBotDesktopApi = {
   saveSetup: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveSetup, input),
   getAnalyticsPreference: () => ipcRenderer.invoke(IPC_CHANNELS.getAnalyticsPreference),
   setAnalyticsPreference: (input) => ipcRenderer.invoke(IPC_CHANNELS.setAnalyticsPreference, input),
+  dynamicIsland: {
+    getPreference: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandGetPreference).then(decodeDynamicIslandPreference),
+    setPreference: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandSetPreference, input).then(decodeDynamicIslandPreference),
+    publishPresentation: (presentation) =>
+      ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandPublishPresentation, presentation).then(decodeVoid),
+    getPresentation: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandGetPresentation).then(decodeDynamicIslandPresentation),
+    onPresentation: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, presentation: unknown) =>
+        listener(decodeDynamicIslandPresentation(presentation));
+      ipcRenderer.on(IPC_CHANNELS.dynamicIslandPresentation, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.dynamicIslandPresentation, handler);
+    },
+    performAction: (action) => ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandPerformAction, action).then(decodeVoid),
+    onAction: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, action: unknown) =>
+        listener(decodeDynamicIslandAction(action));
+      ipcRenderer.on(IPC_CHANNELS.dynamicIslandAction, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.dynamicIslandAction, handler);
+    },
+    setInteractive: (input) => ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandSetInteractive, input).then(decodeVoid),
+  },
   getMacPermissions: () => ipcRenderer.invoke(IPC_CHANNELS.getMacPermissions),
   requestMacPermission: (permission) => ipcRenderer.invoke(IPC_CHANNELS.requestMacPermission, permission),
   openExternal: (destination) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, destination),

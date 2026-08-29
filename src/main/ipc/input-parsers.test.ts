@@ -33,6 +33,10 @@ import {
 } from "./agent-inputs";
 import {
   parseAnalyticsPreference,
+  parseDynamicIslandAction,
+  parseDynamicIslandInteractive,
+  parseDynamicIslandPreference,
+  parseDynamicIslandPresentation,
   parseExternalDestination,
   parseMacPermission,
   parseProvider,
@@ -71,6 +75,73 @@ describe("app IPC input parsing", () => {
     expect(() => parseExternalDestination("https://example.com")).toThrowError("Unknown external destination.");
     expect(() => parseExternalDestination("chatgpt-install")).toThrowError("Unknown external destination.");
     expect(() => parseAnalyticsPreference({ enabled: "false" })).toThrowError("Analytics preference is required.");
+  });
+
+  it("validates Dynamic Island data and actions", () => {
+    const presentation = {
+      serverId: "local",
+      mode: "working",
+      activeCount: 1,
+      unreadCount: 0,
+      attentionCount: 0,
+      working: [
+        {
+          bot: { id: "chief", name: "Chief", avatarSeed: "chief", avatarHue: 215, avatarUrl: null },
+          task: "Checking the release",
+        },
+      ],
+      message: null,
+      attention: [],
+    } as const;
+    expect(parseDynamicIslandPreference({ enabled: true })).toEqual({ enabled: true });
+    expect(parseDynamicIslandInteractive({ interactive: false })).toEqual({ interactive: false });
+    expect(parseDynamicIslandPresentation(presentation)).toEqual(presentation);
+    expect(parseDynamicIslandAction({ type: "open-bot", serverId: "local", botId: "chief" })).toEqual({
+      type: "open-bot",
+      serverId: "local",
+      botId: "chief",
+    });
+    expect(
+      parseDynamicIslandAction({
+        type: "approve-attention",
+        serverId: "local",
+        botId: "chief",
+        requestId: "approval-1",
+      }),
+    ).toEqual({
+      type: "approve-attention",
+      serverId: "local",
+      botId: "chief",
+      requestId: "approval-1",
+    });
+    expect(
+      parseDynamicIslandAction({
+        type: "answer-prompt",
+        serverId: "local",
+        botId: "chief",
+        requestId: "prompt-1",
+        answers: { source: ["Official data"] },
+      }),
+    ).toEqual({
+      type: "answer-prompt",
+      serverId: "local",
+      botId: "chief",
+      requestId: "prompt-1",
+      answers: { source: ["Official data"] },
+    });
+    expect(() =>
+      parseDynamicIslandPresentation({ ...presentation, working: Array(4).fill(presentation.working[0]) }),
+    ).toThrow();
+    expect(() => parseDynamicIslandAction({ type: "approve", serverId: "local", botId: "chief" })).toThrow();
+    expect(() =>
+      parseDynamicIslandAction({
+        type: "answer-prompt",
+        serverId: "local",
+        botId: "chief",
+        requestId: "prompt-1",
+        answers: {},
+      }),
+    ).toThrow();
   });
 });
 

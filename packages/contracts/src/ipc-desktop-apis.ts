@@ -74,6 +74,13 @@ import type {
   UpdateRoutineInput,
 } from "./ipc-conversation";
 import type {
+  DynamicIslandAction,
+  DynamicIslandPreference,
+  DynamicIslandPresentation,
+  SetDynamicIslandInteractiveInput,
+  SetDynamicIslandPreferenceInput,
+} from "./ipc-dynamic-island";
+import type {
   AgentPublicationPreview,
   AgentSubmission,
   InstallMarketplaceAgentInput,
@@ -225,6 +232,17 @@ export interface MaintenanceDesktopApi {
   exportDiagnostics: () => Promise<ExportResult>;
 }
 
+export interface DynamicIslandDesktopApi {
+  getPreference: () => Promise<DynamicIslandPreference>;
+  setPreference: (input: SetDynamicIslandPreferenceInput) => Promise<DynamicIslandPreference>;
+  publishPresentation: (presentation: DynamicIslandPresentation) => Promise<void>;
+  getPresentation: () => Promise<DynamicIslandPresentation>;
+  onPresentation: (listener: (presentation: DynamicIslandPresentation) => void) => () => void;
+  performAction: (action: DynamicIslandAction) => Promise<void>;
+  onAction: (listener: (action: DynamicIslandAction) => void) => () => void;
+  setInteractive: (input: SetDynamicIslandInteractiveInput) => Promise<void>;
+}
+
 export interface ServersDesktopApi {
   list: () => Promise<ServerSummary[]>;
   select: (serverId: string) => Promise<ServerSummary[]>;
@@ -307,6 +325,7 @@ export interface OpenBotDesktopApi {
   saveSetup: (input: SaveSetupInput) => Promise<AppSetupState>;
   getAnalyticsPreference: () => Promise<AnalyticsPreference>;
   setAnalyticsPreference: (input: SetAnalyticsPreferenceInput) => Promise<AnalyticsPreference>;
+  dynamicIsland: DynamicIslandDesktopApi;
   getMacPermissions: () => Promise<MacPermissionsState>;
   requestMacPermission: (permission: MacPermissionId) => Promise<MacPermissionsState>;
   openExternal: (destination: ExternalDestination) => Promise<void>;
