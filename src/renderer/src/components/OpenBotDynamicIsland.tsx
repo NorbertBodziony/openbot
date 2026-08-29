@@ -300,8 +300,10 @@ function measureCompactText(text: string, weight: number): number {
 }
 
 export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Element {
+  const initialPresentation = untrack(() => props.presentation);
   const config = () => OPENBOT_ISLAND_MODE_CONFIG[props.presentation.mode];
-  const [visiblePresentation, setVisiblePresentation] = createSignal(untrack(() => props.presentation));
+  const [visiblePresentation, setVisiblePresentation] = createSignal(initialPresentation);
+  const [compactLayoutPresentation, setCompactLayoutPresentation] = createSignal(initialPresentation);
   const [outgoingPresentation, setOutgoingPresentation] = createSignal<DynamicIslandPresentation>();
   const [modeTransitioning, setModeTransitioning] = createSignal(false);
   let transitionRoot: HTMLDivElement | undefined;
@@ -309,7 +311,7 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
   let modeTransitionVersion = 0;
   let modeTransitionFrame: number | undefined;
   let modeTransitionDisposed = false;
-  const compactGeometry = createMemo(() => compactStatusGeometry(visiblePresentation()));
+  const compactGeometry = createMemo(() => compactStatusGeometry(compactLayoutPresentation()));
   const compactWidth = () => {
     const geometry = compactGeometry();
     if (!geometry) return undefined;
@@ -327,6 +329,13 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
     if (!motion || !geometry || !config().status) return motion;
     return adjustSharedMotion(motion, geometry, "trailing");
   });
+
+  createEffect(
+    () => ({ presentation: visiblePresentation(), state: props.state }),
+    ({ presentation, state }) => {
+      if (state === "compact") setCompactLayoutPresentation(presentation);
+    },
+  );
 
   createEffect(
     () => ({ nextPresentation: props.presentation, currentPresentation: visiblePresentation() }),
@@ -1274,6 +1283,7 @@ function animateModeLayers(
 ): Animation[] {
   if (!root) return [];
   const animations: Animation[] = [];
+  const expanded = root.querySelector<HTMLElement>(".dynamic-island")?.dataset.layoutState === "expanded";
   for (const slot of root.querySelectorAll<HTMLElement>("[data-island-mode-slot]")) {
     const slotName = slot.dataset.islandModeSlot;
     if (!slotName) continue;
@@ -1284,10 +1294,11 @@ function animateModeLayers(
       if (!role || !mode || !animate) continue;
       const previous = captured.get(`${slotName}:${mode}`);
       const outgoing = role === "outgoing";
+      const preserveSpatialPosition = expanded && slotName === "compact-leading";
       const startOpacity = previous?.opacity ?? (outgoing ? 1 : 0);
-      const startScale = previous?.scale ?? (outgoing ? 1 : MODE_SWAP_INCOMING_SCALE);
+      const startScale = preserveSpatialPosition ? 1 : (previous?.scale ?? (outgoing ? 1 : MODE_SWAP_INCOMING_SCALE));
       const endOpacity = outgoing ? 0 : 1;
-      const endScale = outgoing ? MODE_SWAP_OUTGOING_SCALE : 1;
+      const endScale = preserveSpatialPosition ? 1 : outgoing ? MODE_SWAP_OUTGOING_SCALE : 1;
       const duration = reducedMotion
         ? MODE_SWAP_REDUCED_DURATION
         : outgoing
@@ -1296,13 +1307,22 @@ function animateModeLayers(
       animations.push(
         animate(
           reducedMotion
-            ? [{ opacity: startOpacity }, { opacity: endOpacity }]
+            ? [
+                { opacity: startOpacity, transform: "none" },
+                { opacity: endOpacity, transform: "none" },
+              ]
             : outgoing
               ? [
-                  { opacity: startOpacity, transform: `scale(${startScale})` },
-                  { opacity: endOpacity, transform: `scale(${endScale})` },
+                  {
+                    opacity: startOpacity,
+                    transform: preserveSpatialPosition ? "none" : `scale(${startScale})`,
+                  },
+                  {
+                    opacity: endOpacity,
+                    transform: preserveSpatialPosition ? "none" : `scale(${endScale})`,
+                  },
                 ]
-              : modeSwapEntranceKeyframes(startOpacity, startScale),
+              : modeSwapEntranceKeyframes(startOpacity, startScale, preserveSpatialPosition),
           { duration, easing: reducedMotion || outgoing ? MODE_SWAP_EASING : "linear", fill: "both" },
         ),
       );
@@ -1332,10 +1352,14 @@ function animateModeLayers(
   return animations;
 }
 
-function modeSwapEntranceKeyframes(startOpacity: number, startScale: number): Keyframe[] {
+function modeSwapEntranceKeyframes(
+  startOpacity: number,
+  startScale: number,
+  preserveSpatialPosition: boolean,
+): Keyframe[] {
   return modeSwapSpringKeyframes((progress) => ({
     opacity: mixModeSwapValue(startOpacity, 1, progress),
-    transform: `scale(${mixModeSwapValue(startScale, 1, progress)})`,
+    transform: preserveSpatialPosition ? "none" : `scale(${mixModeSwapValue(startScale, 1, progress)})`,
   }));
 }
 

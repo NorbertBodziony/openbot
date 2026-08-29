@@ -92,6 +92,13 @@ body:has(.dynamic-island-surface),
 }
 
 .openbot-dynamic-island-transition-root[data-mode-transitioning="true"]
+  .dynamic-island[data-layout-state="expanded"]
+  .dynamic-island-mode-swap[data-island-mode-slot="compact-leading"]
+  > .dynamic-island-mode-layer[data-island-mode-layer="incoming"] {
+  transform: none;
+}
+
+.openbot-dynamic-island-transition-root[data-mode-transitioning="true"]
   .dynamic-island-mode-layer[data-island-mode-layer="incoming"]
   [data-island-motion-content] {
   filter: blur(4px);
