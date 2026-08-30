@@ -518,6 +518,12 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         name: "openbot",
         version: "0.1.0",
         tools: [
+          tool(
+            "attach_files_to_response",
+            "Attach existing local files to the current response for the user. Use this for screenshots, charts, diagrams, reports, and other files that the user should receive.",
+            { paths: z.array(z.string().min(1).max(INPUT_LIMITS.path)).min(1).max(INPUT_LIMITS.attachments) },
+            (args) => call("openbot", "attach_files_to_response", args),
+          ),
           tool("list_agents", "List OpenBot agents that can receive local messages.", {}, (args) =>
             call("openbot", "list_agents", args),
           ),

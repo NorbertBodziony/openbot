@@ -3844,6 +3844,12 @@
   gap: 14px;
 }
 
+.message-image-attachments {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
 .image-generation-stage {
   position: relative;
   width: min(100%, 420px);

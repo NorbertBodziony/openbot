@@ -7,8 +7,9 @@ export type ImageGenerationStatus = "generating" | "completed" | "failed" | "int
 
 export interface ImageGenerationProps {
   status: ImageGenerationStatus;
+  presentation?: "generated" | "attachment";
   prompt?: string;
-  resolution: string;
+  resolution?: string;
   aspectRatio: ImageGenerationAspectRatio;
   attachment?: AttachmentSummary;
   error?: string;
@@ -28,12 +29,15 @@ export function ImageGeneration(props: ImageGenerationProps) {
   );
 
   const previewUnavailable = () => props.status === "completed" && !props.attachment?.previewUrl;
+  const isAttachment = () => props.presentation === "attachment";
   const hasImage = () => props.status === "completed" && Boolean(props.attachment?.previewUrl) && !previewError();
   const hasFailure = () =>
     props.status === "failed" || props.status === "interrupted" || previewError() || previewUnavailable();
   const failure = () =>
     previewError() || previewUnavailable()
-      ? "The generated image preview is unavailable."
+      ? isAttachment()
+        ? "The image preview is unavailable."
+        : "The generated image preview is unavailable."
       : (props.error ??
         (props.status === "interrupted" ? "Image generation was interrupted." : "Image generation did not complete."));
   const label = () => {
@@ -41,8 +45,12 @@ export function ImageGeneration(props: ImageGenerationProps) {
     if (previewError() || previewUnavailable()) return "Image unavailable";
     if (props.status === "interrupted") return "Image generation interrupted";
     if (props.status === "failed") return "Image generation failed";
-    return "Generated image";
+    return isAttachment() ? "Attached image" : "Generated image";
   };
+  const previewLabel = () =>
+    isAttachment() ? `Preview ${props.attachment?.name ?? "attached image"}` : "Preview generated image";
+  const downloadLabel = () =>
+    isAttachment() ? `Download ${props.attachment?.name ?? "attached image"}` : "Download generated image";
   const stageRatio = () => (hasImage() && imageRatio() ? imageRatio() : ratioValue(props.aspectRatio));
 
   return (
@@ -54,7 +62,7 @@ export function ImageGeneration(props: ImageGenerationProps) {
           "image-generation-failed": hasFailure(),
         },
       ]}
-      aria-label={hasImage() ? "Generated image" : "Image generation"}
+      aria-label={hasImage() ? label() : isAttachment() ? "Image attachment" : "Image generation"}
       aria-live={props.status === "generating" ? "polite" : undefined}
     >
       <div class="image-generation-stage" style={`--image-generation-ratio: ${stageRatio()}`}>
@@ -67,7 +75,7 @@ export function ImageGeneration(props: ImageGenerationProps) {
             },
           ]}
           role="img"
-          aria-label={label()}
+          aria-label={hasImage() ? undefined : label()}
           aria-hidden={hasImage() ? "true" : undefined}
           aria-busy={props.status === "generating" ? "true" : undefined}
         >
@@ -82,14 +90,16 @@ export function ImageGeneration(props: ImageGenerationProps) {
             <div class="image-generation-dots" aria-hidden="true" />
             <div class="image-generation-glow" aria-hidden="true" />
           </Show>
-          <span class="image-generation-resolution">{props.resolution}</span>
+          <Show when={props.resolution}>
+            <span class="image-generation-resolution">{props.resolution}</span>
+          </Show>
         </div>
         <Show when={Boolean(props.attachment?.previewUrl) && !previewError()}>
           <Button
             variant="ghost"
             type="button"
             class={["image-generation-preview", { "image-generation-preview-visible": hasImage() }]}
-            aria-label="Preview generated image"
+            aria-label={previewLabel()}
             onClick={() => {
               if (props.attachment) props.onPreview?.(props.attachment);
             }}
@@ -110,8 +120,8 @@ export function ImageGeneration(props: ImageGenerationProps) {
             variant="ghost"
             type="button"
             class="image-generation-hover-download"
-            aria-label="Download generated image"
-            title="Download generated image"
+            aria-label={downloadLabel()}
+            title={downloadLabel()}
             onClick={(event) => {
               event.stopPropagation();
               if (props.attachment) props.onDownload?.(props.attachment);

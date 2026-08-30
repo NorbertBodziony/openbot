@@ -359,6 +359,7 @@ describe.sequential("AgentService", () => {
         "You may list, read, create, edit, move, and delete files and run local commands in both directories.",
       );
       expect(params.developerInstructions).toContain("openbot.create_routine");
+      expect(params.developerInstructions).toContain("openbot.attach_files_to_response");
       expect(params.developerInstructions).toContain("sadness, disappointment, frustration, loneliness");
       expect(params.developerInstructions).toContain("An emoji written inside your answer does not count");
       expect(params.developerInstructions).toContain("Omit botId to target yourself");
@@ -369,6 +370,7 @@ describe.sequential("AgentService", () => {
             type: "namespace",
             name: "openbot",
             tools: expect.arrayContaining([
+              expect.objectContaining({ name: "attach_files_to_response" }),
               expect.objectContaining({ name: "ask_user" }),
               expect.objectContaining({ name: "list_agents" }),
               expect.objectContaining({ name: "update_profile" }),
@@ -2706,6 +2708,70 @@ describe.sequential("AgentService", () => {
       "react_to_user_message",
       { emoji: "👍" },
       "Only the current user message",
+      turnId,
+    );
+  });
+
+  it("attaches an agent-created screenshot to the current user response", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    const screenshotPath = join(store.sharedRoot, "desktop-screenshot.png");
+    const screenshot = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
+    await writeFile(screenshotPath, screenshot);
+    await service.sendMessage({ botId: "chief", text: "Send me a screenshot." });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The screenshot attachment turn did not start.");
+
+    const result = await callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+    );
+    expect(openBotToolPayload(result.result)).toMatchObject({
+      status: "attached",
+      attachments: [{ name: "desktop-screenshot.png" }],
+    });
+
+    const message = (await service.readConversation("chief")).messages.find(
+      (candidate) => candidate.itemType === "agent_attachment" && candidate.turnId === turnId,
+    );
+    expect(message).toMatchObject({
+      author: "assistant",
+      status: "completed",
+      text: "",
+      attachments: [
+        {
+          name: "desktop-screenshot.png",
+          kind: "image",
+          mimeType: "image/png",
+          previewKind: "image",
+        },
+      ],
+    });
+    const managed = await mailbox.resolveAttachment(message?.attachments?.[0]?.id ?? "");
+    expect(managed?.path).not.toBe(screenshotPath);
+    await expect(readFile(managed?.path ?? "")).resolves.toEqual(screenshot);
+
+    const outsidePath = join(root, "outside.png");
+    await writeFile(outsidePath, screenshot);
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [outsidePath] },
+      "inside this agent's workspace or the OpenBot shared directory",
       turnId,
     );
   });

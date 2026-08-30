@@ -280,6 +280,16 @@ export function MessageBody(props: {
       (attachment) => !referencedIds.has(attachment.id) && attachment.id !== generatedAttachmentId,
     );
   });
+  const standaloneImageAttachments = createMemo(() =>
+    props.message.author === "bot"
+      ? standaloneAttachments().filter((attachment) => attachment.previewKind === "image")
+      : [],
+  );
+  const standaloneFileAttachments = createMemo(() =>
+    props.message.author === "bot"
+      ? standaloneAttachments().filter((attachment) => attachment.previewKind !== "image")
+      : standaloneAttachments(),
+  );
   const contentBlocks = createMemo<MessageContentBlock[]>(() =>
     props.message.author === "bot"
       ? messageContentBlocks(streamedBody(), props.message.streaming === true)
@@ -427,15 +437,34 @@ export function MessageBody(props: {
           />
         )}
       </Show>
-      <Show when={props.message.status && !props.message.imageGeneration}>
+      <Show when={standaloneImageAttachments().length > 0}>
+        <div class="message-image-attachments">
+          <For each={standaloneImageAttachments()}>
+            {(attachment) => (
+              <ImageGeneration
+                presentation="attachment"
+                status="completed"
+                prompt={attachment.name}
+                aspectRatio="square"
+                attachment={attachment}
+                onPreview={props.onPreview}
+                onDownload={props.onDownload}
+              />
+            )}
+          </For>
+        </div>
+      </Show>
+      <Show
+        when={props.message.status && !props.message.imageGeneration && props.message.itemType !== "agent_attachment"}
+      >
         <div class="message-status">
           <span />
           {props.message.status}
         </div>
       </Show>
-      <Show when={standaloneAttachments().length > 0}>
+      <Show when={standaloneFileAttachments().length > 0}>
         <AttachmentCards
-          attachments={standaloneAttachments()}
+          attachments={standaloneFileAttachments()}
           onPreview={props.onPreview}
           onAction={props.onAttachmentAction}
         />

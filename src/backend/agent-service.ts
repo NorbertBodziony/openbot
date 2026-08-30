@@ -1,8 +1,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { realpath, stat } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, isAbsolute } from "node:path";
 import { expandAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
@@ -2156,6 +2156,62 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const senderBotId = this.#threadToBot.get(params.threadId);
     if (!senderBotId) throw new Error("The sending OpenBot agent is unknown.");
 
+    if (params.tool === "attach_files_to_response") {
+      const args = params.arguments;
+      if (!isRecord(args) || !Array.isArray(args.paths)) throw new Error("paths must be an array of local files.");
+      if (
+        args.paths.length === 0 ||
+        args.paths.length > INPUT_LIMITS.attachments ||
+        !args.paths.every((path) => isString(path) && path.trim().length > 0 && path.length <= INPUT_LIMITS.path)
+      ) {
+        throw new Error(`paths must contain between 1 and ${INPUT_LIMITS.attachments} valid local file paths.`);
+      }
+
+      const publicThreadId = this.#publicThreadId(senderBotId, params.threadId);
+      const snapshot = this.#ensureSnapshot(senderBotId, publicThreadId);
+      const messageId = responseAttachmentMessageId(params.threadId, params.turnId, params.callId);
+      const existing = snapshot.messages.find((message) => message.id === messageId);
+      if (existing) {
+        return openBotToolResult({
+          status: "attached",
+          messageId,
+          attachments: (existing.attachments ?? []).map((attachment) => ({
+            id: attachment.id,
+            name: attachment.name,
+          })),
+        });
+      }
+
+      const paths = await Promise.all(args.paths.map((path) => this.#resolveAgentAttachmentPath(senderBotId, path)));
+      if (paths.length !== new Set(paths).size) throw new Error("Duplicate attachment paths are not allowed.");
+      const attachments = await this.#mailbox.storeGeneratedAttachments({
+        sourcePaths: paths,
+        ownerBotId: senderBotId,
+        ownerThreadId: publicThreadId,
+      });
+      snapshot.messages.push({
+        id: messageId,
+        turnId: params.turnId,
+        author: "assistant",
+        source: "assistant",
+        text: "",
+        createdAt: new Date().toISOString(),
+        status: "completed",
+        itemType: "agent_attachment",
+        attachments,
+      });
+      this.#emitConversation(snapshot, "response.attachments-added", {
+        turnId: params.turnId,
+        messageId,
+        attachmentCount: attachments.length,
+      });
+      return openBotToolResult({
+        status: "attached",
+        messageId,
+        attachments: attachments.map((attachment) => ({ id: attachment.id, name: attachment.name })),
+      });
+    }
+
     if (params.tool === "list_agents") {
       const agents = this.#store.list().map((bot) => {
         const queue = this.#mailbox.listQueue(bot.id);
@@ -2439,6 +2495,39 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       success: true,
       contentItems: [{ type: "inputText", text: JSON.stringify(receipt) }],
     };
+  }
+
+  async #resolveAgentAttachmentPath(botId: string, inputPath: string): Promise<string> {
+    const bot = this.#requireKnownBot(botId);
+    const value = inputPath.trim();
+    const [workspaceRoot, sharedRoot] = await Promise.all([
+      realpath(bot.workspacePath),
+      realpath(this.#store.sharedRoot),
+    ]);
+    const normalized = value.replaceAll("\\", "/");
+    const sharedReference = ["~/OpenBot/Shared/", "OpenBot/Shared/", "Shared/"].some((prefix) =>
+      normalized.startsWith(prefix),
+    );
+    const candidates = isAbsolute(value)
+      ? [value]
+      : sharedReference
+        ? [sharedPathFromInput(this.#store.sharedRoot, value)]
+        : [
+            workspacePathFromInput(bot.workspacePath, bot.id, value),
+            sharedPathFromInput(this.#store.sharedRoot, value),
+          ];
+
+    for (const candidate of candidates) {
+      try {
+        const resolved = await realpath(candidate);
+        if (!isWithin(workspaceRoot, resolved) && !isWithin(sharedRoot, resolved)) continue;
+        const metadata = await stat(resolved);
+        if (metadata.isFile()) return resolved;
+      } catch {
+        // Try the other permitted root for relative paths.
+      }
+    }
+    throw new Error("Attachment files must exist inside this agent's workspace or the OpenBot shared directory.");
   }
 
   #stageMemoryMutation(turnId: string, mutation: PendingMemoryMutation): void {
@@ -4234,6 +4323,11 @@ function openBotToolResult(value: unknown): {
   };
 }
 
+function responseAttachmentMessageId(threadId: string, turnId: string, callId: string): string {
+  const digest = createHash("sha256").update(`${threadId}\0${turnId}\0${callId}`).digest("hex").slice(0, 32);
+  return `agent-attachments:${digest}`;
+}
+
 function conversationContentSignature(snapshot: ConversationSnapshot): string {
   return JSON.stringify({
     botId: snapshot.botId,
@@ -4370,6 +4464,7 @@ function developerInstructions(bot: BotSummary, sharedRoot: string, memories: Bo
     "Memory tools always apply to your own agent profile. They cannot change another agent's memories.",
     "Use openbot.react_to_user_message when the user's message contains an obvious positive or negative emotional moment where a reaction would feel natural. Clear wins or celebrations, affection, gratitude, playful humor, sadness, disappointment, frustration, loneliness, empathy, and strong approval should normally receive one fitting reaction; do not be so conservative that you skip these obvious cases. Negative emotions deserve an empathetic reaction such as ❤️, 😔, or 🫂 rather than being excluded as sensitive. An emoji written inside your answer does not count as a message reaction: when you use an inline emoji to acknowledge the user's emotion, that is a strong signal that you should also call the reaction tool. Skip neutral, purely informational, or routine messages, and never react on every turn. A reaction never replaces, shortens, or changes your normal answer: always provide the same complete response you would give without it, and do not mention the reaction in that response.",
     "Use openbot.send_message to send asynchronous messages or local files to one or more teammates. Always set replyToMessageId when answering a teammate. Replies are never forwarded automatically.",
+    "When the user should receive a local file that you created, call openbot.attach_files_to_response with its path before your final answer. Use it for screenshots, images, charts, diagrams, reports, and other output files. Do not only say that you sent a file, and do not only mention its path. OpenBot copies the file and displays image attachments in the conversation.",
     "When you need clarification or the user asks you to ask a question, use openbot.ask_user with 1–3 short questions instead of writing the question as a normal assistant message. Use options for choices and wait for the tool result before continuing. Claude should use AskUserQuestion for the same purpose.",
     "OpenBot renders GitHub-flavored Markdown tables in your final responses. Use a table when structured data or a comparison is clearer than prose; include a header row, a separator row with at least three dashes per column, and at least one data row. For a feature-by-option comparison, use at least three columns and put exactly ✓ or — in every option cell; OpenBot will render that Markdown as a comparison table. Example: | Feature | Personal | Enterprise | followed by | --- | --- | --- | and rows such as | Priority support | — | ✓ |.",
     "When a teammate asks you to do work, complete it and explicitly send the result back. When you receive a reply, summarize it for the user without creating an acknowledgement loop.",

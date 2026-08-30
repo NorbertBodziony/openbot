@@ -930,6 +930,75 @@ export class MailboxStore {
     }
   }
 
+  async storeGeneratedAttachments(input: {
+    sourcePaths: string[];
+    ownerBotId?: string;
+    ownerThreadId?: string | null;
+  }): Promise<AttachmentSummary[]> {
+    if (input.sourcePaths.length === 0 || input.sourcePaths.length > MAX_ATTACHMENTS) {
+      throw new Error(`Attach between 1 and ${MAX_ATTACHMENTS} files.`);
+    }
+    const sources = await Promise.all(input.sourcePaths.map(inspectSource));
+    const total = sources.reduce((sum, source) => sum + source.size, 0);
+    if (total > MAX_TOTAL_BYTES) throw new Error("Attachments exceed the 250 MB total limit.");
+
+    const usedNames = new Set<string>();
+    const entries = sources.map((source) => {
+      const id = randomUUID();
+      const name = uniqueName(sanitizeName(source.path), usedNames);
+      const generatedRoot = join(this.#transfersRoot, "generated", id);
+      return { id, name, source, generatedRoot, targetPath: join(generatedRoot, name) };
+    });
+    const storedIds = new Set<string>(entries.map((entry) => entry.id));
+
+    try {
+      const attachments: StoredGeneratedAttachment[] = [];
+      for (const entry of entries) {
+        await mkdir(entry.generatedRoot, { recursive: true, mode: 0o700 });
+        await copyFile(entry.source.path, entry.targetPath);
+        const copied = await stat(entry.targetPath);
+        if (copied.size > MAX_FILE_BYTES) throw new Error(`${entry.name} exceeds the 100 MB limit.`);
+        const attachment: StoredGeneratedAttachment = {
+          id: entry.id,
+          name: entry.name,
+          size: copied.size,
+          ...attachmentMetadata(entry.name),
+          previewUrl: attachmentPreviewUrl(entry.id),
+          path: entry.targetPath,
+          sha256: await sha256(entry.targetPath),
+          ...(input.ownerBotId ? { ownerBotId: input.ownerBotId } : {}),
+          ...(input.ownerThreadId !== undefined ? { ownerThreadId: input.ownerThreadId } : {}),
+        };
+        await writeTransferManifest(entry.generatedRoot, {
+          version: 1,
+          kind: "generated-attachment",
+          generatedAttachmentId: entry.id,
+          ...(input.ownerBotId ? { ownerBotId: input.ownerBotId } : {}),
+          ...(input.ownerThreadId !== undefined ? { ownerThreadId: input.ownerThreadId } : {}),
+          createdAt: new Date().toISOString(),
+          attachments: [manifestAttachment(attachment, entry.name)],
+        });
+        attachments.push(attachment);
+      }
+      this.#state.generatedAttachments.push(...attachments);
+      try {
+        await this.#persist("attachment.generated-batch");
+      } catch (error) {
+        this.#state.generatedAttachments = this.#state.generatedAttachments.filter(
+          (attachment) => !storedIds.has(attachment.id),
+        );
+        throw error;
+      }
+      return attachments.map(toAttachmentSummary);
+    } catch (error) {
+      this.#state.generatedAttachments = this.#state.generatedAttachments.filter(
+        (attachment) => !storedIds.has(attachment.id),
+      );
+      await Promise.allSettled(entries.map((entry) => rm(entry.generatedRoot, { recursive: true, force: true })));
+      throw error;
+    }
+  }
+
   async storeGeneratedAttachment(input: {
     sourcePath?: string;
     bytes?: Uint8Array;

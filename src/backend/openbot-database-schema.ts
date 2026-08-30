@@ -273,7 +273,7 @@ const BASELINE_V8_SCHEMA_SQL = `
   );
 `;
 
-// v9 and v10 change runtime state but not the schema, so the fresh schema still matches the v8 baseline.
+// v9 through v11 change runtime state but not the schema, so the fresh schema still matches the v8 baseline.
 // Keep this separate once a later migration changes tables or indexes.
 const LATEST_SCHEMA_SQL = BASELINE_V8_SCHEMA_SQL;
 
@@ -303,6 +303,10 @@ const MIGRATIONS: readonly OpenBotMigration[] = [
   {
     version: 10,
     up: refreshProviderSessionsForReactionTools,
+  },
+  {
+    version: 11,
+    up: refreshProviderSessionsForResponseAttachmentTools,
   },
 ];
 
@@ -386,6 +390,14 @@ function migrateToBaselineV8(db: DatabaseSync, appliedAt: string): void {
 }
 
 function refreshProviderSessionsForReactionTools(db: DatabaseSync, appliedAt: string): void {
+  db.prepare(
+    `UPDATE projection_provider_sessions
+     SET state = 'inactive', updated_at = ?
+     WHERE state = 'active'`,
+  ).run(appliedAt);
+}
+
+function refreshProviderSessionsForResponseAttachmentTools(db: DatabaseSync, appliedAt: string): void {
   db.prepare(
     `UPDATE projection_provider_sessions
      SET state = 'inactive', updated_at = ?

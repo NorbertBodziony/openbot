@@ -62,6 +62,7 @@ describe("OpenBotDatabase", () => {
       { version: 8 },
       { version: 9 },
       { version: 10 },
+      { version: 11 },
     ]);
     database.close();
   });
@@ -438,7 +439,7 @@ describe("OpenBotDatabase", () => {
 
     const legacy = new DatabaseSync(database.path);
     legacy.exec("PRAGMA journal_mode = WAL");
-    legacy.prepare("DELETE FROM schema_migrations WHERE version IN (8, 9, 10)").run();
+    legacy.prepare("DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11)").run();
     legacy
       .prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)")
       .run("2026-08-20T10:00:00.000Z");
@@ -490,6 +491,9 @@ describe("OpenBotDatabase", () => {
     expect(migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 10").get()).toEqual({
       applied: 1,
     });
+    expect(migrated.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 11").get()).toEqual({
+      applied: 1,
+    });
     migrated.close();
 
     const reopened = new OpenBotDatabase(root);
@@ -511,7 +515,7 @@ describe("OpenBotDatabase", () => {
       DROP TABLE projection_routine_triggers;
       DROP TABLE projection_agent_routines;
       DROP TABLE projection_agent_memories;
-      DELETE FROM schema_migrations WHERE version IN (8, 9, 10);
+      DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11);
       INSERT OR IGNORE INTO schema_migrations(version, applied_at)
         VALUES (4, '2026-08-20T10:00:00.000Z');
     `);
@@ -539,6 +543,7 @@ describe("OpenBotDatabase", () => {
       { version: 8 },
       { version: 9 },
       { version: 10 },
+      { version: 11 },
     ]);
     migrated.close();
   });
@@ -605,6 +610,7 @@ describe("OpenBotDatabase", () => {
       { version: 8 },
       { version: 9 },
       { version: 10 },
+      { version: 11 },
     ]);
     retried.close();
   });
@@ -627,7 +633,7 @@ describe("OpenBotDatabase", () => {
     database.close();
 
     const legacy = new DatabaseSync(database.path);
-    legacy.prepare("DELETE FROM schema_migrations WHERE version = 10").run();
+    legacy.prepare("DELETE FROM schema_migrations WHERE version IN (10, 11)").run();
     legacy.close();
 
     const migrated = new OpenBotDatabase(root);
@@ -639,6 +645,88 @@ describe("OpenBotDatabase", () => {
     migrated.close();
   });
 
+  it("deactivates existing provider sessions when response attachment tools are added", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-runtime-v11-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    const bot = testBot();
+    if (!bot.threadId) throw new Error("The test bot has no thread.");
+    database.replaceAgents("agents-import", [bot], "agents.imported");
+    database.bindProviderSession({
+      threadId: bot.threadId,
+      provider: "codex",
+      externalSessionId: "session-without-response-attachments",
+      model: "gpt-5.6-luna",
+      effort: "medium",
+    });
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    legacy.prepare("DELETE FROM schema_migrations WHERE version = 11").run();
+    legacy.close();
+
+    const migrated = new OpenBotDatabase(root);
+    await migrated.initialize();
+    expect(migrated.activeProviderSession(bot.threadId, "codex")).toBeNull();
+    expect(migrated.listProviderSessions(bot.threadId)).toEqual([
+      expect.objectContaining({
+        externalSessionId: "session-without-response-attachments",
+        state: "inactive",
+      }),
+    ]);
+    migrated.close();
+  });
+
+  it("rolls back a failed response attachment session refresh and succeeds on retry", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-runtime-v11-rollback-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    const bot = testBot();
+    if (!bot.threadId) throw new Error("The test bot has no thread.");
+    database.replaceAgents("agents-import", [bot], "agents.imported");
+    database.bindProviderSession({
+      threadId: bot.threadId,
+      provider: "codex",
+      externalSessionId: "session-before-failed-refresh",
+      model: "gpt-5.6-luna",
+      effort: "medium",
+    });
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    legacy.exec(`
+      DELETE FROM schema_migrations WHERE version = 11;
+      CREATE TRIGGER reject_session_refresh
+      BEFORE UPDATE OF state ON projection_provider_sessions
+      BEGIN
+        SELECT RAISE(ABORT, 'blocked session refresh');
+      END;
+    `);
+    legacy.close();
+
+    const failed = new OpenBotDatabase(root);
+    await expect(failed.initialize()).rejects.toThrow("migration to version 11 failed");
+    const rolledBack = new DatabaseSync(database.path);
+    expect(rolledBack.prepare("SELECT 1 FROM schema_migrations WHERE version = 11").get()).toBeUndefined();
+    expect(
+      rolledBack
+        .prepare("SELECT external_session_id, state FROM projection_provider_sessions WHERE thread_id = ?")
+        .get(bot.threadId),
+    ).toEqual({ external_session_id: "session-before-failed-refresh", state: "active" });
+    rolledBack.exec("DROP TRIGGER reject_session_refresh");
+    rolledBack.close();
+
+    const retried = new OpenBotDatabase(root);
+    await retried.initialize();
+    expect(retried.activeProviderSession(bot.threadId, "codex")).toBeNull();
+    expect(retried.connection.prepare("SELECT 1 AS applied FROM schema_migrations WHERE version = 11").get()).toEqual({
+      applied: 1,
+    });
+    retried.close();
+  });
+
   it("rejects a database created by a newer application", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-db-newer-"));
     roots.push(root);
@@ -647,7 +735,7 @@ describe("OpenBotDatabase", () => {
     database.close();
 
     const newer = new DatabaseSync(database.path);
-    newer.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (11, ?)").run("2026-08-20T10:00:00.000Z");
+    newer.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (12, ?)").run("2026-08-20T10:00:00.000Z");
     newer.close();
 
     const downgradedApp = new OpenBotDatabase(root);
@@ -716,7 +804,7 @@ describe("OpenBotDatabase", () => {
       ALTER TABLE projection_provider_sessions_v6 RENAME TO projection_provider_sessions;
       CREATE INDEX provider_sessions_thread
         ON projection_provider_sessions(thread_id, provider, state);
-      DELETE FROM schema_migrations WHERE version IN (8, 9, 10);
+      DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11);
       INSERT OR IGNORE INTO schema_migrations(version, applied_at)
         VALUES (6, '2026-08-20T10:00:00.000Z');
       PRAGMA foreign_keys = ON;
@@ -758,7 +846,7 @@ function downgradeReactionsToV7(database: DatabaseSync): void {
     );
     DROP TABLE projection_reactions;
     ALTER TABLE projection_reactions_v7 RENAME TO projection_reactions;
-    DELETE FROM schema_migrations WHERE version IN (8, 9, 10);
+    DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11);
     INSERT OR IGNORE INTO schema_migrations(version, applied_at)
       VALUES (7, '2026-08-20T10:00:00.000Z');
   `);

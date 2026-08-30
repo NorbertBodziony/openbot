@@ -186,6 +186,49 @@ describe("MessageBody", () => {
     expect(onPreview).toHaveBeenCalledWith(attachment);
   });
 
+  it("renders an image attached by an agent as a large preview", async () => {
+    const attachment: AttachmentSummary = {
+      id: "agent-screenshot",
+      name: "desktop-screenshot.png",
+      size: 1_966_000,
+      kind: "image",
+      mimeType: "image/png",
+      previewKind: "image",
+      previewUrl: "openbot-attachment://file/agent-screenshot",
+    };
+    const onPreview = vi.fn();
+    const onDownload = vi.fn();
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-agent-screenshot",
+          author: "bot",
+          body: "",
+          time: "10:00",
+          status: "completed",
+          itemType: "agent_attachment",
+          attachments: [attachment],
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={onPreview}
+        onAttachmentAction={vi.fn()}
+        onDownload={onDownload}
+      />
+    ));
+
+    const image = screen.getByAltText("desktop-screenshot.png");
+    await fireEvent.load(image);
+    expect(screen.getByLabelText("Attached image")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Preview desktop-screenshot.png" })).toBeInTheDocument();
+    expect(screen.queryByText("1.9 MB")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Preview desktop-screenshot.png" }));
+    expect(onPreview).toHaveBeenCalledWith(attachment);
+    await fireEvent.click(screen.getByRole("button", { name: "Download desktop-screenshot.png" }));
+    expect(onDownload).toHaveBeenCalledWith(attachment);
+  });
+
   it("renders a Markdown table in an agent response without exposing its syntax", () => {
     render(() => (
       <MessageBody

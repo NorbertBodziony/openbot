@@ -1546,7 +1546,7 @@ textarea {
   justify-content: space-between;
   gap: var(--openbot-space-2);
   border-bottom: 1px solid var(--openbot-border);
-  padding: 2px 15px 0 10px;
+  padding: 2px 12px 0 10px;
 }
 
 .sidebar-server-name {
