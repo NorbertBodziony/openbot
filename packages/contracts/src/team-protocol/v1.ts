@@ -150,7 +150,8 @@ export function decodeTeamProtocolV1Event(value: unknown): TeamProtocolV1EventDe
   if (!TEAM_PROTOCOL_V1_EVENT_TYPE_SET.has(value.type)) {
     return { kind: "unknown", type: value.type };
   }
-  if (isTeamProtocolV1KnownEvent(value)) return { kind: "known", event: value };
+  const projected = projectTeamProtocolV1Event(value);
+  if (isTeamProtocolV1KnownEvent(projected)) return { kind: "known", event: projected };
   return { kind: "invalid", type: value.type };
 }
 
@@ -159,13 +160,131 @@ export function encodeTeamProtocolV1Event(event: TeamProtocolV1Event): string | 
   return decoded.kind === "known" ? JSON.stringify(decoded.event) : null;
 }
 
+const TEAM_PROTOCOL_V1_EVENT_KEYS = {
+  status: ["type", "status"],
+  "usage-changed": ["type", "usage"],
+  "bots-changed": ["type", "bots"],
+  "memories-changed": ["type", "botId"],
+  "routines-changed": ["type", "botId"],
+  "sidebar-layout-changed": ["type", "layout"],
+  conversation: ["type", "snapshot"],
+  "conversation-invalidated": ["type", "botId", "revision"],
+  "conversation-page": ["type", "page"],
+  "conversation-delta": ["type", "botId", "threadId", "turnId", "messageId", "delta", "createdAt", "revision"],
+  "queue-invalidated": ["type", "botId"],
+  "queue-changed": ["type", "snapshot"],
+  "turn-started": ["type", "botId", "threadId", "turnId", "origin"],
+  "turn-completed": ["type", "botId", "threadId", "turnId", "status", "origin"],
+  prompt: ["type", "requestId", "botId", "threadId", "turnId", "questions"],
+  "agent-input-resolved": ["type", "kind", "requestId", "botId"],
+  "browser-takeover-requested": ["type", "request"],
+  "browser-takeover-resolved": ["type", "requestId", "botId"],
+  approval: ["type", "approval"],
+  "runtime-snapshot": ["type", "snapshot"],
+  "browser-changed": ["type", "tabs", "activeTabId"],
+  "browser-control-changed": ["type", "state"],
+  error: ["type", "botId", "code", "message"],
+  "team-identity": ["type", "serverId", "serverName", "logoVersion"],
+  "team-presence": ["type", "snapshot"],
+  "team-direct-message": ["type", "message", "memberIds"],
+  "team-direct-typing": ["type", "senderMemberId", "recipientMemberId", "typing"],
+} as const satisfies Record<(typeof TEAM_PROTOCOL_V1_EVENT_TYPES)[number], readonly string[]>;
+
+function projectTeamProtocolV1Event(value: DynamicRecord): DynamicRecord {
+  if (!isString(value.type) || !isTeamProtocolV1EventType(value.type)) return value;
+  const eventType = value.type;
+  const projected = projectV1Object(value, TEAM_PROTOCOL_V1_EVENT_KEYS[eventType]);
+  switch (eventType) {
+    case "status":
+      if (isDynamicRecord(projected.status)) {
+        projected.status = projectTeamProtocolV1HttpResponse("GET agent-status", projected.status);
+      }
+      break;
+    case "usage-changed":
+      if (isDynamicRecord(projected.usage)) {
+        projected.usage = projectTeamProtocolV1HttpResponse("GET agent-usage", projected.usage);
+      }
+      break;
+    case "bots-changed":
+      if (Array.isArray(projected.bots))
+        projected.bots = projected.bots.map((bot) => projectV1Object(bot, V1_BOT_KEYS));
+      break;
+    case "sidebar-layout-changed":
+      if (isDynamicRecord(projected.layout)) {
+        projected.layout = projectV1Object(projected.layout, TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS["GET sidebar-layout"]);
+      }
+      break;
+    case "conversation":
+      if (isDynamicRecord(projected.snapshot)) {
+        projected.snapshot = projectV1Object(projected.snapshot, [
+          "botId",
+          "threadId",
+          "activeTurnId",
+          "revision",
+          "messages",
+        ]);
+      }
+      break;
+    case "conversation-page":
+      if (isDynamicRecord(projected.page)) {
+        projected.page = projectTeamProtocolV1HttpResponse("GET conversation-page", projected.page);
+      }
+      break;
+    case "queue-changed":
+      if (isDynamicRecord(projected.snapshot)) {
+        projected.snapshot = projectTeamProtocolV1HttpResponse("GET queue", projected.snapshot);
+      }
+      break;
+    case "runtime-snapshot":
+      if (isDynamicRecord(projected.snapshot)) {
+        projected.snapshot = projectV1Object(projected.snapshot, [
+          "bots",
+          "activeTurns",
+          "work",
+          "latestMessages",
+          "attentionComplete",
+          "pendingPrompts",
+          "pendingApprovals",
+          "pendingBrowserTakeovers",
+          "failedTurns",
+        ]);
+      }
+      break;
+    case "browser-changed":
+      if (Array.isArray(projected.tabs)) {
+        projected.tabs = projected.tabs.map((tab) => projectV1Object(tab, V1_BROWSER_TAB_KEYS));
+      }
+      break;
+    case "browser-control-changed":
+      if (isDynamicRecord(projected.state)) {
+        projected.state = projectV1Object(projected.state, TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS["GET browser-control"]);
+      }
+      break;
+    case "team-presence":
+      if (isDynamicRecord(projected.snapshot)) {
+        projected.snapshot = projectTeamProtocolV1HttpResponse("GET team-presence", projected.snapshot);
+      }
+      break;
+    case "team-direct-message":
+      if (isDynamicRecord(projected.message)) {
+        projected.message = projectV1Object(projected.message, V1_DIRECT_MESSAGE_KEYS);
+      }
+      break;
+  }
+  return projected;
+}
+
+function isTeamProtocolV1EventType(value: string): value is keyof typeof TEAM_PROTOCOL_V1_EVENT_KEYS {
+  return TEAM_PROTOCOL_V1_EVENT_TYPE_SET.has(value);
+}
+
 // This is the frozen v1 wire validator. Do not replace its nested checks with current IPC validators.
 function isTeamProtocolV1KnownEvent(value: DynamicRecord): value is TeamProtocolV1Event {
   switch (value.type) {
     case "status":
-      return isTeamProtocolV1JsonObject(value.status);
+      return isV1AgentStatus(value.status);
     case "usage-changed":
-      return isTeamProtocolV1JsonObject(value.usage);
+      return isV1AccountUsage(value.usage);
     case "bots-changed":
       return Array.isArray(value.bots) && value.bots.length <= 100 && value.bots.every(isV1BotSummary);
     case "memories-changed":
@@ -234,11 +353,11 @@ function isTeamProtocolV1KnownEvent(value: DynamicRecord): value is TeamProtocol
     case "browser-changed":
       return (
         Array.isArray(value.tabs) &&
-        value.tabs.every(isTeamProtocolV1JsonObject) &&
+        value.tabs.every(isV1BrowserTab) &&
         (value.activeTabId === null || isString(value.activeTabId))
       );
     case "browser-control-changed":
-      return isTeamProtocolV1JsonObject(value.state);
+      return isV1BrowserControl(value.state);
     case "error":
       return isString(value.code) && isString(value.message);
     case "team-identity":
@@ -948,6 +1067,210 @@ const TEAM_PROTOCOL_V1_HTTP_CONTRACTS = {
 
 type TeamProtocolV1HttpRoute = keyof typeof TEAM_PROTOCOL_V1_HTTP_CONTRACTS;
 
+const V1_MEMBER_KEYS = ["id", "username", "email", "name", "avatarUrl", "role", "createdAt", "disabled"] as const;
+const V1_BOT_KEYS = [
+  "id",
+  "provider",
+  "name",
+  "title",
+  "description",
+  "notifications",
+  "model",
+  "reasoningEffort",
+  "threadId",
+  "workspacePath",
+  "preview",
+  "updatedAt",
+  "avatarSeed",
+  "avatarHue",
+  "avatarUrl",
+  "marketplaceSource",
+] as const;
+const V1_DIRECT_MESSAGE_KEYS = [
+  "id",
+  "threadId",
+  "senderMemberId",
+  "recipientMemberId",
+  "text",
+  "createdAt",
+  "sequence",
+] as const;
+const V1_BROWSER_TAB_KEYS = ["id", "title", "url", "loading", "ownerThreadId", "ownerBotId"] as const;
+
+const TEAM_PROTOCOL_V1_HTTP_REQUEST_KEYS = {
+  "POST invitation-preview": ["inviteToken"],
+  "POST join": ["inviteToken", "username", "password"],
+  "POST join-account": ["inviteToken", "accountTicket"],
+  "POST auth-login": ["username", "password"],
+  "POST auth-account": ["accountTicket"],
+  "POST auth-password": ["currentPassword", "newPassword"],
+  "POST remote-session": [],
+  "PUT remote-display": ["displayId"],
+  "POST direct-message": ["memberId", "text", "clientMessageId"],
+  "POST direct-conversation-read": ["throughSequence"],
+  "POST browser-open": ["url", "ownerThreadId", "ownerBotId", "focus"],
+  "POST browser-activate": ["tabId"],
+  "POST browser-navigate": ["tabId", "direction"],
+  "POST browser-reload": ["tabId"],
+  "POST browser-close": ["tabId"],
+  "POST browser-preview": ["tabId"],
+  "POST browser-visible": ["visible", "bounds"],
+  "PATCH team-member": ["role", "disabled"],
+  "POST team-invites": ["role", "email"],
+  "POST sidebar-action": ["type", "name", "agentId", "sectionId", "direction", "steps", "beforeAgentId"],
+  "POST agents": ["name", "description", "avatarSeed", "avatarHue", "initialMessage"],
+  "PATCH agent": [
+    "name",
+    "title",
+    "description",
+    "notifications",
+    "provider",
+    "model",
+    "reasoningEffort",
+    "avatarSeed",
+    "avatarHue",
+  ],
+  "POST memories": ["text"],
+  "PATCH memory": ["text"],
+  "POST routines": ["botId", "name", "instruction", "active", "timezone", "schedule"],
+  "PATCH routine": ["botId", "routineId", "name", "instruction", "active", "timezone", "schedule"],
+  "POST conversation-read": ["throughMessageId"],
+  "POST messages": ["text", "attachmentDraftIds", "replyToMessageId"],
+  "POST failure-acknowledge": ["turnId"],
+  "POST reaction": ["messageId", "emoji"],
+  "POST queue-cancel": ["deliveryId"],
+  "POST queue-steer": ["deliveryId", "expectedTurnId"],
+  "POST queue-update": ["deliveryId", "text", "keepAttachmentIds", "attachmentDraftIds"],
+  "POST queue-reorder": ["deliveryIds"],
+  "POST interrupt": ["turnId"],
+  "POST prompt-response": ["requestId", "answers"],
+  "POST approval-response": ["requestId", "decision"],
+  "POST browser-takeover-response": ["requestId", "decision"],
+} as const satisfies Partial<Record<TeamProtocolV1HttpRoute, readonly string[]>>;
+
+const TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS = {
+  "GET compatibility": ["appVersion", "protocol", "capabilities"],
+  "GET identity": [
+    "serverId",
+    "serverName",
+    "fingerprint",
+    "publicKey",
+    "enabledOnLaunch",
+    "logoVersion",
+    "challenge",
+    "signature",
+  ],
+  "POST invitation-preview": ["role", "expiresAt", "emailBound"],
+  "POST join": ["member", "sessionToken", "sessionExpiresAt"],
+  "POST join-account": ["member", "sessionToken", "sessionExpiresAt"],
+  "POST auth-login": ["member", "sessionToken", "sessionExpiresAt"],
+  "POST auth-account": ["member", "sessionToken", "sessionExpiresAt"],
+  "GET me": V1_MEMBER_KEYS,
+  "GET team-presence": ["serverId", "members", "updatedAt"],
+  "GET remote-capabilities": [
+    "ready",
+    "platform",
+    "unattended",
+    "runtime",
+    "protocolVersion",
+    "displays",
+    "selectedDisplayId",
+    "activeSessions",
+    "maxSessions",
+  ],
+  "POST remote-session": [
+    "id",
+    "serverId",
+    "viewerUrl",
+    "viewerGrant",
+    "displays",
+    "selectedDisplayId",
+    "phase",
+    "transport",
+    "errorCode",
+    "message",
+    "createdAt",
+    "grantExpiresAt",
+  ],
+  "GET direct-threads": ["threadId", "otherMemberId", "lastMessage", "unreadCount", "updatedAt"],
+  "POST direct-message": V1_DIRECT_MESSAGE_KEYS,
+  "GET direct-conversation": ["threadId", "otherMemberId", "messages", "revision", "readState"],
+  "GET direct-conversation-page": ["threadId", "otherMemberId", "messages", "revision", "pageInfo", "readState"],
+  "POST direct-conversation-read": ["unreadCount", "firstUnreadMessageId", "throughSequence"],
+  "GET browser-tabs": V1_BROWSER_TAB_KEYS,
+  "GET browser-control": ["sessions"],
+  "POST browser-open": V1_BROWSER_TAB_KEYS,
+  "POST browser-preview": ["dataUrl", "width", "height"],
+  "POST attachment-upload": ["id", "name", "size", "kind", "mimeType", "previewKind", "previewUrl"],
+  "GET team-members": V1_MEMBER_KEYS,
+  "PATCH team-member": V1_MEMBER_KEYS,
+  "POST team-invites": ["id", "role", "expiresAt", "usedAt", "inviteUrl", "email"],
+  "GET team-invites": ["id", "role", "expiresAt", "usedAt", "email"],
+  "GET team-sessions": ["id", "memberId", "username", "createdAt", "expiresAt"],
+  "GET agent-status": ["phase", "cliVersion", "auth", "providers", "capabilities", "message", "fullAccess"],
+  "GET sidebar-layout": ["revision", "sections", "order", "agentAssignments", "agentOrder"],
+  "POST sidebar-action": ["revision", "sections", "order", "agentAssignments", "agentOrder"],
+  "GET agent-usage": ["limits"],
+  "GET agent-models": ["provider", "id", "name", "description", "defaultReasoningEffort", "supportedReasoningEfforts"],
+  "GET agents": V1_BOT_KEYS,
+  "POST agents": V1_BOT_KEYS,
+  "PATCH agent": V1_BOT_KEYS,
+  "PUT agent-avatar": V1_BOT_KEYS,
+  "DELETE agent-avatar": V1_BOT_KEYS,
+  "GET conversation-reads": [],
+  "GET memories": ["id", "botId", "text", "origin", "sourceTurnId", "createdAt", "updatedAt"],
+  "POST memories": ["id", "botId", "text", "origin", "sourceTurnId", "createdAt", "updatedAt"],
+  "PATCH memory": ["id", "botId", "text", "origin", "sourceTurnId", "createdAt", "updatedAt"],
+  "GET routines": ["id", "botId", "name", "instruction", "active", "timezone", "trigger", "createdAt", "updatedAt"],
+  "POST routines": ["id", "botId", "name", "instruction", "active", "timezone", "trigger", "createdAt", "updatedAt"],
+  "PATCH routine": ["id", "botId", "name", "instruction", "active", "timezone", "trigger", "createdAt", "updatedAt"],
+  "POST routine-test": [
+    "id",
+    "routineId",
+    "botId",
+    "triggerId",
+    "kind",
+    "scheduledFor",
+    "routineName",
+    "instruction",
+    "deliveryId",
+    "status",
+    "error",
+    "createdAt",
+    "updatedAt",
+  ],
+  "GET routine-runs": [
+    "id",
+    "routineId",
+    "botId",
+    "triggerId",
+    "kind",
+    "scheduledFor",
+    "routineName",
+    "instruction",
+    "deliveryId",
+    "status",
+    "error",
+    "createdAt",
+    "updatedAt",
+  ],
+  "GET conversation": ["botId", "threadId", "activeTurnId", "revision", "messages", "readState"],
+  "GET conversation-page": [
+    "botId",
+    "threadId",
+    "activeTurnId",
+    "revision",
+    "messages",
+    "references",
+    "pageInfo",
+    "readState",
+  ],
+  "GET message-search": ["results", "total", "nextCursor"],
+  "POST conversation-read": ["unreadCount", "firstUnreadMessageId", "throughMessageId"],
+  "POST messages": ["messageId", "deliveries"],
+  "GET queue": ["botId", "deliveries"],
+} as const satisfies Partial<Record<TeamProtocolV1HttpRoute, readonly string[]>>;
+
 export function decodeTeamProtocolV1HttpRequest(
   method: string,
   path: string,
@@ -959,8 +1282,9 @@ export function decodeTeamProtocolV1HttpRequest(
   if (contract.request !== "object" || !isTeamProtocolV1JsonObject(value)) {
     throw new Error("Invalid Team protocol v1 HTTP request.");
   }
-  validateTeamProtocolV1HttpRequest(route, value);
-  return value;
+  const projected = projectTeamProtocolV1HttpRequest(route, value);
+  validateTeamProtocolV1HttpRequest(route, projected);
+  return projected;
 }
 
 export function decodeTeamProtocolV1HttpResponse(
@@ -973,7 +1297,17 @@ export function decodeTeamProtocolV1HttpResponse(
     if (!isTeamProtocolV1JsonObject(value) || !isString(value.error)) {
       throw new Error("Invalid Team protocol v1 HTTP error response.");
     }
-    return value;
+    const projected = projectV1Object(value, ["error", "code", "host", "client"]);
+    if (isDynamicRecord(projected.host)) {
+      projected.host = projectV1Object(projected.host, ["appVersion", "protocol", "capabilities"]);
+      if (isDynamicRecord(projected.host.protocol)) {
+        projected.host.protocol = projectV1Object(projected.host.protocol, ["minimum", "maximum"]);
+      }
+    }
+    if (isDynamicRecord(projected.client)) {
+      projected.client = projectV1Object(projected.client, ["appVersion", "protocol"]);
+    }
+    return projected;
   }
   const route = teamProtocolV1HttpRoute(method, path);
   if (!route) throw new Error("Invalid Team protocol v1 HTTP response.");
@@ -981,8 +1315,185 @@ export function decodeTeamProtocolV1HttpResponse(
   if (!matchesTeamProtocolV1HttpShape(contract.response, value)) {
     throw new Error("Invalid Team protocol v1 HTTP response.");
   }
-  validateTeamProtocolV1HttpResponse(route, value);
-  return value;
+  const projected = projectTeamProtocolV1HttpResponse(route, value);
+  validateTeamProtocolV1HttpResponse(route, projected);
+  return projected;
+}
+
+function projectTeamProtocolV1HttpRequest(
+  route: TeamProtocolV1HttpRoute,
+  value: TeamProtocolV1JsonObject,
+): TeamProtocolV1JsonObject {
+  if (!hasTeamProtocolV1HttpRequestProjection(route)) {
+    throw new Error("Team protocol v1 HTTP request projection is missing.");
+  }
+  const wireKeys = TEAM_PROTOCOL_V1_HTTP_REQUEST_KEYS[route];
+  const projected = projectV1Object(value, wireKeys);
+  if (route === "POST browser-visible" && isDynamicRecord(projected.bounds)) {
+    projected.bounds = projectV1Object(projected.bounds, ["x", "y", "width", "height"]);
+  }
+  if ((route === "POST routines" || route === "PATCH routine") && isDynamicRecord(projected.schedule)) {
+    projected.schedule = projectV1RoutineSchedule(projected.schedule);
+  }
+  return projected;
+}
+
+function projectTeamProtocolV1HttpResponse(
+  route: TeamProtocolV1HttpRoute,
+  value: TeamProtocolV1JsonValue,
+): TeamProtocolV1JsonValue {
+  if (route === "GET conversation-reads" && isDynamicRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([botId, state]) => [
+        botId,
+        isDynamicRecord(state)
+          ? projectV1Object(state, ["unreadCount", "firstUnreadMessageId", "throughMessageId"])
+          : null,
+      ]),
+    );
+  }
+  if (!hasTeamProtocolV1HttpResponseProjection(route)) {
+    throw new Error("Team protocol v1 HTTP response projection is missing.");
+  }
+  const wireKeys = TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS[route];
+  if (Array.isArray(value)) {
+    return value.map((item) => {
+      const projected = route === "GET agents" ? projectV1Bot(item) : projectV1Object(item, wireKeys);
+      if (route === "GET direct-threads" && isDynamicRecord(projected.lastMessage)) {
+        projected.lastMessage = projectV1Object(projected.lastMessage, V1_DIRECT_MESSAGE_KEYS);
+      } else if (route === "GET agent-usage") {
+        return projectV1UsageLimit(item);
+      } else if (route === "GET routines" || route === "GET routine-runs") {
+        return projectV1RoutineValue(projected);
+      }
+      return projected;
+    });
+  }
+  if (value === null) return null;
+  const projected =
+    route === "POST agents" || route === "PATCH agent" || route.endsWith("agent-avatar")
+      ? projectV1Bot(value)
+      : projectV1Object(value, wireKeys);
+  if (["POST join", "POST join-account", "POST auth-login", "POST auth-account"].includes(route)) {
+    if (isDynamicRecord(projected.member)) projected.member = projectV1Object(projected.member, V1_MEMBER_KEYS);
+  } else if (route === "GET team-presence" && Array.isArray(projected.members)) {
+    projected.members = projected.members.map((member) =>
+      projectV1Object(member, [...V1_MEMBER_KEYS, "online", "typingBotId"]),
+    );
+  } else if (
+    (route === "GET direct-conversation" || route === "GET direct-conversation-page") &&
+    Array.isArray(projected.messages)
+  ) {
+    projected.messages = projected.messages.map((message) => projectV1Object(message, V1_DIRECT_MESSAGE_KEYS));
+  } else if (route === "GET compatibility" && isDynamicRecord(projected.protocol)) {
+    projected.protocol = projectV1Object(projected.protocol, ["minimum", "maximum"]);
+  } else if (route === "GET agent-status") {
+    if (isDynamicRecord(projected.auth)) {
+      projected.auth = projectV1Object(projected.auth, ["kind", "accountType", "email"]);
+    }
+    if (Array.isArray(projected.providers)) {
+      projected.providers = projected.providers.map((provider) =>
+        projectV1Object(provider, ["provider", "state", "email", "message"]),
+      );
+    }
+    if (isDynamicRecord(projected.capabilities)) {
+      projected.capabilities = projectV1Object(projected.capabilities, ["chat", "browser", "computerUse"]);
+    }
+  } else if (route === "GET agent-usage" && Array.isArray(projected.limits)) {
+    projected.limits = projected.limits.map(projectV1UsageLimit);
+  } else if (route === "POST routines" || route === "PATCH routine" || route === "POST routine-test") {
+    return projectV1RoutineValue(projected);
+  }
+  return projected;
+}
+
+function hasTeamProtocolV1HttpRequestProjection(
+  route: TeamProtocolV1HttpRoute,
+): route is keyof typeof TEAM_PROTOCOL_V1_HTTP_REQUEST_KEYS {
+  return Object.hasOwn(TEAM_PROTOCOL_V1_HTTP_REQUEST_KEYS, route);
+}
+
+function hasTeamProtocolV1HttpResponseProjection(
+  route: TeamProtocolV1HttpRoute,
+): route is keyof typeof TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS {
+  return Object.hasOwn(TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS, route);
+}
+
+function projectV1Bot(value: unknown): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, V1_BOT_KEYS);
+  if (isDynamicRecord(projected.marketplaceSource)) {
+    projected.marketplaceSource = projectV1Object(projected.marketplaceSource, [
+      "agentId",
+      "versionId",
+      "version",
+      "skillIds",
+      "routineIds",
+    ]);
+  }
+  return projected;
+}
+
+function projectV1UsageLimit(value: unknown): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, ["id", "primary", "secondary"]);
+  for (const key of ["primary", "secondary"] as const) {
+    if (isDynamicRecord(projected[key])) {
+      projected[key] = projectV1Object(projected[key], ["usedPercent", "windowDurationMins", "resetsAt"]);
+    }
+  }
+  return projected;
+}
+
+function projectV1RoutineValue(value: TeamProtocolV1JsonObject): TeamProtocolV1JsonObject {
+  const projected = { ...value };
+  const trigger = projected.trigger;
+  if (isDynamicRecord(trigger)) {
+    const projectedTrigger = projectV1Object(trigger, [
+      "id",
+      "routineId",
+      "schedule",
+      "nextRunAt",
+      "createdAt",
+      "updatedAt",
+    ]);
+    if (isDynamicRecord(projectedTrigger.schedule)) {
+      projectedTrigger.schedule = projectV1RoutineSchedule(projectedTrigger.schedule);
+    }
+    projected.trigger = projectedTrigger;
+  }
+  return projected;
+}
+
+function projectV1Object(value: unknown, wireKeys: readonly string[]): TeamProtocolV1JsonObject {
+  if (!isDynamicRecord(value)) return {};
+  const projected: TeamProtocolV1JsonObject = {};
+  for (const key of wireKeys) {
+    const item = value[key];
+    if (item !== undefined && isTeamProtocolV1JsonValue(item)) projected[key] = item;
+  }
+  return projected;
+}
+
+function projectV1RoutineSchedule(value: DynamicRecord): TeamProtocolV1JsonObject {
+  const common = ["kind"];
+  switch (value.kind) {
+    case "hourly":
+      return projectV1Object(value, [...common, "minute"]);
+    case "daily":
+    case "weekdays":
+      return projectV1Object(value, [...common, "time"]);
+    case "weekly":
+      return projectV1Object(value, [...common, "weekday", "time"]);
+    case "monthly":
+      return projectV1Object(value, [...common, "day", "time"]);
+    case "interval":
+      return projectV1Object(value, [...common, "amount", "unit", "anchorAt"]);
+    case "advanced":
+      return projectV1Object(value, [...common, "months", "days", "time"]);
+    case "custom":
+      return projectV1Object(value, [...common, "expression"]);
+    default:
+      return projectV1Object(value, common);
+  }
 }
 
 function teamProtocolV1HttpRoute(method: string, path: string): TeamProtocolV1HttpRoute | null {

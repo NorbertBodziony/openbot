@@ -132,4 +132,42 @@ describe("Team protocol v1", () => {
       decodeTeamProtocolV1HttpResponse("GET", "/v1/me", 200, { ...hostHttpResponseFixture, role: 1 }),
     ).toThrow("Invalid Team protocol v1 HTTP response");
   });
+
+  it("projects current values to frozen v1 fields", () => {
+    expect(
+      decodeTeamProtocolV1HttpResponse("GET", "/v1/me", 200, {
+        ...hostHttpResponseFixture,
+        futureCurrentField: "must not cross the wire",
+      }),
+    ).toEqual(hostHttpResponseFixture);
+
+    const status = decodeTeamProtocolV1CurrentEvent({
+      type: "status",
+      futureEventField: true,
+      status: {
+        phase: "ready",
+        cliVersion: "1.0.0",
+        auth: { kind: "unknown", futureAuthField: true },
+        capabilities: { chat: "ready", browser: "ready", computerUse: "ready", futureCapability: "ready" },
+        message: null,
+        fullAccess: true,
+        futureStatusField: true,
+      },
+    });
+
+    expect(status).toEqual({
+      kind: "known",
+      event: {
+        type: "status",
+        status: {
+          phase: "ready",
+          cliVersion: "1.0.0",
+          auth: { kind: "unknown" },
+          capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+          message: null,
+          fullAccess: true,
+        },
+      },
+    });
+  });
 });
