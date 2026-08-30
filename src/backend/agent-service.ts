@@ -2537,7 +2537,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.#mailbox.discardStagedGeneratedAttachments(attachments.map((attachment) => attachment.id));
       throw error;
     }
-    this.#emit({ type: "conversation", snapshot: structuredClone(snapshot) });
+    try {
+      this.#emit({ type: "conversation", snapshot: structuredClone(snapshot) });
+    } catch (error) {
+      try {
+        this.#emitError("conversation_publication_failed", error, senderBotId);
+      } catch {
+        // A committed attachment remains successful even if event listeners fail.
+      }
+    }
     return openBotToolResult({
       status: "attached",
       messageId,

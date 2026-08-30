@@ -2800,9 +2800,12 @@ describe.sequential("AgentService", () => {
         throw new Error("conversation listener failed");
       }
     };
+    const publicationEvents: AgentEvent[] = [];
+    const recordPublicationEvent = (event: AgentEvent) => publicationEvents.push(event);
     service.on("event", publicationFailure);
+    service.on("event", recordPublicationEvent);
     const publicationCallId = "publication-failure-call";
-    const publicationFailed = await callOpenBotTool(
+    const publicationResult = await callOpenBotTool(
       client,
       threadId,
       "attach_files_to_response",
@@ -2811,20 +2814,18 @@ describe.sequential("AgentService", () => {
       publicationCallId,
     );
     service.off("event", publicationFailure);
-    expect(publicationFailed.error?.message).toContain("conversation listener failed");
-
-    const publicationRetry = await callOpenBotTool(
-      client,
-      threadId,
-      "attach_files_to_response",
-      { paths: [publishedPath] },
-      turnId,
-      publicationCallId,
-    );
-    expect(openBotToolPayload(publicationRetry.result)).toMatchObject({
+    service.off("event", recordPublicationEvent);
+    expect(openBotToolPayload(publicationResult.result)).toMatchObject({
       status: "attached",
       attachments: [{ name: "published-screenshot.png" }],
     });
+    expect(publicationEvents).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "conversation_publication_failed",
+        message: "conversation listener failed",
+      }),
+    );
     const publishedMessage = (await service.readConversation("chief")).messages.find((candidate) =>
       candidate.attachments?.some((attachment) => attachment.name === "published-screenshot.png"),
     );
