@@ -206,23 +206,16 @@ function projectTeamProtocolV1Event(value: DynamicRecord): DynamicRecord {
       }
       break;
     case "bots-changed":
-      if (Array.isArray(projected.bots))
-        projected.bots = projected.bots.map((bot) => projectV1Object(bot, V1_BOT_KEYS));
+      if (Array.isArray(projected.bots)) projected.bots = projected.bots.map(projectV1Bot);
       break;
     case "sidebar-layout-changed":
       if (isDynamicRecord(projected.layout)) {
-        projected.layout = projectV1Object(projected.layout, TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS["GET sidebar-layout"]);
+        projected.layout = projectV1SidebarLayout(projected.layout);
       }
       break;
     case "conversation":
       if (isDynamicRecord(projected.snapshot)) {
-        projected.snapshot = projectV1Object(projected.snapshot, [
-          "botId",
-          "threadId",
-          "activeTurnId",
-          "revision",
-          "messages",
-        ]);
+        projected.snapshot = projectV1Conversation(projected.snapshot, false, false);
       }
       break;
     case "conversation-page":
@@ -232,22 +225,21 @@ function projectTeamProtocolV1Event(value: DynamicRecord): DynamicRecord {
       break;
     case "queue-changed":
       if (isDynamicRecord(projected.snapshot)) {
-        projected.snapshot = projectTeamProtocolV1HttpResponse("GET queue", projected.snapshot);
+        projected.snapshot = projectV1QueueSnapshot(projected.snapshot);
       }
+      break;
+    case "prompt":
+      if (Array.isArray(projected.questions)) projected.questions = projected.questions.map(projectV1PromptQuestion);
+      break;
+    case "browser-takeover-requested":
+      if (isDynamicRecord(projected.request)) projected.request = projectV1BrowserTakeover(projected.request);
+      break;
+    case "approval":
+      if (isDynamicRecord(projected.approval)) projected.approval = projectV1Approval(projected.approval, false);
       break;
     case "runtime-snapshot":
       if (isDynamicRecord(projected.snapshot)) {
-        projected.snapshot = projectV1Object(projected.snapshot, [
-          "bots",
-          "activeTurns",
-          "work",
-          "latestMessages",
-          "attentionComplete",
-          "pendingPrompts",
-          "pendingApprovals",
-          "pendingBrowserTakeovers",
-          "failedTurns",
-        ]);
+        projected.snapshot = projectV1RuntimeSnapshot(projected.snapshot);
       }
       break;
     case "browser-changed":
@@ -257,7 +249,7 @@ function projectTeamProtocolV1Event(value: DynamicRecord): DynamicRecord {
       break;
     case "browser-control-changed":
       if (isDynamicRecord(projected.state)) {
-        projected.state = projectV1Object(projected.state, TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS["GET browser-control"]);
+        projected.state = projectV1BrowserControl(projected.state);
       }
       break;
     case "team-presence":
@@ -504,13 +496,11 @@ function isV1ConversationMessage(value: unknown): boolean {
       isV1Identifier(value.replyToMessageId)) &&
     (value.attachments === undefined || isV1Attachments(value.attachments)) &&
     (value.delivery === undefined || isV1ConversationDelivery(value.delivery)) &&
-    (value.exchange === undefined || isTeamProtocolV1JsonObject(value.exchange)) &&
+    (value.exchange === undefined || isV1Exchange(value.exchange)) &&
     (value.reaction === undefined || value.reaction === null || isV1BoundedString(value.reaction, 32)) &&
     (value.reactions === undefined ||
-      (Array.isArray(value.reactions) &&
-        value.reactions.length <= 100 &&
-        value.reactions.every(isTeamProtocolV1JsonObject))) &&
-    (value.routine === undefined || isTeamProtocolV1JsonObject(value.routine)) &&
+      (Array.isArray(value.reactions) && value.reactions.length <= 100 && value.reactions.every(isV1Reaction))) &&
+    (value.routine === undefined || isV1RoutineReference(value.routine)) &&
     (value.imageGeneration === undefined || isV1ImageGeneration(value.imageGeneration)) &&
     (value.questionPrompt === undefined || isV1ConversationQuestionPrompt(value.questionPrompt))
   );
@@ -522,6 +512,47 @@ function isV1ConversationDelivery(value: unknown): boolean {
     isV1Identifier(value.id) &&
     isV1QueueStatus(value.status) &&
     isV1QueuePosition(value.position)
+  );
+}
+
+function isV1Exchange(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1OneOf(["incoming", "outgoing"], value.direction) &&
+    isV1Identifier(value.messageId) &&
+    isV1Identifier(value.senderBotId) &&
+    isV1IdentifierList(value.recipientBotIds, 100) &&
+    (value.replyToMessageId === null || isV1Identifier(value.replyToMessageId)) &&
+    Array.isArray(value.deliveries) &&
+    value.deliveries.length <= 100 &&
+    value.deliveries.every(
+      (delivery) =>
+        isDynamicRecord(delivery) &&
+        isV1Identifier(delivery.id) &&
+        isV1Identifier(delivery.recipientBotId) &&
+        isV1QueueStatus(delivery.status) &&
+        isV1QueuePosition(delivery.position) &&
+        (delivery.error === null || isV1BoundedString(delivery.error, 100_000)),
+    )
+  );
+}
+
+function isV1Reaction(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1BoundedString(value.emoji, 32) &&
+    isDynamicRecord(value.actor) &&
+    (value.actor.kind === "user" || (value.actor.kind === "bot" && isV1Identifier(value.actor.botId)))
+  );
+}
+
+function isV1RoutineReference(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.routineId) &&
+    isV1Identifier(value.runId) &&
+    isV1LimitedString(value.name, 160) &&
+    isV1Timestamp(value.scheduledFor)
   );
 }
 
@@ -542,7 +573,23 @@ function isV1ConversationQuestionPrompt(value: unknown): boolean {
     Array.isArray(value.questions) &&
     value.questions.length <= 32 &&
     value.questions.every(isV1PromptQuestion) &&
-    (value.resolution === null || isTeamProtocolV1JsonObject(value.resolution))
+    (value.resolution === null || isV1PromptResolution(value.resolution))
+  );
+}
+
+function isV1PromptResolution(value: unknown): boolean {
+  if (!isDynamicRecord(value)) return false;
+  if (value.status === "cancelled" || value.status === "expired") return true;
+  return (
+    value.status === "answered" &&
+    isDynamicRecord(value.responses) &&
+    Object.values(value.responses).every(
+      (response) =>
+        isDynamicRecord(response) &&
+        (response.status === "skipped" ||
+          (response.status === "answered" &&
+            (response.answers === undefined || (Array.isArray(response.answers) && response.answers.every(isString))))),
+    )
   );
 }
 
@@ -1297,17 +1344,7 @@ export function decodeTeamProtocolV1HttpResponse(
     if (!isTeamProtocolV1JsonObject(value) || !isString(value.error)) {
       throw new Error("Invalid Team protocol v1 HTTP error response.");
     }
-    const projected = projectV1Object(value, ["error", "code", "host", "client"]);
-    if (isDynamicRecord(projected.host)) {
-      projected.host = projectV1Object(projected.host, ["appVersion", "protocol", "capabilities"]);
-      if (isDynamicRecord(projected.host.protocol)) {
-        projected.host.protocol = projectV1Object(projected.host.protocol, ["minimum", "maximum"]);
-      }
-    }
-    if (isDynamicRecord(projected.client)) {
-      projected.client = projectV1Object(projected.client, ["appVersion", "protocol"]);
-    }
-    return projected;
+    return projectTeamProtocolV1Error(value);
   }
   const route = teamProtocolV1HttpRoute(method, path);
   if (!route) throw new Error("Invalid Team protocol v1 HTTP response.");
@@ -1385,6 +1422,8 @@ function projectTeamProtocolV1HttpResponse(
     Array.isArray(projected.messages)
   ) {
     projected.messages = projected.messages.map((message) => projectV1Object(message, V1_DIRECT_MESSAGE_KEYS));
+    if (isDynamicRecord(projected.readState)) projected.readState = projectV1DirectReadState(projected.readState);
+    if (isDynamicRecord(projected.pageInfo)) projected.pageInfo = projectV1PageInfo(projected.pageInfo);
   } else if (route === "GET compatibility" && isDynamicRecord(projected.protocol)) {
     projected.protocol = projectV1Object(projected.protocol, ["minimum", "maximum"]);
   } else if (route === "GET agent-status") {
@@ -1392,17 +1431,33 @@ function projectTeamProtocolV1HttpResponse(
       projected.auth = projectV1Object(projected.auth, ["kind", "accountType", "email"]);
     }
     if (Array.isArray(projected.providers)) {
-      projected.providers = projected.providers.map((provider) =>
-        projectV1Object(provider, ["provider", "state", "email", "message"]),
-      );
+      projected.providers = projected.providers.map(projectV1ProviderStatus);
     }
     if (isDynamicRecord(projected.capabilities)) {
       projected.capabilities = projectV1Object(projected.capabilities, ["chat", "browser", "computerUse"]);
     }
   } else if (route === "GET agent-usage" && Array.isArray(projected.limits)) {
     projected.limits = projected.limits.map(projectV1UsageLimit);
+  } else if (route === "GET sidebar-layout" || route === "POST sidebar-action") {
+    return projectV1SidebarLayout(projected);
+  } else if (route === "GET remote-capabilities" && Array.isArray(projected.displays)) {
+    projected.displays = projected.displays.map(projectV1RemoteDisplay);
+  } else if (route === "POST remote-session") {
+    if (Array.isArray(projected.displays)) projected.displays = projected.displays.map(projectV1RemoteDisplay);
+  } else if (route === "GET browser-control") {
+    return projectV1BrowserControl(projected);
   } else if (route === "POST routines" || route === "PATCH routine" || route === "POST routine-test") {
     return projectV1RoutineValue(projected);
+  } else if (route === "GET conversation") {
+    return projectV1Conversation(projected, false, true);
+  } else if (route === "GET conversation-page") {
+    return projectV1Conversation(projected, true);
+  } else if (route === "GET message-search") {
+    return projectV1ConversationSearch(projected);
+  } else if (route === "GET queue") {
+    return projectV1QueueSnapshot(projected);
+  } else if (route === "POST messages") {
+    return projectV1QueuedMessageReceipt(projected);
   }
   return projected;
 }
@@ -1419,6 +1474,51 @@ function hasTeamProtocolV1HttpResponseProjection(
   return Object.hasOwn(TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS, route);
 }
 
+const V1_HTTP_ERROR_CODES = new Set([
+  "client_update_required",
+  "host_update_required",
+  "protocol_error",
+  "host_unavailable",
+  "host_permissions_required",
+  "session_capacity_reached",
+  "session_expired",
+  "session_revoked",
+  "protocol_mismatch",
+  "connection_failed",
+]);
+
+function projectTeamProtocolV1Error(value: TeamProtocolV1JsonObject): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, ["error", "code", "host", "client"]);
+  if (!isV1BoundedString(projected.error, 100_000)) throw new Error("Invalid Team protocol v1 HTTP error response.");
+  if (projected.code !== undefined && (!isString(projected.code) || !V1_HTTP_ERROR_CODES.has(projected.code))) {
+    throw new Error("Invalid Team protocol v1 HTTP error response.");
+  }
+  if (projected.host !== undefined) {
+    if (!isDynamicRecord(projected.host)) throw new Error("Invalid Team protocol v1 HTTP error response.");
+    const host = projectV1Object(projected.host, ["appVersion", "protocol", "capabilities"]);
+    if (isDynamicRecord(host.protocol)) host.protocol = projectV1Object(host.protocol, ["minimum", "maximum"]);
+    try {
+      const decoded = decodeTeamProtocolSupportV1(host);
+      projected.host = {
+        appVersion: decoded.appVersion,
+        protocol: { minimum: decoded.protocol.minimum, maximum: decoded.protocol.maximum },
+        capabilities: decoded.capabilities,
+      };
+    } catch {
+      throw new Error("Invalid Team protocol v1 HTTP error response.");
+    }
+  }
+  if (projected.client !== undefined) {
+    if (!isDynamicRecord(projected.client)) throw new Error("Invalid Team protocol v1 HTTP error response.");
+    const client = projectV1Object(projected.client, ["appVersion", "protocol"]);
+    if (!isV1BoundedString(client.appVersion, 64) || !isProtocolVersion(client.protocol)) {
+      throw new Error("Invalid Team protocol v1 HTTP error response.");
+    }
+    projected.client = client;
+  }
+  return projected;
+}
+
 function projectV1Bot(value: unknown): TeamProtocolV1JsonObject {
   const projected = projectV1Object(value, V1_BOT_KEYS);
   if (isDynamicRecord(projected.marketplaceSource)) {
@@ -1431,6 +1531,304 @@ function projectV1Bot(value: unknown): TeamProtocolV1JsonObject {
     ]);
   }
   return projected;
+}
+
+function projectV1SidebarLayout(value: unknown): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS["GET sidebar-layout"]);
+  if (Array.isArray(projected.sections)) {
+    projected.sections = projected.sections.map((section) => projectV1Object(section, ["id", "name"]));
+  }
+  return projected;
+}
+
+function projectV1Conversation(value: unknown, page: boolean, includeReadState = true): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(
+    value,
+    page
+      ? TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS["GET conversation-page"]
+      : TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS["GET conversation"],
+  );
+  if (Array.isArray(projected.messages)) projected.messages = projected.messages.map(projectV1ConversationMessage);
+  if (!includeReadState) delete projected.readState;
+  else if (isDynamicRecord(projected.readState))
+    projected.readState = projectV1ConversationReadState(projected.readState);
+  if (page && isDynamicRecord(projected.references)) {
+    projected.references = Object.fromEntries(
+      Object.entries(projected.references).map(([id, message]) => [id, projectV1ConversationMessage(message)]),
+    );
+  }
+  if (page && isDynamicRecord(projected.pageInfo)) projected.pageInfo = projectV1PageInfo(projected.pageInfo);
+  return projected;
+}
+
+function projectV1ConversationMessage(value: unknown): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, [
+    "id",
+    "turnId",
+    "author",
+    "text",
+    "createdAt",
+    "status",
+    "itemType",
+    "source",
+    "senderBotId",
+    "replyToMessageId",
+    "attachments",
+    "imageGeneration",
+    "delivery",
+    "exchange",
+    "reaction",
+    "reactions",
+    "routine",
+    "questionPrompt",
+  ]);
+  if (Array.isArray(projected.attachments)) projected.attachments = projected.attachments.map(projectV1Attachment);
+  if (isDynamicRecord(projected.delivery)) {
+    projected.delivery = projectV1Object(projected.delivery, ["id", "status", "position"]);
+  }
+  if (isDynamicRecord(projected.exchange)) projected.exchange = projectV1Exchange(projected.exchange);
+  if (Array.isArray(projected.reactions)) projected.reactions = projected.reactions.map(projectV1Reaction);
+  if (isDynamicRecord(projected.routine)) {
+    projected.routine = projectV1Object(projected.routine, ["routineId", "runId", "name", "scheduledFor"]);
+  }
+  if (isDynamicRecord(projected.imageGeneration)) {
+    projected.imageGeneration = projectV1Object(projected.imageGeneration, [
+      "prompt",
+      "resolution",
+      "aspectRatio",
+      "error",
+    ]);
+  }
+  if (isDynamicRecord(projected.questionPrompt)) {
+    projected.questionPrompt = projectV1ConversationQuestionPrompt(projected.questionPrompt);
+  }
+  return projected;
+}
+
+function projectV1Exchange(value: DynamicRecord): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, [
+    "direction",
+    "messageId",
+    "senderBotId",
+    "recipientBotIds",
+    "replyToMessageId",
+    "deliveries",
+  ]);
+  if (Array.isArray(projected.deliveries)) {
+    projected.deliveries = projected.deliveries.map((delivery) =>
+      projectV1Object(delivery, ["id", "recipientBotId", "status", "position", "error"]),
+    );
+  }
+  return projected;
+}
+
+function projectV1Reaction(value: unknown): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, ["emoji", "actor"]);
+  if (isDynamicRecord(projected.actor)) projected.actor = projectV1Object(projected.actor, ["kind", "botId"]);
+  return projected;
+}
+
+function projectV1ConversationQuestionPrompt(value: DynamicRecord): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, ["requestId", "questions", "resolution"]);
+  if (Array.isArray(projected.questions)) projected.questions = projected.questions.map(projectV1PromptQuestion);
+  if (isDynamicRecord(projected.resolution)) {
+    const resolution = projectV1Object(projected.resolution, ["status", "responses"]);
+    if (isDynamicRecord(resolution.responses)) {
+      resolution.responses = Object.fromEntries(
+        Object.entries(resolution.responses).map(([id, response]) => [
+          id,
+          projectV1Object(response, ["status", "answers"]),
+        ]),
+      );
+    }
+    projected.resolution = resolution;
+  }
+  return projected;
+}
+
+function projectV1PromptQuestion(value: unknown): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, ["id", "header", "question", "isSecret", "options"]);
+  if (Array.isArray(projected.options)) {
+    projected.options = projected.options.map((option) => projectV1Object(option, ["label", "description"]));
+  }
+  return projected;
+}
+
+function projectV1ConversationReadState(value: DynamicRecord): TeamProtocolV1JsonObject {
+  return projectV1Object(value, ["unreadCount", "firstUnreadMessageId", "throughMessageId"]);
+}
+
+function projectV1DirectReadState(value: DynamicRecord): TeamProtocolV1JsonObject {
+  return projectV1Object(value, ["unreadCount", "firstUnreadMessageId", "throughSequence"]);
+}
+
+function projectV1PageInfo(value: DynamicRecord): TeamProtocolV1JsonObject {
+  return projectV1Object(value, ["hasOlder", "olderCursor"]);
+}
+
+function projectV1QueueSnapshot(value: unknown): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS["GET queue"]);
+  if (Array.isArray(projected.deliveries)) projected.deliveries = projected.deliveries.map(projectV1QueueDelivery);
+  return projected;
+}
+
+function projectV1QueueDelivery(value: unknown): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, [
+    "id",
+    "messageId",
+    "recipientBotId",
+    "sender",
+    "text",
+    "attachments",
+    "replyToMessageId",
+    "status",
+    "position",
+    "turnId",
+    "error",
+    "createdAt",
+  ]);
+  if (isDynamicRecord(projected.sender)) {
+    projected.sender = projectV1Object(projected.sender, [
+      "kind",
+      "botId",
+      "routineId",
+      "runId",
+      "routineName",
+      "scheduledFor",
+    ]);
+  }
+  if (Array.isArray(projected.attachments)) projected.attachments = projected.attachments.map(projectV1Attachment);
+  return projected;
+}
+
+function projectV1Attachment(value: unknown): TeamProtocolV1JsonObject {
+  return projectV1Object(value, ["id", "name", "size", "kind", "mimeType", "previewKind", "previewUrl"]);
+}
+
+function projectV1BrowserTakeover(value: unknown): TeamProtocolV1JsonObject {
+  return projectV1Object(value, ["requestId", "botId", "threadId", "turnId", "tabId"]);
+}
+
+function projectV1Approval(value: unknown, runtime: boolean): TeamProtocolV1JsonObject {
+  const keys = [
+    "requestId",
+    "botId",
+    "threadId",
+    "turnId",
+    "kind",
+    "command",
+    "cwd",
+    "reason",
+    "grantRoot",
+    "permissions",
+  ];
+  const projected = projectV1Object(value, runtime ? [...keys, "truncated"] : keys);
+  if (isDynamicRecord(projected.permissions)) {
+    const permissions = projectV1Object(projected.permissions, ["fileSystem", "network"]);
+    if (isDynamicRecord(permissions.fileSystem)) {
+      permissions.fileSystem = projectV1Object(permissions.fileSystem, ["read", "write"]);
+    }
+    projected.permissions = permissions;
+  }
+  return projected;
+}
+
+function projectV1RuntimeSnapshot(value: unknown): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, [
+    "bots",
+    "activeTurns",
+    "work",
+    "latestMessages",
+    "attentionComplete",
+    "pendingPrompts",
+    "pendingApprovals",
+    "pendingBrowserTakeovers",
+    "failedTurns",
+  ]);
+  if (Array.isArray(projected.bots)) {
+    projected.bots = projected.bots.map((bot) =>
+      projectV1Object(bot, [
+        "id",
+        "name",
+        "notifications",
+        "preview",
+        "updatedAt",
+        "avatarSeed",
+        "avatarHue",
+        "avatarUrl",
+      ]),
+    );
+  }
+  if (Array.isArray(projected.activeTurns)) {
+    projected.activeTurns = projected.activeTurns.map((turn) => projectV1Object(turn, ["botId", "threadId", "turnId"]));
+  }
+  if (Array.isArray(projected.work)) {
+    projected.work = projected.work.map((work) =>
+      projectV1Object(work, ["id", "botId", "turnId", "status", "text", "error"]),
+    );
+  }
+  if (Array.isArray(projected.latestMessages)) {
+    projected.latestMessages = projected.latestMessages.map((message) =>
+      projectV1Object(message, ["botId", "id", "text", "createdAt"]),
+    );
+  }
+  if (Array.isArray(projected.pendingPrompts)) {
+    projected.pendingPrompts = projected.pendingPrompts.map((prompt) => {
+      const item = projectV1Object(prompt, ["requestId", "botId", "threadId", "turnId", "questions"]);
+      if (Array.isArray(item.questions)) item.questions = item.questions.map(projectV1PromptQuestion);
+      return item;
+    });
+  }
+  if (Array.isArray(projected.pendingApprovals)) {
+    projected.pendingApprovals = projected.pendingApprovals.map((approval) => projectV1Approval(approval, true));
+  }
+  if (Array.isArray(projected.pendingBrowserTakeovers)) {
+    projected.pendingBrowserTakeovers = projected.pendingBrowserTakeovers.map(projectV1BrowserTakeover);
+  }
+  if (Array.isArray(projected.failedTurns)) {
+    projected.failedTurns = projected.failedTurns.map((turn) => projectV1Object(turn, ["botId", "turnId"]));
+  }
+  return projected;
+}
+
+function projectV1BrowserControl(value: unknown): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS["GET browser-control"]);
+  if (Array.isArray(projected.sessions)) {
+    projected.sessions = projected.sessions.map((session) =>
+      projectV1Object(session, ["id", "threadId", "turnId", "callId", "tabId", "action", "phase", "startedAt"]),
+    );
+  }
+  return projected;
+}
+
+function projectV1RemoteDisplay(value: unknown): TeamProtocolV1JsonObject {
+  return projectV1Object(value, ["id", "label", "width", "height", "primary"]);
+}
+
+function projectV1ConversationSearch(value: unknown): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS["GET message-search"]);
+  if (Array.isArray(projected.results)) {
+    projected.results = projected.results.map((result) => {
+      const item = projectV1Object(result, ["botId", "message"]);
+      if (isDynamicRecord(item.message)) item.message = projectV1ConversationMessage(item.message);
+      return item;
+    });
+  }
+  return projected;
+}
+
+function projectV1QueuedMessageReceipt(value: unknown): TeamProtocolV1JsonObject {
+  const projected = projectV1Object(value, TEAM_PROTOCOL_V1_HTTP_RESPONSE_KEYS["POST messages"]);
+  if (Array.isArray(projected.deliveries)) {
+    projected.deliveries = projected.deliveries.map((delivery) =>
+      projectV1Object(delivery, ["id", "recipientBotId", "status", "position"]),
+    );
+  }
+  return projected;
+}
+
+function projectV1ProviderStatus(value: unknown): TeamProtocolV1JsonObject {
+  return projectV1Object(value, ["id", "state", "version", "message", "email", "connectionState", "checkError"]);
 }
 
 function projectV1UsageLimit(value: unknown): TeamProtocolV1JsonObject {
@@ -2095,15 +2493,40 @@ function isV1AgentStatus(value: unknown): boolean {
     isDynamicRecord(value) &&
     isV1OneOf(["idle", "starting", "ready", "restarting", "blocked", "stopped"], value.phase) &&
     (value.cliVersion === null || isV1BoundedString(value.cliVersion, 160)) &&
-    isTeamProtocolV1JsonObject(value.auth) &&
-    (value.providers === undefined ||
-      (Array.isArray(value.providers) && value.providers.every(isTeamProtocolV1JsonObject))) &&
+    isV1AgentAuth(value.auth) &&
+    (value.providers === undefined || (Array.isArray(value.providers) && value.providers.every(isV1ProviderStatus))) &&
     isDynamicRecord(value.capabilities) &&
     isV1CapabilityState(value.capabilities.chat) &&
     isV1CapabilityState(value.capabilities.browser) &&
     isV1CapabilityState(value.capabilities.computerUse) &&
     (value.message === null || isV1BoundedString(value.message, 2_000)) &&
     value.fullAccess === true
+  );
+}
+
+function isV1AgentAuth(value: unknown): boolean {
+  if (!isDynamicRecord(value)) return false;
+  if (value.kind === "unknown" || value.kind === "signed-out") return true;
+  if (value.kind === "unsupported") return isV1BoundedString(value.accountType, 160);
+  return (
+    (value.kind === "chatgpt" || value.kind === "claude" || value.kind === "grok") &&
+    (value.email === null || isV1BoundedString(value.email, 254))
+  );
+}
+
+function isV1ProviderStatus(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1OneOf(["codex", "claude", "grok"], value.id) &&
+    isV1OneOf(
+      ["not-started", "checking", "available", "sign-in-required", "not-installed", "outdated", "error"],
+      value.state,
+    ) &&
+    (value.version === null || isV1BoundedString(value.version, 160)) &&
+    (value.message === null || isV1BoundedString(value.message, 2_000)) &&
+    (value.email === undefined || value.email === null || isV1BoundedString(value.email, 254)) &&
+    (value.connectionState === undefined || value.connectionState === "connecting") &&
+    (value.checkError === undefined || value.checkError === null || isV1BoundedString(value.checkError, 2_000))
   );
 }
 

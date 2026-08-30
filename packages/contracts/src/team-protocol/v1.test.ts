@@ -169,5 +169,94 @@ describe("Team protocol v1", () => {
         },
       },
     });
+
+    const conversation = decodeTeamProtocolV1HttpResponse("GET", "/v1/agents/bot-1/conversation", 200, {
+      botId: "bot-1",
+      threadId: "thread-1",
+      activeTurnId: null,
+      revision: 1,
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+      messages: [
+        {
+          id: "message-1",
+          text: "Hello",
+          createdAt: "2026-08-30T12:00:00.000Z",
+          author: "user",
+          status: "completed",
+          futureMessageField: true,
+          attachments: [
+            {
+              id: "attachment-1",
+              name: "note.txt",
+              size: 4,
+              kind: "file",
+              mimeType: "text/plain",
+              previewKind: "text",
+              previewUrl: null,
+              futureAttachmentField: true,
+            },
+          ],
+        },
+      ],
+    });
+    expect(conversation).toMatchObject({
+      messages: [{ id: "message-1", attachments: [{ id: "attachment-1" }] }],
+    });
+    expect(JSON.stringify(conversation)).not.toContain("future");
+
+    const runtime = decodeTeamProtocolV1CurrentEvent({
+      type: "runtime-snapshot",
+      snapshot: {
+        bots: [],
+        activeTurns: [],
+        work: [],
+        latestMessages: [],
+        attentionComplete: false,
+        pendingPrompts: [
+          {
+            requestId: "request-1",
+            botId: "bot-1",
+            threadId: "thread-1",
+            turnId: "turn-1",
+            futurePromptField: true,
+            questions: [
+              {
+                id: "question-1",
+                header: "Scope",
+                question: "Continue?",
+                isSecret: false,
+                options: null,
+                futureQuestionField: true,
+              },
+            ],
+          },
+        ],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    });
+    expect(runtime.kind).toBe("known");
+    expect(JSON.stringify(runtime)).not.toContain("future");
+  });
+
+  it("rejects malformed v1 HTTP error envelopes", () => {
+    expect(() =>
+      decodeTeamProtocolV1HttpResponse("GET", "/v1/me", 426, {
+        error: "Update required.",
+        code: "future_error_code",
+      }),
+    ).toThrow("Invalid Team protocol v1 HTTP error response");
+    expect(() =>
+      decodeTeamProtocolV1HttpResponse("GET", "/v1/me", 426, {
+        error: "Update required.",
+        code: "client_update_required",
+        host: {
+          appVersion: "1.0.0",
+          protocol: { minimum: 2, maximum: 1 },
+          capabilities: [],
+        },
+      }),
+    ).toThrow("Invalid Team protocol v1 HTTP error response");
   });
 });
