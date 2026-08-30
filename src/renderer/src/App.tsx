@@ -903,21 +903,7 @@ export function createAppController(props: AppProps = {}) {
                 setAgentChatOpenRevision((current) => current + 1);
               } else {
                 agentChatsToMarkRead.delete(trackingKey);
-                const latestIncomingMessage = liveMessages()
-                  [botId]?.filter(
-                    (message) =>
-                      message.author !== "you" &&
-                      message.itemType !== "commentary" &&
-                      message.itemType !== "agent_attachment" &&
-                      !message.id.startsWith("thinking:") &&
-                      !message.id.startsWith("ui-"),
-                  )
-                  .at(-1);
-                if (latestIncomingMessage) {
-                  void markAgentMessagesRead(botId, latestIncomingMessage.id, serverId).catch((error) =>
-                    appendUiError(botId, error, "Read state failed"),
-                  );
-                }
+                markLatestVisibleAgentMessageRead(botId, serverId);
               }
             }
             return;
@@ -941,7 +927,9 @@ export function createAppController(props: AppProps = {}) {
           }
         })
         .catch((error) => {
-          if (activeServerSidebarKey() === serverId) appendUiError(botId, error, "Load failed");
+          if (activeServerSidebarKey() !== serverId || conversationPageRequests.get(botId) !== pageRequest) return;
+          appendUiError(botId, error, "Load failed");
+          if (agentChatsToMarkRead.delete(trackingKey)) markLatestVisibleAgentMessageRead(botId, serverId);
         });
     },
   );
@@ -1256,6 +1244,23 @@ export function createAppController(props: AppProps = {}) {
 
   function agentConversationKey(serverId: string, botId: string): string {
     return `${serverId}\0${botId}`;
+  }
+
+  function markLatestVisibleAgentMessageRead(botId: string, serverId: string): void {
+    const latestIncomingMessage = liveMessages()
+      [botId]?.filter(
+        (message) =>
+          message.author !== "you" &&
+          message.itemType !== "commentary" &&
+          message.itemType !== "agent_attachment" &&
+          !message.id.startsWith("thinking:") &&
+          !message.id.startsWith("ui-"),
+      )
+      .at(-1);
+    if (!latestIncomingMessage) return;
+    void markAgentMessagesRead(botId, latestIncomingMessage.id, serverId).catch((error) =>
+      appendUiError(botId, error, "Read state failed"),
+    );
   }
 
   function refreshAgentReadStateAfterFailure(
@@ -1620,7 +1625,9 @@ export function createAppController(props: AppProps = {}) {
     }
     setActiveDirectMemberId(null);
     clearReplyIndicators(botId);
-    agentChatsToMarkRead.add(agentConversationKey(activeServerSidebarKey(), botId));
+    const trackingKey = agentConversationKey(activeServerSidebarKey(), botId);
+    autoReadAgentMessages.delete(trackingKey);
+    agentChatsToMarkRead.add(trackingKey);
     agentChatsRetriedOnOpen.delete(botId);
     explicitlyOpenedAgentChatId = botId;
     setActiveBotId(botId);

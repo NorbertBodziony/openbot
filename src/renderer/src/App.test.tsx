@@ -6083,6 +6083,102 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.agent.listQueue).toHaveBeenCalledTimes(queueCallsBeforeOpen);
   });
 
+  it("applies an explicit read after an older automatic read", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const firstPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-automatic-first",
+          author: "assistant",
+          text: "First automatic reply",
+          createdAt: "2026-08-30T02:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-automatic-first", throughMessageId: null },
+      },
+    );
+    emitAgentEvent?.({ type: "conversation-page", page: firstPage });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await screen.findByRole("heading", { name: "Sales Outbound" });
+    const newerPage = testConversationPage(
+      "chief",
+      [
+        ...firstPage.messages,
+        {
+          id: "reply-explicit-newer",
+          author: "assistant",
+          text: "Newer reply while closed",
+          createdAt: "2026-08-30T02:04:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 3,
+        readState: {
+          unreadCount: 1,
+          firstUnreadMessageId: "reply-explicit-newer",
+          throughMessageId: "reply-automatic-first",
+        },
+      },
+    );
+    emitAgentEvent?.({ type: "conversation-page", page: newerPage });
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValueOnce(newerPage);
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(
+        2,
+        { botId: "chief", throughMessageId: "reply-explicit-newer" },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("marks the latest visible reply when a chat-open reload fails", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await screen.findByRole("heading", { name: "Sales Outbound" });
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-before-load-failure",
+            author: "assistant",
+            text: "Visible reply before load failure",
+            createdAt: "2026-08-30T02:04:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-before-load-failure", throughMessageId: null },
+        },
+      ),
+    });
+    vi.mocked(window.openbot.agent.readConversationPage).mockRejectedValueOnce(new Error("Reload unavailable"));
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    expect(await screen.findByText("Reload unavailable")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        { botId: "chief", throughMessageId: "reply-before-load-failure" },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
   it("rejects a permission approval and keeps the error visible", async () => {
     vi.mocked(window.openbot.agent.respondToApproval).mockRejectedValueOnce(
       new Error("This approval is no longer active."),
