@@ -1232,6 +1232,38 @@ export function createAppController(props: AppProps = {}) {
     return `${serverId}\0${botId}`;
   }
 
+  function refreshAgentReadStateAfterFailure(
+    botId: string,
+    messageId: string,
+    serverId: string,
+    minimumRevision: number,
+    fallbackState: ConversationReadState | null,
+  ): void {
+    const trackingKey = agentConversationKey(serverId, botId);
+    const applyFallback = () => {
+      if (activeServerSidebarKey() !== serverId || autoReadAgentMessages.has(trackingKey) || !fallbackState) return;
+      const latest = conversationReads()[botId];
+      if (latest?.unreadCount === 0 && latest.throughMessageId === messageId) {
+        applyConversationReadState(botId, fallbackState);
+      }
+    };
+    void window.openbot.agent
+      .readConversationPage({ botId, anchor: { type: "latest" }, limit: 1 }, serverId)
+      .then((page) => {
+        if (
+          activeServerSidebarKey() !== serverId ||
+          autoReadAgentMessages.has(trackingKey) ||
+          page.revision < minimumRevision ||
+          !page.readState
+        ) {
+          applyFallback();
+          return;
+        }
+        applyConversationReadState(botId, page.readState);
+      })
+      .catch(applyFallback);
+  }
+
   function autoMarkAgentMessageRead(botId: string, messageId: string, optimisticallyClearUnread = false): void {
     const serverId = activeServerSidebarKey();
     const trackingKey = agentConversationKey(serverId, botId);
@@ -1266,15 +1298,13 @@ export function createAppController(props: AppProps = {}) {
       autoReadAgentMessages.delete(trackingKey);
       agentChatsToRetryRead.add(trackingKey);
       if (activeServerSidebarKey() !== serverId) return;
-      const latest = conversationReads()[botId];
-      if (
-        optimisticallyCleared &&
-        rollbackState &&
-        latest?.unreadCount === 0 &&
-        latest.throughMessageId === messageId
-      ) {
-        applyConversationReadState(botId, rollbackState);
-      }
+      refreshAgentReadStateAfterFailure(
+        botId,
+        messageId,
+        serverId,
+        conversationRevisions()[botId] ?? -1,
+        optimisticallyCleared ? rollbackState : null,
+      );
       appendUiError(botId, error, "Read state failed");
     });
   }

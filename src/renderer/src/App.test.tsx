@@ -5565,6 +5565,24 @@ describe("OpenBot connected desktop shell", () => {
 
     resolveFirstRead?.({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-read-a" });
     await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledTimes(2));
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValueOnce(
+      testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-read-b",
+            author: "assistant",
+            text: "Newer queued reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 3,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-read-b", throughMessageId: "reply-read-a" },
+        },
+      ),
+    );
     rejectSecondRead?.(new Error("Newer read unavailable"));
 
     expect(await screen.findByText("Newer read unavailable")).toBeInTheDocument();
@@ -5591,6 +5609,7 @@ describe("OpenBot connected desktop shell", () => {
         readState: { unreadCount: 1, firstUnreadMessageId: "reply-read-retry", throughMessageId: null },
       },
     );
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValueOnce(page);
 
     emitAgentEvent?.({ type: "conversation-page", page });
     expect(await screen.findByText("Read unavailable")).toBeInTheDocument();
