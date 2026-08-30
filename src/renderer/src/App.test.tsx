@@ -3353,16 +3353,16 @@ describe("OpenBot connected desktop shell", () => {
       ownerThreadId: "thread-chief",
       ownerBotId: "chief",
     };
-    let resolveInitialTabs: (tabs: BrowserTab[]) => void = () => undefined;
-    vi.mocked(window.openbot.browser.listTabs).mockReturnValueOnce(
+    let resolveInitialState: (state: { tabs: BrowserTab[]; activeTabId: string | null }) => void = () => undefined;
+    vi.mocked(window.openbot.browser.getDisplayState).mockReturnValueOnce(
       new Promise((resolve) => {
-        resolveInitialTabs = resolve;
+        resolveInitialState = resolve;
       }),
     );
 
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    await waitFor(() => expect(window.openbot.browser.listTabs).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(window.openbot.browser.getDisplayState).toHaveBeenCalledTimes(1));
     emitAgentEvent?.({
       type: "browser-changed",
       tabs: [googleTab, substackTab],
@@ -3372,11 +3372,42 @@ describe("OpenBot connected desktop shell", () => {
     const substackTrigger = await screen.findByRole("tab", { name: "Substack | Chat" });
     expect(substackTrigger).toHaveAttribute("aria-selected", "true");
 
-    resolveInitialTabs([googleTab]);
+    resolveInitialState({ tabs: [googleTab], activeTabId: googleTab.id });
 
     await waitFor(() => expect(substackTrigger).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByRole("tab", { name: "Google" })).toHaveAttribute("aria-selected", "false");
     expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://substack.com/chat");
+  });
+
+  it("restores the active embedded browser tab from the local display state", async () => {
+    const firstTab: BrowserTab = {
+      id: "tab-first",
+      title: "First tab",
+      url: "https://example.com/first",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const activeTab: BrowserTab = {
+      id: "tab-active",
+      title: "Active tab",
+      url: "https://example.com/active",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    vi.mocked(window.openbot.browser.getDisplayState).mockResolvedValueOnce({
+      tabs: [firstTab, activeTab],
+      activeTabId: activeTab.id,
+    });
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+
+    expect(await screen.findByRole("tab", { name: "Active tab" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "First tab" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://example.com/active");
   });
 
   it("restores desktop Picture in Picture per conversation without overriding it during agent control", async () => {

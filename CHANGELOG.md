@@ -5,6 +5,10 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore embedded X sign-in with persistent cookie consent, a compatible browser identity, and current login routing.
+
 ## [0.4.0] - 2026-08-30
 
 ### Added

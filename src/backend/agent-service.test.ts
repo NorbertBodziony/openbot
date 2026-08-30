@@ -358,6 +358,9 @@ describe.sequential("AgentService", () => {
       expect(params.developerInstructions).toContain(
         "You may list, read, create, edit, move, and delete files and run local commands in both directories.",
       );
+      expect(params.developerInstructions).not.toContain("For every browser task");
+      expect(params.developerInstructions).not.toContain("Use the installed Computer Use plugin only");
+      expect(params.developerInstructions).toContain("When you use openbot_browser");
       expect(params.developerInstructions).toContain("openbot.create_routine");
       expect(params.developerInstructions).toContain("openbot.attach_files_to_response");
       expect(params.developerInstructions).toContain("sadness, disappointment, frustration, loneliness");
@@ -3086,6 +3089,27 @@ describe.sequential("AgentService", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "error", code: "delivery_start_unconfirmed" }));
   });
 
+  it("keeps a completed turn idle when its start response arrives after lifecycle events", async () => {
+    process.env.OPENBOT_FAKE_AUTO_COMPLETE = "Finished before the start response";
+    process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY = "100";
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    await service.sendMessage({ botId: "chief", text: "Run exactly once" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const delivery = service.listQueue("chief").deliveries[0];
+    if (!delivery?.turnId) throw new Error("The completed delivery did not have a turn.");
+    expect((await service.readConversation("chief")).activeTurnId).toBeNull();
+    expect(
+      store.database.connection
+        .prepare("SELECT status, completed_at FROM projection_turns WHERE turn_id = ?")
+        .get(delivery.turnId),
+    ).toMatchObject({ status: "completed", completed_at: expect.any(String) });
+  });
+
   it("resumes stored threads and does not replay an uncertain running delivery", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
@@ -3295,6 +3319,12 @@ describe.sequential("AgentService", () => {
     const client = clients.get("codex");
     const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
     if (!running?.turnId || !client || !threadId) throw new Error("The routine turn did not start.");
+    const routineInput = firstInputText(client.requests.find((request) => request.method === "turn/start")?.params);
+    expect(routineInput).toContain("Execute one run of an existing OpenBot routine now.");
+    expect(routineInput).toContain("Run type: manual Test run");
+    expect(routineInput).toContain("Do not create, update, delete, list, or test routines during this run.");
+    expect(routineInput).toContain("Report the action and result");
+    expect(routineInput).toContain("Check the current queue health.");
     client.emit("request", {
       id: "routine-approval",
       method: "item/commandExecution/requestApproval",
@@ -3362,6 +3392,41 @@ describe.sequential("AgentService", () => {
         ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
         .some((run) => run.status === "interrupted"),
     );
+  });
+
+  it("persists a completed routine turn as terminal", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      null,
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider),
+    );
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Queue health",
+      instruction: "Check the current queue health.",
+      active: true,
+      timezone: "Europe/Warsaw",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => service?.listQueue(bot.id).deliveries[0]?.status === "completed");
+
+    const turnId = service.listQueue(bot.id).deliveries[0]?.turnId;
+    if (!turnId) throw new Error("The completed routine turn did not start.");
+    expect(
+      store.database.connection
+        .prepare("SELECT status, completed_at FROM projection_turns WHERE turn_id = ?")
+        .get(turnId),
+    ).toMatchObject({ status: "completed", completed_at: expect.any(String) });
+    expect((await service.readConversation(bot.id)).activeTurnId).toBeNull();
   });
 
   it("queues only the last missed run after sleep and does not duplicate it after restart", async () => {

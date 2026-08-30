@@ -838,12 +838,15 @@ export function createAppController(props: AppProps = {}) {
       });
       if (!props.landingPreview && serverSupportsCapability(loadingServer, "browser-control")) {
         const requestedAtRevision = browserChangeRevision;
-        void window.openbot.browser
-          .listTabs()
-          .then((tabs) => {
+        const initialDisplayState =
+          loadingServer?.kind === "remote"
+            ? window.openbot.browser.listTabs().then((tabs) => ({ tabs, activeTabId: tabs[0]?.id ?? null }))
+            : window.openbot.browser.getDisplayState();
+        void initialDisplayState
+          .then((state) => {
             if (browserChangeRevision !== requestedAtRevision) return;
-            setBrowserTabs(tabs);
-            setActiveBrowserTabId((current) => current ?? tabs[0]?.id ?? null);
+            setBrowserTabs(state.tabs);
+            setActiveBrowserTabId(state.activeTabId ?? state.tabs[0]?.id ?? null);
           })
           .catch(() => undefined);
         void window.openbot.browser

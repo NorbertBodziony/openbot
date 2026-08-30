@@ -2759,6 +2759,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           .filter(Boolean)
           .join("\n");
       }
+      if (delivery.sender.kind === "routine") {
+        const routineRun = this.#routines.runForDelivery(delivery.id);
+        const runKind = routineRun?.kind === "manual" ? "manual Test run" : "scheduled run";
+        text = [
+          "Execute one run of an existing OpenBot routine now.",
+          `Routine name: ${delivery.sender.routineName}`,
+          `Run type: ${runKind}`,
+          `Scheduled for: ${delivery.sender.scheduledFor}`,
+          "The routine already exists, and its schedule is already configured.",
+          "Do not create, update, delete, list, or test routines during this run.",
+          "Perform the task below now. Do not answer only that the routine or monitoring is active.",
+          routineRun?.kind === "manual"
+            ? "This is a manual Test run. Report the action and result even when a normal scheduled run would suppress a notification because there is no change."
+            : "This is a scheduled run. Follow the notification conditions in the routine task.",
+          "--- routine task ---",
+          displayText,
+        ].join("\n");
+      }
       if (managedAttachments.length) {
         text += `\n\nAttached local files:\n${managedAttachments.map((item) => `- ${item.name}: ${item.path}`).join("\n")}`;
       }
@@ -2809,6 +2827,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         decodeTurnResponse,
       );
       await this.#mailbox.markRunning(delivery.id, response.turn.id);
+      const currentDelivery = this.#mailbox.getDelivery(delivery.id)?.delivery;
+      if (currentDelivery?.status !== "running" || currentDelivery.turnId !== response.turn.id) return;
       snapshot.activeTurnId = response.turn.id;
       this.#syncDeliveryMessage(snapshot, delivery.id);
       this.#emitQueue(bot.id);
@@ -3253,7 +3273,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await this.#mailbox.markTerminal(delivery.delivery.id, terminal);
         this.#syncDeliveryMessage(snapshot, delivery.delivery.id);
       }
-      this.#emitQueue(botId);
       const relayDelivery = deliveries.find((delivery) => delivery.delivery.sender.kind === "bot");
       if (terminal === "completed" && latestAssistant && relayDelivery) {
         await this.#relayAgentResult(botId, turnId, relayDelivery, latestAssistant.text);
@@ -3264,6 +3283,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#emit({ type: "bots-changed", bots: this.#store.list() });
     }
     this.#emitConversation(snapshot, "turn.completed", { turnId, status });
+    if (deliveries.length > 0) this.#emitQueue(botId);
     this.#emit({
       type: "turn-completed",
       botId,
@@ -4542,8 +4562,7 @@ function developerInstructions(bot: BotSummary, sharedRoot: string, memories: Bo
     `The shared directory available to every OpenBot agent is ${sharedRoot}.`,
     "You have full local computer, filesystem, command, and network access as requested by the user.",
     "Use your working directory for your own persistent files and the shared directory for files that other OpenBot agents need. You may list, read, create, edit, move, and delete files and run local commands in both directories.",
-    `For every browser task, use ${OPENBOT_BROWSER_NAMESPACE} directly. It is OpenBot's private embedded browser and is available through its dynamic tools. Never use browser:control-in-app-browser, browser-use, Chrome, or another browser plugin inside OpenBot; those tools target a different host and can report a false unavailable state. Use the installed Computer Use plugin only for macOS GUI tasks outside the browser.`,
-    `When a browser step requires the user to log in, grant consent, solve a CAPTCHA, use a passkey, enter a one-time code, or complete another authorization step, call ${OPENBOT_BROWSER_NAMESPACE}.request_takeover for that tab. Never enter credentials or authentication secrets yourself. Wait for the takeover result; when it is completed, take a fresh snapshot and continue the original task.`,
+    `When you use ${OPENBOT_BROWSER_NAMESPACE} and a step requires the user to log in, grant consent, solve a CAPTCHA, use a passkey, enter a one-time code, or complete another authorization step, call ${OPENBOT_BROWSER_NAMESPACE}.request_takeover for that tab. Never enter credentials or authentication secrets yourself. Wait for the takeover result; when it is completed, take a fresh snapshot and continue the original task.`,
     "Use openbot.list_agents to discover other persistent OpenBot teammates.",
     "When routing work, call openbot.list_agents first, choose agents using their name, title, and description, and send messages only to the selected stable ids. Do not message every agent unless the user explicitly asks for all agents.",
     "Use openbot.update_profile with the target bot id to change a local agent's name, title, or description. The target id is required and may refer to any local agent.",
