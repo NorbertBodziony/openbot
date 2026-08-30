@@ -454,7 +454,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (message) =>
             (message.author === "assistant" || message.author === "agent") &&
             message.itemType !== "commentary" &&
-            message.itemType !== "question_prompt",
+            message.itemType !== "question_prompt" &&
+            message.itemType !== "agent_attachment",
         );
       const persisted =
         !live || !liveLatest

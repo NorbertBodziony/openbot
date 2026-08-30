@@ -2760,6 +2760,9 @@ describe.sequential("AgentService", () => {
         },
       ],
     });
+    expect(service.getRuntimeSnapshot().latestMessages).not.toContainEqual(
+      expect.objectContaining({ id: message?.id }),
+    );
     const managed = await mailbox.resolveAttachment(message?.attachments?.[0]?.id ?? "");
     expect(managed?.path).not.toBe(screenshotPath);
     await expect(readFile(managed?.path ?? "")).resolves.toEqual(screenshot);
