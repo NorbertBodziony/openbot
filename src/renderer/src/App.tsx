@@ -828,9 +828,13 @@ export function createAppController(props: AppProps = {}) {
         .readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 })
         .then((page) => {
           if (conversationPageRequests.get(botId) !== pageRequest) return;
-          const markReadOnOpen = agentChatsToMarkRead.delete(botId);
           const pageApplied = applyConversationPage(page, "replace", "latest");
-          if (pageApplied && markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
+          if (!pageApplied) {
+            if (agentChatsToMarkRead.has(botId)) setAgentChatOpenRevision((current) => current + 1);
+            return;
+          }
+          const markReadOnOpen = agentChatsToMarkRead.delete(botId);
+          if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
             void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null).catch((error) =>
               appendUiError(botId, error, "Read state failed"),
             );

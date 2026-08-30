@@ -5227,6 +5227,72 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByText("Newest visible reply")).toBeInTheDocument();
   });
 
+  it("retries an explicit chat-open reload when its page revision is stale", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "reply-current-revision",
+      throughMessageId: null,
+    };
+    const currentPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-current-revision",
+          author: "assistant",
+          text: "Current revision reply",
+          createdAt: "2026-08-30T02:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      { revision: 2, readState: unreadState },
+    );
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: currentPage.threadId,
+      activeTurnId: null,
+      revision: currentPage.revision,
+      readState: unreadState,
+      messages: currentPage.messages,
+    });
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+
+    vi.mocked(window.openbot.agent.readConversationPage)
+      .mockResolvedValueOnce(
+        testConversationPage(
+          "chief",
+          [
+            {
+              id: "reply-stale-revision",
+              author: "assistant",
+              text: "Stale revision reply",
+              createdAt: "2026-08-30T02:02:00.000Z",
+              status: "completed",
+            },
+          ],
+          {
+            revision: 1,
+            readState: { unreadCount: 1, firstUnreadMessageId: "reply-stale-revision", throughMessageId: null },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(currentPage);
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "reply-current-revision",
+      }),
+    );
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalledWith({
+      botId: "chief",
+      throughMessageId: "reply-stale-revision",
+    });
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
   it("rejects a permission approval and keeps the error visible", async () => {
     vi.mocked(window.openbot.agent.respondToApproval).mockRejectedValueOnce(
       new Error("This approval is no longer active."),
