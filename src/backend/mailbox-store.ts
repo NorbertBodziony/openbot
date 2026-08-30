@@ -1,5 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  type FileHandle,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
 import {
   attachmentMimeTypeForName,
@@ -136,6 +147,11 @@ export interface DeliveryContext {
 export interface ExportedAttachmentFile {
   sourcePath: string;
   relativePath: string;
+}
+
+export interface GeneratedAttachmentSource {
+  path: string;
+  handle: FileHandle;
 }
 
 const EMPTY_STATE: StoredState = {
@@ -931,14 +947,22 @@ export class MailboxStore {
   }
 
   async storeGeneratedAttachments(input: {
-    sourcePaths: string[];
+    sources: GeneratedAttachmentSource[];
     ownerBotId?: string;
     ownerThreadId?: string | null;
   }): Promise<AttachmentSummary[]> {
-    if (input.sourcePaths.length === 0 || input.sourcePaths.length > MAX_ATTACHMENTS) {
+    if (input.sources.length === 0 || input.sources.length > MAX_ATTACHMENTS) {
       throw new Error(`Attach between 1 and ${MAX_ATTACHMENTS} files.`);
     }
-    const sources = await Promise.all(input.sourcePaths.map(inspectSource));
+    const sources = await Promise.all(
+      input.sources.map(async (source) => {
+        const metadata = await source.handle.stat();
+        if (!metadata.isFile()) throw new Error(`Attachment is not a file: ${source.path}`);
+        if (metadata.size > MAX_FILE_BYTES) throw new Error(`${basename(source.path)} exceeds the 100 MB limit.`);
+        assertSupportedAttachmentName(source.path);
+        return { ...source, size: metadata.size };
+      }),
+    );
     const total = sources.reduce((sum, source) => sum + source.size, 0);
     if (total > MAX_TOTAL_BYTES) throw new Error("Attachments exceed the 250 MB total limit.");
 
@@ -956,7 +980,7 @@ export class MailboxStore {
       let copiedTotal = 0;
       for (const entry of entries) {
         await mkdir(entry.generatedRoot, { recursive: true, mode: 0o700 });
-        await copyFile(entry.source.path, entry.targetPath);
+        await copyOpenedFile(entry.source.handle, entry.targetPath, entry.name, MAX_TOTAL_BYTES - copiedTotal);
         const copied = await stat(entry.targetPath);
         if (copied.size > MAX_FILE_BYTES) throw new Error(`${entry.name} exceeds the 100 MB limit.`);
         copiedTotal += copied.size;
@@ -1582,4 +1606,34 @@ function generatedRootForPath(root: string, path: string): string | null {
   const segments = candidate.split(/[\\/]/u);
   if (segments[0] !== "generated" || !segments[1] || segments[1].startsWith(".")) return null;
   return join(root, "generated", segments[1]);
+}
+
+async function copyOpenedFile(
+  source: FileHandle,
+  targetPath: string,
+  name: string,
+  remainingTotalBytes: number,
+): Promise<void> {
+  const target = await open(targetPath, "wx", 0o600);
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  let position = 0;
+  try {
+    while (true) {
+      const { bytesRead } = await source.read(buffer, 0, buffer.byteLength, position);
+      if (bytesRead === 0) return;
+      const nextPosition = position + bytesRead;
+      if (nextPosition > MAX_FILE_BYTES) throw new Error(`${name} exceeds the 100 MB limit.`);
+      if (nextPosition > remainingTotalBytes) throw new Error("Attachments exceed the 250 MB total limit.");
+
+      let written = 0;
+      while (written < bytesRead) {
+        const result = await target.write(buffer, written, bytesRead - written, position + written);
+        if (result.bytesWritten === 0) throw new Error(`OpenBot could not copy ${name}.`);
+        written += result.bytesWritten;
+      }
+      position = nextPosition;
+    }
+  } finally {
+    await target.close();
+  }
 }

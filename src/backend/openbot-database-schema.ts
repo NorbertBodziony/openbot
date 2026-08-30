@@ -298,15 +298,15 @@ const MIGRATIONS: readonly OpenBotMigration[] = [
   },
   {
     version: 9,
-    up: refreshProviderSessionsForReactionTools,
+    up: refreshProviderSessionsForDynamicTools,
   },
   {
     version: 10,
-    up: refreshProviderSessionsForReactionTools,
+    up: refreshProviderSessionsForDynamicTools,
   },
   {
     version: 11,
-    up: refreshProviderSessionsForResponseAttachmentTools,
+    up: refreshProviderSessionsForDynamicTools,
   },
 ];
 
@@ -389,15 +389,7 @@ function migrateToBaselineV8(db: DatabaseSync, appliedAt: string): void {
   migrateReactionsForActors(db);
 }
 
-function refreshProviderSessionsForReactionTools(db: DatabaseSync, appliedAt: string): void {
-  db.prepare(
-    `UPDATE projection_provider_sessions
-     SET state = 'inactive', updated_at = ?
-     WHERE state = 'active'`,
-  ).run(appliedAt);
-}
-
-function refreshProviderSessionsForResponseAttachmentTools(db: DatabaseSync, appliedAt: string): void {
+function refreshProviderSessionsForDynamicTools(db: DatabaseSync, appliedAt: string): void {
   db.prepare(
     `UPDATE projection_provider_sessions
      SET state = 'inactive', updated_at = ?

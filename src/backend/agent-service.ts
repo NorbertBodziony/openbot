@@ -1,7 +1,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
 import { expandAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -97,7 +98,7 @@ import {
   snapshotFromThread,
   sortConversationMessages,
 } from "./conversation-snapshots";
-import type { DeliveryContext, MailboxStore } from "./mailbox-store";
+import type { DeliveryContext, GeneratedAttachmentSource, MailboxStore } from "./mailbox-store";
 import { OPENBOT_DYNAMIC_TOOLS } from "./openbot-tools";
 import {
   type AccountLoginCompletedResult,
@@ -201,6 +202,11 @@ interface PendingDelta {
 interface ImageGenerationOperation {
   interrupted: boolean;
   promise: Promise<void> | null;
+}
+
+interface OpenBotToolResponse {
+  success: boolean;
+  contentItems: Array<{ type: "inputText"; text: string }>;
 }
 
 interface PendingCodexLogin {
@@ -353,6 +359,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingRuntimeRefreshes = new Set<string>();
   readonly #pendingDeltas = new Map<string, PendingDelta>();
   readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
+  readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
   readonly #memoryEpochs = new Map<string, number>();
   #routineTimer: NodeJS.Timeout | null = null;
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
@@ -2149,10 +2156,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  async #handleOpenBotTool(params: DynamicToolCallParams): Promise<{
-    success: boolean;
-    contentItems: Array<{ type: "inputText"; text: string }>;
-  }> {
+  async #handleOpenBotTool(params: DynamicToolCallParams): Promise<OpenBotToolResponse> {
     const senderBotId = this.#threadToBot.get(params.threadId);
     if (!senderBotId) throw new Error("The sending OpenBot agent is unknown.");
 
@@ -2167,57 +2171,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error(`paths must contain between 1 and ${INPUT_LIMITS.attachments} valid local file paths.`);
       }
 
-      const publicThreadId = this.#publicThreadId(senderBotId, params.threadId);
-      const snapshot = this.#ensureSnapshot(senderBotId, publicThreadId);
       const messageId = responseAttachmentMessageId(params.threadId, params.turnId, params.callId);
-      const existing = snapshot.messages.find((message) => message.id === messageId);
-      if (existing) {
-        return openBotToolResult({
-          status: "attached",
-          messageId,
-          attachments: (existing.attachments ?? []).map((attachment) => ({
-            id: attachment.id,
-            name: attachment.name,
-          })),
-        });
-      }
+      const inFlight = this.#responseAttachmentCommands.get(messageId);
+      if (inFlight) return inFlight;
 
-      const paths = await Promise.all(args.paths.map((path) => this.#resolveAgentAttachmentPath(senderBotId, path)));
-      if (paths.length !== new Set(paths).size) throw new Error("Duplicate attachment paths are not allowed.");
-      const attachments = await this.#mailbox.storeGeneratedAttachments({
-        sourcePaths: paths,
-        ownerBotId: senderBotId,
-        ownerThreadId: publicThreadId,
-      });
-      const message: ConversationSnapshot["messages"][number] = {
-        id: messageId,
-        turnId: params.turnId,
-        author: "assistant",
-        source: "assistant",
-        text: "",
-        createdAt: new Date().toISOString(),
-        status: "completed",
-        itemType: "agent_attachment",
-        attachments,
-      };
-      snapshot.messages.push(message);
+      const command = this.#attachFilesToResponse(senderBotId, params, args.paths, messageId);
+      this.#responseAttachmentCommands.set(messageId, command);
       try {
-        this.#emitConversation(snapshot, "response.attachments-added", {
-          turnId: params.turnId,
-          messageId,
-          attachmentCount: attachments.length,
-        });
-      } catch (error) {
-        const messageIndex = snapshot.messages.findIndex((candidate) => candidate.id === messageId);
-        if (messageIndex >= 0) snapshot.messages.splice(messageIndex, 1);
-        await this.#mailbox.removeGeneratedAttachments(attachments.map((attachment) => attachment.id));
-        throw error;
+        return await command;
+      } finally {
+        if (this.#responseAttachmentCommands.get(messageId) === command) {
+          this.#responseAttachmentCommands.delete(messageId);
+        }
       }
-      return openBotToolResult({
-        status: "attached",
-        messageId,
-        attachments: attachments.map((attachment) => ({ id: attachment.id, name: attachment.name })),
-      });
     }
 
     if (params.tool === "list_agents") {
@@ -2505,7 +2471,84 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     };
   }
 
-  async #resolveAgentAttachmentPath(botId: string, inputPath: string): Promise<string> {
+  async #attachFilesToResponse(
+    senderBotId: string,
+    params: DynamicToolCallParams,
+    paths: string[],
+    messageId: string,
+  ): Promise<OpenBotToolResponse> {
+    const publicThreadId = this.#publicThreadId(senderBotId, params.threadId);
+    const snapshot = this.#ensureSnapshot(senderBotId, publicThreadId);
+    const existing = snapshot.messages.find((message) => message.id === messageId);
+    if (existing) {
+      return openBotToolResult({
+        status: "attached",
+        messageId,
+        attachments: (existing.attachments ?? []).map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+        })),
+      });
+    }
+
+    const sources = await this.#openAgentAttachmentSources(senderBotId, paths);
+    let attachments: AttachmentSummary[];
+    try {
+      attachments = await this.#mailbox.storeGeneratedAttachments({
+        sources,
+        ownerBotId: senderBotId,
+        ownerThreadId: publicThreadId,
+      });
+    } finally {
+      await Promise.allSettled(sources.map((source) => source.handle.close()));
+    }
+    const message: ConversationSnapshot["messages"][number] = {
+      id: messageId,
+      turnId: params.turnId,
+      author: "assistant",
+      source: "assistant",
+      text: "",
+      createdAt: new Date().toISOString(),
+      status: "completed",
+      itemType: "agent_attachment",
+      attachments,
+    };
+    snapshot.messages.push(message);
+    try {
+      this.#emitConversation(snapshot, "response.attachments-added", {
+        turnId: params.turnId,
+        messageId,
+        attachmentCount: attachments.length,
+      });
+    } catch (error) {
+      const messageIndex = snapshot.messages.findIndex((candidate) => candidate.id === messageId);
+      if (messageIndex >= 0) snapshot.messages.splice(messageIndex, 1);
+      await this.#mailbox.removeGeneratedAttachments(attachments.map((attachment) => attachment.id));
+      throw error;
+    }
+    return openBotToolResult({
+      status: "attached",
+      messageId,
+      attachments: attachments.map((attachment) => ({ id: attachment.id, name: attachment.name })),
+    });
+  }
+
+  async #openAgentAttachmentSources(botId: string, paths: string[]): Promise<GeneratedAttachmentSource[]> {
+    const results = await Promise.allSettled(paths.map((path) => this.#openAgentAttachmentSource(botId, path)));
+    const sources = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") {
+      await Promise.allSettled(sources.map((source) => source.handle.close()));
+      throw failure.reason;
+    }
+    if (sources.length !== new Set(sources.map((source) => source.path)).size) {
+      await Promise.allSettled(sources.map((source) => source.handle.close()));
+      throw new Error("Duplicate attachment paths are not allowed.");
+    }
+    return sources;
+  }
+
+  async #openAgentAttachmentSource(botId: string, inputPath: string): Promise<GeneratedAttachmentSource> {
     const bot = this.#requireKnownBot(botId);
     const value = inputPath.trim();
     const [workspaceRoot, sharedRoot] = await Promise.all([
@@ -2527,10 +2570,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     for (const candidate of candidates) {
       try {
+        if ((await lstat(candidate)).isSymbolicLink()) continue;
         const resolved = await realpath(candidate);
         if (!isWithin(workspaceRoot, resolved) && !isWithin(sharedRoot, resolved)) continue;
-        const metadata = await stat(resolved);
-        if (metadata.isFile()) return resolved;
+        const authorizedMetadata = await lstat(resolved);
+        if (authorizedMetadata.isSymbolicLink() || !authorizedMetadata.isFile()) continue;
+        const handle = await open(resolved, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const openedMetadata = await handle.stat();
+          if (
+            !openedMetadata.isFile() ||
+            openedMetadata.dev !== authorizedMetadata.dev ||
+            openedMetadata.ino !== authorizedMetadata.ino
+          ) {
+            throw new Error("The attachment changed while it was being opened.");
+          }
+          return { path: resolved, handle };
+        } catch (error) {
+          await handle.close();
+          throw error;
+        }
       } catch {
         // Try the other permitted root for relative paths.
       }

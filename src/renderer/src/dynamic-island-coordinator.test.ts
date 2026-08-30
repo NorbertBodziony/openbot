@@ -174,6 +174,12 @@ describe("DynamicIslandCoordinator", () => {
             createdAt: "2026-08-29T10:01:00.000Z",
             itemType: "question_prompt",
           },
+          {
+            id: "attachment",
+            text: "",
+            createdAt: "2026-08-29T10:02:00.000Z",
+            itemType: "agent_attachment",
+          },
         ]),
       ),
       "local",

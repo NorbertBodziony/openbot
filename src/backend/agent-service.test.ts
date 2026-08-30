@@ -2774,6 +2774,80 @@ describe.sequential("AgentService", () => {
       "inside this agent's workspace or the OpenBot shared directory",
       turnId,
     );
+    const linkedPath = join(store.sharedRoot, "linked-outside.png");
+    await symlink(outsidePath, linkedPath);
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [linkedPath] },
+      "inside this agent's workspace or the OpenBot shared directory",
+      turnId,
+    );
+  });
+
+  it("shares one attachment operation between concurrent retries", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    const screenshotPath = join(store.sharedRoot, "concurrent-screenshot.png");
+    await writeFile(screenshotPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    await service.sendMessage({ botId: "chief", text: "Send the screenshot once." });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The concurrent attachment turn did not start.");
+
+    const originalStore = mailbox.storeGeneratedAttachments.bind(mailbox);
+    let releaseStore: (() => void) | undefined;
+    const storeGate = new Promise<void>((resolve) => {
+      releaseStore = resolve;
+    });
+    let markStoreStarted: (() => void) | undefined;
+    const storeStarted = new Promise<void>((resolve) => {
+      markStoreStarted = resolve;
+    });
+    const storage = vi.spyOn(mailbox, "storeGeneratedAttachments").mockImplementation(async (input) => {
+      markStoreStarted?.();
+      await storeGate;
+      return originalStore(input);
+    });
+    const callId = "concurrent-attachment-call";
+    const first = callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+      callId,
+    );
+    await storeStarted;
+    const second = callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+      callId,
+    );
+    releaseStore?.();
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(openBotToolPayload(firstResult.result)).toEqual(openBotToolPayload(secondResult.result));
+    expect(storage).toHaveBeenCalledTimes(1);
+    expect(
+      (await service.readConversation("chief")).messages.filter(
+        (message) => message.itemType === "agent_attachment" && message.turnId === turnId,
+      ),
+    ).toHaveLength(1);
+    await expect(mailbox.listExportAttachments()).resolves.toHaveLength(1);
   });
 
   it("rolls back response attachments when conversation persistence fails and permits retry", async () => {
