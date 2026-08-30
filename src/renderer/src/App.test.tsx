@@ -5851,8 +5851,8 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     resolveInitialMark?.({
-      unreadCount: 0,
-      firstUnreadMessageId: null,
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-newer-reply",
       throughMessageId: "chief-old-reply",
     });
     await waitFor(() => expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument());

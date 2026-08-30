@@ -363,6 +363,7 @@ export function createAppController(props: AppProps = {}) {
   const autoReadAgentMessageIds = new Map<string, string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const conversationPageRequests = new Map<string, number>();
+  const conversationReadRequests = new Map<string, number>();
   const queueSnapshotRequests = new Map<string, number>();
   const completedTurnByBot = new Map<string, string>();
   const pendingProviderConnections = new Map<AgentProviderId, ReturnType<typeof desktopAnalytics.scope>>();
@@ -2017,17 +2018,26 @@ export function createAppController(props: AppProps = {}) {
     serverId = activeServerSidebarKey(),
   ): Promise<void> {
     if (!botId || activeServerSidebarKey() !== serverId) return;
+    const requestKey = `${serverId}\0${botId}`;
+    const request = (conversationReadRequests.get(requestKey) ?? 0) + 1;
+    conversationReadRequests.set(requestKey, request);
     const boundary =
       throughMessageId ??
       liveMessages()
         [botId]?.filter((message) => !message.id.startsWith("thinking:") && !message.id.startsWith("ui-"))
         .at(-1)?.id ??
       null;
-    const state = await window.openbot.agent.markConversationRead({
-      botId,
-      throughMessageId: boundary,
-    });
-    if (activeServerSidebarKey() !== serverId) return;
+    let state: ConversationReadState;
+    try {
+      state = await window.openbot.agent.markConversationRead({
+        botId,
+        throughMessageId: boundary,
+      });
+    } catch (error) {
+      if (activeServerSidebarKey() !== serverId || conversationReadRequests.get(requestKey) !== request) return;
+      throw error;
+    }
+    if (activeServerSidebarKey() !== serverId || conversationReadRequests.get(requestKey) !== request) return;
     applyConversationReadState(botId, state);
     clearRecentReply(botId);
   }
