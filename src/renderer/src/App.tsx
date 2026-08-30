@@ -70,7 +70,7 @@ import { readPanelWidth } from "./components/PanelResizer";
 import type { SidebarAgentState } from "./components/Sidebar";
 import { Toaster } from "./components/ui";
 import type { BotMessage, BotProfile } from "./data";
-import { DynamicIslandCoordinator } from "./dynamic-island-coordinator";
+import { DynamicIslandCoordinator, queueSnapshotsFromRuntimeWork } from "./dynamic-island-coordinator";
 import {
   normalizeSidebarPeopleOrder,
   readSidebarPeopleOrder,
@@ -965,6 +965,24 @@ export function createAppController(props: AppProps = {}) {
   function applyAgentRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): void {
     setActiveTurns(Object.fromEntries(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])));
     setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])));
+    setQueues((current) => ({ ...queueSnapshotsFromRuntimeWork(snapshot.work), ...current }));
+    setPendingPrompts((current) => {
+      const next = { ...current };
+      const submitted = submittedPromptRequests();
+      for (const prompt of snapshot.pendingPrompts) {
+        if (promptRequestKey(prompt.turnId, prompt.requestId) !== submitted[prompt.botId]) {
+          next[prompt.botId] = { type: "prompt", ...prompt };
+        }
+      }
+      for (const request of snapshot.pendingBrowserTakeovers) {
+        next[request.botId] = { type: "browser-takeover-requested", request };
+      }
+      return next;
+    });
+    setPendingApprovals((current) => ({
+      ...current,
+      ...Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])),
+    }));
     setLiveMessages((current) => {
       const next = { ...current };
       for (const message of snapshot.latestMessages) {
@@ -3048,16 +3066,27 @@ export function createAppController(props: AppProps = {}) {
 
   async function handleDynamicIslandAction(action: DynamicIslandAction): Promise<void> {
     if (action.type === "open-app") return;
-    if (action.type === "answer-prompt" || action.type === "respond-approval") {
+    if (action.type === "answer-prompt") {
       dynamicIslandCoordinator.resolveAction(action);
-      if (action.type === "respond-approval") {
-        setPendingApprovals((current) => {
-          const approval = current[action.botId];
-          return approval && String(approval.requestId) === String(action.requestId)
-            ? { ...current, [action.botId]: undefined }
-            : current;
-        });
+      const prompt = pendingPrompts()[action.botId];
+      if (prompt?.type === "prompt" && String(prompt.requestId) === String(action.requestId)) {
+        setPendingPrompts((current) => ({ ...current, [action.botId]: undefined }));
+        setSubmittedPromptRequests((current) => ({
+          ...current,
+          [action.botId]: promptRequestKey(prompt.turnId, prompt.requestId) ?? undefined,
+        }));
       }
+      publishDynamicIslandPresentation();
+      return;
+    }
+    if (action.type === "respond-approval") {
+      dynamicIslandCoordinator.resolveAction(action);
+      setPendingApprovals((current) => {
+        const approval = current[action.botId];
+        return approval && String(approval.requestId) === String(action.requestId)
+          ? { ...current, [action.botId]: undefined }
+          : current;
+      });
       publishDynamicIslandPresentation();
       return;
     }

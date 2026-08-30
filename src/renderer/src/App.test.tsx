@@ -1098,6 +1098,46 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
   });
 
+  it("merges compact runtime attention into the active server", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+
+    emitAgentEvent?.({
+      type: "runtime-snapshot",
+      snapshot: {
+        bots: [],
+        activeTurns: [],
+        work: [],
+        latestMessages: [],
+        pendingPrompts: [],
+        pendingApprovals: [
+          {
+            requestId: "approval-runtime",
+            botId: "chief",
+            threadId: "thread-chief",
+            turnId: "turn-runtime",
+            kind: "command",
+            command: "bun test",
+            cwd: null,
+            reason: null,
+            grantRoot: null,
+            permissions: null,
+          },
+        ],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    });
+
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "approval",
+        item: { requestId: "approval-runtime" },
+      }),
+    );
+  });
+
   it("shows the first-run onboarding before starting agents", async () => {
     vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
       completed: false,
@@ -4828,6 +4868,7 @@ describe("OpenBot connected desktop shell", () => {
     await Promise.resolve();
 
     expect(window.openbot.agent.respondToPrompt).not.toHaveBeenCalled();
+    expect(screen.queryByText("Which source should I use?")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Chief" })).toBeVisible();
   });
 
