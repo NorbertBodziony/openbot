@@ -59,11 +59,25 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
 5. Keep Electron entry points small. New features use a service or a focused IPC input module.
 6. Do not add a second linter or formatter. Biome and its repository-owned anti-slop plugins are the
    only repository lint and format tools.
-7. Do not add compatibility paths without a removal condition and a test for that condition.
+7. Do not add temporary compatibility paths without a removal condition and a test for that condition. Released Team API protocol adapters are permanent by default and follow the policy below.
 
 SQLite migration history starts at the frozen version 8 compatibility baseline. Keep the baseline
 schema unchanged, append every later migration in numeric order, and update the separate latest
 schema used for new databases. Never remove or rewrite a migration that may have shipped.
+
+## Team API compatibility boundary
+
+The desktop client starts each remote connection with `GET /v1/compatibility`. The response contains the host application version, the minimum and maximum Team API protocol versions, and host capabilities. The client selects the highest protocol in the shared range. Application SemVer does not select or reject a protocol.
+
+The first released Team API protocol is `1`. All later HTTP requests include `OpenBot-Protocol-Version` and `OpenBot-App-Version`. The event socket uses the `openbot-team-v1` WebSocket subprotocol. A host without the compatibility endpoint is treated as an old host and is blocked. A request without the required protocol headers is treated as an old client and is blocked.
+
+Each protocol has a frozen codec and adapter in `packages/contracts/src/team-protocol`. The host converts current service and IPC values through the selected adapter. It does not write current IPC values directly to the network. Breaking or semantic changes add a new protocol directory and registry entry. A released adapter keeps its original meaning.
+
+Capabilities describe additive behavior. The client sends its capability list when it sets the event scope. The host sends optional events only when the client declared the related capability. A missing capability disables only that feature. An unknown optional event is ignored. A malformed known event closes the connection as `protocol_error` because the client cannot safely apply it.
+
+Team API failures use a JSON error envelope with `error` and a stable `code`. Compatibility codes are `client_update_required`, `host_update_required`, and `protocol_error`. Authentication and network failures are projected to `authentication_required` and `network_unavailable` in the desktop connection state. A confirmed compatibility or protocol error stops data-plane requests and automatic reconnect until the user selects `Retry`, restarts, or updates.
+
+Protocol support has no fixed time or release limit. Removal is an exceptional architecture decision. It requires a security issue, data-loss risk, semantics that cannot be kept, or technical cost that cannot be contained in an adapter. The decision must also include a changelog entry, update instructions, tests for old-client/new-host and new-client/old-host directions, and clear blocking UI.
 
 ## Required verification
 

@@ -639,6 +639,7 @@ describe("OpenBot connected desktop shell", () => {
           }),
           takePendingInvite: vi.fn().mockResolvedValue(null),
           login: vi.fn().mockResolvedValue(undefined),
+          retryConnection: vi.fn().mockRejectedValue(new Error("The host is still incompatible.")),
           remove: vi.fn().mockResolvedValue(undefined),
           getPresence: vi.fn().mockResolvedValue({ serverId: null, members: [], updatedAt: "" }),
           getPresenceFor: vi.fn().mockResolvedValue({ serverId: null, members: [], updatedAt: "" }),
@@ -850,6 +851,108 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByRole("heading", { name: "Remote Chief" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("blocks an incompatible remote workspace and offers a manual retry", async () => {
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
+      { ...testServer("local", false) },
+      {
+        ...testServer("remote-1", true),
+        state: "incompatible",
+        compatibility: {
+          localAppVersion: "0.4.0",
+          hostAppVersion: "0.2.0",
+          localProtocol: { minimum: 2, maximum: 2 },
+          hostProtocol: { minimum: 1, maximum: 1 },
+          negotiatedProtocol: null,
+          capabilities: [],
+        },
+        issue: {
+          code: "host_update_required",
+          message: "Update OpenBot on the host.",
+          retryable: true,
+        },
+      },
+    ]);
+
+    render(() => <App />);
+
+    expect(await screen.findByRole("heading", { name: "Update OpenBot on Studio Mac" })).toBeInTheDocument();
+    expect(window.openbot.agent.listBots).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(window.openbot.servers.retryConnection).toHaveBeenCalledWith("remote-1"));
+  });
+
+  it("keeps a newer online event when retry returns an older summary", async () => {
+    const local = testServer("local", false);
+    const incompatible: ServerSummary = {
+      ...testServer("remote-1", true),
+      state: "incompatible",
+      compatibility: {
+        localAppVersion: "0.4.0",
+        hostAppVersion: "0.4.0",
+        localProtocol: { minimum: 2, maximum: 2 },
+        hostProtocol: { minimum: 1, maximum: 1 },
+        negotiatedProtocol: null,
+        capabilities: [],
+      },
+      issue: { code: "host_update_required", message: "Update OpenBot on the host.", retryable: true },
+    };
+    const online: ServerSummary = {
+      ...incompatible,
+      state: "online",
+      issue: null,
+      compatibility: {
+        localAppVersion: "0.4.0",
+        hostAppVersion: "0.4.0",
+        localProtocol: { minimum: 1, maximum: 1 },
+        hostProtocol: { minimum: 1, maximum: 1 },
+        negotiatedProtocol: 1,
+        capabilities: [],
+      },
+      connectionSequence: 1,
+    };
+    let resolveRetry: ((server: ServerSummary) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, incompatible]);
+    vi.mocked(window.openbot.servers.retryConnection).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRetry = resolve;
+      }),
+    );
+    vi.mocked(window.openbot.servers.select).mockRejectedValueOnce(new Error("Workspace refresh failed"));
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Update OpenBot on Studio Mac" });
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    emitServers?.([local, online]);
+    resolveRetry?.({ ...online, state: "connecting" });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Studio Mac server" })).toBeInTheDocument());
+  });
+
+  it("shows a version warning after every compatible remote connection", async () => {
+    const local = testServer("local", true);
+    const remote: ServerSummary = {
+      ...testServer("remote-1", false),
+      compatibility: {
+        localAppVersion: "0.4.0",
+        hostAppVersion: "0.3.0",
+        localProtocol: { minimum: 1, maximum: 1 },
+        hostProtocol: { minimum: 1, maximum: 1 },
+        negotiatedProtocol: 1,
+        capabilities: [],
+      },
+      connectionSequence: 0,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitServers?.([local, { ...remote, connectionSequence: 1 }]);
+    expect(await screen.findByText("Different OpenBot versions on Studio Mac")).toBeInTheDocument();
+    emitServers?.([local, { ...remote, connectionSequence: 2 }]);
+    await waitFor(() => expect(screen.getAllByText("Different OpenBot versions on Studio Mac")).toHaveLength(2));
   });
 
   it("keeps a remote approval when Review in OpenBot switches to its host", async () => {

@@ -43,6 +43,8 @@ import type {
   Routine,
   RoutineRun,
   SendDirectMessageInput,
+  ServerCompatibility,
+  ServerConnectionIssue,
   ServerSummary,
   SetTeamTypingInput,
   SidebarLayoutSnapshot,
@@ -74,6 +76,21 @@ import {
   isOneOf,
   isString,
 } from "@openbot/contracts/runtime-values";
+import {
+  decodeTeamProtocolSupportV1,
+  decodeTeamProtocolV1Event,
+  encodeTeamProtocolV1ClientEvent,
+  encodeTeamProtocolV1Http,
+  highestCommonTeamProtocol,
+  TEAM_APP_VERSION_HEADER,
+  TEAM_PROTOCOL_V1,
+  TEAM_PROTOCOL_V1_CAPABILITIES,
+  TEAM_PROTOCOL_V1_WEBSOCKET,
+  TEAM_PROTOCOL_VERSION_HEADER,
+  type TeamProtocolSupportV1,
+  type TeamProtocolV1Capability,
+  teamProtocolUpdateDirection,
+} from "@openbot/contracts/team-protocol/v1";
 import { fingerprint } from "./team-store";
 
 export { isValidRemoteApiUrl } from "@openbot/contracts/invite-links";
@@ -117,6 +134,7 @@ interface CentralAccountSession {
 
 interface RemoteServerManagerOptions {
   allowLocalDevelopmentInvites?: boolean;
+  appVersion?: string;
 }
 
 export interface DevelopmentRemoteServerConnection {
@@ -138,16 +156,31 @@ const REMOTE_EVENT_PAYLOAD_LIMIT = 1024 * 1024;
 const REMOTE_EVENT_INITIAL_BUFFER_LIMIT = 1_000;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
+const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V1 } as const;
 
 type ResponseDecoder<T> = (value: unknown) => T;
 
 class RemoteRequestError extends Error {
   readonly status: number;
+  readonly code: string | null;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code: string | null = null) {
     super(message);
     this.name = "RemoteRequestError";
     this.status = status;
+    this.code = code;
+  }
+}
+
+class RemoteProtocolError extends Error {
+  constructor(
+    readonly code: "client_update_required" | "host_update_required" | "protocol_error",
+    message: string,
+    readonly support: TeamProtocolSupportV1 | null = null,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "RemoteProtocolError";
   }
 }
 
@@ -156,8 +189,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #cipher: TokenCipher;
   readonly #centralAccount: CentralAccountSession;
   readonly #allowLocalDevelopmentInvites: boolean;
+  readonly #appVersion: string | null;
   #state: StoredRemoteServers = { version: 2, activeServerId: "local", servers: [] };
   #states = new Map<string, ServerSummary["state"]>();
+  #compatibility = new Map<string, ServerCompatibility>();
+  #issues = new Map<string, ServerConnectionIssue>();
+  #compatibilityRequests = new Map<string, Promise<ServerCompatibility>>();
+  #connectionSequences = new Map<string, number>();
   #eventControllers = new Map<string, AbortController>();
   #eventSockets = new Map<string, WebSocket>();
   #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -181,6 +219,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#cipher = cipher;
     this.#centralAccount = centralAccount;
     this.#allowLocalDevelopmentInvites = options.allowLocalDevelopmentInvites ?? false;
+    this.#appVersion = options.appVersion ?? null;
   }
 
   async initialize(): Promise<void> {
@@ -206,6 +245,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         logoUrl: null,
         role: null,
         active: this.#state.activeServerId === "local",
+        compatibility: null,
+        issue: null,
       },
       ...this.#state.servers.map((server) => ({
         id: server.id,
@@ -217,6 +258,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         logoUrl: server.logoVersion ? remoteServerLogoUrl(server.id, server.logoVersion) : null,
         role: server.role,
         active: this.#state.activeServerId === server.id,
+        compatibility: this.#compatibility.get(server.id) ?? this.#checkingCompatibility(),
+        issue: this.#issues.get(server.id) ?? null,
+        connectionSequence: this.#connectionSequences.get(server.id) ?? 0,
       })),
     ];
   }
@@ -237,10 +281,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         this.#ensureEventConnection(server.id);
         continue;
       }
-      if (socket.protocol === REMOTE_EVENT_SNAPSHOT_PROTOCOL) {
-        socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
+      if (this.#supportsRuntimeSnapshots(server.id, socket)) {
+        socket.send(encodeTeamProtocolV1ClientEvent({ type: "runtime-snapshot-request" }));
       } else {
-        void this.#refreshLegacyAgentState(server.id).catch(() => undefined);
+        void this.#refreshAgentStateFallback(server.id).catch(() => undefined);
       }
     }
   }
@@ -292,6 +336,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         inviteToken: invite.token,
         accountTicket,
       },
+      ...this.#requestProtocol(verifiedIdentity.compatibility),
     });
     const stored: StoredRemoteServer = {
       id: invite.serverId,
@@ -306,6 +351,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       role: result.member.role,
     };
     this.#state.servers = [...this.#state.servers.filter((server) => server.id !== stored.id), stored];
+    this.#compatibility.set(stored.id, verifiedIdentity.compatibility);
+    this.#issues.delete(stored.id);
     this.#state.activeServerId = stored.id;
     this.#syncEventScopes();
     this.#states.set(stored.id, "online");
@@ -334,6 +381,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       role: "member",
     };
     this.#state.servers = [...this.#state.servers.filter((server) => server.id !== stored.id), stored];
+    this.#compatibility.set(stored.id, verifiedIdentity.compatibility);
+    this.#issues.delete(stored.id);
     this.#state.activeServerId = stored.id;
     this.#syncEventScopes();
     this.#states.set(stored.id, "online");
@@ -352,6 +401,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const preview = await requestJson(invite.apiUrl, "/v1/invitations/preview", decodeInvitePreview, {
       method: "POST",
       body: { inviteToken: invite.token },
+      ...this.#requestProtocol(identity.compatibility),
     });
     return {
       serverId: invite.serverId,
@@ -371,7 +421,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const result = await requestJson(server.apiUrl, "/v1/auth/account", decodeJoinResult, {
         method: "POST",
         body: { accountTicket },
+        ...this.#requestProtocol(identity.compatibility),
       });
+      this.#compatibility.set(server.id, identity.compatibility);
+      this.#issues.delete(server.id);
       server.username = this.#centralAccount.getEmail().trim().toLowerCase();
       server.role = result.member.role;
       server.encryptedToken = this.#cipher.encrypt(result.sessionToken).toString("base64");
@@ -382,12 +435,28 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       await this.#persist();
       this.#restartEventConnection(server.id, true);
     } catch (error) {
-      this.#states.set(server.id, "error");
-      this.#emitChanged();
+      this.#applyConnectionError(server.id, error, "error");
       throw error;
     }
     this.#emitChanged();
     return requiredServerSummary(this.list(), server.id);
+  }
+
+  async retryConnection(serverId: string): Promise<ServerSummary> {
+    const server = this.#requireServer(serverId);
+    this.#issues.delete(serverId);
+    this.#compatibility.delete(serverId);
+    this.#eventAuthenticationPaused.delete(serverId);
+    this.#states.set(serverId, "connecting");
+    this.#emitChanged();
+    try {
+      await this.#ensureCompatibility(server, true);
+      this.#restartEventConnection(serverId, true);
+    } catch (error) {
+      this.#applyConnectionError(serverId, error, "error");
+      throw error;
+    }
+    return requiredServerSummary(this.list(), serverId);
   }
 
   async remove(serverId: string): Promise<void> {
@@ -407,6 +476,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (key.startsWith(`${serverId}\0`)) this.#queueRefreshRequests.delete(key);
     }
     this.#states.delete(serverId);
+    this.#compatibility.delete(serverId);
+    this.#issues.delete(serverId);
+    this.#compatibilityRequests.delete(serverId);
+    this.#connectionSequences.delete(serverId);
     this.#eventSockets.delete(serverId);
     this.#presence.delete(serverId);
     this.#state.servers = this.#state.servers.filter((server) => server.id !== serverId);
@@ -422,11 +495,18 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     decoder: ResponseDecoder<T>,
   ): Promise<T> {
     const server = this.#requireServer(serverId);
-    const value = await requestJson(server.apiUrl, path, decoder, {
-      ...init,
-      token: this.#token(server),
-    });
-    return addRemotePreviewUrls(value, server.id);
+    try {
+      const compatibility = await this.#ensureCompatibility(server);
+      const value = await requestJson(server.apiUrl, path, decoder, {
+        ...init,
+        token: this.#token(server),
+        ...this.#requestProtocol(compatibility),
+      });
+      return addRemotePreviewUrls(value, server.id);
+    } catch (error) {
+      this.#applyConnectionError(server.id, error);
+      throw error;
+    }
   }
 
   listAgentConversationReads(serverId = this.#state.activeServerId): Promise<Record<string, ConversationReadState>> {
@@ -502,6 +582,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async refreshIdentity(serverId: string): Promise<ServerSummary> {
     const server = this.#requireServer(serverId);
     const identity = await this.#verifyIdentity(server.apiUrl, server.id, server.fingerprint);
+    this.#compatibility.set(server.id, identity.compatibility);
+    this.#issues.delete(server.id);
     server.name = identity.serverName;
     server.logoVersion = identity.logoVersion;
     await this.#persist();
@@ -541,7 +623,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   setTyping(input: SetTeamTypingInput, serverId = this.#state.activeServerId): void {
     const socket = this.#eventSockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ type: "team-typing", ...input }));
+    socket.send(encodeTeamProtocolV1ClientEvent({ type: "team-typing", ...input }));
   }
 
   listDirectThreads(serverId = this.#state.activeServerId): Promise<DirectThreadSummary[]> {
@@ -591,7 +673,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const socket = this.#eventSockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(
-      JSON.stringify({
+      encodeTeamProtocolV1ClientEvent({
         type: "team-direct-typing",
         recipientMemberId: input.memberId,
         typing: input.typing,
@@ -631,10 +713,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const url = new URL("/v1/attachments", server.apiUrl);
     url.searchParams.set("name", name);
     url.searchParams.set("mime", mimeType || "application/octet-stream");
-    const response = await remoteFetch(url, {
+    const response = await this.#fetch(server, url, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${this.#token(server)}`,
         "Content-Type": "application/octet-stream",
       },
       body: Buffer.from(bytes),
@@ -651,12 +732,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   ): Promise<BotSummary> {
     const server = this.#requireServer(serverId);
     const url = new URL(`/v1/agents/${encodeURIComponent(botId)}/avatar`, server.apiUrl);
-    const response = await remoteFetch(url, {
+    const headers = new Headers();
+    if (image) headers.set("Content-Type", image.mimeType);
+    const response = await this.#fetch(server, url, {
       method: image ? "PUT" : "DELETE",
-      headers: {
-        Authorization: `Bearer ${this.#token(server)}`,
-        ...(image ? { "Content-Type": image.mimeType } : {}),
-      },
+      headers,
       body: image ? Buffer.from(image.bytes) : undefined,
     });
     const value = await response.json();
@@ -674,9 +754,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const server = this.#requireServer(serverId);
     const url = new URL(`/v1/agents/${encodeURIComponent(botId)}/avatar`, server.apiUrl);
     if (version) url.searchParams.set("v", version);
-    const response = await remoteFetch(url, {
-      headers: { Authorization: `Bearer ${this.#token(server)}` },
-    });
+    const response = await this.#fetch(server, url);
     if (!response.ok) throw new Error("Agent avatar download failed.");
     return {
       bytes: new Uint8Array(await response.arrayBuffer()),
@@ -689,7 +767,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (server.logoVersion !== version) throw new Error("Server logo version is not current.");
     const url = new URL("/v1/team/logo", server.apiUrl);
     url.searchParams.set("v", version);
-    const response = await remoteFetch(url, { headers: { Authorization: `Bearer ${this.#token(server)}` } });
+    const response = await this.#fetch(server, url);
     if (!response.ok) throw new Error("Server logo download failed.");
     const bytes = new Uint8Array(await response.arrayBuffer());
     const mimeType = response.headers.get("content-type")?.split(";", 1)[0]?.trim() ?? "";
@@ -706,9 +784,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     mimeType: string;
   }> {
     const server = this.#requireServer(serverId);
-    const response = await remoteFetch(`${server.apiUrl}/v1/attachments/${encodeURIComponent(attachmentId)}`, {
-      headers: { Authorization: `Bearer ${this.#token(server)}` },
-    });
+    const response = await this.#fetch(server, `${server.apiUrl}/v1/attachments/${encodeURIComponent(attachmentId)}`);
     if (!response.ok) {
       throw new Error(responseError(await response.json(), "Attachment download failed."));
     }
@@ -728,9 +804,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const server = this.#requireServer(serverId);
     const url = new URL("/v1/shared-files", server.apiUrl);
     url.searchParams.set("path", sharedPath);
-    const response = await remoteFetch(url, {
-      headers: { Authorization: `Bearer ${this.#token(server)}` },
-    });
+    const response = await this.#fetch(server, url);
     if (!response.ok) {
       throw new Error(responseError(await response.json(), "Shared file download failed."));
     }
@@ -751,9 +825,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const url = new URL("/v1/workspace-files", server.apiUrl);
     url.searchParams.set("botId", botId);
     url.searchParams.set("path", workspacePath);
-    const response = await remoteFetch(url, {
-      headers: { Authorization: `Bearer ${this.#token(server)}` },
-    });
+    const response = await this.#fetch(server, url);
     if (!response.ok) {
       throw new Error(responseError(await response.json(), "Workspace file download failed."));
     }
@@ -776,18 +848,202 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventGenerations.clear();
     this.#conversationRefreshRequests.clear();
     this.#queueRefreshRequests.clear();
+    this.#compatibilityRequests.clear();
+  }
+
+  #checkingCompatibility(): ServerCompatibility {
+    return {
+      localAppVersion: this.#appVersion ?? "0.0.0",
+      hostAppVersion: null,
+      localProtocol: LOCAL_TEAM_PROTOCOL,
+      hostProtocol: null,
+      negotiatedProtocol: null,
+      capabilities: [],
+    };
+  }
+
+  #requestProtocol(compatibility: ServerCompatibility): { protocol?: number; appVersion?: string } {
+    return {
+      protocol: compatibility.negotiatedProtocol ?? undefined,
+      appVersion: this.#appVersion ?? undefined,
+    };
+  }
+
+  async #fetch(server: StoredRemoteServer, input: string | URL, init: RequestInit = {}): Promise<Response> {
+    try {
+      const compatibility = await this.#ensureCompatibility(server);
+      const headers = new Headers(init.headers);
+      headers.set("Authorization", `Bearer ${this.#token(server)}`);
+      headers.set(TEAM_PROTOCOL_VERSION_HEADER, String(compatibility.negotiatedProtocol));
+      if (this.#appVersion) headers.set(TEAM_APP_VERSION_HEADER, this.#appVersion);
+      const response = await remoteFetch(input, { ...init, headers });
+      if (response.status === 400 || response.status === 401 || response.status === 403 || response.status === 426) {
+        const value = await response
+          .clone()
+          .json()
+          .catch(() => undefined);
+        const message = responseError(value, `Remote server request failed (${response.status}).`);
+        const code = isDynamicRecord(value) && isString(value.code) ? value.code : null;
+        throw new RemoteRequestError(response.status, message, code);
+      }
+      return response;
+    } catch (error) {
+      this.#applyConnectionError(server.id, error);
+      throw error;
+    }
+  }
+
+  async #ensureCompatibility(server: StoredRemoteServer, refresh = false): Promise<ServerCompatibility> {
+    const current = this.#compatibility.get(server.id);
+    const issue = this.#issues.get(server.id);
+    if (
+      !refresh &&
+      (issue?.code === "client_update_required" ||
+        issue?.code === "host_update_required" ||
+        issue?.code === "protocol_error")
+    ) {
+      throw new RemoteProtocolError(
+        issue.code,
+        issue.message,
+        current?.hostAppVersion && current.hostProtocol
+          ? {
+              appVersion: current.hostAppVersion,
+              protocol: current.hostProtocol,
+              capabilities: current.capabilities,
+            }
+          : null,
+      );
+    }
+    if (!this.#appVersion) {
+      const compatibility = this.#assumedCompatibility();
+      this.#compatibility.set(server.id, compatibility);
+      return compatibility;
+    }
+    if (!refresh && current?.negotiatedProtocol) return current;
+    const pending = this.#compatibilityRequests.get(server.id);
+    if (pending) return pending;
+    const request = this.#negotiateCompatibility(server.apiUrl)
+      .then((compatibility) => {
+        this.#compatibility.set(server.id, compatibility);
+        this.#issues.delete(server.id);
+        return compatibility;
+      })
+      .finally(() => {
+        if (this.#compatibilityRequests.get(server.id) === request) this.#compatibilityRequests.delete(server.id);
+      });
+    this.#compatibilityRequests.set(server.id, request);
+    return request;
+  }
+
+  async #negotiateCompatibility(apiUrl: string): Promise<ServerCompatibility> {
+    if (!this.#appVersion) return this.#assumedCompatibility();
+    let host: TeamProtocolSupportV1;
+    try {
+      host = await requestJson(apiUrl, "/v1/compatibility", decodeTeamProtocolSupportV1);
+    } catch (error) {
+      if (error instanceof RemoteRequestError && error.status === 404) {
+        throw new RemoteProtocolError("host_update_required", "Update OpenBot on the host before connecting.");
+      }
+      if (error instanceof SyntaxError || (error instanceof RemoteProtocolError && error.code === "protocol_error")) {
+        throw new RemoteProtocolError("protocol_error", "The host returned invalid compatibility information.");
+      }
+      throw error;
+    }
+    const negotiatedProtocol = highestCommonTeamProtocol(LOCAL_TEAM_PROTOCOL, host.protocol);
+    if (negotiatedProtocol === null) {
+      if (teamProtocolUpdateDirection(LOCAL_TEAM_PROTOCOL, host.protocol) === "client_update_required") {
+        throw new RemoteProtocolError(
+          "client_update_required",
+          "Update this OpenBot app before connecting to the host.",
+          host,
+        );
+      }
+      throw new RemoteProtocolError("host_update_required", "Update OpenBot on the host before connecting.", host);
+    }
+    return {
+      localAppVersion: this.#appVersion ?? "0.0.0",
+      hostAppVersion: host.appVersion,
+      localProtocol: LOCAL_TEAM_PROTOCOL,
+      hostProtocol: host.protocol,
+      negotiatedProtocol,
+      capabilities: host.capabilities,
+    };
+  }
+
+  #assumedCompatibility(): ServerCompatibility {
+    return {
+      ...this.#checkingCompatibility(),
+      hostAppVersion: "0.0.0",
+      hostProtocol: LOCAL_TEAM_PROTOCOL,
+      negotiatedProtocol: TEAM_PROTOCOL_V1,
+      capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+    };
+  }
+
+  #applyConnectionError(serverId: string, error: unknown, fallbackState: ServerSummary["state"] | null = null): void {
+    let issue: ServerConnectionIssue | null = null;
+    let state: ServerSummary["state"] | null = null;
+    let pauseReconnect = false;
+    if (error instanceof RemoteProtocolError) {
+      if (error.support) {
+        this.#compatibility.set(serverId, {
+          ...this.#checkingCompatibility(),
+          hostAppVersion: error.support.appVersion,
+          hostProtocol: error.support.protocol,
+          capabilities: error.support.capabilities,
+        });
+      }
+      issue = { code: error.code, message: error.message, retryable: true };
+      state = error.code === "protocol_error" ? "error" : "incompatible";
+      pauseReconnect = true;
+    } else if (error instanceof RemoteRequestError) {
+      if (error.code === "client_update_required" || error.code === "host_update_required") {
+        issue = { code: error.code, message: error.message, retryable: true };
+        state = "incompatible";
+        pauseReconnect = true;
+      } else if (error.code === "protocol_error") {
+        issue = { code: "protocol_error", message: error.message, retryable: true };
+        state = "error";
+        pauseReconnect = true;
+      } else if (error.status === 401 || error.status === 403) {
+        issue = { code: "authentication_required", message: "Sign in to this host again.", retryable: true };
+        state = "error";
+        pauseReconnect = true;
+      }
+    } else if (error instanceof SyntaxError) {
+      issue = { code: "protocol_error", message: "The host returned invalid data.", retryable: true };
+      state = "error";
+      pauseReconnect = true;
+    } else if (error instanceof TypeError) {
+      issue = { code: "network_unavailable", message: "The host is not reachable.", retryable: true };
+      state = "offline";
+    }
+    state ??= fallbackState;
+    if (issue) this.#issues.set(serverId, issue);
+    if (state) this.#states.set(serverId, state);
+    if (pauseReconnect) this.#eventAuthenticationPaused.add(serverId);
+    this.#emitChanged();
   }
 
   async #verifyIdentity(
     apiUrl: string,
     serverId: string,
     expectedFingerprint: string,
-  ): Promise<{ publicKey: string; serverName: string; logoVersion: string | null }> {
+  ): Promise<{
+    publicKey: string;
+    serverName: string;
+    logoVersion: string | null;
+    compatibility: ServerCompatibility;
+  }> {
+    const compatibility = await this.#negotiateCompatibility(apiUrl);
     const challenge = randomBytes(24).toString("base64url");
     const proof = await requestJson(
       apiUrl,
       `/v1/identity?challenge=${encodeURIComponent(challenge)}`,
       decodeIdentityProof,
+      {
+        ...this.#requestProtocol(compatibility),
+      },
     );
     const valid =
       proof.serverId === serverId &&
@@ -796,17 +1052,28 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       fingerprint(proof.publicKey) === expectedFingerprint &&
       verify(null, Buffer.from(challenge), proof.publicKey, Buffer.from(proof.signature, "base64url"));
     if (!valid) throw new Error("The server identity could not be verified.");
-    return { publicKey: proof.publicKey, serverName: proof.serverName, logoVersion: proof.logoVersion };
+    return {
+      publicKey: proof.publicKey,
+      serverName: proof.serverName,
+      logoVersion: proof.logoVersion,
+      compatibility,
+    };
   }
 
   async #refreshRemoteDesktop(server: StoredRemoteServer): Promise<void> {
     try {
+      const compatibility = await this.#ensureCompatibility(server);
+      if (!compatibility.capabilities.includes("remote-desktop")) {
+        server.remoteDesktopAvailable = false;
+        return;
+      }
       const capabilities = await requestJson(
         server.apiUrl,
         "/v1/remote-screen/capabilities",
         decodeRemoteDesktopCapabilities,
         {
           token: this.#token(server),
+          ...this.#requestProtocol(compatibility),
         },
       );
       server.remoteDesktopAvailable = capabilities.ready;
@@ -827,14 +1094,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     let opened = false;
     let openedAt = 0;
     let authenticationFailed = false;
+    let protocolFailed = false;
     try {
+      const compatibility = await this.#ensureCompatibility(server, true);
       const eventsUrl = new URL("/v1/events", server.apiUrl);
       eventsUrl.protocol = eventsUrl.protocol === "https:" ? "wss:" : "ws:";
-      const socket = new WebSocket(eventsUrl, [
-        REMOTE_EVENT_SNAPSHOT_PROTOCOL,
-        REMOTE_EVENT_PROTOCOL,
-        `openbot-token.${this.#token(server)}`,
-      ]);
+      const socketProtocols = this.#appVersion
+        ? [TEAM_PROTOCOL_V1_WEBSOCKET, `openbot-token.${this.#token(server)}`]
+        : [REMOTE_EVENT_SNAPSHOT_PROTOCOL, REMOTE_EVENT_PROTOCOL, `openbot-token.${this.#token(server)}`];
+      const socket = new WebSocket(eventsUrl, socketProtocols);
       let agentEventsReady = false;
       const bufferedAgentEvents: AgentEvent[] = [];
       controller.signal.addEventListener("abort", () => socket.close(1000, "Client stopped"), {
@@ -848,12 +1116,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             openedAt = Date.now();
             this.#eventSockets.set(serverId, socket);
             this.#sendEventScope(serverId, socket);
+            this.#compatibility.set(serverId, compatibility);
+            this.#issues.delete(serverId);
+            this.#eventAuthenticationPaused.delete(serverId);
+            this.#connectionSequences.set(serverId, (this.#connectionSequences.get(serverId) ?? 0) + 1);
             this.#states.set(serverId, "online");
             this.#emitChanged();
-            if (socket.protocol === REMOTE_EVENT_SNAPSHOT_PROTOCOL) {
+            if (this.#supportsRuntimeSnapshots(serverId, socket)) {
               agentEventsReady = true;
             } else {
-              void this.#refreshLegacyAgentState(serverId)
+              void this.#refreshAgentStateFallback(serverId)
                 .then(() => {
                   if (this.#eventSockets.get(serverId) !== socket) return;
                   agentEventsReady = true;
@@ -866,13 +1138,37 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           { once: true },
         );
         socket.addEventListener("message", (message) => {
-          if (!isString(message.data)) return;
+          if (!isString(message.data)) {
+            protocolFailed = true;
+            this.#applyConnectionError(
+              serverId,
+              new RemoteProtocolError("protocol_error", "The host sent a binary event."),
+            );
+            socket.close(1003, "Text event payloads are required");
+            return;
+          }
           if (Buffer.byteLength(message.data) > REMOTE_EVENT_PAYLOAD_LIMIT) {
+            protocolFailed = true;
+            this.#applyConnectionError(
+              serverId,
+              new RemoteProtocolError("protocol_error", "The host event was too large."),
+            );
             socket.close(1009, "Event payload is too large");
             return;
           }
           try {
-            const event = JSON.parse(message.data);
+            const decoded = decodeTeamProtocolV1Event(JSON.parse(message.data));
+            if (decoded.kind === "unknown") return;
+            if (decoded.kind === "invalid") {
+              protocolFailed = true;
+              this.#applyConnectionError(
+                serverId,
+                new RemoteProtocolError("protocol_error", "The host returned an invalid known event."),
+              );
+              socket.close(1003, "Invalid known event payload");
+              return;
+            }
+            const event = decoded.event;
             if (isTeamRealtimeEvent(event)) {
               if (event.type === "team-identity") {
                 server.name = event.serverName;
@@ -896,10 +1192,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               } else {
                 this.#forwardAgentEvent(serverId, event);
               }
-            } else {
-              throw new Error("Invalid agent event payload.");
             }
           } catch {
+            protocolFailed = true;
+            this.#applyConnectionError(
+              serverId,
+              new RemoteProtocolError("protocol_error", "The host returned invalid JSON."),
+            );
             socket.close(1003, "Invalid event payload");
           }
         });
@@ -922,25 +1221,38 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           { once: true },
         );
       });
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && !protocolFailed) {
         this.#states.set(serverId, "offline");
         this.#setPresenceOffline(serverId);
         this.#emitChanged();
       }
-    } catch {
+    } catch (error) {
       if (!controller.signal.aborted) {
-        authenticationFailed = !opened && (await this.#hasRejectedEventCredentials(server));
-        if (authenticationFailed) this.#eventAuthenticationPaused.add(serverId);
-        this.#states.set(serverId, authenticationFailed ? "error" : "offline");
-        this.#setPresenceOffline(serverId);
-        this.#emitChanged();
+        if (error instanceof RemoteProtocolError) {
+          protocolFailed = true;
+          this.#applyConnectionError(serverId, error);
+        } else {
+          authenticationFailed = !opened && (await this.#hasRejectedEventCredentials(server));
+          if (authenticationFailed) {
+            this.#applyConnectionError(serverId, new RemoteRequestError(401, "Sign in again."));
+          } else {
+            this.#states.set(serverId, "offline");
+            this.#issues.set(serverId, {
+              code: "network_unavailable",
+              message: "The host is not reachable.",
+              retryable: true,
+            });
+            this.#setPresenceOffline(serverId);
+            this.#emitChanged();
+          }
+        }
       }
     }
     if (this.#eventControllers.get(serverId) === controller) this.#eventControllers.delete(serverId);
     if (openedAt > 0 && Date.now() - openedAt >= REMOTE_EVENT_HEALTHY_MS) {
       this.#eventReconnectAttempts.delete(serverId);
     }
-    if (!controller.signal.aborted && !authenticationFailed) this.#scheduleEventReconnect(serverId);
+    if (!controller.signal.aborted && !authenticationFailed && !protocolFailed) this.#scheduleEventReconnect(serverId);
   }
 
   #syncEventScopes(): void {
@@ -948,9 +1260,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   #sendEventScope(serverId: string, socket: WebSocket): void {
-    if (socket.readyState !== WebSocket.OPEN || socket.protocol !== REMOTE_EVENT_SNAPSHOT_PROTOCOL) return;
+    if (socket.readyState !== WebSocket.OPEN || !this.#supportsRuntimeSnapshots(serverId, socket)) {
+      return;
+    }
     socket.send(
-      JSON.stringify({ type: "agent-event-scope", includeConversations: this.#state.activeServerId === serverId }),
+      encodeTeamProtocolV1ClientEvent({
+        type: "agent-event-scope",
+        includeConversations: this.#state.activeServerId === serverId,
+        ...(this.#appVersion ? { capabilities: TEAM_PROTOCOL_V1_CAPABILITIES } : {}),
+      }),
     );
   }
 
@@ -1003,8 +1321,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async #hasRejectedEventCredentials(server: StoredRemoteServer): Promise<boolean> {
     try {
+      const compatibility = await this.#ensureCompatibility(server);
       await requestJson(server.apiUrl, "/v1/me", (value) => decodeRecord(value, "team member"), {
         token: this.#token(server),
+        ...this.#requestProtocol(compatibility),
       });
       return false;
     } catch (error) {
@@ -1012,7 +1332,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
   }
 
-  async #refreshLegacyAgentState(serverId: string): Promise<void> {
+  #supportsCapability(serverId: string, capability: TeamProtocolV1Capability): boolean {
+    return this.#compatibility.get(serverId)?.capabilities.includes(capability) ?? false;
+  }
+
+  #supportsRuntimeSnapshots(serverId: string, socket: WebSocket): boolean {
+    return this.#appVersion
+      ? this.#supportsCapability(serverId, "agent-runtime-snapshots")
+      : socket.protocol === REMOTE_EVENT_SNAPSHOT_PROTOCOL;
+  }
+
+  async #refreshAgentStateFallback(serverId: string): Promise<void> {
     const generation = this.#advanceEventGeneration(serverId);
     const bots = await this.request("/v1/agents", {}, serverId, decodeBotSummaries);
     if (this.#eventGenerations.get(serverId) !== generation) return;
@@ -1169,7 +1499,7 @@ async function requestJson<T>(
   apiUrl: string,
   path: string,
   decoder: ResponseDecoder<T>,
-  options: { method?: string; body?: unknown; token?: string } = {},
+  options: { method?: string; body?: unknown; token?: string; protocol?: number; appVersion?: string } = {},
 ): Promise<T> {
   const response = await remoteFetch(new URL(path, apiUrl), {
     method: options.method ?? (options.body === undefined ? "GET" : "POST"),
@@ -1177,18 +1507,45 @@ async function requestJson<T>(
       Accept: "application/json",
       ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
       ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      ...(options.protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(options.protocol) } : {}),
+      ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
     },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    body: options.body === undefined ? undefined : encodeTeamProtocolV1Http(parseTeamProtocolHttpBody(options.body)),
   });
-  const value = response.status === 204 ? undefined : await response.json();
+  let value: unknown;
+  if (response.status !== 204) {
+    try {
+      value = await response.json();
+    } catch (error) {
+      if (response.ok) throw error;
+    }
+  }
   if (!response.ok) {
     const message =
       isDynamicRecord(value) && isString(value.error)
         ? value.error
         : `Remote server request failed (${response.status}).`;
-    throw new RemoteRequestError(response.status, message);
+    const code = isDynamicRecord(value) && isString(value.code) ? value.code : null;
+    throw new RemoteRequestError(response.status, message, code);
   }
-  return decoder(value);
+  try {
+    return decoder(value);
+  } catch (error) {
+    throw new RemoteProtocolError(
+      "protocol_error",
+      "The host returned data that this app could not safely use.",
+      null,
+      {
+        cause: error,
+      },
+    );
+  }
+}
+
+function parseTeamProtocolHttpBody(value: unknown): object | null {
+  if (value === null) return null;
+  if (Array.isArray(value) || isDynamicRecord(value)) return value;
+  throw new Error("Invalid Team protocol request body.");
 }
 
 function decodeRecord(value: unknown, label: string): DynamicRecord {

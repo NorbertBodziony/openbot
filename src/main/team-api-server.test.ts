@@ -16,6 +16,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { TEAM_APP_VERSION_HEADER, TEAM_PROTOCOL_VERSION_HEADER } from "@openbot/contracts/team-protocol/v1";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
@@ -131,6 +132,51 @@ function createBrowser(overrides: Partial<TestBrowser> = {}): TestBrowser {
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+describe("TeamApiServer compatibility", () => {
+  it("publishes protocol support and blocks requests without a compatible handshake", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-compatibility-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    const api = new TeamApiServer({
+      appVersion: "0.4.0",
+      store,
+      agents: createAgents(),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const compatibility = await fetch(`${base}/v1/compatibility`);
+      expect(compatibility.status).toBe(200);
+      await expect(compatibility.json()).resolves.toMatchObject({
+        appVersion: "0.4.0",
+        protocol: { minimum: 1, maximum: 1 },
+        capabilities: expect.arrayContaining(["browser-control", "remote-desktop"]),
+      });
+
+      const missing = await fetch(`${base}/v1/identity`);
+      expect(missing.status).toBe(426);
+      await expect(missing.json()).resolves.toMatchObject({ code: "client_update_required" });
+
+      const newerClient = await fetch(`${base}/v1/identity`, {
+        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "2", [TEAM_APP_VERSION_HEADER]: "0.5.0" },
+      });
+      expect(newerClient.status).toBe(426);
+      await expect(newerClient.json()).resolves.toMatchObject({ code: "host_update_required" });
+
+      const compatible = await fetch(`${base}/v1/identity`, {
+        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "1", [TEAM_APP_VERSION_HEADER]: "0.3.9" },
+      });
+      expect(compatible.status).toBe(200);
+    } finally {
+      await api.stop();
+    }
+  });
 });
 
 describe("TeamApiServer administration", () => {

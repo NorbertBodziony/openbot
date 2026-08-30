@@ -981,6 +981,7 @@ const openbotApi: OpenBotDesktopApi = {
       selectedServerId = server.id;
       return server;
     },
+    retryConnection: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversRetryConnection, serverId),
     remove: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversRemove, serverId),
     getPresence: () => ipcRenderer.invoke(IPC_CHANNELS.serversGetPresence),
     getPresenceFor: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversGetPresenceFor, serverId),

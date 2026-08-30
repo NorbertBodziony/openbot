@@ -36,6 +36,18 @@ import {
   type UpdateQueuedMessageInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import {
+  decodeTeamProtocolV1ClientEvent,
+  encodeTeamProtocolV1Event,
+  encodeTeamProtocolV1Http,
+  isTeamProtocolV1Capability,
+  TEAM_APP_VERSION_HEADER,
+  TEAM_PROTOCOL_V1,
+  TEAM_PROTOCOL_V1_CAPABILITIES,
+  TEAM_PROTOCOL_V1_WEBSOCKET,
+  TEAM_PROTOCOL_VERSION_HEADER,
+  type TeamProtocolSupportV1,
+} from "@openbot/contracts/team-protocol/v1";
 import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
@@ -59,8 +71,8 @@ const RATE_LIMIT_SWEEP_MS = 60_000;
 const RATE_LIMIT_ATTEMPTS = 5;
 const RATE_LIMIT_CAPACITY = 10_000;
 const RUNTIME_SNAPSHOT_REQUEST_INTERVAL_MS = 1_000;
-const EVENT_PROTOCOL = "openbot-events";
-const EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
+const TEST_LEGACY_EVENT_PROTOCOL = "openbot-events";
+const TEST_LEGACY_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 const requireModule = createRequire(import.meta.url);
 const webSockets: typeof Ws = requireModule(join(dirname(requireModule.resolve("ws/package.json")), "index.js"));
 
@@ -148,6 +160,7 @@ type TeamApiRemoteScreen = Pick<
 >;
 
 interface TeamApiOptions {
+  appVersion?: string;
   store: TeamStore;
   agents: TeamApiAgents;
   sidebarLayout?: TeamApiSidebarLayout;
@@ -167,7 +180,7 @@ interface TeamApiOptions {
 interface EventClientState {
   token: string;
   memberId: string;
-  supportsRuntimeSnapshot: boolean;
+  capabilities: Set<string>;
   includeConversationEvents: boolean;
   typingBotId: string | null;
   typingTimer: ReturnType<typeof setTimeout> | null;
@@ -182,6 +195,16 @@ interface RateEntry {
   resetAt: number;
 }
 
+interface TeamProtocolIssue {
+  status: 400 | 426;
+  body: {
+    error: string;
+    code: "client_update_required" | "host_update_required" | "protocol_error";
+    host: TeamProtocolSupportV1;
+    client?: { appVersion: string; protocol: number };
+  };
+}
+
 export class TeamApiServer {
   readonly #options: Omit<TeamApiOptions, "sidebarLayout"> & { sidebarLayout: TeamApiSidebarLayout };
   readonly #rateLimits = new Map<string, RateEntry>();
@@ -190,11 +213,13 @@ export class TeamApiServer {
     noServer: true,
     maxPayload: EVENT_PAYLOAD_LIMIT,
     handleProtocols: (protocols) =>
-      protocols.has(EVENT_SNAPSHOT_PROTOCOL)
-        ? EVENT_SNAPSHOT_PROTOCOL
-        : protocols.has(EVENT_PROTOCOL)
-          ? EVENT_PROTOCOL
-          : false,
+      protocols.has(TEAM_PROTOCOL_V1_WEBSOCKET)
+        ? TEAM_PROTOCOL_V1_WEBSOCKET
+        : protocols.has(TEST_LEGACY_SNAPSHOT_PROTOCOL)
+          ? TEST_LEGACY_SNAPSHOT_PROTOCOL
+          : protocols.has(TEST_LEGACY_EVENT_PROTOCOL)
+            ? TEST_LEGACY_EVENT_PROTOCOL
+            : false,
   });
   readonly #rateLimitCapacity: number;
   readonly #now: () => number;
@@ -226,6 +251,15 @@ export class TeamApiServer {
         return;
       }
       const protocols = (request.headers["sec-websocket-protocol"] ?? "").split(",").map((value) => value.trim());
+      if (
+        this.#options.appVersion &&
+        url.pathname === "/v1/events" &&
+        !protocols.includes(TEAM_PROTOCOL_V1_WEBSOCKET)
+      ) {
+        socket.write("HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return;
+      }
       const encodedToken = protocols.find((value) => value.startsWith("openbot-token."));
       const token = encodedToken?.slice("openbot-token.".length) ?? "";
       const member = token.length <= 512 ? this.#options.store.authenticate(token) : null;
@@ -236,10 +270,18 @@ export class TeamApiServer {
       }
       if (
         url.pathname === "/v1/events" &&
-        (protocols.includes(EVENT_SNAPSHOT_PROTOCOL) || protocols.includes(EVENT_PROTOCOL))
+        (protocols.includes(TEAM_PROTOCOL_V1_WEBSOCKET) ||
+          (!this.#options.appVersion &&
+            (protocols.includes(TEST_LEGACY_SNAPSHOT_PROTOCOL) || protocols.includes(TEST_LEGACY_EVENT_PROTOCOL))))
       ) {
         this.#webSockets.handleUpgrade(request, socket, head, (client) => {
-          this.#connectEvents(client, token, member.id, client.protocol === EVENT_SNAPSHOT_PROTOCOL);
+          this.#connectEvents(
+            client,
+            token,
+            member.id,
+            client.protocol === TEAM_PROTOCOL_V1_WEBSOCKET || client.protocol === TEST_LEGACY_SNAPSHOT_PROTOCOL,
+            client.protocol === TEAM_PROTOCOL_V1_WEBSOCKET,
+          );
         });
         return;
       }
@@ -345,7 +387,8 @@ export class TeamApiServer {
       serverName: identity.serverName,
       logoVersion: identity.logoVersion,
     };
-    const payload = JSON.stringify(event);
+    const payload = encodeTeamProtocolV1Event(event);
+    if (!payload) return;
     for (const client of this.#eventClients.keys()) {
       if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
     }
@@ -402,10 +445,17 @@ export class TeamApiServer {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       const method = request.method ?? "GET";
 
+      if (method === "GET" && url.pathname === "/v1/compatibility") {
+        return this.#json(response, 200, this.#protocolSupport());
+      }
+
       if (this.#options.remoteScreen?.handlesHttp(url)) {
         await this.#options.remoteScreen.handleHttp(request, response, url);
         return;
       }
+
+      const protocolIssue = this.#protocolIssue(request);
+      if (protocolIssue) return this.#json(response, protocolIssue.status, protocolIssue.body);
 
       if (method === "GET" && url.pathname === "/v1/identity") {
         const challenge = url.searchParams.get("challenge");
@@ -1144,56 +1194,69 @@ export class TeamApiServer {
     let queueInvalidation: string | undefined;
     let completionSnapshot: string | undefined;
     for (const [client, connection] of this.#eventClients) {
-      if (event.type === "runtime-snapshot" && !connection.supportsRuntimeSnapshot) continue;
+      const supportsRuntimeSnapshots = connection.capabilities.has("agent-runtime-snapshots");
+      const requiredCapability = eventCapability(event);
+      if (requiredCapability && !connection.capabilities.has(requiredCapability)) continue;
       if (event.type === "conversation" && !connection.includeConversationEvents) continue;
-      if (
-        event.type === "queue-changed" &&
-        connection.supportsRuntimeSnapshot &&
-        !connection.includeConversationEvents
-      ) {
+      if (event.type === "queue-changed" && supportsRuntimeSnapshots && !connection.includeConversationEvents) {
         continue;
       }
       let outgoing: string;
-      if (event.type === "conversation" && connection.supportsRuntimeSnapshot) {
-        conversationInvalidation ??= JSON.stringify({
-          type: "conversation-invalidated",
-          botId: event.snapshot.botId,
-          revision: event.snapshot.revision,
-        });
+      if (event.type === "conversation" && supportsRuntimeSnapshots) {
+        conversationInvalidation ??=
+          encodeTeamProtocolV1Event({
+            type: "conversation-invalidated",
+            botId: event.snapshot.botId,
+            revision: event.snapshot.revision,
+          }) ?? undefined;
+        if (!conversationInvalidation) continue;
         outgoing = conversationInvalidation;
-      } else if (event.type === "queue-changed" && connection.supportsRuntimeSnapshot) {
-        queueInvalidation ??= JSON.stringify({ type: "queue-invalidated", botId: event.snapshot.botId });
+      } else if (event.type === "queue-changed" && supportsRuntimeSnapshots) {
+        queueInvalidation ??=
+          encodeTeamProtocolV1Event({ type: "queue-invalidated", botId: event.snapshot.botId }) ?? undefined;
+        if (!queueInvalidation) continue;
         outgoing = queueInvalidation;
       } else {
-        payload ??= JSON.stringify(event);
+        payload ??= encodeTeamProtocolV1Event(event) ?? undefined;
+        if (!payload) continue;
         outgoing = payload;
       }
       const limit = event.type === "runtime-snapshot" ? AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT : JSON_LIMIT;
       if (Buffer.byteLength(outgoing) > limit) continue;
       if (client.readyState !== webSockets.WebSocket.OPEN) continue;
       client.send(outgoing);
-      if (
-        event.type !== "turn-completed" ||
-        !connection.supportsRuntimeSnapshot ||
-        connection.includeConversationEvents
-      ) {
+      if (event.type !== "turn-completed" || !supportsRuntimeSnapshots || connection.includeConversationEvents) {
         continue;
       }
-      completionSnapshot ??= JSON.stringify({
-        type: "runtime-snapshot",
-        snapshot: this.#options.agents.getRuntimeSnapshot(),
-      });
+      completionSnapshot ??=
+        encodeTeamProtocolV1Event({
+          type: "runtime-snapshot",
+          snapshot: this.#options.agents.getRuntimeSnapshot(),
+        }) ?? undefined;
+      if (!completionSnapshot) continue;
       if (Buffer.byteLength(completionSnapshot) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return;
       client.send(completionSnapshot);
     }
   }
 
-  #connectEvents(client: Ws.WebSocket, token: string, memberId: string, supportsRuntimeSnapshot: boolean): void {
+  #connectEvents(
+    client: Ws.WebSocket,
+    token: string,
+    memberId: string,
+    supportsSnapshotTransport: boolean,
+    acceptsCapabilityDeclaration: boolean,
+  ): void {
     const connection: EventClientState = {
       token,
       memberId,
-      supportsRuntimeSnapshot,
-      includeConversationEvents: !supportsRuntimeSnapshot,
+      capabilities: new Set(
+        acceptsCapabilityDeclaration
+          ? []
+          : TEAM_PROTOCOL_V1_CAPABILITIES.filter(
+              (capability) => supportsSnapshotTransport || capability !== "agent-runtime-snapshots",
+            ),
+      ),
+      includeConversationEvents: !supportsSnapshotTransport,
       typingBotId: null,
       typingTimer: null,
       directTypingRecipientId: null,
@@ -1206,7 +1269,7 @@ export class TeamApiServer {
       // Protocol errors, including maxPayload violations, also close the socket.
       // Consume the emitted error so malformed input cannot become an uncaught exception.
     });
-    if (supportsRuntimeSnapshot) {
+    if (connection.capabilities.has("agent-runtime-snapshots")) {
       this.#sendRuntimeSnapshot(client, connection, false);
     }
     client.on("message", (data, isBinary) => {
@@ -1221,25 +1284,29 @@ export class TeamApiServer {
             ? Buffer.concat(data).toString("utf8")
             : Buffer.from(data).toString("utf8");
         if (text.length > EVENT_PAYLOAD_LIMIT) throw new Error("Event payload is too large.");
-        const event = JSON.parse(text);
-        if (!isDynamicRecord(event)) {
-          throw new Error("Unsupported team event.");
-        }
-        if (event.type === "runtime-snapshot-request" && supportsRuntimeSnapshot) {
+        const event = decodeTeamProtocolV1ClientEvent(JSON.parse(text));
+        if (event.type === "runtime-snapshot-request" && connection.capabilities.has("agent-runtime-snapshots")) {
           this.#sendRuntimeSnapshot(client, connection, true);
           return;
         }
-        if (event.type === "agent-event-scope" && supportsRuntimeSnapshot) {
-          if (!isBoolean(event.includeConversations)) throw new Error("Invalid agent event scope.");
+        if (event.type === "agent-event-scope" && supportsSnapshotTransport) {
+          if (acceptsCapabilityDeclaration) {
+            if (!event.capabilities) throw new Error("Invalid client capabilities.");
+            const snapshotsWereEnabled = connection.capabilities.has("agent-runtime-snapshots");
+            connection.capabilities = new Set(event.capabilities.filter(isTeamProtocolV1Capability));
+            if (connection.capabilities.has("agent-runtime-snapshots") && !snapshotsWereEnabled) {
+              this.#sendRuntimeSnapshot(client, connection, false);
+            }
+          }
           connection.includeConversationEvents = event.includeConversations;
           return;
         }
         if (event.type === "team-direct-typing") {
+          if (!connection.capabilities.has("direct-messages")) {
+            throw new Error("Direct messages are not enabled for this client.");
+          }
           const typing = event.typing;
           const recipientMemberId = event.recipientMemberId;
-          if (!isBoolean(typing) || !isString(recipientMemberId)) {
-            throw new Error("Invalid direct typing event.");
-          }
           if (recipientMemberId.length > INPUT_LIMITS.identifier) {
             throw new Error("Invalid direct typing recipient.");
           }
@@ -1250,9 +1317,6 @@ export class TeamApiServer {
         if (event.type !== "team-typing") throw new Error("Unsupported team event.");
         const typing = event.typing;
         const botId = event.botId;
-        if (!isBoolean(typing) || (botId !== null && !isString(botId))) {
-          throw new Error("Invalid typing event.");
-        }
         if (typing && (!botId || botId.length > INPUT_LIMITS.identifier)) {
           throw new Error("A valid agent is required for typing state.");
         }
@@ -1288,7 +1352,11 @@ export class TeamApiServer {
     connection.snapshotResponsePending = true;
     if (rateLimited) connection.nextSnapshotRequestAt = now + RUNTIME_SNAPSHOT_REQUEST_INTERVAL_MS;
     try {
-      const payload = JSON.stringify({ type: "runtime-snapshot", snapshot: this.#options.agents.getRuntimeSnapshot() });
+      const payload = encodeTeamProtocolV1Event({
+        type: "runtime-snapshot",
+        snapshot: this.#options.agents.getRuntimeSnapshot(),
+      });
+      if (!payload) throw new Error("Runtime snapshot is not supported by Team protocol v1.");
       if (Buffer.byteLength(payload) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) {
         throw new Error("Runtime snapshot exceeds its transport budget.");
       }
@@ -1359,7 +1427,8 @@ export class TeamApiServer {
     const snapshot = this.getPresence();
     this.#options.onPresence?.(snapshot);
     const event: TeamRealtimeEvent = { type: "team-presence", snapshot };
-    const payload = JSON.stringify(event);
+    const payload = encodeTeamProtocolV1Event(event);
+    if (!payload) return;
     for (const client of this.#eventClients.keys()) {
       if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
     }
@@ -1392,9 +1461,14 @@ export class TeamApiServer {
   }
 
   #sendToMembers(memberIds: string[], event: TeamRealtimeEvent): void {
-    const payload = JSON.stringify(event);
+    const payload = encodeTeamProtocolV1Event(event);
+    if (!payload) return;
     for (const [client, connection] of this.#eventClients) {
-      if (memberIds.includes(connection.memberId) && client.readyState === webSockets.WebSocket.OPEN) {
+      if (
+        connection.capabilities.has("direct-messages") &&
+        memberIds.includes(connection.memberId) &&
+        client.readyState === webSockets.WebSocket.OPEN
+      ) {
         client.send(payload);
       }
     }
@@ -1416,9 +1490,60 @@ export class TeamApiServer {
     return recipient;
   }
 
-  #json(response: ServerResponse, status: number, value: unknown): void {
+  #json(response: ServerResponse, status: number, value: object | null): void {
     response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
-    response.end(`${JSON.stringify(value)}\n`);
+    response.end(`${encodeTeamProtocolV1Http(value)}\n`);
+  }
+
+  #protocolSupport(): TeamProtocolSupportV1 {
+    return {
+      appVersion: this.#options.appVersion ?? "0.0.0",
+      protocol: { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V1 },
+      capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+    };
+  }
+
+  #protocolIssue(request: import("node:http").IncomingMessage): TeamProtocolIssue | null {
+    if (!this.#options.appVersion) return null;
+    const rawProtocol = firstHeaderValue(request.headers[TEAM_PROTOCOL_VERSION_HEADER.toLowerCase()]);
+    const clientAppVersion = firstHeaderValue(request.headers[TEAM_APP_VERSION_HEADER.toLowerCase()]);
+    const protocol = rawProtocol ? Number(rawProtocol) : null;
+    const host = this.#protocolSupport();
+    if (!rawProtocol || !clientAppVersion) {
+      return {
+        status: 426,
+        body: {
+          error: "Update this OpenBot client before connecting to this host.",
+          code: "client_update_required",
+          host,
+        },
+      };
+    }
+    if (
+      !Number.isSafeInteger(protocol) ||
+      protocol === null ||
+      protocol < 1 ||
+      protocol > 65_535 ||
+      clientAppVersion.length > 64
+    ) {
+      return {
+        status: 400,
+        body: { error: "Invalid Team API protocol headers.", code: "protocol_error", host },
+      };
+    }
+    if (protocol === TEAM_PROTOCOL_V1) return null;
+    const clientIsOlder = protocol < TEAM_PROTOCOL_V1;
+    return {
+      status: 426,
+      body: {
+        error: clientIsOlder
+          ? "Update this OpenBot client before connecting to this host."
+          : "Update OpenBot on the host before connecting.",
+        code: clientIsOlder ? "client_update_required" : "host_update_required",
+        host,
+        client: { appVersion: clientAppVersion, protocol },
+      },
+    };
   }
 
   #empty(response: ServerResponse, status: number): void {
@@ -1449,6 +1574,14 @@ function unavailableSidebarLayout(): TeamApiSidebarLayout {
     on: () => undefined,
     off: () => undefined,
   };
+}
+
+function eventCapability(event: AgentEvent): (typeof TEAM_PROTOCOL_V1_CAPABILITIES)[number] | null {
+  if (event.type === "runtime-snapshot") return "agent-runtime-snapshots";
+  if (event.type === "sidebar-layout-changed") return "sidebar-layout";
+  if (event.type === "browser-changed" || event.type === "browser-control-changed") return "browser-control";
+  if (event.type === "conversation-page") return "conversation-pagination";
+  return null;
 }
 
 class HttpError extends Error {

@@ -1,0 +1,12 @@
+{
+  "type": "agent-event-scope",
+  "includeConversations": true,
+  "capabilities": [
+    "agent-runtime-snapshots",
+    "browser-control",
+    "conversation-pagination",
+    "direct-messages",
+    "remote-desktop",
+    "sidebar-layout"
+  ]
+}

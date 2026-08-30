@@ -1020,6 +1020,11 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         if (!server) throw new Error("Server not found");
         return clone(server);
       },
+      retryConnection: async (serverId) => {
+        const server = servers.find((candidate) => candidate.id === serverId);
+        if (!server) throw new Error("Server not found");
+        return clone(server);
+      },
       remove: async (serverId) => {
         servers = servers.filter((server) => server.id !== serverId);
       },

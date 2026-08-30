@@ -33,6 +33,16 @@
 - Migration changes require data-preservation fixtures for every affected released schema plus failure, rollback, retry, downgrade, missing-version, foreign-key, and integrity coverage at the stable database boundary.
 - Do not add automatic full-database migration backups. Their time and disk cost is unbounded because conversation history lives in SQLite; make the migration itself safe instead.
 
+## Team API protocol compatibility
+
+- Never use the OpenBot application SemVer as a wire protocol version. Application versions are diagnostic metadata only.
+- Keep a frozen codec, adapter, and client and host fixtures for each released Team API protocol under `packages/contracts/src/team-protocol`.
+- Keep one registered adapter for every supported protocol. Do not serialize current IPC types directly across the Team API boundary.
+- Use capabilities for additive, optional behavior. A missing capability can disable only the related feature.
+- Add a new protocol version for a required field, a removed field, or a semantic change. Never change the meaning of a released protocol.
+- Do not remove an adapter because of age, release count, or SemVer distance. Removal requires a separate architecture decision for a security issue, data-loss risk, semantics that cannot be kept, or cost that an adapter cannot contain. Also add a changelog entry, update instructions, both update-direction tests, and clear UI text.
+- Keep malformed known payloads fail-closed as `protocol_error`. Ignore unknown optional events.
+
 ## Test value policy
 
 - Keep verification minimal and proportional to the change. Run the narrowest relevant automated test and, when needed, one manual UI check; do not repeat equivalent checks across Vitest, Storybook, and the integrated app unless they cover genuinely different runtime behavior.

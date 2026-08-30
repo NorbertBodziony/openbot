@@ -224,7 +224,9 @@ describe("remote server order", () => {
     const bytes = new TextEncoder().encode("name,value\nOpenBot,1\n");
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
-      expect(init?.headers).toEqual({ Authorization: "Bearer session-token" });
+      const headers = new Headers(init?.headers);
+      expect(headers.get("Authorization")).toBe("Bearer session-token");
+      expect(headers.get("OpenBot-Protocol-Version")).toBe("1");
       if (url.pathname === "/v1/shared-files") {
         expect(url.searchParams.get("path")).toBe("~/OpenBot/Shared/report.csv");
       } else {
@@ -584,22 +586,22 @@ describe("remote event connections", () => {
     }
   });
 
-  it("buffers legacy events until the initial state is loaded", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "openbot-legacy-remote-events-"));
+  it("buffers events while fallback state is loaded", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-fallback-remote-events-"));
     const statePath = join(directory, "servers.json");
     await writeFile(
       statePath,
       JSON.stringify({
         version: 2,
-        activeServerId: "legacy",
+        activeServerId: "fallback",
         servers: [
           {
-            id: "legacy",
-            name: "Legacy",
-            apiUrl: "https://legacy.trycloudflare.com/",
+            id: "fallback",
+            name: "Fallback",
+            apiUrl: "https://fallback.trycloudflare.com/",
             fingerprint: "fingerprint",
             username: "person@example.com",
-            encryptedToken: Buffer.from("token-legacy").toString("base64"),
+            encryptedToken: Buffer.from("token-fallback").toString("base64"),
             remoteDesktopAvailable: false,
             role: "member",
           },
@@ -659,21 +661,21 @@ describe("remote event connections", () => {
         return Response.json({ botId: bot.id, deliveries: [] });
       }),
     );
-    let legacySocket: LegacyEventSocket | undefined;
-    class LegacyEventSocket extends EventTarget {
+    let fallbackSocket: FallbackEventSocket | undefined;
+    class FallbackEventSocket extends EventTarget {
       static readonly OPEN = 1;
       readonly protocol = "openbot-events";
-      readonly readyState = LegacyEventSocket.OPEN;
+      readonly readyState = FallbackEventSocket.OPEN;
       readonly send = vi.fn();
       readonly close = vi.fn(() => this.dispatchEvent(new Event("close")));
 
       constructor() {
         super();
-        legacySocket = this;
+        fallbackSocket = this;
         queueMicrotask(() => this.dispatchEvent(new Event("open")));
       }
     }
-    vi.stubGlobal("WebSocket", LegacyEventSocket);
+    vi.stubGlobal("WebSocket", FallbackEventSocket);
     const manager = new RemoteServerManager(
       statePath,
       {
@@ -693,7 +695,7 @@ describe("remote event connections", () => {
       deferConversation = true;
       manager.startEventConnections();
       await vi.waitFor(() => expect(resolveConversation).toBeTypeOf("function"));
-      legacySocket?.dispatchEvent(
+      fallbackSocket?.dispatchEvent(
         new MessageEvent("message", {
           data: JSON.stringify({
             type: "conversation",
@@ -708,12 +710,12 @@ describe("remote event connections", () => {
         }),
       );
       expect(agentEvent).not.toHaveBeenCalledWith(
-        "legacy",
+        "fallback",
         expect.objectContaining({ type: "conversation", snapshot: expect.objectContaining({ revision: 2 }) }),
       );
       resolveConversation?.(conversationResponse(2, [liveReply]));
       await vi.waitFor(() =>
-        expect(agentEvent).toHaveBeenCalledWith("legacy", expect.objectContaining({ type: "conversation" }), true),
+        expect(agentEvent).toHaveBeenCalledWith("fallback", expect.objectContaining({ type: "conversation" }), true),
       );
       expect(
         agentEvent.mock.calls
@@ -752,7 +754,7 @@ async function writeRemoteEventState(path: string, serverId: string): Promise<vo
   );
 }
 
-function remoteEventManager(statePath: string): RemoteServerManager {
+function remoteEventManager(statePath: string, appVersion?: string): RemoteServerManager {
   return new RemoteServerManager(
     statePath,
     {
@@ -763,8 +765,178 @@ function remoteEventManager(statePath: string): RemoteServerManager {
       createTeamAuthTicket: async () => "ticket",
       getEmail: () => "person@example.com",
     },
+    { appVersion },
   );
 }
+
+describe("Team API compatibility negotiation", () => {
+  it("leaves connecting state after an unexpected retry failure", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-retry-error-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "retry-error");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("Unexpected compatibility failure");
+      }),
+    );
+    const manager = remoteEventManager(statePath, "0.4.0");
+
+    try {
+      await manager.initialize();
+      await expect(manager.retryConnection("retry-error")).rejects.toThrow("Unexpected compatibility failure");
+      expect(manager.list().find((server) => server.id === "retry-error")?.state).toBe("error");
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks a host range with no shared protocol", async () => {
+    const protocol = { minimum: 2, maximum: 2 };
+    const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-range-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "compatibility-range");
+    const fetchMock = vi.fn(async () => Response.json({ appVersion: "0.5.0", protocol, capabilities: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const manager = remoteEventManager(statePath, "0.4.0");
+
+    try {
+      await manager.initialize();
+      await expect(manager.retryConnection("compatibility-range")).rejects.toThrow();
+      expect(manager.list().find((server) => server.id === "compatibility-range")).toMatchObject({
+        state: "incompatible",
+        issue: { code: "client_update_required" },
+        compatibility: { negotiatedProtocol: null, hostProtocol: protocol },
+      });
+      await expect(manager.request("/v1/agents", {}, "compatibility-range", (value) => value)).rejects.toThrow();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("treats a missing handshake as an old host", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-missing-handshake-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "missing-handshake");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 404 })),
+    );
+    const manager = remoteEventManager(statePath, "0.4.0");
+
+    try {
+      await manager.initialize();
+      await expect(manager.retryConnection("missing-handshake")).rejects.toThrow();
+      expect(manager.list().find((server) => server.id === "missing-handshake")).toMatchObject({
+        state: "incompatible",
+        issue: { code: "host_update_required" },
+      });
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the shared protocol and sends both version headers", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-headers-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "compatibility-headers");
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (url.pathname === "/v1/compatibility") {
+        return Response.json({ appVersion: "0.3.0", protocol: { minimum: 1, maximum: 3 }, capabilities: [] });
+      }
+      const headers = new Headers(init?.headers);
+      expect(headers.get("OpenBot-Protocol-Version")).toBe("1");
+      expect(headers.get("OpenBot-App-Version")).toBe("0.4.0");
+      return Response.json({ ok: true });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const manager = remoteEventManager(statePath, "0.4.0");
+
+    try {
+      await manager.initialize();
+      await expect(manager.request("/v1/test", {}, "compatibility-headers", (value) => value)).resolves.toEqual({
+        ok: true,
+      });
+      expect(manager.list().find((server) => server.id === "compatibility-headers")?.compatibility).toMatchObject({
+        localAppVersion: "0.4.0",
+        hostAppVersion: "0.3.0",
+        negotiatedProtocol: 1,
+      });
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores unknown events and stops reconnect after a malformed known event", async () => {
+    vi.useFakeTimers();
+    const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-events-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "compatibility-events");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          appVersion: "0.3.0",
+          protocol: { minimum: 1, maximum: 1 },
+          capabilities: ["agent-runtime-snapshots"],
+        }),
+      ),
+    );
+    const sockets: CompatibleEventSocket[] = [];
+    class CompatibleEventSocket extends EventTarget {
+      static readonly OPEN = 1;
+      readonly protocol = "openbot-team-v1";
+      readyState = CompatibleEventSocket.OPEN;
+      readonly send = vi.fn();
+      readonly close = vi.fn(() => {
+        this.readyState = 3;
+        this.dispatchEvent(new Event("close"));
+      });
+
+      constructor(_url: URL, protocols: string[]) {
+        super();
+        expect(protocols).toContain("openbot-team-v1");
+        sockets.push(this);
+        queueMicrotask(() => this.dispatchEvent(new Event("open")));
+      }
+    }
+    vi.stubGlobal("WebSocket", CompatibleEventSocket);
+    const manager = remoteEventManager(statePath, "0.4.0");
+
+    try {
+      await manager.initialize();
+      manager.startEventConnections();
+      await vi.waitFor(() =>
+        expect(manager.list().find((server) => server.id === "compatibility-events")).toMatchObject({
+          state: "online",
+          connectionSequence: 1,
+        }),
+      );
+      sockets[0]?.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "future-event" }) }));
+      expect(sockets[0]?.close).not.toHaveBeenCalled();
+
+      sockets[0]?.dispatchEvent(
+        new MessageEvent("message", { data: JSON.stringify({ type: "team-presence", snapshot: {} }) }),
+      );
+      await vi.waitFor(() =>
+        expect(manager.list().find((server) => server.id === "compatibility-events")?.issue?.code).toBe(
+          "protocol_error",
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(REMOTE_EVENT_RECONNECT_TEST_MS * 4);
+      expect(sockets).toHaveLength(1);
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("remote control capability discovery", () => {
   it("joins a server when remote control is unavailable", async () => {
