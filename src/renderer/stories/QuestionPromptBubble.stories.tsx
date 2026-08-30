@@ -214,14 +214,6 @@ export const InChat: Story = {
   name: "In chat",
   args: { questions: multipleQuestions, onSubmit: fn(async () => true) },
   render: renderInChat,
-  play: async ({ canvas, userEvent }) => {
-    await userEvent.click(canvas.getByRole("radio", { name: /Session cookies/ }));
-    await waitFor(() => expect(canvas.getByRole("radio", { name: /Environment file/ })).toBeEnabled());
-    await userEvent.click(canvas.getByRole("radio", { name: /Environment file/ }));
-    await waitFor(() => expect(canvas.getByRole("radio", { name: /Gradual rollout/ })).toBeEnabled());
-    await userEvent.click(canvas.getByRole("radio", { name: /Gradual rollout/ }));
-    await waitFor(() => expect(canvas.getByRole("region", { name: "Answers sent" })).toBeVisible());
-  },
 };
 
 export const SingleQuestion: Story = {

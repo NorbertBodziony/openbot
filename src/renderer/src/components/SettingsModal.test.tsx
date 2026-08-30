@@ -23,6 +23,29 @@ const idleUpdateStatus: UpdateStatus = {
 };
 
 describe("SettingsModal", () => {
+  it("keeps dependent notch options selected but unavailable while the MacBook notch is disabled", () => {
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={{ ...DEFAULT_GENERAL_SETTINGS, macBookNotch: false }}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={account}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+      />
+    ));
+
+    expect(screen.getByRole("switch", { name: "Haptic feedback" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Haptic feedback" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Show idle island" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Show idle island" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Show on additional displays" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Show on additional displays" })).toBeDisabled();
+  });
+
   it("keeps General preferences controlled across close and reopen", async () => {
     const [open, setOpen] = createSignal(true);
     const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });

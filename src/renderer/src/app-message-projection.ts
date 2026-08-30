@@ -16,6 +16,7 @@ export function toBotProfile(stored: BotSummary): BotProfile {
     avatarHue: stored.avatarHue,
     avatarUrl: stored.avatarUrl,
     marketplaceSource: stored.marketplaceSource,
+    updatedAt: stored.updatedAt,
     time: stored.updatedAt ? formatTime(stored.updatedAt) : "now",
     preview: cleanPreview(stored.preview),
   };
@@ -29,6 +30,7 @@ export function toBotMessage(message: ConversationMessage): BotMessage {
     author: message.author === "user" ? "you" : "bot",
     body: message.text,
     time: formatTime(message.createdAt),
+    createdAt: message.createdAt,
     streaming: message.status === "streaming",
     itemType: message.itemType,
     kind: message.questionPrompt ? "question" : message.exchange ? "exchange" : "text",
@@ -80,6 +82,7 @@ export function toBotMessages(messages: ConversationMessage[]): BotMessage[] {
       author: "bot",
       body: "",
       time: formatTime(message.createdAt),
+      createdAt: message.createdAt,
       streaming: message.status === "streaming",
       itemType: "commentary",
       kind: "thinking",
@@ -121,7 +124,9 @@ export function botProfilesEqual(left: BotProfile, right: BotProfile): boolean {
     left.threadId === right.threadId &&
     left.avatarSeed === right.avatarSeed &&
     left.avatarHue === right.avatarHue &&
+    left.avatarUrl === right.avatarUrl &&
     marketplaceSourcesEqual(left.marketplaceSource, right.marketplaceSource) &&
+    left.updatedAt === right.updatedAt &&
     left.time === right.time &&
     left.preview === right.preview
   );

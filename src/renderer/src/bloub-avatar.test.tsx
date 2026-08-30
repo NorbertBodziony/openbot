@@ -15,7 +15,11 @@ describe("Bloub avatar adapter", () => {
     expect(avatarHueSwatch(215)).toBe(avatarHeadColor("different-seed", 215));
   });
 
-  it("keeps all eight Bloub shapes in each deterministic candidate set", () => {
+  it("preserves the generated droplet outside explicit avatar overrides", () => {
+    expect(bloubAvatarProfile("droplet-regression-0", null).shape).toBe("goutte");
+  });
+
+  it("keeps every supported Bloub shape in avatar candidates", () => {
     const firstSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 0);
     const repeatedSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 0);
     const nextSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 1);

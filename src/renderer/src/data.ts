@@ -32,6 +32,7 @@ export interface BotMessage {
   author: "you" | "bot";
   body: string;
   time: string;
+  createdAt?: string;
   streaming?: boolean;
   animate?: boolean;
   itemType?: string;
@@ -70,6 +71,7 @@ export interface BotProfile {
   avatarHue: BotAvatarHue | null;
   avatarUrl: string | null;
   marketplaceSource?: BotSummary["marketplaceSource"];
+  updatedAt?: string | null;
   time: string;
   preview: string;
 }

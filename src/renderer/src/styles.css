@@ -6,6 +6,8 @@
 @import "./styles/transitions.css";
 @import "./styles/sliding-tabs.css";
 @import "./styles/action-menu.css";
+@import "./styles/dynamic-island.css";
+@import "./styles/dynamic-island-surface.css";
 @import "./styles/base.css";
 @import "./styles/auth.css";
 @import "./styles/onboarding.css";
@@ -40,6 +42,7 @@
   --openbot-bg-host-canvas: #14161b;
   --openbot-bg-host-header: #15171c;
   --openbot-bg-host-inset: #101216;
+  --openbot-bg-notch: #000000;
   --openbot-queue-surface: var(--openbot-bg-surface);
   --openbot-queue-border: var(--openbot-border-strong);
   --openbot-queue-text: var(--openbot-text-primary);
@@ -93,6 +96,20 @@
   --openbot-success-wash: rgba(111, 205, 188, 0.045);
   --openbot-warning: #e3b866;
   --openbot-warning-soft: rgba(227, 184, 102, 0.12);
+  --openbot-question-option: #6bc7d9;
+  --openbot-question-option-soft: rgba(107, 199, 217, 0.14);
+  --openbot-question-option-hover: rgba(107, 199, 217, 0.2);
+  --openbot-question-option-pressed: rgba(107, 199, 217, 0.26);
+  --openbot-island-identity-name: var(--openbot-text-primary);
+  --openbot-island-compact-name: #fff;
+  --openbot-question-badge-text: #8bdee8;
+  --openbot-question-badge-soft: rgba(107, 199, 217, 0.16);
+  --openbot-question-badge-border: rgba(107, 199, 217, 0.24);
+  --openbot-message-badge-text: #91c8ff;
+  --openbot-message-badge-soft: rgba(116, 185, 255, 0.16);
+  --openbot-message-badge-border: rgba(116, 185, 255, 0.24);
+  --openbot-approval-badge-soft: rgba(227, 184, 102, 0.18);
+  --openbot-approval-badge-border: rgba(227, 184, 102, 0.3);
   --openbot-danger: #e47d75;
   --openbot-danger-soft: rgba(228, 125, 117, 0.13);
   --openbot-danger-strong: #ff4058;
@@ -128,6 +145,7 @@
   --openbot-shadow-popover-ambient: rgba(0, 0, 0, 0.1);
   --openbot-shadow-popover-key: rgba(0, 0, 0, 0.1);
   --openbot-shadow-dialog: rgba(0, 0, 0, 0.48);
+  --openbot-shadow-dynamic-island: rgba(0, 0, 0, 0.6);
   --openbot-shadow-ring: rgba(228, 228, 228, 0.04);
   --openbot-border-on-light: rgba(20, 20, 20, 0.14);
   --openbot-white: var(--openbot-text-primary);
@@ -224,6 +242,8 @@
   --openbot-duration-normal: 160ms;
   --openbot-duration-slow: 200ms;
   --openbot-duration-overlay: 240ms;
+  --openbot-duration-island-content: 340ms;
+  --openbot-duration-island-content-exit: 220ms;
   --stream-gap: 60ms;
   --stream-fade: 400ms;
   --stream-blur: 2px;

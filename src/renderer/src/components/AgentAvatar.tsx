@@ -1,4 +1,12 @@
-import { type Block, BloubBot, defaultCycle, makeBlock, POSES, type StateId } from "@norbert_bodziony/bloub";
+import {
+  type Block,
+  BloubBot,
+  defaultCycle,
+  makeBlock,
+  POSES,
+  type ShapeId,
+  type StateId,
+} from "@norbert_bodziony/bloub";
 import type { BotAvatarHue } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, onSettled, Show } from "solid-js";
 import { type AvatarMotion, bloubAvatarProfile } from "../bloub-avatar";
@@ -24,6 +32,7 @@ interface AgentAvatarProps {
   cycleOffset?: number;
   animationOffset?: number;
   animationState?: StateId;
+  shape?: ShapeId;
   class?: string;
   style?: Record<string, string>;
 }
@@ -52,6 +61,7 @@ export function AgentAvatar(props: AgentAvatarProps) {
           cycleOffset={props.cycleOffset}
           animationOffset={props.animationOffset}
           animationState={props.animationState}
+          shape={props.shape}
           class={className()}
           style={props.style}
         />
@@ -71,6 +81,7 @@ function GeneratedAvatar(props: {
   cycleOffset?: number;
   animationOffset?: number;
   animationState?: StateId;
+  shape?: ShapeId;
   class: string;
   style?: Record<string, string>;
 }) {
@@ -121,7 +132,7 @@ function GeneratedAvatar(props: {
   const avatar = () => (
     <BloubBot
       size={100}
-      shape={profile().shape}
+      shape={props.shape ?? profile().shape}
       color={profile().color}
       expression={profile().expression}
       cycle={motionCycle()}
@@ -145,7 +156,7 @@ function GeneratedAvatar(props: {
         fallback={
           <BloubBot
             size={100}
-            shape={profile().shape}
+            shape={props.shape ?? profile().shape}
             color={profile().color}
             expression={profile().expression}
             frozenAt={frozenAt}

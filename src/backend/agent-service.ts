@@ -17,6 +17,7 @@ import type {
   AgentPromptQuestion,
   AgentPromptResolution,
   AgentProviderStatus,
+  AgentRuntimeSnapshot,
   AgentStatus,
   AttachmentDataInput,
   AttachmentSummary,
@@ -61,6 +62,12 @@ import type {
   UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
 import {
+  AGENT_RUNTIME_ATTENTION_LIMIT,
+  AGENT_RUNTIME_PERMISSION_PATHS_LIMIT,
+  AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
+  AGENT_RUNTIME_QUESTION_HEADER_LIMIT,
+  AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
+  AGENT_RUNTIME_TEXT_LIMIT,
   isImageGenerationAspectRatio,
   isMessageReaction,
   isReasoningEffort,
@@ -330,6 +337,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingPrompts = new Map<RequestId, PendingPrompt>();
   readonly #pendingApprovals = new Map<RequestId, PendingApproval>();
   readonly #pendingBrowserTakeovers = new Map<RequestId, PendingBrowserTakeover>();
+  readonly #failedTurns = new Map<string, string>();
   readonly #itemTurns = new Map<string, string>();
   readonly #imageGenerationOperations = new Map<string, ImageGenerationOperation>();
   readonly #interruptedTurns = new Set<string>();
@@ -415,6 +423,83 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   listBots(): BotSummary[] {
     return this.#store.list();
+  }
+
+  getRuntimeSnapshot(): AgentRuntimeSnapshot {
+    const bots = this.listBots();
+    const runtimeBots: AgentRuntimeSnapshot["bots"] = bots.map((bot) => ({
+      id: bot.id,
+      name: bot.name,
+      notifications: bot.notifications,
+      preview: bot.preview.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
+      updatedAt: bot.updatedAt,
+      avatarSeed: bot.avatarSeed,
+      avatarHue: bot.avatarHue,
+      avatarUrl: bot.avatarUrl,
+    }));
+    const activeTurns: AgentRuntimeSnapshot["activeTurns"] = [];
+    const latestMessages: AgentRuntimeSnapshot["latestMessages"] = [];
+    for (const bot of bots) {
+      const live = this.#snapshots.get(bot.id);
+      const liveLatest = [...(live?.messages ?? [])]
+        .reverse()
+        .find(
+          (message) =>
+            (message.author === "assistant" || message.author === "agent") &&
+            message.itemType !== "commentary" &&
+            message.itemType !== "question_prompt",
+        );
+      const persisted =
+        !live || !liveLatest
+          ? this.#store.database.readConversationRuntime(bot.id, bot.threadId)
+          : { activeTurnId: null, latestMessage: null };
+      const activeTurnId = live ? live.activeTurnId : persisted.activeTurnId;
+      if (activeTurnId && bot.threadId) {
+        activeTurns.push({ botId: bot.id, threadId: bot.threadId, turnId: activeTurnId });
+      }
+      const latest = liveLatest ?? persisted.latestMessage;
+      if (latest) {
+        latestMessages.push({
+          botId: bot.id,
+          id: latest.id,
+          text: latest.text.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
+          createdAt: latest.createdAt,
+        });
+      }
+    }
+    const attentionComplete =
+      this.#pendingPrompts.size + this.#pendingApprovals.size + this.#pendingBrowserTakeovers.size <=
+      AGENT_RUNTIME_ATTENTION_LIMIT;
+    let remainingAttention = AGENT_RUNTIME_ATTENTION_LIMIT;
+    const pendingPrompts = [...this.#pendingPrompts.values()].slice(0, remainingAttention).map((pending) => ({
+      requestId: pending.id,
+      botId: pending.botId,
+      threadId: pending.publicThreadId,
+      turnId: pending.turnId,
+      questions: pending.questions.map(compactRuntimeQuestion),
+    }));
+    remainingAttention -= pendingPrompts.length;
+    const pendingApprovals = [...this.#pendingApprovals.values()]
+      .slice(0, remainingAttention)
+      .map((pending) => compactRuntimeApproval(pending.approval));
+    remainingAttention -= pendingApprovals.length;
+    const pendingBrowserTakeovers = [...this.#pendingBrowserTakeovers.values()]
+      .slice(0, remainingAttention)
+      .map((pending) => structuredClone(pending.request));
+    return fitRuntimeSnapshot({
+      bots: runtimeBots,
+      activeTurns,
+      work: this.#mailbox.listRuntimeWork(
+        bots.map((bot) => bot.id),
+        this.#failedTurns,
+      ),
+      latestMessages,
+      attentionComplete,
+      pendingPrompts,
+      pendingApprovals,
+      pendingBrowserTakeovers,
+      failedTurns: [...this.#failedTurns].map(([botId, turnId]) => ({ botId, turnId })),
+    });
   }
 
   listMemories(botId: string): BotMemory[] {
@@ -689,6 +774,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       errors.push(error);
     }
     this.#snapshots.delete(bot.id);
+    this.#failedTurns.delete(bot.id);
     this.#lastConversationSignatures.delete(bot.id);
     this.#drainingBots.delete(bot.id);
     this.#scheduledDrains.delete(bot.id);
@@ -832,6 +918,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#clearPendingPrompts();
     this.#clearPendingBrowserTakeovers();
     this.#pendingApprovals.clear();
+    this.#failedTurns.clear();
     const pendingLogin = this.#codexLogin;
     this.#codexLogin = null;
     const claudeLogin = this.#claudeLogin;
@@ -932,6 +1019,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   listQueue(botId: string): QueueSnapshot {
     return this.#mailbox.listQueue(botId);
+  }
+
+  acknowledgeFailedTurn(botId: string, turnId: string): void {
+    if (this.#failedTurns.get(botId) !== turnId) return;
+    this.#failedTurns.delete(botId);
+    this.#emitRuntimeSnapshot();
   }
 
   async cancelQueuedMessage(botId: string, deliveryId: string): Promise<void> {
@@ -1089,11 +1182,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           };
     pending.client.respond(pending.id, result);
     this.#pendingPrompts.delete(input.requestId);
+    this.#emit({ type: "agent-input-resolved", kind: "prompt", requestId: input.requestId, botId: pending.botId });
     try {
       this.#resolvePersistedPrompt(pending, promptResolution(pending.questions, input.answers));
     } catch (error) {
       this.#emitError("prompt_persistence_failed", error, pending.botId);
     }
+    this.#emitRuntimeSnapshot();
   }
 
   async respondToApproval(input: RespondToApprovalInput): Promise<void> {
@@ -1116,6 +1211,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       pending.client.respond(pending.id, { decision: input.decision });
     }
     this.#pendingApprovals.delete(input.requestId);
+    this.#emit({
+      type: "agent-input-resolved",
+      kind: "approval",
+      requestId: input.requestId,
+      botId: pending.approval.botId,
+    });
+    this.#emitRuntimeSnapshot();
   }
 
   async respondToBrowserTakeover(input: RespondToBrowserTakeoverInput): Promise<void> {
@@ -2831,6 +2933,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const publicThreadId = this.#publicThreadId(botId, threadId);
         const snapshot = this.#ensureSnapshot(botId, publicThreadId);
         snapshot.activeTurnId = turnId;
+        this.#failedTurns.delete(botId);
         const origin = this.#mailbox.startingDeliveryForBot(botId)?.delivery.sender.kind ?? "unknown";
         const association = this.#associateStartedTurn(botId, turnId, snapshot);
         this.#turnAssociations.set(turnId, association);
@@ -2950,6 +3053,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#browser.endControl(this.#publicThreadId(botId, threadId), turnId);
     const snapshot = this.#ensureSnapshot(botId, threadId);
     snapshot.activeTurnId = null;
+    if (status === "failed") this.#failedTurns.set(botId, turnId);
+    else this.#failedTurns.delete(botId);
     for (const message of snapshot.messages) {
       if (this.#itemTurns.get(message.id) !== turnId || message.status !== "streaming") continue;
       message.status = normalizeCompletionStatus(status);
@@ -3457,6 +3562,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       requestId: pending.request.requestId,
       botId: pending.request.botId,
     });
+    this.#emitRuntimeSnapshot();
     pending.resolve(browserTakeoverResult(decision));
   }
 
@@ -3967,9 +4073,123 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
   }
 
+  #emitRuntimeSnapshot(): void {
+    this.#emit({ type: "runtime-snapshot", snapshot: this.getRuntimeSnapshot() });
+  }
+
   #emit(event: AgentEvent): void {
     this.emit("event", event);
   }
+}
+
+function compactRuntimeQuestion(
+  question: AgentPromptQuestion,
+): AgentRuntimeSnapshot["pendingPrompts"][number]["questions"][number] {
+  return {
+    id: question.id,
+    header: question.header.slice(0, AGENT_RUNTIME_QUESTION_HEADER_LIMIT),
+    question: question.question.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
+    isSecret: question.isSecret,
+    options:
+      question.options?.map((option) => ({
+        label: option.label,
+        description: option.description.slice(0, AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT),
+      })) ?? null,
+  };
+}
+
+function compactRuntimeApproval(approval: AgentApproval): AgentRuntimeSnapshot["pendingApprovals"][number] {
+  const pathTruncated = (path: string) => path.length > AGENT_RUNTIME_TEXT_LIMIT;
+  return {
+    ...approval,
+    truncated:
+      [approval.command, approval.cwd, approval.reason, approval.grantRoot].some(
+        (value) => value !== null && value.length > AGENT_RUNTIME_TEXT_LIMIT,
+      ) ||
+      Boolean(
+        approval.permissions &&
+          (approval.permissions.fileSystem.read.length > AGENT_RUNTIME_PERMISSION_PATHS_LIMIT ||
+            approval.permissions.fileSystem.write.length > AGENT_RUNTIME_PERMISSION_PATHS_LIMIT ||
+            approval.permissions.fileSystem.read.some(pathTruncated) ||
+            approval.permissions.fileSystem.write.some(pathTruncated)),
+      ),
+    command: approval.command?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+    cwd: approval.cwd?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+    reason: approval.reason?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+    grantRoot: approval.grantRoot?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+    permissions: approval.permissions
+      ? {
+          fileSystem: {
+            read: approval.permissions.fileSystem.read
+              .slice(0, AGENT_RUNTIME_PERMISSION_PATHS_LIMIT)
+              .map((path) => path.slice(0, AGENT_RUNTIME_TEXT_LIMIT)),
+            write: approval.permissions.fileSystem.write
+              .slice(0, AGENT_RUNTIME_PERMISSION_PATHS_LIMIT)
+              .map((path) => path.slice(0, AGENT_RUNTIME_TEXT_LIMIT)),
+          },
+          network: approval.permissions.network,
+        }
+      : null,
+  };
+}
+
+function fitRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): AgentRuntimeSnapshot {
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.bots = snapshot.bots.map((bot) => ({ ...bot, preview: "", avatarUrl: null }));
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.work = [];
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.latestMessages = snapshot.latestMessages.map((message) => ({ ...message, text: "" }));
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.pendingPrompts = snapshot.pendingPrompts.map((prompt) => ({
+    ...prompt,
+    questions: prompt.questions.map((question) => ({
+      ...question,
+      header: question.header.slice(0, 40),
+      question: question.question.slice(0, 80),
+      options: question.options?.map((option) => ({ label: option.label, description: "" })) ?? null,
+    })),
+  }));
+  snapshot.pendingApprovals = snapshot.pendingApprovals.map((approval) => ({
+    ...approval,
+    truncated: true,
+    command: approval.command?.slice(0, 80) ?? null,
+    cwd: approval.cwd?.slice(0, 80) ?? null,
+    reason: approval.reason?.slice(0, 80) ?? null,
+    grantRoot: approval.grantRoot?.slice(0, 80) ?? null,
+    permissions: approval.permissions
+      ? { fileSystem: { read: [], write: [] }, network: approval.permissions.network }
+      : null,
+  }));
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  while (
+    runtimeSnapshotBytes(snapshot) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT &&
+    snapshot.pendingPrompts.length + snapshot.pendingApprovals.length + snapshot.pendingBrowserTakeovers.length > 0
+  ) {
+    snapshot.attentionComplete = false;
+    if (snapshot.pendingBrowserTakeovers.length > 0) snapshot.pendingBrowserTakeovers.pop();
+    else if (snapshot.pendingApprovals.length > 0) snapshot.pendingApprovals.pop();
+    else snapshot.pendingPrompts.pop();
+  }
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.bots = snapshot.bots.map((bot) => ({
+    ...bot,
+    name: bot.name.slice(0, 40),
+    preview: "",
+    avatarSeed: bot.id,
+    avatarUrl: null,
+  }));
+  return snapshot;
+}
+
+function runtimeSnapshotBytes(snapshot: AgentRuntimeSnapshot): number {
+  return Buffer.byteLength(JSON.stringify({ type: "runtime-snapshot", snapshot }));
 }
 
 function routineToolArguments(value: unknown, allowedKeys: readonly string[]): DynamicRecord {

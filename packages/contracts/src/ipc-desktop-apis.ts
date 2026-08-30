@@ -25,6 +25,7 @@ import type {
 } from "./ipc-browser";
 import type {
   AccountUsage,
+  AcknowledgeFailedTurnInput,
   AgentEvent,
   AgentModelOption,
   AgentProviderId,
@@ -60,6 +61,7 @@ import type {
   RespondToPromptInput,
   Routine,
   RoutineRun,
+  ScopedAgentEvent,
   SearchConversationMessagesInput,
   SendMessageInput,
   SetAgentAvatarInput,
@@ -73,6 +75,13 @@ import type {
   UpdateQueuedMessageInput,
   UpdateRoutineInput,
 } from "./ipc-conversation";
+import type {
+  DynamicIslandAction,
+  DynamicIslandPreference,
+  DynamicIslandPresentation,
+  SetDynamicIslandInteractiveInput,
+  SetDynamicIslandPreferenceInput,
+} from "./ipc-dynamic-island";
 import type {
   AgentPublicationPreview,
   AgentSubmission,
@@ -166,6 +175,7 @@ export interface AgentDesktopApi {
   sendMessage: (input: SendMessageInput) => Promise<QueuedMessageReceipt>;
   setMessageReaction: (input: SetMessageReactionInput) => Promise<void>;
   listQueue: (botId: string) => Promise<QueueSnapshot>;
+  acknowledgeFailedTurn: (input: AcknowledgeFailedTurnInput) => Promise<void>;
   cancelQueuedMessage: (input: CancelQueuedMessageInput) => Promise<void>;
   steerQueuedMessage: (input: SteerQueuedMessageInput) => Promise<void>;
   updateQueuedMessage: (input: UpdateQueuedMessageInput) => Promise<void>;
@@ -175,6 +185,7 @@ export interface AgentDesktopApi {
   respondToApproval: (input: RespondToApprovalInput) => Promise<void>;
   respondToBrowserTakeover: (input: RespondToBrowserTakeoverInput) => Promise<void>;
   onEvent: (listener: (event: AgentEvent) => void) => () => void;
+  onScopedEvent: (listener: (event: ScopedAgentEvent) => void) => () => void;
 }
 
 export interface MarketplaceAgentsDesktopApi {
@@ -223,6 +234,19 @@ export interface ProviderRuntimesDesktopApi {
 export interface MaintenanceDesktopApi {
   exportData: () => Promise<ExportResult>;
   exportDiagnostics: () => Promise<ExportResult>;
+}
+
+export interface DynamicIslandDesktopApi {
+  getPreference: () => Promise<DynamicIslandPreference>;
+  setPreference: (input: SetDynamicIslandPreferenceInput) => Promise<DynamicIslandPreference>;
+  publishPresentation: (presentation: DynamicIslandPresentation) => Promise<void>;
+  getPresentation: () => Promise<DynamicIslandPresentation>;
+  onPreference: (listener: (preference: DynamicIslandPreference) => void) => () => void;
+  onPresentation: (listener: (presentation: DynamicIslandPresentation) => void) => () => void;
+  performAction: (action: DynamicIslandAction) => Promise<void>;
+  performHaptic: () => Promise<void>;
+  onAction: (listener: (action: DynamicIslandAction) => void) => () => void;
+  setInteractive: (input: SetDynamicIslandInteractiveInput) => Promise<void>;
 }
 
 export interface ServersDesktopApi {
@@ -307,6 +331,7 @@ export interface OpenBotDesktopApi {
   saveSetup: (input: SaveSetupInput) => Promise<AppSetupState>;
   getAnalyticsPreference: () => Promise<AnalyticsPreference>;
   setAnalyticsPreference: (input: SetAnalyticsPreferenceInput) => Promise<AnalyticsPreference>;
+  dynamicIsland: DynamicIslandDesktopApi;
   getMacPermissions: () => Promise<MacPermissionsState>;
   requestMacPermission: (permission: MacPermissionId) => Promise<MacPermissionsState>;
   openExternal: (destination: ExternalDestination) => Promise<void>;

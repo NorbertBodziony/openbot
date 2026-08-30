@@ -633,14 +633,18 @@ export interface ConversationMessage {
 function isAgentPromptQuestion(value: unknown): value is AgentPromptQuestion {
   if (!isDynamicRecord(value)) return false;
   return (
-    isString(value.id) &&
-    isString(value.header) &&
-    isString(value.question) &&
+    isBoundedString(value.id, INPUT_LIMITS.identifier) &&
+    isBoundedString(value.header, INPUT_LIMITS.promptHeader) &&
+    isBoundedString(value.question, INPUT_LIMITS.promptQuestion) &&
     isBoolean(value.isSecret) &&
     (value.options === null ||
       (Array.isArray(value.options) &&
+        value.options.length <= INPUT_LIMITS.promptOptions &&
         value.options.every(
-          (option) => isDynamicRecord(option) && isString(option.label) && isString(option.description),
+          (option) =>
+            isDynamicRecord(option) &&
+            isBoundedString(option.label, INPUT_LIMITS.promptOptionLabel) &&
+            isBoundedString(option.description, INPUT_LIMITS.promptOptionDescription),
         )))
   );
 }
@@ -661,8 +665,9 @@ function isAgentPromptResolution(value: unknown): value is AgentPromptResolution
 function isConversationQuestionPrompt(value: unknown): value is ConversationQuestionPrompt {
   if (!isDynamicRecord(value)) return false;
   return (
-    (isString(value.requestId) || isNumber(value.requestId)) &&
+    isRequestId(value.requestId) &&
     Array.isArray(value.questions) &&
+    value.questions.length <= INPUT_LIMITS.promptQuestions &&
     value.questions.every(isAgentPromptQuestion) &&
     (value.resolution === null || isAgentPromptResolution(value.resolution))
   );
@@ -673,32 +678,80 @@ export function isConversationMessage(value: unknown): value is ConversationMess
   const author = value.author;
   const status = value.status;
   return (
-    isString(value.id) &&
+    isIdentifier(value.id) &&
     isString(value.text) &&
-    isString(value.createdAt) &&
+    isBoundedString(value.createdAt, 160) &&
     (author === "user" || author === "assistant" || author === "agent" || author === "system") &&
     (status === "streaming" || status === "completed" || status === "failed" || status === "interrupted") &&
-    (value.turnId === undefined || isString(value.turnId)) &&
-    (value.itemType === undefined || isString(value.itemType)) &&
+    (value.turnId === undefined || isIdentifier(value.turnId)) &&
+    (value.itemType === undefined || isBoundedString(value.itemType, INPUT_LIMITS.identifier)) &&
     (value.source === undefined ||
       value.source === "user" ||
       value.source === "assistant" ||
       value.source === "agent" ||
       value.source === "system" ||
       value.source === "routine") &&
-    (value.senderBotId === undefined || isString(value.senderBotId)) &&
-    (value.replyToMessageId === undefined || value.replyToMessageId === null || isString(value.replyToMessageId)) &&
+    (value.senderBotId === undefined || isIdentifier(value.senderBotId)) &&
+    (value.replyToMessageId === undefined || value.replyToMessageId === null || isIdentifier(value.replyToMessageId)) &&
+    (value.attachments === undefined ||
+      (Array.isArray(value.attachments) &&
+        value.attachments.length <= INPUT_LIMITS.attachments &&
+        value.attachments.every(isAttachmentSummary))) &&
+    (value.delivery === undefined || isConversationDelivery(value.delivery)) &&
+    (value.exchange === undefined || isAgentExchangeSummary(value.exchange)) &&
     (value.reaction === undefined || value.reaction === null || isMessageReaction(value.reaction)) &&
     (value.reactions === undefined ||
-      (Array.isArray(value.reactions) && value.reactions.every(isConversationReaction))) &&
+      (Array.isArray(value.reactions) &&
+        value.reactions.length <= INPUT_LIMITS.teamMembers &&
+        value.reactions.every(isConversationReaction))) &&
     (value.routine === undefined ||
       (isDynamicRecord(value.routine) &&
-        isString(value.routine.routineId) &&
-        isString(value.routine.runId) &&
-        isString(value.routine.name) &&
-        isString(value.routine.scheduledFor))) &&
+        isIdentifier(value.routine.routineId) &&
+        isIdentifier(value.routine.runId) &&
+        isBoundedString(value.routine.name, INPUT_LIMITS.routineName) &&
+        isBoundedString(value.routine.scheduledFor, 160))) &&
     (value.imageGeneration === undefined || isImageGenerationInfo(value.imageGeneration)) &&
     (value.questionPrompt === undefined || isConversationQuestionPrompt(value.questionPrompt))
+  );
+}
+
+function isConversationDelivery(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.id) &&
+    isOneOf(
+      ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"] as const,
+      value.status,
+    ) &&
+    (value.position === null || (isNumber(value.position) && Number.isInteger(value.position) && value.position >= 1))
+  );
+}
+
+function isAgentExchangeSummary(value: unknown): value is AgentExchangeSummary {
+  return (
+    isDynamicRecord(value) &&
+    isOneOf(["incoming", "outgoing"] as const, value.direction) &&
+    isIdentifier(value.messageId) &&
+    isIdentifier(value.senderBotId) &&
+    Array.isArray(value.recipientBotIds) &&
+    value.recipientBotIds.length <= INPUT_LIMITS.messageRecipients &&
+    value.recipientBotIds.every(isIdentifier) &&
+    (value.replyToMessageId === null || isIdentifier(value.replyToMessageId)) &&
+    Array.isArray(value.deliveries) &&
+    value.deliveries.length <= INPUT_LIMITS.messageRecipients &&
+    value.deliveries.every(
+      (delivery) =>
+        isDynamicRecord(delivery) &&
+        isIdentifier(delivery.id) &&
+        isIdentifier(delivery.recipientBotId) &&
+        isOneOf(
+          ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"] as const,
+          delivery.status,
+        ) &&
+        (delivery.position === null ||
+          (isNumber(delivery.position) && Number.isInteger(delivery.position) && delivery.position >= 1)) &&
+        (delivery.error === null || isBoundedString(delivery.error, INPUT_LIMITS.messageText)),
+    )
   );
 }
 
@@ -746,10 +799,35 @@ export interface ConversationSnapshot {
   messages: ConversationMessage[];
 }
 
+function isConversationSnapshot(value: unknown): value is ConversationSnapshot {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.botId) &&
+    (value.threadId === null || isIdentifier(value.threadId)) &&
+    (value.activeTurnId === null || isIdentifier(value.activeTurnId)) &&
+    isNumber(value.revision) &&
+    Number.isInteger(value.revision) &&
+    value.revision >= 0 &&
+    Array.isArray(value.messages) &&
+    value.messages.every(isConversationMessage)
+  );
+}
+
 export interface ConversationReadState {
   unreadCount: number;
   firstUnreadMessageId: string | null;
   throughMessageId: string | null;
+}
+
+function isConversationReadState(value: unknown): value is ConversationReadState {
+  return (
+    isDynamicRecord(value) &&
+    isNumber(value.unreadCount) &&
+    Number.isInteger(value.unreadCount) &&
+    value.unreadCount >= 0 &&
+    (value.firstUnreadMessageId === null || isIdentifier(value.firstUnreadMessageId)) &&
+    (value.throughMessageId === null || isIdentifier(value.throughMessageId))
+  );
 }
 
 export interface ConversationWithReadState extends ConversationSnapshot {
@@ -834,6 +912,11 @@ export interface CancelQueuedMessageInput {
   deliveryId: string;
 }
 
+export interface AcknowledgeFailedTurnInput {
+  botId: string;
+  turnId: string;
+}
+
 export interface SteerQueuedMessageInput {
   botId: string;
   deliveryId: string;
@@ -899,6 +982,64 @@ export interface AgentApproval {
   permissions: AgentApprovalPermissions | null;
 }
 
+export interface AgentRuntimeSnapshot {
+  bots: AgentRuntimeBotSummary[];
+  activeTurns: Array<{ botId: string; threadId: string; turnId: string }>;
+  work: AgentRuntimeWorkItem[];
+  latestMessages: Array<{ botId: string; id: string; text: string; createdAt: string }>;
+  attentionComplete: boolean;
+  pendingPrompts: Array<{
+    requestId: string | number;
+    botId: string;
+    threadId: string;
+    turnId: string;
+    questions: AgentRuntimePromptQuestion[];
+  }>;
+  pendingApprovals: AgentRuntimeApproval[];
+  pendingBrowserTakeovers: BrowserTakeoverRequest[];
+  failedTurns: Array<{ botId: string; turnId: string }>;
+}
+
+export const AGENT_RUNTIME_TEXT_LIMIT = 240;
+export const AGENT_RUNTIME_QUESTION_HEADER_LIMIT = 80;
+export const AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT = 120;
+export const AGENT_RUNTIME_WORKING_ITEMS_LIMIT = 3;
+export const AGENT_RUNTIME_ATTENTION_LIMIT = 4;
+export const AGENT_RUNTIME_PERMISSION_PATHS_LIMIT = 3;
+export const AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT = 256 * 1024;
+
+export interface AgentRuntimeBotSummary {
+  id: string;
+  name: string;
+  notifications: boolean;
+  preview: string;
+  updatedAt: string | null;
+  avatarSeed: string;
+  avatarHue: BotAvatarHue | null;
+  avatarUrl: string | null;
+}
+
+export interface AgentRuntimeWorkItem {
+  id: string;
+  botId: string;
+  turnId: string | null;
+  status: "starting" | "running" | "failed";
+  text: string;
+  error: string | null;
+}
+
+export interface AgentRuntimePromptQuestion {
+  id: string;
+  header: string;
+  question: string;
+  isSecret: boolean;
+  options: Array<{ label: string; description: string }> | null;
+}
+
+export interface AgentRuntimeApproval extends AgentApproval {
+  truncated: boolean;
+}
+
 export interface RespondToApprovalInput {
   requestId: string | number;
   decision: "accept" | "decline";
@@ -914,6 +1055,8 @@ export type AgentEvent =
   | { type: "routines-changed"; botId: string }
   | { type: "sidebar-layout-changed"; layout: SidebarLayoutSnapshot }
   | { type: "conversation"; snapshot: ConversationSnapshot }
+  | { type: "conversation-invalidated"; botId: string; revision: number }
+  | { type: "conversation-page"; page: ConversationPage }
   | {
       type: "conversation-delta";
       botId: string;
@@ -924,6 +1067,7 @@ export type AgentEvent =
       createdAt: string;
       revision: number;
     }
+  | { type: "queue-invalidated"; botId: string }
   | { type: "queue-changed"; snapshot: QueueSnapshot }
   | { type: "turn-started"; botId: string; threadId: string; turnId: string; origin?: AgentTurnOrigin }
   | {
@@ -942,9 +1086,16 @@ export type AgentEvent =
       turnId: string;
       questions: AgentPromptQuestion[];
     }
+  | {
+      type: "agent-input-resolved";
+      kind: "prompt" | "approval";
+      requestId: string | number;
+      botId: string;
+    }
   | { type: "browser-takeover-requested"; request: BrowserTakeoverRequest }
   | { type: "browser-takeover-resolved"; requestId: string | number; botId: string }
   | { type: "approval"; approval: AgentApproval }
+  | { type: "runtime-snapshot"; snapshot: AgentRuntimeSnapshot }
   | { type: "browser-changed"; tabs: BrowserTab[]; activeTabId: string | null }
   | { type: "browser-control-changed"; state: BrowserControlState }
   | { type: "error"; botId?: string; code: string; message: string };
@@ -957,7 +1108,7 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
     case "usage-changed":
       return isDynamicRecord(value.usage);
     case "bots-changed":
-      return Array.isArray(value.bots);
+      return Array.isArray(value.bots) && value.bots.length <= INPUT_LIMITS.agents && value.bots.every(isBotSummary);
     case "memories-changed":
       return isString(value.botId) && value.botId.length > 0 && value.botId.length <= INPUT_LIMITS.identifier;
     case "routines-changed":
@@ -965,7 +1116,28 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
     case "sidebar-layout-changed":
       return isSidebarLayoutSnapshot(value.layout);
     case "conversation":
-      return isDynamicRecord(value.snapshot);
+      return isConversationSnapshot(value.snapshot);
+    case "conversation-invalidated":
+      return (
+        isIdentifier(value.botId) && isNumber(value.revision) && Number.isInteger(value.revision) && value.revision >= 0
+      );
+    case "conversation-page": {
+      const page = value.page;
+      if (!isDynamicRecord(page)) return false;
+      const references = page.references;
+      const pageInfo = page.pageInfo;
+      const readState = page.readState;
+      return (
+        isConversationSnapshot(page) &&
+        page.messages.length <= 100 &&
+        isDynamicRecord(references) &&
+        Object.values(references).every(isConversationMessage) &&
+        isDynamicRecord(pageInfo) &&
+        isBoolean(pageInfo.hasOlder) &&
+        (pageInfo.olderCursor === null || isString(pageInfo.olderCursor)) &&
+        (readState === undefined || isConversationReadState(readState))
+      );
+    }
     case "conversation-delta":
       return (
         isString(value.botId) &&
@@ -976,8 +1148,10 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
         isString(value.createdAt) &&
         isNumber(value.revision)
       );
+    case "queue-invalidated":
+      return isIdentifier(value.botId);
     case "queue-changed":
-      return isDynamicRecord(value.snapshot);
+      return isQueueSnapshot(value.snapshot);
     case "turn-started":
     case "turn-completed":
       return (
@@ -992,14 +1166,24 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
         isString(value.botId) &&
         isString(value.threadId) &&
         isString(value.turnId) &&
-        Array.isArray(value.questions)
+        Array.isArray(value.questions) &&
+        value.questions.length <= INPUT_LIMITS.promptQuestions &&
+        value.questions.every(isAgentPromptQuestion)
+      );
+    case "agent-input-resolved":
+      return (
+        (value.kind === "prompt" || value.kind === "approval") &&
+        (isString(value.requestId) || isNumber(value.requestId)) &&
+        isString(value.botId)
       );
     case "browser-takeover-requested":
-      return isDynamicRecord(value.request);
+      return isBrowserTakeoverRequest(value.request);
     case "browser-takeover-resolved":
       return (isString(value.requestId) || isNumber(value.requestId)) && isString(value.botId);
     case "approval":
-      return isDynamicRecord(value.approval);
+      return isAgentApproval(value.approval);
+    case "runtime-snapshot":
+      return isAgentRuntimeSnapshot(value.snapshot);
     case "browser-changed":
       return Array.isArray(value.tabs) && (value.activeTabId === null || isString(value.activeTabId));
     case "browser-control-changed":
@@ -1009,6 +1193,301 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
     default:
       return false;
   }
+}
+
+function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
+  if (!isDynamicRecord(value)) return false;
+  return (
+    Array.isArray(value.bots) &&
+    value.bots.length <= INPUT_LIMITS.agents &&
+    value.bots.every(isAgentRuntimeBotSummary) &&
+    Array.isArray(value.activeTurns) &&
+    value.activeTurns.length <= INPUT_LIMITS.agents &&
+    value.activeTurns.every(
+      (turn) =>
+        isDynamicRecord(turn) && isIdentifier(turn.botId) && isIdentifier(turn.threadId) && isIdentifier(turn.turnId),
+    ) &&
+    Array.isArray(value.work) &&
+    value.work.length <= AGENT_RUNTIME_WORKING_ITEMS_LIMIT + AGENT_RUNTIME_ATTENTION_LIMIT &&
+    value.work.every(isRuntimeWorkItem) &&
+    Array.isArray(value.latestMessages) &&
+    value.latestMessages.length <= INPUT_LIMITS.agents &&
+    value.latestMessages.every(
+      (message) =>
+        isDynamicRecord(message) &&
+        isIdentifier(message.botId) &&
+        isIdentifier(message.id) &&
+        isBoundedString(message.text, AGENT_RUNTIME_TEXT_LIMIT) &&
+        isBoundedString(message.createdAt, 160),
+    ) &&
+    isBoolean(value.attentionComplete) &&
+    Array.isArray(value.pendingPrompts) &&
+    value.pendingPrompts.length <= AGENT_RUNTIME_ATTENTION_LIMIT &&
+    value.pendingPrompts.every(isRuntimePrompt) &&
+    Array.isArray(value.pendingApprovals) &&
+    value.pendingApprovals.length <= AGENT_RUNTIME_ATTENTION_LIMIT &&
+    value.pendingApprovals.every(isRuntimeApproval) &&
+    Array.isArray(value.pendingBrowserTakeovers) &&
+    value.pendingBrowserTakeovers.length <= AGENT_RUNTIME_ATTENTION_LIMIT &&
+    value.pendingBrowserTakeovers.every(isBrowserTakeoverRequest) &&
+    value.pendingPrompts.length + value.pendingApprovals.length + value.pendingBrowserTakeovers.length <=
+      AGENT_RUNTIME_ATTENTION_LIMIT &&
+    Array.isArray(value.failedTurns) &&
+    value.failedTurns.length <= INPUT_LIMITS.agents &&
+    value.failedTurns.every((turn) => isDynamicRecord(turn) && isIdentifier(turn.botId) && isIdentifier(turn.turnId))
+  );
+}
+
+function isAgentRuntimeBotSummary(value: unknown): value is AgentRuntimeBotSummary {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.id) &&
+    isBoundedString(value.name, INPUT_LIMITS.agentName) &&
+    isBoolean(value.notifications) &&
+    isBoundedString(value.preview, AGENT_RUNTIME_TEXT_LIMIT) &&
+    (value.updatedAt === null || isBoundedString(value.updatedAt, 160)) &&
+    isAvatarSeed(value.avatarSeed) &&
+    (value.avatarHue === null || isAvatarHue(value.avatarHue)) &&
+    (value.avatarUrl === null || isBoundedString(value.avatarUrl, INPUT_LIMITS.avatarUrl))
+  );
+}
+
+function isBotSummary(value: unknown): value is BotSummary {
+  if (!isDynamicRecord(value)) return false;
+  return (
+    isIdentifier(value.id) &&
+    isBoundedString(value.name, INPUT_LIMITS.agentName) &&
+    isBoundedString(value.title, INPUT_LIMITS.agentTitle) &&
+    isBoundedString(value.description, INPUT_LIMITS.agentDescription) &&
+    isBoolean(value.notifications) &&
+    isAgentProvider(value.provider) &&
+    isAgentModel(value.model) &&
+    isReasoningEffort(value.reasoningEffort) &&
+    (value.threadId === null || isIdentifier(value.threadId)) &&
+    isBoundedString(value.workspacePath, INPUT_LIMITS.path) &&
+    isBoundedString(value.preview, INPUT_LIMITS.messageText) &&
+    (value.updatedAt === null || isBoundedString(value.updatedAt, 160)) &&
+    isAvatarSeed(value.avatarSeed) &&
+    (value.avatarHue === null || isAvatarHue(value.avatarHue)) &&
+    (value.avatarUrl === null || isBoundedString(value.avatarUrl, INPUT_LIMITS.avatarUrl)) &&
+    (value.marketplaceSource === undefined || isMarketplaceSource(value.marketplaceSource))
+  );
+}
+
+function isMarketplaceSource(value: unknown): value is NonNullable<BotSummary["marketplaceSource"]> {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.agentId) &&
+    isIdentifier(value.versionId) &&
+    isNumber(value.version) &&
+    Number.isInteger(value.version) &&
+    Array.isArray(value.skillIds) &&
+    value.skillIds.length <= INPUT_LIMITS.agents &&
+    value.skillIds.every(isIdentifier) &&
+    Array.isArray(value.routineIds) &&
+    value.routineIds.length <= INPUT_LIMITS.agentRoutines &&
+    value.routineIds.every(isIdentifier)
+  );
+}
+
+function isQueueSnapshot(value: unknown): value is QueueSnapshot {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.botId) &&
+    Array.isArray(value.deliveries) &&
+    value.deliveries.every(isQueueDelivery)
+  );
+}
+
+function isRuntimeWorkItem(value: unknown): value is AgentRuntimeWorkItem {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.id) &&
+    isIdentifier(value.botId) &&
+    (value.turnId === null || isIdentifier(value.turnId)) &&
+    isOneOf(["starting", "running", "failed"] as const, value.status) &&
+    isBoundedString(value.text, AGENT_RUNTIME_TEXT_LIMIT) &&
+    isNullableBoundedString(value.error, AGENT_RUNTIME_TEXT_LIMIT)
+  );
+}
+
+function isQueueDelivery(value: unknown): value is QueueDelivery {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.id) &&
+    isIdentifier(value.messageId) &&
+    isIdentifier(value.recipientBotId) &&
+    isQueueSender(value.sender) &&
+    isBoundedString(value.text, INPUT_LIMITS.messageText) &&
+    Array.isArray(value.attachments) &&
+    value.attachments.length <= INPUT_LIMITS.attachments &&
+    value.attachments.every(isAttachmentSummary) &&
+    (value.replyToMessageId === null || isIdentifier(value.replyToMessageId)) &&
+    isOneOf(
+      ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"] as const,
+      value.status,
+    ) &&
+    (value.position === null ||
+      (isNumber(value.position) && Number.isInteger(value.position) && value.position >= 1)) &&
+    (value.turnId === null || isIdentifier(value.turnId)) &&
+    (value.error === null || isBoundedString(value.error, INPUT_LIMITS.messageText)) &&
+    isBoundedString(value.createdAt, 160)
+  );
+}
+
+function isQueueSender(value: unknown): value is QueueDelivery["sender"] {
+  if (!isDynamicRecord(value)) return false;
+  if (value.kind === "user") return true;
+  if (value.kind === "bot") return isIdentifier(value.botId);
+  return (
+    value.kind === "routine" &&
+    isIdentifier(value.routineId) &&
+    isIdentifier(value.runId) &&
+    isBoundedString(value.routineName, INPUT_LIMITS.routineName) &&
+    isBoundedString(value.scheduledFor, 160)
+  );
+}
+
+function isAttachmentSummary(value: unknown): value is AttachmentSummary {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.id) &&
+    isBoundedString(value.name, INPUT_LIMITS.attachmentName) &&
+    isNumber(value.size) &&
+    value.size >= 0 &&
+    isOneOf(["image", "file"] as const, value.kind) &&
+    isBoundedString(value.mimeType, INPUT_LIMITS.mimeType) &&
+    isOneOf(["image", "pdf", "text", "none"] as const, value.previewKind) &&
+    (value.previewUrl === null || isBoundedString(value.previewUrl, INPUT_LIMITS.avatarUrl))
+  );
+}
+
+function isRuntimePrompt(value: unknown): value is AgentRuntimeSnapshot["pendingPrompts"][number] {
+  return (
+    isDynamicRecord(value) &&
+    isRequestId(value.requestId) &&
+    isIdentifier(value.botId) &&
+    isIdentifier(value.threadId) &&
+    isIdentifier(value.turnId) &&
+    Array.isArray(value.questions) &&
+    value.questions.length <= INPUT_LIMITS.promptQuestions &&
+    value.questions.every(isRuntimePromptQuestion)
+  );
+}
+
+function isRuntimePromptQuestion(value: unknown): value is AgentRuntimePromptQuestion {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.id) &&
+    isBoundedString(value.header, AGENT_RUNTIME_QUESTION_HEADER_LIMIT) &&
+    isBoundedString(value.question, AGENT_RUNTIME_TEXT_LIMIT) &&
+    isBoolean(value.isSecret) &&
+    (value.options === null ||
+      (Array.isArray(value.options) &&
+        value.options.length <= INPUT_LIMITS.promptOptions &&
+        value.options.every(
+          (option) =>
+            isDynamicRecord(option) &&
+            isBoundedString(option.label, INPUT_LIMITS.promptOptionLabel) &&
+            isBoundedString(option.description, AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT),
+        )))
+  );
+}
+
+function isRuntimeApproval(value: unknown): value is AgentRuntimeApproval {
+  if (!isDynamicRecord(value)) return false;
+  return (
+    isRequestId(value.requestId) &&
+    isIdentifier(value.botId) &&
+    isIdentifier(value.threadId) &&
+    isIdentifier(value.turnId) &&
+    isOneOf(["command", "file-change", "permissions"] as const, value.kind) &&
+    isNullableBoundedString(value.command, AGENT_RUNTIME_TEXT_LIMIT) &&
+    isNullableBoundedString(value.cwd, AGENT_RUNTIME_TEXT_LIMIT) &&
+    isNullableBoundedString(value.reason, AGENT_RUNTIME_TEXT_LIMIT) &&
+    isNullableBoundedString(value.grantRoot, AGENT_RUNTIME_TEXT_LIMIT) &&
+    isBoolean(value.truncated) &&
+    (value.permissions === null || isRuntimeApprovalPermissions(value.permissions))
+  );
+}
+
+function isRuntimeApprovalPermissions(value: unknown): value is AgentApprovalPermissions {
+  return (
+    isDynamicRecord(value) &&
+    isDynamicRecord(value.fileSystem) &&
+    isRuntimePathList(value.fileSystem.read) &&
+    isRuntimePathList(value.fileSystem.write) &&
+    isBoolean(value.network)
+  );
+}
+
+function isRuntimePathList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= AGENT_RUNTIME_PERMISSION_PATHS_LIMIT &&
+    value.every((path) => isBoundedString(path, AGENT_RUNTIME_TEXT_LIMIT))
+  );
+}
+
+function isAgentApproval(value: unknown): value is AgentApproval {
+  if (!isDynamicRecord(value)) return false;
+  return (
+    isRequestId(value.requestId) &&
+    isIdentifier(value.botId) &&
+    isIdentifier(value.threadId) &&
+    isIdentifier(value.turnId) &&
+    isOneOf(["command", "file-change", "permissions"] as const, value.kind) &&
+    isNullableBoundedString(value.command, INPUT_LIMITS.messageText) &&
+    isNullableBoundedString(value.cwd, INPUT_LIMITS.path) &&
+    isNullableBoundedString(value.reason, INPUT_LIMITS.messageText) &&
+    isNullableBoundedString(value.grantRoot, INPUT_LIMITS.path) &&
+    (value.permissions === null || isAgentApprovalPermissions(value.permissions))
+  );
+}
+
+function isAgentApprovalPermissions(value: unknown): value is AgentApprovalPermissions {
+  return (
+    isDynamicRecord(value) &&
+    isDynamicRecord(value.fileSystem) &&
+    isPathList(value.fileSystem.read) &&
+    isPathList(value.fileSystem.write) &&
+    isBoolean(value.network)
+  );
+}
+
+function isBrowserTakeoverRequest(value: unknown): value is BrowserTakeoverRequest {
+  return (
+    isDynamicRecord(value) &&
+    isRequestId(value.requestId) &&
+    isIdentifier(value.botId) &&
+    isIdentifier(value.threadId) &&
+    isIdentifier(value.turnId) &&
+    isIdentifier(value.tabId)
+  );
+}
+
+function isPathList(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= INPUT_LIMITS.agents &&
+    value.every((path) => isBoundedString(path, INPUT_LIMITS.path))
+  );
+}
+
+function isRequestId(value: unknown): value is string | number {
+  return isNumber(value) || isIdentifier(value);
+}
+
+function isIdentifier(value: unknown): value is string {
+  return isBoundedString(value, INPUT_LIMITS.identifier) && value.length > 0;
+}
+
+function isNullableBoundedString(value: unknown, maximum: number): value is string | null {
+  return value === null || isBoundedString(value, maximum);
+}
+
+function isBoundedString(value: unknown, maximum: number): value is string {
+  return isString(value) && value.length <= maximum;
 }
 
 function isAgentTurnOrigin(value: unknown): value is AgentTurnOrigin {
@@ -1039,6 +1518,7 @@ export function isSidebarLayoutSnapshot(value: unknown): value is SidebarLayoutS
 export interface ScopedAgentEvent {
   serverId: string;
   event: AgentEvent;
+  bufferedLive?: boolean;
 }
 
 export interface AgentIpcRequest<T = unknown> {

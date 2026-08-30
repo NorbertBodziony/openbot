@@ -33,6 +33,8 @@ export { default as LogIn } from "lucide-solid/icons/log-in";
 export { default as LogOut } from "lucide-solid/icons/log-out";
 export { default as Mail } from "lucide-solid/icons/mail";
 export { default as Megaphone } from "lucide-solid/icons/megaphone";
+export { default as MessageCircle } from "lucide-solid/icons/message-circle";
+export { default as MessageCircleQuestionMark } from "lucide-solid/icons/message-circle-question-mark";
 export { default as Mic } from "lucide-solid/icons/mic";
 export { default as Monitor } from "lucide-solid/icons/monitor";
 export { default as OctagonX } from "lucide-solid/icons/octagon-x";

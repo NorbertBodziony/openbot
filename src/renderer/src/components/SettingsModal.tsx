@@ -304,6 +304,40 @@ export function SettingsModal(props: SettingsModalProps) {
             </ItemGroup>
           </SettingsSection>
 
+          <Show when={props.appInfo?.platform === "darwin"}>
+            <SettingsSection title="MacBook notch">
+              <ItemGroup class="settings-modal-card" surface="subtle">
+                <SwitchField
+                  checked={props.value.macBookNotch}
+                  onChange={(checked) => updateSetting("macBookNotch", checked)}
+                  label="Show status in the MacBook notch"
+                  description="Show bot activity and items that need attention at the top of each display."
+                />
+                <SwitchField
+                  checked={props.value.macBookNotchIdle}
+                  disabled={!props.value.macBookNotch}
+                  onChange={(checked) => updateSetting("macBookNotchIdle", checked)}
+                  label="Show idle island"
+                  description="Show the OpenBot logo and greeting when no status is active."
+                />
+                <SwitchField
+                  checked={props.value.macBookNotchAdditionalDisplays}
+                  disabled={!props.value.macBookNotch}
+                  onChange={(checked) => updateSetting("macBookNotchAdditionalDisplays", checked)}
+                  label="Show on additional displays"
+                  description="Show Dynamic Island on connected external displays."
+                />
+                <SwitchField
+                  checked={props.value.macBookNotchHaptics}
+                  disabled={!props.value.macBookNotch}
+                  onChange={(checked) => updateSetting("macBookNotchHaptics", checked)}
+                  label="Haptic feedback"
+                  description="Use the Force Touch trackpad to confirm Dynamic Island interactions."
+                />
+              </ItemGroup>
+            </SettingsSection>
+          </Show>
+
           <SettingsSection title="Updates">
             <ItemGroup class="settings-modal-card" surface="subtle">
               <SwitchField

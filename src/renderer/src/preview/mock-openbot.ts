@@ -25,6 +25,8 @@ import type {
   DirectMessageRealtimeEvent,
   DirectThreadSummary,
   DirectTypingRealtimeEvent,
+  DynamicIslandPreference,
+  DynamicIslandPresentation,
   HostStatus,
   InviteSummary,
   JoinServerInput,
@@ -59,7 +61,11 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
-import { SIDEBAR_PEOPLE_SECTION_ID, SIDEBAR_UNASSIGNED_SECTION_ID } from "@openbot/contracts/ipc";
+import {
+  DEFAULT_DYNAMIC_ISLAND_PREFERENCE,
+  SIDEBAR_PEOPLE_SECTION_ID,
+  SIDEBAR_UNASSIGNED_SECTION_ID,
+} from "@openbot/contracts/ipc";
 import browserTakeoverPreviewUrl from "../../stories/assets/browser-takeover-preview.svg";
 import {
   STORY_AGENT_STATUS,
@@ -155,6 +161,8 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let authState = clone<CentralAuthState>(options.authState ?? defaultAuthState);
   let setupState = clone<AppSetupState>(options.setupState ?? { completed: true, preferredProvider: "codex" });
   let analyticsPreference = clone<AnalyticsPreference>(options.analyticsPreference ?? { enabled: true });
+  let dynamicIslandPreference: DynamicIslandPreference = { ...DEFAULT_DYNAMIC_ISLAND_PREFERENCE };
+  let dynamicIslandPresentation: DynamicIslandPresentation = { serverId: "local", mode: "idle" };
   const agentStatus = clone(options.agentStatus ?? STORY_AGENT_STATUS);
   let bots = clone(options.bots ?? STORY_BOT_SUMMARIES);
   let sidebarLayout: SidebarLayoutSnapshot = {
@@ -363,6 +371,23 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
     setAnalyticsPreference: async ({ enabled }) => {
       analyticsPreference = { enabled };
       return clone(analyticsPreference);
+    },
+    dynamicIsland: {
+      getPreference: async () => clone(dynamicIslandPreference),
+      setPreference: async (preference) => {
+        dynamicIslandPreference = { ...preference };
+        return clone(dynamicIslandPreference);
+      },
+      publishPresentation: async (presentation) => {
+        dynamicIslandPresentation = clone(presentation);
+      },
+      getPresentation: async () => clone(dynamicIslandPresentation),
+      onPreference: () => () => undefined,
+      onPresentation: () => () => undefined,
+      performAction: async () => undefined,
+      performHaptic: async () => undefined,
+      onAction: () => () => undefined,
+      setInteractive: async () => undefined,
     },
     getMacPermissions: async (): Promise<MacPermissionsState> => ({
       screenRecording: "granted",
@@ -807,6 +832,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         });
       },
       listQueue: async (botId) => clone(queues.get(botId) ?? emptyQueue(botId)),
+      acknowledgeFailedTurn: async () => undefined,
       cancelQueuedMessage: async (input) => {
         const queue = queues.get(input.botId) ?? emptyQueue(input.botId);
         queue.deliveries = queue.deliveries.map((delivery) =>
@@ -858,6 +884,11 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       onEvent: (listener) => {
         agentListeners.add(listener);
         return () => agentListeners.delete(listener);
+      },
+      onScopedEvent: (listener) => {
+        const scopedListener = (event: AgentEvent) => listener({ serverId: "local", event });
+        agentListeners.add(scopedListener);
+        return () => agentListeners.delete(scopedListener);
       },
     },
     browser: {

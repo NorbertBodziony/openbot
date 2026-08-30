@@ -1031,6 +1031,83 @@
   gap: var(--openbot-space-2);
 }
 
+.ui-item.ui-dynamic-island-identity {
+  min-width: 0;
+  width: 100%;
+  min-height: 43px;
+  display: grid;
+  grid-template-columns: 35px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--openbot-space-2);
+  padding: 0;
+}
+
+.dynamic-island-external .ui-dynamic-island-identity {
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+}
+
+.ui-dynamic-island-identity-avatar {
+  width: 35px;
+  height: 35px;
+}
+
+.dynamic-island-external .ui-dynamic-island-identity-avatar {
+  width: 38px;
+  height: 38px;
+}
+
+.ui-dynamic-island-identity-copy {
+  gap: 2px;
+}
+
+.ui-dynamic-island-identity-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--openbot-space-1);
+  font-size: var(--openbot-text-xs);
+  font-weight: var(--openbot-weight-semibold);
+  line-height: var(--openbot-leading-sm);
+}
+
+.ui-dynamic-island-identity-name {
+  min-width: 0;
+  max-width: 26ch;
+  overflow: hidden;
+  flex: 0 1 auto;
+  color: var(--openbot-island-identity-name);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-dynamic-island-identity-status {
+  flex: 0 0 auto;
+  color: var(--openbot-text-secondary);
+}
+
+.ui-dynamic-island-identity-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-xs);
+  font-weight: var(--openbot-weight-regular);
+  line-height: var(--openbot-leading-sm);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.ui-dynamic-island-identity-trailing {
+  align-self: start;
+  padding-top: 2px;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--openbot-leading-xs);
+  white-space: nowrap;
+}
+
 .ui-questionnaire {
   min-width: 0;
   display: grid;

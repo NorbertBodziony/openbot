@@ -3,6 +3,7 @@ export * from "./ipc-browser";
 export * from "./ipc-channels";
 export * from "./ipc-conversation";
 export * from "./ipc-desktop-apis";
+export * from "./ipc-dynamic-island";
 export * from "./ipc-marketplace-agents";
 export * from "./ipc-skills";
 export * from "./ipc-team-host";

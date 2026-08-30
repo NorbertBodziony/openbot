@@ -9,6 +9,7 @@ import {
 import { rewriteAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
+  AgentRuntimeWorkItem,
   AttachmentDataInput,
   AttachmentKind,
   AttachmentPreviewKind,
@@ -23,7 +24,12 @@ import type {
   QueuedMessageReceipt,
   QueueSnapshot,
 } from "@openbot/contracts/ipc";
-import { isMessageReaction } from "@openbot/contracts/ipc";
+import {
+  AGENT_RUNTIME_ATTENTION_LIMIT,
+  AGENT_RUNTIME_TEXT_LIMIT,
+  AGENT_RUNTIME_WORKING_ITEMS_LIMIT,
+  isMessageReaction,
+} from "@openbot/contracts/ipc";
 import { isNumber, isString } from "@openbot/contracts/runtime-values";
 import { OpenBotDatabase } from "./openbot-database";
 import { isRecord } from "./protocol";
@@ -390,6 +396,48 @@ export class MailboxStore {
         .filter((delivery) => delivery.recipientBotId === botId)
         .map((delivery) => this.#publicDelivery(delivery, positions)),
     };
+  }
+
+  listRuntimeWork(botIds: readonly string[], failedTurns: ReadonlyMap<string, string>): AgentRuntimeWorkItem[] {
+    const targetBotIds = new Set(botIds);
+    const working: StoredDelivery[] = [];
+    const failed: StoredDelivery[] = [];
+    const workingBotIds = new Set<string>();
+    const failedBotIds = new Set<string>();
+    for (const delivery of this.#state.deliveries) {
+      if (!targetBotIds.has(delivery.recipientBotId)) continue;
+      const isWorking = delivery.status === "starting" || delivery.status === "running";
+      const isCurrentFailure =
+        delivery.status === "failed" && delivery.turnId === failedTurns.get(delivery.recipientBotId);
+      if (!isWorking && !isCurrentFailure) continue;
+      const seenBotIds = isCurrentFailure ? failedBotIds : workingBotIds;
+      if (seenBotIds.has(delivery.recipientBotId)) continue;
+      seenBotIds.add(delivery.recipientBotId);
+      (isCurrentFailure ? failed : working).push(delivery);
+    }
+    const selected = [
+      ...failed.slice(0, AGENT_RUNTIME_ATTENTION_LIMIT),
+      ...working.slice(0, AGENT_RUNTIME_WORKING_ITEMS_LIMIT),
+    ];
+    const messageIds = new Set(selected.map((delivery) => delivery.messageId));
+    const messages = new Map(
+      this.#state.messages.filter((message) => messageIds.has(message.id)).map((message) => [message.id, message]),
+    );
+    return selected.map((delivery) => {
+      const message = messages.get(delivery.messageId);
+      if (!message) throw new Error(`Mailbox message is missing: ${delivery.messageId}`);
+      if (delivery.status !== "starting" && delivery.status !== "running" && delivery.status !== "failed") {
+        throw new Error(`Mailbox runtime delivery has an invalid status: ${delivery.status}`);
+      }
+      return {
+        id: delivery.id,
+        botId: delivery.recipientBotId,
+        turnId: delivery.turnId,
+        status: delivery.status,
+        text: message.text.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
+        error: delivery.error?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+      };
+    });
   }
 
   conversationMessages(botId: string): ConversationMessage[] {
@@ -998,8 +1046,11 @@ export class MailboxStore {
     );
   }
 
-  #publicDelivery(delivery: StoredDelivery, positions = this.#queuedPositions()): QueueDelivery {
-    const message = this.#requireMessage(delivery.messageId);
+  #publicDelivery(
+    delivery: StoredDelivery,
+    positions = this.#queuedPositions(),
+    message = this.#requireMessage(delivery.messageId),
+  ): QueueDelivery {
     return {
       ...delivery,
       sender: structuredClone(message.sender),

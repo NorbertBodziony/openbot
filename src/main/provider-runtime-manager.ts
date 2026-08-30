@@ -16,6 +16,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { finished } from "node:stream/promises";
 import { promisify } from "node:util";
 import type { AgentProviderId, ProviderRuntimeSnapshot, ProviderRuntimeStatus } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
@@ -528,6 +529,7 @@ async function streamResponse(
     });
   } catch (error) {
     writer.destroy();
+    await finished(writer).catch(() => undefined);
     await reader.cancel().catch(() => undefined);
     throw error;
   }

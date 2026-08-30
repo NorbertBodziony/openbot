@@ -6,11 +6,14 @@ import type {
   BrowserPictureInPictureEvent,
   BrowserTab,
   CentralAuthState,
+  ConversationPage,
   ConversationSnapshot,
   DirectConversationSnapshot,
   DirectMessageRealtimeEvent,
   DirectTypingRealtimeEvent,
+  DynamicIslandAction,
   QueueDelivery,
+  ScopedAgentEvent,
   ServerSummary,
   TeamPresenceSnapshot,
   UpdateStatus,
@@ -37,6 +40,7 @@ vi.spyOn(desktopAnalytics, "anonymousScope").mockImplementation(() => ({
 const defaultMatchMedia = window.matchMedia;
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
+let emitScopedAgentEvent: ((event: ScopedAgentEvent) => void) | undefined;
 let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
 let emitBrowserPictureInPicture: ((event: BrowserPictureInPictureEvent) => void) | undefined;
 let emitUpdateStatus: ((status: UpdateStatus) => void) | undefined;
@@ -46,6 +50,7 @@ let emitPresence: ((snapshot: TeamPresenceSnapshot) => void) | undefined;
 let emitDirectMessage: ((event: DirectMessageRealtimeEvent) => void) | undefined;
 let emitDirectTyping: ((event: DirectTypingRealtimeEvent) => void) | undefined;
 let emitInvite: ((inviteUrl: string) => void) | undefined;
+let emitDynamicIslandAction: ((action: DynamicIslandAction) => void) | undefined;
 
 const BOTS: BotSummary[] = [
   {
@@ -84,6 +89,39 @@ const BOTS: BotSummary[] = [
   },
 ];
 
+function testServer(id: string, active: boolean): ServerSummary {
+  const local = id === "local";
+  return {
+    id,
+    name: local ? "Local" : "Studio Mac",
+    logoUrl: null,
+    kind: local ? "local" : "remote",
+    state: "online",
+    apiUrl: local ? null : "https://studio.example.com",
+    remoteDesktopAvailable: false,
+    role: local ? null : "member",
+    active,
+  };
+}
+
+function testConversationPage(
+  botId: string,
+  messages: ConversationPage["messages"] = [],
+  overrides: Partial<ConversationPage> = {},
+): ConversationPage {
+  return {
+    botId,
+    threadId: "thread-1",
+    activeTurnId: null,
+    revision: 1,
+    messages,
+    references: {},
+    readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    pageInfo: { hasOlder: false, olderCursor: null },
+    ...overrides,
+  };
+}
+
 async function confirmOnboardingModel(): Promise<void> {
   await screen.findByRole("button", { name: "Agent model: Luna" });
 }
@@ -114,6 +152,7 @@ function queuedDelivery(
 describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {
     emitAgentEvent = undefined;
+    emitScopedAgentEvent = undefined;
     emitAttachmentImport = undefined;
     emitBrowserPictureInPicture = undefined;
     emitUpdateStatus = undefined;
@@ -123,6 +162,7 @@ describe("OpenBot connected desktop shell", () => {
     emitDirectMessage = undefined;
     emitDirectTyping = undefined;
     emitInvite = undefined;
+    emitDynamicIslandAction = undefined;
     trackAnalytics.mockClear();
     window.localStorage.clear();
     Object.defineProperty(window, "matchMedia", {
@@ -146,6 +186,26 @@ describe("OpenBot connected desktop shell", () => {
         getSetupState: vi.fn().mockResolvedValue({ completed: true, preferredProvider: "codex" }),
         getAnalyticsPreference: vi.fn().mockResolvedValue({ enabled: true }),
         setAnalyticsPreference: vi.fn(async ({ enabled }) => ({ enabled })),
+        dynamicIsland: {
+          getPreference: vi.fn().mockResolvedValue({
+            enabled: true,
+            hapticsEnabled: true,
+            idleVisible: true,
+            additionalDisplaysEnabled: true,
+          }),
+          setPreference: vi.fn(async (preference) => ({ ...preference })),
+          publishPresentation: vi.fn().mockResolvedValue(undefined),
+          getPresentation: vi.fn().mockResolvedValue(null),
+          onPreference: vi.fn().mockReturnValue(() => undefined),
+          onPresentation: vi.fn().mockReturnValue(() => undefined),
+          performAction: vi.fn().mockResolvedValue(undefined),
+          performHaptic: vi.fn().mockResolvedValue(undefined),
+          onAction: vi.fn((listener) => {
+            emitDynamicIslandAction = listener;
+            return () => undefined;
+          }),
+          setInteractive: vi.fn().mockResolvedValue(undefined),
+        },
         saveSetup: vi.fn().mockImplementation(async ({ preferredProvider }) => ({
           completed: true,
           preferredProvider,
@@ -461,6 +521,7 @@ describe("OpenBot connected desktop shell", () => {
           }),
           setMessageReaction: vi.fn().mockResolvedValue(undefined),
           listQueue: vi.fn().mockImplementation(async (botId) => ({ botId, deliveries: [] })),
+          acknowledgeFailedTurn: vi.fn().mockResolvedValue(undefined),
           cancelQueuedMessage: vi.fn().mockResolvedValue(undefined),
           steerQueuedMessage: vi.fn().mockResolvedValue(undefined),
           updateQueuedMessage: vi.fn().mockResolvedValue(undefined),
@@ -471,6 +532,10 @@ describe("OpenBot connected desktop shell", () => {
           respondToBrowserTakeover: vi.fn().mockResolvedValue(undefined),
           onEvent: vi.fn((listener) => {
             emitAgentEvent = listener;
+            return () => undefined;
+          }),
+          onScopedEvent: vi.fn((listener) => {
+            emitScopedAgentEvent = listener;
             return () => undefined;
           }),
         },
@@ -785,6 +850,352 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByRole("heading", { name: "Remote Chief" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("keeps a remote approval when Review in OpenBot switches to its host", async () => {
+    const servers: ServerSummary[] = [
+      {
+        id: "local",
+        name: "Local",
+        logoUrl: null,
+        kind: "local",
+        state: "online",
+        apiUrl: null,
+        remoteDesktopAvailable: false,
+        role: null,
+        active: true,
+      },
+      {
+        id: "remote-1",
+        name: "Studio Mac",
+        logoUrl: null,
+        kind: "remote",
+        state: "online",
+        apiUrl: "https://studio.example.com",
+        remoteDesktopAvailable: false,
+        role: "member",
+        active: false,
+      },
+    ];
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce(servers);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce(
+      servers.map((server) => ({ ...server, active: server.id === "remote-1" })),
+    );
+
+    render(() => <App />);
+    await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
+    emitScopedAgentEvent?.({ serverId: "remote-1", event: { type: "bots-changed", bots: BOTS } });
+    emitScopedAgentEvent?.({
+      serverId: "remote-1",
+      event: {
+        type: "approval",
+        approval: {
+          requestId: "approval-remote",
+          botId: "chief",
+          threadId: "thread-chief",
+          turnId: "turn-remote",
+          kind: "permissions",
+          command: null,
+          cwd: null,
+          reason: "Review remote access.",
+          grantRoot: null,
+          permissions: { fileSystem: { read: ["/workspace"], write: [] }, network: false },
+        },
+      },
+    });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "remote-1",
+        mode: "approval",
+        item: { requestId: "approval-remote" },
+      }),
+    );
+
+    emitDynamicIslandAction?.({
+      type: "review-attention",
+      serverId: "remote-1",
+      botId: "chief",
+      requestId: "approval-remote",
+    });
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "remote-1",
+        mode: "approval",
+        item: { requestId: "approval-remote" },
+      }),
+    );
+
+    emitDynamicIslandAction?.({
+      type: "respond-approval",
+      serverId: "remote-1",
+      botId: "chief",
+      requestId: "approval-remote",
+      decision: "accept",
+    });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "remote-1",
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("removes stale Dynamic Island attention when a remote host goes offline", async () => {
+    const local: ServerSummary = {
+      id: "local",
+      name: "Local",
+      logoUrl: null,
+      kind: "local",
+      state: "online",
+      apiUrl: null,
+      remoteDesktopAvailable: false,
+      role: null,
+      active: true,
+    };
+    const remote: ServerSummary = {
+      id: "remote-1",
+      name: "Studio Mac",
+      logoUrl: null,
+      kind: "remote",
+      state: "online",
+      apiUrl: "https://studio.example.com",
+      remoteDesktopAvailable: false,
+      role: "member",
+      active: false,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+
+    render(() => <App />);
+    await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
+    emitScopedAgentEvent?.({ serverId: remote.id, event: { type: "bots-changed", bots: BOTS } });
+    emitScopedAgentEvent?.({
+      serverId: remote.id,
+      event: {
+        type: "approval",
+        approval: {
+          requestId: "stale-approval",
+          botId: "chief",
+          threadId: "thread-chief",
+          turnId: "turn-remote",
+          kind: "permissions",
+          command: null,
+          cwd: null,
+          reason: "Review remote access.",
+          grantRoot: null,
+          permissions: { fileSystem: { read: ["/workspace"], write: [] }, network: false },
+        },
+      },
+    });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: remote.id,
+        mode: "approval",
+      }),
+    );
+
+    emitServers?.([local, { ...remote, state: "offline" }]);
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "local",
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("reports a remote reply that arrives while its host is offline", async () => {
+    const local: ServerSummary = {
+      id: "local",
+      name: "Local",
+      logoUrl: null,
+      kind: "local",
+      state: "online",
+      apiUrl: null,
+      remoteDesktopAvailable: false,
+      role: null,
+      active: true,
+    };
+    const remote: ServerSummary = {
+      id: "remote-1",
+      name: "Studio Mac",
+      logoUrl: null,
+      kind: "remote",
+      state: "online",
+      apiUrl: "https://studio.example.com",
+      remoteDesktopAvailable: false,
+      role: "member",
+      active: false,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    const snapshot = (messageId: string, text: string) => ({
+      type: "runtime-snapshot" as const,
+      snapshot: {
+        bots: [
+          {
+            id: "chief",
+            name: "Chief",
+            notifications: true,
+            preview: "",
+            updatedAt: null,
+            avatarSeed: "chief",
+            avatarHue: null,
+            avatarUrl: null,
+          },
+        ],
+        activeTurns: [],
+        work: [],
+        latestMessages: [{ botId: "chief", id: messageId, text, createdAt: "2026-08-29T10:00:00.000Z" }],
+        attentionComplete: true,
+        pendingPrompts: [],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    });
+
+    render(() => <App />);
+    await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
+    emitScopedAgentEvent?.({ serverId: remote.id, event: snapshot("reply-old", "Earlier reply") });
+    emitServers?.([local, { ...remote, state: "offline" }]);
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "local",
+        mode: "idle",
+      }),
+    );
+
+    emitServers?.([local, remote]);
+    emitScopedAgentEvent?.({ serverId: remote.id, event: snapshot("reply-new", "Reply from offline work") });
+
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: remote.id,
+        mode: "message",
+        unreadCount: 1,
+        message: { messageId: "reply-new", text: "Reply from offline work" },
+      }),
+    );
+  });
+
+  it("preserves omitted attention only when a compact runtime snapshot is incomplete", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(window.openbot.agent.listQueue).toHaveBeenCalledWith("chief"));
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        deliveries: [
+          queuedDelivery("delivery-running", "Keep the full queue", null, {
+            status: "running",
+            turnId: "turn-running",
+          }),
+        ],
+      },
+    });
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-authoritative",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-running",
+      questions: [
+        {
+          id: "scope",
+          header: "Scope",
+          question: "Which scope?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    expect(await screen.findByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
+
+    const runtimeSnapshot: AgentEvent = {
+      type: "runtime-snapshot",
+      snapshot: {
+        bots: [],
+        activeTurns: [{ botId: "chief", threadId: "thread-chief", turnId: "turn-running" }],
+        work: [],
+        latestMessages: [],
+        attentionComplete: false,
+        pendingPrompts: [],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    };
+    emitAgentEvent?.(runtimeSnapshot);
+
+    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      ...runtimeSnapshot,
+      snapshot: { ...runtimeSnapshot.snapshot, activeTurns: [], attentionComplete: true },
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox", { name: "Custom answer for: Which scope?" })).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
+  });
+
+  it("merges compact runtime attention into the active server", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+
+    emitAgentEvent?.({
+      type: "runtime-snapshot",
+      snapshot: {
+        bots: [],
+        activeTurns: [],
+        work: [],
+        latestMessages: [],
+        attentionComplete: true,
+        pendingPrompts: [],
+        pendingApprovals: [
+          {
+            requestId: "approval-runtime",
+            botId: "chief",
+            threadId: "thread-chief",
+            turnId: "turn-runtime",
+            kind: "command",
+            command: "bun test",
+            truncated: false,
+            cwd: null,
+            reason: null,
+            grantRoot: null,
+            permissions: null,
+          },
+        ],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    });
+
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "approval",
+        item: { requestId: "approval-runtime" },
+      }),
+    );
+
+    emitAgentEvent?.({
+      type: "agent-input-resolved",
+      kind: "approval",
+      requestId: "approval-runtime",
+      botId: "chief",
+    });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
   });
 
   it("shows the first-run onboarding before starting agents", async () => {
@@ -1769,6 +2180,25 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(await screen.findByRole("switch", { name: "Share product analytics" }));
 
     await waitFor(() => expect(window.openbot.setAnalyticsPreference).toHaveBeenCalledWith({ enabled: false }));
+  });
+
+  it("persists the MacBook notch preference from settings on macOS", async () => {
+    render(() => <App />);
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const notchSwitch = await screen.findByRole("switch", { name: "Show status in the MacBook notch" });
+    expect(notchSwitch).toBeChecked();
+
+    await fireEvent.click(notchSwitch);
+
+    await waitFor(() =>
+      expect(window.openbot.dynamicIsland.setPreference).toHaveBeenCalledWith({
+        enabled: false,
+        hapticsEnabled: true,
+        idleVisible: true,
+        additionalDisplaysEnabled: true,
+      }),
+    );
+    expect(notchSwitch).not.toBeChecked();
   });
 
   it("does not open desktop analytics when the saved preference is disabled", async () => {
@@ -4459,6 +4889,202 @@ describe("OpenBot connected desktop shell", () => {
 
     resolveApproval?.();
     await waitFor(() => expect(screen.queryByText("Run this command?")).not.toBeInTheDocument());
+  });
+
+  it("removes a completed Dynamic Island answer without sending it twice", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-island",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: [
+        {
+          id: "source",
+          header: "Choose a source",
+          question: "Which source should I use?",
+          isSecret: false,
+          options: [
+            { label: "Official data", description: "Use the public dataset" },
+            { label: "Industry report", description: "Use the detailed report" },
+          ],
+        },
+      ],
+    });
+    await screen.findByText("Which source should I use?");
+
+    emitDynamicIslandAction?.({
+      type: "answer-prompt",
+      serverId: "local",
+      botId: "chief",
+      requestId: "prompt-island",
+      answers: { source: ["Official data"] },
+    });
+
+    await Promise.resolve();
+
+    expect(window.openbot.agent.respondToPrompt).not.toHaveBeenCalled();
+    expect(screen.queryByText("Which source should I use?")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Chief" })).toBeVisible();
+  });
+
+  it("keeps a Dynamic Island failure until acknowledgement succeeds", async () => {
+    vi.mocked(window.openbot.agent.acknowledgeFailedTurn).mockRejectedValueOnce(
+      new Error("Acknowledgement unavailable"),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    emitScopedAgentEvent?.({
+      serverId: "local",
+      event: {
+        type: "turn-completed",
+        botId: "chief",
+        threadId: "thread-1",
+        turnId: "turn-failed",
+        status: "failed",
+      },
+    });
+    const action = {
+      type: "open-failure",
+      serverId: "local",
+      botId: "chief",
+      turnId: "turn-failed",
+    } as const;
+    emitDynamicIslandAction?.(action);
+
+    expect(await screen.findByText("Acknowledgement unavailable")).toBeInTheDocument();
+    expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+      mode: "failed",
+    });
+    emitDynamicIslandAction?.(action);
+    await waitFor(() => expect(window.openbot.agent.acknowledgeFailedTurn).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("marks the selected Dynamic Island message as read after opening it", async () => {
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-1",
+      activeTurnId: null,
+      revision: 1,
+      messages: [
+        {
+          id: "reply-island",
+          author: "assistant",
+          text: "The result is ready.",
+          createdAt: "2026-08-29T10:42:00.000Z",
+          status: "completed",
+        },
+      ],
+      readState: { unreadCount: 1, firstUnreadMessageId: "reply-island", throughMessageId: null },
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "local",
+      botId: "chief",
+      messageId: "reply-island",
+    });
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "reply-island",
+      }),
+    );
+  });
+
+  it("stops opening a Dynamic Island message when the active server changes", async () => {
+    let resolveFocusedPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async (input) => {
+      if (input.anchor?.type === "around") {
+        return await new Promise<ConversationPage>((resolve) => {
+          resolveFocusedPage = resolve;
+        });
+      }
+      return testConversationPage(input.botId);
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "local",
+      botId: "chief",
+      messageId: "reply-island",
+    });
+    await waitFor(() =>
+      expect(window.openbot.agent.readConversationPage).toHaveBeenCalledWith({
+        botId: "chief",
+        anchor: { type: "around", messageId: "reply-island" },
+        limit: 50,
+      }),
+    );
+    emitServers?.([testServer("local", false), testServer("remote-1", true)]);
+    await screen.findByRole("button", { name: "Studio Mac server" });
+    resolveFocusedPage?.(
+      testConversationPage("chief", [
+        {
+          id: "reply-island",
+          author: "assistant",
+          text: "The result is ready.",
+          createdAt: "2026-08-29T10:42:00.000Z",
+          status: "completed",
+        },
+      ]),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      vi
+        .mocked(window.openbot.agent.readConversationPage)
+        .mock.calls.filter(([input]) => input.anchor?.type === "latest" && input.limit === 1),
+    ).toHaveLength(0);
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+  });
+
+  it("merges a refreshed remote conversation page without dropping loaded messages", async () => {
+    const message = (id: string, text: string) => ({
+      id,
+      author: "assistant" as const,
+      text,
+      createdAt: "2026-08-30T02:00:00.000Z",
+      status: "completed" as const,
+    });
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(
+      testConversationPage("chief", [message("reply-old", "Loaded earlier")], {
+        pageInfo: { hasOlder: true, olderCursor: "older" },
+      }),
+    );
+    render(() => <App />);
+    expect(await screen.findByText("Loaded earlier")).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage("chief", [message("reply-new", "Fresh remote reply")], {
+        revision: 2,
+        pageInfo: { hasOlder: true, olderCursor: "older" },
+      }),
+    });
+
+    expect(await screen.findByText("Fresh remote reply")).toBeInTheDocument();
+    expect(screen.getByText("Loaded earlier")).toBeInTheDocument();
   });
 
   it("rejects a permission approval and keeps the error visible", async () => {

@@ -16,6 +16,7 @@ import {
 import { fingerprint } from "./team-store";
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -269,6 +270,501 @@ describe("remote server order", () => {
     }
   });
 });
+
+describe("remote event connections", () => {
+  it("keeps every configured host connected across selection and reconnects independently", async () => {
+    vi.useFakeTimers();
+    const directory = await mkdtemp(join(tmpdir(), "openbot-remote-events-"));
+    const statePath = join(directory, "servers.json");
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        version: 2,
+        activeServerId: "server-1",
+        servers: ["server-1", "server-2"].map((id) => ({
+          id,
+          name: id,
+          apiUrl: `https://${id}.trycloudflare.com/`,
+          fingerprint: "fingerprint",
+          username: "person@example.com",
+          encryptedToken: Buffer.from(`token-${id}`).toString("base64"),
+          remoteDesktopAvailable: false,
+          role: "member",
+        })),
+      }),
+    );
+    const sockets: TestEventSocket[] = [];
+    class TestEventSocket extends EventTarget {
+      static readonly OPEN = 1;
+      readonly close = vi.fn(() => this.dispatchEvent(new Event("close")));
+      readonly protocol: string;
+      readonly readyState = TestEventSocket.OPEN;
+      readonly send = vi.fn();
+
+      constructor(
+        readonly url: string | URL,
+        protocols: string[] = [],
+      ) {
+        super();
+        this.protocol = protocols[0] ?? "";
+        sockets.push(this);
+        queueMicrotask(() => this.dispatchEvent(new Event("open")));
+      }
+    }
+    vi.stubGlobal("WebSocket", TestEventSocket);
+    const conversationRequests: Array<{
+      resolve: (response: Response) => void;
+      reject: (error: Error) => void;
+    }> = [];
+    let queueRequests = 0;
+    let rejectQueue: ((error: Error) => void) | undefined;
+    const conversationPage = (revision: number) =>
+      new Response(
+        JSON.stringify({
+          botId: "chief",
+          threadId: "thread-chief",
+          activeTurnId: null,
+          revision,
+          messages: [
+            {
+              id: `reply-${revision}`,
+              author: "assistant",
+              text: "Fresh remote reply",
+              createdAt: "2026-08-30T02:00:00.000Z",
+              status: "completed",
+            },
+          ],
+          references: {},
+          pageInfo: { hasOlder: true, olderCursor: "older" },
+        }),
+      );
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = new URL(input);
+      if (url.pathname.endsWith("/queue")) {
+        queueRequests += 1;
+        if (queueRequests === 1) {
+          return await new Promise<Response>((_resolve, reject) => {
+            rejectQueue = reject;
+          });
+        }
+        return new Response(JSON.stringify({ botId: "chief", deliveries: [] }));
+      }
+      expect(url.pathname).toBe("/v1/agents/chief/conversation-page");
+      return await new Promise<Response>((resolve, reject) => {
+        conversationRequests.push({ resolve, reject });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const manager = new RemoteServerManager(
+      statePath,
+      {
+        encrypt: (value) => Buffer.from(value),
+        decrypt: (value) => value.toString(),
+      },
+      {
+        createTeamAuthTicket: async () => "ticket",
+        getEmail: () => "person@example.com",
+      },
+    );
+    const agentEvent = vi.fn();
+    manager.on("agent", agentEvent);
+
+    try {
+      await manager.initialize();
+      manager.startEventConnections();
+      await vi.waitFor(() => expect(sockets).toHaveLength(2));
+      await vi.waitFor(() =>
+        expect(sockets[0]?.send).toHaveBeenCalledWith(
+          JSON.stringify({ type: "agent-event-scope", includeConversations: true }),
+        ),
+      );
+      expect(sockets[1]?.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "agent-event-scope", includeConversations: false }),
+      );
+
+      await manager.select("server-2");
+      expect(sockets).toHaveLength(2);
+      expect(sockets.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
+      expect(sockets[0]?.send).toHaveBeenLastCalledWith(
+        JSON.stringify({ type: "agent-event-scope", includeConversations: false }),
+      );
+      expect(sockets[1]?.send).toHaveBeenLastCalledWith(
+        JSON.stringify({ type: "agent-event-scope", includeConversations: true }),
+      );
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 1 }),
+        }),
+      );
+      await vi.waitFor(() => expect(conversationRequests).toHaveLength(1));
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 2 }),
+        }),
+      );
+      conversationRequests[0]?.resolve(conversationPage(2));
+      await vi.waitFor(() =>
+        expect(agentEvent).toHaveBeenCalledWith(
+          "server-2",
+          expect.objectContaining({ type: "conversation-page", page: expect.objectContaining({ revision: 2 }) }),
+        ),
+      );
+      expect(
+        fetchMock.mock.calls.filter(([input]) => new URL(input).pathname.endsWith("conversation-page")),
+      ).toHaveLength(1);
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 3 }),
+        }),
+      );
+      await vi.waitFor(() => expect(conversationRequests).toHaveLength(2));
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 4 }),
+        }),
+      );
+      conversationRequests[1]?.reject(new Error("Refresh failed"));
+      await vi.waitFor(() => expect(conversationRequests).toHaveLength(3));
+      conversationRequests[2]?.resolve(conversationPage(4));
+      await vi.waitFor(() =>
+        expect(agentEvent).toHaveBeenCalledWith(
+          "server-2",
+          expect.objectContaining({ type: "conversation-page", page: expect.objectContaining({ revision: 4 }) }),
+        ),
+      );
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "queue-invalidated", botId: "chief" }),
+        }),
+      );
+      await vi.waitFor(() => expect(rejectQueue).toBeDefined());
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "queue-invalidated", botId: "chief" }),
+        }),
+      );
+      rejectQueue?.(new Error("Refresh failed"));
+      await vi.waitFor(() =>
+        expect(agentEvent).toHaveBeenCalledWith(
+          "server-2",
+          expect.objectContaining({ type: "queue-changed", snapshot: { botId: "chief", deliveries: [] } }),
+        ),
+      );
+      expect(queueRequests).toBe(2);
+
+      sockets[0]?.close();
+      await vi.advanceTimersByTimeAsync(REMOTE_EVENT_RECONNECT_TEST_MS);
+      expect(sockets).toHaveLength(3);
+      expect(String(sockets[2]?.url)).toContain("server-1.trycloudflare.com");
+
+      sockets[2]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "turn-started",
+            botId: "research",
+            threadId: "thread-research",
+            turnId: "turn-research",
+          }),
+        }),
+      );
+      expect(agentEvent).toHaveBeenCalledWith(
+        "server-1",
+        expect.objectContaining({ type: "turn-started", botId: "research" }),
+      );
+
+      manager.refreshRuntimeSnapshots();
+      expect(sockets).toHaveLength(3);
+      expect(sockets[1]?.send).toHaveBeenCalledWith(JSON.stringify({ type: "runtime-snapshot-request" }));
+      expect(sockets[2]?.send).toHaveBeenCalledWith(JSON.stringify({ type: "runtime-snapshot-request" }));
+
+      sockets[2]?.dispatchEvent(new MessageEvent("message", { data: "x".repeat(1024 * 1024 + 1) }));
+      expect(sockets[2]?.close).toHaveBeenCalledWith(1009, "Event payload is too large");
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("backs off short-lived event connections", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const directory = await mkdtemp(join(tmpdir(), "openbot-remote-backoff-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "backoff");
+    const sockets: TestShortLivedEventSocket[] = [];
+    const connectionTimes: number[] = [];
+    class TestShortLivedEventSocket extends EventTarget {
+      static readonly OPEN = 1;
+      readonly close = vi.fn(() => this.dispatchEvent(new Event("close")));
+      readonly protocol = "openbot-events-v2";
+      readonly readyState = TestShortLivedEventSocket.OPEN;
+      readonly send = vi.fn();
+
+      constructor() {
+        super();
+        sockets.push(this);
+        connectionTimes.push(Date.now());
+        queueMicrotask(() => {
+          this.dispatchEvent(new Event("open"));
+          this.dispatchEvent(
+            new MessageEvent("message", {
+              data: JSON.stringify({
+                type: "team-presence",
+                snapshot: { serverId: "backoff", members: [], updatedAt: "2026-08-30T02:00:00.000Z" },
+              }),
+            }),
+          );
+          this.dispatchEvent(new Event("close"));
+        });
+      }
+    }
+    vi.stubGlobal("WebSocket", TestShortLivedEventSocket);
+    const manager = remoteEventManager(statePath);
+
+    try {
+      await manager.initialize();
+      manager.startEventConnections();
+      await vi.waitFor(() => expect(sockets).toHaveLength(1));
+      await vi.waitFor(() => expect(manager.list().find((server) => server.id === "backoff")?.state).toBe("offline"));
+      manager.refreshRuntimeSnapshots();
+      expect(sockets).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await vi.waitFor(() => expect(sockets).toHaveLength(3));
+      expect(connectionTimes[1] - connectionTimes[0]).toBeGreaterThanOrEqual(1_000);
+      expect(connectionTimes[2] - connectionTimes[1]).toBeGreaterThanOrEqual(2_000);
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("pauses event reconnects after credentials are rejected", async () => {
+    vi.useFakeTimers();
+    const directory = await mkdtemp(join(tmpdir(), "openbot-remote-auth-pause-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "auth-paused");
+    const sockets: EventTarget[] = [];
+    class TestRejectedEventSocket extends EventTarget {
+      static readonly OPEN = 1;
+      readonly close = vi.fn();
+      readonly protocol = "";
+      readonly readyState = 0;
+      readonly send = vi.fn();
+
+      constructor() {
+        super();
+        sockets.push(this);
+        queueMicrotask(() => this.dispatchEvent(new Event("error")));
+      }
+    }
+    vi.stubGlobal("WebSocket", TestRejectedEventSocket);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "Authentication required." }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+    const manager = remoteEventManager(statePath);
+
+    try {
+      await manager.initialize();
+      manager.startEventConnections();
+      await vi.waitFor(() => expect(manager.list().find((server) => server.id === "auth-paused")?.state).toBe("error"));
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      manager.refreshRuntimeSnapshots();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(sockets).toHaveLength(1);
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("buffers legacy events until the initial state is loaded", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-legacy-remote-events-"));
+    const statePath = join(directory, "servers.json");
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        version: 2,
+        activeServerId: "legacy",
+        servers: [
+          {
+            id: "legacy",
+            name: "Legacy",
+            apiUrl: "https://legacy.trycloudflare.com/",
+            fingerprint: "fingerprint",
+            username: "person@example.com",
+            encryptedToken: Buffer.from("token-legacy").toString("base64"),
+            remoteDesktopAvailable: false,
+            role: "member",
+          },
+        ],
+      }),
+    );
+    const bot = {
+      id: "research",
+      name: "Research",
+      title: "Researcher",
+      description: "Researches topics.",
+      notifications: true,
+      provider: "codex",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
+      threadId: "thread-research",
+      workspacePath: "/workspace/research",
+      preview: "Ready",
+      updatedAt: "2026-08-29T10:00:00.000Z",
+      avatarSeed: "research",
+      avatarHue: null,
+      avatarUrl: null,
+    };
+    let deferConversation = false;
+    let resolveConversation: ((response: Response) => void) | undefined;
+    const liveReply = {
+      id: "live-reply",
+      author: "assistant",
+      text: "New live reply",
+      createdAt: "2026-08-29T10:01:00.000Z",
+      status: "completed",
+    };
+    const conversationResponse = (revision = 1, messages: unknown[] = []) =>
+      Response.json({
+        botId: bot.id,
+        threadId: bot.threadId,
+        activeTurnId: "turn-1",
+        revision,
+        messages,
+        references: {},
+        pageInfo: { hasOlder: false, olderCursor: null },
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+      });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+        if (path === "/v1/agents") return Response.json([bot]);
+        if (path.endsWith("/conversation-page")) {
+          if (deferConversation) {
+            return new Promise<Response>((resolve) => {
+              resolveConversation = resolve;
+            });
+          }
+          return conversationResponse();
+        }
+        return Response.json({ botId: bot.id, deliveries: [] });
+      }),
+    );
+    let legacySocket: LegacyEventSocket | undefined;
+    class LegacyEventSocket extends EventTarget {
+      static readonly OPEN = 1;
+      readonly protocol = "openbot-events";
+      readonly readyState = LegacyEventSocket.OPEN;
+      readonly send = vi.fn();
+      readonly close = vi.fn(() => this.dispatchEvent(new Event("close")));
+
+      constructor() {
+        super();
+        legacySocket = this;
+        queueMicrotask(() => this.dispatchEvent(new Event("open")));
+      }
+    }
+    vi.stubGlobal("WebSocket", LegacyEventSocket);
+    const manager = new RemoteServerManager(
+      statePath,
+      {
+        encrypt: (value) => Buffer.from(value),
+        decrypt: (value) => value.toString(),
+      },
+      {
+        createTeamAuthTicket: async () => "ticket",
+        getEmail: () => "person@example.com",
+      },
+    );
+    const agentEvent = vi.fn();
+    manager.on("agent", agentEvent);
+
+    try {
+      await manager.initialize();
+      deferConversation = true;
+      manager.startEventConnections();
+      await vi.waitFor(() => expect(resolveConversation).toBeTypeOf("function"));
+      legacySocket?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "conversation",
+            snapshot: {
+              botId: bot.id,
+              threadId: bot.threadId,
+              activeTurnId: null,
+              revision: 2,
+              messages: [liveReply],
+            },
+          }),
+        }),
+      );
+      expect(agentEvent).not.toHaveBeenCalledWith(
+        "legacy",
+        expect.objectContaining({ type: "conversation", snapshot: expect.objectContaining({ revision: 2 }) }),
+      );
+      resolveConversation?.(conversationResponse(2, [liveReply]));
+      await vi.waitFor(() =>
+        expect(agentEvent).toHaveBeenCalledWith("legacy", expect.objectContaining({ type: "conversation" }), true),
+      );
+      expect(
+        agentEvent.mock.calls
+          .map(([, event]) => event)
+          .filter((event) => event.type === "conversation")
+          .map((event) => event.snapshot.revision),
+      ).toEqual([2, 2]);
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+const REMOTE_EVENT_RECONNECT_TEST_MS = 1_250;
+
+async function writeRemoteEventState(path: string, serverId: string): Promise<void> {
+  await writeFile(
+    path,
+    JSON.stringify({
+      version: 2,
+      activeServerId: serverId,
+      servers: [
+        {
+          id: serverId,
+          name: serverId,
+          apiUrl: `https://${serverId}.trycloudflare.com/`,
+          fingerprint: "fingerprint",
+          username: "person@example.com",
+          encryptedToken: Buffer.from(`token-${serverId}`).toString("base64"),
+          remoteDesktopAvailable: false,
+          role: "member",
+        },
+      ],
+    }),
+  );
+}
+
+function remoteEventManager(statePath: string): RemoteServerManager {
+  return new RemoteServerManager(
+    statePath,
+    {
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+    },
+    {
+      createTeamAuthTicket: async () => "ticket",
+      getEmail: () => "person@example.com",
+    },
+  );
+}
 
 describe("remote control capability discovery", () => {
   it("joins a server when remote control is unavailable", async () => {

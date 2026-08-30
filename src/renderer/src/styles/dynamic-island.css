@@ -1,0 +1,484 @@
+.dynamic-island {
+  --dynamic-island-notch-width: 192px;
+  --dynamic-island-notch-height: 32px;
+  --dynamic-island-compact-width: 268px;
+  --dynamic-island-expanded-width: 420px;
+  --dynamic-island-hover-width-growth: 32px;
+  --dynamic-island-hover-height-growth: 8px;
+  --dynamic-island-hover-hit-top: 6px;
+  --dynamic-island-hover-hit-bottom: 12px;
+  --dynamic-island-hover-hit-inline-growth: 28px;
+  --dynamic-island-hover-retention-bottom: 6px;
+  --dynamic-island-hover-retention-inline-growth: 24px;
+  --dynamic-island-shoulder-size: 6px;
+  --dynamic-island-expanded-shoulder-size: 19px;
+  --dynamic-island-bottom-radius: 14px;
+  --dynamic-island-external-compact-radius: 16px;
+  --dynamic-island-external-expanded-radius: 24px;
+  --dynamic-island-shared-duration: 450ms;
+  --dynamic-island-shared-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+  display: flex;
+  width: min(var(--dynamic-island-expanded-width), calc(100vw - var(--openbot-space-6)));
+  height: fit-content;
+  align-items: flex-start;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--openbot-text-primary);
+  filter: drop-shadow(0 0 0 transparent);
+  pointer-events: none;
+  transition: filter var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+.dynamic-island-shell {
+  position: relative;
+  display: block;
+  width: fit-content;
+  height: fit-content;
+  overflow: clip;
+  contain: layout paint;
+  isolation: isolate;
+  pointer-events: auto;
+}
+
+.dynamic-island[data-layout-state="expanded"] {
+  --dynamic-island-shared-duration: 420ms;
+  --dynamic-island-shoulder-size: 19px;
+  --dynamic-island-bottom-radius: 24px;
+}
+
+.dynamic-island[data-layout-state="expanded"],
+.dynamic-island[data-hovered="true"] {
+  filter: drop-shadow(0 0 10px var(--openbot-shadow-dynamic-island));
+}
+
+.dynamic-island-shell[data-resizing] {
+  will-change: width, height;
+}
+
+.dynamic-island-size-target {
+  position: relative;
+  left: 50%;
+  width: min(var(--dynamic-island-compact-width), calc(100vw - var(--openbot-space-6)));
+  min-height: var(--dynamic-island-notch-height);
+  transform: translateX(-50%);
+}
+
+.dynamic-island[data-layout-state="compact"][data-hovered="true"] .dynamic-island-size-target {
+  width: min(
+    calc(var(--dynamic-island-compact-width) + var(--dynamic-island-hover-width-growth)),
+    calc(100vw - var(--openbot-space-6))
+  );
+  min-height: calc(var(--dynamic-island-notch-height) + var(--dynamic-island-hover-height-growth));
+}
+
+.dynamic-island[data-layout-state="expanded"] .dynamic-island-size-target {
+  width: min(var(--dynamic-island-expanded-width), calc(100vw - var(--openbot-space-6)));
+  padding-top: var(--dynamic-island-notch-height);
+}
+
+/* The body and two shoulders reproduce the concave top corners of a physical MacBook notch. */
+.dynamic-island-silhouette {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+}
+
+.dynamic-island-silhouette-body {
+  position: absolute;
+  inset: 0 var(--dynamic-island-shoulder-size);
+  border-radius: 0 0 var(--dynamic-island-bottom-radius) var(--dynamic-island-bottom-radius);
+  background: var(--openbot-bg-notch);
+  box-shadow: inset 0 -1px 0 var(--openbot-shadow-ring);
+  transition: box-shadow var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+.dynamic-island-shoulder {
+  position: absolute;
+  top: 0;
+  width: var(--dynamic-island-shoulder-size);
+  height: var(--dynamic-island-shoulder-size);
+  overflow: visible;
+}
+
+.dynamic-island-shoulder path {
+  fill: var(--openbot-bg-notch);
+}
+
+.dynamic-island-shoulder-leading {
+  left: 0;
+}
+
+.dynamic-island-shoulder-trailing {
+  right: 0;
+}
+
+.dynamic-island-toggle {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  left: 50%;
+  width: min(var(--dynamic-island-compact-width), calc(100vw - var(--openbot-space-6)));
+  height: var(--dynamic-island-notch-height);
+  display: grid;
+  grid-template-columns:
+    minmax(38px, 1fr) var(--dynamic-island-notch-width)
+    minmax(38px, 1fr);
+  align-items: center;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  outline: none;
+  transform: translateX(-50%);
+}
+
+.dynamic-island[data-pointer-toggle="false"] .dynamic-island-toggle {
+  cursor: default;
+}
+
+.dynamic-island .dynamic-island-toggle:focus-visible {
+  outline: none;
+}
+
+.dynamic-island-notch-safe-zone {
+  width: var(--dynamic-island-notch-width);
+  height: var(--dynamic-island-notch-height);
+  pointer-events: none;
+}
+
+.dynamic-island-ear {
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  color: var(--openbot-text-secondary);
+  transition: color var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+.dynamic-island-ear-leading {
+  justify-content: flex-end;
+  padding-right: var(--openbot-space-2);
+}
+
+.dynamic-island-ear-trailing {
+  justify-content: flex-start;
+  padding-left: var(--openbot-space-2);
+}
+
+.dynamic-island:not(.dynamic-island-external):not(.dynamic-island-status) .dynamic-island-ear-leading {
+  padding-right: 6px;
+}
+
+.dynamic-island-ear-content {
+  position: relative;
+  z-index: 3;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  transform: translate3d(0, 0, 0) scale(1);
+  transform-origin: center;
+  transition:
+    color var(--openbot-duration-normal) var(--openbot-ease-out),
+    opacity var(--openbot-duration-island-content) cubic-bezier(0.22, 1.08, 0.36, 1),
+    transform var(--openbot-duration-island-content) cubic-bezier(0.22, 1.08, 0.36, 1);
+}
+
+.dynamic-island-hover-content {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  transform: translate3d(0, 0, 0) scale(1);
+  transform-origin: center;
+}
+
+.dynamic-island-status .dynamic-island-hover-leading {
+  width: 100%;
+}
+
+.dynamic-island-toggle:hover .dynamic-island-ear,
+.dynamic-island-toggle:focus-visible .dynamic-island-ear {
+  color: var(--openbot-text-primary);
+}
+
+.dynamic-island-trailing-content {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  justify-content: center;
+}
+
+.dynamic-island-trailing-compact {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    opacity var(--openbot-duration-island-content) cubic-bezier(0.22, 1.08, 0.36, 1),
+    transform var(--openbot-duration-island-content) cubic-bezier(0.22, 1.08, 0.36, 1);
+}
+
+.dynamic-island-trailing-compact {
+  opacity: 1;
+  filter: blur(0);
+  transform: translateY(0) scale(1);
+}
+
+.dynamic-island-status .dynamic-island-trailing-compact {
+  right: auto;
+  left: 0;
+  justify-content: flex-start;
+  transform-origin: left center;
+}
+
+.dynamic-island-external.dynamic-island-status .dynamic-island-trailing-compact {
+  right: 0;
+  left: auto;
+  justify-content: flex-end;
+  transform-origin: right center;
+}
+
+.dynamic-island[data-layout-state="expanded"] .dynamic-island-trailing-compact {
+  opacity: 0;
+  filter: none;
+  transform: scale(0.92);
+  transition-duration: var(--openbot-duration-island-content-exit);
+  transition-timing-function: var(--dynamic-island-shared-ease);
+}
+
+.dynamic-island-panel {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  padding: var(--openbot-space-2) var(--openbot-space-4) var(--openbot-space-4);
+}
+
+.dynamic-island-panel[data-phase="leaving"] {
+  position: absolute;
+  top: var(--dynamic-island-notch-height);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.dynamic-island-panel[data-phase="exiting"],
+.dynamic-island-panel[data-phase="leaving"] {
+  pointer-events: none;
+}
+
+.dynamic-island-panel[data-phase="leaving"] {
+  width: min(var(--dynamic-island-expanded-width), calc(100vw - var(--openbot-space-6)));
+}
+
+.dynamic-island-content {
+  opacity: 1;
+  filter: none;
+  transform: scale(1);
+  transform-origin: top center;
+}
+
+/* The shell and content use separate, asymmetric springs. */
+.dynamic-island[data-shared-leading="true"] .dynamic-island-ear-leading .dynamic-island-ear-content {
+  opacity: 1;
+  filter: none;
+  transition:
+    color var(--openbot-duration-normal) var(--openbot-ease-out),
+    opacity var(--openbot-duration-island-content-exit) var(--dynamic-island-shared-ease);
+}
+
+.dynamic-island:not([data-shared-leading="true"])[data-layout-state="expanded"]
+  .dynamic-island-ear-leading
+  .dynamic-island-ear-content {
+  opacity: 0;
+  filter: none;
+  transform: scale(0.92);
+  transition-duration:
+    var(--openbot-duration-normal), var(--openbot-duration-island-content-exit),
+    var(--openbot-duration-island-content-exit);
+  transition-timing-function:
+    var(--openbot-ease-out), var(--dynamic-island-shared-ease), var(--dynamic-island-shared-ease);
+}
+
+.dynamic-island[data-layout-state="expanded"] .dynamic-island-ear-trailing .dynamic-island-ear-content {
+  opacity: 1;
+  filter: none;
+  transform: none;
+}
+
+.dynamic-island-status .dynamic-island-trailing-compact {
+  transform: scale(1);
+  transition: opacity var(--openbot-duration-island-content) var(--dynamic-island-shared-ease);
+}
+
+.dynamic-island-status[data-layout-state="expanded"] .dynamic-island-trailing-compact {
+  opacity: 0;
+  transform: scale(1);
+}
+
+.dynamic-island-status .dynamic-island-trailing-content {
+  transform-origin: left center;
+}
+
+.dynamic-island-status .dynamic-island-trailing-compact,
+.dynamic-island-status .dynamic-island-hover-trailing,
+.dynamic-island-status .dynamic-island-mode-swap[data-island-mode-slot="compact-trailing"] {
+  width: max-content;
+}
+
+.dynamic-island-external.dynamic-island-status .dynamic-island-trailing-content {
+  transform-origin: right center;
+}
+
+.dynamic-island-panel-wide {
+  --dynamic-island-expanded-width: 590px;
+}
+
+.dynamic-island-idle .dynamic-island-ear-trailing {
+  color: var(--openbot-text-primary);
+  transition: none;
+}
+
+.dynamic-island-hover-zone {
+  position: absolute;
+  top: calc(-1 * var(--dynamic-island-hover-hit-top));
+  left: 50%;
+  display: none;
+  width: min(
+    calc(var(--dynamic-island-compact-width) + var(--dynamic-island-hover-hit-inline-growth)),
+    calc(100vw - var(--openbot-space-6))
+  );
+  height: calc(
+    var(--dynamic-island-notch-height) +
+    var(--dynamic-island-hover-hit-top) +
+    var(--dynamic-island-hover-hit-bottom)
+  );
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+
+.dynamic-island[data-layout-state="compact"] > .dynamic-island-hover-zone {
+  display: block;
+}
+
+.dynamic-island[data-layout-state="compact"][data-hovered="true"] > .dynamic-island-hover-zone {
+  width: min(
+    calc(
+      var(--dynamic-island-compact-width) +
+      var(--dynamic-island-hover-width-growth) +
+      var(--dynamic-island-hover-retention-inline-growth)
+    ),
+    calc(100vw - var(--openbot-space-6))
+  );
+  height: calc(
+    var(--dynamic-island-notch-height) +
+    var(--dynamic-island-hover-height-growth) +
+    var(--dynamic-island-hover-hit-top) +
+    var(--dynamic-island-hover-retention-bottom)
+  );
+}
+
+.dynamic-island-status:not(.dynamic-island-external) .dynamic-island-ear-leading {
+  justify-content: flex-start;
+  padding-right: 0;
+  padding-left: 12px;
+}
+
+.dynamic-island-status:not(.dynamic-island-external) .dynamic-island-ear-trailing {
+  justify-content: flex-end;
+  padding-right: 12px;
+  padding-left: 0;
+}
+
+.dynamic-island-status:not(.dynamic-island-external) .dynamic-island-trailing-compact {
+  right: 0;
+  left: auto;
+  justify-content: flex-end;
+  transform-origin: right center;
+}
+
+.dynamic-island-status:not(.dynamic-island-external) .dynamic-island-trailing-content {
+  transform-origin: right center;
+}
+
+.openbot-dynamic-island[data-layout-state="expanded"] .dynamic-island-panel,
+.openbot-dynamic-island .dynamic-island-panel[data-phase="exiting"],
+.openbot-dynamic-island .dynamic-island-panel[data-phase="leaving"] {
+  padding: 14px calc(var(--dynamic-island-expanded-shoulder-size) + 20px) 20px;
+}
+
+.dynamic-island-external.openbot-dynamic-island[data-layout-state="expanded"] .dynamic-island-panel,
+.dynamic-island-external.openbot-dynamic-island .dynamic-island-panel[data-phase="exiting"],
+.dynamic-island-external.openbot-dynamic-island .dynamic-island-panel[data-phase="leaving"] {
+  padding: 14px 20px 20px;
+}
+
+.openbot-dynamic-island.dynamic-island-working[data-layout-state="expanded"] .dynamic-island-panel,
+.openbot-dynamic-island.dynamic-island-working .dynamic-island-panel[data-phase="exiting"],
+.openbot-dynamic-island.dynamic-island-working .dynamic-island-panel[data-phase="leaving"] {
+  padding-bottom: 14px;
+}
+
+/* External displays use a detached capsule because there is no physical notch to join. */
+.dynamic-island-external {
+  --dynamic-island-notch-width: 16px;
+  --dynamic-island-compact-width: 212px;
+  --dynamic-island-external-inline-inset: 6px;
+  padding-top: var(--dynamic-island-hover-hit-top);
+}
+
+.dynamic-island-external .dynamic-island-shoulder {
+  display: none;
+}
+
+.dynamic-island-external .dynamic-island-silhouette {
+  border-radius: var(--dynamic-island-external-compact-radius);
+  background: var(--openbot-bg-notch);
+  box-shadow: inset 0 -1px 0 var(--openbot-shadow-ring);
+}
+
+.dynamic-island-external .dynamic-island-silhouette-body {
+  display: none;
+}
+
+.dynamic-island-external[data-layout-state="expanded"] .dynamic-island-silhouette {
+  border-radius: var(--dynamic-island-external-expanded-radius);
+}
+
+.dynamic-island-external > .dynamic-island-hover-zone {
+  top: 0;
+}
+
+.dynamic-island-external .dynamic-island-toggle {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding-inline: var(--dynamic-island-external-inline-inset);
+}
+
+.dynamic-island-external .dynamic-island-notch-safe-zone {
+  display: none;
+}
+
+.dynamic-island-external .dynamic-island-ear-leading {
+  position: relative;
+  left: 0;
+  justify-content: flex-start;
+  padding-right: 0;
+}
+
+.dynamic-island-external .dynamic-island-ear-trailing {
+  justify-content: flex-end;
+  padding-left: 0;
+}
+
+.dynamic-island-external.dynamic-island-panel-wide {
+  --dynamic-island-expanded-width: 552px;
+}
+
+.dynamic-island-external.dynamic-island-status .dynamic-island-ear-leading {
+  left: 0;
+  justify-content: flex-start;
+  padding-right: 0;
+  padding-left: 0;
+}

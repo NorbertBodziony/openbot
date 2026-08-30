@@ -248,6 +248,17 @@ function createSmokeAgents(events: EventEmitter): SmokeAgents {
     off: (event, listener) => {
       events.off(event, listener);
     },
+    getRuntimeSnapshot: () => ({
+      bots: [],
+      activeTurns: [],
+      work: [],
+      latestMessages: [],
+      attentionComplete: true,
+      pendingPrompts: [],
+      pendingApprovals: [],
+      pendingBrowserTakeovers: [],
+      failedTurns: [],
+    }),
     getStatus: unimplemented,
     getUsage: unimplemented,
     listModels: unimplemented,
@@ -279,6 +290,7 @@ function createSmokeAgents(events: EventEmitter): SmokeAgents {
     discardDraftAttachment: unimplemented,
     sendMessage: unimplemented,
     listQueue: unimplemented,
+    acknowledgeFailedTurn: unimplemented,
     setMessageReaction: unimplemented,
     cancelQueuedMessage: unimplemented,
     steerQueuedMessage: unimplemented,

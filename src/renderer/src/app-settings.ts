@@ -6,6 +6,10 @@ export interface GeneralSettingsValue {
   restoreLastWorkspace: boolean;
   externalLinkTarget: ExternalLinkTarget;
   desktopNotifications: boolean;
+  macBookNotch: boolean;
+  macBookNotchHaptics: boolean;
+  macBookNotchIdle: boolean;
+  macBookNotchAdditionalDisplays: boolean;
   taskCompletionSound: boolean;
   autoDownloadUpdates: boolean;
   productAnalytics: boolean;
@@ -17,6 +21,10 @@ export const DEFAULT_GENERAL_SETTINGS: GeneralSettingsValue = {
   restoreLastWorkspace: true,
   externalLinkTarget: "Default browser",
   desktopNotifications: true,
+  macBookNotch: true,
+  macBookNotchHaptics: true,
+  macBookNotchIdle: true,
+  macBookNotchAdditionalDisplays: true,
   taskCompletionSound: false,
   autoDownloadUpdates: true,
   productAnalytics: true,
