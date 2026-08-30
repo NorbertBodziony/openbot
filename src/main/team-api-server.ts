@@ -1140,13 +1140,28 @@ export class TeamApiServer {
 
   #broadcastAgentEvent(event: AgentEvent): void {
     let payload: string | undefined;
+    let completionSnapshot: string | undefined;
     for (const [client, connection] of this.#eventClients) {
       if (event.type === "runtime-snapshot" && !connection.supportsRuntimeSnapshot) continue;
       if (event.type === "conversation" && !connection.includeConversationEvents) continue;
       payload ??= JSON.stringify(event);
       const limit = event.type === "runtime-snapshot" ? AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT : JSON_LIMIT;
       if (Buffer.byteLength(payload) > limit) return;
-      if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
+      if (client.readyState !== webSockets.WebSocket.OPEN) continue;
+      client.send(payload);
+      if (
+        event.type !== "turn-completed" ||
+        !connection.supportsRuntimeSnapshot ||
+        connection.includeConversationEvents
+      ) {
+        continue;
+      }
+      completionSnapshot ??= JSON.stringify({
+        type: "runtime-snapshot",
+        snapshot: this.#options.agents.getRuntimeSnapshot(),
+      });
+      if (Buffer.byteLength(completionSnapshot) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return;
+      client.send(completionSnapshot);
     }
   }
 

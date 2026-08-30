@@ -751,6 +751,12 @@ describe.sequential("AgentService", () => {
 
     await service.respondToApproval({ requestId: "approval-command", decision: "accept" });
     expect(client.responses).toEqual([{ id: "approval-command", result: { decision: "accept" } }]);
+    expect(events).toContainEqual({
+      type: "agent-input-resolved",
+      kind: "approval",
+      requestId: "approval-command",
+      botId: "chief",
+    });
     expect(events.findLast((event) => event.type === "runtime-snapshot")).toMatchObject({
       snapshot: { pendingApprovals: [] },
     });
@@ -843,6 +849,12 @@ describe.sequential("AgentService", () => {
     await service.respondToPrompt({
       requestId: "question-call",
       answers: { favorite: [optionLabel], token: ["super-secret"] },
+    });
+    expect(events).toContainEqual({
+      type: "agent-input-resolved",
+      kind: "prompt",
+      requestId: "question-call",
+      botId: "chief",
     });
     expect(events.findLast((event) => event.type === "runtime-snapshot")).toMatchObject({
       snapshot: { pendingPrompts: [] },

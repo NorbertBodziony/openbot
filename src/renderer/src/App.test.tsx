@@ -1136,6 +1136,18 @@ describe("OpenBot connected desktop shell", () => {
         item: { requestId: "approval-runtime" },
       }),
     );
+
+    emitAgentEvent?.({
+      type: "agent-input-resolved",
+      kind: "approval",
+      requestId: "approval-runtime",
+      botId: "chief",
+    });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
   });
 
   it("shows the first-run onboarding before starting agents", async () => {

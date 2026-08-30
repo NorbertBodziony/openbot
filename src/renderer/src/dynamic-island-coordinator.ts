@@ -127,6 +127,20 @@ export class DynamicIslandCoordinator {
         runtime.resolvedPrompts.delete(event.botId);
         runtime.pendingPrompts[event.botId] = event;
         return;
+      case "agent-input-resolved":
+        if (event.kind === "prompt") {
+          const prompt = runtime.pendingPrompts[event.botId];
+          if (prompt?.type === "prompt" && String(prompt.requestId) === String(event.requestId)) {
+            runtime.pendingPrompts[event.botId] = undefined;
+            runtime.resolvedPrompts.set(event.botId, String(event.requestId));
+          }
+        } else {
+          const approval = runtime.pendingApprovals[event.botId];
+          if (approval && String(approval.requestId) === String(event.requestId)) {
+            runtime.pendingApprovals[event.botId] = undefined;
+          }
+        }
+        return;
       case "approval":
         runtime.pendingApprovals[event.approval.botId] = event.approval;
         return;

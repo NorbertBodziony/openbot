@@ -236,10 +236,26 @@ describe("TeamApiServer administration", () => {
           ],
         },
       };
-      const boundedEvent = nextJsonEvent(socket);
+      getRuntimeSnapshot.mockReturnValueOnce({
+        ...createAgents().getRuntimeSnapshot(),
+        latestMessages: [{ botId: "chief", id: "reply-1", text: "Done", createdAt: "2026-08-29T10:00:00.000Z" }],
+      });
+      const boundedEvents = nextJsonEvents(socket, 2);
       agentEvents.emit("event", conversation);
-      agentEvents.emit("event", { type: "bots-changed", bots: [] });
-      await expect(boundedEvent).resolves.toMatchObject({ type: "bots-changed" });
+      agentEvents.emit("event", {
+        type: "turn-completed",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-1",
+        status: "completed",
+      });
+      await expect(boundedEvents).resolves.toEqual([
+        expect.objectContaining({ type: "turn-completed" }),
+        expect.objectContaining({
+          type: "runtime-snapshot",
+          snapshot: expect.objectContaining({ latestMessages: [expect.objectContaining({ id: "reply-1" })] }),
+        }),
+      ]);
 
       socket.send(JSON.stringify({ type: "agent-event-scope", includeConversations: true }));
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -265,7 +281,7 @@ describe("TeamApiServer administration", () => {
         socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(getRuntimeSnapshot).toHaveBeenCalledTimes(2);
+      expect(getRuntimeSnapshot).toHaveBeenCalledTimes(3);
 
       for (const [index, token] of [owner.sessionToken, admin.sessionToken, member.sessionToken].entries()) {
         const event = nextJsonEvent(socket);

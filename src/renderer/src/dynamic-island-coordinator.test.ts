@@ -4,7 +4,7 @@ import { DynamicIslandCoordinator } from "./dynamic-island-coordinator";
 import type { DynamicIslandPresentationInput } from "./dynamic-island-presentation";
 
 describe("DynamicIslandCoordinator", () => {
-  it("selects the highest-priority notification across hosts and reveals the next item after an action", () => {
+  it("selects the highest-priority notification across hosts and applies remote resolutions", () => {
     const coordinator = new DynamicIslandCoordinator();
     seedBots(coordinator, "local", [bot("chief", "Chief")]);
     seedBots(coordinator, "remote-a", [bot("research", "Research")]);
@@ -19,13 +19,15 @@ describe("DynamicIslandCoordinator", () => {
       item: { requestId: "question-1" },
     });
 
-    coordinator.resolveAction({
-      type: "answer-prompt",
-      serverId: "remote-a",
-      botId: "research",
-      requestId: "question-1",
-      answers: { source: ["Official data"] },
-    });
+    coordinator.applyEvent(
+      scoped("remote-a", {
+        type: "agent-input-resolved",
+        kind: "prompt",
+        requestId: "question-1",
+        botId: "research",
+      }),
+      "local",
+    );
 
     expect(coordinator.presentation(["local", "remote-a", "remote-b"])).toMatchObject({
       serverId: "remote-b",
@@ -33,13 +35,15 @@ describe("DynamicIslandCoordinator", () => {
       item: { requestId: "approval-1" },
     });
 
-    coordinator.resolveAction({
-      type: "respond-approval",
-      serverId: "remote-b",
-      botId: "sales",
-      requestId: "approval-1",
-      decision: "accept",
-    });
+    coordinator.applyEvent(
+      scoped("remote-b", {
+        type: "agent-input-resolved",
+        kind: "approval",
+        requestId: "approval-1",
+        botId: "sales",
+      }),
+      "local",
+    );
     expect(coordinator.presentation(["local", "remote-a", "remote-b"]).mode).toBe("idle");
   });
 

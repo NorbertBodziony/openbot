@@ -1080,6 +1080,12 @@ export type AgentEvent =
       turnId: string;
       questions: AgentPromptQuestion[];
     }
+  | {
+      type: "agent-input-resolved";
+      kind: "prompt" | "approval";
+      requestId: string | number;
+      botId: string;
+    }
   | { type: "browser-takeover-requested"; request: BrowserTakeoverRequest }
   | { type: "browser-takeover-resolved"; requestId: string | number; botId: string }
   | { type: "approval"; approval: AgentApproval }
@@ -1134,6 +1140,12 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
         Array.isArray(value.questions) &&
         value.questions.length <= INPUT_LIMITS.promptQuestions &&
         value.questions.every(isAgentPromptQuestion)
+      );
+    case "agent-input-resolved":
+      return (
+        (value.kind === "prompt" || value.kind === "approval") &&
+        (isString(value.requestId) || isNumber(value.requestId)) &&
+        isString(value.botId)
       );
     case "browser-takeover-requested":
       return isBrowserTakeoverRequest(value.request);

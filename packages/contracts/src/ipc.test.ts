@@ -250,6 +250,16 @@ describe("runtime snapshot event validation", () => {
   });
 });
 
+describe("agent input resolution event validation", () => {
+  it("accepts bounded prompt and approval resolutions", () => {
+    expect(isAgentEvent({ type: "agent-input-resolved", kind: "prompt", requestId: "prompt-1", botId: "chief" })).toBe(
+      true,
+    );
+    expect(isAgentEvent({ type: "agent-input-resolved", kind: "approval", requestId: 1, botId: "chief" })).toBe(true);
+    expect(isAgentEvent({ type: "agent-input-resolved", kind: "other", requestId: 1, botId: "chief" })).toBe(false);
+  });
+});
+
 describe("conversation event validation", () => {
   it("accepts complete snapshots and rejects malformed messages", () => {
     const snapshot = {

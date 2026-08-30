@@ -934,6 +934,23 @@ export function createAppController(props: AppProps = {}) {
         setPresentedPromptResolutions((current) => ({ ...current, [event.botId]: undefined }));
         setSubmittedPromptRequests((current) => ({ ...current, [event.botId]: undefined }));
         return;
+      case "agent-input-resolved":
+        if (event.kind === "prompt") {
+          setPendingPrompts((current) => {
+            const prompt = current[event.botId];
+            return prompt?.type === "prompt" && String(prompt.requestId) === String(event.requestId)
+              ? { ...current, [event.botId]: undefined }
+              : current;
+          });
+        } else {
+          setPendingApprovals((current) => {
+            const approval = current[event.botId];
+            return approval && String(approval.requestId) === String(event.requestId)
+              ? { ...current, [event.botId]: undefined }
+              : current;
+          });
+        }
+        return;
       case "approval":
         setPendingApprovals((current) => ({
           ...current,

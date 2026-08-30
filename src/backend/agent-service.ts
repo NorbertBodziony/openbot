@@ -1176,6 +1176,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           };
     pending.client.respond(pending.id, result);
     this.#pendingPrompts.delete(input.requestId);
+    this.#emit({ type: "agent-input-resolved", kind: "prompt", requestId: input.requestId, botId: pending.botId });
     try {
       this.#resolvePersistedPrompt(pending, promptResolution(pending.questions, input.answers));
     } catch (error) {
@@ -1204,6 +1205,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       pending.client.respond(pending.id, { decision: input.decision });
     }
     this.#pendingApprovals.delete(input.requestId);
+    this.#emit({
+      type: "agent-input-resolved",
+      kind: "approval",
+      requestId: input.requestId,
+      botId: pending.approval.botId,
+    });
     this.#emitRuntimeSnapshot();
   }
 
