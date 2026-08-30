@@ -886,7 +886,12 @@ export function createAppController(props: AppProps = {}) {
           const latestIncomingMessage = markNewMessagesRead
             ? [...event.page.messages]
                 .reverse()
-                .find((message) => message.author !== "user" && message.itemType !== "commentary")
+                .find(
+                  (message) =>
+                    message.author !== "user" &&
+                    message.itemType !== "commentary" &&
+                    message.itemType !== "agent_attachment",
+                )
             : undefined;
           if (pageApplied && latestIncomingMessage) {
             autoMarkAgentMessageRead(event.page.botId, latestIncomingMessage.id, existingUnreadCount === 0);

@@ -5128,6 +5128,36 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
   });
 
+  it("does not mark an attachment-only conversation refresh as unread", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-attachment-only",
+            author: "assistant",
+            text: "",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+            itemType: "agent_attachment",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+        },
+      ),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument();
+  });
+
   it("retries an automatic read for the same message after persistence fails", async () => {
     vi.mocked(window.openbot.agent.markConversationRead).mockRejectedValueOnce(new Error("Read unavailable"));
     render(() => <App />);
