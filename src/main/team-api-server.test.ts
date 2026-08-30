@@ -15,7 +15,7 @@ import type {
   TeamPresenceSnapshot,
 } from "@openbot/contracts/ipc";
 import { AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT } from "@openbot/contracts/ipc";
-import { isBoolean, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
@@ -31,6 +31,8 @@ type TestBrowser = TeamApiOptions["browser"];
 
 interface TestRealtimeEvent {
   type: string;
+  botId?: string;
+  revision?: number;
   code?: string;
   snapshot?: unknown;
   message?: unknown;
@@ -263,7 +265,11 @@ describe("TeamApiServer administration", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       const conversationEvent = nextJsonEvent(socket);
       agentEvents.emit("event", conversation);
-      await expect(conversationEvent).resolves.toMatchObject({ type: "conversation" });
+      await expect(conversationEvent).resolves.toEqual({
+        type: "conversation-invalidated",
+        botId: "chief",
+        revision: 1,
+      });
 
       const eventsAfterOversizedConversation = nextJsonEvents(socket, 2);
       agentEvents.emit("event", {
@@ -275,7 +281,7 @@ describe("TeamApiServer administration", () => {
       });
       agentEvents.emit("event", { type: "bots-changed", bots: [] });
       await expect(eventsAfterOversizedConversation).resolves.toEqual([
-        expect.objectContaining({ type: "conversation" }),
+        expect.objectContaining({ type: "conversation-invalidated" }),
         expect.objectContaining({ type: "bots-changed" }),
       ]);
 
@@ -1554,8 +1560,14 @@ function decodeTestRealtimeEvent(value: unknown): TestRealtimeEvent {
   }
   const typing = value.typing;
   if (typing !== undefined && !isBoolean(typing)) throw new Error("Invalid test typing state.");
+  const botId = value.botId;
+  if (botId !== undefined && !isString(botId)) throw new Error("Invalid test bot id.");
+  const revision = value.revision;
+  if (revision !== undefined && !isNumber(revision)) throw new Error("Invalid test revision.");
   return {
     type: value.type,
+    ...(botId === undefined ? {} : { botId }),
+    ...(revision === undefined ? {} : { revision }),
     ...(code === undefined ? {} : { code }),
     ...(value.snapshot === undefined ? {} : { snapshot: value.snapshot }),
     ...(value.message === undefined ? {} : { message: value.message }),

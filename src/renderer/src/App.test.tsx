@@ -104,7 +104,11 @@ function testServer(id: string, active: boolean): ServerSummary {
   };
 }
 
-function testConversationPage(botId: string, messages: ConversationPage["messages"] = []): ConversationPage {
+function testConversationPage(
+  botId: string,
+  messages: ConversationPage["messages"] = [],
+  overrides: Partial<ConversationPage> = {},
+): ConversationPage {
   return {
     botId,
     threadId: "thread-1",
@@ -114,6 +118,7 @@ function testConversationPage(botId: string, messages: ConversationPage["message
     references: {},
     readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
     pageInfo: { hasOlder: false, olderCursor: null },
+    ...overrides,
   };
 }
 
@@ -5052,6 +5057,34 @@ describe("OpenBot connected desktop shell", () => {
         .mock.calls.filter(([input]) => input.anchor?.type === "latest" && input.limit === 1),
     ).toHaveLength(0);
     expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+  });
+
+  it("merges a refreshed remote conversation page without dropping loaded messages", async () => {
+    const message = (id: string, text: string) => ({
+      id,
+      author: "assistant" as const,
+      text,
+      createdAt: "2026-08-30T02:00:00.000Z",
+      status: "completed" as const,
+    });
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(
+      testConversationPage("chief", [message("reply-old", "Loaded earlier")], {
+        pageInfo: { hasOlder: true, olderCursor: "older" },
+      }),
+    );
+    render(() => <App />);
+    expect(await screen.findByText("Loaded earlier")).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage("chief", [message("reply-new", "Fresh remote reply")], {
+        revision: 2,
+        pageInfo: { hasOlder: true, olderCursor: "older" },
+      }),
+    });
+
+    expect(await screen.findByText("Fresh remote reply")).toBeInTheDocument();
+    expect(screen.getByText("Loaded earlier")).toBeInTheDocument();
   });
 
   it("rejects a permission approval and keeps the error visible", async () => {

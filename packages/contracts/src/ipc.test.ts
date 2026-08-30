@@ -295,6 +295,17 @@ describe("conversation event validation", () => {
     ).toBe(true);
     expect(isAgentEvent({ type: "conversation", snapshot: {} })).toBe(false);
     expect(isAgentEvent({ type: "conversation", snapshot: { ...snapshot, messages: [null] } })).toBe(false);
+    expect(isAgentEvent({ type: "conversation-invalidated", botId: "chief", revision: 2 })).toBe(true);
+    expect(
+      isAgentEvent({
+        type: "conversation-page",
+        page: {
+          ...snapshot,
+          references: {},
+          pageInfo: { hasOlder: true, olderCursor: "older" },
+        },
+      }),
+    ).toBe(true);
   });
 });
 

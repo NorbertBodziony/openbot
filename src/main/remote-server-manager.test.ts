@@ -312,6 +312,31 @@ describe("remote event connections", () => {
       }
     }
     vi.stubGlobal("WebSocket", TestEventSocket);
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = new URL(input);
+      expect(url.pathname).toBe("/v1/agents/chief/conversation-page");
+      return new Response(
+        JSON.stringify({
+          botId: "chief",
+          threadId: "thread-chief",
+          activeTurnId: null,
+          revision: 2,
+          messages: [
+            {
+              id: "reply-2",
+              author: "assistant",
+              text: "Fresh remote reply",
+              createdAt: "2026-08-30T02:00:00.000Z",
+              status: "completed",
+            },
+          ],
+          references: {},
+          pageInfo: { hasOlder: true, olderCursor: "older" },
+        }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const manager = new RemoteServerManager(
       statePath,
       {
@@ -348,6 +373,17 @@ describe("remote event connections", () => {
       expect(sockets[1]?.send).toHaveBeenLastCalledWith(
         JSON.stringify({ type: "agent-event-scope", includeConversations: true }),
       );
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 2 }),
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(agentEvent).toHaveBeenCalledWith(
+          "server-2",
+          expect.objectContaining({ type: "conversation-page", page: expect.objectContaining({ revision: 2 }) }),
+        ),
+      );
 
       sockets[0]?.close();
       await vi.advanceTimersByTimeAsync(REMOTE_EVENT_RECONNECT_TEST_MS);
@@ -382,39 +418,40 @@ describe("remote event connections", () => {
     }
   });
 
-  it("backs off repeated event connection failures", async () => {
+  it("backs off short-lived event connections", async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(0.5);
     const directory = await mkdtemp(join(tmpdir(), "openbot-remote-backoff-"));
     const statePath = join(directory, "servers.json");
     await writeRemoteEventState(statePath, "backoff");
-    const sockets: TestFailingEventSocket[] = [];
+    const sockets: TestShortLivedEventSocket[] = [];
     const connectionTimes: number[] = [];
-    class TestFailingEventSocket extends EventTarget {
+    class TestShortLivedEventSocket extends EventTarget {
       static readonly OPEN = 1;
-      readonly close = vi.fn();
-      readonly protocol = "";
-      readonly readyState = 0;
+      readonly close = vi.fn(() => this.dispatchEvent(new Event("close")));
+      readonly protocol = "openbot-events-v2";
+      readonly readyState = TestShortLivedEventSocket.OPEN;
       readonly send = vi.fn();
 
       constructor() {
         super();
         sockets.push(this);
         connectionTimes.push(Date.now());
-        queueMicrotask(() => this.dispatchEvent(new Event("error")));
+        queueMicrotask(() => {
+          this.dispatchEvent(new Event("open"));
+          this.dispatchEvent(
+            new MessageEvent("message", {
+              data: JSON.stringify({
+                type: "team-presence",
+                snapshot: { serverId: "backoff", members: [], updatedAt: "2026-08-30T02:00:00.000Z" },
+              }),
+            }),
+          );
+          this.dispatchEvent(new Event("close"));
+        });
       }
     }
-    vi.stubGlobal("WebSocket", TestFailingEventSocket);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ error: "Unavailable" }), {
-            status: 503,
-            headers: { "Content-Type": "application/json" },
-          }),
-      ),
-    );
+    vi.stubGlobal("WebSocket", TestShortLivedEventSocket);
     const manager = remoteEventManager(statePath);
 
     try {

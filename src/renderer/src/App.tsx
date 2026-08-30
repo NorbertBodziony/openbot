@@ -830,7 +830,7 @@ export function createAppController(props: AppProps = {}) {
           if (queueSnapshotRequests.get(botId) === queueRequest) {
             setQueues((current) => ({ ...current, [botId]: queue }));
           }
-          applyConversationPage(page, true, "latest");
+          applyConversationPage(page, "replace", "latest");
           if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
             void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null).catch((error) =>
               appendUiError(botId, error, "Read state failed"),
@@ -863,6 +863,11 @@ export function createAppController(props: AppProps = {}) {
         return;
       case "conversation":
         scheduleConversation(event.snapshot, isAgentChatOpen(event.snapshot.botId));
+        return;
+      case "conversation-page":
+        applyConversationPage(event.page, "latest", "latest");
+        return;
+      case "conversation-invalidated":
         return;
       case "conversation-delta":
         applyConversationDelta(event);
@@ -1250,7 +1255,11 @@ export function createAppController(props: AppProps = {}) {
     }
   }
 
-  function applyConversationPage(page: ConversationPage, replace: boolean, windowMode?: "latest" | "around"): void {
+  function applyConversationPage(
+    page: ConversationPage,
+    merge: "replace" | "older" | "latest",
+    windowMode?: "latest" | "around",
+  ): void {
     if (page.revision < (conversationRevisions()[page.botId] ?? -1)) return;
     const mapped = toBotMessages(page.messages);
     setLiveMessages((current) => {
@@ -1262,17 +1271,22 @@ export function createAppController(props: AppProps = {}) {
         if (!botMessagesEqual(stored, message)) updateStored(stored, { ...message, animate: stored.animate });
         return stored;
       });
-      const existing = replace ? [] : currentMessages;
+      const existing = merge === "replace" ? [] : currentMessages;
       const ids = new Set(mapped.map((message) => message.id));
       return {
         ...current,
-        [page.botId]: replace ? pageMessages : [...pageMessages, ...existing.filter((message) => !ids.has(message.id))],
+        [page.botId]:
+          merge === "replace"
+            ? pageMessages
+            : merge === "older"
+              ? [...pageMessages, ...existing.filter((message) => !ids.has(message.id))]
+              : [...existing.filter((message) => !ids.has(message.id)), ...pageMessages],
       };
     });
     setConversationReferences((current) => ({
       ...current,
       [page.botId]: {
-        ...(replace ? {} : current[page.botId]),
+        ...(merge === "replace" ? {} : current[page.botId]),
         ...Object.fromEntries(Object.entries(page.references).map(([id, message]) => [id, toBotMessage(message)])),
       },
     }));
@@ -1303,7 +1317,7 @@ export function createAppController(props: AppProps = {}) {
       });
       if (conversationPageRequests.get(botId) !== requestVersion) return;
       if (conversationPages()[botId]?.olderCursor !== cursor) return;
-      applyConversationPage(page, false);
+      applyConversationPage(page, "older");
     } catch (error) {
       setConversationOlderErrors((current) => ({
         ...current,
@@ -1428,7 +1442,7 @@ export function createAppController(props: AppProps = {}) {
       if (!page.messages.some((message) => message.id === messageId)) {
         throw new Error("This message is no longer available.");
       }
-      applyConversationPage(page, true, "around");
+      applyConversationPage(page, "replace", "around");
       setMessageFocusRequest({ botId, messageId, nonce: Date.now() });
       try {
         let readBoundary = page.messages.at(-1)?.id ?? messageId;
@@ -1604,7 +1618,7 @@ export function createAppController(props: AppProps = {}) {
       limit: 50,
     });
     if (conversationPageRequests.get(botId) !== request) return;
-    applyConversationPage(page, true, "latest");
+    applyConversationPage(page, "replace", "latest");
   }
 
   async function sendDirectMessage(

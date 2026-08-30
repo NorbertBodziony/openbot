@@ -133,6 +133,7 @@ const REMOTE_REQUEST_TIMEOUT_MS = 15_000;
 const REMOTE_EVENT_RECONNECT_BASE_MS = 1_000;
 const REMOTE_EVENT_RECONNECT_MAX_MS = 60_000;
 const REMOTE_EVENT_RECONNECT_JITTER = 0.2;
+const REMOTE_EVENT_HEALTHY_MS = 30_000;
 const REMOTE_EVENT_PAYLOAD_LIMIT = 1024 * 1024;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
@@ -160,6 +161,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #eventSockets = new Map<string, WebSocket>();
   #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #eventReconnectAttempts = new Map<string, number>();
+  #conversationRefreshRequests = new Map<string, number>();
   #eventAuthenticationPaused = new Set<string>();
   #eventGenerations = new Map<string, number>();
   #eventsEnabled = false;
@@ -396,6 +398,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventReconnectAttempts.delete(serverId);
     this.#eventAuthenticationPaused.delete(serverId);
     this.#eventGenerations.delete(serverId);
+    for (const key of this.#conversationRefreshRequests.keys()) {
+      if (key.startsWith(`${serverId}\0`)) this.#conversationRefreshRequests.delete(key);
+    }
     this.#states.delete(serverId);
     this.#eventSockets.delete(serverId);
     this.#presence.delete(serverId);
@@ -764,6 +769,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventReconnectAttempts.clear();
     this.#eventAuthenticationPaused.clear();
     this.#eventGenerations.clear();
+    this.#conversationRefreshRequests.clear();
   }
 
   async #verifyIdentity(
@@ -813,6 +819,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const controller = new AbortController();
     this.#eventControllers.set(serverId, controller);
     let opened = false;
+    let openedAt = 0;
     let authenticationFailed = false;
     try {
       const eventsUrl = new URL("/v1/events", server.apiUrl);
@@ -830,6 +837,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           "open",
           () => {
             opened = true;
+            openedAt = Date.now();
             this.#eventSockets.set(serverId, socket);
             this.#sendEventScope(serverId, socket);
             this.#states.set(serverId, "online");
@@ -863,12 +871,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               }
             } else if (isAgentEvent(event)) {
               this.#advanceEventGeneration(serverId);
-              const remoteEvent = addRemotePreviewUrls(event, serverId);
-              this.emit("agent", serverId, remoteEvent);
+              if (event.type === "conversation-invalidated") {
+                void this.#refreshConversationPage(serverId, event.botId, event.revision);
+              } else {
+                const remoteEvent = addRemotePreviewUrls(event, serverId);
+                this.emit("agent", serverId, remoteEvent);
+              }
             } else {
               throw new Error("Invalid agent event payload.");
             }
-            this.#eventReconnectAttempts.delete(serverId);
           } catch {
             socket.close(1003, "Invalid event payload");
           }
@@ -907,6 +918,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
     }
     if (this.#eventControllers.get(serverId) === controller) this.#eventControllers.delete(serverId);
+    if (openedAt > 0 && Date.now() - openedAt >= REMOTE_EVENT_HEALTHY_MS) {
+      this.#eventReconnectAttempts.delete(serverId);
+    }
     if (!controller.signal.aborted && !authenticationFailed) this.#scheduleEventReconnect(serverId);
   }
 
@@ -1000,6 +1014,27 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         }
       }),
     );
+  }
+
+  async #refreshConversationPage(serverId: string, botId: string, revision: number): Promise<void> {
+    const key = `${serverId}\0${botId}`;
+    const request = (this.#conversationRefreshRequests.get(key) ?? 0) + 1;
+    this.#conversationRefreshRequests.set(key, request);
+    try {
+      const page = await this.readAgentConversationPage(botId, { type: "latest" }, 50, serverId);
+      if (
+        this.#conversationRefreshRequests.get(key) !== request ||
+        page.revision < revision ||
+        !this.#state.servers.some((server) => server.id === serverId)
+      ) {
+        return;
+      }
+      this.emit("agent", serverId, { type: "conversation-page", page });
+    } catch {
+      // The next invalidation or explicit conversation load can retry the refresh.
+    } finally {
+      if (this.#conversationRefreshRequests.get(key) === request) this.#conversationRefreshRequests.delete(key);
+    }
   }
 
   #advanceEventGeneration(serverId: string): number {

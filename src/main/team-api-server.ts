@@ -1140,14 +1140,27 @@ export class TeamApiServer {
 
   #broadcastAgentEvent(event: AgentEvent): void {
     let payload: string | undefined;
+    let conversationInvalidation: string | undefined;
     let completionSnapshot: string | undefined;
     for (const [client, connection] of this.#eventClients) {
       if (event.type === "runtime-snapshot" && !connection.supportsRuntimeSnapshot) continue;
       if (event.type === "conversation" && !connection.includeConversationEvents) continue;
-      payload ??= JSON.stringify(event);
-      if (event.type === "runtime-snapshot" && Buffer.byteLength(payload) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return;
+      let outgoing: string;
+      if (event.type === "conversation" && connection.supportsRuntimeSnapshot) {
+        conversationInvalidation ??= JSON.stringify({
+          type: "conversation-invalidated",
+          botId: event.snapshot.botId,
+          revision: event.snapshot.revision,
+        });
+        outgoing = conversationInvalidation;
+      } else {
+        payload ??= JSON.stringify(event);
+        outgoing = payload;
+      }
+      const limit = event.type === "runtime-snapshot" ? AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT : JSON_LIMIT;
+      if (Buffer.byteLength(outgoing) > limit) continue;
       if (client.readyState !== webSockets.WebSocket.OPEN) continue;
-      client.send(payload);
+      client.send(outgoing);
       if (
         event.type !== "turn-completed" ||
         !connection.supportsRuntimeSnapshot ||

@@ -819,6 +819,17 @@ export interface ConversationReadState {
   throughMessageId: string | null;
 }
 
+function isConversationReadState(value: unknown): value is ConversationReadState {
+  return (
+    isDynamicRecord(value) &&
+    isNumber(value.unreadCount) &&
+    Number.isInteger(value.unreadCount) &&
+    value.unreadCount >= 0 &&
+    (value.firstUnreadMessageId === null || isIdentifier(value.firstUnreadMessageId)) &&
+    (value.throughMessageId === null || isIdentifier(value.throughMessageId))
+  );
+}
+
 export interface ConversationWithReadState extends ConversationSnapshot {
   readState?: ConversationReadState;
 }
@@ -1044,6 +1055,8 @@ export type AgentEvent =
   | { type: "routines-changed"; botId: string }
   | { type: "sidebar-layout-changed"; layout: SidebarLayoutSnapshot }
   | { type: "conversation"; snapshot: ConversationSnapshot }
+  | { type: "conversation-invalidated"; botId: string; revision: number }
+  | { type: "conversation-page"; page: ConversationPage }
   | {
       type: "conversation-delta";
       botId: string;
@@ -1103,6 +1116,27 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
       return isSidebarLayoutSnapshot(value.layout);
     case "conversation":
       return isConversationSnapshot(value.snapshot);
+    case "conversation-invalidated":
+      return (
+        isIdentifier(value.botId) && isNumber(value.revision) && Number.isInteger(value.revision) && value.revision >= 0
+      );
+    case "conversation-page": {
+      const page = value.page;
+      if (!isDynamicRecord(page)) return false;
+      const references = page.references;
+      const pageInfo = page.pageInfo;
+      const readState = page.readState;
+      return (
+        isConversationSnapshot(page) &&
+        page.messages.length <= 100 &&
+        isDynamicRecord(references) &&
+        Object.values(references).every(isConversationMessage) &&
+        isDynamicRecord(pageInfo) &&
+        isBoolean(pageInfo.hasOlder) &&
+        (pageInfo.olderCursor === null || isString(pageInfo.olderCursor)) &&
+        (readState === undefined || isConversationReadState(readState))
+      );
+    }
     case "conversation-delta":
       return (
         isString(value.botId) &&
