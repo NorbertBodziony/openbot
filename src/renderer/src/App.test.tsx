@@ -3698,10 +3698,13 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "delivery-1",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "delivery-1",
+        },
+        "local",
+      ),
     );
     await waitFor(() => expect(composer).toHaveTextContent(""));
     expect(trackAnalytics).toHaveBeenCalledWith("message_send", {
@@ -5002,10 +5005,13 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "reply-island",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "reply-island",
+        },
+        "local",
+      ),
     );
     await waitFor(() =>
       expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
@@ -5119,10 +5125,13 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByText("Visible remote reply")).toBeInTheDocument();
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "reply-visible",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "reply-visible",
+        },
+        "local",
+      ),
     );
     expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
@@ -5187,6 +5196,36 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument();
   });
 
+  it("keeps a successful read when an equal-revision unread page arrives later", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const delayedPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-delayed-read-state",
+          author: "assistant",
+          text: "Reply from the delayed page",
+          createdAt: "2026-08-30T02:02:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-delayed-read-state", throughMessageId: null },
+      },
+    );
+
+    emitAgentEvent?.({ type: "conversation-page", page: delayedPage });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+
+    emitAgentEvent?.({ type: "conversation-page", page: delayedPage });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+  });
+
   it("retries an automatic read for the same message after persistence fails", async () => {
     vi.mocked(window.openbot.agent.markConversationRead).mockRejectedValueOnce(new Error("Read unavailable"));
     render(() => <App />);
@@ -5214,10 +5253,14 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({ type: "conversation-page", page });
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(2, {
-        botId: "chief",
-        throughMessageId: "reply-read-retry",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(
+        2,
+        {
+          botId: "chief",
+          throughMessageId: "reply-read-retry",
+        },
+        "local",
+      ),
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
   });
@@ -5324,6 +5367,97 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
   });
 
+  it("keeps a queued read scoped to its original server", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    let resolveFirstRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce([
+      { ...local, active: false },
+      { ...remote, active: true },
+    ]);
+    vi.mocked(window.openbot.agent.markConversationRead)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstRead = resolve;
+          }),
+      )
+      .mockImplementationOnce(async (input) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: input.throughMessageId,
+      }));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-first-local",
+            author: "assistant",
+            text: "First local reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-first-local", throughMessageId: null },
+        },
+      ),
+    });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-first-local",
+            author: "assistant",
+            text: "First local reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "reply-second-local",
+            author: "assistant",
+            text: "Second local reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 3,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-second-local", throughMessageId: null },
+        },
+      ),
+    });
+    await screen.findByText("Second local reply");
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(window.openbot.agent.listConversationReads).toHaveBeenCalledTimes(2));
+    resolveFirstRead?.({
+      unreadCount: 1,
+      firstUnreadMessageId: "reply-second-local",
+      throughMessageId: "reply-first-local",
+    });
+
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledTimes(2));
+    expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(
+      2,
+      { botId: "chief", throughMessageId: "reply-second-local" },
+      "local",
+    );
+  });
+
   it("does not mark an older boundary from a rejected conversation page", async () => {
     let resolveInitialPage: ((page: ConversationPage) => void) | undefined;
     vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(
@@ -5355,10 +5489,13 @@ describe("OpenBot connected desktop shell", () => {
       ),
     });
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "reply-newer-boundary",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "reply-newer-boundary",
+        },
+        "local",
+      ),
     );
 
     resolveInitialPage?.(
@@ -5381,10 +5518,13 @@ describe("OpenBot connected desktop shell", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalledWith({
-      botId: "chief",
-      throughMessageId: "reply-older-boundary",
-    });
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalledWith(
+      {
+        botId: "chief",
+        throughMessageId: "reply-older-boundary",
+      },
+      "local",
+    );
     expect(screen.getByText("Newest visible reply")).toBeInTheDocument();
   });
 
@@ -5442,15 +5582,21 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
 
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "reply-current-revision",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "reply-current-revision",
+        },
+        "local",
+      ),
     );
-    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalledWith({
-      botId: "chief",
-      throughMessageId: "reply-stale-revision",
-    });
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalledWith(
+      {
+        botId: "chief",
+        throughMessageId: "reply-stale-revision",
+      },
+      "local",
+    );
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
   });
 
@@ -5998,10 +6144,13 @@ describe("OpenBot connected desktop shell", () => {
     expect(scrollTo).toHaveBeenCalledWith({ behavior: "smooth", top: 1080 });
 
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "agent-new-2",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "agent-new-2",
+        },
+        "local",
+      ),
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "2 new messages" })).not.toBeInTheDocument());
     await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 1080 }));
@@ -6036,10 +6185,13 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "agent-visible-answer",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "agent-visible-answer",
+        },
+        "local",
+      ),
     );
   });
 
@@ -6086,10 +6238,13 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByText("A new sales reply")).toBeInTheDocument();
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "sales-outbound",
-        throughMessageId: "sales-new",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "sales-outbound",
+          throughMessageId: "sales-new",
+        },
+        "local",
+      ),
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
@@ -6126,10 +6281,13 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
 
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "chief-new",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "chief-new",
+        },
+        "local",
+      ),
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
@@ -6191,10 +6349,13 @@ describe("OpenBot connected desktop shell", () => {
     resolveSecondPage?.(unreadPage);
 
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "chief-status-reply",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "chief-status-reply",
+        },
+        "local",
+      ),
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
   });
@@ -6240,10 +6401,13 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "chief-old-reply",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "chief-old-reply",
+        },
+        "local",
+      ),
     );
 
     emitAgentEvent?.({
@@ -6280,10 +6444,13 @@ describe("OpenBot connected desktop shell", () => {
       throughMessageId: "chief-old-reply",
     });
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "chief-newer-reply",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "chief-newer-reply",
+        },
+        "local",
+      ),
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument());
   });
@@ -6361,10 +6528,13 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("Read state unavailable")).toBeInTheDocument();
     expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
     expect(screen.getByRole("separator", { name: "New messages" })).toBeInTheDocument();
-    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-      botId: "chief",
-      throughMessageId: "agent-new",
-    });
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+      {
+        botId: "chief",
+        throughMessageId: "agent-new",
+      },
+      "local",
+    );
     await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 840 }));
     expect(scrollElement.scrollTop).toBe(840);
   });

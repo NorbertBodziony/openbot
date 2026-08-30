@@ -361,7 +361,10 @@ export function createAppController(props: AppProps = {}) {
   const agentChatsToMarkRead = new Set<string>();
   const agentChatsRetriedOnOpen = new Set<string>();
   let explicitlyOpenedAgentChatId: string | null = null;
-  const autoReadAgentMessageIds = new Map<string, string>();
+  const autoReadAgentMessages = new Map<
+    string,
+    { messageId: string; status: "pending" } | { messageId: string; status: "succeeded"; state: ConversationReadState }
+  >();
   const agentChatsToRetryRead = new Set<string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const conversationPageRequests = new Map<string, number>();
@@ -1153,12 +1156,16 @@ export function createAppController(props: AppProps = {}) {
   function autoMarkAgentMessageRead(botId: string, messageId: string, optimisticallyClearUnread = false): void {
     const serverId = activeServerSidebarKey();
     const trackingKey = agentConversationKey(serverId, botId);
-    if (autoReadAgentMessageIds.get(trackingKey) === messageId) return;
     const current = conversationReads()[botId];
+    const previousAutoRead = autoReadAgentMessages.get(trackingKey);
+    if (previousAutoRead?.messageId === messageId) {
+      if (previousAutoRead.status === "succeeded") applyConversationReadState(botId, previousAutoRead.state);
+      return;
+    }
     const hasUnread = Boolean(current && current.unreadCount > 0);
     const retryingRead = agentChatsToRetryRead.delete(trackingKey);
     if (!optimisticallyClearUnread && explicitlyOpenedAgentChatId !== botId && !retryingRead && hasUnread) return;
-    autoReadAgentMessageIds.set(trackingKey, messageId);
+    autoReadAgentMessages.set(trackingKey, { messageId, status: "pending" });
     const optimisticallyCleared = Boolean(current && (!hasUnread || optimisticallyClearUnread));
     const rollbackState = current
       ? hasUnread
@@ -1172,9 +1179,12 @@ export function createAppController(props: AppProps = {}) {
         throughMessageId: messageId,
       });
     }
-    void markAgentMessagesRead(botId, messageId, serverId).catch((error) => {
-      if (autoReadAgentMessageIds.get(trackingKey) !== messageId) return;
-      autoReadAgentMessageIds.delete(trackingKey);
+    void markAgentMessagesRead(botId, messageId, serverId, (state) => {
+      if (autoReadAgentMessages.get(trackingKey)?.messageId !== messageId) return;
+      autoReadAgentMessages.set(trackingKey, { messageId, status: "succeeded", state });
+    }).catch((error) => {
+      if (autoReadAgentMessages.get(trackingKey)?.messageId !== messageId) return;
+      autoReadAgentMessages.delete(trackingKey);
       if (activeServerSidebarKey() !== serverId) return;
       agentChatsToRetryRead.add(trackingKey);
       const latest = conversationReads()[botId];
@@ -2067,6 +2077,7 @@ export function createAppController(props: AppProps = {}) {
     botId = activeBot()?.id,
     throughMessageId?: string | null,
     serverId = activeServerSidebarKey(),
+    onSuccess?: (state: ConversationReadState) => void,
   ): Promise<void> {
     if (!botId || activeServerSidebarKey() !== serverId) return;
     const requestKey = agentConversationKey(serverId, botId);
@@ -2080,15 +2091,19 @@ export function createAppController(props: AppProps = {}) {
     const operation = previousOperation
       .catch(() => undefined)
       .then(async () => {
-        if (activeServerSidebarKey() !== serverId) return;
-        const state: ConversationReadState = await window.openbot.agent.markConversationRead({
-          botId,
-          throughMessageId: boundary,
-        });
-        if (activeServerSidebarKey() !== serverId) return;
-        applyConversationReadState(botId, state);
+        const state: ConversationReadState = await window.openbot.agent.markConversationRead(
+          {
+            botId,
+            throughMessageId: boundary,
+          },
+          serverId,
+        );
         agentChatsToRetryRead.delete(requestKey);
-        clearRecentReply(botId);
+        onSuccess?.(state);
+        if (activeServerSidebarKey() === serverId) {
+          applyConversationReadState(botId, state);
+          clearRecentReply(botId);
+        }
       });
     conversationReadOperations.set(requestKey, operation);
     try {

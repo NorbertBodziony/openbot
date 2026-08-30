@@ -163,7 +163,7 @@ export interface AgentDesktopApi {
   readConversationPage: (input: ReadConversationPageInput) => Promise<ConversationPage>;
   searchConversationMessages: (input: SearchConversationMessagesInput) => Promise<ConversationSearchPage>;
   listConversationReads: () => Promise<Record<string, ConversationReadState>>;
-  markConversationRead: (input: MarkConversationReadInput) => Promise<ConversationReadState>;
+  markConversationRead: (input: MarkConversationReadInput, serverId?: string) => Promise<ConversationReadState>;
   chooseAttachments: (input: ChooseAttachmentsInput) => Promise<DraftAttachment[]>;
   onAttachmentImport: (listener: (event: AttachmentImportEvent) => void) => () => void;
   discardDraftAttachment: (attachmentId: string) => Promise<void>;
