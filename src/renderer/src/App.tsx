@@ -363,7 +363,8 @@ export function createAppController(props: AppProps = {}) {
   let explicitlyOpenedAgentChatId: string | null = null;
   const autoReadAgentMessages = new Map<
     string,
-    { messageId: string; status: "pending" } | { messageId: string; status: "succeeded"; state: ConversationReadState }
+    | { messageId: string; status: "pending"; optimisticState: ConversationReadState | null }
+    | { messageId: string; status: "succeeded"; state: ConversationReadState }
   >();
   const agentChatsToRetryRead = new Set<string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1164,26 +1165,26 @@ export function createAppController(props: AppProps = {}) {
     const current = conversationReads()[botId];
     const previousAutoRead = autoReadAgentMessages.get(trackingKey);
     if (previousAutoRead?.messageId === messageId) {
-      if (previousAutoRead.status === "succeeded") applyConversationReadState(botId, previousAutoRead.state);
+      const retainedState =
+        previousAutoRead.status === "succeeded" ? previousAutoRead.state : previousAutoRead.optimisticState;
+      if (retainedState) applyConversationReadState(botId, retainedState);
       return;
     }
     const hasUnread = Boolean(current && current.unreadCount > 0);
     const retryingRead = agentChatsToRetryRead.delete(trackingKey);
     if (!optimisticallyClearUnread && explicitlyOpenedAgentChatId !== botId && !retryingRead && hasUnread) return;
-    autoReadAgentMessages.set(trackingKey, { messageId, status: "pending" });
     const optimisticallyCleared = Boolean(current && (!hasUnread || optimisticallyClearUnread));
+    const optimisticState: ConversationReadState | null =
+      current && optimisticallyCleared
+        ? { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: messageId }
+        : null;
+    autoReadAgentMessages.set(trackingKey, { messageId, status: "pending", optimisticState });
     const rollbackState = current
       ? hasUnread
         ? current
         : { ...current, unreadCount: 1, firstUnreadMessageId: messageId }
       : null;
-    if (current && optimisticallyCleared) {
-      applyConversationReadState(botId, {
-        unreadCount: 0,
-        firstUnreadMessageId: null,
-        throughMessageId: messageId,
-      });
-    }
+    if (optimisticState) applyConversationReadState(botId, optimisticState);
     void markAgentMessagesRead(botId, messageId, serverId, (state) => {
       if (autoReadAgentMessages.get(trackingKey)?.messageId !== messageId) return;
       autoReadAgentMessages.set(trackingKey, { messageId, status: "succeeded", state });

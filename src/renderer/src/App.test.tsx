@@ -5281,6 +5281,50 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
   });
 
+  it("keeps a duplicate refreshed page read while persistence is pending", async () => {
+    let resolveRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({
+      chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    vi.mocked(window.openbot.agent.markConversationRead).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const duplicatePage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-pending-read",
+          author: "assistant",
+          text: "Reply with a pending read",
+          createdAt: "2026-08-30T02:02:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-pending-read", throughMessageId: null },
+      },
+    );
+
+    emitAgentEvent?.({ type: "conversation-page", page: duplicatePage });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "conversation-page", page: duplicatePage });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+
+    resolveRead?.({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-pending-read" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
   it("retries an automatic read for the same message after persistence fails", async () => {
     vi.mocked(window.openbot.agent.markConversationRead).mockRejectedValueOnce(new Error("Read unavailable"));
     render(() => <App />);
