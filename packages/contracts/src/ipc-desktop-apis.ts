@@ -160,7 +160,7 @@ export interface AgentDesktopApi {
   testRoutine: (input: TestRoutineInput) => Promise<RoutineRun>;
   listRoutineRuns: (input: ListRoutineRunsInput) => Promise<RoutineRun[]>;
   readConversation: (botId: string) => Promise<ConversationWithReadState>;
-  readConversationPage: (input: ReadConversationPageInput) => Promise<ConversationPage>;
+  readConversationPage: (input: ReadConversationPageInput, serverId?: string) => Promise<ConversationPage>;
   searchConversationMessages: (input: SearchConversationMessagesInput) => Promise<ConversationSearchPage>;
   listConversationReads: () => Promise<Record<string, ConversationReadState>>;
   markConversationRead: (input: MarkConversationReadInput, serverId?: string) => Promise<ConversationReadState>;

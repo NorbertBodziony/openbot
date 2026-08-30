@@ -824,14 +824,15 @@ export function createAppController(props: AppProps = {}) {
     () => ({ botId: activeBotId(), agentPhase: agentStatus().phase, openRevision: agentChatOpenRevision() }),
     ({ botId }) => {
       if (!botId) return;
+      const serverId = activeServerSidebarKey();
       const pageRequest = (conversationPageRequests.get(botId) ?? 0) + 1;
       conversationPageRequests.set(botId, pageRequest);
       const queueRequest = (queueSnapshotRequests.get(botId) ?? 0) + 1;
       queueSnapshotRequests.set(botId, queueRequest);
       void window.openbot.agent
-        .readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 })
+        .readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 }, serverId)
         .then((page) => {
-          if (conversationPageRequests.get(botId) !== pageRequest) return;
+          if (activeServerSidebarKey() !== serverId || conversationPageRequests.get(botId) !== pageRequest) return;
           const pageApplied = applyConversationPage(page, "replace", "latest");
           if (!pageApplied) {
             if (agentChatsToMarkRead.has(botId) && !agentChatsRetriedOnOpen.has(botId)) {
@@ -843,19 +844,23 @@ export function createAppController(props: AppProps = {}) {
           agentChatsRetriedOnOpen.delete(botId);
           const markReadOnOpen = agentChatsToMarkRead.delete(botId);
           if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
-            void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null).catch((error) =>
+            void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null, serverId).catch((error) =>
               appendUiError(botId, error, "Read state failed"),
             );
           }
         })
-        .catch((error) => appendUiError(botId, error, "Load failed"));
+        .catch((error) => {
+          if (activeServerSidebarKey() === serverId) appendUiError(botId, error, "Load failed");
+        });
       void window.openbot.agent
         .listQueue(botId)
         .then((queue) => {
-          if (queueSnapshotRequests.get(botId) !== queueRequest) return;
+          if (activeServerSidebarKey() !== serverId || queueSnapshotRequests.get(botId) !== queueRequest) return;
           setQueues((current) => ({ ...current, [botId]: queue }));
         })
-        .catch((error) => appendUiError(botId, error, "Queue load failed"));
+        .catch((error) => {
+          if (activeServerSidebarKey() === serverId) appendUiError(botId, error, "Queue load failed");
+        });
     },
   );
 

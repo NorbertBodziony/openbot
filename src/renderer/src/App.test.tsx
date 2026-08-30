@@ -5071,6 +5071,61 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
   });
 
+  it("discards a chat-open reload that resolves during a server switch", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    let resolveOldPage: ((page: ConversationPage) => void) | undefined;
+    let resolveRemoteBots: ((bots: BotSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce([
+      { ...local, active: false },
+      { ...remote, active: true },
+    ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOldPage = resolve;
+        }),
+    );
+    vi.mocked(window.openbot.agent.listBots).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRemoteBots = resolve;
+        }),
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() => expect(resolveOldPage).toBeDefined());
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(resolveRemoteBots).toBeDefined());
+    resolveOldPage?.(
+      testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-old-server",
+            author: "assistant",
+            text: "Reply from the old server",
+            createdAt: "2026-08-30T02:04:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-old-server", throughMessageId: null },
+        },
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Reply from the old server")).not.toBeInTheDocument();
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    resolveRemoteBots?.(BOTS);
+    await screen.findByRole("heading", { name: "Chief" });
+  });
+
   it("merges a refreshed remote conversation page without dropping loaded messages", async () => {
     const message = (id: string, text: string) => ({
       id,
