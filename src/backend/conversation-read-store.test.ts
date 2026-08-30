@@ -43,6 +43,7 @@ describe("ConversationReadStore", () => {
     const second = snapshot([
       ...first.messages,
       message("commentary-2", "assistant", "commentary"),
+      message("attachment-2", "assistant", "agent_attachment"),
       message("message-2", "assistant"),
     ]);
     expect(reads.readState("member-a", second)).toMatchObject({

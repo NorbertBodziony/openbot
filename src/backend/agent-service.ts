@@ -1,8 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { realpath, stat } from "node:fs/promises";
-import { basename } from "node:path";
+import { constants } from "node:fs";
+import { lstat, open, realpath, stat } from "node:fs/promises";
+import { basename, isAbsolute } from "node:path";
 import { expandAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
@@ -97,7 +98,7 @@ import {
   snapshotFromThread,
   sortConversationMessages,
 } from "./conversation-snapshots";
-import type { DeliveryContext, MailboxStore } from "./mailbox-store";
+import type { DeliveryContext, GeneratedAttachmentSource, MailboxStore } from "./mailbox-store";
 import { OPENBOT_DYNAMIC_TOOLS } from "./openbot-tools";
 import {
   type AccountLoginCompletedResult,
@@ -201,6 +202,11 @@ interface PendingDelta {
 interface ImageGenerationOperation {
   interrupted: boolean;
   promise: Promise<void> | null;
+}
+
+interface OpenBotToolResponse {
+  success: boolean;
+  contentItems: Array<{ type: "inputText"; text: string }>;
 }
 
 interface PendingCodexLogin {
@@ -353,6 +359,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingRuntimeRefreshes = new Set<string>();
   readonly #pendingDeltas = new Map<string, PendingDelta>();
   readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
+  readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
   readonly #memoryEpochs = new Map<string, number>();
   #routineTimer: NodeJS.Timeout | null = null;
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
@@ -447,7 +454,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (message) =>
             (message.author === "assistant" || message.author === "agent") &&
             message.itemType !== "commentary" &&
-            message.itemType !== "question_prompt",
+            message.itemType !== "question_prompt" &&
+            message.itemType !== "agent_attachment",
         );
       const persisted =
         !live || !liveLatest
@@ -947,6 +955,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         .filter((promise): promise is Promise<void> => promise !== null),
     );
     this.#imageGenerationOperations.clear();
+    await Promise.allSettled([...this.#responseAttachmentCommands.values()]);
+    this.#responseAttachmentCommands.clear();
     this.#interruptedTurns.clear();
     this.#setStatus({ phase: "stopped", message: null });
   }
@@ -2149,12 +2159,35 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  async #handleOpenBotTool(params: DynamicToolCallParams): Promise<{
-    success: boolean;
-    contentItems: Array<{ type: "inputText"; text: string }>;
-  }> {
+  async #handleOpenBotTool(params: DynamicToolCallParams): Promise<OpenBotToolResponse> {
     const senderBotId = this.#threadToBot.get(params.threadId);
     if (!senderBotId) throw new Error("The sending OpenBot agent is unknown.");
+
+    if (params.tool === "attach_files_to_response") {
+      const args = params.arguments;
+      if (!isRecord(args) || !Array.isArray(args.paths)) throw new Error("paths must be an array of local files.");
+      if (
+        args.paths.length === 0 ||
+        args.paths.length > INPUT_LIMITS.attachments ||
+        !args.paths.every((path) => isString(path) && path.trim().length > 0 && path.length <= INPUT_LIMITS.path)
+      ) {
+        throw new Error(`paths must contain between 1 and ${INPUT_LIMITS.attachments} valid local file paths.`);
+      }
+
+      const messageId = responseAttachmentMessageId(params.threadId, params.turnId, params.callId);
+      const inFlight = this.#responseAttachmentCommands.get(messageId);
+      if (inFlight) return inFlight;
+
+      const command = this.#attachFilesToResponse(senderBotId, params, args.paths, messageId);
+      this.#responseAttachmentCommands.set(messageId, command);
+      try {
+        return await command;
+      } finally {
+        if (this.#responseAttachmentCommands.get(messageId) === command) {
+          this.#responseAttachmentCommands.delete(messageId);
+        }
+      }
+    }
 
     if (params.tool === "list_agents") {
       const agents = this.#store.list().map((bot) => {
@@ -2439,6 +2472,149 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       success: true,
       contentItems: [{ type: "inputText", text: JSON.stringify(receipt) }],
     };
+  }
+
+  async #attachFilesToResponse(
+    senderBotId: string,
+    params: DynamicToolCallParams,
+    paths: string[],
+    messageId: string,
+  ): Promise<OpenBotToolResponse> {
+    const publicThreadId = this.#publicThreadId(senderBotId, params.threadId);
+    const snapshot = this.#ensureSnapshot(senderBotId, publicThreadId);
+    const existing = snapshot.messages.find((message) => message.id === messageId);
+    if (existing) {
+      return openBotToolResult({
+        status: "attached",
+        messageId,
+        attachments: (existing.attachments ?? []).map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+        })),
+      });
+    }
+
+    const sources = await this.#openAgentAttachmentSources(senderBotId, paths);
+    let attachments: AttachmentSummary[];
+    try {
+      attachments = await this.#mailbox.stageGeneratedAttachments({
+        sources,
+        ownerBotId: senderBotId,
+        ownerThreadId: publicThreadId,
+      });
+    } finally {
+      await Promise.allSettled(sources.map((source) => source.handle.close()));
+    }
+    const message: ConversationSnapshot["messages"][number] = {
+      id: messageId,
+      turnId: params.turnId,
+      author: "assistant",
+      source: "assistant",
+      text: "",
+      createdAt: new Date().toISOString(),
+      status: "completed",
+      itemType: "agent_attachment",
+      attachments,
+    };
+    snapshot.messages.push(message);
+    sortConversationMessages(snapshot.messages);
+    try {
+      const persisted = this.#mailbox.persistGeneratedAttachmentsWithConversation(
+        snapshot,
+        "response.attachments-added",
+        {
+          turnId: params.turnId,
+          messageId,
+          attachmentCount: attachments.length,
+        },
+        attachments.map((attachment) => attachment.id),
+      );
+      snapshot.revision = persisted.revision;
+      this.#lastConversationSignatures.set(snapshot.botId, conversationContentSignature(snapshot));
+    } catch (error) {
+      const messageIndex = snapshot.messages.findIndex((candidate) => candidate.id === messageId);
+      if (messageIndex >= 0) snapshot.messages.splice(messageIndex, 1);
+      await this.#mailbox.discardStagedGeneratedAttachments(attachments.map((attachment) => attachment.id));
+      throw error;
+    }
+    try {
+      this.#emit({ type: "conversation", snapshot: structuredClone(snapshot) });
+    } catch (error) {
+      try {
+        this.#emitError("conversation_publication_failed", error, senderBotId);
+      } catch {
+        // A committed attachment remains successful even if event listeners fail.
+      }
+    }
+    return openBotToolResult({
+      status: "attached",
+      messageId,
+      attachments: attachments.map((attachment) => ({ id: attachment.id, name: attachment.name })),
+    });
+  }
+
+  async #openAgentAttachmentSources(botId: string, paths: string[]): Promise<GeneratedAttachmentSource[]> {
+    const results = await Promise.allSettled(paths.map((path) => this.#openAgentAttachmentSource(botId, path)));
+    const sources = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") {
+      await Promise.allSettled(sources.map((source) => source.handle.close()));
+      throw failure.reason;
+    }
+    if (sources.length !== new Set(sources.map((source) => source.path)).size) {
+      await Promise.allSettled(sources.map((source) => source.handle.close()));
+      throw new Error("Duplicate attachment paths are not allowed.");
+    }
+    return sources;
+  }
+
+  async #openAgentAttachmentSource(botId: string, inputPath: string): Promise<GeneratedAttachmentSource> {
+    const bot = this.#requireKnownBot(botId);
+    const value = inputPath.trim();
+    const [workspaceRoot, sharedRoot] = await Promise.all([
+      realpath(bot.workspacePath),
+      realpath(this.#store.sharedRoot),
+    ]);
+    const normalized = value.replaceAll("\\", "/");
+    const sharedReference = ["~/OpenBot/Shared/", "OpenBot/Shared/", "Shared/"].some((prefix) =>
+      normalized.startsWith(prefix),
+    );
+    const candidates = isAbsolute(value)
+      ? [value]
+      : sharedReference
+        ? [sharedPathFromInput(this.#store.sharedRoot, value)]
+        : [
+            workspacePathFromInput(bot.workspacePath, bot.id, value),
+            sharedPathFromInput(this.#store.sharedRoot, value),
+          ];
+
+    for (const candidate of candidates) {
+      try {
+        if ((await lstat(candidate)).isSymbolicLink()) continue;
+        const resolved = await realpath(candidate);
+        if (!isWithin(workspaceRoot, resolved) && !isWithin(sharedRoot, resolved)) continue;
+        const authorizedMetadata = await lstat(resolved);
+        if (authorizedMetadata.isSymbolicLink() || !authorizedMetadata.isFile()) continue;
+        const handle = await open(resolved, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const openedMetadata = await handle.stat();
+          if (
+            !openedMetadata.isFile() ||
+            openedMetadata.dev !== authorizedMetadata.dev ||
+            openedMetadata.ino !== authorizedMetadata.ino
+          ) {
+            throw new Error("The attachment changed while it was being opened.");
+          }
+          return { path: resolved, handle };
+        } catch (error) {
+          await handle.close();
+          throw error;
+        }
+      } catch {
+        // Try the other permitted root for relative paths.
+      }
+    }
+    throw new Error("Attachment files must exist inside this agent's workspace or the OpenBot shared directory.");
   }
 
   #stageMemoryMutation(turnId: string, mutation: PendingMemoryMutation): void {
@@ -4234,6 +4410,11 @@ function openBotToolResult(value: unknown): {
   };
 }
 
+function responseAttachmentMessageId(threadId: string, turnId: string, callId: string): string {
+  const digest = createHash("sha256").update(`${threadId}\0${turnId}\0${callId}`).digest("hex").slice(0, 32);
+  return `agent-attachments:${digest}`;
+}
+
 function conversationContentSignature(snapshot: ConversationSnapshot): string {
   return JSON.stringify({
     botId: snapshot.botId,
@@ -4370,6 +4551,7 @@ function developerInstructions(bot: BotSummary, sharedRoot: string, memories: Bo
     "Memory tools always apply to your own agent profile. They cannot change another agent's memories.",
     "Use openbot.react_to_user_message when the user's message contains an obvious positive or negative emotional moment where a reaction would feel natural. Clear wins or celebrations, affection, gratitude, playful humor, sadness, disappointment, frustration, loneliness, empathy, and strong approval should normally receive one fitting reaction; do not be so conservative that you skip these obvious cases. Negative emotions deserve an empathetic reaction such as ❤️, 😔, or 🫂 rather than being excluded as sensitive. An emoji written inside your answer does not count as a message reaction: when you use an inline emoji to acknowledge the user's emotion, that is a strong signal that you should also call the reaction tool. Skip neutral, purely informational, or routine messages, and never react on every turn. A reaction never replaces, shortens, or changes your normal answer: always provide the same complete response you would give without it, and do not mention the reaction in that response.",
     "Use openbot.send_message to send asynchronous messages or local files to one or more teammates. Always set replyToMessageId when answering a teammate. Replies are never forwarded automatically.",
+    "When the user should receive a local file that you created, call openbot.attach_files_to_response with its path before your final answer. Use it for screenshots, images, charts, diagrams, reports, and other output files. Do not only say that you sent a file, and do not only mention its path. OpenBot copies the file and displays image attachments in the conversation.",
     "When you need clarification or the user asks you to ask a question, use openbot.ask_user with 1–3 short questions instead of writing the question as a normal assistant message. Use options for choices and wait for the tool result before continuing. Claude should use AskUserQuestion for the same purpose.",
     "OpenBot renders GitHub-flavored Markdown tables in your final responses. Use a table when structured data or a comparison is clearer than prose; include a header row, a separator row with at least three dashes per column, and at least one data row. For a feature-by-option comparison, use at least three columns and put exactly ✓ or — in every option cell; OpenBot will render that Markdown as a comparison table. Example: | Feature | Personal | Enterprise | followed by | --- | --- | --- | and rows such as | Priority support | — | ✓ |.",
     "When a teammate asks you to do work, complete it and explicitly send the result back. When you receive a reply, summarize it for the user without creating an acknowledgement loop.",

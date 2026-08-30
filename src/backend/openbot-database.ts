@@ -184,7 +184,8 @@ export class OpenBotDatabase {
     );
     if (receipt) return JSON.parse(receipt.result_json);
 
-    db.exec("BEGIN IMMEDIATE");
+    const ownsTransaction = !db.isTransaction;
+    if (ownsTransaction) db.exec("BEGIN IMMEDIATE");
     try {
       const sequences: number[] = [];
       const append = db.prepare(`
@@ -216,10 +217,10 @@ export class OpenBotDatabase {
         sequences.at(-1) ?? 0,
         JSON.stringify(result ?? null),
       );
-      db.exec("COMMIT");
+      if (ownsTransaction) db.exec("COMMIT");
       return result;
     } catch (error) {
-      db.exec("ROLLBACK");
+      if (ownsTransaction && db.isTransaction) db.exec("ROLLBACK");
       throw error;
     }
   }
@@ -379,6 +380,7 @@ export class OpenBotDatabase {
                      AND json_extract(message.message_json, '$.author') IN ('assistant', 'agent')
                      AND COALESCE(json_extract(message.message_json, '$.itemType'), '') != 'commentary'
                      AND COALESCE(json_extract(message.message_json, '$.itemType'), '') != 'question_prompt'
+                     AND COALESCE(json_extract(message.message_json, '$.itemType'), '') != 'agent_attachment'
                    ORDER BY message.created_at DESC, message.ordinal DESC, message.message_id DESC
                    LIMIT 1) AS latest_message_json
            FROM projection_threads thread
@@ -767,6 +769,31 @@ export class OpenBotDatabase {
       },
     );
     return { ...structuredClone(snapshot), revision: result.revision };
+  }
+
+  persistConversationAndMailbox(
+    snapshot: ConversationSnapshot,
+    eventType: string,
+    payload: unknown,
+    mailboxState: MailboxProjectionState,
+    mailboxEventType: string,
+  ): ConversationSnapshot {
+    const db = this.connection;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      this.replaceMailboxState(`mailbox:${mailboxEventType}:${randomUUID()}`, mailboxState, mailboxEventType);
+      const persisted = this.persistConversation(
+        snapshot,
+        eventType,
+        payload,
+        `conversation:${eventType}:${randomUUID()}`,
+      );
+      db.exec("COMMIT");
+      return persisted;
+    } catch (error) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   activeProviderSession(threadId: string, provider: AgentProviderId): ProviderSession | null {
