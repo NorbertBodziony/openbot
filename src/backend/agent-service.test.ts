@@ -2787,6 +2787,48 @@ describe.sequential("AgentService", () => {
       "inside this agent's workspace or the OpenBot shared directory",
       turnId,
     );
+
+    const publishedPath = join(store.sharedRoot, "published-screenshot.png");
+    await writeFile(publishedPath, screenshot);
+    const publicationFailure = (event: AgentEvent) => {
+      if (
+        event.type === "conversation" &&
+        event.snapshot.messages.some((candidate) =>
+          candidate.attachments?.some((attachment) => attachment.name === "published-screenshot.png"),
+        )
+      ) {
+        throw new Error("conversation listener failed");
+      }
+    };
+    service.on("event", publicationFailure);
+    const publicationCallId = "publication-failure-call";
+    const publicationFailed = await callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [publishedPath] },
+      turnId,
+      publicationCallId,
+    );
+    service.off("event", publicationFailure);
+    expect(publicationFailed.error?.message).toContain("conversation listener failed");
+
+    const publicationRetry = await callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [publishedPath] },
+      turnId,
+      publicationCallId,
+    );
+    expect(openBotToolPayload(publicationRetry.result)).toMatchObject({
+      status: "attached",
+      attachments: [{ name: "published-screenshot.png" }],
+    });
+    const publishedMessage = (await service.readConversation("chief")).messages.find((candidate) =>
+      candidate.attachments?.some((attachment) => attachment.name === "published-screenshot.png"),
+    );
+    await expect(mailbox.resolveAttachment(publishedMessage?.attachments?.[0]?.id ?? "")).resolves.not.toBeNull();
   });
 
   it("shares one attachment operation between concurrent retries", async () => {

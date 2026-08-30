@@ -2517,8 +2517,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       attachments,
     };
     snapshot.messages.push(message);
+    sortConversationMessages(snapshot.messages);
     try {
-      this.#emitConversation(
+      const persisted = this.#mailbox.persistGeneratedAttachmentsWithConversation(
         snapshot,
         "response.attachments-added",
         {
@@ -2526,14 +2527,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           messageId,
           attachmentCount: attachments.length,
         },
-        true,
+        attachments.map((attachment) => attachment.id),
       );
+      snapshot.revision = persisted.revision;
+      this.#lastConversationSignatures.set(snapshot.botId, conversationContentSignature(snapshot));
     } catch (error) {
       const messageIndex = snapshot.messages.findIndex((candidate) => candidate.id === messageId);
       if (messageIndex >= 0) snapshot.messages.splice(messageIndex, 1);
       await this.#mailbox.discardStagedGeneratedAttachments(attachments.map((attachment) => attachment.id));
       throw error;
     }
+    this.#emit({ type: "conversation", snapshot: structuredClone(snapshot) });
     return openBotToolResult({
       status: "attached",
       messageId,
@@ -4216,15 +4220,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       activeTurnId: snapshot.activeTurnId,
       messageCount: snapshot.messages.length,
     },
-    persistMailbox = false,
   ): void {
     sortConversationMessages(snapshot.messages);
     const signature = conversationContentSignature(snapshot);
     if (this.#lastConversationSignatures.get(snapshot.botId) === signature) return;
     if (snapshot.threadId) {
-      const persisted = persistMailbox
-        ? this.#mailbox.persistGeneratedAttachmentsWithConversation(snapshot, eventType, detail)
-        : this.#store.database.persistConversation(snapshot, eventType, detail);
+      const persisted = this.#store.database.persistConversation(snapshot, eventType, detail);
       snapshot.revision = persisted.revision;
     }
     this.#lastConversationSignatures.set(snapshot.botId, signature);

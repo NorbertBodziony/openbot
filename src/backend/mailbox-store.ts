@@ -171,6 +171,7 @@ export class MailboxStore {
   readonly #draftsRoot: string;
   readonly #transfersRoot: string;
   readonly #database: OpenBotDatabase;
+  readonly #stagedGeneratedAttachments = new Map<string, StoredGeneratedAttachment>();
   #state: StoredState = structuredClone(EMPTY_STATE);
 
   constructor(userDataPath: string, sharedRoot: string, database = new OpenBotDatabase(userDataPath)) {
@@ -1008,12 +1009,10 @@ export class MailboxStore {
         });
         attachments.push(attachment);
       }
-      this.#state.generatedAttachments.push(...attachments);
+      for (const attachment of attachments) this.#stagedGeneratedAttachments.set(attachment.id, attachment);
       return attachments.map(toAttachmentSummary);
     } catch (error) {
-      this.#state.generatedAttachments = this.#state.generatedAttachments.filter(
-        (attachment) => !storedIds.has(attachment.id),
-      );
+      for (const id of storedIds) this.#stagedGeneratedAttachments.delete(id);
       await Promise.allSettled(entries.map((entry) => rm(entry.generatedRoot, { recursive: true, force: true })));
       throw error;
     }
@@ -1023,22 +1022,38 @@ export class MailboxStore {
     snapshot: ConversationSnapshot,
     eventType: string,
     detail: unknown,
+    attachmentIds: string[],
   ): ConversationSnapshot {
-    return this.#database.persistConversationAndMailbox(
+    const staged = attachmentIds.map((id) => {
+      const attachment = this.#stagedGeneratedAttachments.get(id);
+      if (!attachment) throw new Error(`Staged generated attachment is missing: ${id}`);
+      return attachment;
+    });
+    const nextState: StoredState = {
+      ...this.#state,
+      generatedAttachments: [...this.#state.generatedAttachments, ...staged],
+    };
+    const persisted = this.#database.persistConversationAndMailbox(
       snapshot,
       eventType,
       detail,
-      this.#state,
+      nextState,
       "attachment.generated-batch",
     );
+    this.#state = nextState;
+    for (const id of attachmentIds) this.#stagedGeneratedAttachments.delete(id);
+    return persisted;
   }
 
   async discardStagedGeneratedAttachments(attachmentIds: string[]): Promise<void> {
     const ids = new Set(attachmentIds);
-    const removed = this.#state.generatedAttachments.filter((attachment) => ids.has(attachment.id));
+    const removed = attachmentIds.flatMap((id) => {
+      const attachment = this.#stagedGeneratedAttachments.get(id);
+      return attachment ? [attachment] : [];
+    });
     if (removed.length === 0) return;
 
-    this.#state.generatedAttachments = this.#state.generatedAttachments.filter((attachment) => !ids.has(attachment.id));
+    for (const id of ids) this.#stagedGeneratedAttachments.delete(id);
     const generatedRoots = removed
       .map((attachment) => generatedRootForPath(this.#transfersRoot, attachment.path))
       .filter((path): path is string => path !== null);

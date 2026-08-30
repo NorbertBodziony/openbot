@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
@@ -23,6 +23,22 @@ afterEach(async () => {
 });
 
 describe("MailboxStore", () => {
+  it("keeps staged generated attachments out of unrelated mailbox writes", async () => {
+    const sourcePath = join(root, "staged-screenshot.png");
+    await writeFile(sourcePath, "image bytes");
+    const source = await open(sourcePath, "r");
+    const staged = await store.stageGeneratedAttachments({ sources: [{ path: sourcePath, handle: source }] });
+    await source.close();
+
+    await expect(store.listExportAttachments()).resolves.toEqual([]);
+    await store.enqueue({ sender: { kind: "user" }, recipientBotIds: ["chief"], text: "Unrelated work" });
+    const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    await expect(restored.listExportAttachments()).resolves.toEqual([]);
+
+    await store.discardStagedGeneratedAttachments(staged.map((attachment) => attachment.id));
+  });
+
   it("preserves the extension when it shortens a long attachment name", async () => {
     const source = join(root, `${"screenshot-".repeat(19)}capture.png`);
     await writeFile(source, "image bytes");
