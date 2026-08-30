@@ -5083,12 +5083,30 @@ describe("OpenBot connected desktop shell", () => {
     ]);
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    vi.mocked(window.openbot.agent.readConversationPage).mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveOldPage = resolve;
-        }),
-    );
+    vi.mocked(window.openbot.agent.readConversationPage)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOldPage = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(
+        testConversationPage(
+          "chief",
+          [
+            {
+              id: "reply-new-server",
+              author: "assistant",
+              text: "Unread reply from the new server",
+              createdAt: "2026-08-30T02:05:00.000Z",
+              status: "completed",
+            },
+          ],
+          {
+            readState: { unreadCount: 1, firstUnreadMessageId: "reply-new-server", throughMessageId: null },
+          },
+        ),
+      );
     vi.mocked(window.openbot.agent.listBots).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -5124,6 +5142,9 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
     resolveRemoteBots?.(BOTS);
     await screen.findByRole("heading", { name: "Chief" });
+    await screen.findByText("Unread reply from the new server");
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
   });
 
   it("merges a refreshed remote conversation page without dropping loaded messages", async () => {

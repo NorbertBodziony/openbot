@@ -826,6 +826,7 @@ export function createAppController(props: AppProps = {}) {
     ({ botId }) => {
       if (!botId) return;
       const serverId = activeServerSidebarKey();
+      const trackingKey = agentConversationKey(serverId, botId);
       const pageRequest = (conversationPageRequests.get(botId) ?? 0) + 1;
       conversationPageRequests.set(botId, pageRequest);
       const queueRequest = (queueSnapshotRequests.get(botId) ?? 0) + 1;
@@ -836,14 +837,14 @@ export function createAppController(props: AppProps = {}) {
           if (activeServerSidebarKey() !== serverId || conversationPageRequests.get(botId) !== pageRequest) return;
           const pageApplied = applyConversationPage(page, "replace", "latest");
           if (!pageApplied) {
-            if (agentChatsToMarkRead.has(botId) && !agentChatsRetriedOnOpen.has(botId)) {
+            if (agentChatsToMarkRead.has(trackingKey) && !agentChatsRetriedOnOpen.has(botId)) {
               agentChatsRetriedOnOpen.add(botId);
               setAgentChatOpenRevision((current) => current + 1);
             }
             return;
           }
           agentChatsRetriedOnOpen.delete(botId);
-          const markReadOnOpen = agentChatsToMarkRead.delete(botId);
+          const markReadOnOpen = agentChatsToMarkRead.delete(trackingKey);
           if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
             void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null, serverId).catch((error) =>
               appendUiError(botId, error, "Read state failed"),
@@ -1477,7 +1478,7 @@ export function createAppController(props: AppProps = {}) {
     }
     setActiveDirectMemberId(null);
     clearReplyIndicators(botId);
-    agentChatsToMarkRead.add(botId);
+    agentChatsToMarkRead.add(agentConversationKey(activeServerSidebarKey(), botId));
     agentChatsRetriedOnOpen.delete(botId);
     explicitlyOpenedAgentChatId = botId;
     setActiveBotId(botId);
