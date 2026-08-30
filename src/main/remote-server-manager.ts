@@ -1103,6 +1103,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     let protocolFailed = false;
     try {
       const compatibility = await this.#ensureCompatibility(server, true);
+      if (
+        controller.signal.aborted ||
+        !this.#eventsEnabled ||
+        !this.#state.servers.some((candidate) => candidate.id === serverId)
+      ) {
+        if (this.#eventControllers.get(serverId) === controller) this.#eventControllers.delete(serverId);
+        return;
+      }
       const eventsUrl = new URL("/v1/events", server.apiUrl);
       eventsUrl.protocol = eventsUrl.protocol === "https:" ? "wss:" : "ws:";
       const socketProtocols = this.#appVersion

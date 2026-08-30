@@ -274,6 +274,48 @@ describe("remote server order", () => {
 });
 
 describe("remote event connections", () => {
+  it("does not open a socket when the server is removed during compatibility negotiation", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-removed-during-compatibility-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "removed-during-compatibility");
+    let resolveCompatibility: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          await new Promise<Response>((resolve) => {
+            resolveCompatibility = resolve;
+          }),
+      ),
+    );
+    const socketConstructor = vi.fn();
+    vi.stubGlobal(
+      "WebSocket",
+      class extends EventTarget {
+        constructor() {
+          super();
+          socketConstructor();
+        }
+      },
+    );
+    const manager = remoteEventManager(statePath, "0.4.0");
+
+    try {
+      await manager.initialize();
+      manager.startEventConnections();
+      await vi.waitFor(() => expect(resolveCompatibility).toBeDefined());
+      await manager.remove("removed-during-compatibility");
+      resolveCompatibility?.(
+        Response.json({ appVersion: "0.3.0", protocol: { minimum: 1, maximum: 1 }, capabilities: [] }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(socketConstructor).not.toHaveBeenCalled();
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps every configured host connected across selection and reconnects independently", async () => {
     vi.useFakeTimers();
     const directory = await mkdtemp(join(tmpdir(), "openbot-remote-events-"));

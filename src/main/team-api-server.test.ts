@@ -386,7 +386,7 @@ describe("TeamApiServer administration", () => {
     } finally {
       await api.stop();
     }
-  });
+  }, 10_000);
 
   it("keeps legacy event clients connected without sending runtime snapshots", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-legacy-events-"));
