@@ -5447,6 +5447,47 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
   });
 
+  it("keeps a successful realtime read when a pending reload resolves later", async () => {
+    let resolveInitialPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({
+      chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveInitialPage = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(resolveInitialPage).toBeDefined());
+    const unreadPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-reload-race",
+          author: "assistant",
+          text: "Reply before the reload resolves",
+          createdAt: "2026-08-30T02:02:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-reload-race", throughMessageId: null },
+      },
+    );
+
+    emitAgentEvent?.({ type: "conversation-page", page: unreadPage });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+
+    resolveInitialPage?.(unreadPage);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
   it("keeps a duplicate refreshed page read while persistence is pending", async () => {
     let resolveRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
     vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({

@@ -1487,7 +1487,21 @@ export function createAppController(props: AppProps = {}) {
       ...current,
       [page.botId]: completedTurnByBot.get(page.botId) === page.activeTurnId ? null : page.activeTurnId,
     }));
-    if (page.readState) applyConversationReadState(page.botId, page.readState);
+    if (page.readState) {
+      const trackedAutoRead = autoReadAgentMessages.get(agentConversationKey(activeServerSidebarKey(), page.botId));
+      const latestIncomingMessage = [...page.messages]
+        .reverse()
+        .find(
+          (message) =>
+            message.author !== "user" && message.itemType !== "commentary" && message.itemType !== "agent_attachment",
+        );
+      let retainedState: ConversationReadState | null = null;
+      if (trackedAutoRead && trackedAutoRead.messageId === latestIncomingMessage?.id) {
+        retainedState =
+          trackedAutoRead.status === "succeeded" ? trackedAutoRead.state : trackedAutoRead.optimisticState;
+      }
+      applyConversationReadState(page.botId, retainedState ?? page.readState);
+    }
     return true;
   }
 
