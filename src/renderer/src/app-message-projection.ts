@@ -103,7 +103,10 @@ export function readStateForMessages(
     : -1;
   const unread = messages
     .slice(throughIndex + 1)
-    .filter((message) => message.author !== "user" && message.itemType !== "commentary");
+    .filter(
+      (message) =>
+        message.author !== "user" && message.itemType !== "commentary" && message.itemType !== "agent_attachment",
+    );
   return {
     ...state,
     unreadCount: unread.length,

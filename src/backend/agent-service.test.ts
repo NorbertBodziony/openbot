@@ -359,6 +359,7 @@ describe.sequential("AgentService", () => {
         "You may list, read, create, edit, move, and delete files and run local commands in both directories.",
       );
       expect(params.developerInstructions).toContain("openbot.create_routine");
+      expect(params.developerInstructions).toContain("openbot.attach_files_to_response");
       expect(params.developerInstructions).toContain("sadness, disappointment, frustration, loneliness");
       expect(params.developerInstructions).toContain("An emoji written inside your answer does not count");
       expect(params.developerInstructions).toContain("Omit botId to target yourself");
@@ -369,6 +370,7 @@ describe.sequential("AgentService", () => {
             type: "namespace",
             name: "openbot",
             tools: expect.arrayContaining([
+              expect.objectContaining({ name: "attach_files_to_response" }),
               expect.objectContaining({ name: "ask_user" }),
               expect.objectContaining({ name: "list_agents" }),
               expect.objectContaining({ name: "update_profile" }),
@@ -2710,6 +2712,255 @@ describe.sequential("AgentService", () => {
     );
   });
 
+  it("attaches an agent-created screenshot to the current user response", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    const screenshotPath = join(store.sharedRoot, "desktop-screenshot.png");
+    const screenshot = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
+    await writeFile(screenshotPath, screenshot);
+    await service.sendMessage({ botId: "chief", text: "Send me a screenshot." });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The screenshot attachment turn did not start.");
+
+    const result = await callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+    );
+    expect(openBotToolPayload(result.result)).toMatchObject({
+      status: "attached",
+      attachments: [{ name: "desktop-screenshot.png" }],
+    });
+
+    const message = (await service.readConversation("chief")).messages.find(
+      (candidate) => candidate.itemType === "agent_attachment" && candidate.turnId === turnId,
+    );
+    expect(message).toMatchObject({
+      author: "assistant",
+      status: "completed",
+      text: "",
+      attachments: [
+        {
+          name: "desktop-screenshot.png",
+          kind: "image",
+          mimeType: "image/png",
+          previewKind: "image",
+        },
+      ],
+    });
+    expect(service.getRuntimeSnapshot().latestMessages).not.toContainEqual(
+      expect.objectContaining({ id: message?.id }),
+    );
+    const managed = await mailbox.resolveAttachment(message?.attachments?.[0]?.id ?? "");
+    expect(managed?.path).not.toBe(screenshotPath);
+    await expect(readFile(managed?.path ?? "")).resolves.toEqual(screenshot);
+
+    const outsidePath = join(root, "outside.png");
+    await writeFile(outsidePath, screenshot);
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [outsidePath] },
+      "inside this agent's workspace or the OpenBot shared directory",
+      turnId,
+    );
+    const linkedPath = join(store.sharedRoot, "linked-outside.png");
+    await symlink(outsidePath, linkedPath);
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [linkedPath] },
+      "inside this agent's workspace or the OpenBot shared directory",
+      turnId,
+    );
+
+    const publishedPath = join(store.sharedRoot, "published-screenshot.png");
+    await writeFile(publishedPath, screenshot);
+    const publicationFailure = (event: AgentEvent) => {
+      if (
+        event.type === "conversation" &&
+        event.snapshot.messages.some((candidate) =>
+          candidate.attachments?.some((attachment) => attachment.name === "published-screenshot.png"),
+        )
+      ) {
+        throw new Error("conversation listener failed");
+      }
+    };
+    const publicationEvents: AgentEvent[] = [];
+    const recordPublicationEvent = (event: AgentEvent) => publicationEvents.push(event);
+    service.on("event", publicationFailure);
+    service.on("event", recordPublicationEvent);
+    const publicationCallId = "publication-failure-call";
+    const publicationResult = await callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [publishedPath] },
+      turnId,
+      publicationCallId,
+    );
+    service.off("event", publicationFailure);
+    service.off("event", recordPublicationEvent);
+    expect(openBotToolPayload(publicationResult.result)).toMatchObject({
+      status: "attached",
+      attachments: [{ name: "published-screenshot.png" }],
+    });
+    expect(publicationEvents).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "conversation_publication_failed",
+        message: "conversation listener failed",
+      }),
+    );
+    const publishedMessage = (await service.readConversation("chief")).messages.find((candidate) =>
+      candidate.attachments?.some((attachment) => attachment.name === "published-screenshot.png"),
+    );
+    await expect(mailbox.resolveAttachment(publishedMessage?.attachments?.[0]?.id ?? "")).resolves.not.toBeNull();
+  });
+
+  it("shares one attachment operation between concurrent retries", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    const screenshotPath = join(store.sharedRoot, "concurrent-screenshot.png");
+    await writeFile(screenshotPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    await service.sendMessage({ botId: "chief", text: "Send the screenshot once." });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The concurrent attachment turn did not start.");
+
+    const originalStore = mailbox.stageGeneratedAttachments.bind(mailbox);
+    let releaseStore: (() => void) | undefined;
+    const storeGate = new Promise<void>((resolve) => {
+      releaseStore = resolve;
+    });
+    let markStoreStarted: (() => void) | undefined;
+    const storeStarted = new Promise<void>((resolve) => {
+      markStoreStarted = resolve;
+    });
+    const storage = vi.spyOn(mailbox, "stageGeneratedAttachments").mockImplementation(async (input) => {
+      markStoreStarted?.();
+      await storeGate;
+      return originalStore(input);
+    });
+    const callId = "concurrent-attachment-call";
+    const first = callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+      callId,
+    );
+    await storeStarted;
+    const second = callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+      callId,
+    );
+    let stopCompleted = false;
+    const stopping = service.stop().then(() => {
+      stopCompleted = true;
+    });
+    await Promise.resolve();
+    expect(stopCompleted).toBe(false);
+    releaseStore?.();
+
+    const [firstResult, secondResult] = await Promise.all([first, second, stopping]);
+    expect(stopCompleted).toBe(true);
+    expect(openBotToolPayload(firstResult.result)).toEqual(openBotToolPayload(secondResult.result));
+    expect(storage).toHaveBeenCalledTimes(1);
+    expect(
+      (await service.readConversation("chief")).messages.filter(
+        (message) => message.itemType === "agent_attachment" && message.turnId === turnId,
+      ),
+    ).toHaveLength(1);
+    await expect(mailbox.listExportAttachments()).resolves.toHaveLength(1);
+  });
+
+  it("rolls back response attachments when conversation persistence fails and permits retry", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    const screenshotPath = join(store.sharedRoot, "retry-screenshot.png");
+    await writeFile(screenshotPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    await service.sendMessage({ botId: "chief", text: "Send the screenshot safely." });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The attachment rollback turn did not start.");
+
+    const callId = "stable-attachment-call";
+    const persistence = vi.spyOn(mailbox, "persistGeneratedAttachmentsWithConversation").mockImplementationOnce(() => {
+      throw new Error("conversation write failed");
+    });
+    const failed = await callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+      callId,
+    );
+    expect(failed.error?.message).toContain("conversation write failed");
+    expect((await service.readConversation("chief")).messages).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ itemType: "agent_attachment", turnId })]),
+    );
+    await expect(mailbox.listExportAttachments()).resolves.toEqual([]);
+
+    persistence.mockRestore();
+    const retried = await callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+      callId,
+    );
+    expect(openBotToolPayload(retried.result)).toMatchObject({
+      status: "attached",
+      attachments: [{ name: "retry-screenshot.png" }],
+    });
+    await expect(mailbox.listExportAttachments()).resolves.toHaveLength(1);
+    expect(
+      (await service.readConversation("chief")).messages.filter(
+        (message) => message.itemType === "agent_attachment" && message.turnId === turnId,
+      ),
+    ).toHaveLength(1);
+  });
+
   it("sends a teammate request only to the selected profile match", async () => {
     process.env.OPENBOT_FAKE_AGENT_TOOL_CALLS = JSON.stringify([
       { tool: "list_agents", arguments: {} },
@@ -3308,6 +3559,7 @@ async function callOpenBotTool(
   tool: string,
   args: unknown,
   turnId = "routine-tool-turn",
+  callId: string = randomUUID(),
 ): Promise<{ result?: unknown; error?: RpcError }> {
   const id = `openbot-tool-${randomUUID()}`;
   client.emit("request", {
@@ -3316,7 +3568,7 @@ async function callOpenBotTool(
     params: {
       threadId,
       turnId,
-      callId: randomUUID(),
+      callId,
       namespace: "openbot",
       tool,
       arguments: args,

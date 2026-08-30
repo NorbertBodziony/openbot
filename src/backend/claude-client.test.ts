@@ -84,6 +84,7 @@ fi
       const registeredTools = isDynamicRecord(serverInstance) ? serverInstance._registeredTools : null;
       expect(isDynamicRecord(registeredTools) ? Object.keys(registeredTools) : []).toEqual(
         expect.arrayContaining([
+          "attach_files_to_response",
           "remember",
           "forget_memory",
           "list_routines",

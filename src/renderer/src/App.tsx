@@ -1308,7 +1308,10 @@ export function createAppController(props: AppProps = {}) {
     const latestIncomingMessage = markNewMessagesRead
       ? [...snapshot.messages]
           .reverse()
-          .find((message) => message.author !== "user" && message.itemType !== "commentary")
+          .find(
+            (message) =>
+              message.author !== "user" && message.itemType !== "commentary" && message.itemType !== "agent_attachment",
+          )
       : undefined;
     if (latestIncomingMessage) {
       autoMarkAgentMessageRead(botId, latestIncomingMessage.id);
