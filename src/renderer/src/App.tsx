@@ -246,6 +246,7 @@ export function createAppController(props: AppProps = {}) {
   const [botList, setBotList] = createSignal<BotProfile[]>([]);
   const [modelOptions, setModelOptions] = createSignal<AgentModelOption[]>([]);
   const [activeBotId, setActiveBotId] = createSignal("");
+  const [agentChatOpenRevision, setAgentChatOpenRevision] = createSignal(0);
   const [liveMessages, setLiveMessages] = createSignal<Record<string, BotMessage[]>>({});
   const [uiErrors, setUiErrors] = createSignal<Record<string, BotMessage[]>>({});
   const [conversationLoaded, setConversationLoaded] = createSignal<Record<string, boolean>>({});
@@ -358,6 +359,7 @@ export function createAppController(props: AppProps = {}) {
     { snapshot: ConversationSnapshot; markNewMessagesRead: boolean }
   >();
   const agentChatsToMarkRead = new Set<string>();
+  let explicitlyOpenedAgentChatId: string | null = null;
   const autoReadAgentMessageIds = new Map<string, string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const conversationPageRequests = new Map<string, number>();
@@ -813,7 +815,7 @@ export function createAppController(props: AppProps = {}) {
   );
 
   createEffect(
-    () => ({ botId: activeBotId(), agentPhase: agentStatus().phase }),
+    () => ({ botId: activeBotId(), agentPhase: agentStatus().phase, openRevision: agentChatOpenRevision() }),
     ({ botId }) => {
       if (!botId) return;
       const markReadOnOpen = agentChatsToMarkRead.delete(botId);
@@ -865,7 +867,21 @@ export function createAppController(props: AppProps = {}) {
         scheduleConversation(event.snapshot, isAgentChatOpen(event.snapshot.botId));
         return;
       case "conversation-page":
-        applyConversationPage(event.page, "latest", "latest");
+        {
+          const existingUnreadCount = conversationReads()[event.page.botId]?.unreadCount ?? 0;
+          const markNewMessagesRead =
+            isAgentChatOpen(event.page.botId) &&
+            (existingUnreadCount === 0 || explicitlyOpenedAgentChatId === event.page.botId);
+          applyConversationPage(event.page, "latest", "latest");
+          const latestIncomingMessage = markNewMessagesRead
+            ? [...event.page.messages]
+                .reverse()
+                .find((message) => message.author !== "user" && message.itemType !== "commentary")
+            : undefined;
+          if (latestIncomingMessage) {
+            autoMarkAgentMessageRead(event.page.botId, latestIncomingMessage.id, existingUnreadCount === 0);
+          }
+        }
         return;
       case "conversation-invalidated":
         return;
@@ -1108,12 +1124,13 @@ export function createAppController(props: AppProps = {}) {
     return !botSetupOpen() && !activeDirectMemberId() && activeBot()?.id === botId;
   }
 
-  function autoMarkAgentMessageRead(botId: string, messageId: string): void {
+  function autoMarkAgentMessageRead(botId: string, messageId: string, optimisticallyClearUnread = false): void {
     if (autoReadAgentMessageIds.get(botId) === messageId) return;
     const current = conversationReads()[botId];
-    if (current && current.unreadCount > 0) return;
+    const hasUnread = Boolean(current && current.unreadCount > 0);
+    if (!optimisticallyClearUnread && explicitlyOpenedAgentChatId !== botId && hasUnread) return;
     autoReadAgentMessageIds.set(botId, messageId);
-    if (current) {
+    if (current && (!hasUnread || optimisticallyClearUnread)) {
       applyConversationReadState(botId, {
         unreadCount: 0,
         firstUnreadMessageId: null,
@@ -1370,6 +1387,7 @@ export function createAppController(props: AppProps = {}) {
     }
     setBotSetupDraft(createFirstBotDraft());
     setBotSetupError(null);
+    explicitlyOpenedAgentChatId = null;
     setBotSetupOpen(true);
   }
 
@@ -1393,7 +1411,9 @@ export function createAppController(props: AppProps = {}) {
     setActiveDirectMemberId(null);
     clearReplyIndicators(botId);
     agentChatsToMarkRead.add(botId);
+    explicitlyOpenedAgentChatId = botId;
     setActiveBotId(botId);
+    setAgentChatOpenRevision((current) => current + 1);
   }
 
   function setGlobalSearchVisibility(open: boolean): void {
@@ -1487,6 +1507,7 @@ export function createAppController(props: AppProps = {}) {
     if (!peopleEnabled || !currentTeamMember() || !directPeople().some((member) => member.id === memberId)) return;
     const previousBotId = activeBotId();
     if (previousBotId) pruneInactiveAgentHistory(previousBotId);
+    explicitlyOpenedAgentChatId = null;
     setBotSetupOpen(false);
     setBotSetupError(null);
     setSettingsRequest(null);
@@ -2542,6 +2563,7 @@ export function createAppController(props: AppProps = {}) {
     setBotSetupError(null);
     setSettingsRequest(null);
     setBotList([]);
+    explicitlyOpenedAgentChatId = null;
     setSidebarLayout(defaultSidebarLayout());
     setActiveBotId("");
     setActiveDirectMemberId(null);

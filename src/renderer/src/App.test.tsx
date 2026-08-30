@@ -5006,6 +5006,11 @@ describe("OpenBot connected desktop shell", () => {
         throughMessageId: "reply-island",
       }),
     );
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
   });
 
   it("stops opening a Dynamic Island message when the active server changes", async () => {
@@ -5085,6 +5090,41 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByText("Fresh remote reply")).toBeInTheDocument();
     expect(screen.getByText("Loaded earlier")).toBeInTheDocument();
+  });
+
+  it("keeps a refreshed conversation page read while its agent chat is open", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-visible",
+            author: "assistant",
+            text: "Visible remote reply",
+            createdAt: "2026-08-30T02:01:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-visible", throughMessageId: null },
+        },
+      ),
+    });
+
+    expect(await screen.findByText("Visible remote reply")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "reply-visible",
+      }),
+    );
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
   });
 
   it("rejects a permission approval and keeps the error visible", async () => {
@@ -5688,6 +5728,134 @@ describe("OpenBot connected desktop shell", () => {
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
+  it("clears unread messages when entering the already selected agent chat", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-new",
+      throughMessageId: null,
+    };
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 1,
+      readState: unreadState,
+      messages: [
+        {
+          id: "chief-new",
+          author: "assistant",
+          text: "A new reply from Chief",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+    });
+
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    await screen.findByText("A new reply from Chief");
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "chief-new",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
+  it("marks a newer reply that arrives while an opened agent chat is being marked read", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-old-reply",
+      throughMessageId: null,
+    };
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 1,
+      readState: unreadState,
+      messages: [
+        {
+          id: "chief-old-reply",
+          author: "assistant",
+          text: "First visible reply",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+    });
+    let resolveInitialMark: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    vi.mocked(window.openbot.agent.markConversationRead)
+      .mockImplementationOnce(
+        async (): Promise<NonNullable<ConversationPage["readState"]>> =>
+          await new Promise((resolve) => {
+            resolveInitialMark = resolve;
+          }),
+      )
+      .mockImplementation(async (input) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: input.throughMessageId,
+      }));
+
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "chief-old-reply",
+      }),
+    );
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "chief-old-reply",
+            author: "assistant",
+            text: "First visible reply",
+            createdAt: "2026-08-19T09:03:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "chief-newer-reply",
+            author: "assistant",
+            text: "Newer visible reply",
+            createdAt: "2026-08-19T09:04:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 2, firstUnreadMessageId: "chief-old-reply", throughMessageId: null },
+        },
+      ),
+    });
+
+    expect(await screen.findByText("Newer visible reply")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "chief-newer-reply",
+      }),
+    );
+    resolveInitialMark?.({
+      unreadCount: 0,
+      firstUnreadMessageId: null,
+      throughMessageId: "chief-old-reply",
+    });
+    await waitFor(() => expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument());
   });
 
   it("keeps the agent unread state when marking it fails", async () => {
