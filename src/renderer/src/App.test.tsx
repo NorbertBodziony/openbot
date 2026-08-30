@@ -5127,6 +5127,70 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
   });
 
+  it("does not mark an older boundary from a rejected conversation page", async () => {
+    let resolveInitialPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(
+      async (): Promise<ConversationPage> =>
+        await new Promise((resolve) => {
+          resolveInitialPage = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-newer-boundary",
+            author: "assistant",
+            text: "Newest visible reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-newer-boundary", throughMessageId: null },
+        },
+      ),
+    });
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "reply-newer-boundary",
+      }),
+    );
+
+    resolveInitialPage?.(
+      testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-older-boundary",
+            author: "assistant",
+            text: "Older reply",
+            createdAt: "2026-08-30T02:01:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 1,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-older-boundary", throughMessageId: null },
+        },
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalledWith({
+      botId: "chief",
+      throughMessageId: "reply-older-boundary",
+    });
+    expect(screen.getByText("Newest visible reply")).toBeInTheDocument();
+  });
+
   it("rejects a permission approval and keeps the error visible", async () => {
     vi.mocked(window.openbot.agent.respondToApproval).mockRejectedValueOnce(
       new Error("This approval is no longer active."),
@@ -5844,17 +5908,17 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     expect(await screen.findByText("Newer visible reply")).toBeInTheDocument();
+    resolveInitialMark?.({
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-newer-reply",
+      throughMessageId: "chief-old-reply",
+    });
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
         botId: "chief",
         throughMessageId: "chief-newer-reply",
       }),
     );
-    resolveInitialMark?.({
-      unreadCount: 1,
-      firstUnreadMessageId: "chief-newer-reply",
-      throughMessageId: "chief-old-reply",
-    });
     await waitFor(() => expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument());
   });
 

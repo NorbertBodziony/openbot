@@ -363,7 +363,7 @@ export function createAppController(props: AppProps = {}) {
   const autoReadAgentMessageIds = new Map<string, string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const conversationPageRequests = new Map<string, number>();
-  const conversationReadRequests = new Map<string, number>();
+  const conversationReadOperations = new Map<string, Promise<void>>();
   const queueSnapshotRequests = new Map<string, number>();
   const completedTurnByBot = new Map<string, string>();
   const pendingProviderConnections = new Map<AgentProviderId, ReturnType<typeof desktopAnalytics.scope>>();
@@ -833,8 +833,8 @@ export function createAppController(props: AppProps = {}) {
           if (queueSnapshotRequests.get(botId) === queueRequest) {
             setQueues((current) => ({ ...current, [botId]: queue }));
           }
-          applyConversationPage(page, "replace", "latest");
-          if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
+          const pageApplied = applyConversationPage(page, "replace", "latest");
+          if (pageApplied && markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
             void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null).catch((error) =>
               appendUiError(botId, error, "Read state failed"),
             );
@@ -873,13 +873,13 @@ export function createAppController(props: AppProps = {}) {
           const markNewMessagesRead =
             isAgentChatOpen(event.page.botId) &&
             (existingUnreadCount === 0 || explicitlyOpenedAgentChatId === event.page.botId);
-          applyConversationPage(event.page, "latest", "latest");
+          const pageApplied = applyConversationPage(event.page, "latest", "latest");
           const latestIncomingMessage = markNewMessagesRead
             ? [...event.page.messages]
                 .reverse()
                 .find((message) => message.author !== "user" && message.itemType !== "commentary")
             : undefined;
-          if (latestIncomingMessage) {
+          if (pageApplied && latestIncomingMessage) {
             autoMarkAgentMessageRead(event.page.botId, latestIncomingMessage.id, existingUnreadCount === 0);
           }
         }
@@ -1280,8 +1280,8 @@ export function createAppController(props: AppProps = {}) {
     page: ConversationPage,
     merge: "replace" | "older" | "latest",
     windowMode?: "latest" | "around",
-  ): void {
-    if (page.revision < (conversationRevisions()[page.botId] ?? -1)) return;
+  ): boolean {
+    if (page.revision < (conversationRevisions()[page.botId] ?? -1)) return false;
     const mapped = toBotMessages(page.messages);
     setLiveMessages((current) => {
       const currentMessages = current[page.botId] ?? [];
@@ -1320,6 +1320,7 @@ export function createAppController(props: AppProps = {}) {
       [page.botId]: completedTurnByBot.get(page.botId) === page.activeTurnId ? null : page.activeTurnId,
     }));
     if (page.readState) applyConversationReadState(page.botId, page.readState);
+    return true;
   }
 
   async function loadOlderAgentMessages(botId = activeBot()?.id): Promise<void> {
@@ -2019,27 +2020,31 @@ export function createAppController(props: AppProps = {}) {
   ): Promise<void> {
     if (!botId || activeServerSidebarKey() !== serverId) return;
     const requestKey = `${serverId}\0${botId}`;
-    const request = (conversationReadRequests.get(requestKey) ?? 0) + 1;
-    conversationReadRequests.set(requestKey, request);
     const boundary =
       throughMessageId ??
       liveMessages()
         [botId]?.filter((message) => !message.id.startsWith("thinking:") && !message.id.startsWith("ui-"))
         .at(-1)?.id ??
       null;
-    let state: ConversationReadState;
-    try {
-      state = await window.openbot.agent.markConversationRead({
-        botId,
-        throughMessageId: boundary,
+    const previousOperation = conversationReadOperations.get(requestKey) ?? Promise.resolve();
+    const operation = previousOperation
+      .catch(() => undefined)
+      .then(async () => {
+        if (activeServerSidebarKey() !== serverId) return;
+        const state: ConversationReadState = await window.openbot.agent.markConversationRead({
+          botId,
+          throughMessageId: boundary,
+        });
+        if (activeServerSidebarKey() !== serverId) return;
+        applyConversationReadState(botId, state);
+        clearRecentReply(botId);
       });
-    } catch (error) {
-      if (activeServerSidebarKey() !== serverId || conversationReadRequests.get(requestKey) !== request) return;
-      throw error;
+    conversationReadOperations.set(requestKey, operation);
+    try {
+      await operation;
+    } finally {
+      if (conversationReadOperations.get(requestKey) === operation) conversationReadOperations.delete(requestKey);
     }
-    if (activeServerSidebarKey() !== serverId || conversationReadRequests.get(requestKey) !== request) return;
-    applyConversationReadState(botId, state);
-    clearRecentReply(botId);
   }
 
   async function answerPrompt(answers: Record<string, string[]>): Promise<boolean> {
