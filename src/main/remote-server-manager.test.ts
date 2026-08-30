@@ -850,6 +850,40 @@ describe("Team API compatibility negotiation", () => {
     }
   });
 
+  it("treats a non-JSON binary-route failure as a request error", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-binary-request-error-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "binary-request-error");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        if (url.pathname === "/v1/compatibility") {
+          return Response.json({ appVersion: "0.3.0", protocol: { minimum: 1, maximum: 1 }, capabilities: [] });
+        }
+        return new Response("Bad gateway", {
+          status: 502,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }),
+    );
+    const manager = remoteEventManager(statePath, "0.4.0");
+
+    try {
+      await manager.initialize();
+      await expect(manager.downloadSharedFile("~/OpenBot/Shared/report.csv", "binary-request-error")).rejects.toThrow(
+        "Remote server request failed (502).",
+      );
+      expect(manager.list().find((server) => server.id === "binary-request-error")).toMatchObject({
+        state: "offline",
+        issue: null,
+      });
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("leaves connecting state after an unexpected retry failure", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-retry-error-"));
     const statePath = join(directory, "servers.json");
@@ -866,6 +900,37 @@ describe("Team API compatibility negotiation", () => {
       await manager.initialize();
       await expect(manager.retryConnection("retry-error")).rejects.toThrow("Unexpected compatibility failure");
       expect(manager.list().find((server) => server.id === "retry-error")?.state).toBe("error");
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the compatibility retry path after a timeout", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-retry-timeout-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "retry-timeout");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          appVersion: "0.5.0",
+          protocol: { minimum: 2, maximum: 2 },
+          capabilities: [],
+        }),
+      )
+      .mockRejectedValueOnce(new DOMException("The operation timed out.", "TimeoutError"));
+    vi.stubGlobal("fetch", fetchMock);
+    const manager = remoteEventManager(statePath, "0.4.0");
+
+    try {
+      await manager.initialize();
+      await expect(manager.retryConnection("retry-timeout")).rejects.toThrow();
+      await expect(manager.retryConnection("retry-timeout")).rejects.toThrow("timed out");
+      expect(manager.list().find((server) => server.id === "retry-timeout")).toMatchObject({
+        state: "incompatible",
+        issue: { code: "client_update_required", retryable: true },
+      });
     } finally {
       manager.stop();
       await rm(directory, { recursive: true, force: true });

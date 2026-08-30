@@ -447,16 +447,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async retryConnection(serverId: string): Promise<ServerSummary> {
     const server = this.#requireServer(serverId);
-    this.#issues.delete(serverId);
-    this.#compatibility.delete(serverId);
-    this.#eventAuthenticationPaused.delete(serverId);
-    this.#states.set(serverId, "connecting");
-    this.#emitChanged();
+    const blockedState = this.#issues.has(serverId) ? (this.#states.get(serverId) ?? "error") : "error";
     try {
       await this.#ensureCompatibility(server, true);
+      this.#states.set(serverId, "connecting");
+      this.#emitChanged();
       this.#restartEventConnection(serverId, true);
     } catch (error) {
-      this.#applyConnectionError(serverId, error, "error");
+      this.#applyConnectionError(serverId, error, blockedState);
       throw error;
     }
     return requiredServerSummary(this.list(), serverId);
@@ -873,13 +871,22 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (!response.ok) {
         const method = init.method ?? "GET";
         const path = new URL(input).pathname;
+        let body: unknown;
         try {
-          const value = decodeTeamProtocolV1CurrentHttpResponse(
-            method,
-            path,
-            response.status,
-            await response.clone().json(),
-          );
+          body = await response.clone().json();
+        } catch (error) {
+          if (response.headers.get("content-type")?.toLowerCase().includes("json")) {
+            throw new RemoteProtocolError(
+              "protocol_error",
+              "The host returned data that this app could not safely use.",
+              null,
+              { cause: error },
+            );
+          }
+          throw new RemoteRequestError(response.status, `Remote server request failed (${response.status}).`);
+        }
+        try {
+          const value = decodeTeamProtocolV1CurrentHttpResponse(method, path, response.status, body);
           if (!isDynamicRecord(value) || !isString(value.error)) throw new Error("Invalid error envelope.");
           throw new RemoteRequestError(response.status, value.error, isString(value.code) ? value.code : null);
         } catch (error) {
