@@ -451,7 +451,7 @@ describe("DynamicIslandCoordinator", () => {
         runtimeSnapshot({
           bots: [remoteBot],
           activeTurns: [{ botId: "research", threadId: "thread-research", turnId: "turn-current" }],
-          latestMessages: [runtimeMessage("reply-current")],
+          latestMessages: [runtimeMessage("reply-previous")],
         }),
       ),
       "local",
@@ -463,7 +463,7 @@ describe("DynamicIslandCoordinator", () => {
         threadId: "thread-research",
         turnId: "turn-current",
         messageId: "reply-current",
-        delta: " completed",
+        delta: "Fresh reply",
         createdAt: "2026-08-29T10:00:00.000Z",
         revision: 2,
       }),
