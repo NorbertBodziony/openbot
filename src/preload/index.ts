@@ -75,7 +75,16 @@ function invokeAgent<TResult>(
   payload: unknown = null,
   decoder: (value: unknown) => TResult,
 ): Promise<TResult> {
-  const request: AgentIpcRequest = { serverId: selectedServerId, payload };
+  return invokeAgentForServer(selectedServerId, channel, payload, decoder);
+}
+
+function invokeAgentForServer<TResult>(
+  serverId: string,
+  channel: string,
+  payload: unknown,
+  decoder: (value: unknown) => TResult,
+): Promise<TResult> {
+  const request: AgentIpcRequest = { serverId, payload };
   return ipcRenderer.invoke(channel, request).then(decoder);
 }
 
@@ -882,11 +891,13 @@ const openbotApi: OpenBotDesktopApi = {
     testRoutine: (input) => invokeAgent(IPC_CHANNELS.agentTestRoutine, input, decodeRoutineRun),
     listRoutineRuns: (input) => invokeAgent(IPC_CHANNELS.agentListRoutineRuns, input, decodeRoutineRuns),
     readConversation: (botId) => invokeAgent(IPC_CHANNELS.agentReadConversation, botId, decodeConversation),
-    readConversationPage: (input) => invokeAgent(IPC_CHANNELS.agentReadConversationPage, input, decodeConversationPage),
+    readConversationPage: (input, serverId = selectedServerId) =>
+      invokeAgentForServer(serverId, IPC_CHANNELS.agentReadConversationPage, input, decodeConversationPage),
     searchConversationMessages: (input) =>
       invokeAgent(IPC_CHANNELS.agentSearchConversationMessages, input, decodeConversationSearchPage),
     listConversationReads: () => invokeAgent(IPC_CHANNELS.agentListConversationReads, null, decodeReadStates),
-    markConversationRead: (input) => invokeAgent(IPC_CHANNELS.agentMarkConversationRead, input, decodeReadState),
+    markConversationRead: (input, serverId = selectedServerId) =>
+      invokeAgentForServer(serverId, IPC_CHANNELS.agentMarkConversationRead, input, decodeReadState),
     chooseAttachments: (input) => invokeAgent(IPC_CHANNELS.agentChooseAttachments, input, decodeAttachments),
     onAttachmentImport: (listener) => {
       attachmentImportListeners.add(listener);
