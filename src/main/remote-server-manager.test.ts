@@ -852,7 +852,14 @@ describe("Team API compatibility negotiation", () => {
       const headers = new Headers(init?.headers);
       expect(headers.get("OpenBot-Protocol-Version")).toBe("1");
       expect(headers.get("OpenBot-App-Version")).toBe("0.4.0");
-      return Response.json({ ok: true });
+      return Response.json({
+        phase: "ready",
+        cliVersion: "1.0.0",
+        auth: { kind: "unknown" },
+        capabilities: { chat: "ready", browser: "ready", computerUse: "ready" },
+        message: null,
+        fullAccess: true,
+      });
     });
     vi.stubGlobal("fetch", fetchMock);
     const manager = remoteEventManager(statePath, "0.4.0");
@@ -861,7 +868,7 @@ describe("Team API compatibility negotiation", () => {
       await manager.initialize();
       await expect(
         manager.request("/v1/agents/status", {}, "compatibility-headers", (value) => value),
-      ).resolves.toEqual({ ok: true });
+      ).resolves.toMatchObject({ phase: "ready" });
       expect(manager.list().find((server) => server.id === "compatibility-headers")?.compatibility).toMatchObject({
         localAppVersion: "0.4.0",
         hostAppVersion: "0.3.0",
@@ -1055,11 +1062,25 @@ describe("remote control capability discovery", () => {
             fingerprint: expectedFingerprint,
             challenge,
             signature: sign(null, Buffer.from(challenge), privateKey).toString("base64url"),
+            enabledOnLaunch: true,
             logoVersion: null,
           });
         }
         if (pathname === "/v1/join/account") {
-          return Response.json({ member: { role: "member" }, sessionToken: "session-token" });
+          return Response.json({
+            member: {
+              id: "member-id",
+              username: "member",
+              email: "member@example.com",
+              name: null,
+              avatarUrl: null,
+              role: "member",
+              createdAt: new Date().toISOString(),
+              disabled: false,
+            },
+            sessionToken: "session-token",
+            sessionExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+          });
         }
         if (pathname === "/v1/remote-screen/capabilities") {
           return Response.json({ error: "Remote control is unavailable.", code: "host_unavailable" }, { status: 503 });

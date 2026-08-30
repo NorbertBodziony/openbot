@@ -36,12 +36,12 @@ describe("Team protocol v1", () => {
     expect(
       JSON.parse(encodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/invitations/preview", clientHttpRequestFixture)),
     ).toEqual(clientHttpRequestFixture);
-    expect(decodeTeamProtocolV1HttpResponse("GET", "/v1/agents", 200, hostHttpResponseFixture)).toEqual(
+    expect(decodeTeamProtocolV1HttpResponse("GET", "/v1/me", 200, hostHttpResponseFixture)).toEqual(
       hostHttpResponseFixture,
     );
-    expect(
-      JSON.parse(encodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/agents", 200, hostHttpResponseFixture)),
-    ).toEqual(hostHttpResponseFixture);
+    expect(JSON.parse(encodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/me", 200, hostHttpResponseFixture))).toEqual(
+      hostHttpResponseFixture,
+    );
   });
 
   it("decodes bounded compatibility metadata and finds the highest common version", () => {
@@ -128,5 +128,8 @@ describe("Team protocol v1", () => {
     expect(() => decodeTeamProtocolV1HttpResponse("GET", "/v1/agents", 200, {})).toThrow(
       "Invalid Team protocol v1 HTTP response",
     );
+    expect(() =>
+      decodeTeamProtocolV1HttpResponse("GET", "/v1/me", 200, { ...hostHttpResponseFixture, role: 1 }),
+    ).toThrow("Invalid Team protocol v1 HTTP response");
   });
 });

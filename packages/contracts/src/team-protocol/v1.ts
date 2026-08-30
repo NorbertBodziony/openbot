@@ -898,7 +898,10 @@ const TEAM_PROTOCOL_V1_HTTP_CONTRACTS = {
   "GET browser-tabs": { request: "none", response: "array" },
   "GET browser-control": { request: "none", response: "object" },
   "POST browser-open": { request: "object", response: "object" },
-  "POST browser-action": { request: "object", response: "object" },
+  "POST browser-activate": { request: "object", response: "object" },
+  "POST browser-navigate": { request: "object", response: "object" },
+  "POST browser-reload": { request: "object", response: "object" },
+  "POST browser-close": { request: "object", response: "object" },
   "POST browser-preview": { request: "object", response: "object" },
   "POST browser-visible": { request: "object", response: "object" },
   "POST attachment-upload": { request: "none", response: "object" },
@@ -931,7 +934,13 @@ const TEAM_PROTOCOL_V1_HTTP_CONTRACTS = {
   "POST conversation-read": { request: "object", response: "object" },
   "POST messages": { request: "object", response: "object" },
   "GET queue": { request: "none", response: "object" },
-  "POST agent-action": { request: "object", response: "object" },
+  "POST failure-acknowledge": { request: "object", response: "object" },
+  "POST reaction": { request: "object", response: "object" },
+  "POST queue-cancel": { request: "object", response: "object" },
+  "POST queue-steer": { request: "object", response: "object" },
+  "POST queue-update": { request: "object", response: "object" },
+  "POST queue-reorder": { request: "object", response: "object" },
+  "POST interrupt": { request: "object", response: "object" },
   "POST prompt-response": { request: "object", response: "object" },
   "POST approval-response": { request: "object", response: "object" },
   "POST browser-takeover-response": { request: "object", response: "object" },
@@ -998,10 +1007,10 @@ function teamProtocolV1HttpRoute(method: string, path: string): TeamProtocolV1Ht
     "GET /v1/browser/tabs": "GET browser-tabs",
     "GET /v1/browser/control": "GET browser-control",
     "POST /v1/browser/open": "POST browser-open",
-    "POST /v1/browser/activate": "POST browser-action",
-    "POST /v1/browser/navigate": "POST browser-action",
-    "POST /v1/browser/reload": "POST browser-action",
-    "POST /v1/browser/close": "POST browser-action",
+    "POST /v1/browser/activate": "POST browser-activate",
+    "POST /v1/browser/navigate": "POST browser-navigate",
+    "POST /v1/browser/reload": "POST browser-reload",
+    "POST /v1/browser/close": "POST browser-close",
     "POST /v1/browser/preview": "POST browser-preview",
     "POST /v1/browser/visible": "POST browser-visible",
     "POST /v1/attachments": "POST attachment-upload",
@@ -1045,20 +1054,13 @@ function teamProtocolV1HttpRoute(method: string, path: string): TeamProtocolV1Ht
   if (action === "conversation/read" && method === "POST") return "POST conversation-read";
   if (action === "messages" && method === "POST") return "POST messages";
   if (action === "queue" && method === "GET") return "GET queue";
-  if (
-    method === "POST" &&
-    [
-      "failures/acknowledge",
-      "reactions",
-      "queue/cancel",
-      "queue/steer",
-      "queue/update",
-      "queue/reorder",
-      "interrupt",
-    ].includes(action)
-  ) {
-    return "POST agent-action";
-  }
+  if (method === "POST" && action === "failures/acknowledge") return "POST failure-acknowledge";
+  if (method === "POST" && action === "reactions") return "POST reaction";
+  if (method === "POST" && action === "queue/cancel") return "POST queue-cancel";
+  if (method === "POST" && action === "queue/steer") return "POST queue-steer";
+  if (method === "POST" && action === "queue/update") return "POST queue-update";
+  if (method === "POST" && action === "queue/reorder") return "POST queue-reorder";
+  if (method === "POST" && action === "interrupt") return "POST interrupt";
   return null;
 }
 
@@ -1072,50 +1074,817 @@ function matchesTeamProtocolV1HttpShape(
 }
 
 function validateTeamProtocolV1HttpRequest(route: TeamProtocolV1HttpRoute, value: TeamProtocolV1JsonObject): void {
-  const invalid = () => {
-    throw new Error("Invalid Team protocol v1 HTTP request.");
-  };
-  if (route === "POST invitation-preview" && !isString(value.inviteToken)) invalid();
-  if (route === "POST join" && (!isString(value.inviteToken) || !isString(value.username) || !isString(value.password)))
-    invalid();
-  if (route === "POST join-account" && (!isString(value.inviteToken) || !isString(value.accountTicket))) invalid();
-  if (route === "POST auth-login" && (!isString(value.username) || !isString(value.password))) invalid();
-  if (route === "POST auth-account" && !isString(value.accountTicket)) invalid();
-  if (route === "POST auth-password" && (!isString(value.currentPassword) || !isString(value.newPassword))) invalid();
-  if (route === "PUT remote-display" && !isString(value.displayId)) invalid();
-  if (
-    route === "POST direct-message" &&
-    (!isString(value.memberId) || !isString(value.text) || !isString(value.clientMessageId))
-  )
-    invalid();
-  if (route === "POST direct-conversation-read" && !isNumber(value.throughSequence)) invalid();
-  if (route === "PATCH team-member" && value.role === undefined && value.disabled === undefined) invalid();
-  if (route === "POST team-invites" && value.role !== "admin" && value.role !== "member") invalid();
-  if ((route === "POST memories" || route === "PATCH memory") && !isString(value.text)) invalid();
-  if (route === "POST conversation-read" && value.throughMessageId !== null && !isString(value.throughMessageId))
-    invalid();
+  let valid = false;
+  switch (route) {
+    case "POST invitation-preview":
+      valid = isV1Identifier(value.inviteToken);
+      break;
+    case "POST join":
+      valid =
+        isV1Identifier(value.inviteToken) &&
+        isV1LimitedString(value.username, 64) &&
+        isV1LimitedString(value.password, 256);
+      break;
+    case "POST join-account":
+      valid = isV1Identifier(value.inviteToken) && isV1Identifier(value.accountTicket);
+      break;
+    case "POST auth-login":
+      valid = isV1LimitedString(value.username, 64) && isV1LimitedString(value.password, 256);
+      break;
+    case "POST auth-account":
+      valid = isV1Identifier(value.accountTicket);
+      break;
+    case "POST auth-password":
+      valid = isV1LimitedString(value.currentPassword, 256) && isV1LimitedString(value.newPassword, 256);
+      break;
+    case "POST remote-session":
+      valid = Object.keys(value).length === 0;
+      break;
+    case "PUT remote-display":
+      valid = isV1Identifier(value.displayId);
+      break;
+    case "POST direct-message":
+      valid =
+        isV1Identifier(value.memberId) &&
+        isV1LimitedString(value.text, 20_000) &&
+        isV1Identifier(value.clientMessageId);
+      break;
+    case "POST direct-conversation-read":
+      valid = isV1NonNegativeInteger(value.throughSequence);
+      break;
+    case "POST browser-open":
+      valid =
+        isV1HttpUrl(value.url, 8_192) &&
+        isV1OptionalNullableIdentifier(value.ownerThreadId) &&
+        isV1OptionalNullableIdentifier(value.ownerBotId) &&
+        (value.focus === undefined || isBoolean(value.focus));
+      break;
+    case "POST browser-activate":
+    case "POST browser-reload":
+    case "POST browser-close":
+    case "POST browser-preview":
+      valid = isV1Identifier(value.tabId);
+      break;
+    case "POST browser-navigate":
+      valid = isV1Identifier(value.tabId) && isV1OneOf(["back", "forward"], value.direction);
+      break;
+    case "POST browser-visible":
+      valid = isBoolean(value.visible) && (value.bounds === undefined || isV1BrowserBounds(value.bounds));
+      break;
+    case "PATCH team-member":
+      valid =
+        (value.role === undefined || value.role === "admin" || value.role === "member") &&
+        (value.disabled === undefined || isBoolean(value.disabled)) &&
+        (value.role !== undefined || value.disabled !== undefined);
+      break;
+    case "POST team-invites":
+      valid =
+        (value.role === "admin" || value.role === "member") &&
+        (value.email === undefined || isV1LimitedString(value.email, 254));
+      break;
+    case "POST sidebar-action":
+      valid = isV1SidebarAction(value);
+      break;
+    case "POST agents":
+      valid =
+        isV1LimitedString(value.name, 80) &&
+        isV1BoundedString(value.description, 2_000) &&
+        isString(value.avatarSeed) &&
+        (value.avatarHue === null || isV1OneOf([0, 30, 55, 100, 150, 185, 215, 245, 280, 320], value.avatarHue)) &&
+        isV1BoundedString(value.initialMessage, 100_000);
+      break;
+    case "PATCH agent":
+      valid = isV1BotUpdate(value);
+      break;
+    case "POST memories":
+    case "PATCH memory":
+      valid = isV1BoundedString(value.text, 20_000);
+      break;
+    case "POST routines":
+      valid = isV1RoutineMutation(value, true);
+      break;
+    case "PATCH routine":
+      valid = isV1RoutineMutation(value, false);
+      break;
+    case "POST conversation-read":
+      valid = value.throughMessageId === null || isV1Identifier(value.throughMessageId);
+      break;
+    case "POST messages":
+      valid =
+        isV1BoundedString(value.text, 100_000) &&
+        (value.attachmentDraftIds === undefined || isV1IdentifierList(value.attachmentDraftIds, 10)) &&
+        isV1OptionalNullableIdentifier(value.replyToMessageId);
+      break;
+    case "POST failure-acknowledge":
+    case "POST interrupt":
+      valid = isV1Identifier(value.turnId);
+      break;
+    case "POST reaction":
+      valid = isV1Identifier(value.messageId) && (value.emoji === null || isV1BoundedString(value.emoji, 32));
+      break;
+    case "POST queue-cancel":
+      valid = isV1Identifier(value.deliveryId);
+      break;
+    case "POST queue-steer":
+      valid = isV1Identifier(value.deliveryId) && isV1Identifier(value.expectedTurnId);
+      break;
+    case "POST queue-update":
+      valid =
+        isV1Identifier(value.deliveryId) &&
+        isV1BoundedString(value.text, 100_000) &&
+        isV1IdentifierList(value.keepAttachmentIds, 10) &&
+        isV1IdentifierList(value.attachmentDraftIds, 10);
+      break;
+    case "POST queue-reorder":
+      valid = isV1IdentifierList(value.deliveryIds, 100);
+      break;
+    case "POST prompt-response":
+      valid = isV1RequestId(value.requestId) && isV1PromptAnswers(value.answers);
+      break;
+    case "POST approval-response":
+      valid = isV1RequestId(value.requestId) && isV1OneOf(["accept", "decline"], value.decision);
+      break;
+    case "POST browser-takeover-response":
+      valid = isV1RequestId(value.requestId) && isV1OneOf(["complete", "cancel"], value.decision);
+      break;
+    default:
+      valid = TEAM_PROTOCOL_V1_HTTP_CONTRACTS[route].request === "none";
+  }
+  if (!valid) throw new Error("Invalid Team protocol v1 HTTP request.");
 }
 
 function validateTeamProtocolV1HttpResponse(route: TeamProtocolV1HttpRoute, value: TeamProtocolV1JsonValue): void {
-  const invalid = () => {
-    throw new Error("Invalid Team protocol v1 HTTP response.");
-  };
-  if (route === "GET compatibility") {
-    decodeTeamProtocolSupportV1(value);
-  } else if (route === "GET team-presence" && !isTeamProtocolV1PresenceSnapshot(value)) {
-    invalid();
-  } else if (route === "GET agents" && (!Array.isArray(value) || !value.every(isV1BotSummary))) {
-    invalid();
-  } else if (
-    (route === "POST agents" || route === "PATCH agent" || route.endsWith("agent-avatar")) &&
-    !isV1BotSummary(value)
-  ) {
-    invalid();
-  } else if (route === "GET sidebar-layout" || route === "POST sidebar-action") {
-    if (!isV1SidebarLayout(value)) invalid();
-  } else if (route === "GET conversation-page" && !isV1ConversationPage(value)) {
-    invalid();
-  } else if (route === "GET queue" && !isV1QueueSnapshot(value)) {
-    invalid();
+  let valid = false;
+  switch (route) {
+    case "GET compatibility":
+      try {
+        decodeTeamProtocolSupportV1(value);
+        valid = true;
+      } catch {
+        valid = false;
+      }
+      break;
+    case "GET identity":
+      valid = value === null || isV1Identity(value);
+      break;
+    case "POST invitation-preview":
+      valid = isV1InvitePreview(value);
+      break;
+    case "POST join":
+    case "POST join-account":
+    case "POST auth-login":
+    case "POST auth-account":
+      valid = isV1JoinResult(value);
+      break;
+    case "GET me":
+    case "PATCH team-member":
+      valid = isV1TeamMember(value);
+      break;
+    case "GET team-presence":
+      valid = isTeamProtocolV1PresenceSnapshot(value);
+      break;
+    case "GET remote-capabilities":
+      valid = isV1RemoteCapabilities(value);
+      break;
+    case "POST remote-session":
+      valid = isV1RemoteSession(value);
+      break;
+    case "GET direct-threads":
+      valid = Array.isArray(value) && value.every(isV1DirectThread);
+      break;
+    case "POST direct-message":
+      valid = isTeamProtocolV1DirectMessage(value);
+      break;
+    case "GET direct-conversation":
+      valid = isV1DirectConversation(value, false);
+      break;
+    case "GET direct-conversation-page":
+      valid = isV1DirectConversation(value, true);
+      break;
+    case "POST direct-conversation-read":
+      valid = isV1DirectReadState(value);
+      break;
+    case "GET browser-tabs":
+      valid = Array.isArray(value) && value.every(isV1BrowserTab);
+      break;
+    case "GET browser-control":
+      valid = isV1BrowserControl(value);
+      break;
+    case "POST browser-open":
+      valid = isV1BrowserTab(value);
+      break;
+    case "POST browser-preview":
+      valid = isV1BrowserPreview(value);
+      break;
+    case "POST attachment-upload":
+      valid = isV1Attachment(value);
+      break;
+    case "GET team-members":
+      valid = Array.isArray(value) && value.every(isV1TeamMember);
+      break;
+    case "POST team-invites":
+      valid = isV1TeamInvite(value, true);
+      break;
+    case "GET team-invites":
+      valid = Array.isArray(value) && value.every((invite) => isV1TeamInvite(invite, false));
+      break;
+    case "GET team-sessions":
+      valid = Array.isArray(value) && value.every(isV1TeamSession);
+      break;
+    case "GET agent-status":
+      valid = isV1AgentStatus(value);
+      break;
+    case "GET sidebar-layout":
+    case "POST sidebar-action":
+      valid = isV1SidebarLayout(value);
+      break;
+    case "GET agent-usage":
+      valid = isV1AccountUsage(value);
+      break;
+    case "GET agent-models":
+      valid = Array.isArray(value) && value.every(isV1AgentModelOption);
+      break;
+    case "GET agents":
+      valid = Array.isArray(value) && value.every(isV1BotSummary);
+      break;
+    case "POST agents":
+    case "PATCH agent":
+    case "PUT agent-avatar":
+    case "DELETE agent-avatar":
+      valid = isV1BotSummary(value);
+      break;
+    case "GET conversation-reads":
+      valid = isV1ConversationReadStates(value);
+      break;
+    case "GET memories":
+      valid = Array.isArray(value) && value.every(isV1Memory);
+      break;
+    case "POST memories":
+    case "PATCH memory":
+      valid = isV1Memory(value);
+      break;
+    case "GET routines":
+      valid = Array.isArray(value) && value.every(isV1Routine);
+      break;
+    case "POST routines":
+    case "PATCH routine":
+      valid = isV1Routine(value);
+      break;
+    case "POST routine-test":
+      valid = isV1RoutineRun(value);
+      break;
+    case "GET routine-runs":
+      valid = Array.isArray(value) && value.every(isV1RoutineRun);
+      break;
+    case "GET conversation":
+      valid = isV1ConversationSnapshot(value) && isV1ConversationReadState(value.readState);
+      break;
+    case "GET conversation-page":
+      valid = isV1ConversationPage(value);
+      break;
+    case "GET message-search":
+      valid = isV1ConversationSearch(value);
+      break;
+    case "POST conversation-read":
+      valid = isV1ConversationReadState(value);
+      break;
+    case "POST messages":
+      valid = isV1QueuedMessageReceipt(value);
+      break;
+    case "GET queue":
+      valid = isV1QueueSnapshot(value);
+      break;
+    default:
+      valid = false;
   }
+  if (!valid) throw new Error("Invalid Team protocol v1 HTTP response.");
+}
+
+function isV1Identity(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.serverId) &&
+    isV1LimitedString(value.serverName, 120) &&
+    isV1LimitedString(value.fingerprint, 256) &&
+    isV1BoundedString(value.publicKey, 8_192) &&
+    isBoolean(value.enabledOnLaunch) &&
+    (value.logoVersion === null || isV1Identifier(value.logoVersion)) &&
+    (value.challenge === undefined || isV1BoundedString(value.challenge, 256)) &&
+    (value.signature === undefined || isV1BoundedString(value.signature, 512))
+  );
+}
+
+function isV1InvitePreview(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1OneOf(["admin", "member"], value.role) &&
+    isV1Timestamp(value.expiresAt) &&
+    isBoolean(value.emailBound)
+  );
+}
+
+function isV1JoinResult(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1TeamMember(value.member) &&
+    isV1LimitedString(value.sessionToken, 512) &&
+    isV1Timestamp(value.sessionExpiresAt)
+  );
+}
+
+function isV1TeamMember(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.id) &&
+    isV1LimitedString(value.username, 254) &&
+    (value.email === null || isV1LimitedString(value.email, 254)) &&
+    (value.name === null || isV1LimitedString(value.name, 120)) &&
+    (value.avatarUrl === null || isV1HttpUrl(value.avatarUrl, 2_048)) &&
+    isV1OneOf(["owner", "admin", "member"], value.role) &&
+    isV1Timestamp(value.createdAt) &&
+    isBoolean(value.disabled)
+  );
+}
+
+function isV1RemoteDisplay(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.id) &&
+    isV1LimitedString(value.label, 160) &&
+    isV1PositiveInteger(value.width) &&
+    isV1PositiveInteger(value.height) &&
+    isBoolean(value.primary)
+  );
+}
+
+function isV1RemoteCapabilities(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isBoolean(value.ready) &&
+    isV1OneOf(["darwin", "win32", "linux"], value.platform) &&
+    isBoolean(value.unattended) &&
+    value.runtime === "sunshine-moonlight" &&
+    value.protocolVersion === 2 &&
+    Array.isArray(value.displays) &&
+    value.displays.every(isV1RemoteDisplay) &&
+    (value.selectedDisplayId === null || isV1Identifier(value.selectedDisplayId)) &&
+    isV1NonNegativeInteger(value.activeSessions) &&
+    isV1PositiveInteger(value.maxSessions)
+  );
+}
+
+function isV1RemoteSession(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.id) &&
+    isV1Identifier(value.serverId) &&
+    isV1HttpUrl(value.viewerUrl, 8_192) &&
+    isV1LimitedString(value.viewerGrant, 512) &&
+    Array.isArray(value.displays) &&
+    value.displays.every(isV1RemoteDisplay) &&
+    (value.selectedDisplayId === null || isV1Identifier(value.selectedDisplayId)) &&
+    isV1OneOf(["starting_host", "connecting", "connected", "disconnecting", "error"], value.phase) &&
+    isV1OneOf(["unknown", "p2p", "relay"], value.transport) &&
+    (value.errorCode === null ||
+      isV1OneOf(
+        [
+          "host_unavailable",
+          "host_permissions_required",
+          "session_capacity_reached",
+          "session_expired",
+          "session_revoked",
+          "protocol_mismatch",
+          "connection_failed",
+        ],
+        value.errorCode,
+      )) &&
+    (value.message === null || isV1BoundedString(value.message, 2_000)) &&
+    isV1Timestamp(value.createdAt) &&
+    isV1Timestamp(value.grantExpiresAt)
+  );
+}
+
+function isV1DirectThread(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.threadId) &&
+    isV1Identifier(value.otherMemberId) &&
+    isTeamProtocolV1DirectMessage(value.lastMessage) &&
+    isV1NonNegativeInteger(value.unreadCount) &&
+    isV1Timestamp(value.updatedAt)
+  );
+}
+
+function isV1DirectConversation(value: unknown, paged: boolean): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.threadId) &&
+    isV1Identifier(value.otherMemberId) &&
+    Array.isArray(value.messages) &&
+    value.messages.every(isTeamProtocolV1DirectMessage) &&
+    isV1Revision(value.revision) &&
+    (value.readState === undefined || isV1DirectReadState(value.readState)) &&
+    (!paged || isV1PageInfo(value.pageInfo))
+  );
+}
+
+function isV1DirectReadState(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1NonNegativeInteger(value.unreadCount) &&
+    (value.firstUnreadMessageId === null || isV1Identifier(value.firstUnreadMessageId)) &&
+    isV1NonNegativeInteger(value.throughSequence)
+  );
+}
+
+function isV1BrowserTab(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.id) &&
+    isV1BoundedString(value.title, 2_000) &&
+    isV1BoundedString(value.url, 8_192) &&
+    isBoolean(value.loading) &&
+    (value.ownerThreadId === null || isV1Identifier(value.ownerThreadId)) &&
+    (value.ownerBotId === null || isV1Identifier(value.ownerBotId))
+  );
+}
+
+function isV1BrowserControl(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    Array.isArray(value.sessions) &&
+    value.sessions.every(
+      (session) =>
+        isDynamicRecord(session) &&
+        isV1Identifier(session.id) &&
+        isV1Identifier(session.threadId) &&
+        isV1Identifier(session.turnId) &&
+        isV1Identifier(session.callId) &&
+        (session.tabId === null || isV1Identifier(session.tabId)) &&
+        isV1OneOf(
+          [
+            "open",
+            "list-tabs",
+            "snapshot",
+            "click",
+            "type",
+            "key",
+            "scroll",
+            "back",
+            "forward",
+            "reload",
+            "screenshot",
+            "close-tab",
+          ],
+          session.action,
+        ) &&
+        isV1OneOf(["acting", "waiting"], session.phase) &&
+        isV1Timestamp(session.startedAt),
+    )
+  );
+}
+
+function isV1BrowserPreview(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1BoundedString(value.dataUrl, 2_000_000) &&
+    /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/u.test(value.dataUrl) &&
+    isV1PositiveInteger(value.width) &&
+    value.width <= 960 &&
+    isV1PositiveInteger(value.height) &&
+    value.height <= 600
+  );
+}
+
+function isV1TeamInvite(value: unknown, includeUrl: boolean): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.id) &&
+    isV1OneOf(["admin", "member"], value.role) &&
+    isV1Timestamp(value.expiresAt) &&
+    (value.usedAt === null || isV1Timestamp(value.usedAt)) &&
+    (value.email === null || isV1LimitedString(value.email, 254)) &&
+    (!includeUrl || isV1BoundedString(value.inviteUrl, 8_192))
+  );
+}
+
+function isV1TeamSession(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.id) &&
+    isV1Identifier(value.memberId) &&
+    isV1LimitedString(value.username, 254) &&
+    isV1Timestamp(value.createdAt) &&
+    isV1Timestamp(value.expiresAt)
+  );
+}
+
+function isV1AgentStatus(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1OneOf(["idle", "starting", "ready", "restarting", "blocked", "stopped"], value.phase) &&
+    (value.cliVersion === null || isV1BoundedString(value.cliVersion, 160)) &&
+    isTeamProtocolV1JsonObject(value.auth) &&
+    (value.providers === undefined ||
+      (Array.isArray(value.providers) && value.providers.every(isTeamProtocolV1JsonObject))) &&
+    isDynamicRecord(value.capabilities) &&
+    isV1CapabilityState(value.capabilities.chat) &&
+    isV1CapabilityState(value.capabilities.browser) &&
+    isV1CapabilityState(value.capabilities.computerUse) &&
+    (value.message === null || isV1BoundedString(value.message, 2_000)) &&
+    value.fullAccess === true
+  );
+}
+
+function isV1CapabilityState(value: unknown): boolean {
+  return isV1OneOf(["ready", "setup-required", "unavailable"], value);
+}
+
+function isV1AccountUsage(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    Array.isArray(value.limits) &&
+    value.limits.every(
+      (limit) =>
+        isDynamicRecord(limit) &&
+        isV1Identifier(limit.id) &&
+        (limit.primary === null || isV1UsageWindow(limit.primary)) &&
+        (limit.secondary === null || isV1UsageWindow(limit.secondary)),
+    )
+  );
+}
+
+function isV1UsageWindow(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isNumber(value.usedPercent) &&
+    Number.isFinite(value.usedPercent) &&
+    (value.windowDurationMins === null || isV1NonNegativeInteger(value.windowDurationMins)) &&
+    (value.resetsAt === null || (isNumber(value.resetsAt) && Number.isFinite(value.resetsAt)))
+  );
+}
+
+function isV1AgentModelOption(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1OneOf(["codex", "claude", "grok"], value.provider) &&
+    isV1BoundedString(value.id, 160) &&
+    isV1LimitedString(value.name, 160) &&
+    isV1BoundedString(value.description, 2_000) &&
+    isV1OneOf(["low", "medium", "high", "xhigh", "max"], value.defaultReasoningEffort) &&
+    Array.isArray(value.supportedReasoningEfforts) &&
+    value.supportedReasoningEfforts.every((effort) => isV1OneOf(["low", "medium", "high", "xhigh", "max"], effort))
+  );
+}
+
+function isV1ConversationReadStates(value: unknown): boolean {
+  return isDynamicRecord(value) && Object.values(value).every(isV1ConversationReadState);
+}
+
+function isV1Memory(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.id) &&
+    isV1Identifier(value.botId) &&
+    isV1BoundedString(value.text, 20_000) &&
+    isV1OneOf(["automatic", "manual"], value.origin) &&
+    (value.sourceTurnId === null || isV1Identifier(value.sourceTurnId)) &&
+    isV1Timestamp(value.createdAt) &&
+    isV1Timestamp(value.updatedAt)
+  );
+}
+
+function isV1Routine(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.id) &&
+    isV1Identifier(value.botId) &&
+    isV1LimitedString(value.name, 160) &&
+    isV1BoundedString(value.instruction, 100_000) &&
+    isBoolean(value.active) &&
+    isV1LimitedString(value.timezone, 128) &&
+    isDynamicRecord(value.trigger) &&
+    isV1Identifier(value.trigger.id) &&
+    isV1Identifier(value.trigger.routineId) &&
+    isV1RoutineSchedule(value.trigger.schedule) &&
+    isV1Timestamp(value.trigger.nextRunAt) &&
+    isV1Timestamp(value.trigger.createdAt) &&
+    isV1Timestamp(value.trigger.updatedAt) &&
+    isV1Timestamp(value.createdAt) &&
+    isV1Timestamp(value.updatedAt)
+  );
+}
+
+function isV1RoutineRun(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.id) &&
+    isV1Identifier(value.routineId) &&
+    isV1Identifier(value.botId) &&
+    (value.triggerId === null || isV1Identifier(value.triggerId)) &&
+    isV1OneOf(["scheduled", "manual"], value.kind) &&
+    isV1Timestamp(value.scheduledFor) &&
+    isV1LimitedString(value.routineName, 160) &&
+    isV1BoundedString(value.instruction, 100_000) &&
+    (value.deliveryId === null || isV1Identifier(value.deliveryId)) &&
+    isV1OneOf(
+      ["queued", "running", "needs-attention", "succeeded", "failed", "interrupted", "cancelled"],
+      value.status,
+    ) &&
+    (value.error === null || isV1BoundedString(value.error, 100_000)) &&
+    isV1Timestamp(value.createdAt) &&
+    isV1Timestamp(value.updatedAt)
+  );
+}
+
+function isV1ConversationSearch(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    Array.isArray(value.results) &&
+    value.results.every(
+      (result) => isDynamicRecord(result) && isV1Identifier(result.botId) && isV1ConversationMessage(result.message),
+    ) &&
+    isV1NonNegativeInteger(value.total) &&
+    (value.nextCursor === null || isV1BoundedString(value.nextCursor, 512))
+  );
+}
+
+function isV1QueuedMessageReceipt(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isV1Identifier(value.messageId) &&
+    Array.isArray(value.deliveries) &&
+    value.deliveries.every(
+      (delivery) =>
+        isDynamicRecord(delivery) &&
+        isV1Identifier(delivery.id) &&
+        isV1Identifier(delivery.recipientBotId) &&
+        isV1QueueStatus(delivery.status) &&
+        isV1QueuePosition(delivery.position),
+    )
+  );
+}
+
+function isV1SidebarAction(value: TeamProtocolV1JsonObject): boolean {
+  if (!isString(value.type)) return false;
+  if (value.type === "create")
+    return isV1LimitedString(value.name, 40) && (value.agentId === undefined || isV1Identifier(value.agentId));
+  if (value.type === "rename") return isV1Identifier(value.sectionId) && isV1LimitedString(value.name, 40);
+  if (value.type === "delete") return isV1Identifier(value.sectionId);
+  if (value.type === "move") {
+    return (
+      isV1Identifier(value.sectionId) &&
+      isV1OneOf(["up", "down"], value.direction) &&
+      (value.steps === undefined || isV1PositiveInteger(value.steps))
+    );
+  }
+  if (value.type === "assign")
+    return isV1Identifier(value.agentId) && (value.sectionId === null || isV1Identifier(value.sectionId));
+  return (
+    value.type === "move-agent" &&
+    isV1Identifier(value.agentId) &&
+    (value.sectionId === null || isV1Identifier(value.sectionId)) &&
+    (value.beforeAgentId === null || isV1Identifier(value.beforeAgentId))
+  );
+}
+
+function isV1BotUpdate(value: TeamProtocolV1JsonObject): boolean {
+  const fields = [
+    "name",
+    "title",
+    "description",
+    "notifications",
+    "provider",
+    "model",
+    "reasoningEffort",
+    "avatarSeed",
+    "avatarHue",
+  ];
+  if (!fields.some((field) => value[field] !== undefined)) return false;
+  return (
+    (value.name === undefined || isV1BoundedString(value.name, 80)) &&
+    (value.title === undefined || isV1BoundedString(value.title, 120)) &&
+    (value.description === undefined || isV1BoundedString(value.description, 2_000)) &&
+    (value.notifications === undefined || isBoolean(value.notifications)) &&
+    (value.provider === undefined || isV1OneOf(["codex", "claude", "grok"], value.provider)) &&
+    (value.model === undefined || isV1BoundedString(value.model, 160)) &&
+    (value.reasoningEffort === undefined ||
+      isV1OneOf(["low", "medium", "high", "xhigh", "max"], value.reasoningEffort)) &&
+    (value.avatarSeed === undefined || isV1BoundedString(value.avatarSeed, 128)) &&
+    (value.avatarHue === undefined ||
+      value.avatarHue === null ||
+      isV1OneOf([0, 30, 55, 100, 150, 185, 215, 245, 280, 320], value.avatarHue))
+  );
+}
+
+function isV1RoutineMutation(value: TeamProtocolV1JsonObject, create: boolean): boolean {
+  return (
+    (!create ||
+      (isV1LimitedString(value.name, 160) &&
+        isV1BoundedString(value.instruction, 100_000) &&
+        isBoolean(value.active) &&
+        isV1LimitedString(value.timezone, 128) &&
+        isV1RoutineSchedule(value.schedule))) &&
+    (value.name === undefined || isV1LimitedString(value.name, 160)) &&
+    (value.instruction === undefined || isV1BoundedString(value.instruction, 100_000)) &&
+    (value.active === undefined || isBoolean(value.active)) &&
+    (value.timezone === undefined || isV1LimitedString(value.timezone, 128)) &&
+    (value.schedule === undefined || isV1RoutineSchedule(value.schedule))
+  );
+}
+
+function isV1RoutineSchedule(value: unknown): boolean {
+  if (!isDynamicRecord(value) || !isString(value.kind)) return false;
+  switch (value.kind) {
+    case "hourly":
+      return isV1IntegerInRange(value.minute, 0, 59);
+    case "daily":
+    case "weekdays":
+      return isV1RoutineTime(value.time);
+    case "weekly":
+      return isV1IntegerInRange(value.weekday, 0, 6) && isV1RoutineTime(value.time);
+    case "monthly":
+      return isV1IntegerInRange(value.day, 1, 31) && isV1RoutineTime(value.time);
+    case "interval":
+      return (
+        isV1IntegerInRange(value.amount, 1, 100_000) &&
+        isV1OneOf(["minutes", "hours", "days"], value.unit) &&
+        isV1Timestamp(value.anchorAt)
+      );
+    case "advanced":
+      return (
+        Array.isArray(value.months) &&
+        value.months.length > 0 &&
+        value.months.every((month) => isV1IntegerInRange(month, 1, 12)) &&
+        isV1RoutineDays(value.days) &&
+        isV1RoutineTimeSelection(value.time)
+      );
+    case "custom":
+      return isV1LimitedString(value.expression, 512);
+    default:
+      return false;
+  }
+}
+
+function isV1RoutineDays(value: unknown): boolean {
+  if (!isDynamicRecord(value) || !isString(value.kind)) return false;
+  if (value.kind === "every-day") return true;
+  if (!Array.isArray(value.days) || value.days.length === 0) return false;
+  if (value.kind === "days-of-week") return value.days.every((day) => isV1IntegerInRange(day, 0, 6));
+  return value.kind === "days-of-month" && value.days.every((day) => isV1IntegerInRange(day, 1, 31));
+}
+
+function isV1RoutineTimeSelection(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    ((value.kind === "at-time" && isV1RoutineTime(value.time)) ||
+      (value.kind === "every" &&
+        isV1IntegerInRange(value.amount, 1, 100_000) &&
+        isV1OneOf(["minutes", "hours"], value.unit)))
+  );
+}
+
+function isV1RoutineTime(value: unknown): boolean {
+  return isString(value) && /^([01]\d|2[0-3]):[0-5]\d$/u.test(value);
+}
+
+function isV1PromptAnswers(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    Object.keys(value).length <= 32 &&
+    Object.values(value).every(
+      (answers) => Array.isArray(answers) && answers.every((answer) => isV1BoundedString(answer, 20_000)),
+    )
+  );
+}
+
+function isV1BrowserBounds(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    [value.x, value.y, value.width, value.height].every((item) => isNumber(item) && Number.isFinite(item))
+  );
+}
+
+function isV1PageInfo(value: unknown): boolean {
+  return (
+    isDynamicRecord(value) &&
+    isBoolean(value.hasOlder) &&
+    (value.olderCursor === null || isV1BoundedString(value.olderCursor, 512))
+  );
+}
+
+function isV1OptionalNullableIdentifier(value: unknown): boolean {
+  return value === undefined || value === null || isV1Identifier(value);
+}
+
+function isV1NonNegativeInteger(value: unknown): value is number {
+  return isNumber(value) && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isV1PositiveInteger(value: unknown): value is number {
+  return isNumber(value) && Number.isSafeInteger(value) && value > 0;
+}
+
+function isV1IntegerInRange(value: unknown, minimum: number, maximum: number): value is number {
+  return isNumber(value) && Number.isSafeInteger(value) && value >= minimum && value <= maximum;
 }
