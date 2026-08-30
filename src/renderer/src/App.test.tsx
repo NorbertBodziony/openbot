@@ -2718,6 +2718,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     const trigger = screen.getByRole("button", { name: "Agent model: Luna" });
+    await waitFor(() => expect(trigger).toBeEnabled());
 
     emitAgentEvent?.({
       type: "turn-started",
@@ -5794,7 +5795,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
   });
 
-  it("clears unread messages when entering the already selected agent chat", async () => {
+  it("clears unread messages in the selected agent chat when queue loading fails", async () => {
     const unreadState = {
       unreadCount: 1,
       firstUnreadMessageId: "chief-new",
@@ -5817,6 +5818,7 @@ describe("OpenBot connected desktop shell", () => {
         },
       ],
     });
+    vi.mocked(window.openbot.agent.listQueue).mockRejectedValue(new Error("Queue unavailable"));
 
     render(() => <App />);
     expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
@@ -5831,6 +5833,70 @@ describe("OpenBot connected desktop shell", () => {
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
+  it("preserves explicit read intent when an agent status change supersedes the page request", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-status-reply",
+      throughMessageId: null,
+    };
+    const unreadPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "chief-status-reply",
+          author: "assistant",
+          text: "Reply visible after status change",
+          createdAt: "2026-08-19T09:05:00.000Z",
+          status: "completed",
+        },
+      ],
+      { readState: unreadState },
+    );
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: unreadPage.threadId,
+      activeTurnId: null,
+      revision: unreadPage.revision,
+      readState: unreadState,
+      messages: unreadPage.messages,
+    });
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+
+    let resolveFirstPage: ((page: ConversationPage) => void) | undefined;
+    let resolveSecondPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.openbot.agent.readConversationPage)
+      .mockImplementationOnce(
+        async (): Promise<ConversationPage> =>
+          await new Promise((resolve) => {
+            resolveFirstPage = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        async (): Promise<ConversationPage> =>
+          await new Promise((resolve) => {
+            resolveSecondPage = resolve;
+          }),
+      );
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() => expect(resolveFirstPage).toBeDefined());
+
+    const currentStatus = await window.openbot.agent.getStatus();
+    emitAgentEvent?.({ type: "status", status: { ...currentStatus, phase: "starting" } });
+    await waitFor(() => expect(resolveSecondPage).toBeDefined());
+    resolveFirstPage?.(unreadPage);
+    resolveSecondPage?.(unreadPage);
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
+        botId: "chief",
+        throughMessageId: "chief-status-reply",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
   });
 
   it("marks a newer reply that arrives while an opened agent chat is being marked read", async () => {

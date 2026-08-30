@@ -819,20 +819,15 @@ export function createAppController(props: AppProps = {}) {
     () => ({ botId: activeBotId(), agentPhase: agentStatus().phase, openRevision: agentChatOpenRevision() }),
     ({ botId }) => {
       if (!botId) return;
-      const markReadOnOpen = agentChatsToMarkRead.delete(botId);
       const pageRequest = (conversationPageRequests.get(botId) ?? 0) + 1;
       conversationPageRequests.set(botId, pageRequest);
       const queueRequest = (queueSnapshotRequests.get(botId) ?? 0) + 1;
       queueSnapshotRequests.set(botId, queueRequest);
-      void Promise.all([
-        window.openbot.agent.readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 }),
-        window.openbot.agent.listQueue(botId),
-      ])
-        .then(([page, queue]) => {
+      void window.openbot.agent
+        .readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 })
+        .then((page) => {
           if (conversationPageRequests.get(botId) !== pageRequest) return;
-          if (queueSnapshotRequests.get(botId) === queueRequest) {
-            setQueues((current) => ({ ...current, [botId]: queue }));
-          }
+          const markReadOnOpen = agentChatsToMarkRead.delete(botId);
           const pageApplied = applyConversationPage(page, "replace", "latest");
           if (pageApplied && markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
             void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null).catch((error) =>
@@ -841,6 +836,13 @@ export function createAppController(props: AppProps = {}) {
           }
         })
         .catch((error) => appendUiError(botId, error, "Load failed"));
+      void window.openbot.agent
+        .listQueue(botId)
+        .then((queue) => {
+          if (queueSnapshotRequests.get(botId) !== queueRequest) return;
+          setQueues((current) => ({ ...current, [botId]: queue }));
+        })
+        .catch((error) => appendUiError(botId, error, "Queue load failed"));
     },
   );
 
