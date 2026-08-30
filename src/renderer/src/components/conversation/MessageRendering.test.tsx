@@ -692,13 +692,16 @@ describe("ImageGeneration", () => {
   });
 
   it("shows the failure mark when the preview cannot load", async () => {
+    const onDownload = vi.fn();
     render(() => (
       <ImageGeneration
         status="completed"
+        presentation="attachment"
         prompt="A quiet observatory"
         resolution="1024 × 1024"
         aspectRatio="square"
         attachment={attachment}
+        onDownload={onDownload}
       />
     ));
 
@@ -707,6 +710,8 @@ describe("ImageGeneration", () => {
     expect(screen.getByRole("img", { name: "Image unavailable" })).toBeInTheDocument();
     expect(screen.getByText("×")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Download generated-image.png" }));
+    expect(onDownload).toHaveBeenCalledWith(attachment);
   });
 
   it.each([

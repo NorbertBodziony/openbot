@@ -115,7 +115,7 @@ export function ImageGeneration(props: ImageGenerationProps) {
             />
           </Button>
         </Show>
-        <Show when={hasImage() && props.attachment && props.onDownload}>
+        <Show when={props.status === "completed" && props.attachment && props.onDownload}>
           <Button
             variant="ghost"
             type="button"

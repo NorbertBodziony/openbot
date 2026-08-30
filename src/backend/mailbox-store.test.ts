@@ -23,6 +23,17 @@ afterEach(async () => {
 });
 
 describe("MailboxStore", () => {
+  it("preserves the extension when it shortens a long attachment name", async () => {
+    const source = join(root, `${"screenshot-".repeat(19)}capture.png`);
+    await writeFile(source, "image bytes");
+
+    const [draft] = await store.prepareAttachments([source]);
+
+    expect(draft.name).toHaveLength(180);
+    expect(draft).toMatchObject({ kind: "image", mimeType: "image/png", previewKind: "image" });
+    expect(draft.name.endsWith(".png")).toBe(true);
+  });
+
   it("keeps runtime queues small and excludes queued work", async () => {
     const source = join(root, "runtime.txt");
     await writeFile(source, "runtime attachment");

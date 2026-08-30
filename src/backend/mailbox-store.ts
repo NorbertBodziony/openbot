@@ -1373,7 +1373,11 @@ function sanitizeName(path: string): string {
     .replace(/[^\p{L}\p{N}._ -]+/gu, "-")
     .replace(/^\.+/, "")
     .trim();
-  return value.slice(0, 180) || "attachment";
+  if (!value) return "attachment";
+  const extension = extname(value);
+  if (!extension || extension.length >= 180) return value.slice(0, 180);
+  const stem = value.slice(0, -extension.length);
+  return `${stem.slice(0, 180 - extension.length)}${extension}`;
 }
 
 function safeArchiveSegment(value: string): string {
