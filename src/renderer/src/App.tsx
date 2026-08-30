@@ -359,6 +359,7 @@ export function createAppController(props: AppProps = {}) {
     { snapshot: ConversationSnapshot; markNewMessagesRead: boolean }
   >();
   const agentChatsToMarkRead = new Set<string>();
+  const agentChatsRetriedOnOpen = new Set<string>();
   let explicitlyOpenedAgentChatId: string | null = null;
   const autoReadAgentMessageIds = new Map<string, string>();
   const agentChatsToRetryRead = new Set<string>();
@@ -830,9 +831,13 @@ export function createAppController(props: AppProps = {}) {
           if (conversationPageRequests.get(botId) !== pageRequest) return;
           const pageApplied = applyConversationPage(page, "replace", "latest");
           if (!pageApplied) {
-            if (agentChatsToMarkRead.has(botId)) setAgentChatOpenRevision((current) => current + 1);
+            if (agentChatsToMarkRead.has(botId) && !agentChatsRetriedOnOpen.has(botId)) {
+              agentChatsRetriedOnOpen.add(botId);
+              setAgentChatOpenRevision((current) => current + 1);
+            }
             return;
           }
+          agentChatsRetriedOnOpen.delete(botId);
           const markReadOnOpen = agentChatsToMarkRead.delete(botId);
           if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
             void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null).catch((error) =>
@@ -879,6 +884,7 @@ export function createAppController(props: AppProps = {}) {
           const existingUnreadCount = conversationReads()[event.page.botId]?.unreadCount ?? 0;
           const markNewMessagesRead =
             isAgentChatOpen(event.page.botId) &&
+            (event.page.readState === undefined || event.page.readState.unreadCount > 0) &&
             (existingUnreadCount === 0 ||
               explicitlyOpenedAgentChatId === event.page.botId ||
               agentChatsToRetryRead.has(event.page.botId));
@@ -1448,6 +1454,7 @@ export function createAppController(props: AppProps = {}) {
     setActiveDirectMemberId(null);
     clearReplyIndicators(botId);
     agentChatsToMarkRead.add(botId);
+    agentChatsRetriedOnOpen.delete(botId);
     explicitlyOpenedAgentChatId = botId;
     setActiveBotId(botId);
     setAgentChatOpenRevision((current) => current + 1);
@@ -2614,6 +2621,7 @@ export function createAppController(props: AppProps = {}) {
     setBotSetupError(null);
     setSettingsRequest(null);
     setBotList([]);
+    agentChatsRetriedOnOpen.clear();
     explicitlyOpenedAgentChatId = null;
     setSidebarLayout(defaultSidebarLayout());
     setActiveBotId("");

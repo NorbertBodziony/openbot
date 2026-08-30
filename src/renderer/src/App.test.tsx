@@ -5158,6 +5158,35 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument();
   });
 
+  it("does not persist a redundant read for an already-read refreshed page", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-already-read",
+            author: "assistant",
+            text: "Historical visible reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-already-read" },
+        },
+      ),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument();
+  });
+
   it("retries an automatic read for the same message after persistence fails", async () => {
     vi.mocked(window.openbot.agent.markConversationRead).mockRejectedValueOnce(new Error("Read unavailable"));
     render(() => <App />);
@@ -5321,6 +5350,44 @@ describe("OpenBot connected desktop shell", () => {
       throughMessageId: "reply-stale-revision",
     });
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("limits stale chat-open reloads to one retry", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-applied-revision",
+            author: "assistant",
+            text: "Applied revision reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-applied-revision" },
+        },
+      ),
+    });
+    await screen.findByText("Applied revision reply");
+    const stalePage = testConversationPage("chief", [], {
+      revision: 1,
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    const callsBeforeOpen = vi.mocked(window.openbot.agent.readConversationPage).mock.calls.length;
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(stalePage);
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() => expect(window.openbot.agent.readConversationPage).toHaveBeenCalledTimes(callsBeforeOpen + 2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.openbot.agent.readConversationPage).toHaveBeenCalledTimes(callsBeforeOpen + 2);
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
   });
 
   it("rejects a permission approval and keeps the error visible", async () => {
