@@ -724,7 +724,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       body: Buffer.from(bytes),
     });
     const value = decodeTeamProtocolV1CurrentHttpResponse("POST", url.pathname, response.status, await response.json());
-    if (!response.ok) throw new Error(responseError(value, "Attachment upload failed."));
     return addRemotePreviewUrls(decodeDraftAttachment(value), server.id);
   }
 
@@ -748,9 +747,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       response.status,
       await response.json(),
     );
-    if (!response.ok) {
-      throw new Error(responseError(value, "Agent avatar update failed."));
-    }
     return addRemotePreviewUrls(decodeBotSummary(value), server.id);
   }
 
@@ -763,7 +759,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const url = new URL(`/v1/agents/${encodeURIComponent(botId)}/avatar`, server.apiUrl);
     if (version) url.searchParams.set("v", version);
     const response = await this.#fetch(server, url);
-    if (!response.ok) throw new Error("Agent avatar download failed.");
     return {
       bytes: new Uint8Array(await response.arrayBuffer()),
       mimeType: response.headers.get("content-type") ?? "application/octet-stream",
@@ -776,7 +771,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const url = new URL("/v1/team/logo", server.apiUrl);
     url.searchParams.set("v", version);
     const response = await this.#fetch(server, url);
-    if (!response.ok) throw new Error("Server logo download failed.");
     const bytes = new Uint8Array(await response.arrayBuffer());
     const mimeType = response.headers.get("content-type")?.split(";", 1)[0]?.trim() ?? "";
     if (!isValidAvatarImage(mimeType, bytes)) throw new Error("Server logo response is invalid.");
@@ -793,19 +787,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }> {
     const server = this.#requireServer(serverId);
     const response = await this.#fetch(server, `${server.apiUrl}/v1/attachments/${encodeURIComponent(attachmentId)}`);
-    if (!response.ok) {
-      throw new Error(
-        responseError(
-          decodeTeamProtocolV1CurrentHttpResponse(
-            "GET",
-            "/v1/attachments/item",
-            response.status,
-            await response.json(),
-          ),
-          "Attachment download failed.",
-        ),
-      );
-    }
     const disposition = response.headers.get("content-disposition") ?? "";
     const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
     return {
@@ -823,14 +804,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const url = new URL("/v1/shared-files", server.apiUrl);
     url.searchParams.set("path", sharedPath);
     const response = await this.#fetch(server, url);
-    if (!response.ok) {
-      throw new Error(
-        responseError(
-          decodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/shared-files", response.status, await response.json()),
-          "Shared file download failed.",
-        ),
-      );
-    }
     const disposition = response.headers.get("content-disposition") ?? "";
     const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
     return {
@@ -849,14 +822,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     url.searchParams.set("botId", botId);
     url.searchParams.set("path", workspacePath);
     const response = await this.#fetch(server, url);
-    if (!response.ok) {
-      throw new Error(
-        responseError(
-          decodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/workspace-files", response.status, await response.json()),
-          "Workspace file download failed.",
-        ),
-      );
-    }
     const disposition = response.headers.get("content-disposition") ?? "";
     const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
     return {
@@ -905,14 +870,27 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       headers.set(TEAM_PROTOCOL_VERSION_HEADER, String(compatibility.negotiatedProtocol));
       if (this.#appVersion) headers.set(TEAM_APP_VERSION_HEADER, this.#appVersion);
       const response = await remoteFetch(input, { ...init, headers });
-      if (response.status === 400 || response.status === 401 || response.status === 403 || response.status === 426) {
-        const value = await response
-          .clone()
-          .json()
-          .catch(() => undefined);
-        const message = responseError(value, `Remote server request failed (${response.status}).`);
-        const code = isDynamicRecord(value) && isString(value.code) ? value.code : null;
-        throw new RemoteRequestError(response.status, message, code);
+      if (!response.ok) {
+        const method = init.method ?? "GET";
+        const path = new URL(input).pathname;
+        try {
+          const value = decodeTeamProtocolV1CurrentHttpResponse(
+            method,
+            path,
+            response.status,
+            await response.clone().json(),
+          );
+          if (!isDynamicRecord(value) || !isString(value.error)) throw new Error("Invalid error envelope.");
+          throw new RemoteRequestError(response.status, value.error, isString(value.code) ? value.code : null);
+        } catch (error) {
+          if (error instanceof RemoteRequestError) throw error;
+          throw new RemoteProtocolError(
+            "protocol_error",
+            "The host returned data that this app could not safely use.",
+            null,
+            { cause: error },
+          );
+        }
       }
       return response;
     } catch (error) {
@@ -2204,11 +2182,6 @@ function decodeRemoteDesktopDisplays(value: unknown): RemoteDesktopCapabilities[
       primary: requiredBoolean(display, "primary"),
     };
   });
-}
-
-function responseError(value: unknown, fallback: string): string {
-  if (isDynamicRecord(value) && isString(value.error)) return value.error;
-  return fallback;
 }
 
 function requiredServerSummary(servers: ServerSummary[], serverId: string): ServerSummary {

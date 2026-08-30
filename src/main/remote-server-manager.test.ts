@@ -770,6 +770,44 @@ function remoteEventManager(statePath: string, appVersion?: string): RemoteServe
 }
 
 describe("Team API compatibility negotiation", () => {
+  it("fails closed when a binary route returns malformed protocol metadata", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-binary-protocol-error-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "binary-protocol-error");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        if (url.pathname === "/v1/compatibility") {
+          return Response.json({ appVersion: "0.3.0", protocol: { minimum: 1, maximum: 1 }, capabilities: [] });
+        }
+        return Response.json(
+          {
+            error: "Update required.",
+            code: "client_update_required",
+            host: { appVersion: "0.3.0", protocol: { minimum: 2, maximum: 1 }, capabilities: [] },
+          },
+          { status: 426 },
+        );
+      }),
+    );
+    const manager = remoteEventManager(statePath, "0.4.0");
+
+    try {
+      await manager.initialize();
+      await expect(manager.downloadSharedFile("~/OpenBot/Shared/report.csv", "binary-protocol-error")).rejects.toThrow(
+        "could not safely use",
+      );
+      expect(manager.list().find((server) => server.id === "binary-protocol-error")).toMatchObject({
+        state: "error",
+        issue: { code: "protocol_error" },
+      });
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("leaves connecting state after an unexpected retry failure", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-retry-error-"));
     const statePath = join(directory, "servers.json");
