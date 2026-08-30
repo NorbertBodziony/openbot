@@ -953,9 +953,11 @@ function ApprovalContent(props: {
         <Button size="sm" variant="ghost" onClick={() => respond("decline")}>
           Decline
         </Button>
-        <Button size="sm" onClick={() => respond("accept")}>
-          Approve
-        </Button>
+        <Show when={!props.item.truncated}>
+          <Button size="sm" onClick={() => respond("accept")}>
+            Approve
+          </Button>
+        </Show>
       </div>
     </div>
   );

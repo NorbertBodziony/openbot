@@ -64,6 +64,7 @@ export interface DynamicIslandApprovalItem {
   bot: DynamicIslandBotIdentity;
   title: string;
   detail: string | null;
+  truncated: boolean;
   approval: {
     kind: AgentApprovalKind;
     command: string | null;
@@ -239,6 +240,7 @@ function isApprovalItem(value: unknown): value is DynamicIslandApprovalItem {
     isBotIdentity(value.bot) &&
     isShortString(value.title, 180) &&
     isNullableShortString(value.detail, 600) &&
+    isBoolean(value.truncated) &&
     isApproval(value.approval)
   );
 }

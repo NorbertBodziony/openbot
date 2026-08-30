@@ -749,6 +749,7 @@ describe.sequential("AgentService", () => {
     );
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot: service.getRuntimeSnapshot() })).toBe(true);
     expect(service.getRuntimeSnapshot().pendingApprovals[0]?.reason).toHaveLength(AGENT_RUNTIME_TEXT_LIMIT);
+    expect(service.getRuntimeSnapshot().pendingApprovals[0]?.truncated).toBe(true);
 
     await service.respondToApproval({ requestId: "approval-command", decision: "accept" });
     expect(client.responses).toEqual([{ id: "approval-command", result: { decision: "accept" } }]);

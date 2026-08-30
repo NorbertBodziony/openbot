@@ -43,6 +43,7 @@ function criticalPresentation(
         bot,
         title: "Approve",
         detail: "Review the request.",
+        truncated: false,
         approval: {
           kind: "command",
           command: "bun test",
@@ -190,6 +191,47 @@ describe("dynamic island window geometry", () => {
     expect(windows[0]?.destroy).toHaveBeenCalledOnce();
     expect(controller.overlayRendererIds).toEqual(new Set([81]));
     expect(error).toHaveBeenCalledWith("Unable to load Dynamic Island on display 1:", expect.any(Error));
+  });
+
+  it("does not recreate overlays when disabling during display loading", async () => {
+    const root = await temporaryRoot();
+    const windows: FakeWindow[] = [];
+    let releaseLoad: () => void = () => undefined;
+    let markLoadStarted: () => void = () => undefined;
+    const loadStarted = new Promise<void>((resolve) => {
+      markLoadStarted = resolve;
+    });
+    const firstLoad = new Promise<void>((resolve) => {
+      releaseLoad = resolve;
+    });
+    const controller = new DynamicIslandWindowController({
+      platform: "darwin",
+      preferencePath: join(root, "preference.json"),
+      createWindow: (bounds) => {
+        const window = new FakeWindow(90 + windows.length, bounds);
+        windows.push(window);
+        // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
+        return window as unknown as BrowserWindow;
+      },
+      loadWindow: async () => {
+        if (windows.length !== 1) return;
+        markLoadStarted();
+        await firstLoad;
+      },
+      getDisplays: () => [display({ id: 1, internal: true }), display({ id: 2, internal: false })],
+      getMainWindow: () => null,
+      performHaptic: () => undefined,
+      performCriticalAction: async () => undefined,
+    });
+
+    const initialize = controller.initialize();
+    await loadStarted;
+    const disable = controller.setPreference(preference({ enabled: false }));
+    releaseLoad();
+    await Promise.all([initialize, disable]);
+
+    expect(controller.overlayRendererIds).toEqual(new Set());
+    expect(windows.every((window) => window.destroy.mock.calls.length === 1)).toBe(true);
   });
 
   it("serializes preference writes in invocation order", async () => {

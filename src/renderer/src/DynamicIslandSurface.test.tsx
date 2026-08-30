@@ -311,6 +311,7 @@ function approvalPresentation(requestId: string): DynamicIslandPresentation {
       bot: RESEARCH,
       title: "Command needs review",
       detail: "Run the test suite.",
+      truncated: false,
       approval: {
         kind: "command",
         command: "bun test",

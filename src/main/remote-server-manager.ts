@@ -982,21 +982,24 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async #refreshLegacyAgentState(serverId: string): Promise<void> {
     const generation = this.#advanceEventGeneration(serverId);
     const bots = await this.request("/v1/agents", {}, serverId, decodeBotSummaries);
-    const snapshots = await Promise.all(
-      bots.map(async (bot) => {
-        const [conversation, queue] = await Promise.all([
-          this.readAgentConversation(bot.id, serverId),
-          this.request(`/v1/agents/${encodeURIComponent(bot.id)}/queue`, {}, serverId, decodeQueueSnapshot),
-        ]);
-        return { conversation, queue };
-      }),
-    );
     if (this.#eventGenerations.get(serverId) !== generation) return;
     this.emit("agent", serverId, { type: "bots-changed", bots });
-    for (const { conversation, queue } of snapshots) {
-      this.emit("agent", serverId, { type: "conversation", snapshot: conversation });
-      this.emit("agent", serverId, { type: "queue-changed", snapshot: queue });
-    }
+    await Promise.all(
+      bots.map(async (bot) => {
+        try {
+          const [page, queue] = await Promise.all([
+            this.readAgentConversationPage(bot.id, { type: "latest" }, 1, serverId),
+            this.request(`/v1/agents/${encodeURIComponent(bot.id)}/queue`, {}, serverId, decodeQueueSnapshot),
+          ]);
+          if (this.#eventGenerations.get(serverId) !== generation) return;
+          const { pageInfo: _, references: __, readState: ___, ...snapshot } = page;
+          this.emit("agent", serverId, { type: "conversation", snapshot });
+          this.emit("agent", serverId, { type: "queue-changed", snapshot: queue });
+        } catch {
+          // A failed bot refresh must not discard the server or other bots.
+        }
+      }),
+    );
   }
 
   #advanceEventGeneration(serverId: string): number {

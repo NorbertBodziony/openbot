@@ -1025,17 +1025,8 @@ export interface AgentRuntimePromptQuestion {
   options: Array<{ label: string; description: string }> | null;
 }
 
-export interface AgentRuntimeApproval {
-  requestId: string | number;
-  botId: string;
-  threadId: string;
-  turnId: string;
-  kind: AgentApprovalKind;
-  command: string | null;
-  cwd: string | null;
-  reason: string | null;
-  grantRoot: string | null;
-  permissions: AgentApprovalPermissions | null;
+export interface AgentRuntimeApproval extends AgentApproval {
+  truncated: boolean;
 }
 
 export interface RespondToApprovalInput {
@@ -1378,6 +1369,7 @@ function isRuntimeApproval(value: unknown): value is AgentRuntimeApproval {
     isNullableBoundedString(value.cwd, AGENT_RUNTIME_TEXT_LIMIT) &&
     isNullableBoundedString(value.reason, AGENT_RUNTIME_TEXT_LIMIT) &&
     isNullableBoundedString(value.grantRoot, AGENT_RUNTIME_TEXT_LIMIT) &&
+    isBoolean(value.truncated) &&
     (value.permissions === null || isRuntimeApprovalPermissions(value.permissions))
   );
 }

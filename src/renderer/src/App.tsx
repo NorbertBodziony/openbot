@@ -70,7 +70,7 @@ import { readPanelWidth } from "./components/PanelResizer";
 import type { SidebarAgentState } from "./components/Sidebar";
 import { Toaster } from "./components/ui";
 import type { BotMessage, BotProfile } from "./data";
-import { DynamicIslandCoordinator, queueSnapshotsFromRuntimeWork } from "./dynamic-island-coordinator";
+import { DynamicIslandCoordinator, reconcileQueuesWithRuntimeWork } from "./dynamic-island-coordinator";
 import {
   normalizeSidebarPeopleOrder,
   readSidebarPeopleOrder,
@@ -982,7 +982,13 @@ export function createAppController(props: AppProps = {}) {
   function applyAgentRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): void {
     setActiveTurns(Object.fromEntries(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])));
     setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])));
-    setQueues((current) => ({ ...queueSnapshotsFromRuntimeWork(snapshot.work), ...current }));
+    setQueues((current) =>
+      reconcileQueuesWithRuntimeWork(
+        current,
+        snapshot.work,
+        new Map(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])),
+      ),
+    );
     setPendingPrompts((current) => {
       const next = snapshot.attentionComplete ? {} : { ...current };
       const submitted = submittedPromptRequests();

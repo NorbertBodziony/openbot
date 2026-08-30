@@ -1085,7 +1085,7 @@ describe("OpenBot connected desktop shell", () => {
       type: "runtime-snapshot",
       snapshot: {
         bots: [],
-        activeTurns: [],
+        activeTurns: [{ botId: "chief", threadId: "thread-chief", turnId: "turn-running" }],
         work: [],
         latestMessages: [],
         attentionComplete: false,
@@ -1102,12 +1102,12 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({
       ...runtimeSnapshot,
-      snapshot: { ...runtimeSnapshot.snapshot, attentionComplete: true },
+      snapshot: { ...runtimeSnapshot.snapshot, activeTurns: [], attentionComplete: true },
     });
     await waitFor(() =>
       expect(screen.queryByRole("textbox", { name: "Custom answer for: Which scope?" })).not.toBeInTheDocument(),
     );
-    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
   });
 
   it("merges compact runtime attention into the active server", async () => {
@@ -1132,6 +1132,7 @@ describe("OpenBot connected desktop shell", () => {
             turnId: "turn-runtime",
             kind: "command",
             command: "bun test",
+            truncated: false,
             cwd: null,
             reason: null,
             grantRoot: null,

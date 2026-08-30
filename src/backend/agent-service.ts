@@ -4096,8 +4096,20 @@ function compactRuntimeQuestion(
 }
 
 function compactRuntimeApproval(approval: AgentApproval): AgentRuntimeSnapshot["pendingApprovals"][number] {
+  const pathTruncated = (path: string) => path.length > AGENT_RUNTIME_TEXT_LIMIT;
   return {
     ...approval,
+    truncated:
+      [approval.command, approval.cwd, approval.reason, approval.grantRoot].some(
+        (value) => value !== null && value.length > AGENT_RUNTIME_TEXT_LIMIT,
+      ) ||
+      Boolean(
+        approval.permissions &&
+          (approval.permissions.fileSystem.read.length > AGENT_RUNTIME_PERMISSION_PATHS_LIMIT ||
+            approval.permissions.fileSystem.write.length > AGENT_RUNTIME_PERMISSION_PATHS_LIMIT ||
+            approval.permissions.fileSystem.read.some(pathTruncated) ||
+            approval.permissions.fileSystem.write.some(pathTruncated)),
+      ),
     command: approval.command?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
     cwd: approval.cwd?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
     reason: approval.reason?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
@@ -4141,6 +4153,7 @@ function fitRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): AgentRuntimeSnapsho
   }));
   snapshot.pendingApprovals = snapshot.pendingApprovals.map((approval) => ({
     ...approval,
+    truncated: true,
     command: approval.command?.slice(0, 80) ?? null,
     cwd: approval.cwd?.slice(0, 80) ?? null,
     reason: approval.reason?.slice(0, 80) ?? null,

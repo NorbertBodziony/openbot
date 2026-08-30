@@ -31,6 +31,8 @@ export class DynamicIslandWindowController {
   readonly #windows = new Map<number, BrowserWindow>();
   readonly #criticalActions = new Map<string, Promise<void>>();
   #preferenceMutation = Promise.resolve();
+  #windowReconciliation = Promise.resolve();
+  #destroyed = false;
 
   constructor(options: DynamicIslandWindowControllerOptions) {
     this.#options = options;
@@ -127,8 +129,14 @@ export class DynamicIslandWindowController {
     return created;
   }
 
-  async reconcileWindow(): Promise<void> {
-    if (this.#options.platform !== "darwin" || !this.#preference.enabled) {
+  reconcileWindow(): Promise<void> {
+    const reconciliation = this.#windowReconciliation.then(() => this.#reconcileWindows());
+    this.#windowReconciliation = reconciliation.catch(() => undefined);
+    return reconciliation;
+  }
+
+  async #reconcileWindows(): Promise<void> {
+    if (this.#destroyed || this.#options.platform !== "darwin" || !this.#preference.enabled) {
       this.destroyWindows();
       return;
     }
@@ -144,6 +152,7 @@ export class DynamicIslandWindowController {
     }
 
     for (const display of displays) {
+      if (this.#destroyed) return;
       const bounds = dynamicIslandWindowBounds(display);
       const current = this.#windows.get(display.id);
       if (current && !current.isDestroyed()) {
@@ -188,6 +197,7 @@ export class DynamicIslandWindowController {
   }
 
   destroy(): void {
+    this.#destroyed = true;
     this.destroyWindows();
   }
 

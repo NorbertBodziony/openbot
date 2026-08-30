@@ -162,6 +162,19 @@ function collectAttention(
         bot: botIdentity(bot),
         title: approvalTitle(approval),
         detail: truncateNullable(approval.reason ?? approval.command),
+        truncated:
+          ("truncated" in approval && approval.truncated === true) ||
+          [approval.command, approval.cwd, approval.reason, approval.grantRoot].some(
+            (value) => value !== null && value.length > 600,
+          ) ||
+          Boolean(
+            approval.permissions &&
+              (approval.permissions.fileSystem.read.length > 3 ||
+                approval.permissions.fileSystem.write.length > 3 ||
+                [...approval.permissions.fileSystem.read, ...approval.permissions.fileSystem.write].some(
+                  (path) => path.length > 600,
+                )),
+          ),
         approval: {
           kind: approval.kind,
           command: truncateNullable(approval.command),

@@ -528,6 +528,8 @@ describe("remote event connections", () => {
         activeTurnId: "turn-1",
         revision: 1,
         messages: [],
+        references: {},
+        pageInfo: { hasOlder: false, olderCursor: null },
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
       });
     vi.stubGlobal(
@@ -535,7 +537,7 @@ describe("remote event connections", () => {
       vi.fn(async (input: string | URL | Request) => {
         const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
         if (path === "/v1/agents") return Response.json([bot]);
-        if (path.endsWith("/conversation")) {
+        if (path.endsWith("/conversation-page")) {
           if (deferConversation) {
             return new Promise<Response>((resolve) => {
               resolveConversation = resolve;

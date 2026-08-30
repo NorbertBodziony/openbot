@@ -341,6 +341,34 @@ export function queueSnapshotsFromRuntimeWork(work: readonly AgentRuntimeWorkIte
   return queues;
 }
 
+export function reconcileQueuesWithRuntimeWork(
+  current: Record<string, QueueSnapshot>,
+  work: readonly AgentRuntimeWorkItem[],
+  activeTurns: ReadonlyMap<string, string>,
+): Record<string, QueueSnapshot> {
+  const runtime = queueSnapshotsFromRuntimeWork(work);
+  const queues: Record<string, QueueSnapshot> = {};
+  for (const botId of new Set([...Object.keys(current), ...Object.keys(runtime)])) {
+    const existing = current[botId] ?? runtime[botId];
+    if (!existing) continue;
+    const active = runtime[botId]?.deliveries ?? [];
+    const activeIds = new Set(active.map((delivery) => delivery.id));
+    queues[botId] = {
+      ...existing,
+      deliveries: [
+        ...active,
+        ...existing.deliveries.filter(
+          (delivery) =>
+            ((delivery.status !== "starting" && delivery.status !== "running") ||
+              (delivery.turnId === activeTurns.get(botId) && !runtime[botId])) &&
+            !activeIds.has(delivery.id),
+        ),
+      ],
+    };
+  }
+  return queues;
+}
+
 function toDynamicIslandMessage(
   message: Extract<AgentEvent, { type: "conversation" }>["snapshot"]["messages"][number],
 ) {

@@ -165,6 +165,15 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     });
   });
 
+  it("requires opening OpenBot before approving truncated requests", () => {
+    const presentation = approvalPresentation();
+    presentation.item.truncated = true;
+    renderControlledIsland(presentation, "expanded", vi.fn());
+
+    expect(screen.getByRole("button", { name: "Review in OpenBot" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  });
+
   it("requests feedback when an intermediate prompt answer advances the question", async () => {
     const onAction = vi.fn<(action: DynamicIslandAction) => void>();
     const onHaptic = vi.fn();
@@ -264,7 +273,7 @@ function questionPresentation(): Extract<DynamicIslandPresentation, { mode: "que
   };
 }
 
-function approvalPresentation(): DynamicIslandPresentation {
+function approvalPresentation(): Extract<DynamicIslandPresentation, { mode: "approval" }> {
   return {
     serverId: "local",
     mode: "approval",
@@ -274,6 +283,7 @@ function approvalPresentation(): DynamicIslandPresentation {
       bot: BOT,
       title: "Command needs review",
       detail: "Install the locked dependencies.",
+      truncated: false,
       approval: {
         kind: "command",
         command: "bun install --frozen-lockfile",

@@ -89,6 +89,7 @@ describe("createDynamicIslandPresentation", () => {
           bot: identity,
           title: "Approve access",
           detail: "Review access.",
+          truncated: false,
           approval: {
             kind: "permissions",
             command: null,
@@ -370,8 +371,12 @@ describe("createDynamicIslandPresentation", () => {
     expect(presentation.remainingCount).toBe(0);
     expect(presentation.item).toMatchObject({
       requestId: "approval-1",
+      truncated: false,
       approval: { kind: "command", command: "bun test" },
     });
+
+    approval.command = "x".repeat(601);
+    expect(createDynamicIslandPresentation(input)).toMatchObject({ mode: "approval", item: { truncated: true } });
   });
 
   it("maps a browser takeover presentation", () => {

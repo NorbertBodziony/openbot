@@ -93,6 +93,7 @@ function presentationFor(
         bot: BOT_IDENTITIES[0],
         title: "Command needs review",
         detail: "Chief needs to install the verified workspace dependencies before tests can run.",
+        truncated: false,
         approval: {
           kind: "command",
           command: "bun install --frozen-lockfile",
