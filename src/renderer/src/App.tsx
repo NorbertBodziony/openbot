@@ -1413,7 +1413,9 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function openAgentMessage(botId: string, messageId: string): Promise<void> {
+    const serverId = activeServerSidebarKey();
     await Promise.resolve();
+    if (activeServerSidebarKey() !== serverId) return;
     const request = (conversationPageRequests.get(botId) ?? 0) + 1;
     conversationPageRequests.set(botId, request);
     try {
@@ -1422,7 +1424,7 @@ export function createAppController(props: AppProps = {}) {
         anchor: { type: "around", messageId },
         limit: 50,
       });
-      if (conversationPageRequests.get(botId) !== request) return;
+      if (conversationPageRequests.get(botId) !== request || activeServerSidebarKey() !== serverId) return;
       if (!page.messages.some((message) => message.id === messageId)) {
         throw new Error("This message is no longer available.");
       }
@@ -1431,16 +1433,18 @@ export function createAppController(props: AppProps = {}) {
       try {
         let readBoundary = page.messages.at(-1)?.id ?? messageId;
         try {
+          if (activeServerSidebarKey() !== serverId) return;
           const latestPage = await window.openbot.agent.readConversationPage({
             botId,
             anchor: { type: "latest" },
             limit: 1,
           });
+          if (activeServerSidebarKey() !== serverId) return;
           readBoundary = latestPage.messages.at(-1)?.id ?? readBoundary;
         } catch {
           // The focused page still gives us a safe read boundary when the latest-page refresh fails.
         }
-        await markAgentMessagesRead(botId, readBoundary);
+        await markAgentMessagesRead(botId, readBoundary, serverId);
       } catch (error) {
         appendUiError(botId, error, "Read state failed");
       }
@@ -1969,8 +1973,12 @@ export function createAppController(props: AppProps = {}) {
     }
   }
 
-  async function markAgentMessagesRead(botId = activeBot()?.id, throughMessageId?: string | null): Promise<void> {
-    if (!botId) return;
+  async function markAgentMessagesRead(
+    botId = activeBot()?.id,
+    throughMessageId?: string | null,
+    serverId = activeServerSidebarKey(),
+  ): Promise<void> {
+    if (!botId || activeServerSidebarKey() !== serverId) return;
     const boundary =
       throughMessageId ??
       liveMessages()
@@ -1981,6 +1989,7 @@ export function createAppController(props: AppProps = {}) {
       botId,
       throughMessageId: boundary,
     });
+    if (activeServerSidebarKey() !== serverId) return;
     applyConversationReadState(botId, state);
     clearRecentReply(botId);
   }
@@ -3117,14 +3126,17 @@ export function createAppController(props: AppProps = {}) {
     selectBot(action.botId);
     if (action.type === "open-message") await openAgentMessage(action.botId, action.messageId);
     if (action.type === "open-failure") {
-      dynamicIslandCoordinator.resolveAction(action);
-      publishDynamicIslandPresentation();
+      try {
+        await window.openbot.agent.acknowledgeFailedTurn({ botId: action.botId, turnId: action.turnId });
+      } catch (error) {
+        appendUiError(action.botId, error, "Acknowledge failed");
+        return;
+      }
       setFailedTurns((current) =>
         current[action.botId] === action.turnId ? withoutBot(current, action.botId) : current,
       );
-      await window.openbot.agent
-        .acknowledgeFailedTurn({ botId: action.botId, turnId: action.turnId })
-        .catch(() => undefined);
+      dynamicIslandCoordinator.resolveAction(action);
+      publishDynamicIslandPresentation();
     }
   }
 

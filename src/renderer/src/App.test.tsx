@@ -6,6 +6,7 @@ import type {
   BrowserPictureInPictureEvent,
   BrowserTab,
   CentralAuthState,
+  ConversationPage,
   ConversationSnapshot,
   DirectConversationSnapshot,
   DirectMessageRealtimeEvent,
@@ -87,6 +88,34 @@ const BOTS: BotSummary[] = [
     updatedAt: null,
   },
 ];
+
+function testServer(id: string, active: boolean): ServerSummary {
+  const local = id === "local";
+  return {
+    id,
+    name: local ? "Local" : "Studio Mac",
+    logoUrl: null,
+    kind: local ? "local" : "remote",
+    state: "online",
+    apiUrl: local ? null : "https://studio.example.com",
+    remoteDesktopAvailable: false,
+    role: local ? null : "member",
+    active,
+  };
+}
+
+function testConversationPage(botId: string, messages: ConversationPage["messages"] = []): ConversationPage {
+  return {
+    botId,
+    threadId: "thread-1",
+    activeTurnId: null,
+    revision: 1,
+    messages,
+    references: {},
+    readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    pageInfo: { hasOlder: false, olderCursor: null },
+  };
+}
 
 async function confirmOnboardingModel(): Promise<void> {
   await screen.findByRole("button", { name: "Agent model: Luna" });
@@ -4898,7 +4927,10 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("heading", { name: "Chief" })).toBeVisible();
   });
 
-  it("acknowledges a Dynamic Island failure after opening it", async () => {
+  it("keeps a Dynamic Island failure until acknowledgement succeeds", async () => {
+    vi.mocked(window.openbot.agent.acknowledgeFailedTurn).mockRejectedValueOnce(
+      new Error("Acknowledgement unavailable"),
+    );
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
@@ -4913,18 +4945,23 @@ describe("OpenBot connected desktop shell", () => {
         status: "failed",
       },
     });
-
-    emitDynamicIslandAction?.({
+    const action = {
       type: "open-failure",
       serverId: "local",
       botId: "chief",
       turnId: "turn-failed",
-    });
+    } as const;
+    emitDynamicIslandAction?.(action);
 
+    expect(await screen.findByText("Acknowledgement unavailable")).toBeInTheDocument();
+    expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+      mode: "failed",
+    });
+    emitDynamicIslandAction?.(action);
+    await waitFor(() => expect(window.openbot.agent.acknowledgeFailedTurn).toHaveBeenCalledTimes(2));
     await waitFor(() =>
-      expect(window.openbot.agent.acknowledgeFailedTurn).toHaveBeenCalledWith({
-        botId: "chief",
-        turnId: "turn-failed",
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
       }),
     );
   });
@@ -4964,6 +5001,57 @@ describe("OpenBot connected desktop shell", () => {
         throughMessageId: "reply-island",
       }),
     );
+  });
+
+  it("stops opening a Dynamic Island message when the active server changes", async () => {
+    let resolveFocusedPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async (input) => {
+      if (input.anchor?.type === "around") {
+        return await new Promise<ConversationPage>((resolve) => {
+          resolveFocusedPage = resolve;
+        });
+      }
+      return testConversationPage(input.botId);
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "local",
+      botId: "chief",
+      messageId: "reply-island",
+    });
+    await waitFor(() =>
+      expect(window.openbot.agent.readConversationPage).toHaveBeenCalledWith({
+        botId: "chief",
+        anchor: { type: "around", messageId: "reply-island" },
+        limit: 50,
+      }),
+    );
+    emitServers?.([testServer("local", false), testServer("remote-1", true)]);
+    await screen.findByRole("button", { name: "Studio Mac server" });
+    resolveFocusedPage?.(
+      testConversationPage("chief", [
+        {
+          id: "reply-island",
+          author: "assistant",
+          text: "The result is ready.",
+          createdAt: "2026-08-29T10:42:00.000Z",
+          status: "completed",
+        },
+      ]),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      vi
+        .mocked(window.openbot.agent.readConversationPage)
+        .mock.calls.filter(([input]) => input.anchor?.type === "latest" && input.limit === 1),
+    ).toHaveLength(0);
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
   });
 
   it("rejects a permission approval and keeps the error visible", async () => {

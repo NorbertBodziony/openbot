@@ -1303,6 +1303,9 @@ describe.sequential("AgentService", () => {
       requestId: "takeover-call",
       botId: "chief",
     });
+    expect(events.findLast((event) => event.type === "runtime-snapshot")).toMatchObject({
+      snapshot: { pendingBrowserTakeovers: [] },
+    });
 
     client.emit("request", {
       method: "item/tool/call",

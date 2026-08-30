@@ -3560,6 +3560,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       requestId: pending.request.requestId,
       botId: pending.request.botId,
     });
+    this.#emitRuntimeSnapshot();
     pending.resolve(browserTakeoverResult(decision));
   }
 
