@@ -873,6 +873,37 @@ describe("Team API compatibility negotiation", () => {
     }
   });
 
+  it("does not invalidate a healthy connection after a permission denial", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-permission-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "compatibility-permission");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        if (url.pathname === "/v1/compatibility") {
+          return Response.json({ appVersion: "0.4.0", protocol: { minimum: 1, maximum: 1 }, capabilities: [] });
+        }
+        return Response.json({ error: "Administrator access is required." }, { status: 403 });
+      }),
+    );
+    const manager = remoteEventManager(statePath, "0.4.0");
+
+    try {
+      await manager.initialize();
+      await expect(manager.request("/v1/admin", {}, "compatibility-permission", (value) => value)).rejects.toThrow(
+        "Administrator access is required.",
+      );
+      expect(manager.list().find((server) => server.id === "compatibility-permission")).toMatchObject({
+        state: "offline",
+        issue: null,
+      });
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("declares client capabilities when runtime snapshots are unavailable", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-event-scope-"));
     const statePath = join(directory, "servers.json");

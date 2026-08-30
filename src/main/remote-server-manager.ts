@@ -1005,7 +1005,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         issue = { code: "protocol_error", message: error.message, retryable: true };
         state = "error";
         pauseReconnect = true;
-      } else if (error.status === 401 || error.status === 403) {
+      } else if (error.status === 401) {
         issue = { code: "authentication_required", message: "Sign in to this host again.", retryable: true };
         state = "error";
         pauseReconnect = true;
@@ -1169,20 +1169,18 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               return;
             }
             const event = decoded.event;
-            if (isTeamRealtimeEvent(event)) {
-              if (event.type === "team-identity") {
-                server.name = event.serverName;
-                server.logoVersion = event.logoVersion;
-                void this.#persist().then(() => this.#emitChanged());
-              } else if (event.type === "team-presence") {
-                this.#presence.set(serverId, event.snapshot);
-                this.emit("presence", serverId, structuredClone(event.snapshot));
-              } else if (event.type === "team-direct-message") {
-                this.emit("directMessage", serverId, event);
-              } else if (event.type === "team-direct-typing") {
-                this.emit("directTyping", serverId, event);
-              }
-            } else if (isAgentEvent(event)) {
+            if (event.type === "team-identity") {
+              server.name = event.serverName;
+              server.logoVersion = event.logoVersion;
+              void this.#persist().then(() => this.#emitChanged());
+            } else if (event.type === "team-presence") {
+              this.#presence.set(serverId, event.snapshot);
+              this.emit("presence", serverId, structuredClone(event.snapshot));
+            } else if (event.type === "team-direct-message") {
+              this.emit("directMessage", serverId, event);
+            } else if (event.type === "team-direct-typing") {
+              this.emit("directTyping", serverId, event);
+            } else {
               if (!agentEventsReady) {
                 if (bufferedAgentEvents.length >= REMOTE_EVENT_INITIAL_BUFFER_LIMIT) {
                   socket.close(1013, "Initial agent event buffer is full");

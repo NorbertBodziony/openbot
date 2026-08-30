@@ -68,6 +68,33 @@ describe("Team protocol v1", () => {
       kind: "invalid",
       type: "team-presence",
     });
+    expect(decodeTeamProtocolV1CurrentEvent({ type: "conversation", snapshot: {} })).toEqual({
+      kind: "invalid",
+      type: "conversation",
+    });
+    expect(decodeTeamProtocolV1CurrentEvent({ type: "runtime-snapshot", snapshot: {} })).toEqual({
+      kind: "invalid",
+      type: "runtime-snapshot",
+    });
     expect(decodeTeamProtocolV1Event({ payload: true })).toEqual({ kind: "invalid", type: null });
+  });
+
+  it("accepts the frozen minimal runtime snapshot", () => {
+    const event = {
+      type: "runtime-snapshot",
+      snapshot: {
+        bots: [],
+        activeTurns: [],
+        work: [],
+        latestMessages: [],
+        attentionComplete: true,
+        pendingPrompts: [],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    };
+
+    expect(decodeTeamProtocolV1CurrentEvent(event)).toEqual({ kind: "known", event });
   });
 });
