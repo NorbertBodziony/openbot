@@ -955,6 +955,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         .filter((promise): promise is Promise<void> => promise !== null),
     );
     this.#imageGenerationOperations.clear();
+    await Promise.allSettled([...this.#responseAttachmentCommands.values()]);
+    this.#responseAttachmentCommands.clear();
     this.#interruptedTurns.clear();
     this.#setStatus({ phase: "stopped", message: null });
   }
@@ -2495,7 +2497,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const sources = await this.#openAgentAttachmentSources(senderBotId, paths);
     let attachments: AttachmentSummary[];
     try {
-      attachments = await this.#mailbox.storeGeneratedAttachments({
+      attachments = await this.#mailbox.stageGeneratedAttachments({
         sources,
         ownerBotId: senderBotId,
         ownerThreadId: publicThreadId,
@@ -2516,15 +2518,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     };
     snapshot.messages.push(message);
     try {
-      this.#emitConversation(snapshot, "response.attachments-added", {
-        turnId: params.turnId,
-        messageId,
-        attachmentCount: attachments.length,
-      });
+      this.#emitConversation(
+        snapshot,
+        "response.attachments-added",
+        {
+          turnId: params.turnId,
+          messageId,
+          attachmentCount: attachments.length,
+        },
+        true,
+      );
     } catch (error) {
       const messageIndex = snapshot.messages.findIndex((candidate) => candidate.id === messageId);
       if (messageIndex >= 0) snapshot.messages.splice(messageIndex, 1);
-      await this.#mailbox.removeGeneratedAttachments(attachments.map((attachment) => attachment.id));
+      await this.#mailbox.discardStagedGeneratedAttachments(attachments.map((attachment) => attachment.id));
       throw error;
     }
     return openBotToolResult({
@@ -4209,12 +4216,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       activeTurnId: snapshot.activeTurnId,
       messageCount: snapshot.messages.length,
     },
+    persistMailbox = false,
   ): void {
     sortConversationMessages(snapshot.messages);
     const signature = conversationContentSignature(snapshot);
     if (this.#lastConversationSignatures.get(snapshot.botId) === signature) return;
     if (snapshot.threadId) {
-      const persisted = this.#store.database.persistConversation(snapshot, eventType, detail);
+      const persisted = persistMailbox
+        ? this.#mailbox.persistGeneratedAttachmentsWithConversation(snapshot, eventType, detail)
+        : this.#store.database.persistConversation(snapshot, eventType, detail);
       snapshot.revision = persisted.revision;
     }
     this.#lastConversationSignatures.set(snapshot.botId, signature);

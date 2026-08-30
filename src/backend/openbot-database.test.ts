@@ -323,6 +323,55 @@ describe("OpenBotDatabase", () => {
     database.close();
   });
 
+  it("rolls back mailbox attachments when the matching conversation projection fails", async () => {
+    const database = await createDatabase();
+    const mailboxState = {
+      messages: [],
+      deliveries: [],
+      drafts: [],
+      generatedAttachments: [],
+      pausedBotIds: [],
+      idempotency: {},
+      reactions: [],
+    };
+    database.replaceMailboxState("mailbox-baseline", mailboxState, "mailbox.baseline");
+    const snapshot: ConversationSnapshot = {
+      botId: "missing-agent",
+      threadId: "missing-thread",
+      activeTurnId: null,
+      revision: 0,
+      messages: [],
+    };
+
+    expect(() =>
+      database.persistConversationAndMailbox(
+        snapshot,
+        "response.attachments-added",
+        {},
+        {
+          ...mailboxState,
+          generatedAttachments: [
+            {
+              id: "generated-1",
+              name: "screenshot.png",
+              size: 12,
+              kind: "image",
+              mimeType: "image/png",
+              previewKind: "image",
+              previewUrl: "openbot-attachment://file/generated-1",
+              path: "/tmp/screenshot.png",
+              sha256: "hash",
+            },
+          ],
+        },
+        "attachment.generated-batch",
+      ),
+    ).toThrow("Unknown agent for conversation");
+    expect(database.readMailboxState()).toMatchObject({ generatedAttachments: [] });
+    expect(database.connection.isTransaction).toBe(false);
+    database.close();
+  });
+
   it("removes messages omitted from the latest full conversation snapshot", async () => {
     const database = await createDatabase();
     const bot = testBot();

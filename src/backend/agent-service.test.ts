@@ -2808,7 +2808,7 @@ describe.sequential("AgentService", () => {
     const turnId = service.listQueue("chief").deliveries[0]?.turnId;
     if (!client || !threadId || !turnId) throw new Error("The concurrent attachment turn did not start.");
 
-    const originalStore = mailbox.storeGeneratedAttachments.bind(mailbox);
+    const originalStore = mailbox.stageGeneratedAttachments.bind(mailbox);
     let releaseStore: (() => void) | undefined;
     const storeGate = new Promise<void>((resolve) => {
       releaseStore = resolve;
@@ -2817,7 +2817,7 @@ describe.sequential("AgentService", () => {
     const storeStarted = new Promise<void>((resolve) => {
       markStoreStarted = resolve;
     });
-    const storage = vi.spyOn(mailbox, "storeGeneratedAttachments").mockImplementation(async (input) => {
+    const storage = vi.spyOn(mailbox, "stageGeneratedAttachments").mockImplementation(async (input) => {
       markStoreStarted?.();
       await storeGate;
       return originalStore(input);
@@ -2840,9 +2840,16 @@ describe.sequential("AgentService", () => {
       turnId,
       callId,
     );
+    let stopCompleted = false;
+    const stopping = service.stop().then(() => {
+      stopCompleted = true;
+    });
+    await Promise.resolve();
+    expect(stopCompleted).toBe(false);
     releaseStore?.();
 
-    const [firstResult, secondResult] = await Promise.all([first, second]);
+    const [firstResult, secondResult] = await Promise.all([first, second, stopping]);
+    expect(stopCompleted).toBe(true);
     expect(openBotToolPayload(firstResult.result)).toEqual(openBotToolPayload(secondResult.result));
     expect(storage).toHaveBeenCalledTimes(1);
     expect(
@@ -2873,7 +2880,7 @@ describe.sequential("AgentService", () => {
     if (!client || !threadId || !turnId) throw new Error("The attachment rollback turn did not start.");
 
     const callId = "stable-attachment-call";
-    const persistence = vi.spyOn(store.database, "persistConversation").mockImplementationOnce(() => {
+    const persistence = vi.spyOn(mailbox, "persistGeneratedAttachmentsWithConversation").mockImplementationOnce(() => {
       throw new Error("conversation write failed");
     });
     const failed = await callOpenBotTool(

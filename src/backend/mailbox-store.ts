@@ -28,6 +28,7 @@ import type {
   ConversationMessage,
   ConversationReaction,
   ConversationReactionActor,
+  ConversationSnapshot,
   DraftAttachment,
   MessageReaction,
   QueueDelivery,
@@ -946,7 +947,7 @@ export class MailboxStore {
     }
   }
 
-  async storeGeneratedAttachments(input: {
+  async stageGeneratedAttachments(input: {
     sources: GeneratedAttachmentSource[];
     ownerBotId?: string;
     ownerThreadId?: string | null;
@@ -1008,14 +1009,6 @@ export class MailboxStore {
         attachments.push(attachment);
       }
       this.#state.generatedAttachments.push(...attachments);
-      try {
-        await this.#persist("attachment.generated-batch");
-      } catch (error) {
-        this.#state.generatedAttachments = this.#state.generatedAttachments.filter(
-          (attachment) => !storedIds.has(attachment.id),
-        );
-        throw error;
-      }
       return attachments.map(toAttachmentSummary);
     } catch (error) {
       this.#state.generatedAttachments = this.#state.generatedAttachments.filter(
@@ -1026,27 +1019,30 @@ export class MailboxStore {
     }
   }
 
-  async removeGeneratedAttachments(attachmentIds: string[]): Promise<void> {
+  persistGeneratedAttachmentsWithConversation(
+    snapshot: ConversationSnapshot,
+    eventType: string,
+    detail: unknown,
+  ): ConversationSnapshot {
+    return this.#database.persistConversationAndMailbox(
+      snapshot,
+      eventType,
+      detail,
+      this.#state,
+      "attachment.generated-batch",
+    );
+  }
+
+  async discardStagedGeneratedAttachments(attachmentIds: string[]): Promise<void> {
     const ids = new Set(attachmentIds);
     const removed = this.#state.generatedAttachments.filter((attachment) => ids.has(attachment.id));
     if (removed.length === 0) return;
 
-    const previous = this.#state.generatedAttachments;
-    this.#state.generatedAttachments = previous.filter((attachment) => !ids.has(attachment.id));
+    this.#state.generatedAttachments = this.#state.generatedAttachments.filter((attachment) => !ids.has(attachment.id));
     const generatedRoots = removed
       .map((attachment) => generatedRootForPath(this.#transfersRoot, attachment.path))
       .filter((path): path is string => path !== null);
-    try {
-      await this.#persist(
-        "attachment.generated-batch-removed",
-        `mailbox:attachment.generated-batch-removed:${randomUUID()}`,
-        generatedRoots,
-      );
-    } catch (error) {
-      this.#state.generatedAttachments = previous;
-      throw error;
-    }
-    await this.#drainFileDeletionOutbox();
+    await Promise.allSettled(generatedRoots.map((path) => rm(path, { recursive: true, force: true })));
   }
 
   async storeGeneratedAttachment(input: {
