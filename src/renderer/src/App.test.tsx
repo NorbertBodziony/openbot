@@ -5320,6 +5320,84 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByText("Loaded earlier")).toBeInTheDocument();
   });
 
+  it("keeps the current read state when an older page returns stale read data", async () => {
+    const latestMessage = {
+      id: "reply-latest-page",
+      author: "assistant" as const,
+      text: "Latest reply",
+      createdAt: "2026-08-30T02:02:00.000Z",
+      status: "completed" as const,
+    };
+    const latestPage = testConversationPage("chief", [latestMessage], {
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+      pageInfo: { hasOlder: true, olderCursor: "older" },
+    });
+    let resolveOlderPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async (input) => {
+      if (input.anchor?.type !== "before") return latestPage;
+      return await new Promise((resolve) => {
+        resolveOlderPage = resolve;
+      });
+    });
+
+    function Harness() {
+      const controller = createAppController({});
+      return (
+        <AppControllerProvider controller={controller}>
+          <button type="button" onClick={() => void controller.loadOlderAgentMessages("chief")}>
+            Load older agent messages
+          </button>
+          <output data-testid="agent-read-state">
+            {controller.conversationReads().chief?.unreadCount ?? -1}|
+            {controller
+              .activeMessages()
+              .map((message) => message.id)
+              .join(",")}
+          </output>
+        </AppControllerProvider>
+      );
+    }
+
+    render(() => <Harness />);
+    await waitFor(() => expect(screen.getByTestId("agent-read-state")).toHaveTextContent("0|reply-latest-page"));
+    await fireEvent.click(screen.getByRole("button", { name: "Load older agent messages" }));
+    await waitFor(() => expect(resolveOlderPage).toBeDefined());
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage("chief", [latestMessage], {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: latestMessage.id, throughMessageId: null },
+        pageInfo: { hasOlder: true, olderCursor: "older" },
+      }),
+    });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByTestId("agent-read-state")).toHaveTextContent("0|reply-latest-page"));
+
+    resolveOlderPage?.(
+      testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-older-page",
+            author: "assistant",
+            text: "Older reply",
+            createdAt: "2026-08-30T02:01:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: latestMessage.id, throughMessageId: null },
+        },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-read-state")).toHaveTextContent("0|reply-older-page,reply-latest-page"),
+    );
+  });
+
   it("keeps a refreshed conversation page read while its agent chat is open", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });

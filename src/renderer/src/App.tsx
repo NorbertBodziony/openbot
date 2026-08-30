@@ -1518,7 +1518,7 @@ export function createAppController(props: AppProps = {}) {
       ...current,
       [page.botId]: completedTurnByBot.get(page.botId) === page.activeTurnId ? null : page.activeTurnId,
     }));
-    if (page.readState) {
+    if (page.readState && merge !== "older") {
       const trackedAutoRead = autoReadAgentMessages.get(agentConversationKey(activeServerSidebarKey(), page.botId));
       const latestIncomingMessage = [...page.messages]
         .reverse()
