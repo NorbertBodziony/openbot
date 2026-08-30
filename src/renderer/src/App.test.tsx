@@ -5128,6 +5128,41 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
   });
 
+  it("retries an automatic read for the same message after persistence fails", async () => {
+    vi.mocked(window.openbot.agent.markConversationRead).mockRejectedValueOnce(new Error("Read unavailable"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const page = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-read-retry",
+          author: "assistant",
+          text: "Visible reply that needs a retry",
+          createdAt: "2026-08-30T02:02:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-read-retry", throughMessageId: null },
+      },
+    );
+
+    emitAgentEvent?.({ type: "conversation-page", page });
+    expect(await screen.findByText("Read unavailable")).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "conversation-page", page });
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(2, {
+        botId: "chief",
+        throughMessageId: "reply-read-retry",
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
   it("does not mark an older boundary from a rejected conversation page", async () => {
     let resolveInitialPage: ((page: ConversationPage) => void) | undefined;
     vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(

@@ -361,6 +361,7 @@ export function createAppController(props: AppProps = {}) {
   const agentChatsToMarkRead = new Set<string>();
   let explicitlyOpenedAgentChatId: string | null = null;
   const autoReadAgentMessageIds = new Map<string, string>();
+  const agentChatsToRetryRead = new Set<string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const conversationPageRequests = new Map<string, number>();
   const conversationReadOperations = new Map<string, Promise<void>>();
@@ -874,7 +875,9 @@ export function createAppController(props: AppProps = {}) {
           const existingUnreadCount = conversationReads()[event.page.botId]?.unreadCount ?? 0;
           const markNewMessagesRead =
             isAgentChatOpen(event.page.botId) &&
-            (existingUnreadCount === 0 || explicitlyOpenedAgentChatId === event.page.botId);
+            (existingUnreadCount === 0 ||
+              explicitlyOpenedAgentChatId === event.page.botId ||
+              agentChatsToRetryRead.has(event.page.botId));
           const pageApplied = applyConversationPage(event.page, "latest", "latest");
           const latestIncomingMessage = markNewMessagesRead
             ? [...event.page.messages]
@@ -1131,16 +1134,37 @@ export function createAppController(props: AppProps = {}) {
     if (autoReadAgentMessageIds.get(botId) === messageId) return;
     const current = conversationReads()[botId];
     const hasUnread = Boolean(current && current.unreadCount > 0);
-    if (!optimisticallyClearUnread && explicitlyOpenedAgentChatId !== botId && hasUnread) return;
+    const retryingRead = agentChatsToRetryRead.delete(botId);
+    if (!optimisticallyClearUnread && explicitlyOpenedAgentChatId !== botId && !retryingRead && hasUnread) return;
     autoReadAgentMessageIds.set(botId, messageId);
-    if (current && (!hasUnread || optimisticallyClearUnread)) {
+    const optimisticallyCleared = Boolean(current && (!hasUnread || optimisticallyClearUnread));
+    const rollbackState = current
+      ? hasUnread
+        ? current
+        : { ...current, unreadCount: 1, firstUnreadMessageId: messageId }
+      : null;
+    if (current && optimisticallyCleared) {
       applyConversationReadState(botId, {
         unreadCount: 0,
         firstUnreadMessageId: null,
         throughMessageId: messageId,
       });
     }
-    void markAgentMessagesRead(botId, messageId).catch((error) => appendUiError(botId, error, "Read state failed"));
+    void markAgentMessagesRead(botId, messageId).catch((error) => {
+      if (autoReadAgentMessageIds.get(botId) !== messageId) return;
+      autoReadAgentMessageIds.delete(botId);
+      agentChatsToRetryRead.add(botId);
+      const latest = conversationReads()[botId];
+      if (
+        optimisticallyCleared &&
+        rollbackState &&
+        latest?.unreadCount === 0 &&
+        latest.throughMessageId === messageId
+      ) {
+        applyConversationReadState(botId, rollbackState);
+      }
+      appendUiError(botId, error, "Read state failed");
+    });
   }
 
   function applyConversationDelta(event: Extract<AgentEvent, { type: "conversation-delta" }>) {
@@ -2039,6 +2063,7 @@ export function createAppController(props: AppProps = {}) {
         });
         if (activeServerSidebarKey() !== serverId) return;
         applyConversationReadState(botId, state);
+        agentChatsToRetryRead.delete(botId);
         clearRecentReply(botId);
       });
     conversationReadOperations.set(requestKey, operation);
