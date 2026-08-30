@@ -330,10 +330,24 @@ describe("remote event connections", () => {
       await manager.initialize();
       manager.startEventConnections();
       await vi.waitFor(() => expect(sockets).toHaveLength(2));
+      await vi.waitFor(() =>
+        expect(sockets[0]?.send).toHaveBeenCalledWith(
+          JSON.stringify({ type: "agent-event-scope", includeConversations: true }),
+        ),
+      );
+      expect(sockets[1]?.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "agent-event-scope", includeConversations: false }),
+      );
 
       await manager.select("server-2");
       expect(sockets).toHaveLength(2);
       expect(sockets.every((socket) => socket.close.mock.calls.length === 0)).toBe(true);
+      expect(sockets[0]?.send).toHaveBeenLastCalledWith(
+        JSON.stringify({ type: "agent-event-scope", includeConversations: false }),
+      );
+      expect(sockets[1]?.send).toHaveBeenLastCalledWith(
+        JSON.stringify({ type: "agent-event-scope", includeConversations: true }),
+      );
 
       sockets[0]?.close();
       await vi.advanceTimersByTimeAsync(REMOTE_EVENT_RECONNECT_TEST_MS);
@@ -359,6 +373,9 @@ describe("remote event connections", () => {
       expect(sockets).toHaveLength(3);
       expect(sockets[1]?.send).toHaveBeenCalledWith(JSON.stringify({ type: "runtime-snapshot-request" }));
       expect(sockets[2]?.send).toHaveBeenCalledWith(JSON.stringify({ type: "runtime-snapshot-request" }));
+
+      sockets[2]?.dispatchEvent(new MessageEvent("message", { data: "x".repeat(1024 * 1024 + 1) }));
+      expect(sockets[2]?.close).toHaveBeenCalledWith(1009, "Event payload is too large");
     } finally {
       manager.stop();
       await rm(directory, { recursive: true, force: true });

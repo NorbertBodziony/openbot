@@ -133,6 +133,7 @@ const REMOTE_REQUEST_TIMEOUT_MS = 15_000;
 const REMOTE_EVENT_RECONNECT_BASE_MS = 1_000;
 const REMOTE_EVENT_RECONNECT_MAX_MS = 60_000;
 const REMOTE_EVENT_RECONNECT_JITTER = 0.2;
+const REMOTE_EVENT_PAYLOAD_LIMIT = 1024 * 1024;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 
@@ -245,6 +246,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       throw new Error("Remote server not found.");
     }
     this.#state.activeServerId = serverId;
+    this.#syncEventScopes();
     await this.#persist();
     this.#emitChanged();
     this.startEventConnections();
@@ -827,6 +829,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           () => {
             opened = true;
             this.#eventSockets.set(serverId, socket);
+            this.#sendEventScope(serverId, socket);
             this.#states.set(serverId, "online");
             this.#emitChanged();
             if (socket.protocol !== REMOTE_EVENT_SNAPSHOT_PROTOCOL) {
@@ -837,6 +840,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         );
         socket.addEventListener("message", (message) => {
           if (!isString(message.data)) return;
+          if (Buffer.byteLength(message.data) > REMOTE_EVENT_PAYLOAD_LIMIT) {
+            socket.close(1009, "Event payload is too large");
+            return;
+          }
           try {
             const event = JSON.parse(message.data);
             if (isTeamRealtimeEvent(event)) {
@@ -899,6 +906,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
     if (this.#eventControllers.get(serverId) === controller) this.#eventControllers.delete(serverId);
     if (!controller.signal.aborted && !authenticationFailed) this.#scheduleEventReconnect(serverId);
+  }
+
+  #syncEventScopes(): void {
+    for (const [serverId, socket] of this.#eventSockets) this.#sendEventScope(serverId, socket);
+  }
+
+  #sendEventScope(serverId: string, socket: WebSocket): void {
+    if (socket.readyState !== WebSocket.OPEN || socket.protocol !== REMOTE_EVENT_SNAPSHOT_PROTOCOL) return;
+    socket.send(
+      JSON.stringify({ type: "agent-event-scope", includeConversations: this.#state.activeServerId === serverId }),
+    );
   }
 
   #ensureEventConnection(serverId: string): void {

@@ -168,6 +168,7 @@ interface EventClientState {
   token: string;
   memberId: string;
   supportsRuntimeSnapshot: boolean;
+  includeConversationEvents: boolean;
   typingBotId: string | null;
   typingTimer: ReturnType<typeof setTimeout> | null;
   directTypingRecipientId: string | null;
@@ -1138,10 +1139,13 @@ export class TeamApiServer {
   }
 
   #broadcastAgentEvent(event: AgentEvent): void {
-    const payload = JSON.stringify(event);
-    if (event.type === "runtime-snapshot" && Buffer.byteLength(payload) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return;
+    let payload: string | undefined;
     for (const [client, connection] of this.#eventClients) {
       if (event.type === "runtime-snapshot" && !connection.supportsRuntimeSnapshot) continue;
+      if (event.type === "conversation" && !connection.includeConversationEvents) continue;
+      payload ??= JSON.stringify(event);
+      const limit = event.type === "runtime-snapshot" ? AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT : JSON_LIMIT;
+      if (Buffer.byteLength(payload) > limit) return;
       if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
     }
   }
@@ -1151,6 +1155,7 @@ export class TeamApiServer {
       token,
       memberId,
       supportsRuntimeSnapshot,
+      includeConversationEvents: !supportsRuntimeSnapshot,
       typingBotId: null,
       typingTimer: null,
       directTypingRecipientId: null,
@@ -1184,6 +1189,11 @@ export class TeamApiServer {
         }
         if (event.type === "runtime-snapshot-request" && supportsRuntimeSnapshot) {
           this.#sendRuntimeSnapshot(client, connection, true);
+          return;
+        }
+        if (event.type === "agent-event-scope" && supportsRuntimeSnapshot) {
+          if (!isBoolean(event.includeConversations)) throw new Error("Invalid agent event scope.");
+          connection.includeConversationEvents = event.includeConversations;
           return;
         }
         if (event.type === "team-direct-typing") {

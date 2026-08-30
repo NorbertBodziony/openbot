@@ -163,7 +163,10 @@ describe("TeamApiServer administration", () => {
       pendingBrowserTakeovers: [],
       failedTurns: [],
     }));
+    const agentEvents = new EventEmitter();
     const agents = createAgents({
+      on: (event, listener) => agentEvents.on(event, listener),
+      off: (event, listener) => agentEvents.off(event, listener),
       getRuntimeSnapshot,
       listBots: () => [
         {
@@ -214,6 +217,46 @@ describe("TeamApiServer administration", () => {
         snapshot: { bots: [], activeTurns: [], pendingApprovals: [] },
       });
       expect(initialPresence).toMatchObject({ type: "team-presence" });
+
+      const conversation = {
+        type: "conversation",
+        snapshot: {
+          botId: "chief",
+          threadId: "thread-chief",
+          activeTurnId: null,
+          revision: 1,
+          messages: [
+            {
+              id: "reply-1",
+              author: "assistant",
+              text: "Done",
+              createdAt: "2026-08-29T10:00:00.000Z",
+              status: "completed",
+            },
+          ],
+        },
+      };
+      const boundedEvent = nextJsonEvent(socket);
+      agentEvents.emit("event", conversation);
+      agentEvents.emit("event", { type: "bots-changed", bots: [] });
+      await expect(boundedEvent).resolves.toMatchObject({ type: "bots-changed" });
+
+      socket.send(JSON.stringify({ type: "agent-event-scope", includeConversations: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const conversationEvent = nextJsonEvent(socket);
+      agentEvents.emit("event", conversation);
+      await expect(conversationEvent).resolves.toMatchObject({ type: "conversation" });
+
+      const eventAfterOversizedConversation = nextJsonEvent(socket);
+      agentEvents.emit("event", {
+        ...conversation,
+        snapshot: {
+          ...conversation.snapshot,
+          messages: [{ ...conversation.snapshot.messages[0], text: "x".repeat(1024 * 1024) }],
+        },
+      });
+      agentEvents.emit("event", { type: "bots-changed", bots: [] });
+      await expect(eventAfterOversizedConversation).resolves.toMatchObject({ type: "bots-changed" });
 
       const refreshedSnapshot = nextJsonEvent(socket);
       socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
