@@ -2189,7 +2189,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ownerBotId: senderBotId,
         ownerThreadId: publicThreadId,
       });
-      snapshot.messages.push({
+      const message: ConversationSnapshot["messages"][number] = {
         id: messageId,
         turnId: params.turnId,
         author: "assistant",
@@ -2199,12 +2199,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         status: "completed",
         itemType: "agent_attachment",
         attachments,
-      });
-      this.#emitConversation(snapshot, "response.attachments-added", {
-        turnId: params.turnId,
-        messageId,
-        attachmentCount: attachments.length,
-      });
+      };
+      snapshot.messages.push(message);
+      try {
+        this.#emitConversation(snapshot, "response.attachments-added", {
+          turnId: params.turnId,
+          messageId,
+          attachmentCount: attachments.length,
+        });
+      } catch (error) {
+        const messageIndex = snapshot.messages.findIndex((candidate) => candidate.id === messageId);
+        if (messageIndex >= 0) snapshot.messages.splice(messageIndex, 1);
+        await this.#mailbox.removeGeneratedAttachments(attachments.map((attachment) => attachment.id));
+        throw error;
+      }
       return openBotToolResult({
         status: "attached",
         messageId,

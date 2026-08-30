@@ -953,11 +953,14 @@ export class MailboxStore {
 
     try {
       const attachments: StoredGeneratedAttachment[] = [];
+      let copiedTotal = 0;
       for (const entry of entries) {
         await mkdir(entry.generatedRoot, { recursive: true, mode: 0o700 });
         await copyFile(entry.source.path, entry.targetPath);
         const copied = await stat(entry.targetPath);
         if (copied.size > MAX_FILE_BYTES) throw new Error(`${entry.name} exceeds the 100 MB limit.`);
+        copiedTotal += copied.size;
+        if (copiedTotal > MAX_TOTAL_BYTES) throw new Error("Attachments exceed the 250 MB total limit.");
         const attachment: StoredGeneratedAttachment = {
           id: entry.id,
           name: entry.name,
@@ -997,6 +1000,29 @@ export class MailboxStore {
       await Promise.allSettled(entries.map((entry) => rm(entry.generatedRoot, { recursive: true, force: true })));
       throw error;
     }
+  }
+
+  async removeGeneratedAttachments(attachmentIds: string[]): Promise<void> {
+    const ids = new Set(attachmentIds);
+    const removed = this.#state.generatedAttachments.filter((attachment) => ids.has(attachment.id));
+    if (removed.length === 0) return;
+
+    const previous = this.#state.generatedAttachments;
+    this.#state.generatedAttachments = previous.filter((attachment) => !ids.has(attachment.id));
+    const generatedRoots = removed
+      .map((attachment) => generatedRootForPath(this.#transfersRoot, attachment.path))
+      .filter((path): path is string => path !== null);
+    try {
+      await this.#persist(
+        "attachment.generated-batch-removed",
+        `mailbox:attachment.generated-batch-removed:${randomUUID()}`,
+        generatedRoots,
+      );
+    } catch (error) {
+      this.#state.generatedAttachments = previous;
+      throw error;
+    }
+    await this.#drainFileDeletionOutbox();
   }
 
   async storeGeneratedAttachment(input: {
