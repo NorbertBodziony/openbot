@@ -1,16 +1,24 @@
 import { describe, expect, it } from "vitest";
+import clientHttpRequestFixture from "./fixtures/v1/client-http-request.json";
 import clientScopeFixture from "./fixtures/v1/client-scope.json";
 import hostCompatibilityFixture from "./fixtures/v1/host-compatibility.json";
 import hostEventFixture from "./fixtures/v1/host-event.json";
+import hostHttpResponseFixture from "./fixtures/v1/host-http-response.json";
 import {
   decodeTeamProtocolSupportV1,
   decodeTeamProtocolV1ClientEvent,
   decodeTeamProtocolV1Event,
+  decodeTeamProtocolV1HttpRequest,
+  decodeTeamProtocolV1HttpResponse,
   encodeTeamProtocolV1ClientEvent,
   highestCommonTeamProtocol,
   teamProtocolUpdateDirection,
 } from "./v1";
-import { decodeTeamProtocolV1CurrentEvent } from "./v1-adapter";
+import {
+  decodeTeamProtocolV1CurrentEvent,
+  encodeTeamProtocolV1CurrentHttpRequest,
+  encodeTeamProtocolV1CurrentHttpResponse,
+} from "./v1-adapter";
 
 describe("Team protocol v1", () => {
   it("keeps the released host and client fixtures valid", () => {
@@ -22,6 +30,18 @@ describe("Team protocol v1", () => {
     });
     const clientScope = decodeTeamProtocolV1ClientEvent(clientScopeFixture);
     expect(JSON.parse(encodeTeamProtocolV1ClientEvent(clientScope))).toEqual(clientScopeFixture);
+    expect(decodeTeamProtocolV1HttpRequest("POST", "/v1/invitations/preview", clientHttpRequestFixture)).toEqual(
+      clientHttpRequestFixture,
+    );
+    expect(
+      JSON.parse(encodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/invitations/preview", clientHttpRequestFixture)),
+    ).toEqual(clientHttpRequestFixture);
+    expect(decodeTeamProtocolV1HttpResponse("GET", "/v1/agents", 200, hostHttpResponseFixture)).toEqual(
+      hostHttpResponseFixture,
+    );
+    expect(
+      JSON.parse(encodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/agents", 200, hostHttpResponseFixture)),
+    ).toEqual(hostHttpResponseFixture);
   });
 
   it("decodes bounded compatibility metadata and finds the highest common version", () => {
@@ -96,5 +116,17 @@ describe("Team protocol v1", () => {
     };
 
     expect(decodeTeamProtocolV1CurrentEvent(event)).toEqual({ kind: "known", event });
+  });
+
+  it("rejects unregistered HTTP routes and malformed known payloads", () => {
+    expect(() => decodeTeamProtocolV1HttpRequest("POST", "/v1/future", {})).toThrow(
+      "Invalid Team protocol v1 HTTP request",
+    );
+    expect(() => decodeTeamProtocolV1HttpRequest("POST", "/v1/invitations/preview", { inviteToken: 1 })).toThrow(
+      "Invalid Team protocol v1 HTTP request",
+    );
+    expect(() => decodeTeamProtocolV1HttpResponse("GET", "/v1/agents", 200, {})).toThrow(
+      "Invalid Team protocol v1 HTTP response",
+    );
   });
 });

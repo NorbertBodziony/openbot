@@ -79,7 +79,6 @@ import {
 import {
   decodeTeamProtocolSupportV1,
   encodeTeamProtocolV1ClientEvent,
-  encodeTeamProtocolV1Http,
   highestCommonTeamProtocol,
   TEAM_APP_VERSION_HEADER,
   TEAM_PROTOCOL_V1,
@@ -90,7 +89,11 @@ import {
   type TeamProtocolV1Capability,
   teamProtocolUpdateDirection,
 } from "@openbot/contracts/team-protocol/v1";
-import { decodeTeamProtocolV1CurrentEvent } from "@openbot/contracts/team-protocol/v1-adapter";
+import {
+  decodeTeamProtocolV1CurrentEvent,
+  decodeTeamProtocolV1CurrentHttpResponse,
+  encodeTeamProtocolV1CurrentHttpRequest,
+} from "@openbot/contracts/team-protocol/v1-adapter";
 import { fingerprint } from "./team-store";
 
 export { isValidRemoteApiUrl } from "@openbot/contracts/invite-links";
@@ -720,7 +723,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       },
       body: Buffer.from(bytes),
     });
-    const value = await response.json();
+    const value = decodeTeamProtocolV1CurrentHttpResponse("POST", url.pathname, response.status, await response.json());
     if (!response.ok) throw new Error(responseError(value, "Attachment upload failed."));
     return addRemotePreviewUrls(decodeDraftAttachment(value), server.id);
   }
@@ -739,7 +742,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       headers,
       body: image ? Buffer.from(image.bytes) : undefined,
     });
-    const value = await response.json();
+    const value = decodeTeamProtocolV1CurrentHttpResponse(
+      image ? "PUT" : "DELETE",
+      url.pathname,
+      response.status,
+      await response.json(),
+    );
     if (!response.ok) {
       throw new Error(responseError(value, "Agent avatar update failed."));
     }
@@ -786,7 +794,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const server = this.#requireServer(serverId);
     const response = await this.#fetch(server, `${server.apiUrl}/v1/attachments/${encodeURIComponent(attachmentId)}`);
     if (!response.ok) {
-      throw new Error(responseError(await response.json(), "Attachment download failed."));
+      throw new Error(
+        responseError(
+          decodeTeamProtocolV1CurrentHttpResponse(
+            "GET",
+            "/v1/attachments/item",
+            response.status,
+            await response.json(),
+          ),
+          "Attachment download failed.",
+        ),
+      );
     }
     const disposition = response.headers.get("content-disposition") ?? "";
     const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
@@ -806,7 +824,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     url.searchParams.set("path", sharedPath);
     const response = await this.#fetch(server, url);
     if (!response.ok) {
-      throw new Error(responseError(await response.json(), "Shared file download failed."));
+      throw new Error(
+        responseError(
+          decodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/shared-files", response.status, await response.json()),
+          "Shared file download failed.",
+        ),
+      );
     }
     const disposition = response.headers.get("content-disposition") ?? "";
     const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
@@ -827,7 +850,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     url.searchParams.set("path", workspacePath);
     const response = await this.#fetch(server, url);
     if (!response.ok) {
-      throw new Error(responseError(await response.json(), "Workspace file download failed."));
+      throw new Error(
+        responseError(
+          decodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/workspace-files", response.status, await response.json()),
+          "Workspace file download failed.",
+        ),
+      );
     }
     const disposition = response.headers.get("content-disposition") ?? "";
     const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
@@ -1504,8 +1532,9 @@ async function requestJson<T>(
   decoder: ResponseDecoder<T>,
   options: { method?: string; body?: unknown; token?: string; protocol?: number; appVersion?: string } = {},
 ): Promise<T> {
+  const method = options.method ?? (options.body === undefined ? "GET" : "POST");
   const response = await remoteFetch(new URL(path, apiUrl), {
-    method: options.method ?? (options.body === undefined ? "GET" : "POST"),
+    method,
     headers: {
       Accept: "application/json",
       ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -1513,7 +1542,7 @@ async function requestJson<T>(
       ...(options.protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(options.protocol) } : {}),
       ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
     },
-    body: options.body === undefined ? undefined : encodeTeamProtocolV1Http(parseTeamProtocolHttpBody(options.body)),
+    body: options.body === undefined ? undefined : encodeTeamProtocolV1CurrentHttpRequest(method, path, options.body),
   });
   let value: unknown;
   if (response.status !== 204) {
@@ -1521,6 +1550,18 @@ async function requestJson<T>(
       value = await response.json();
     } catch (error) {
       if (response.ok) throw error;
+    }
+  }
+  if (value !== undefined) {
+    try {
+      value = decodeTeamProtocolV1CurrentHttpResponse(method, path, response.status, value);
+    } catch (error) {
+      throw new RemoteProtocolError(
+        "protocol_error",
+        "The host returned data that this app could not safely use.",
+        null,
+        { cause: error },
+      );
     }
   }
   if (!response.ok) {
@@ -1543,12 +1584,6 @@ async function requestJson<T>(
       },
     );
   }
-}
-
-function parseTeamProtocolHttpBody(value: unknown): object | null {
-  if (value === null) return null;
-  if (Array.isArray(value) || isDynamicRecord(value)) return value;
-  throw new Error("Invalid Team protocol request body.");
 }
 
 function decodeRecord(value: unknown, label: string): DynamicRecord {

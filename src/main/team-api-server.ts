@@ -38,7 +38,6 @@ import {
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import {
   decodeTeamProtocolV1ClientEvent,
-  encodeTeamProtocolV1Http,
   isTeamProtocolV1Capability,
   TEAM_APP_VERSION_HEADER,
   TEAM_PROTOCOL_V1,
@@ -47,7 +46,11 @@ import {
   TEAM_PROTOCOL_VERSION_HEADER,
   type TeamProtocolSupportV1,
 } from "@openbot/contracts/team-protocol/v1";
-import { encodeTeamProtocolV1CurrentEvent } from "@openbot/contracts/team-protocol/v1-adapter";
+import {
+  decodeTeamProtocolV1CurrentHttpRequest,
+  encodeTeamProtocolV1CurrentEvent,
+  encodeTeamProtocolV1CurrentHttpResponse,
+} from "@openbot/contracts/team-protocol/v1-adapter";
 import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
@@ -209,6 +212,7 @@ export class TeamApiServer {
   readonly #options: Omit<TeamApiOptions, "sidebarLayout"> & { sidebarLayout: TeamApiSidebarLayout };
   readonly #rateLimits = new Map<string, RateEntry>();
   readonly #eventClients = new Map<Ws.WebSocket, EventClientState>();
+  readonly #responseRoutes = new WeakMap<ServerResponse, { method: string; path: string }>();
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
     maxPayload: EVENT_PAYLOAD_LIMIT,
@@ -444,6 +448,7 @@ export class TeamApiServer {
       response.setHeader("X-Content-Type-Options", "nosniff");
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       const method = request.method ?? "GET";
+      this.#responseRoutes.set(response, { method, path: url.pathname });
 
       if (method === "GET" && url.pathname === "/v1/compatibility") {
         return this.#json(response, 200, this.#protocolSupport());
@@ -1491,8 +1496,10 @@ export class TeamApiServer {
   }
 
   #json(response: ServerResponse, status: number, value: object | null): void {
+    const route = this.#responseRoutes.get(response);
+    if (!route) throw new Error("Team API response route is unavailable.");
     response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
-    response.end(`${encodeTeamProtocolV1Http(value)}\n`);
+    response.end(`${encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value)}\n`);
   }
 
   #protocolSupport(): TeamProtocolSupportV1 {
@@ -1652,8 +1659,7 @@ async function readJson(request: import("node:http").IncomingMessage): Promise<D
   }
   try {
     const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    if (!isDynamicRecord(value)) throw new Error();
-    return value;
+    return decodeTeamProtocolV1CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value);
   } catch {
     throw new HttpError(400, "A valid JSON object is required.");
   }

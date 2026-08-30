@@ -804,10 +804,6 @@ export function decodeTeamProtocolV1ClientEvent(value: unknown): TeamProtocolV1C
   throw new Error("Invalid Team protocol v1 client event.");
 }
 
-export function encodeTeamProtocolV1Http(value: object | null): string {
-  return JSON.stringify(value);
-}
-
 export function isTeamProtocolV1Capability(value: string): value is TeamProtocolV1Capability {
   return TEAM_PROTOCOL_V1_CAPABILITY_SET.has(value);
 }
@@ -867,4 +863,259 @@ function isProtocolVersion(value: unknown): value is number {
 
 function isCapability(value: unknown): value is string {
   return isString(value) && value.length > 0 && value.length <= 64 && /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(value);
+}
+
+export type TeamProtocolV1HttpMethod = "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
+
+type TeamProtocolV1HttpPayloadKind = "array" | "nullable-object" | "object";
+
+interface TeamProtocolV1HttpContract {
+  request: "none" | "object";
+  response: TeamProtocolV1HttpPayloadKind;
+}
+
+// This registry is the frozen v1 HTTP surface. A new route or a changed payload must use a new protocol.
+const TEAM_PROTOCOL_V1_HTTP_CONTRACTS = {
+  "GET compatibility": { request: "none", response: "object" },
+  "GET identity": { request: "none", response: "nullable-object" },
+  "POST invitation-preview": { request: "object", response: "object" },
+  "POST join": { request: "object", response: "object" },
+  "POST join-account": { request: "object", response: "object" },
+  "POST auth-login": { request: "object", response: "object" },
+  "POST auth-account": { request: "object", response: "object" },
+  "POST auth-password": { request: "object", response: "object" },
+  "GET me": { request: "none", response: "object" },
+  "GET team-presence": { request: "none", response: "object" },
+  "GET remote-capabilities": { request: "none", response: "object" },
+  "POST remote-session": { request: "object", response: "object" },
+  "PUT remote-display": { request: "object", response: "object" },
+  "GET direct-threads": { request: "none", response: "array" },
+  "GET message-search": { request: "none", response: "object" },
+  "POST direct-message": { request: "object", response: "object" },
+  "GET direct-conversation": { request: "none", response: "object" },
+  "GET direct-conversation-page": { request: "none", response: "object" },
+  "POST direct-conversation-read": { request: "object", response: "object" },
+  "GET browser-tabs": { request: "none", response: "array" },
+  "GET browser-control": { request: "none", response: "object" },
+  "POST browser-open": { request: "object", response: "object" },
+  "POST browser-action": { request: "object", response: "object" },
+  "POST browser-preview": { request: "object", response: "object" },
+  "POST browser-visible": { request: "object", response: "object" },
+  "POST attachment-upload": { request: "none", response: "object" },
+  "GET team-members": { request: "none", response: "array" },
+  "PATCH team-member": { request: "object", response: "object" },
+  "POST team-invites": { request: "object", response: "object" },
+  "GET team-invites": { request: "none", response: "array" },
+  "GET team-sessions": { request: "none", response: "array" },
+  "GET agent-status": { request: "none", response: "object" },
+  "GET sidebar-layout": { request: "none", response: "object" },
+  "POST sidebar-action": { request: "object", response: "object" },
+  "GET agent-usage": { request: "none", response: "object" },
+  "GET agent-models": { request: "none", response: "array" },
+  "GET agents": { request: "none", response: "array" },
+  "POST agents": { request: "object", response: "object" },
+  "GET conversation-reads": { request: "none", response: "object" },
+  "PATCH agent": { request: "object", response: "object" },
+  "GET memories": { request: "none", response: "array" },
+  "POST memories": { request: "object", response: "object" },
+  "PATCH memory": { request: "object", response: "object" },
+  "GET routines": { request: "none", response: "array" },
+  "POST routines": { request: "object", response: "object" },
+  "PATCH routine": { request: "object", response: "object" },
+  "POST routine-test": { request: "none", response: "object" },
+  "GET routine-runs": { request: "none", response: "array" },
+  "PUT agent-avatar": { request: "none", response: "object" },
+  "DELETE agent-avatar": { request: "none", response: "object" },
+  "GET conversation": { request: "none", response: "object" },
+  "GET conversation-page": { request: "none", response: "object" },
+  "POST conversation-read": { request: "object", response: "object" },
+  "POST messages": { request: "object", response: "object" },
+  "GET queue": { request: "none", response: "object" },
+  "POST agent-action": { request: "object", response: "object" },
+  "POST prompt-response": { request: "object", response: "object" },
+  "POST approval-response": { request: "object", response: "object" },
+  "POST browser-takeover-response": { request: "object", response: "object" },
+} as const satisfies Record<string, TeamProtocolV1HttpContract>;
+
+type TeamProtocolV1HttpRoute = keyof typeof TEAM_PROTOCOL_V1_HTTP_CONTRACTS;
+
+export function decodeTeamProtocolV1HttpRequest(
+  method: string,
+  path: string,
+  value: unknown,
+): TeamProtocolV1JsonObject {
+  const route = teamProtocolV1HttpRoute(method, path);
+  if (!route) throw new Error("Invalid Team protocol v1 HTTP request.");
+  const contract = TEAM_PROTOCOL_V1_HTTP_CONTRACTS[route];
+  if (contract.request !== "object" || !isTeamProtocolV1JsonObject(value)) {
+    throw new Error("Invalid Team protocol v1 HTTP request.");
+  }
+  validateTeamProtocolV1HttpRequest(route, value);
+  return value;
+}
+
+export function decodeTeamProtocolV1HttpResponse(
+  method: string,
+  path: string,
+  status: number,
+  value: unknown,
+): TeamProtocolV1JsonValue {
+  if (status >= 400) {
+    if (!isTeamProtocolV1JsonObject(value) || !isString(value.error)) {
+      throw new Error("Invalid Team protocol v1 HTTP error response.");
+    }
+    return value;
+  }
+  const route = teamProtocolV1HttpRoute(method, path);
+  if (!route) throw new Error("Invalid Team protocol v1 HTTP response.");
+  const contract = TEAM_PROTOCOL_V1_HTTP_CONTRACTS[route];
+  if (!matchesTeamProtocolV1HttpShape(contract.response, value)) {
+    throw new Error("Invalid Team protocol v1 HTTP response.");
+  }
+  validateTeamProtocolV1HttpResponse(route, value);
+  return value;
+}
+
+function teamProtocolV1HttpRoute(method: string, path: string): TeamProtocolV1HttpRoute | null {
+  const pathname = new URL(path, "http://openbot.invalid").pathname;
+  const exact: Record<string, TeamProtocolV1HttpRoute> = {
+    "GET /v1/compatibility": "GET compatibility",
+    "GET /v1/identity": "GET identity",
+    "POST /v1/invitations/preview": "POST invitation-preview",
+    "POST /v1/join": "POST join",
+    "POST /v1/join/account": "POST join-account",
+    "POST /v1/auth/login": "POST auth-login",
+    "POST /v1/auth/account": "POST auth-account",
+    "POST /v1/auth/password": "POST auth-password",
+    "GET /v1/me": "GET me",
+    "GET /v1/team/presence": "GET team-presence",
+    "GET /v1/remote-screen/capabilities": "GET remote-capabilities",
+    "POST /v1/remote-screen/sessions": "POST remote-session",
+    "PUT /v1/remote-screen/display": "PUT remote-display",
+    "GET /v1/direct/threads": "GET direct-threads",
+    "GET /v1/messages/search": "GET message-search",
+    "POST /v1/direct/messages": "POST direct-message",
+    "GET /v1/browser/tabs": "GET browser-tabs",
+    "GET /v1/browser/control": "GET browser-control",
+    "POST /v1/browser/open": "POST browser-open",
+    "POST /v1/browser/activate": "POST browser-action",
+    "POST /v1/browser/navigate": "POST browser-action",
+    "POST /v1/browser/reload": "POST browser-action",
+    "POST /v1/browser/close": "POST browser-action",
+    "POST /v1/browser/preview": "POST browser-preview",
+    "POST /v1/browser/visible": "POST browser-visible",
+    "POST /v1/attachments": "POST attachment-upload",
+    "GET /v1/team/members": "GET team-members",
+    "POST /v1/team/invites": "POST team-invites",
+    "GET /v1/team/invites": "GET team-invites",
+    "GET /v1/team/sessions": "GET team-sessions",
+    "GET /v1/agents/status": "GET agent-status",
+    "GET /v1/sidebar-layout": "GET sidebar-layout",
+    "POST /v1/sidebar-layout/actions": "POST sidebar-action",
+    "GET /v1/agents/usage": "GET agent-usage",
+    "GET /v1/agents/models": "GET agent-models",
+    "GET /v1/agents": "GET agents",
+    "POST /v1/agents": "POST agents",
+    "GET /v1/agents/conversation-reads": "GET conversation-reads",
+    "POST /v1/prompts/respond": "POST prompt-response",
+    "POST /v1/approvals/respond": "POST approval-response",
+    "POST /v1/browser-takeovers/respond": "POST browser-takeover-response",
+  };
+  const direct = exact[`${method} ${pathname}`];
+  if (direct) return direct;
+  if (/^\/v1\/team\/members\/[^/]+$/u.test(pathname) && method === "PATCH") return "PATCH team-member";
+  const directConversation = pathname.match(/^\/v1\/direct\/conversations\/[^/]+(?:\/(read|page))?$/u);
+  if (directConversation && method === "GET") {
+    return directConversation[1] === "page" ? "GET direct-conversation-page" : "GET direct-conversation";
+  }
+  if (directConversation?.[1] === "read" && method === "POST") return "POST direct-conversation-read";
+  const agent = pathname.match(/^\/v1\/agents\/[^/]+(?:\/(.*))?$/u);
+  if (!agent) return null;
+  const action = agent[1] ?? "";
+  if (!action && method === "PATCH") return "PATCH agent";
+  if (action === "memories") return method === "GET" ? "GET memories" : method === "POST" ? "POST memories" : null;
+  if (/^memories\/[^/]+$/u.test(action) && method === "PATCH") return "PATCH memory";
+  if (action === "routines") return method === "GET" ? "GET routines" : method === "POST" ? "POST routines" : null;
+  if (/^routines\/[^/]+$/u.test(action) && method === "PATCH") return "PATCH routine";
+  if (/^routines\/[^/]+\/test$/u.test(action) && method === "POST") return "POST routine-test";
+  if (/^routines\/[^/]+\/runs$/u.test(action) && method === "GET") return "GET routine-runs";
+  if (action === "avatar" && (method === "PUT" || method === "DELETE")) return `${method} agent-avatar`;
+  if (action === "conversation" && method === "GET") return "GET conversation";
+  if (action === "conversation-page" && method === "GET") return "GET conversation-page";
+  if (action === "conversation/read" && method === "POST") return "POST conversation-read";
+  if (action === "messages" && method === "POST") return "POST messages";
+  if (action === "queue" && method === "GET") return "GET queue";
+  if (
+    method === "POST" &&
+    [
+      "failures/acknowledge",
+      "reactions",
+      "queue/cancel",
+      "queue/steer",
+      "queue/update",
+      "queue/reorder",
+      "interrupt",
+    ].includes(action)
+  ) {
+    return "POST agent-action";
+  }
+  return null;
+}
+
+function matchesTeamProtocolV1HttpShape(
+  payloadKind: TeamProtocolV1HttpPayloadKind,
+  value: unknown,
+): value is TeamProtocolV1JsonValue {
+  if (payloadKind === "array") return Array.isArray(value) && value.every(isTeamProtocolV1JsonValue);
+  if (payloadKind === "nullable-object" && value === null) return true;
+  return isTeamProtocolV1JsonObject(value);
+}
+
+function validateTeamProtocolV1HttpRequest(route: TeamProtocolV1HttpRoute, value: TeamProtocolV1JsonObject): void {
+  const invalid = () => {
+    throw new Error("Invalid Team protocol v1 HTTP request.");
+  };
+  if (route === "POST invitation-preview" && !isString(value.inviteToken)) invalid();
+  if (route === "POST join" && (!isString(value.inviteToken) || !isString(value.username) || !isString(value.password)))
+    invalid();
+  if (route === "POST join-account" && (!isString(value.inviteToken) || !isString(value.accountTicket))) invalid();
+  if (route === "POST auth-login" && (!isString(value.username) || !isString(value.password))) invalid();
+  if (route === "POST auth-account" && !isString(value.accountTicket)) invalid();
+  if (route === "POST auth-password" && (!isString(value.currentPassword) || !isString(value.newPassword))) invalid();
+  if (route === "PUT remote-display" && !isString(value.displayId)) invalid();
+  if (
+    route === "POST direct-message" &&
+    (!isString(value.memberId) || !isString(value.text) || !isString(value.clientMessageId))
+  )
+    invalid();
+  if (route === "POST direct-conversation-read" && !isNumber(value.throughSequence)) invalid();
+  if (route === "PATCH team-member" && value.role === undefined && value.disabled === undefined) invalid();
+  if (route === "POST team-invites" && value.role !== "admin" && value.role !== "member") invalid();
+  if ((route === "POST memories" || route === "PATCH memory") && !isString(value.text)) invalid();
+  if (route === "POST conversation-read" && value.throughMessageId !== null && !isString(value.throughMessageId))
+    invalid();
+}
+
+function validateTeamProtocolV1HttpResponse(route: TeamProtocolV1HttpRoute, value: TeamProtocolV1JsonValue): void {
+  const invalid = () => {
+    throw new Error("Invalid Team protocol v1 HTTP response.");
+  };
+  if (route === "GET compatibility") {
+    decodeTeamProtocolSupportV1(value);
+  } else if (route === "GET team-presence" && !isTeamProtocolV1PresenceSnapshot(value)) {
+    invalid();
+  } else if (route === "GET agents" && (!Array.isArray(value) || !value.every(isV1BotSummary))) {
+    invalid();
+  } else if (
+    (route === "POST agents" || route === "PATCH agent" || route.endsWith("agent-avatar")) &&
+    !isV1BotSummary(value)
+  ) {
+    invalid();
+  } else if (route === "GET sidebar-layout" || route === "POST sidebar-action") {
+    if (!isV1SidebarLayout(value)) invalid();
+  } else if (route === "GET conversation-page" && !isV1ConversationPage(value)) {
+    invalid();
+  } else if (route === "GET queue" && !isV1QueueSnapshot(value)) {
+    invalid();
+  }
 }

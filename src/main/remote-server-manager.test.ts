@@ -859,9 +859,9 @@ describe("Team API compatibility negotiation", () => {
 
     try {
       await manager.initialize();
-      await expect(manager.request("/v1/test", {}, "compatibility-headers", (value) => value)).resolves.toEqual({
-        ok: true,
-      });
+      await expect(
+        manager.request("/v1/agents/status", {}, "compatibility-headers", (value) => value),
+      ).resolves.toEqual({ ok: true });
       expect(manager.list().find((server) => server.id === "compatibility-headers")?.compatibility).toMatchObject({
         localAppVersion: "0.4.0",
         hostAppVersion: "0.3.0",
