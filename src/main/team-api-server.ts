@@ -1145,8 +1145,7 @@ export class TeamApiServer {
       if (event.type === "runtime-snapshot" && !connection.supportsRuntimeSnapshot) continue;
       if (event.type === "conversation" && !connection.includeConversationEvents) continue;
       payload ??= JSON.stringify(event);
-      const limit = event.type === "runtime-snapshot" ? AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT : JSON_LIMIT;
-      if (Buffer.byteLength(payload) > limit) return;
+      if (event.type === "runtime-snapshot" && Buffer.byteLength(payload) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return;
       if (client.readyState !== webSockets.WebSocket.OPEN) continue;
       client.send(payload);
       if (

@@ -265,7 +265,7 @@ describe("TeamApiServer administration", () => {
       agentEvents.emit("event", conversation);
       await expect(conversationEvent).resolves.toMatchObject({ type: "conversation" });
 
-      const eventAfterOversizedConversation = nextJsonEvent(socket);
+      const eventsAfterOversizedConversation = nextJsonEvents(socket, 2);
       agentEvents.emit("event", {
         ...conversation,
         snapshot: {
@@ -274,7 +274,10 @@ describe("TeamApiServer administration", () => {
         },
       });
       agentEvents.emit("event", { type: "bots-changed", bots: [] });
-      await expect(eventAfterOversizedConversation).resolves.toMatchObject({ type: "bots-changed" });
+      await expect(eventsAfterOversizedConversation).resolves.toEqual([
+        expect.objectContaining({ type: "conversation" }),
+        expect.objectContaining({ type: "bots-changed" }),
+      ]);
 
       const refreshedSnapshot = nextJsonEvent(socket);
       socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
