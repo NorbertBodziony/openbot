@@ -891,17 +891,34 @@ export function createAppController(props: AppProps = {}) {
       const trackingKey = agentConversationKey(serverId, botId);
       const pageRequest = (conversationPageRequests.get(botId) ?? 0) + 1;
       conversationPageRequests.set(botId, pageRequest);
-      const queueRequest = (queueSnapshotRequests.get(botId) ?? 0) + 1;
-      queueSnapshotRequests.set(botId, queueRequest);
       void window.openbot.agent
         .readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 }, serverId)
         .then((page) => {
           if (activeServerSidebarKey() !== serverId || conversationPageRequests.get(botId) !== pageRequest) return;
           const pageApplied = applyConversationPage(page, "replace", "latest");
           if (!pageApplied) {
-            if (agentChatsToMarkRead.has(trackingKey) && !agentChatsRetriedOnOpen.has(botId)) {
-              agentChatsRetriedOnOpen.add(botId);
-              setAgentChatOpenRevision((current) => current + 1);
+            if (agentChatsToMarkRead.has(trackingKey)) {
+              if (!agentChatsRetriedOnOpen.has(botId)) {
+                agentChatsRetriedOnOpen.add(botId);
+                setAgentChatOpenRevision((current) => current + 1);
+              } else {
+                agentChatsToMarkRead.delete(trackingKey);
+                const latestIncomingMessage = liveMessages()
+                  [botId]?.filter(
+                    (message) =>
+                      message.author !== "you" &&
+                      message.itemType !== "commentary" &&
+                      message.itemType !== "agent_attachment" &&
+                      !message.id.startsWith("thinking:") &&
+                      !message.id.startsWith("ui-"),
+                  )
+                  .at(-1);
+                if (latestIncomingMessage) {
+                  void markAgentMessagesRead(botId, latestIncomingMessage.id, serverId).catch((error) =>
+                    appendUiError(botId, error, "Read state failed"),
+                  );
+                }
+              }
             }
             return;
           }
@@ -926,6 +943,15 @@ export function createAppController(props: AppProps = {}) {
         .catch((error) => {
           if (activeServerSidebarKey() === serverId) appendUiError(botId, error, "Load failed");
         });
+    },
+  );
+
+  createEffect(
+    () => ({ botId: activeBotId(), agentPhase: agentStatus().phase, serverId: activeServerSidebarKey() }),
+    ({ botId, serverId }) => {
+      if (!botId) return;
+      const queueRequest = (queueSnapshotRequests.get(botId) ?? 0) + 1;
+      queueSnapshotRequests.set(botId, queueRequest);
       void window.openbot.agent
         .listQueue(botId)
         .then((queue) => {
@@ -3293,7 +3319,7 @@ export function createAppController(props: AppProps = {}) {
   }
 
   const activeServer = createMemo(() => servers().find((server) => server.active));
-  const activeServerSidebarKey = createMemo(() => activeServer()?.id ?? "local");
+  const activeServerSidebarKey: () => string = createMemo((): string => activeServer()?.id ?? "local");
 
   function dynamicIslandServerOrder(): string[] {
     const ids = servers()

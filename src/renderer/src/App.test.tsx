@@ -6040,7 +6040,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
   });
 
-  it("limits stale chat-open reloads to one retry", async () => {
+  it("uses the latest visible reply after one stale retry without reloading the queue", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -6068,6 +6068,7 @@ describe("OpenBot connected desktop shell", () => {
       readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
     });
     const callsBeforeOpen = vi.mocked(window.openbot.agent.readConversationPage).mock.calls.length;
+    const queueCallsBeforeOpen = vi.mocked(window.openbot.agent.listQueue).mock.calls.length;
     vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(stalePage);
 
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
@@ -6075,7 +6076,11 @@ describe("OpenBot connected desktop shell", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(window.openbot.agent.readConversationPage).toHaveBeenCalledTimes(callsBeforeOpen + 2);
-    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+      { botId: "chief", throughMessageId: "reply-applied-revision" },
+      "local",
+    );
+    expect(window.openbot.agent.listQueue).toHaveBeenCalledTimes(queueCallsBeforeOpen);
   });
 
   it("rejects a permission approval and keeps the error visible", async () => {
