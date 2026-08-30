@@ -911,6 +911,16 @@ export function createAppController(props: AppProps = {}) {
             void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null, serverId).catch((error) =>
               appendUiError(botId, error, "Read state failed"),
             );
+          } else if (agentChatsToRetryRead.has(trackingKey) && (page.readState?.unreadCount ?? 0) > 0) {
+            const latestIncomingMessage = [...page.messages]
+              .reverse()
+              .find(
+                (message) =>
+                  message.author !== "user" &&
+                  message.itemType !== "commentary" &&
+                  message.itemType !== "agent_attachment",
+              );
+            if (latestIncomingMessage) autoMarkAgentMessageRead(botId, latestIncomingMessage.id);
           }
         })
         .catch((error) => {
@@ -1254,8 +1264,8 @@ export function createAppController(props: AppProps = {}) {
     }).catch((error) => {
       if (autoReadAgentMessages.get(trackingKey)?.messageId !== messageId) return;
       autoReadAgentMessages.delete(trackingKey);
-      if (activeServerSidebarKey() !== serverId) return;
       agentChatsToRetryRead.add(trackingKey);
+      if (activeServerSidebarKey() !== serverId) return;
       const latest = conversationReads()[botId];
       if (
         optimisticallyCleared &&
@@ -2169,7 +2179,9 @@ export function createAppController(props: AppProps = {}) {
         );
         agentChatsToRetryRead.delete(requestKey);
         onSuccess?.(state);
-        if (activeServerSidebarKey() === serverId) {
+        const trackedAutoRead = autoReadAgentMessages.get(requestKey);
+        const supersededByAutoRead = Boolean(trackedAutoRead && trackedAutoRead.messageId !== boundary);
+        if (activeServerSidebarKey() === serverId && !supersededByAutoRead) {
           applyConversationReadState(botId, state);
           clearRecentReply(botId);
         }

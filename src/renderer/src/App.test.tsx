@@ -5491,6 +5491,86 @@ describe("OpenBot connected desktop shell", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 
+  it("restores a newer unread reply when its queued read fails", async () => {
+    let resolveFirstRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    let rejectSecondRead: ((error: Error) => void) | undefined;
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({
+      chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    vi.mocked(window.openbot.agent.markConversationRead)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstRead = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectSecondRead = reject;
+          }),
+      );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-read-a",
+            author: "assistant",
+            text: "First queued reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-read-a", throughMessageId: null },
+        },
+      ),
+    });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-read-a",
+            author: "assistant",
+            text: "First queued reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "reply-read-b",
+            author: "assistant",
+            text: "Newer queued reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 3,
+          readState: { unreadCount: 2, firstUnreadMessageId: "reply-read-a", throughMessageId: null },
+        },
+      ),
+    });
+    await screen.findByText("Newer queued reply");
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
+
+    resolveFirstRead?.({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-read-a" });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledTimes(2));
+    rejectSecondRead?.(new Error("Newer read unavailable"));
+
+    expect(await screen.findByText("Newer read unavailable")).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+  });
+
   it("retries an automatic read for the same message after persistence fails", async () => {
     vi.mocked(window.openbot.agent.markConversationRead).mockRejectedValueOnce(new Error("Read unavailable"));
     render(() => <App />);
@@ -5534,38 +5614,61 @@ describe("OpenBot connected desktop shell", () => {
     const local = testServer("local", true);
     const remote = testServer("remote-1", false);
     let selectedServerId = "local";
+    let returningToLocal = false;
     let rejectLocalRead: ((error: Error) => void) | undefined;
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
-    vi.mocked(window.openbot.servers.select).mockImplementationOnce(async () => {
-      selectedServerId = "remote-1";
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => {
+      selectedServerId = serverId;
+      returningToLocal = serverId === "local";
       return [
-        { ...local, active: false },
-        { ...remote, active: true },
+        { ...local, active: serverId === "local" },
+        { ...remote, active: serverId === "remote-1" },
       ];
     });
-    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async (input) =>
-      selectedServerId === "remote-1"
-        ? testConversationPage(
-            input.botId,
-            [
-              {
-                id: "reply-remote-loaded",
-                author: "assistant",
-                text: "Remote loaded reply",
-                createdAt: "2026-08-30T02:02:30.000Z",
-                status: "completed",
-              },
-            ],
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async (input) => {
+      if (selectedServerId === "remote-1") {
+        return testConversationPage(
+          input.botId,
+          [
             {
-              readState: { unreadCount: 1, firstUnreadMessageId: "reply-remote-loaded", throughMessageId: null },
+              id: "reply-remote-loaded",
+              author: "assistant",
+              text: "Remote loaded reply",
+              createdAt: "2026-08-30T02:02:30.000Z",
+              status: "completed",
             },
-          )
-        : testConversationPage(input.botId),
-    );
+          ],
+          {
+            readState: { unreadCount: 1, firstUnreadMessageId: "reply-remote-loaded", throughMessageId: null },
+          },
+        );
+      }
+      if (returningToLocal) {
+        return testConversationPage(
+          input.botId,
+          [
+            {
+              id: "reply-local",
+              author: "assistant",
+              text: "Local reply after returning",
+              createdAt: "2026-08-30T02:02:00.000Z",
+              status: "completed",
+            },
+          ],
+          {
+            readState: { unreadCount: 1, firstUnreadMessageId: "reply-local", throughMessageId: null },
+          },
+        );
+      }
+      return testConversationPage(input.botId);
+    });
     vi.mocked(window.openbot.agent.listConversationReads)
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({
         chief: { unreadCount: 1, firstUnreadMessageId: "reply-remote", throughMessageId: null },
+      })
+      .mockResolvedValueOnce({
+        chief: { unreadCount: 1, firstUnreadMessageId: "reply-local", throughMessageId: null },
       });
     vi.mocked(window.openbot.agent.markConversationRead).mockImplementationOnce(
       () =>
@@ -5630,6 +5733,18 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
     expect(screen.queryByText("Local read unavailable")).not.toBeInTheDocument();
     expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
+    await waitFor(() => expect(window.openbot.agent.listConversationReads).toHaveBeenCalledTimes(3));
+    await screen.findByText("Local reply after returning");
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(
+        2,
+        { botId: "chief", throughMessageId: "reply-local" },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
   });
 
   it("keeps a queued read scoped to its original server", async () => {
