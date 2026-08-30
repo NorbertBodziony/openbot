@@ -1047,6 +1047,61 @@ describe("Team API compatibility negotiation", () => {
     }
   });
 
+  it("closes the event data plane after a malformed HTTP payload", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-http-protocol-events-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "http-protocol-events");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        if (url.pathname === "/v1/compatibility") {
+          return Response.json({
+            appVersion: "0.3.0",
+            protocol: { minimum: 1, maximum: 1 },
+            capabilities: ["agent-runtime-snapshots"],
+          });
+        }
+        return Response.json({ malformed: true });
+      }),
+    );
+    const sockets: HttpProtocolEventSocket[] = [];
+    class HttpProtocolEventSocket extends EventTarget {
+      static readonly OPEN = 1;
+      readonly protocol = "openbot-team-v1";
+      readonly readyState = HttpProtocolEventSocket.OPEN;
+      readonly send = vi.fn();
+      readonly close = vi.fn(() => this.dispatchEvent(new Event("close")));
+
+      constructor() {
+        super();
+        sockets.push(this);
+        queueMicrotask(() => this.dispatchEvent(new Event("open")));
+      }
+    }
+    vi.stubGlobal("WebSocket", HttpProtocolEventSocket);
+    const manager = remoteEventManager(statePath, "0.4.0");
+
+    try {
+      await manager.initialize();
+      manager.startEventConnections();
+      await vi.waitFor(() =>
+        expect(manager.list().find((server) => server.id === "http-protocol-events")?.state).toBe("online"),
+      );
+      await expect(manager.request("/v1/agents", {}, "http-protocol-events", (value) => value)).rejects.toThrow(
+        "could not safely use",
+      );
+      expect(sockets[0]?.close).toHaveBeenCalledWith(1000, "Client stopped");
+      expect(manager.list().find((server) => server.id === "http-protocol-events")).toMatchObject({
+        state: "error",
+        issue: { code: "protocol_error" },
+      });
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("ignores unknown events and stops reconnect after a malformed known event", async () => {
     vi.useFakeTimers();
     const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-events-"));

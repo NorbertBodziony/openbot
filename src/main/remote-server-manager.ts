@@ -1027,7 +1027,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     state ??= fallbackState;
     if (issue) this.#issues.set(serverId, issue);
     if (state) this.#states.set(serverId, state);
-    if (pauseReconnect) this.#eventAuthenticationPaused.add(serverId);
+    if (pauseReconnect) {
+      this.#eventAuthenticationPaused.add(serverId);
+      this.#eventControllers.get(serverId)?.abort();
+      this.#eventControllers.delete(serverId);
+      this.#eventSockets.delete(serverId);
+    }
     this.#emitChanged();
   }
 
