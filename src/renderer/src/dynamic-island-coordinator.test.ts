@@ -388,6 +388,22 @@ describe("DynamicIslandCoordinator", () => {
         "remote",
         runtimeSnapshot({
           bots: [remoteBot],
+          latestMessages: [runtimeMessage("historical")],
+          attentionComplete: false,
+        }),
+      ),
+      "local",
+    );
+    expect(coordinator.presentation(["remote"])).toMatchObject({
+      mode: "question",
+      item: { requestId: "stale-question" },
+    });
+
+    coordinator.applyEvent(
+      scoped(
+        "remote",
+        runtimeSnapshot({
+          bots: [remoteBot],
           activeTurns: [{ botId: "research", threadId: "thread-research", turnId: "turn-current" }],
           work: [
             {
@@ -511,6 +527,7 @@ function runtimeSnapshot(
       activeTurns: [],
       work: [],
       latestMessages: [],
+      attentionComplete: true,
       pendingPrompts: [],
       pendingApprovals: [],
       pendingBrowserTakeovers: [],

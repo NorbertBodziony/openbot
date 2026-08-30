@@ -163,12 +163,14 @@ describe("runtime snapshot event validation", () => {
       activeTurns: [],
       work: [],
       latestMessages: [],
+      attentionComplete: true,
       pendingPrompts: [],
       pendingApprovals: [],
       pendingBrowserTakeovers: [],
       failedTurns: [],
     };
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot })).toBe(true);
+    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, attentionComplete: null } })).toBe(false);
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, failedTurns: null } })).toBe(false);
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, bots: [{}] } })).toBe(false);
     expect(isAgentEvent({ type: "runtime-snapshot", snapshot: { ...snapshot, work: [{}] } })).toBe(false);

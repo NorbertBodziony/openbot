@@ -253,6 +253,7 @@ function createSmokeAgents(events: EventEmitter): SmokeAgents {
       activeTurns: [],
       work: [],
       latestMessages: [],
+      attentionComplete: true,
       pendingPrompts: [],
       pendingApprovals: [],
       pendingBrowserTakeovers: [],

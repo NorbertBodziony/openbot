@@ -465,6 +465,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         });
       }
     }
+    const attentionComplete =
+      this.#pendingPrompts.size + this.#pendingApprovals.size + this.#pendingBrowserTakeovers.size <=
+      AGENT_RUNTIME_ATTENTION_LIMIT;
     let remainingAttention = AGENT_RUNTIME_ATTENTION_LIMIT;
     const pendingPrompts = [...this.#pendingPrompts.values()].slice(0, remainingAttention).map((pending) => ({
       requestId: pending.id,
@@ -489,6 +492,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.#failedTurns,
       ),
       latestMessages,
+      attentionComplete,
       pendingPrompts,
       pendingApprovals,
       pendingBrowserTakeovers,
@@ -4151,6 +4155,7 @@ function fitRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): AgentRuntimeSnapsho
     runtimeSnapshotBytes(snapshot) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT &&
     snapshot.pendingPrompts.length + snapshot.pendingApprovals.length + snapshot.pendingBrowserTakeovers.length > 0
   ) {
+    snapshot.attentionComplete = false;
     if (snapshot.pendingBrowserTakeovers.length > 0) snapshot.pendingBrowserTakeovers.pop();
     else if (snapshot.pendingApprovals.length > 0) snapshot.pendingApprovals.pop();
     else snapshot.pendingPrompts.pop();

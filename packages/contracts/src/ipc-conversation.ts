@@ -976,6 +976,7 @@ export interface AgentRuntimeSnapshot {
   activeTurns: Array<{ botId: string; threadId: string; turnId: string }>;
   work: AgentRuntimeWorkItem[];
   latestMessages: Array<{ botId: string; id: string; text: string; createdAt: string }>;
+  attentionComplete: boolean;
   pendingPrompts: Array<{
     requestId: string | number;
     botId: string;
@@ -1191,6 +1192,7 @@ function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
         isBoundedString(message.text, AGENT_RUNTIME_TEXT_LIMIT) &&
         isBoundedString(message.createdAt, 160),
     ) &&
+    isBoolean(value.attentionComplete) &&
     Array.isArray(value.pendingPrompts) &&
     value.pendingPrompts.length <= AGENT_RUNTIME_ATTENTION_LIMIT &&
     value.pendingPrompts.every(isRuntimePrompt) &&

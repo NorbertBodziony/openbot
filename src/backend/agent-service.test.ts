@@ -156,6 +156,7 @@ describe.sequential("AgentService", () => {
       bots: [expect.objectContaining({ id: "chief" })],
       activeTurns: [],
       work: [],
+      attentionComplete: true,
       pendingPrompts: [],
       pendingApprovals: [],
       pendingBrowserTakeovers: [],

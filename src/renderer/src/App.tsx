@@ -984,7 +984,7 @@ export function createAppController(props: AppProps = {}) {
     setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])));
     setQueues((current) => ({ ...queueSnapshotsFromRuntimeWork(snapshot.work), ...current }));
     setPendingPrompts((current) => {
-      const next = { ...current };
+      const next = snapshot.attentionComplete ? {} : { ...current };
       const submitted = submittedPromptRequests();
       for (const prompt of snapshot.pendingPrompts) {
         if (promptRequestKey(prompt.turnId, prompt.requestId) !== submitted[prompt.botId]) {
@@ -997,7 +997,7 @@ export function createAppController(props: AppProps = {}) {
       return next;
     });
     setPendingApprovals((current) => ({
-      ...current,
+      ...(snapshot.attentionComplete ? {} : current),
       ...Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])),
     }));
     setLiveMessages((current) => {

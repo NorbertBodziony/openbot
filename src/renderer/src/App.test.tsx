@@ -1011,6 +1011,7 @@ describe("OpenBot connected desktop shell", () => {
         activeTurns: [],
         work: [],
         latestMessages: [{ botId: "chief", id: messageId, text, createdAt: "2026-08-29T10:00:00.000Z" }],
+        attentionComplete: true,
         pendingPrompts: [],
         pendingApprovals: [],
         pendingBrowserTakeovers: [],
@@ -1042,7 +1043,7 @@ describe("OpenBot connected desktop shell", () => {
     );
   });
 
-  it("keeps authoritative queue and attention state when a compact runtime snapshot omits them", async () => {
+  it("preserves omitted attention only when a compact runtime snapshot is incomplete", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
@@ -1080,22 +1081,33 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("status", { name: "Chief is working" })).toBeInTheDocument();
     expect(await screen.findByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
 
-    emitAgentEvent?.({
+    const runtimeSnapshot: AgentEvent = {
       type: "runtime-snapshot",
       snapshot: {
         bots: [],
         activeTurns: [],
         work: [],
         latestMessages: [],
+        attentionComplete: false,
         pendingPrompts: [],
         pendingApprovals: [],
         pendingBrowserTakeovers: [],
         failedTurns: [],
       },
-    });
+    };
+    emitAgentEvent?.(runtimeSnapshot);
 
     expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      ...runtimeSnapshot,
+      snapshot: { ...runtimeSnapshot.snapshot, attentionComplete: true },
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox", { name: "Custom answer for: Which scope?" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
   });
 
   it("merges compact runtime attention into the active server", async () => {
@@ -1110,6 +1122,7 @@ describe("OpenBot connected desktop shell", () => {
         activeTurns: [],
         work: [],
         latestMessages: [],
+        attentionComplete: true,
         pendingPrompts: [],
         pendingApprovals: [
           {

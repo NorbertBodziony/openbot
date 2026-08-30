@@ -303,6 +303,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     };
     this.#state.servers = [...this.#state.servers.filter((server) => server.id !== stored.id), stored];
     this.#state.activeServerId = stored.id;
+    this.#syncEventScopes();
     this.#states.set(stored.id, "online");
     await this.#refreshRemoteDesktop(stored);
     await this.#persist();
@@ -330,6 +331,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     };
     this.#state.servers = [...this.#state.servers.filter((server) => server.id !== stored.id), stored];
     this.#state.activeServerId = stored.id;
+    this.#syncEventScopes();
     this.#states.set(stored.id, "online");
     await this.#refreshRemoteDesktop(stored);
     await this.#persist();

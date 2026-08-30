@@ -258,7 +258,9 @@ export class DynamicIslandCoordinator {
         this.#recordIncoming(runtime, message.botId, [converted]);
       }
     }
-    const pendingPrompts: DynamicIslandPresentationInput["pendingPrompts"] = {};
+    const pendingPrompts: DynamicIslandPresentationInput["pendingPrompts"] = snapshot.attentionComplete
+      ? {}
+      : { ...runtime.pendingPrompts };
     for (const prompt of snapshot.pendingPrompts) pendingPrompts[prompt.botId] = { type: "prompt", ...prompt };
     for (const request of snapshot.pendingBrowserTakeovers) {
       pendingPrompts[request.botId] = { type: "browser-takeover-requested", request };
@@ -272,7 +274,10 @@ export class DynamicIslandCoordinator {
       unreadMessageIds: { ...runtime.unreadMessageIds },
       liveMessages,
       pendingPrompts,
-      pendingApprovals: Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])),
+      pendingApprovals: {
+        ...(snapshot.attentionComplete ? {} : runtime.pendingApprovals),
+        ...Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])),
+      },
       failedTurns: Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])),
     });
     const nextRuntime = this.#runtime(serverId);
