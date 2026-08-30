@@ -445,7 +445,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         .reverse()
         .find(
           (message) =>
-            (message.author === "assistant" || message.author === "agent") && message.itemType !== "commentary",
+            (message.author === "assistant" || message.author === "agent") &&
+            message.itemType !== "commentary" &&
+            message.itemType !== "question_prompt",
         );
       const persisted =
         !live || !liveLatest

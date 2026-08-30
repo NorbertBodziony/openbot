@@ -1035,15 +1035,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     try {
       while (this.#state.servers.some((server) => server.id === serverId)) {
         const requestedRevision = request.revision;
-        const page = await this.readAgentConversationPage(botId, { type: "latest" }, 50, serverId);
+        let page: ConversationPage;
+        try {
+          page = await this.readAgentConversationPage(botId, { type: "latest" }, 50, serverId);
+        } catch {
+          if (request.revision !== requestedRevision) continue;
+          return;
+        }
         if (page.revision >= request.revision) {
           this.emit("agent", serverId, { type: "conversation-page", page });
           return;
         }
         if (request.revision === requestedRevision) return;
       }
-    } catch {
-      // The next invalidation or explicit conversation load can retry the refresh.
     } finally {
       if (this.#conversationRefreshRequests.get(key) === request) this.#conversationRefreshRequests.delete(key);
     }
@@ -1061,17 +1065,21 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     try {
       do {
         request.dirty = false;
-        const snapshot = await this.request(
-          `/v1/agents/${encodeURIComponent(botId)}/queue`,
-          {},
-          serverId,
-          decodeQueueSnapshot,
-        );
+        let snapshot: QueueSnapshot;
+        try {
+          snapshot = await this.request(
+            `/v1/agents/${encodeURIComponent(botId)}/queue`,
+            {},
+            serverId,
+            decodeQueueSnapshot,
+          );
+        } catch {
+          if (request.dirty) continue;
+          return;
+        }
         if (!this.#state.servers.some((server) => server.id === serverId)) return;
         this.emit("agent", serverId, { type: "queue-changed", snapshot });
       } while (request.dirty);
-    } catch {
-      // The next invalidation or explicit queue load can retry the refresh.
     } finally {
       if (this.#queueRefreshRequests.get(key) === request) this.#queueRefreshRequests.delete(key);
     }

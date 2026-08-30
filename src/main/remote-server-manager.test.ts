@@ -312,15 +312,46 @@ describe("remote event connections", () => {
       }
     }
     vi.stubGlobal("WebSocket", TestEventSocket);
-    let resolveConversationPage: ((response: Response) => void) | undefined;
+    const conversationRequests: Array<{
+      resolve: (response: Response) => void;
+      reject: (error: Error) => void;
+    }> = [];
+    let queueRequests = 0;
+    let rejectQueue: ((error: Error) => void) | undefined;
+    const conversationPage = (revision: number) =>
+      new Response(
+        JSON.stringify({
+          botId: "chief",
+          threadId: "thread-chief",
+          activeTurnId: null,
+          revision,
+          messages: [
+            {
+              id: `reply-${revision}`,
+              author: "assistant",
+              text: "Fresh remote reply",
+              createdAt: "2026-08-30T02:00:00.000Z",
+              status: "completed",
+            },
+          ],
+          references: {},
+          pageInfo: { hasOlder: true, olderCursor: "older" },
+        }),
+      );
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = new URL(input);
       if (url.pathname.endsWith("/queue")) {
+        queueRequests += 1;
+        if (queueRequests === 1) {
+          return await new Promise<Response>((_resolve, reject) => {
+            rejectQueue = reject;
+          });
+        }
         return new Response(JSON.stringify({ botId: "chief", deliveries: [] }));
       }
       expect(url.pathname).toBe("/v1/agents/chief/conversation-page");
-      return await new Promise<Response>((resolve) => {
-        resolveConversationPage = resolve;
+      return await new Promise<Response>((resolve, reject) => {
+        conversationRequests.push({ resolve, reject });
       });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -365,33 +396,13 @@ describe("remote event connections", () => {
           data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 1 }),
         }),
       );
-      await vi.waitFor(() => expect(resolveConversationPage).toBeDefined());
+      await vi.waitFor(() => expect(conversationRequests).toHaveLength(1));
       sockets[1]?.dispatchEvent(
         new MessageEvent("message", {
           data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 2 }),
         }),
       );
-      resolveConversationPage?.(
-        new Response(
-          JSON.stringify({
-            botId: "chief",
-            threadId: "thread-chief",
-            activeTurnId: null,
-            revision: 2,
-            messages: [
-              {
-                id: "reply-2",
-                author: "assistant",
-                text: "Fresh remote reply",
-                createdAt: "2026-08-30T02:00:00.000Z",
-                status: "completed",
-              },
-            ],
-            references: {},
-            pageInfo: { hasOlder: true, olderCursor: "older" },
-          }),
-        ),
-      );
+      conversationRequests[0]?.resolve(conversationPage(2));
       await vi.waitFor(() =>
         expect(agentEvent).toHaveBeenCalledWith(
           "server-2",
@@ -403,15 +414,43 @@ describe("remote event connections", () => {
       ).toHaveLength(1);
       sockets[1]?.dispatchEvent(
         new MessageEvent("message", {
+          data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 3 }),
+        }),
+      );
+      await vi.waitFor(() => expect(conversationRequests).toHaveLength(2));
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 4 }),
+        }),
+      );
+      conversationRequests[1]?.reject(new Error("Refresh failed"));
+      await vi.waitFor(() => expect(conversationRequests).toHaveLength(3));
+      conversationRequests[2]?.resolve(conversationPage(4));
+      await vi.waitFor(() =>
+        expect(agentEvent).toHaveBeenCalledWith(
+          "server-2",
+          expect.objectContaining({ type: "conversation-page", page: expect.objectContaining({ revision: 4 }) }),
+        ),
+      );
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
           data: JSON.stringify({ type: "queue-invalidated", botId: "chief" }),
         }),
       );
+      await vi.waitFor(() => expect(rejectQueue).toBeDefined());
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "queue-invalidated", botId: "chief" }),
+        }),
+      );
+      rejectQueue?.(new Error("Refresh failed"));
       await vi.waitFor(() =>
         expect(agentEvent).toHaveBeenCalledWith(
           "server-2",
           expect.objectContaining({ type: "queue-changed", snapshot: { botId: "chief", deliveries: [] } }),
         ),
       );
+      expect(queueRequests).toBe(2);
 
       sockets[0]?.close();
       await vi.advanceTimersByTimeAsync(REMOTE_EVENT_RECONNECT_TEST_MS);

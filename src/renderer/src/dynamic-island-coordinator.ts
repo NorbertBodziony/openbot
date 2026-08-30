@@ -389,6 +389,12 @@ export function reconcileQueuesWithRuntimeWork(
 function toDynamicIslandMessage(
   message: Extract<AgentEvent, { type: "conversation" }>["snapshot"]["messages"][number],
 ) {
-  if ((message.author !== "assistant" && message.author !== "agent") || message.itemType === "commentary") return [];
+  if (
+    (message.author !== "assistant" && message.author !== "agent") ||
+    message.itemType === "commentary" ||
+    message.itemType === "question_prompt"
+  ) {
+    return [];
+  }
   return [{ id: message.id, author: "bot", body: message.text, time: message.createdAt, createdAt: message.createdAt }];
 }

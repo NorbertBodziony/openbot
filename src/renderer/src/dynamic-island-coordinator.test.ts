@@ -154,7 +154,7 @@ describe("DynamicIslandCoordinator", () => {
     });
   });
 
-  it("does not count or display commentary from a full conversation", () => {
+  it("does not count or display non-reply items from a full conversation", () => {
     const coordinator = new DynamicIslandCoordinator();
     seedBots(coordinator, "remote", [bot("research", "Research")]);
     coordinator.applyEvent(scoped("remote", conversation("research", 0, [])), "local");
@@ -167,6 +167,12 @@ describe("DynamicIslandCoordinator", () => {
             text: "Checking the sources",
             createdAt: "2026-08-29T10:00:00.000Z",
             itemType: "commentary",
+          },
+          {
+            id: "question",
+            text: "Which source should I use?",
+            createdAt: "2026-08-29T10:01:00.000Z",
+            itemType: "question_prompt",
           },
         ]),
       ),

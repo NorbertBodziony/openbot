@@ -847,6 +847,7 @@ describe.sequential("AgentService", () => {
       text: expect.stringContaining("What is your favorite color?"),
       questionPrompt: { resolution: null },
     });
+    expect(runtimeSnapshot.latestMessages).not.toContainEqual(expect.objectContaining({ id: pendingMessage?.id }));
 
     await service.respondToPrompt({
       requestId: "question-call",
