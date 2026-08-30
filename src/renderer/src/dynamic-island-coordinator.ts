@@ -16,6 +16,7 @@ import {
 
 type ServerRuntime = DynamicIslandPresentationInput & {
   incomingMessageAnchors: Map<string, string>;
+  lastRecordedMessageIds: Map<string, string>;
   receivedConversations: Set<string>;
   resolvedPrompts: Map<string, string>;
   receivedRuntimeSnapshot: boolean;
@@ -53,7 +54,9 @@ export class DynamicIslandCoordinator {
     }
     const botIds = new Set(input.bots.map((bot) => bot.id));
     const incomingMessageAnchors = activeMessageAnchors(input.liveMessages, previous?.incomingMessageAnchors);
+    const lastRecordedMessageIds = new Map(previous?.lastRecordedMessageIds);
     for (const botId of incomingMessageAnchors.keys()) if (!botIds.has(botId)) incomingMessageAnchors.delete(botId);
+    for (const botId of lastRecordedMessageIds.keys()) if (!botIds.has(botId)) lastRecordedMessageIds.delete(botId);
     const receivedConversations = [...(previous?.receivedConversations ?? [])].filter((botId) => botIds.has(botId));
     this.#servers.set(input.serverId, {
       ...input,
@@ -61,6 +64,7 @@ export class DynamicIslandCoordinator {
       pendingPrompts,
       liveMessages: compactLiveMessages(input.liveMessages),
       incomingMessageAnchors,
+      lastRecordedMessageIds,
       receivedConversations: new Set([...receivedConversations, ...Object.keys(input.liveMessages)]),
       resolvedPrompts,
       receivedRuntimeSnapshot: previous?.receivedRuntimeSnapshot ?? false,
@@ -117,6 +121,13 @@ export class DynamicIslandCoordinator {
         delete runtime.failedTurns[event.botId];
         return;
       case "turn-completed":
+        if (
+          serverId !== activeServerId &&
+          event.status === "completed" &&
+          runtime.activeTurns[event.botId] === event.turnId
+        ) {
+          this.#recordIncoming(runtime, event.botId, runtime.liveMessages[event.botId] ?? []);
+        }
         runtime.activeTurns[event.botId] = null;
         runtime.pendingPrompts[event.botId] = undefined;
         runtime.pendingApprovals[event.botId] = undefined;
@@ -206,6 +217,7 @@ export class DynamicIslandCoordinator {
       pendingApprovals: {},
       failedTurns: {},
       incomingMessageAnchors: new Map(),
+      lastRecordedMessageIds: new Map(),
       receivedConversations: new Set(),
       resolvedPrompts: new Map(),
       receivedRuntimeSnapshot: false,
@@ -217,15 +229,20 @@ export class DynamicIslandCoordinator {
   #recordIncoming(runtime: ServerRuntime, botId: string, messages: DynamicIslandMessageSource[]): void {
     for (const message of messages) {
       if (message.author !== "bot") continue;
+      if (runtime.lastRecordedMessageIds.get(botId) === message.id) continue;
       runtime.unreadReplies[botId] = (runtime.unreadReplies[botId] ?? 0) + 1;
       runtime.unreadMessageIds ??= {};
       runtime.unreadMessageIds[botId] ??= message.id;
+      runtime.lastRecordedMessageIds.set(botId, message.id);
     }
   }
 
   #retainBotMessages(runtime: ServerRuntime, botIds: ReadonlySet<string>): void {
     for (const botId of runtime.incomingMessageAnchors.keys()) {
       if (!botIds.has(botId)) runtime.incomingMessageAnchors.delete(botId);
+    }
+    for (const botId of runtime.lastRecordedMessageIds.keys()) {
+      if (!botIds.has(botId)) runtime.lastRecordedMessageIds.delete(botId);
     }
     for (const botId of runtime.receivedConversations) {
       if (!botIds.has(botId)) runtime.receivedConversations.delete(botId);

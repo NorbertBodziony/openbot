@@ -1141,10 +1141,18 @@ export class TeamApiServer {
   #broadcastAgentEvent(event: AgentEvent): void {
     let payload: string | undefined;
     let conversationInvalidation: string | undefined;
+    let queueInvalidation: string | undefined;
     let completionSnapshot: string | undefined;
     for (const [client, connection] of this.#eventClients) {
       if (event.type === "runtime-snapshot" && !connection.supportsRuntimeSnapshot) continue;
       if (event.type === "conversation" && !connection.includeConversationEvents) continue;
+      if (
+        event.type === "queue-changed" &&
+        connection.supportsRuntimeSnapshot &&
+        !connection.includeConversationEvents
+      ) {
+        continue;
+      }
       let outgoing: string;
       if (event.type === "conversation" && connection.supportsRuntimeSnapshot) {
         conversationInvalidation ??= JSON.stringify({
@@ -1153,6 +1161,9 @@ export class TeamApiServer {
           revision: event.snapshot.revision,
         });
         outgoing = conversationInvalidation;
+      } else if (event.type === "queue-changed" && connection.supportsRuntimeSnapshot) {
+        queueInvalidation ??= JSON.stringify({ type: "queue-invalidated", botId: event.snapshot.botId });
+        outgoing = queueInvalidation;
       } else {
         payload ??= JSON.stringify(event);
         outgoing = payload;

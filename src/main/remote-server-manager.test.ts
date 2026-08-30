@@ -312,29 +312,16 @@ describe("remote event connections", () => {
       }
     }
     vi.stubGlobal("WebSocket", TestEventSocket);
+    let resolveConversationPage: ((response: Response) => void) | undefined;
     const fetchMock = vi.fn(async (input: string | URL) => {
       const url = new URL(input);
+      if (url.pathname.endsWith("/queue")) {
+        return new Response(JSON.stringify({ botId: "chief", deliveries: [] }));
+      }
       expect(url.pathname).toBe("/v1/agents/chief/conversation-page");
-      return new Response(
-        JSON.stringify({
-          botId: "chief",
-          threadId: "thread-chief",
-          activeTurnId: null,
-          revision: 2,
-          messages: [
-            {
-              id: "reply-2",
-              author: "assistant",
-              text: "Fresh remote reply",
-              createdAt: "2026-08-30T02:00:00.000Z",
-              status: "completed",
-            },
-          ],
-          references: {},
-          pageInfo: { hasOlder: true, olderCursor: "older" },
-        }),
-        { headers: { "Content-Type": "application/json" } },
-      );
+      return await new Promise<Response>((resolve) => {
+        resolveConversationPage = resolve;
+      });
     });
     vi.stubGlobal("fetch", fetchMock);
     const manager = new RemoteServerManager(
@@ -375,13 +362,54 @@ describe("remote event connections", () => {
       );
       sockets[1]?.dispatchEvent(
         new MessageEvent("message", {
+          data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 1 }),
+        }),
+      );
+      await vi.waitFor(() => expect(resolveConversationPage).toBeDefined());
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
           data: JSON.stringify({ type: "conversation-invalidated", botId: "chief", revision: 2 }),
         }),
+      );
+      resolveConversationPage?.(
+        new Response(
+          JSON.stringify({
+            botId: "chief",
+            threadId: "thread-chief",
+            activeTurnId: null,
+            revision: 2,
+            messages: [
+              {
+                id: "reply-2",
+                author: "assistant",
+                text: "Fresh remote reply",
+                createdAt: "2026-08-30T02:00:00.000Z",
+                status: "completed",
+              },
+            ],
+            references: {},
+            pageInfo: { hasOlder: true, olderCursor: "older" },
+          }),
+        ),
       );
       await vi.waitFor(() =>
         expect(agentEvent).toHaveBeenCalledWith(
           "server-2",
           expect.objectContaining({ type: "conversation-page", page: expect.objectContaining({ revision: 2 }) }),
+        ),
+      );
+      expect(
+        fetchMock.mock.calls.filter(([input]) => new URL(input).pathname.endsWith("conversation-page")),
+      ).toHaveLength(1);
+      sockets[1]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({ type: "queue-invalidated", botId: "chief" }),
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(agentEvent).toHaveBeenCalledWith(
+          "server-2",
+          expect.objectContaining({ type: "queue-changed", snapshot: { botId: "chief", deliveries: [] } }),
         ),
       );
 

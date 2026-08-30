@@ -161,7 +161,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #eventSockets = new Map<string, WebSocket>();
   #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #eventReconnectAttempts = new Map<string, number>();
-  #conversationRefreshRequests = new Map<string, number>();
+  #conversationRefreshRequests = new Map<string, { revision: number }>();
+  #queueRefreshRequests = new Map<string, { dirty: boolean }>();
   #eventAuthenticationPaused = new Set<string>();
   #eventGenerations = new Map<string, number>();
   #eventsEnabled = false;
@@ -400,6 +401,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventGenerations.delete(serverId);
     for (const key of this.#conversationRefreshRequests.keys()) {
       if (key.startsWith(`${serverId}\0`)) this.#conversationRefreshRequests.delete(key);
+    }
+    for (const key of this.#queueRefreshRequests.keys()) {
+      if (key.startsWith(`${serverId}\0`)) this.#queueRefreshRequests.delete(key);
     }
     this.#states.delete(serverId);
     this.#eventSockets.delete(serverId);
@@ -770,6 +774,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventAuthenticationPaused.clear();
     this.#eventGenerations.clear();
     this.#conversationRefreshRequests.clear();
+    this.#queueRefreshRequests.clear();
   }
 
   async #verifyIdentity(
@@ -873,6 +878,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
               this.#advanceEventGeneration(serverId);
               if (event.type === "conversation-invalidated") {
                 void this.#refreshConversationPage(serverId, event.botId, event.revision);
+              } else if (event.type === "queue-invalidated") {
+                void this.#refreshQueue(serverId, event.botId);
               } else {
                 const remoteEvent = addRemotePreviewUrls(event, serverId);
                 this.emit("agent", serverId, remoteEvent);
@@ -1018,22 +1025,55 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async #refreshConversationPage(serverId: string, botId: string, revision: number): Promise<void> {
     const key = `${serverId}\0${botId}`;
-    const request = (this.#conversationRefreshRequests.get(key) ?? 0) + 1;
+    const pending = this.#conversationRefreshRequests.get(key);
+    if (pending) {
+      pending.revision = Math.max(pending.revision, revision);
+      return;
+    }
+    const request = { revision };
     this.#conversationRefreshRequests.set(key, request);
     try {
-      const page = await this.readAgentConversationPage(botId, { type: "latest" }, 50, serverId);
-      if (
-        this.#conversationRefreshRequests.get(key) !== request ||
-        page.revision < revision ||
-        !this.#state.servers.some((server) => server.id === serverId)
-      ) {
-        return;
+      while (this.#state.servers.some((server) => server.id === serverId)) {
+        const requestedRevision = request.revision;
+        const page = await this.readAgentConversationPage(botId, { type: "latest" }, 50, serverId);
+        if (page.revision >= request.revision) {
+          this.emit("agent", serverId, { type: "conversation-page", page });
+          return;
+        }
+        if (request.revision === requestedRevision) return;
       }
-      this.emit("agent", serverId, { type: "conversation-page", page });
     } catch {
       // The next invalidation or explicit conversation load can retry the refresh.
     } finally {
       if (this.#conversationRefreshRequests.get(key) === request) this.#conversationRefreshRequests.delete(key);
+    }
+  }
+
+  async #refreshQueue(serverId: string, botId: string): Promise<void> {
+    const key = `${serverId}\0${botId}`;
+    const pending = this.#queueRefreshRequests.get(key);
+    if (pending) {
+      pending.dirty = true;
+      return;
+    }
+    const request = { dirty: false };
+    this.#queueRefreshRequests.set(key, request);
+    try {
+      do {
+        request.dirty = false;
+        const snapshot = await this.request(
+          `/v1/agents/${encodeURIComponent(botId)}/queue`,
+          {},
+          serverId,
+          decodeQueueSnapshot,
+        );
+        if (!this.#state.servers.some((server) => server.id === serverId)) return;
+        this.emit("agent", serverId, { type: "queue-changed", snapshot });
+      } while (request.dirty);
+    } catch {
+      // The next invalidation or explicit queue load can retry the refresh.
+    } finally {
+      if (this.#queueRefreshRequests.get(key) === request) this.#queueRefreshRequests.delete(key);
     }
   }
 

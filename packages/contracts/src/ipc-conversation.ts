@@ -1067,6 +1067,7 @@ export type AgentEvent =
       createdAt: string;
       revision: number;
     }
+  | { type: "queue-invalidated"; botId: string }
   | { type: "queue-changed"; snapshot: QueueSnapshot }
   | { type: "turn-started"; botId: string; threadId: string; turnId: string; origin?: AgentTurnOrigin }
   | {
@@ -1147,6 +1148,8 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
         isString(value.createdAt) &&
         isNumber(value.revision)
       );
+    case "queue-invalidated":
+      return isIdentifier(value.botId);
     case "queue-changed":
       return isQueueSnapshot(value.snapshot);
     case "turn-started":

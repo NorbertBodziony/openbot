@@ -435,6 +435,55 @@ describe("DynamicIslandCoordinator", () => {
       message: { messageId: "missed-reply" },
     });
   });
+
+  it("shows a completed reply after reconnecting during its turn", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    const remoteBot = bot("research", "Research");
+    coordinator.applyEvent(
+      scoped(
+        "remote",
+        runtimeSnapshot({
+          bots: [remoteBot],
+          activeTurns: [{ botId: "research", threadId: "thread-research", turnId: "turn-current" }],
+          latestMessages: [runtimeMessage("reply-current")],
+        }),
+      ),
+      "local",
+    );
+    coordinator.applyEvent(
+      scoped("remote", {
+        type: "conversation-delta",
+        botId: "research",
+        threadId: "thread-research",
+        turnId: "turn-current",
+        messageId: "reply-current",
+        delta: " completed",
+        createdAt: "2026-08-29T10:00:00.000Z",
+        revision: 2,
+      }),
+      "local",
+    );
+    coordinator.applyEvent(
+      scoped("remote", {
+        type: "turn-completed",
+        botId: "research",
+        threadId: "thread-research",
+        turnId: "turn-current",
+        status: "completed",
+      }),
+      "local",
+    );
+    coordinator.applyEvent(
+      scoped("remote", runtimeSnapshot({ bots: [remoteBot], latestMessages: [runtimeMessage("reply-current")] })),
+      "local",
+    );
+
+    expect(coordinator.presentation(["remote"])).toMatchObject({
+      mode: "message",
+      unreadCount: 1,
+      message: { messageId: "reply-current" },
+    });
+  });
 });
 
 function seedBots(coordinator: DynamicIslandCoordinator, serverId: string, bots: BotSummary[]): void {

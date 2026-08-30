@@ -270,6 +270,9 @@ describe("TeamApiServer administration", () => {
         botId: "chief",
         revision: 1,
       });
+      const queueEvent = nextJsonEvent(socket);
+      agentEvents.emit("event", { type: "queue-changed", snapshot: { botId: "chief", deliveries: [] } });
+      await expect(queueEvent).resolves.toEqual({ type: "queue-invalidated", botId: "chief" });
 
       const eventsAfterOversizedConversation = nextJsonEvents(socket, 2);
       agentEvents.emit("event", {
