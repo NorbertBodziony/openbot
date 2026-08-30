@@ -171,6 +171,33 @@ describe("DynamicIslandCoordinator", () => {
     });
   });
 
+  it("counts only replies after the runtime snapshot message when full history arrives", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    const remoteBot = bot("research", "Research");
+    coordinator.applyEvent(
+      scoped("remote", runtimeSnapshot({ bots: [remoteBot], latestMessages: [runtimeMessage("anchor")] })),
+      "local",
+    );
+
+    coordinator.applyEvent(
+      scoped(
+        "remote",
+        conversation("research", 1, [
+          { id: "historical", text: "Historical reply", createdAt: "2026-08-29T09:00:00.000Z" },
+          { id: "anchor", text: "Snapshot reply", createdAt: "2026-08-29T10:00:00.000Z" },
+          { id: "fresh", text: "Fresh reply", createdAt: "2026-08-29T11:00:00.000Z" },
+        ]),
+      ),
+      "local",
+    );
+
+    expect(coordinator.presentation(["remote"])).toMatchObject({
+      mode: "message",
+      unreadCount: 1,
+      message: { messageId: "fresh", text: "Fresh reply" },
+    });
+  });
+
   it("keeps working ahead of an unread message across hosts", () => {
     const coordinator = new DynamicIslandCoordinator();
     seedBots(coordinator, "remote-working", [bot("builder", "Builder")]);

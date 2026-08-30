@@ -6,6 +6,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
@@ -794,6 +795,7 @@ describe.sequential("AgentService", () => {
     const turnId = events.find((event) => event.type === "turn-started")?.turnId;
     if (!threadId || !turnId) throw new Error("Turn did not start.");
 
+    const optionLabel = "L".repeat(INPUT_LIMITS.promptOptionLabel);
     client.emit("request", {
       method: "item/tool/call",
       id: "question-call",
@@ -809,7 +811,7 @@ describe.sequential("AgentService", () => {
               id: "favorite",
               header: "Favorite",
               question: "What is your favorite color?",
-              options: [{ label: "Blue", description: "d".repeat(1_000) }],
+              options: [{ label: optionLabel, description: "d".repeat(1_000) }],
             },
             {
               id: "token",
@@ -827,6 +829,7 @@ describe.sequential("AgentService", () => {
     expect(runtimeSnapshot.pendingPrompts[0]?.questions[0]?.options?.[0]?.description).toHaveLength(
       AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
     );
+    expect(runtimeSnapshot.pendingPrompts[0]?.questions[0]?.options?.[0]?.label).toBe(optionLabel);
     expect(client.responses).toHaveLength(0);
     const pendingMessage = (await service.readConversation("chief")).messages.find(
       (message) => message.questionPrompt?.requestId === "question-call",
@@ -839,7 +842,7 @@ describe.sequential("AgentService", () => {
 
     await service.respondToPrompt({
       requestId: "question-call",
-      answers: { favorite: ["Blue"], token: ["super-secret"] },
+      answers: { favorite: [optionLabel], token: ["super-secret"] },
     });
     expect(events.findLast((event) => event.type === "runtime-snapshot")).toMatchObject({
       snapshot: { pendingPrompts: [] },
@@ -857,7 +860,7 @@ describe.sequential("AgentService", () => {
     if (!isDynamicRecord(content) || !isString(content.text)) {
       throw new Error("The question result has no text content.");
     }
-    expect(JSON.parse(content.text)).toEqual({ favorite: ["Blue"], token: ["super-secret"] });
+    expect(JSON.parse(content.text)).toEqual({ favorite: [optionLabel], token: ["super-secret"] });
 
     const resolvedMessage = (await service.readConversation("chief")).messages.find(
       (message) => message.questionPrompt?.requestId === "question-call",
@@ -865,11 +868,11 @@ describe.sequential("AgentService", () => {
     expect(resolvedMessage?.questionPrompt?.resolution).toEqual({
       status: "answered",
       responses: {
-        favorite: { status: "answered", answers: ["Blue"] },
+        favorite: { status: "answered", answers: [optionLabel] },
         token: { status: "answered" },
       },
     });
-    expect(resolvedMessage?.text).toContain("Answer: Blue");
+    expect(resolvedMessage?.text).toContain(`Answer: ${optionLabel}`);
     expect(resolvedMessage?.text).toContain("Answer: Private answer");
     expect(JSON.stringify(resolvedMessage)).not.toContain("super-secret");
     const persisted = store.database.readConversation(
@@ -877,7 +880,7 @@ describe.sequential("AgentService", () => {
       resolvedMessage?.turnId ? (store.list().find((bot) => bot.id === "chief")?.threadId ?? null) : null,
     );
     expect(JSON.stringify(persisted)).not.toContain("super-secret");
-    expect(service.searchConversationMessages("Blue", "chief").results).toEqual([
+    expect(service.searchConversationMessages(optionLabel, "chief").results).toEqual([
       expect.objectContaining({ message: expect.objectContaining({ id: resolvedMessage?.id }) }),
     ]);
 

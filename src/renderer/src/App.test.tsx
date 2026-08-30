@@ -1028,6 +1028,62 @@ describe("OpenBot connected desktop shell", () => {
     );
   });
 
+  it("keeps authoritative queue and attention state when a compact runtime snapshot omits them", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(window.openbot.agent.listQueue).toHaveBeenCalledWith("chief"));
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        deliveries: [
+          queuedDelivery("delivery-running", "Keep the full queue", null, {
+            status: "running",
+            turnId: "turn-running",
+          }),
+        ],
+      },
+    });
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-authoritative",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-running",
+      questions: [
+        {
+          id: "scope",
+          header: "Scope",
+          question: "Which scope?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    expect(await screen.findByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "runtime-snapshot",
+      snapshot: {
+        bots: [],
+        activeTurns: [],
+        work: [],
+        latestMessages: [],
+        pendingPrompts: [],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    });
+
+    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
+  });
+
   it("shows the first-run onboarding before starting agents", async () => {
     vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
       completed: false,

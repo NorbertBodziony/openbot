@@ -4075,7 +4075,7 @@ function compactRuntimeQuestion(
     isSecret: question.isSecret,
     options:
       question.options?.map((option) => ({
-        label: option.label.slice(0, AGENT_RUNTIME_QUESTION_HEADER_LIMIT),
+        label: option.label,
         description: option.description.slice(0, AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT),
       })) ?? null,
   };
@@ -4122,7 +4122,7 @@ function fitRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): AgentRuntimeSnapsho
       ...question,
       header: question.header.slice(0, 40),
       question: question.question.slice(0, 80),
-      options: question.options?.map((option) => ({ label: option.label.slice(0, 40), description: "" })) ?? null,
+      options: question.options?.map((option) => ({ label: option.label, description: "" })) ?? null,
     })),
   }));
   snapshot.pendingApprovals = snapshot.pendingApprovals.map((approval) => ({

@@ -1346,7 +1346,7 @@ function isRuntimePromptQuestion(value: unknown): value is AgentRuntimePromptQue
         value.options.every(
           (option) =>
             isDynamicRecord(option) &&
-            isBoundedString(option.label, AGENT_RUNTIME_QUESTION_HEADER_LIMIT) &&
+            isBoundedString(option.label, INPUT_LIMITS.promptOptionLabel) &&
             isBoundedString(option.description, AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT),
         )))
   );

@@ -70,7 +70,7 @@ import { readPanelWidth } from "./components/PanelResizer";
 import type { SidebarAgentState } from "./components/Sidebar";
 import { Toaster } from "./components/ui";
 import type { BotMessage, BotProfile } from "./data";
-import { DynamicIslandCoordinator, queueSnapshotsFromRuntimeWork } from "./dynamic-island-coordinator";
+import { DynamicIslandCoordinator } from "./dynamic-island-coordinator";
 import {
   normalizeSidebarPeopleOrder,
   readSidebarPeopleOrder,
@@ -964,17 +964,6 @@ export function createAppController(props: AppProps = {}) {
 
   function applyAgentRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): void {
     setActiveTurns(Object.fromEntries(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])));
-    setQueues(queueSnapshotsFromRuntimeWork(snapshot.work));
-    setPendingPrompts({
-      ...Object.fromEntries(snapshot.pendingPrompts.map((prompt) => [prompt.botId, { type: "prompt", ...prompt }])),
-      ...Object.fromEntries(
-        snapshot.pendingBrowserTakeovers.map((request) => [
-          request.botId,
-          { type: "browser-takeover-requested", request },
-        ]),
-      ),
-    });
-    setPendingApprovals(Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])));
     setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])));
     setLiveMessages((current) => {
       const next = { ...current };

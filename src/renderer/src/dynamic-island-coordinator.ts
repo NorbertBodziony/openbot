@@ -15,6 +15,7 @@ import {
 } from "./dynamic-island-presentation";
 
 type ServerRuntime = DynamicIslandPresentationInput & {
+  incomingMessageAnchors: Map<string, string>;
   seenIncomingMessageIds: Set<string>;
   resolvedPrompts: Map<string, string>;
   receivedRuntimeSnapshot: boolean;
@@ -54,6 +55,7 @@ export class DynamicIslandCoordinator {
       ...input,
       pendingApprovals,
       pendingPrompts,
+      incomingMessageAnchors: previous?.incomingMessageAnchors ?? new Map(),
       seenIncomingMessageIds: previous?.seenIncomingMessageIds ?? new Set(),
       resolvedPrompts,
       receivedRuntimeSnapshot: previous?.receivedRuntimeSnapshot ?? false,
@@ -82,7 +84,13 @@ export class DynamicIslandCoordinator {
         const previousMessages = runtime.liveMessages[event.snapshot.botId];
         runtime.liveMessages[event.snapshot.botId] = messages;
         if (serverId !== activeServerId) {
-          if (previousMessages === undefined) this.#seedIncoming(runtime, messages);
+          const anchorId = runtime.incomingMessageAnchors.get(event.snapshot.botId);
+          if (anchorId) {
+            const anchorIndex = messages.findIndex((message) => message.id === anchorId);
+            this.#seedIncoming(runtime, anchorIndex < 0 ? messages : messages.slice(0, anchorIndex + 1));
+            if (anchorIndex >= 0) this.#recordIncoming(runtime, event.snapshot.botId, messages.slice(anchorIndex + 1));
+            runtime.incomingMessageAnchors.delete(event.snapshot.botId);
+          } else if (previousMessages === undefined) this.#seedIncoming(runtime, messages);
           else {
             const previousIds = new Set(previousMessages.map((message) => message.id));
             this.#recordIncoming(
@@ -91,7 +99,7 @@ export class DynamicIslandCoordinator {
               messages.filter((message) => !previousIds.has(message.id)),
             );
           }
-        }
+        } else runtime.incomingMessageAnchors.delete(event.snapshot.botId);
         return;
       }
       case "conversation-delta": {
@@ -187,6 +195,7 @@ export class DynamicIslandCoordinator {
       pendingPrompts: {},
       pendingApprovals: {},
       failedTurns: {},
+      incomingMessageAnchors: new Map(),
       seenIncomingMessageIds: new Set(),
       resolvedPrompts: new Map(),
       receivedRuntimeSnapshot: false,
@@ -218,6 +227,7 @@ export class DynamicIslandCoordinator {
     trackIncoming: boolean,
   ): void {
     const liveMessages: Record<string, DynamicIslandMessageSource[]> = {};
+    const incomingMessageAnchors = new Map<string, string>();
     for (const message of snapshot.latestMessages) {
       const converted = {
         id: message.id,
@@ -227,6 +237,7 @@ export class DynamicIslandCoordinator {
         createdAt: message.createdAt,
       };
       liveMessages[message.botId] = [converted];
+      incomingMessageAnchors.set(message.botId, message.id);
       if (!trackIncoming) continue;
       if (!runtime.receivedRuntimeSnapshot) this.#seedIncoming(runtime, [converted]);
       else if (!(runtime.liveMessages[message.botId] ?? []).some((previous) => previous.id === message.id)) {
@@ -250,7 +261,9 @@ export class DynamicIslandCoordinator {
       pendingApprovals: Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])),
       failedTurns: Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])),
     });
-    this.#runtime(serverId).receivedRuntimeSnapshot = true;
+    const nextRuntime = this.#runtime(serverId);
+    nextRuntime.incomingMessageAnchors = incomingMessageAnchors;
+    nextRuntime.receivedRuntimeSnapshot = true;
   }
 }
 
