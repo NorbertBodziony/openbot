@@ -238,7 +238,7 @@ function truncate(value: string, length: number): string {
 
 function normalizeQuestions(questions: PromptEvent["questions"]): DynamicIslandQuestionItem[] {
   return questions.slice(0, INPUT_LIMITS.promptQuestions).map((question, questionIndex) => ({
-    id: normalizeRequired(question.id, `question-${questionIndex + 1}`, INPUT_LIMITS.identifier),
+    id: normalizeTechnical(question.id, `question-${questionIndex + 1}`, INPUT_LIMITS.identifier),
     header: normalizeRequired(question.header, "Question from your bot", INPUT_LIMITS.promptHeader),
     question: normalizeRequired(
       question.question,
@@ -248,13 +248,19 @@ function normalizeQuestions(questions: PromptEvent["questions"]): DynamicIslandQ
     isSecret: question.isSecret,
     options:
       question.options?.slice(0, INPUT_LIMITS.promptOptions).map((option, optionIndex) => {
-        const label = normalizeRequired(option.label, `Option ${optionIndex + 1}`, INPUT_LIMITS.promptOptionLabel);
+        const fallback = `Option ${optionIndex + 1}`;
+        const label = normalizeTechnical(option.label, fallback, INPUT_LIMITS.promptOptionLabel);
+        const displayLabel = normalizeRequired(option.label, fallback, INPUT_LIMITS.promptOptionLabel);
         return {
           label,
-          description: normalizeRequired(option.description, label, INPUT_LIMITS.promptOptionDescription),
+          description: normalizeRequired(option.description, displayLabel, INPUT_LIMITS.promptOptionDescription),
         };
       }) ?? null,
   }));
+}
+
+function normalizeTechnical(value: string, fallback: string, length: number): string {
+  return truncate(value || fallback, length);
 }
 
 function normalizeRequired(value: string, fallback: string, length: number): string {

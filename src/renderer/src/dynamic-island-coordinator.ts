@@ -106,17 +106,6 @@ export class DynamicIslandCoordinator {
         const messages = runtime.liveMessages[event.botId] ?? [];
         const existing = messages.find((message) => message.id === event.messageId);
         if (existing) existing.body += event.delta;
-        else {
-          const message = {
-            id: event.messageId,
-            author: "bot",
-            body: event.delta,
-            time: event.createdAt,
-            createdAt: event.createdAt,
-          };
-          runtime.liveMessages[event.botId] = [...messages, message];
-          if (serverId !== activeServerId) this.#recordIncoming(runtime, event.botId, [message]);
-        }
         return;
       }
       case "queue-changed":
@@ -293,6 +282,6 @@ export function queueSnapshotsFromRuntimeWork(work: readonly AgentRuntimeWorkIte
 function toDynamicIslandMessage(
   message: Extract<AgentEvent, { type: "conversation" }>["snapshot"]["messages"][number],
 ) {
-  if (message.author !== "assistant" && message.author !== "agent") return [];
+  if ((message.author !== "assistant" && message.author !== "agent") || message.itemType === "commentary") return [];
   return [{ id: message.id, author: "bot", body: message.text, time: message.createdAt, createdAt: message.createdAt }];
 }

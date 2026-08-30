@@ -95,6 +95,7 @@ describe("DynamicIslandCoordinator", () => {
   it("tracks working and unread updates from an inactive host", () => {
     const coordinator = new DynamicIslandCoordinator();
     seedBots(coordinator, "remote", [bot("research", "Research")]);
+    coordinator.applyEvent(scoped("remote", conversation("research", 0, [])), "local");
     coordinator.applyEvent(
       scoped("remote", { type: "turn-started", botId: "research", threadId: "thread-1", turnId: "turn-1" }),
       "local",
@@ -102,15 +103,22 @@ describe("DynamicIslandCoordinator", () => {
     expect(coordinator.presentation(["remote"]).mode).toBe("working");
 
     coordinator.applyEvent(
+      scoped(
+        "remote",
+        conversation("research", 1, [{ id: "message-1", text: "The result", createdAt: "2026-08-29T10:00:00.000Z" }]),
+      ),
+      "local",
+    );
+    coordinator.applyEvent(
       scoped("remote", {
         type: "conversation-delta",
         botId: "research",
         threadId: "thread-1",
         turnId: "turn-1",
         messageId: "message-1",
-        delta: "The result is ready.",
+        delta: " is ready.",
         createdAt: "2026-08-29T10:00:00.000Z",
-        revision: 1,
+        revision: 2,
       }),
       "local",
     );
@@ -131,6 +139,64 @@ describe("DynamicIslandCoordinator", () => {
       unreadCount: 1,
       message: { messageId: "message-1", text: "The result is ready." },
     });
+  });
+
+  it("does not count or display commentary from a full conversation", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    coordinator.applyEvent(scoped("remote", conversation("research", 0, [])), "local");
+    coordinator.applyEvent(
+      scoped(
+        "remote",
+        conversation("research", 1, [
+          {
+            id: "commentary",
+            text: "Checking the sources",
+            createdAt: "2026-08-29T10:00:00.000Z",
+            itemType: "commentary",
+          },
+        ]),
+      ),
+      "local",
+    );
+
+    expect(coordinator.presentation(["remote"]).mode).toBe("idle");
+  });
+
+  it("waits for a full conversation before classifying a new delta message", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    coordinator.applyEvent(scoped("remote", conversation("research", 0, [])), "local");
+    coordinator.applyEvent(
+      scoped("remote", {
+        type: "conversation-delta",
+        botId: "research",
+        threadId: "thread-research",
+        turnId: "turn-research",
+        messageId: "commentary",
+        delta: "Checking the sources",
+        createdAt: "2026-08-29T10:00:00.000Z",
+        revision: 1,
+      }),
+      "local",
+    );
+    expect(coordinator.presentation(["remote"]).mode).toBe("idle");
+
+    coordinator.applyEvent(
+      scoped(
+        "remote",
+        conversation("research", 2, [
+          {
+            id: "commentary",
+            text: "Checking the sources",
+            createdAt: "2026-08-29T10:00:00.000Z",
+            itemType: "commentary",
+          },
+        ]),
+      ),
+      "local",
+    );
+    expect(coordinator.presentation(["remote"]).mode).toBe("idle");
   });
 
   it("seeds an inactive host snapshot without counting historical replies as new", () => {
@@ -390,7 +456,7 @@ function approval(botId: string, requestId: string): Extract<AgentEvent, { type:
 function conversation(
   botId: string,
   revision: number,
-  messages: Array<{ id: string; text: string; createdAt: string }>,
+  messages: Array<{ id: string; text: string; createdAt: string; itemType?: string }>,
 ): Extract<AgentEvent, { type: "conversation" }> {
   return {
     type: "conversation",

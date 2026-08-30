@@ -315,6 +315,40 @@ describe("createDynamicIslandPresentation", () => {
     });
   });
 
+  it("preserves technical question ids and option labels exactly", () => {
+    const input = state();
+    input.pendingPrompts.chief = {
+      type: "prompt",
+      requestId: "prompt-technical-values",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: [
+        {
+          id: " choice ",
+          header: "Choose",
+          question: "Which option?",
+          isSecret: false,
+          options: [{ label: " Option ", description: "" }],
+        },
+      ],
+    };
+
+    const presentation = createDynamicIslandPresentation(input);
+
+    expect(presentation).toMatchObject({
+      mode: "question",
+      item: {
+        questions: [
+          {
+            id: " choice ",
+            options: [{ label: " Option ", description: "Option" }],
+          },
+        ],
+      },
+    });
+  });
+
   it("maps approvals to the approval presentation", () => {
     const input = state();
     const approval: AgentApproval = {
