@@ -5222,6 +5222,108 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
   });
 
+  it("does not carry a failed automatic read to the same bot on another server", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    let selectedServerId = "local";
+    let rejectLocalRead: ((error: Error) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockImplementationOnce(async () => {
+      selectedServerId = "remote-1";
+      return [
+        { ...local, active: false },
+        { ...remote, active: true },
+      ];
+    });
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async (input) =>
+      selectedServerId === "remote-1"
+        ? testConversationPage(
+            input.botId,
+            [
+              {
+                id: "reply-remote-loaded",
+                author: "assistant",
+                text: "Remote loaded reply",
+                createdAt: "2026-08-30T02:02:30.000Z",
+                status: "completed",
+              },
+            ],
+            {
+              readState: { unreadCount: 1, firstUnreadMessageId: "reply-remote-loaded", throughMessageId: null },
+            },
+          )
+        : testConversationPage(input.botId),
+    );
+    vi.mocked(window.openbot.agent.listConversationReads)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        chief: { unreadCount: 1, firstUnreadMessageId: "reply-remote", throughMessageId: null },
+      });
+    vi.mocked(window.openbot.agent.markConversationRead).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectLocalRead = reject;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-local",
+            author: "assistant",
+            text: "Local visible reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-local", throughMessageId: null },
+        },
+      ),
+    });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    await waitFor(() => expect(window.openbot.agent.listConversationReads).toHaveBeenCalledTimes(2));
+    await screen.findByText("Remote loaded reply");
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    rejectLocalRead?.(new Error("Local read unavailable"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-remote",
+            author: "assistant",
+            text: "Remote unread reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-remote", throughMessageId: null },
+        },
+      ),
+    });
+    await screen.findByText("Remote unread reply");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
+    expect(screen.queryByText("Local read unavailable")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+  });
+
   it("does not mark an older boundary from a rejected conversation page", async () => {
     let resolveInitialPage: ((page: ConversationPage) => void) | undefined;
     vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(
