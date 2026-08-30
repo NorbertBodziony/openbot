@@ -1518,6 +1518,7 @@ export function isSidebarLayoutSnapshot(value: unknown): value is SidebarLayoutS
 export interface ScopedAgentEvent {
   serverId: string;
   event: AgentEvent;
+  bufferedLive?: boolean;
 }
 
 export interface AgentIpcRequest<T = unknown> {

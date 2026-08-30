@@ -584,7 +584,7 @@ describe("remote event connections", () => {
     }
   });
 
-  it("falls back to explicit state reads when an older host selects the legacy protocol", async () => {
+  it("buffers legacy events until the initial state is loaded", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-legacy-remote-events-"));
     const statePath = join(directory, "servers.json");
     await writeFile(
@@ -625,13 +625,20 @@ describe("remote event connections", () => {
     };
     let deferConversation = false;
     let resolveConversation: ((response: Response) => void) | undefined;
-    const conversationResponse = () =>
+    const liveReply = {
+      id: "live-reply",
+      author: "assistant",
+      text: "New live reply",
+      createdAt: "2026-08-29T10:01:00.000Z",
+      status: "completed",
+    };
+    const conversationResponse = (revision = 1, messages: unknown[] = []) =>
       Response.json({
         botId: bot.id,
         threadId: bot.threadId,
         activeTurnId: "turn-1",
-        revision: 1,
-        messages: [],
+        revision,
+        messages,
         references: {},
         pageInfo: { hasOlder: false, olderCursor: null },
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
@@ -683,15 +690,8 @@ describe("remote event connections", () => {
 
     try {
       await manager.initialize();
-      manager.startEventConnections();
-      await vi.waitFor(() => {
-        expect(agentEvent).toHaveBeenCalledWith("legacy", expect.objectContaining({ type: "bots-changed" }));
-        expect(agentEvent).toHaveBeenCalledWith("legacy", expect.objectContaining({ type: "conversation" }));
-        expect(agentEvent).toHaveBeenCalledWith("legacy", expect.objectContaining({ type: "queue-changed" }));
-      });
-
       deferConversation = true;
-      manager.refreshRuntimeSnapshots();
+      manager.startEventConnections();
       await vi.waitFor(() => expect(resolveConversation).toBeTypeOf("function"));
       legacySocket?.dispatchEvent(
         new MessageEvent("message", {
@@ -702,33 +702,25 @@ describe("remote event connections", () => {
               threadId: bot.threadId,
               activeTurnId: null,
               revision: 2,
-              messages: [
-                {
-                  id: "live-reply",
-                  author: "assistant",
-                  text: "New live reply",
-                  createdAt: "2026-08-29T10:01:00.000Z",
-                  status: "completed",
-                },
-              ],
+              messages: [liveReply],
             },
           }),
         }),
       );
-      await vi.waitFor(() =>
-        expect(agentEvent).toHaveBeenCalledWith(
-          "legacy",
-          expect.objectContaining({ type: "conversation", snapshot: expect.objectContaining({ revision: 2 }) }),
-        ),
+      expect(agentEvent).not.toHaveBeenCalledWith(
+        "legacy",
+        expect.objectContaining({ type: "conversation", snapshot: expect.objectContaining({ revision: 2 }) }),
       );
-      resolveConversation?.(conversationResponse());
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      resolveConversation?.(conversationResponse(2, [liveReply]));
+      await vi.waitFor(() =>
+        expect(agentEvent).toHaveBeenCalledWith("legacy", expect.objectContaining({ type: "conversation" }), true),
+      );
       expect(
         agentEvent.mock.calls
           .map(([, event]) => event)
           .filter((event) => event.type === "conversation")
           .map((event) => event.snapshot.revision),
-      ).toEqual([1, 2]);
+      ).toEqual([2, 2]);
     } finally {
       manager.stop();
       await rm(directory, { recursive: true, force: true });

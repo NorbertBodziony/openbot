@@ -1342,10 +1342,13 @@ function configureApplicationMenu(service: AgentService, updater: UpdateService)
   );
 }
 
-function forwardAgentEvent(serverId: string, event: AgentEvent): void {
+function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
   if (serverId === "local") hostAnalytics?.handleAgentEvent(event);
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.agentEvent, { serverId, event });
+  mainWindow.webContents.send(
+    IPC_CHANNELS.agentEvent,
+    bufferedLive ? { serverId, event, bufferedLive } : { serverId, event },
+  );
   if (mainWindow.isFocused() || !Notification.isSupported()) return;
 
   const content = notificationForAgentEvent(event, agentService?.listBots() ?? []);
@@ -1797,8 +1800,8 @@ if (!hasSingleInstanceLock) {
       host.on("directTyping", (event) => forwardDirectTyping("local", event));
       remoteDesktop.on("changed", forwardRemoteDesktopSessions);
       remoteServers.on("changed", forwardServers);
-      remoteServers.on("agent", (serverId, event) => {
-        forwardAgentEvent(serverId, event);
+      remoteServers.on("agent", (serverId, event, bufferedLive) => {
+        forwardAgentEvent(serverId, event, bufferedLive);
       });
       remoteServers.on("presence", forwardTeamPresence);
       remoteServers.on("directMessage", forwardDirectMessage);

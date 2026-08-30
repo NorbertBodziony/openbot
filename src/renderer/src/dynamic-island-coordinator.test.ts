@@ -256,6 +256,39 @@ describe("DynamicIslandCoordinator", () => {
     });
   });
 
+  it("counts a buffered live legacy snapshot after the same baseline", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    const reply = conversation("research", 1, [
+      { id: "live-reply", text: "Fresh reply", createdAt: "2026-08-29T10:00:00.000Z" },
+    ]);
+    coordinator.applyEvent(scoped("remote", reply), "local");
+    coordinator.applyEvent({ ...scoped("remote", reply), bufferedLive: true }, "local");
+    coordinator.applyEvent({ ...scoped("remote", reply), bufferedLive: true }, "local");
+
+    expect(coordinator.presentation(["remote"])).toMatchObject({
+      mode: "message",
+      unreadCount: 1,
+      message: { messageId: "live-reply" },
+    });
+  });
+
+  it("counts a buffered live legacy reply when its baseline could not be loaded", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    const reply = conversation("research", 1, [
+      { id: "live-reply", text: "Fresh reply", createdAt: "2026-08-29T10:00:00.000Z" },
+    ]);
+
+    coordinator.applyEvent({ ...scoped("remote", reply), bufferedLive: true }, "local");
+
+    expect(coordinator.presentation(["remote"])).toMatchObject({
+      mode: "message",
+      unreadCount: 1,
+      message: { messageId: "live-reply" },
+    });
+  });
+
   it("counts only replies after the runtime snapshot message when full history arrives", () => {
     const coordinator = new DynamicIslandCoordinator();
     const remoteBot = bot("research", "Research");

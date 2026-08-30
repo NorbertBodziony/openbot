@@ -99,7 +99,7 @@ interface StoredRemoteServers {
 
 interface RemoteServerEvents {
   changed: [servers: ServerSummary[]];
-  agent: [serverId: string, event: AgentEvent];
+  agent: [serverId: string, event: AgentEvent, bufferedLive?: boolean];
   presence: [serverId: string, snapshot: TeamPresenceSnapshot];
   directMessage: [serverId: string, event: DirectMessageRealtimeEvent];
   directTyping: [serverId: string, event: DirectTypingRealtimeEvent];
@@ -135,6 +135,7 @@ const REMOTE_EVENT_RECONNECT_MAX_MS = 60_000;
 const REMOTE_EVENT_RECONNECT_JITTER = 0.2;
 const REMOTE_EVENT_HEALTHY_MS = 30_000;
 const REMOTE_EVENT_PAYLOAD_LIMIT = 1024 * 1024;
+const REMOTE_EVENT_INITIAL_BUFFER_LIMIT = 1_000;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 
@@ -834,6 +835,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         REMOTE_EVENT_PROTOCOL,
         `openbot-token.${this.#token(server)}`,
       ]);
+      let agentEventsReady = false;
+      const bufferedAgentEvents: AgentEvent[] = [];
       controller.signal.addEventListener("abort", () => socket.close(1000, "Client stopped"), {
         once: true,
       });
@@ -847,8 +850,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             this.#sendEventScope(serverId, socket);
             this.#states.set(serverId, "online");
             this.#emitChanged();
-            if (socket.protocol !== REMOTE_EVENT_SNAPSHOT_PROTOCOL) {
-              void this.#refreshLegacyAgentState(serverId).catch(() => undefined);
+            if (socket.protocol === REMOTE_EVENT_SNAPSHOT_PROTOCOL) {
+              agentEventsReady = true;
+            } else {
+              void this.#refreshLegacyAgentState(serverId)
+                .then(() => {
+                  if (this.#eventSockets.get(serverId) !== socket) return;
+                  agentEventsReady = true;
+                  for (const event of bufferedAgentEvents) this.#forwardAgentEvent(serverId, event, true);
+                  bufferedAgentEvents.length = 0;
+                })
+                .catch(() => socket.close(1011, "Initial agent state is unavailable"));
             }
           },
           { once: true },
@@ -875,14 +887,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
                 this.emit("directTyping", serverId, event);
               }
             } else if (isAgentEvent(event)) {
-              this.#advanceEventGeneration(serverId);
-              if (event.type === "conversation-invalidated") {
-                void this.#refreshConversationPage(serverId, event.botId, event.revision);
-              } else if (event.type === "queue-invalidated") {
-                void this.#refreshQueue(serverId, event.botId);
+              if (!agentEventsReady) {
+                if (bufferedAgentEvents.length >= REMOTE_EVENT_INITIAL_BUFFER_LIMIT) {
+                  socket.close(1013, "Initial agent event buffer is full");
+                  return;
+                }
+                bufferedAgentEvents.push(event);
               } else {
-                const remoteEvent = addRemotePreviewUrls(event, serverId);
-                this.emit("agent", serverId, remoteEvent);
+                this.#forwardAgentEvent(serverId, event);
               }
             } else {
               throw new Error("Invalid agent event payload.");
@@ -1021,6 +1033,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         }
       }),
     );
+  }
+
+  #forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
+    this.#advanceEventGeneration(serverId);
+    if (event.type === "conversation-invalidated") {
+      void this.#refreshConversationPage(serverId, event.botId, event.revision);
+    } else if (event.type === "queue-invalidated") {
+      void this.#refreshQueue(serverId, event.botId);
+    } else {
+      const remoteEvent = addRemotePreviewUrls(event, serverId);
+      if (bufferedLive) this.emit("agent", serverId, remoteEvent, true);
+      else this.emit("agent", serverId, remoteEvent);
+    }
   }
 
   async #refreshConversationPage(serverId: string, botId: string, revision: number): Promise<void> {

@@ -17,6 +17,7 @@ import {
 type ServerRuntime = DynamicIslandPresentationInput & {
   incomingMessageAnchors: Map<string, string>;
   completedBots: Set<string>;
+  lastRecordedMessageIds: Map<string, string>;
   receivedConversations: Set<string>;
   resolvedPrompts: Map<string, string>;
   receivedRuntimeSnapshot: boolean;
@@ -55,8 +56,10 @@ export class DynamicIslandCoordinator {
     const botIds = new Set(input.bots.map((bot) => bot.id));
     const incomingMessageAnchors = activeMessageAnchors(input.liveMessages, previous?.incomingMessageAnchors);
     const completedBots = new Set(previous?.completedBots);
+    const lastRecordedMessageIds = new Map(previous?.lastRecordedMessageIds);
     for (const botId of incomingMessageAnchors.keys()) if (!botIds.has(botId)) incomingMessageAnchors.delete(botId);
     for (const botId of completedBots) if (!botIds.has(botId)) completedBots.delete(botId);
+    for (const botId of lastRecordedMessageIds.keys()) if (!botIds.has(botId)) lastRecordedMessageIds.delete(botId);
     const receivedConversations = [...(previous?.receivedConversations ?? [])].filter((botId) => botIds.has(botId));
     this.#servers.set(input.serverId, {
       ...input,
@@ -65,6 +68,7 @@ export class DynamicIslandCoordinator {
       liveMessages: compactLiveMessages(input.liveMessages),
       incomingMessageAnchors,
       completedBots,
+      lastRecordedMessageIds,
       receivedConversations: new Set([...receivedConversations, ...Object.keys(input.liveMessages)]),
       resolvedPrompts,
       receivedRuntimeSnapshot: previous?.receivedRuntimeSnapshot ?? false,
@@ -78,7 +82,7 @@ export class DynamicIslandCoordinator {
     }
   }
 
-  applyEvent({ serverId, event }: ScopedAgentEvent, activeServerId: string): void {
+  applyEvent({ serverId, event, bufferedLive }: ScopedAgentEvent, activeServerId: string): void {
     const runtime = this.#runtime(serverId);
     switch (event.type) {
       case "bots-changed":
@@ -99,8 +103,16 @@ export class DynamicIslandCoordinator {
         if (serverId !== activeServerId) {
           if (anchorId) {
             const anchorIndex = messages.findIndex((message) => message.id === anchorId);
-            if (anchorIndex >= 0) this.#recordIncoming(runtime, event.snapshot.botId, messages.slice(anchorIndex + 1));
+            if (anchorIndex >= 0) {
+              const incoming = messages.slice(anchorIndex + 1);
+              this.#recordIncoming(
+                runtime,
+                event.snapshot.botId,
+                incoming.length > 0 ? incoming : bufferedLive && latest ? [latest] : [],
+              );
+            }
           } else if (receivedConversation) this.#recordIncoming(runtime, event.snapshot.botId, messages);
+          else if (bufferedLive && latest) this.#recordIncoming(runtime, event.snapshot.botId, [latest]);
         }
         if (latest) runtime.incomingMessageAnchors.set(event.snapshot.botId, latest.id);
         else if (event.snapshot.messages.length === 0) runtime.incomingMessageAnchors.delete(event.snapshot.botId);
@@ -219,6 +231,7 @@ export class DynamicIslandCoordinator {
       failedTurns: {},
       incomingMessageAnchors: new Map(),
       completedBots: new Set(),
+      lastRecordedMessageIds: new Map(),
       receivedConversations: new Set(),
       resolvedPrompts: new Map(),
       receivedRuntimeSnapshot: false,
@@ -230,9 +243,11 @@ export class DynamicIslandCoordinator {
   #recordIncoming(runtime: ServerRuntime, botId: string, messages: DynamicIslandMessageSource[]): void {
     for (const message of messages) {
       if (message.author !== "bot") continue;
+      if (runtime.lastRecordedMessageIds.get(botId) === message.id) continue;
       runtime.unreadReplies[botId] = (runtime.unreadReplies[botId] ?? 0) + 1;
       runtime.unreadMessageIds ??= {};
       runtime.unreadMessageIds[botId] ??= message.id;
+      runtime.lastRecordedMessageIds.set(botId, message.id);
     }
   }
 
@@ -241,6 +256,9 @@ export class DynamicIslandCoordinator {
       if (!botIds.has(botId)) runtime.incomingMessageAnchors.delete(botId);
     }
     for (const botId of runtime.completedBots) if (!botIds.has(botId)) runtime.completedBots.delete(botId);
+    for (const botId of runtime.lastRecordedMessageIds.keys()) {
+      if (!botIds.has(botId)) runtime.lastRecordedMessageIds.delete(botId);
+    }
     for (const botId of runtime.receivedConversations) {
       if (!botIds.has(botId)) runtime.receivedConversations.delete(botId);
     }

@@ -4136,13 +4136,13 @@ function compactRuntimeApproval(approval: AgentApproval): AgentRuntimeSnapshot["
 function fitRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): AgentRuntimeSnapshot {
   if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
 
+  snapshot.bots = snapshot.bots.map((bot) => ({ ...bot, preview: "", avatarUrl: null }));
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
   snapshot.work = [];
   if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
 
-  snapshot.latestMessages = [];
-  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
-
-  snapshot.bots = snapshot.bots.map((bot) => ({ ...bot, preview: "", avatarUrl: null }));
+  snapshot.latestMessages = snapshot.latestMessages.map((message) => ({ ...message, text: "" }));
   if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
 
   snapshot.pendingPrompts = snapshot.pendingPrompts.map((prompt) => ({
