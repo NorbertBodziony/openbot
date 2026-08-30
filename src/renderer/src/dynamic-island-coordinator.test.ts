@@ -32,6 +32,15 @@ describe("DynamicIslandCoordinator", () => {
       mode: "approval",
       item: { requestId: "approval-1" },
     });
+
+    coordinator.resolveAction({
+      type: "respond-approval",
+      serverId: "remote-b",
+      botId: "sales",
+      requestId: "approval-1",
+      decision: "accept",
+    });
+    expect(coordinator.presentation(["local", "remote-a", "remote-b"]).mode).toBe("idle");
   });
 
   it("keeps simultaneous requests from different bots and advances after each answer", () => {

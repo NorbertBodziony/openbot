@@ -443,7 +443,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const live = this.#snapshots.get(bot.id);
       const liveLatest = [...(live?.messages ?? [])]
         .reverse()
-        .find((message) => message.author === "assistant" || message.author === "agent");
+        .find(
+          (message) =>
+            (message.author === "assistant" || message.author === "agent") && message.itemType !== "commentary",
+        );
       const persisted =
         !live || !liveLatest
           ? this.#store.database.readConversationRuntime(bot.id, bot.threadId)

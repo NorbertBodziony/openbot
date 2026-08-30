@@ -8,8 +8,23 @@ import {
   isAvatarSeed,
   isBotMemory,
   isConversationMessage,
+  isDynamicIslandAction,
   isMessageReaction,
 } from "./ipc";
+
+describe("Dynamic Island action validation", () => {
+  it("accepts approval decisions and rejects unknown decisions", () => {
+    const action = {
+      type: "respond-approval",
+      serverId: "local",
+      botId: "chief",
+      requestId: "approval-1",
+      decision: "accept",
+    };
+    expect(isDynamicIslandAction(action)).toBe(true);
+    expect(isDynamicIslandAction({ ...action, decision: "always" })).toBe(false);
+  });
+});
 
 describe("question prompt message validation", () => {
   const message = {

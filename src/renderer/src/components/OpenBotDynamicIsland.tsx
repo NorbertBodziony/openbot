@@ -920,6 +920,14 @@ function ApprovalContent(props: {
       botId: props.item.bot.id,
       requestId: props.item.requestId,
     });
+  const respond = (decision: "accept" | "decline") =>
+    props.onAction({
+      type: "respond-approval",
+      serverId: props.serverId,
+      botId: props.item.bot.id,
+      requestId: props.item.requestId,
+      decision,
+    });
 
   return (
     <div class="dynamic-island-surface-panel dynamic-island-surface-attention-panel">
@@ -939,8 +947,14 @@ function ApprovalContent(props: {
         </div>
       </IslandContentSwap>
       <div class="dynamic-island-surface-actions" data-island-motion-content>
-        <Button size="sm" onClick={openInOpenBot}>
+        <Button size="sm" variant="ghost" onClick={openInOpenBot}>
           Review in OpenBot
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => respond("decline")}>
+          Decline
+        </Button>
+        <Button size="sm" onClick={() => respond("accept")}>
+          Approve
         </Button>
       </div>
     </div>

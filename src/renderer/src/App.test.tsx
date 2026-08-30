@@ -891,6 +891,20 @@ describe("OpenBot connected desktop shell", () => {
         item: { requestId: "approval-remote" },
       }),
     );
+
+    emitDynamicIslandAction?.({
+      type: "respond-approval",
+      serverId: "remote-1",
+      botId: "chief",
+      requestId: "approval-remote",
+      decision: "accept",
+    });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "remote-1",
+        mode: "idle",
+      }),
+    );
   });
 
   it("removes stale Dynamic Island attention when a remote host goes offline", async () => {

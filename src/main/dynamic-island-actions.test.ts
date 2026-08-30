@@ -55,11 +55,51 @@ describe("performDynamicIslandCriticalAction", () => {
     );
     expect(local.respondToPrompt).not.toHaveBeenCalled();
   });
+
+  it("executes local and remote approval decisions", async () => {
+    const local = localAgent();
+    const remote = remoteAgent();
+    const decodeVoid = vi.fn(() => undefined);
+
+    await performDynamicIslandCriticalAction(
+      {
+        type: "respond-approval",
+        serverId: "local",
+        botId: "chief",
+        requestId: "approval-local",
+        decision: "accept",
+      },
+      local,
+      remote,
+      decodeVoid,
+    );
+    await performDynamicIslandCriticalAction(
+      {
+        type: "respond-approval",
+        serverId: "server-eu",
+        botId: "research",
+        requestId: "approval-remote",
+        decision: "decline",
+      },
+      local,
+      remote,
+      decodeVoid,
+    );
+
+    expect(local.respondToApproval).toHaveBeenCalledWith({ requestId: "approval-local", decision: "accept" });
+    expect(remote.request).toHaveBeenCalledWith(
+      "/v1/approvals/respond",
+      { method: "POST", body: { requestId: "approval-remote", decision: "decline" } },
+      "server-eu",
+      decodeVoid,
+    );
+  });
 });
 
 function localAgent() {
   return {
     respondToPrompt: vi.fn(async () => undefined),
+    respondToApproval: vi.fn(async () => undefined),
   };
 }
 

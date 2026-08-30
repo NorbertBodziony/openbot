@@ -134,18 +134,34 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     expect(onAction).toHaveBeenCalledWith(action);
   });
 
-  it("opens approvals in the main app without authorizing hidden details", async () => {
+  it("reviews, accepts, or declines approvals", async () => {
     const onAction = vi.fn<(action: DynamicIslandAction) => void>();
     renderControlledIsland(approvalPresentation(), "expanded", onAction);
 
-    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Review in OpenBot" }));
-
     expect(onAction).toHaveBeenCalledWith({
       type: "review-attention",
       serverId: "local",
       botId: "research",
       requestId: "approval-1",
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Decline" }));
+    expect(onAction).toHaveBeenCalledWith({
+      type: "respond-approval",
+      serverId: "local",
+      botId: "research",
+      requestId: "approval-1",
+      decision: "decline",
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(onAction).toHaveBeenCalledWith({
+      type: "respond-approval",
+      serverId: "local",
+      botId: "research",
+      requestId: "approval-1",
+      decision: "accept",
     });
   });
 

@@ -121,6 +121,13 @@ export type DynamicIslandAction =
       botId: string;
       requestId: string | number;
       answers: Record<string, string[]>;
+    }
+  | {
+      type: "respond-approval";
+      serverId: string;
+      botId: string;
+      requestId: string | number;
+      decision: "accept" | "decline";
     };
 
 export interface SetDynamicIslandInteractiveInput {
@@ -166,6 +173,9 @@ export function isDynamicIslandAction(value: unknown): value is DynamicIslandAct
   if (value.type === "open-failure") return isShortString(value.turnId, 160);
   if (value.type === "review-attention") {
     return isDynamicIslandRequestId(value.requestId);
+  }
+  if (value.type === "respond-approval") {
+    return isDynamicIslandRequestId(value.requestId) && (value.decision === "accept" || value.decision === "decline");
   }
   return (
     value.type === "answer-prompt" && isDynamicIslandRequestId(value.requestId) && isDynamicIslandAnswers(value.answers)

@@ -16,7 +16,7 @@ import {
 
 type ServerRuntime = DynamicIslandPresentationInput & {
   incomingMessageAnchors: Map<string, string>;
-  seenIncomingMessageIds: Set<string>;
+  receivedConversations: Set<string>;
   resolvedPrompts: Map<string, string>;
   receivedRuntimeSnapshot: boolean;
 };
@@ -51,12 +51,17 @@ export class DynamicIslandCoordinator {
       if (prompt?.type === "prompt" && String(prompt.requestId) === requestId) pendingPrompts[botId] = undefined;
       else resolvedPrompts.delete(botId);
     }
+    const botIds = new Set(input.bots.map((bot) => bot.id));
+    const incomingMessageAnchors = activeMessageAnchors(input.liveMessages, previous?.incomingMessageAnchors);
+    for (const botId of incomingMessageAnchors.keys()) if (!botIds.has(botId)) incomingMessageAnchors.delete(botId);
+    const receivedConversations = [...(previous?.receivedConversations ?? [])].filter((botId) => botIds.has(botId));
     this.#servers.set(input.serverId, {
       ...input,
       pendingApprovals,
       pendingPrompts,
-      incomingMessageAnchors: previous?.incomingMessageAnchors ?? new Map(),
-      seenIncomingMessageIds: previous?.seenIncomingMessageIds ?? new Set(),
+      liveMessages: compactLiveMessages(input.liveMessages),
+      incomingMessageAnchors,
+      receivedConversations: new Set([...receivedConversations, ...Object.keys(input.liveMessages)]),
       resolvedPrompts,
       receivedRuntimeSnapshot: previous?.receivedRuntimeSnapshot ?? false,
     });
@@ -74,6 +79,7 @@ export class DynamicIslandCoordinator {
     switch (event.type) {
       case "bots-changed":
         runtime.bots = event.bots;
+        this.#retainBotMessages(runtime, new Set(event.bots.map((bot) => bot.id)));
         return;
       case "runtime-snapshot":
         this.#replaceRuntimeSnapshot(serverId, runtime, event.snapshot, serverId !== activeServerId);
@@ -81,25 +87,20 @@ export class DynamicIslandCoordinator {
       case "conversation": {
         runtime.activeTurns[event.snapshot.botId] = event.snapshot.activeTurnId;
         const messages = event.snapshot.messages.flatMap(toDynamicIslandMessage);
-        const previousMessages = runtime.liveMessages[event.snapshot.botId];
-        runtime.liveMessages[event.snapshot.botId] = messages;
+        const anchorId = runtime.incomingMessageAnchors.get(event.snapshot.botId);
+        const receivedConversation = runtime.receivedConversations.has(event.snapshot.botId);
+        const latest = messages.at(-1);
+        if (latest) runtime.liveMessages[event.snapshot.botId] = [latest];
+        else if (event.snapshot.messages.length === 0) runtime.liveMessages[event.snapshot.botId] = [];
         if (serverId !== activeServerId) {
-          const anchorId = runtime.incomingMessageAnchors.get(event.snapshot.botId);
           if (anchorId) {
             const anchorIndex = messages.findIndex((message) => message.id === anchorId);
-            this.#seedIncoming(runtime, anchorIndex < 0 ? messages : messages.slice(0, anchorIndex + 1));
             if (anchorIndex >= 0) this.#recordIncoming(runtime, event.snapshot.botId, messages.slice(anchorIndex + 1));
-            runtime.incomingMessageAnchors.delete(event.snapshot.botId);
-          } else if (previousMessages === undefined) this.#seedIncoming(runtime, messages);
-          else {
-            const previousIds = new Set(previousMessages.map((message) => message.id));
-            this.#recordIncoming(
-              runtime,
-              event.snapshot.botId,
-              messages.filter((message) => !previousIds.has(message.id)),
-            );
-          }
-        } else runtime.incomingMessageAnchors.delete(event.snapshot.botId);
+          } else if (receivedConversation) this.#recordIncoming(runtime, event.snapshot.botId, messages);
+        }
+        if (latest) runtime.incomingMessageAnchors.set(event.snapshot.botId, latest.id);
+        else if (event.snapshot.messages.length === 0) runtime.incomingMessageAnchors.delete(event.snapshot.botId);
+        runtime.receivedConversations.add(event.snapshot.botId);
         return;
       }
       case "conversation-delta": {
@@ -155,6 +156,12 @@ export class DynamicIslandCoordinator {
         runtime.resolvedPrompts.set(action.botId, String(action.requestId));
       }
     }
+    if (action.type === "respond-approval") {
+      const approval = runtime.pendingApprovals[action.botId];
+      if (approval && String(approval.requestId) === String(action.requestId)) {
+        runtime.pendingApprovals[action.botId] = undefined;
+      }
+    }
     if (action.type === "open-failure" && runtime.failedTurns[action.botId] === action.turnId) {
       delete runtime.failedTurns[action.botId];
     }
@@ -185,7 +192,7 @@ export class DynamicIslandCoordinator {
       pendingApprovals: {},
       failedTurns: {},
       incomingMessageAnchors: new Map(),
-      seenIncomingMessageIds: new Set(),
+      receivedConversations: new Set(),
       resolvedPrompts: new Map(),
       receivedRuntimeSnapshot: false,
     };
@@ -195,17 +202,22 @@ export class DynamicIslandCoordinator {
 
   #recordIncoming(runtime: ServerRuntime, botId: string, messages: DynamicIslandMessageSource[]): void {
     for (const message of messages) {
-      if (message.author !== "bot" || runtime.seenIncomingMessageIds.has(message.id)) continue;
-      runtime.seenIncomingMessageIds.add(message.id);
+      if (message.author !== "bot") continue;
       runtime.unreadReplies[botId] = (runtime.unreadReplies[botId] ?? 0) + 1;
       runtime.unreadMessageIds ??= {};
       runtime.unreadMessageIds[botId] ??= message.id;
     }
   }
 
-  #seedIncoming(runtime: ServerRuntime, messages: DynamicIslandMessageSource[]): void {
-    for (const message of messages) {
-      if (message.author === "bot") runtime.seenIncomingMessageIds.add(message.id);
+  #retainBotMessages(runtime: ServerRuntime, botIds: ReadonlySet<string>): void {
+    for (const botId of runtime.incomingMessageAnchors.keys()) {
+      if (!botIds.has(botId)) runtime.incomingMessageAnchors.delete(botId);
+    }
+    for (const botId of runtime.receivedConversations) {
+      if (!botIds.has(botId)) runtime.receivedConversations.delete(botId);
+    }
+    for (const botId of Object.keys(runtime.liveMessages)) {
+      if (!botIds.has(botId)) delete runtime.liveMessages[botId];
     }
   }
 
@@ -216,7 +228,7 @@ export class DynamicIslandCoordinator {
     trackIncoming: boolean,
   ): void {
     const liveMessages: Record<string, DynamicIslandMessageSource[]> = {};
-    const incomingMessageAnchors = new Map<string, string>();
+    const incomingMessageAnchors = new Map(runtime.incomingMessageAnchors);
     for (const message of snapshot.latestMessages) {
       const converted = {
         id: message.id,
@@ -228,8 +240,7 @@ export class DynamicIslandCoordinator {
       liveMessages[message.botId] = [converted];
       incomingMessageAnchors.set(message.botId, message.id);
       if (!trackIncoming) continue;
-      if (!runtime.receivedRuntimeSnapshot) this.#seedIncoming(runtime, [converted]);
-      else if (!(runtime.liveMessages[message.botId] ?? []).some((previous) => previous.id === message.id)) {
+      if (runtime.receivedRuntimeSnapshot && runtime.incomingMessageAnchors.get(message.botId) !== message.id) {
         this.#recordIncoming(runtime, message.botId, [converted]);
       }
     }
@@ -254,6 +265,38 @@ export class DynamicIslandCoordinator {
     nextRuntime.incomingMessageAnchors = incomingMessageAnchors;
     nextRuntime.receivedRuntimeSnapshot = true;
   }
+}
+
+function compactLiveMessages(
+  messagesByBot: Record<string, DynamicIslandMessageSource[]>,
+): Record<string, DynamicIslandMessageSource[]> {
+  return Object.fromEntries(
+    Object.entries(messagesByBot).map(([botId, messages]) => {
+      const latest = latestBotMessage(messages);
+      return [botId, latest ? [latest] : []];
+    }),
+  );
+}
+
+function activeMessageAnchors(
+  messagesByBot: Record<string, DynamicIslandMessageSource[]>,
+  previous = new Map<string, string>(),
+): Map<string, string> {
+  const anchors = new Map(previous);
+  for (const [botId, messages] of Object.entries(messagesByBot)) {
+    const latest = latestBotMessage(messages);
+    if (latest) anchors.set(botId, latest.id);
+    else anchors.delete(botId);
+  }
+  return anchors;
+}
+
+function latestBotMessage(messages: readonly DynamicIslandMessageSource[]): DynamicIslandMessageSource | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.author === "bot") return message;
+  }
+  return undefined;
 }
 
 export function queueSnapshotsFromRuntimeWork(work: readonly AgentRuntimeWorkItem[]): Record<string, QueueSnapshot> {

@@ -19,7 +19,9 @@ export interface DynamicIslandWindowControllerOptions {
   getMainWindow: () => BrowserWindow | null;
   ensureMainWindow?: () => Promise<BrowserWindow>;
   performHaptic: () => void;
-  performCriticalAction: (action: Extract<DynamicIslandAction, { type: "answer-prompt" }>) => Promise<void>;
+  performCriticalAction: (
+    action: Extract<DynamicIslandAction, { type: "answer-prompt" | "respond-approval" }>,
+  ) => Promise<void>;
 }
 
 export class DynamicIslandWindowController {
@@ -94,7 +96,7 @@ export class DynamicIslandWindowController {
   }
 
   async performAction(action: DynamicIslandAction): Promise<void> {
-    if (action.type === "answer-prompt") {
+    if (action.type === "answer-prompt" || action.type === "respond-approval") {
       const key = criticalActionKey(action);
       const existing = this.#criticalActions.get(key);
       if (existing) return existing;
@@ -204,7 +206,9 @@ export class DynamicIslandWindowController {
   }
 }
 
-function criticalActionKey(action: Extract<DynamicIslandAction, { type: "answer-prompt" }>): string {
+function criticalActionKey(
+  action: Extract<DynamicIslandAction, { type: "answer-prompt" | "respond-approval" }>,
+): string {
   return [action.type, action.serverId, action.botId, String(action.requestId)].join("\u0000");
 }
 

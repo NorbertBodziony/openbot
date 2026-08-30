@@ -377,6 +377,7 @@ export class OpenBotDatabase {
                    FROM projection_thread_messages message
                    WHERE message.thread_id = thread.thread_id
                      AND json_extract(message.message_json, '$.author') IN ('assistant', 'agent')
+                     AND COALESCE(json_extract(message.message_json, '$.itemType'), '') != 'commentary'
                    ORDER BY message.created_at DESC, message.ordinal DESC, message.message_id DESC
                    LIMIT 1) AS latest_message_json
            FROM projection_threads thread

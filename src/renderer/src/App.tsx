@@ -3048,8 +3048,16 @@ export function createAppController(props: AppProps = {}) {
 
   async function handleDynamicIslandAction(action: DynamicIslandAction): Promise<void> {
     if (action.type === "open-app") return;
-    if (action.type === "answer-prompt") {
+    if (action.type === "answer-prompt" || action.type === "respond-approval") {
       dynamicIslandCoordinator.resolveAction(action);
+      if (action.type === "respond-approval") {
+        setPendingApprovals((current) => {
+          const approval = current[action.botId];
+          return approval && String(approval.requestId) === String(action.requestId)
+            ? { ...current, [action.botId]: undefined }
+            : current;
+        });
+      }
       publishDynamicIslandPresentation();
       return;
     }
