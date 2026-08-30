@@ -78,7 +78,6 @@ import {
 } from "@openbot/contracts/runtime-values";
 import {
   decodeTeamProtocolSupportV1,
-  decodeTeamProtocolV1Event,
   encodeTeamProtocolV1ClientEvent,
   encodeTeamProtocolV1Http,
   highestCommonTeamProtocol,
@@ -91,6 +90,7 @@ import {
   type TeamProtocolV1Capability,
   teamProtocolUpdateDirection,
 } from "@openbot/contracts/team-protocol/v1";
+import { decodeTeamProtocolV1CurrentEvent } from "@openbot/contracts/team-protocol/v1-adapter";
 import { fingerprint } from "./team-store";
 
 export { isValidRemoteApiUrl } from "@openbot/contracts/invite-links";
@@ -1157,7 +1157,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             return;
           }
           try {
-            const decoded = decodeTeamProtocolV1Event(JSON.parse(message.data));
+            const decoded = decodeTeamProtocolV1CurrentEvent(JSON.parse(message.data));
             if (decoded.kind === "unknown") return;
             if (decoded.kind === "invalid") {
               protocolFailed = true;
@@ -1260,7 +1260,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   #sendEventScope(serverId: string, socket: WebSocket): void {
-    if (socket.readyState !== WebSocket.OPEN || !this.#supportsRuntimeSnapshots(serverId, socket)) {
+    if (socket.readyState !== WebSocket.OPEN) return;
+    if (
+      this.#appVersion
+        ? socket.protocol !== TEAM_PROTOCOL_V1_WEBSOCKET
+        : !this.#supportsRuntimeSnapshots(serverId, socket)
+    ) {
       return;
     }
     socket.send(

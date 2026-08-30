@@ -10,11 +10,12 @@ import {
   highestCommonTeamProtocol,
   teamProtocolUpdateDirection,
 } from "./v1";
+import { decodeTeamProtocolV1CurrentEvent } from "./v1-adapter";
 
 describe("Team protocol v1", () => {
   it("keeps the released host and client fixtures valid", () => {
     expect(decodeTeamProtocolSupportV1(hostCompatibilityFixture)).toEqual(hostCompatibilityFixture);
-    expect(decodeTeamProtocolV1Event(hostEventFixture)).toEqual({ kind: "known", event: hostEventFixture });
+    expect(decodeTeamProtocolV1CurrentEvent(hostEventFixture)).toEqual({ kind: "known", event: hostEventFixture });
     expect(clientScopeFixture).toMatchObject({
       type: "agent-event-scope",
       includeConversations: true,
@@ -63,7 +64,7 @@ describe("Team protocol v1", () => {
       kind: "unknown",
       type: "future-optional-event",
     });
-    expect(decodeTeamProtocolV1Event({ type: "team-presence", snapshot: {} })).toEqual({
+    expect(decodeTeamProtocolV1CurrentEvent({ type: "team-presence", snapshot: {} })).toEqual({
       kind: "invalid",
       type: "team-presence",
     });

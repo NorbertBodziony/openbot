@@ -873,6 +873,62 @@ describe("Team API compatibility negotiation", () => {
     }
   });
 
+  it("declares client capabilities when runtime snapshots are unavailable", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-event-scope-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "compatibility-event-scope");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        if (url.pathname === "/v1/compatibility") {
+          return Response.json({
+            appVersion: "0.3.0",
+            protocol: { minimum: 1, maximum: 1 },
+            capabilities: ["direct-messages"],
+          });
+        }
+        if (url.pathname === "/v1/agents") return Response.json([]);
+        throw new Error(`Unexpected request: ${url.pathname}`);
+      }),
+    );
+    const sockets: CapabilityEventSocket[] = [];
+    class CapabilityEventSocket extends EventTarget {
+      static readonly OPEN = 1;
+      readonly protocol = "openbot-team-v1";
+      readyState = CapabilityEventSocket.OPEN;
+      readonly send = vi.fn();
+      readonly close = vi.fn(() => {
+        this.readyState = 3;
+        this.dispatchEvent(new Event("close"));
+      });
+
+      constructor(_url: URL, protocols: string[]) {
+        super();
+        expect(protocols).toContain("openbot-team-v1");
+        sockets.push(this);
+        queueMicrotask(() => this.dispatchEvent(new Event("open")));
+      }
+    }
+    vi.stubGlobal("WebSocket", CapabilityEventSocket);
+    const manager = remoteEventManager(statePath, "0.4.0");
+
+    try {
+      await manager.initialize();
+      manager.startEventConnections();
+      await vi.waitFor(() => expect(sockets[0]?.send).toHaveBeenCalled());
+      const messages = sockets[0]?.send.mock.calls.map(([message]) => JSON.parse(String(message))) ?? [];
+      expect(messages).toContainEqual({
+        type: "agent-event-scope",
+        includeConversations: true,
+        capabilities: expect.arrayContaining(["direct-messages"]),
+      });
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("ignores unknown events and stops reconnect after a malformed known event", async () => {
     vi.useFakeTimers();
     const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-events-"));

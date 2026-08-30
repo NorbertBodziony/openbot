@@ -955,6 +955,48 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.getAllByText("Different OpenBot versions on Studio Mac")).toHaveLength(2));
   });
 
+  it("loads capability-gated state when a provisional handshake becomes ready", async () => {
+    const local = testServer("local", false);
+    const provisional: ServerSummary = {
+      ...testServer("remote-1", true),
+      state: "connecting",
+      compatibility: {
+        localAppVersion: "0.4.0",
+        hostAppVersion: null,
+        localProtocol: { minimum: 1, maximum: 1 },
+        hostProtocol: null,
+        negotiatedProtocol: null,
+        capabilities: [],
+      },
+      connectionSequence: 0,
+    };
+    const negotiated: ServerSummary = {
+      ...provisional,
+      state: "online",
+      compatibility: {
+        localAppVersion: "0.4.0",
+        hostAppVersion: "0.4.0",
+        localProtocol: { minimum: 1, maximum: 1 },
+        hostProtocol: { minimum: 1, maximum: 1 },
+        negotiatedProtocol: 1,
+        capabilities: ["browser-control", "sidebar-layout"],
+      },
+      connectionSequence: 1,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, provisional]);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce([local, negotiated]);
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    expect(window.openbot.agent.getSidebarLayout).not.toHaveBeenCalled();
+    expect(window.openbot.browser.listTabs).not.toHaveBeenCalled();
+
+    emitServers?.([local, negotiated]);
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    await waitFor(() => expect(window.openbot.agent.getSidebarLayout).toHaveBeenCalled());
+    expect(window.openbot.browser.listTabs).toHaveBeenCalled();
+  });
+
   it("keeps a remote approval when Review in OpenBot switches to its host", async () => {
     const servers: ServerSummary[] = [
       {

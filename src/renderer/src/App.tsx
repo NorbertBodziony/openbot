@@ -408,9 +408,20 @@ export function createAppController(props: AppProps = {}) {
     const retryTarget = value.find(
       (server) => server.id === pendingCompatibilityRetryServerId && server.active && server.state === "online",
     );
-    if (retryTarget) {
+    const negotiatedTarget = value.find((server) => {
+      const oldCompatibility = previous.get(server.id)?.compatibility;
+      return (
+        server.kind === "remote" &&
+        server.active &&
+        server.state === "online" &&
+        oldCompatibility?.hostAppVersion === null &&
+        Boolean(server.compatibility?.hostAppVersion)
+      );
+    });
+    const loadTarget = retryTarget ?? negotiatedTarget;
+    if (loadTarget) {
       pendingCompatibilityRetryServerId = null;
-      void selectServer(retryTarget.id, false).catch((error) => {
+      void selectServer(loadTarget.id, false).catch((error) => {
         toast.error("Could not load the remote workspace", {
           description: error instanceof Error ? error.message : String(error),
         });

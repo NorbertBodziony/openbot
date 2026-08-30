@@ -38,7 +38,6 @@ import {
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import {
   decodeTeamProtocolV1ClientEvent,
-  encodeTeamProtocolV1Event,
   encodeTeamProtocolV1Http,
   isTeamProtocolV1Capability,
   TEAM_APP_VERSION_HEADER,
@@ -48,6 +47,7 @@ import {
   TEAM_PROTOCOL_VERSION_HEADER,
   type TeamProtocolSupportV1,
 } from "@openbot/contracts/team-protocol/v1";
+import { encodeTeamProtocolV1CurrentEvent } from "@openbot/contracts/team-protocol/v1-adapter";
 import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
@@ -387,7 +387,7 @@ export class TeamApiServer {
       serverName: identity.serverName,
       logoVersion: identity.logoVersion,
     };
-    const payload = encodeTeamProtocolV1Event(event);
+    const payload = encodeTeamProtocolV1CurrentEvent(event);
     if (!payload) return;
     for (const client of this.#eventClients.keys()) {
       if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
@@ -1204,7 +1204,7 @@ export class TeamApiServer {
       let outgoing: string;
       if (event.type === "conversation" && supportsRuntimeSnapshots) {
         conversationInvalidation ??=
-          encodeTeamProtocolV1Event({
+          encodeTeamProtocolV1CurrentEvent({
             type: "conversation-invalidated",
             botId: event.snapshot.botId,
             revision: event.snapshot.revision,
@@ -1213,11 +1213,11 @@ export class TeamApiServer {
         outgoing = conversationInvalidation;
       } else if (event.type === "queue-changed" && supportsRuntimeSnapshots) {
         queueInvalidation ??=
-          encodeTeamProtocolV1Event({ type: "queue-invalidated", botId: event.snapshot.botId }) ?? undefined;
+          encodeTeamProtocolV1CurrentEvent({ type: "queue-invalidated", botId: event.snapshot.botId }) ?? undefined;
         if (!queueInvalidation) continue;
         outgoing = queueInvalidation;
       } else {
-        payload ??= encodeTeamProtocolV1Event(event) ?? undefined;
+        payload ??= encodeTeamProtocolV1CurrentEvent(event) ?? undefined;
         if (!payload) continue;
         outgoing = payload;
       }
@@ -1229,7 +1229,7 @@ export class TeamApiServer {
         continue;
       }
       completionSnapshot ??=
-        encodeTeamProtocolV1Event({
+        encodeTeamProtocolV1CurrentEvent({
           type: "runtime-snapshot",
           snapshot: this.#options.agents.getRuntimeSnapshot(),
         }) ?? undefined;
@@ -1352,7 +1352,7 @@ export class TeamApiServer {
     connection.snapshotResponsePending = true;
     if (rateLimited) connection.nextSnapshotRequestAt = now + RUNTIME_SNAPSHOT_REQUEST_INTERVAL_MS;
     try {
-      const payload = encodeTeamProtocolV1Event({
+      const payload = encodeTeamProtocolV1CurrentEvent({
         type: "runtime-snapshot",
         snapshot: this.#options.agents.getRuntimeSnapshot(),
       });
@@ -1427,7 +1427,7 @@ export class TeamApiServer {
     const snapshot = this.getPresence();
     this.#options.onPresence?.(snapshot);
     const event: TeamRealtimeEvent = { type: "team-presence", snapshot };
-    const payload = encodeTeamProtocolV1Event(event);
+    const payload = encodeTeamProtocolV1CurrentEvent(event);
     if (!payload) return;
     for (const client of this.#eventClients.keys()) {
       if (client.readyState === webSockets.WebSocket.OPEN) client.send(payload);
@@ -1461,7 +1461,7 @@ export class TeamApiServer {
   }
 
   #sendToMembers(memberIds: string[], event: TeamRealtimeEvent): void {
-    const payload = encodeTeamProtocolV1Event(event);
+    const payload = encodeTeamProtocolV1CurrentEvent(event);
     if (!payload) return;
     for (const [client, connection] of this.#eventClients) {
       if (
