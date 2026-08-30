@@ -39,6 +39,7 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
+import type { TeamProtocolV1Capability } from "@openbot/contracts/team-protocol/v1";
 import {
   createContext,
   createEffect,
@@ -68,7 +69,7 @@ import { playCompletionSoundForAgentEvent } from "./completion-sound";
 import { createFirstBotDraft, type FirstBotDraft } from "./components/FirstBotSetup";
 import { readPanelWidth } from "./components/PanelResizer";
 import type { SidebarAgentState } from "./components/Sidebar";
-import { Toaster } from "./components/ui";
+import { Toaster, toast } from "./components/ui";
 import type { BotMessage, BotProfile } from "./data";
 import { DynamicIslandCoordinator, reconcileQueuesWithRuntimeWork } from "./dynamic-island-coordinator";
 import {
@@ -151,6 +152,10 @@ const EMPTY_TEAM_PRESENCE: TeamPresenceSnapshot = {
   members: [],
   updatedAt: "",
 };
+
+function serverSupportsCapability(server: ServerSummary | undefined, capability: TeamProtocolV1Capability): boolean {
+  return server?.kind !== "remote" || !server.compatibility || server.compatibility.capabilities.includes(capability);
+}
 
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-requested" }>;
@@ -389,6 +394,54 @@ export function createAppController(props: AppProps = {}) {
   let analyticsOpened = false;
   let analyticsVersionRecorded = false;
   let appInfoLoadedFromHost = false;
+  let pendingCompatibilityRetryServerId: string | null = null;
+
+  function applyServerSummaries(value: ServerSummary[]): void {
+    const previous = new Map(servers().map((server) => [server.id, server]));
+    for (const server of value) {
+      const sequence = server.connectionSequence ?? 0;
+      const previousSequence = previous.get(server.id)?.connectionSequence ?? 0;
+      const compatibility = server.compatibility;
+      if (
+        server.kind === "remote" &&
+        sequence > previousSequence &&
+        compatibility?.hostAppVersion &&
+        compatibility.hostAppVersion !== compatibility.localAppVersion
+      ) {
+        toast.warning(`Different OpenBot versions on ${server.name}`, {
+          description: `The connection uses protocol ${compatibility.negotiatedProtocol}. Some newer features may be unavailable. Client ${compatibility.localAppVersion}; host ${compatibility.hostAppVersion}.`,
+        });
+      }
+    }
+    setServers(value);
+    const retryTarget = value.find(
+      (server) => server.id === pendingCompatibilityRetryServerId && server.active && server.state === "online",
+    );
+    const negotiatedTarget = value.find((server) => {
+      const oldCompatibility = previous.get(server.id)?.compatibility;
+      return (
+        server.kind === "remote" &&
+        server.active &&
+        server.state === "online" &&
+        oldCompatibility?.hostAppVersion === null &&
+        Boolean(server.compatibility?.hostAppVersion)
+      );
+    });
+    const loadTarget = retryTarget ?? negotiatedTarget;
+    if (loadTarget) {
+      pendingCompatibilityRetryServerId = null;
+      void selectServer(loadTarget.id, false).catch((error) => {
+        toast.error("Could not load the remote workspace", {
+          description: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+  }
+
+  function activeServerSupportsCapability(capability: TeamProtocolV1Capability): boolean {
+    const server = servers().find((candidate) => candidate.active);
+    return serverSupportsCapability(server, capability);
+  }
 
   function analyticsAgentProperties(botId: string) {
     const bot = botList().find((candidate) => candidate.id === botId);
@@ -619,7 +672,7 @@ export function createAppController(props: AppProps = {}) {
     const unsubscribeAuth = window.openbot.auth.onEvent((state) => {
       flush(() => applyCentralAuthState(state));
     });
-    const unsubscribeServers = window.openbot.servers.onEvent((value) => flush(() => setServers(value)));
+    const unsubscribeServers = window.openbot.servers.onEvent((value) => flush(() => applyServerSummaries(value)));
     const unsubscribePresence = window.openbot.servers.onPresence((snapshot) => flush(() => setTeamPresence(snapshot)));
     const unsubscribeDirectMessage = peopleEnabled
       ? window.openbot.servers.onDirectMessage((event) => flush(() => handleDirectMessageEvent(event)))
@@ -744,10 +797,17 @@ export function createAppController(props: AppProps = {}) {
       );
     const initialServerReady = window.openbot.servers
       .list()
-      .then(setServers)
+      .then(applyServerSummaries)
       .catch(() => undefined);
     void initialServerReady.then(() => {
       const loadingServerId = activeServerSidebarKey();
+      const loadingServer = servers().find((server) => server.id === loadingServerId);
+      if (
+        loadingServer?.kind === "remote" &&
+        (loadingServer.state === "incompatible" || loadingServer.issue?.code === "protocol_error")
+      ) {
+        return;
+      }
       void Promise.all([
         window.openbot.agent
           .getStatus()
@@ -763,10 +823,12 @@ export function createAppController(props: AppProps = {}) {
           .catch((error) => {
             setAgentStatus((current) => ({ ...current, message: String(error) }));
           }),
-        window.openbot.agent
-          .getSidebarLayout()
-          .then(setSidebarLayout)
-          .catch(() => setSidebarLayout(defaultSidebarLayout())),
+        serverSupportsCapability(loadingServer, "sidebar-layout")
+          ? window.openbot.agent
+              .getSidebarLayout()
+              .then(setSidebarLayout)
+              .catch(() => setSidebarLayout(defaultSidebarLayout()))
+          : Promise.resolve(setSidebarLayout(defaultSidebarLayout())),
         window.openbot.agent
           .listConversationReads()
           .then(applyConversationReads)
@@ -774,7 +836,7 @@ export function createAppController(props: AppProps = {}) {
       ]).finally(() => {
         if (activeServerSidebarKey() === loadingServerId) setDynamicIslandLoadedServerId(loadingServerId);
       });
-      if (!props.landingPreview) {
+      if (!props.landingPreview && serverSupportsCapability(loadingServer, "browser-control")) {
         const requestedAtRevision = browserChangeRevision;
         void window.openbot.browser
           .listTabs()
@@ -1560,7 +1622,7 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function refreshDirectThreads(): Promise<void> {
-    if (!currentTeamMember()) {
+    if (!currentTeamMember() || !activeServerSupportsCapability("direct-messages")) {
       setDirectThreads([]);
       return;
     }
@@ -2673,15 +2735,27 @@ export function createAppController(props: AppProps = {}) {
     setPendingApprovals(dynamicIslandState?.pendingApprovals ?? {});
     setFailedTurns(dynamicIslandState?.failedTurns ?? {});
     setTeamPresence(EMPTY_TEAM_PRESENCE);
+    const selectedServer = nextServers.find((server) => server.id === serverId);
+    if (
+      selectedServer?.kind === "remote" &&
+      (selectedServer.state === "incompatible" || selectedServer.issue?.code === "protocol_error")
+    ) {
+      return;
+    }
     const browserRequestedAtRevision = browserChangeRevision;
+    const browserSupported = serverSupportsCapability(selectedServer, "browser-control");
     const [storedBots, layout, reads, status, models, tabs, controlState, presence] = await Promise.all([
       window.openbot.agent.listBots(),
-      window.openbot.agent.getSidebarLayout(),
+      serverSupportsCapability(selectedServer, "sidebar-layout")
+        ? window.openbot.agent.getSidebarLayout()
+        : Promise.resolve(defaultSidebarLayout()),
       window.openbot.agent.listConversationReads(),
       window.openbot.agent.getStatus(),
       window.openbot.agent.listModels(),
-      props.landingPreview ? Promise.resolve([]) : window.openbot.browser.listTabs(),
-      props.landingPreview ? Promise.resolve({ sessions: [] }) : window.openbot.browser.getControlState(),
+      props.landingPreview || !browserSupported ? Promise.resolve([]) : window.openbot.browser.listTabs(),
+      props.landingPreview || !browserSupported
+        ? Promise.resolve({ sessions: [] })
+        : window.openbot.browser.getControlState(),
       window.openbot.servers.getPresence(),
     ]);
     setAgentStatus(status);
@@ -2696,6 +2770,18 @@ export function createAppController(props: AppProps = {}) {
     applyStoredBots(storedBots);
     applyConversationReads(reads);
     setDynamicIslandLoadedServerId(serverId);
+  }
+
+  async function retryServerConnection(serverId: string): Promise<void> {
+    pendingCompatibilityRetryServerId = serverId;
+    try {
+      await window.openbot.servers.retryConnection(serverId);
+    } catch (error) {
+      pendingCompatibilityRetryServerId = null;
+      toast.error("The host is still incompatible", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   async function openInstalledMarketplaceAgent(bot: BotSummary): Promise<void> {
@@ -3090,6 +3176,7 @@ export function createAppController(props: AppProps = {}) {
     const existingSession = latestRemoteDesktopSession(serverId);
     if (
       server?.kind !== "remote" ||
+      !serverSupportsCapability(server, "remote-desktop") ||
       (!existingSession && (server.state !== "online" || !server.remoteDesktopAvailable))
     ) {
       return;
@@ -3221,7 +3308,13 @@ export function createAppController(props: AppProps = {}) {
 
   onSettled(() => {
     if (props.landingPreview) return;
-    return window.openbot.dynamicIsland.onAction((action) => void handleDynamicIslandAction(action));
+    return window.openbot.dynamicIsland.onAction((action) => {
+      void handleDynamicIslandAction(action).catch((error) => {
+        toast.error("Could not open this remote item", {
+          description: error instanceof Error ? error.message : String(error),
+        });
+      });
+    });
   });
 
   async function handleDynamicIslandAction(action: DynamicIslandAction): Promise<void> {
@@ -3273,6 +3366,9 @@ export function createAppController(props: AppProps = {}) {
   const collapsedSidebarSectionIds = createMemo(() => sidebarCollapsedByServer()[activeServerSidebarKey()] ?? []);
 
   async function mutateSidebarLayout(action: SidebarLayoutAction): Promise<void> {
+    if (!activeServerSupportsCapability("sidebar-layout")) {
+      throw new Error("This host does not support sidebar layout changes.");
+    }
     const layout = await window.openbot.agent.mutateSidebarLayout(action);
     setSidebarLayout(layout);
   }
@@ -3426,6 +3522,7 @@ export function createAppController(props: AppProps = {}) {
     leftPanelWidth,
     servers,
     selectServer,
+    retryServerConnection,
     reorderServers,
     setJoinServerOpen,
     openServerSettings,
@@ -3433,6 +3530,7 @@ export function createAppController(props: AppProps = {}) {
     botList,
     activeDirectMemberId,
     peopleEnabled,
+    activeServerSupportsCapability,
     activeBot,
     directPeople,
     directThreads,

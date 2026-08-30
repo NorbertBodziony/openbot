@@ -49,6 +49,9 @@ export function registerTeamIpcHandlers({
   );
   handleTrusted(IPC_CHANNELS.serversTakePendingInvite, takePendingInvite);
   handleTrusted(IPC_CHANNELS.serversLogin, (input: unknown) => remoteServers.login(parseLoginServer(input)));
+  handleTrusted(IPC_CHANNELS.serversRetryConnection, (serverId: unknown) =>
+    remoteServers.retryConnection(requireString(serverId, "serverId")),
+  );
   handleTrusted(IPC_CHANNELS.serversRemove, (serverId: unknown) =>
     remoteServers.remove(requireString(serverId, "serverId")),
   );

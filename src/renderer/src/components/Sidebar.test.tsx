@@ -408,6 +408,24 @@ describe("Sidebar sections", () => {
     };
   }
 
+  it("keeps sidebar layout controls unavailable when the host lacks the capability", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} layout={sectionLayout()} layoutMutable={false} />);
+
+    const section = screen.getByRole("button", { name: "Demo" });
+    expect(section).toHaveAttribute("title", "This host does not support sidebar layout changes.");
+    expect(section).toHaveAttribute("draggable", "false");
+    expect(view.container.querySelector("[data-agent-id='chief']")).toHaveAttribute("draggable", "false");
+    expect(screen.queryByLabelText("Sidebar free area")).not.toBeInTheDocument();
+
+    await fireEvent.contextMenu(section);
+    expect(screen.queryByRole("menu", { name: "Section actions" })).not.toBeInTheDocument();
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Chief/ }));
+    const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
+    expect(within(agentMenu).queryByText("Move to")).not.toBeInTheDocument();
+    expect(props.onMutateLayout).not.toHaveBeenCalled();
+  });
+
   it("removes an agent row when the controlled bot list changes", async () => {
     const props = sidebarProps();
     const [bots, setBots] = createSignal(STORY_BOTS);

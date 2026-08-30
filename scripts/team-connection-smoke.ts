@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInviteUrl } from "@openbot/contracts/invite-links";
-import type { CentralAuthUser } from "@openbot/contracts/ipc";
+import type { AgentEvent, CentralAuthUser } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { OpenBotDatabase } from "../src/backend/openbot-database";
 import { TeamChatStore } from "../src/backend/team-chat-store";
@@ -17,6 +17,8 @@ import { TeamStore } from "../src/main/team-store";
 
 const AUTH_API_URL = process.env.OPENBOT_AUTH_API_URL ?? "http://127.0.0.1:3100";
 const REQUEST_TIMEOUT_MS = 15_000;
+const SMOKE_HOST_APP_VERSION = "team-smoke-host";
+const SMOKE_CLIENT_APP_VERSION = "team-smoke-client";
 
 async function main(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "openbot-team-smoke-"));
@@ -68,6 +70,7 @@ async function main(): Promise<void> {
     };
     const chat = new TeamChatStore(database);
     api = new TeamApiServer({
+      appVersion: SMOKE_HOST_APP_VERSION,
       store,
       agents,
       mailbox,
@@ -96,12 +99,18 @@ async function main(): Promise<void> {
 
     const cipher = createTemporaryCipher();
     const remotePath = join(root, "remote-servers.json");
-    const remoteManager = new RemoteServerManager(remotePath, cipher, {
-      createTeamAuthTicket: (serverId) => createDevelopmentTeamTicket(memberSession.sessionToken, serverId),
-      getEmail: () => memberSession.user.email,
-    });
+    const remoteManager = new RemoteServerManager(
+      remotePath,
+      cipher,
+      {
+        createTeamAuthTicket: (serverId) => createDevelopmentTeamTicket(memberSession.sessionToken, serverId),
+        getEmail: () => memberSession.user.email,
+      },
+      { appVersion: SMOKE_CLIENT_APP_VERSION },
+    );
     remote = remoteManager;
     await remoteManager.initialize();
+    remoteManager.startEventConnections();
     const preview = await remoteManager.previewInvite({ inviteUrl });
     if (
       preview.serverName !== "Smoke Host" ||
@@ -112,9 +121,12 @@ async function main(): Promise<void> {
       throw new Error("The invitation preview did not match the host invitation.");
     }
     const remoteEvent = new Promise<void>((resolve) => {
-      remoteManager.once("agent", (_serverId, event) => {
-        if (event.type === "error" && event.code === "team_smoke_event") resolve();
-      });
+      const onAgent = (_serverId: string, event: AgentEvent) => {
+        if (event.type !== "error" || event.code !== "team_smoke_event") return;
+        remoteManager.off("agent", onAgent);
+        resolve();
+      };
+      remoteManager.on("agent", onAgent);
     });
     const server = await remoteManager.join({ inviteUrl });
     let reuseRejected = false;
@@ -124,6 +136,7 @@ async function main(): Promise<void> {
       reuseRejected = true;
     }
     if (!reuseRejected) throw new Error("The host accepted a reused invitation.");
+    await waitForRemoteEventConnection(remoteManager, server.id);
     const eventInterval = setInterval(() => {
       agentEvents.emit("event", {
         type: "error",
@@ -141,6 +154,13 @@ async function main(): Promise<void> {
 
     if (server.state !== "online" || server.role !== "member") {
       throw new Error("The remote server did not become online with the member role.");
+    }
+    if (
+      server.compatibility?.localAppVersion !== SMOKE_CLIENT_APP_VERSION ||
+      server.compatibility.hostAppVersion !== SMOKE_HOST_APP_VERSION ||
+      server.compatibility.negotiatedProtocol !== 1
+    ) {
+      throw new Error("The client and host did not negotiate Team protocol v1 across different app versions.");
     }
     if (!members.some((member) => member.email === memberSession.user.email)) {
       throw new Error("The verified member was not added to the host.");
@@ -224,6 +244,8 @@ async function main(): Promise<void> {
         events: "websocket",
         directMessages: ownerConversation.messages.length,
         directTyping: "websocket",
+        protocol: server.compatibility.negotiatedProtocol,
+        versions: `${server.compatibility.localAppVersion}/${server.compatibility.hostAppVersion}`,
       }),
     );
   } finally {
@@ -236,6 +258,16 @@ async function main(): Promise<void> {
     database?.close();
     await rm(root, { recursive: true, force: true });
   }
+}
+
+async function waitForRemoteEventConnection(remote: RemoteServerManager, serverId: string): Promise<void> {
+  const deadline = Date.now() + REQUEST_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if ((remote.list().find((server) => server.id === serverId)?.connectionSequence ?? 0) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const server = remote.list().find((candidate) => candidate.id === serverId);
+  throw new Error(`The remote event connection did not open: ${JSON.stringify(server)}`);
 }
 
 type SmokeAgents = ConstructorParameters<typeof TeamApiServer>[0]["agents"];
@@ -341,7 +373,7 @@ async function waitForPublicTunnel(apiUrl: string): Promise<void> {
   let lastError = "not ready";
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(new URL("/v1/identity", apiUrl), {
+      const response = await fetch(new URL("/v1/compatibility", apiUrl), {
         signal: AbortSignal.timeout(5_000),
       });
       if (response.ok) return;

@@ -257,6 +257,7 @@ export interface ServersDesktopApi {
   previewInvite: (input: JoinServerInput) => Promise<InvitePreview>;
   takePendingInvite: () => Promise<string | null>;
   login: (input: LoginServerInput) => Promise<ServerSummary>;
+  retryConnection: (serverId: string) => Promise<ServerSummary>;
   remove: (serverId: string) => Promise<void>;
   getPresence: () => Promise<TeamPresenceSnapshot>;
   getPresenceFor: (serverId: string) => Promise<TeamPresenceSnapshot>;

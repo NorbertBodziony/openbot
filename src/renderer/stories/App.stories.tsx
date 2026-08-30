@@ -265,6 +265,80 @@ export const EmptyWorkspace: Story = {
   },
 };
 
+export const IncompatibleRemoteHost: Story = {
+  render: () => (
+    <OpenBotPlayground
+      options={{
+        servers: [
+          { ...STORY_SERVERS[0], active: false },
+          {
+            ...STORY_SERVERS[1],
+            active: true,
+            state: "incompatible",
+            compatibility: {
+              localAppVersion: "44.0.0",
+              hostAppVersion: "42.0.0",
+              localProtocol: { minimum: 2, maximum: 2 },
+              hostProtocol: { minimum: 1, maximum: 1 },
+              negotiatedProtocol: null,
+              capabilities: [],
+            },
+            issue: {
+              code: "host_update_required",
+              message: "Update OpenBot on the host.",
+              retryable: true,
+            },
+          },
+        ],
+      }}
+    />
+  ),
+  play: async ({ canvas }) => {
+    await expect(canvas.findByRole("heading", { name: "Update OpenBot on OpenBot team" })).resolves.toBeInTheDocument();
+    await expect(canvas.getByText("44.0.0")).toBeInTheDocument();
+    await expect(canvas.getByText("42.0.0")).toBeInTheDocument();
+    await expect(canvas.getByRole("button", { name: "Retry" })).toBeEnabled();
+  },
+};
+
+export const DifferentRemoteVersions: Story = {
+  render: () => (
+    <OpenBotPlayground
+      options={{
+        servers: [
+          { ...STORY_SERVERS[0], active: false },
+          {
+            ...STORY_SERVERS[1],
+            active: true,
+            compatibility: {
+              localAppVersion: "44.0.0",
+              hostAppVersion: "43.0.0",
+              localProtocol: { minimum: 1, maximum: 1 },
+              hostProtocol: { minimum: 1, maximum: 1 },
+              negotiatedProtocol: 1,
+              capabilities: [
+                "agent-runtime-snapshots",
+                "browser-control",
+                "conversation-pagination",
+                "direct-messages",
+                "remote-desktop",
+                "sidebar-layout",
+              ],
+            },
+            connectionSequence: 1,
+          },
+        ],
+      }}
+    />
+  ),
+  play: async ({ canvas, canvasElement }) => {
+    await expect(canvas.findByRole("heading", { name: "Chief" })).resolves.toBeInTheDocument();
+    await expect(
+      within(canvasElement.ownerDocument.body).findByText("Different OpenBot versions on OpenBot team"),
+    ).resolves.toBeInTheDocument();
+  },
+};
+
 export const Onboarding: Story = {
   render: () => <OpenBotPlayground options={{ setupState: { completed: false, preferredProvider: null } }} />,
   play: async ({ canvas, userEvent }) => {
