@@ -1639,6 +1639,7 @@ if (!hasSingleInstanceLock) {
         overrideRoot: process.env.OPENBOT_REMOTE_DESKTOP_RUNTIME_PATH,
       });
       hostService = new HostService({
+        appVersion: app.getVersion(),
         store: teamStore,
         agents: service,
         sidebarLayout: sidebarLayoutStore,
@@ -1752,7 +1753,10 @@ if (!hasSingleInstanceLock) {
             return centralAuthManager.getSignedInUser().email;
           },
         },
-        { allowLocalDevelopmentInvites: developmentRemoteRole !== null },
+        {
+          allowLocalDevelopmentInvites: developmentRemoteRole !== null,
+          appVersion: app.getVersion(),
+        },
       );
       await remoteServerManager.initialize();
       if (developmentRemoteRole === "host") {

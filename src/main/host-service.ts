@@ -56,6 +56,7 @@ interface HostEvents {
 }
 
 interface HostServiceOptions {
+  appVersion: string;
   store: TeamStore;
   agents: AgentService;
   sidebarLayout: SidebarLayoutStore;
@@ -176,6 +177,7 @@ export class HostService extends EventEmitter<HostEvents> {
       },
     });
     this.#api = new TeamApiServer({
+      appVersion: options.appVersion,
       store: options.store,
       agents: options.agents,
       sidebarLayout: options.sidebarLayout,
@@ -593,7 +595,7 @@ export async function waitForPublicApi(apiUrl: string, timeoutMs: number): Promi
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(new URL("/v1/identity", apiUrl), {
+      const response = await fetch(new URL("/v1/compatibility", apiUrl), {
         signal: AbortSignal.timeout(Math.min(5_000, Math.max(1, timeoutMs))),
       });
       if (response.ok) return true;

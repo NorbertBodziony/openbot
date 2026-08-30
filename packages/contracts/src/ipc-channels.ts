@@ -128,6 +128,7 @@ export const IPC_CHANNELS = {
   serversPreviewInvite: "servers:preview-invite",
   serversTakePendingInvite: "servers:take-pending-invite",
   serversLogin: "servers:login",
+  serversRetryConnection: "servers:retry-connection",
   serversRemove: "servers:remove",
   serversGetPresence: "servers:get-presence",
   serversGetPresenceFor: "servers:get-presence-for",

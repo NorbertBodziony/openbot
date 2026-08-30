@@ -1,7 +1,29 @@
 import type { AvatarImageInput } from "./ipc-conversation";
 
-export type ServerConnectionState = "online" | "connecting" | "offline" | "error";
+export type ServerConnectionState = "online" | "connecting" | "offline" | "error" | "incompatible";
 export type TeamRole = "owner" | "admin" | "member";
+
+export type ServerConnectionIssueCode =
+  | "client_update_required"
+  | "host_update_required"
+  | "protocol_error"
+  | "authentication_required"
+  | "network_unavailable";
+
+export interface ServerConnectionIssue {
+  code: ServerConnectionIssueCode;
+  message: string;
+  retryable: boolean;
+}
+
+export interface ServerCompatibility {
+  localAppVersion: string;
+  hostAppVersion: string | null;
+  localProtocol: { minimum: number; maximum: number };
+  hostProtocol: { minimum: number; maximum: number } | null;
+  negotiatedProtocol: number | null;
+  capabilities: string[];
+}
 
 export interface ServerSummary {
   id: string;
@@ -13,6 +35,9 @@ export interface ServerSummary {
   logoUrl: string | null;
   role: TeamRole | null;
   active: boolean;
+  compatibility?: ServerCompatibility | null;
+  issue?: ServerConnectionIssue | null;
+  connectionSequence?: number;
 }
 
 export interface JoinServerInput {
