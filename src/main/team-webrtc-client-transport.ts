@@ -75,6 +75,7 @@ interface ActiveHost {
     binding: { localFingerprint: string; remoteFingerprint: string } | null;
     started: boolean;
     completed: boolean;
+    hostNonce: string | null;
   } | null;
 }
 
@@ -259,6 +260,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     if (active) active.cancelled = true;
     if (active?.expirationTimer) clearTimeout(active.expirationTimer);
     this.#active.delete(hostId);
+    this.#files.setPeerAuthenticated(hostId, false);
     let disconnectError: unknown;
     try {
       await this.#options.bridge.disconnect(hostId);
@@ -389,6 +391,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       binding: null,
       started: false,
       completed: false,
+      hostNonce: null,
     };
     try {
       await this.#options.bridge.connect({
@@ -482,6 +485,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   };
 
   #finishConnected(hostId: string, active: ActiveHost): void {
+    this.#files.setPeerAuthenticated(hostId, true);
     active.connected = true;
     active.connecting = null;
     this.#sendRecoverable(
@@ -497,6 +501,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   }
 
   readonly #onDisconnected = (hostId: string): void => {
+    this.#files.setPeerAuthenticated(hostId, false);
     const active = this.#active.get(hostId);
     if (active) active.connected = false;
     this.#lastEventSequence.delete(hostId);
@@ -516,7 +521,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   ): void => {
     const active = this.#active.get(hostId);
     const authFrame = isString(data) && channel === "rpc" ? authenticationFrame(data) : null;
-    if (!active?.connected && authFrame?.type !== "auth-ready") {
+    if (!active?.connected && authFrame?.type !== "auth-ready" && authFrame?.type !== "auth-confirmed") {
       this.#failProtocol(hostId, "The host sent data before end-to-end authentication.");
       return;
     }
@@ -526,6 +531,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     }
     if (!isString(data)) return;
     if (authFrame?.type === "auth-ready") void this.#handleAuthentication(hostId, authFrame);
+    else if (authFrame?.type === "auth-confirmed") this.#handleAuthenticationConfirmation(hostId, authFrame);
     else if (channel === "rpc") this.#handleRpc(hostId, data);
     else if (channel === "events") this.#handleEvent(hostId, data);
   };
@@ -559,6 +565,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         throw new Error("The host device signature is invalid.");
       }
       authentication.completed = true;
+      authentication.hostNonce = frame.hostNonce;
       await this.#options.bridge.send(
         hostId,
         "rpc",
@@ -569,11 +576,28 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
           hostNonce: frame.hostNonce,
         }),
       );
-      if (this.#active.get(hostId) !== active || active.cancelled) return;
-      this.#finishConnected(hostId, active);
     } catch {
       this.#failProtocol(hostId, "The host failed end-to-end authentication.");
     }
+  }
+
+  #handleAuthenticationConfirmation(
+    hostId: string,
+    frame: Extract<TeamProtocolV2AuthFrame, { type: "auth-confirmed" }>,
+  ): void {
+    const active = this.#active.get(hostId);
+    const authentication = active?.authentication;
+    if (
+      !active ||
+      !authentication?.completed ||
+      active.connected ||
+      frame.clientNonce !== authentication.clientNonce ||
+      frame.hostNonce !== authentication.hostNonce
+    ) {
+      this.#failProtocol(hostId, "The host returned an invalid authentication confirmation.");
+      return;
+    }
+    this.#finishConnected(hostId, active);
   }
 
   #handleRpc(hostId: string, data: string): void {
@@ -647,6 +671,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   }
 
   #failProtocol(hostId: string, message: string): void {
+    this.#files.setPeerAuthenticated(hostId, false);
     const error = new TeamWebRtcRequestError(502, "protocol_error", message);
     for (const [requestId, pending] of this.#pending) {
       if (pending.hostId !== hostId) continue;

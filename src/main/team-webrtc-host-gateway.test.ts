@@ -4,6 +4,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isString } from "@openbot/contracts/runtime-values";
 import {
   decodeTeamProtocolV2AuthFrame,
   encodeTeamProtocolV2Frame,
@@ -160,6 +161,18 @@ describe("TeamWebRtcHostGateway", () => {
         clientNonce: ready.clientNonce,
         hostNonce: ready.hostNonce,
       }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        bridge.sent.some((message) => {
+          if (message.channel !== "rpc" || !isString(message.data)) return false;
+          try {
+            return decodeTeamProtocolV2AuthFrame(message.data).type === "auth-confirmed";
+          } catch {
+            return false;
+          }
+        }),
+      ).toBe(true),
     );
     bridge.emit("disconnected", "host-1");
     await vi.waitFor(() => expect(closeSession).toHaveBeenCalledWith("session-1"));

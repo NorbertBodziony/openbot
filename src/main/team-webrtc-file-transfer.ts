@@ -84,8 +84,13 @@ export class TeamWebRtcFileTransfer {
     this.#resumeMilliseconds = resumeMilliseconds;
     this.#acceptPeer = acceptPeer;
     bridge.on("data", this.#onData);
-    bridge.on("connected", this.#onConnected);
     bridge.on("disconnected", this.#onDisconnected);
+  }
+
+  setPeerAuthenticated(peerId: string, authenticated: boolean): void {
+    if (authenticated) this.#connectedPeers.add(peerId);
+    else this.#connectedPeers.delete(peerId);
+    this.#notifyStateChange();
   }
 
   async send(peerId: string, input: { name: string; mimeType: string; bytes: Uint8Array }): Promise<string> {
@@ -150,7 +155,6 @@ export class TeamWebRtcFileTransfer {
     this.#stopped = true;
     this.#notifyStateChange();
     this.#bridge.off("data", this.#onData);
-    this.#bridge.off("connected", this.#onConnected);
     this.#bridge.off("disconnected", this.#onDisconnected);
     for (const timer of this.#expirationTimers.values()) clearTimeout(timer);
     this.#expirationTimers.clear();
@@ -166,16 +170,8 @@ export class TeamWebRtcFileTransfer {
     this.#expirationTimers.clear();
   }
 
-  readonly #onConnected = (peerId: string): void => {
-    if (!this.#acceptPeer(peerId)) return;
-    this.#connectedPeers.add(peerId);
-    this.#notifyStateChange();
-  };
-
   readonly #onDisconnected = (peerId: string): void => {
-    if (!this.#acceptPeer(peerId)) return;
-    this.#connectedPeers.delete(peerId);
-    this.#notifyStateChange();
+    this.setPeerAuthenticated(peerId, false);
   };
 
   readonly #onData = (
@@ -183,7 +179,7 @@ export class TeamWebRtcFileTransfer {
     channel: "rpc" | "events" | "files" | "desktop",
     data: string | ArrayBuffer,
   ): void => {
-    if (channel !== "files" || !this.#acceptPeer(peerId)) return;
+    if (channel !== "files" || !this.#connectedPeers.has(peerId) || !this.#acceptPeer(peerId)) return;
     const transferId = fileTransferId(data);
     this.#chain = this.#chain
       .then(() => this.#handleData(peerId, data))

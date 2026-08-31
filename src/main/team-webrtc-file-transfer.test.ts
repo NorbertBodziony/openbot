@@ -42,6 +42,8 @@ describe("TeamWebRtcFileTransfer", () => {
       undefined,
       (peerId) => peerId === "host-2",
     );
+    first.setPeerAuthenticated("host-1", true);
+    second.setPeerAuthenticated("host-1", true);
     bridge.emit(
       "data",
       "host-1",
@@ -57,6 +59,7 @@ describe("TeamWebRtcFileTransfer", () => {
     const bridge = new FakeBridge();
     const directory = await temporaryDirectory();
     const transfers = new TeamWebRtcFileTransfer(bridge, directory);
+    transfers.setPeerAuthenticated("host-1", true);
     const bytes = new TextEncoder().encode("hello-world");
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const complete = transfers.receive("host-1", "transfer-1");
@@ -82,6 +85,7 @@ describe("TeamWebRtcFileTransfer", () => {
   it("rejects a non-contiguous offset", async () => {
     const bridge = new FakeBridge();
     const transfers = new TeamWebRtcFileTransfer(bridge, await temporaryDirectory());
+    transfers.setPeerAuthenticated("host-1", true);
     const waiting = transfers.receive("host-1", "transfer-2");
     bridge.emit(
       "data",
@@ -97,6 +101,7 @@ describe("TeamWebRtcFileTransfer", () => {
   it("rejects a completed file with the wrong hash", async () => {
     const bridge = new FakeBridge();
     const transfers = new TeamWebRtcFileTransfer(bridge, await temporaryDirectory());
+    transfers.setPeerAuthenticated("host-1", true);
     const waiting = transfers.receive("host-1", "transfer-3");
     bridge.emit("data", "host-1", "files", fileOpen("transfer-3", 4, "0".repeat(64)));
     bridge.emit("data", "host-1", "files", chunk("transfer-3", 0, new TextEncoder().encode("test")));
@@ -113,6 +118,8 @@ describe("TeamWebRtcFileTransfer", () => {
   it("keeps a malformed peer frame isolated from other hosts", async () => {
     const bridge = new FakeBridge();
     const transfers = new TeamWebRtcFileTransfer(bridge, await temporaryDirectory());
+    transfers.setPeerAuthenticated("host-1", true);
+    transfers.setPeerAuthenticated("host-2", true);
     const first = transfers.receive("host-1", "transfer-1");
     const second = transfers.receive("host-2", "transfer-2");
     bridge.emit(
@@ -144,10 +151,11 @@ describe("TeamWebRtcFileTransfer", () => {
   it("keeps the transfer ID and resumes from the last acknowledged offset", async () => {
     const bridge = new ResumingBridge();
     const transfers = new TeamWebRtcFileTransfer(bridge, await temporaryDirectory());
+    bridge.onReconnect = () => transfers.setPeerAuthenticated("host-1", true);
     const bytes = new Uint8Array(2 * 1024 * 1024);
     bytes.fill(7);
     const sending = transfers.send("host-1", { name: "large.bin", mimeType: "application/octet-stream", bytes });
-    bridge.emit("connected", "host-1");
+    transfers.setPeerAuthenticated("host-1", true);
     const transferId = await sending;
 
     expect(bridge.openTransferIds).toEqual([transferId, transferId]);
@@ -159,6 +167,7 @@ describe("TeamWebRtcFileTransfer", () => {
   it("releases quota for file declarations that make no progress", async () => {
     const bridge = new FakeBridge();
     const transfers = new TeamWebRtcFileTransfer(bridge, await temporaryDirectory(), 10);
+    transfers.setPeerAuthenticated("host-1", true);
     try {
       const maximumFileBytes = 100 * 1024 * 1024;
       bridge.emit("data", "host-1", "files", fileOpen("transfer-1", maximumFileBytes, "1".repeat(64)));
@@ -187,6 +196,7 @@ class ResumingBridge extends TeamWebRtcBridge {
   acknowledged = 0;
   resumeAcknowledged = 0;
   firstOffsetAfterReconnect: number | null = null;
+  onReconnect: () => void = () => undefined;
   #transferId = "";
   #disconnected = false;
 
@@ -221,7 +231,10 @@ class ResumingBridge extends TeamWebRtcBridge {
       this.#disconnected = true;
       this.resumeAcknowledged = this.acknowledged;
       this.emit("disconnected", peerId);
-      setTimeout(() => this.emit("connected", peerId), 5);
+      setTimeout(() => {
+        this.emit("connected", peerId);
+        this.onReconnect();
+      }, 5);
       throw new Error("simulated network change");
     }
     this.acknowledged = Math.max(this.acknowledged, chunk.offset + chunk.bytes.byteLength);

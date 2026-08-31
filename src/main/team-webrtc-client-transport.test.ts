@@ -29,13 +29,31 @@ const listedHost = {
   role: "member" as const,
 };
 
-function mockAuthenticatedSend(bridge: TeamWebRtcBridge) {
-  return vi.spyOn(bridge, "send").mockImplementation(async (hostId, channel, data) => {
+function mockAuthenticatedSend(bridge: TeamWebRtcBridge, automaticallyConfirm = true) {
+  const pendingConfirmations: Array<() => void> = [];
+  const send = vi.spyOn(bridge, "send").mockImplementation(async (hostId, channel, data) => {
     if (channel !== "rpc" || !isString(data)) return;
     let frame: TeamProtocolV2AuthFrame;
     try {
       frame = decodeTeamProtocolV2AuthFrame(data);
     } catch {
+      return;
+    }
+    if (frame.type === "auth-complete") {
+      const confirm = () =>
+        bridge.emit(
+          "data",
+          hostId,
+          "rpc",
+          encodeTeamProtocolV2Frame({
+            version: 2,
+            type: "auth-confirmed",
+            clientNonce: frame.clientNonce,
+            hostNonce: frame.hostNonce,
+          }),
+        );
+      if (automaticallyConfirm) queueMicrotask(confirm);
+      else pendingConfirmations.push(confirm);
       return;
     }
     if (frame.type !== "auth-init") return;
@@ -65,6 +83,11 @@ function mockAuthenticatedSend(bridge: TeamWebRtcBridge) {
       ),
     );
   });
+  return {
+    send,
+    pendingConfirmations,
+    confirmNext: () => pendingConfirmations.shift()?.(),
+  };
 }
 
 describe("TeamWebRtcClientTransport", () => {
@@ -73,7 +96,7 @@ describe("TeamWebRtcClientTransport", () => {
     vi.spyOn(bridge, "connect").mockImplementation(async ({ peerId }) => {
       queueMicrotask(() => bridge.emit("connected", peerId, channelBinding));
     });
-    mockAuthenticatedSend(bridge);
+    const authentication = mockAuthenticatedSend(bridge, false);
     vi.spyOn(bridge, "disconnect").mockResolvedValue();
     const startSession = vi
       .fn()
@@ -116,7 +139,11 @@ describe("TeamWebRtcClientTransport", () => {
     const protocolError = vi.fn();
     transport.on("error", protocolError);
 
-    await transport.connect("host-1");
+    const initialConnection = transport.connect("host-1");
+    await vi.waitFor(() => expect(authentication.pendingConfirmations).toHaveLength(1));
+    expect(bridge.send).not.toHaveBeenCalledWith("host-1", "events", expect.any(String));
+    authentication.confirmNext();
+    await initialConnection;
     bridge.emit("data", "host-1", "events", JSON.stringify({ version: 2, type: "event-reset", nextSequence: 2_001 }));
     bridge.emit(
       "data",
@@ -134,7 +161,10 @@ describe("TeamWebRtcClientTransport", () => {
       }),
     );
     bridge.emit("disconnected", "host-1");
-    await transport.connect("host-1");
+    const reconnection = transport.connect("host-1");
+    await vi.waitFor(() => expect(authentication.pendingConfirmations).toHaveLength(1));
+    authentication.confirmNext();
+    await reconnection;
 
     expect(startSession).toHaveBeenCalledTimes(1);
     expect(issueTicket).toHaveBeenCalledTimes(2);

@@ -43,7 +43,8 @@ export type TeamProtocolV2AuthFrame =
       signature: string;
     }
   | { version: 2; type: "auth-ready"; clientNonce: string; hostNonce: string; signature: string }
-  | { version: 2; type: "auth-complete"; clientNonce: string; hostNonce: string };
+  | { version: 2; type: "auth-complete"; clientNonce: string; hostNonce: string }
+  | { version: 2; type: "auth-confirmed"; clientNonce: string; hostNonce: string };
 
 export type TeamProtocolV2EventFrame =
   | { version: 2; type: "event"; sequence: number; payload: TeamProtocolV2Json }
@@ -137,10 +138,14 @@ export function decodeTeamProtocolV2AuthFrame(value: string | unknown): TeamProt
       signature: frame.signature,
     };
   }
-  if (frame.type === "auth-complete" && base64url(frame.clientNonce, 16, 128) && base64url(frame.hostNonce, 16, 128)) {
+  if (
+    (frame.type === "auth-complete" || frame.type === "auth-confirmed") &&
+    base64url(frame.clientNonce, 16, 128) &&
+    base64url(frame.hostNonce, 16, 128)
+  ) {
     return {
       version: 2,
-      type: "auth-complete",
+      type: frame.type,
       clientNonce: frame.clientNonce,
       hostNonce: frame.hostNonce,
     };
@@ -234,7 +239,12 @@ export function encodeTeamProtocolV2Frame(
   frame: TeamProtocolV2RpcFrame | TeamProtocolV2AuthFrame | TeamProtocolV2EventFrame | TeamProtocolV2FileControlFrame,
 ): string {
   let encoded: string;
-  if (frame.type === "auth-init" || frame.type === "auth-ready" || frame.type === "auth-complete")
+  if (
+    frame.type === "auth-init" ||
+    frame.type === "auth-ready" ||
+    frame.type === "auth-complete" ||
+    frame.type === "auth-confirmed"
+  )
     encoded = JSON.stringify(decodeTeamProtocolV2AuthFrame(frame));
   else if (frame.type === "request" || frame.type === "response")
     encoded = JSON.stringify(decodeTeamProtocolV2RpcFrame(frame));

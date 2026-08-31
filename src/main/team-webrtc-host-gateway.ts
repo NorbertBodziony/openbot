@@ -186,7 +186,6 @@ export class TeamWebRtcHostGateway {
     this.#localSessionToken = session.sessionToken;
     this.#localSessionId = connection.sessionId;
     this.#sessionExpirationTimer = setTimeout(() => this.#closeLocalSession(), expiresAt - Date.now());
-    this.#connectLocalEvents(session.sessionToken);
   }
 
   readonly #onData = (
@@ -222,6 +221,7 @@ export class TeamWebRtcHostGateway {
 
   readonly #onDisconnected = (peerId: string): void => {
     if (peerId === this.#peerId) {
+      this.#files.setPeerAuthenticated(peerId, false);
       this.#sessionPreparation = null;
       this.#pendingConnection = null;
       this.#peerBinding = null;
@@ -305,6 +305,18 @@ export class TeamWebRtcHostGateway {
     this.#authenticationCompletion = null;
     this.#sessionPreparation = this.#openIncomingSession(peerId, completion.claims);
     await this.#sessionPreparation;
+    if (!this.#localSessionToken) throw new Error("The remote session did not open.");
+    this.#files.setPeerAuthenticated(peerId, true);
+    await this.#bridge.send(
+      peerId,
+      "rpc",
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "auth-confirmed",
+        clientNonce: frame.clientNonce,
+        hostNonce: frame.hostNonce,
+      }),
+    );
     this.#pendingConnection = null;
   }
 
@@ -485,6 +497,7 @@ export class TeamWebRtcHostGateway {
   async #handleEventControl(data: string): Promise<void> {
     await this.#sessionPreparation;
     const frame = decodeTeamProtocolV2EventFrame(data);
+    if (!this.#eventsSocket && this.#localSessionToken) this.#connectLocalEvents(this.#localSessionToken);
     if (frame.type === "event-control") {
       if (this.#eventsSocket?.readyState === webSockets.WebSocket.OPEN) {
         this.#eventsSocket.send(encodeTeamProtocolV1ClientEvent(frame.control));
@@ -508,6 +521,7 @@ export class TeamWebRtcHostGateway {
 
   #failProtocol(peerId: string): void {
     if (peerId !== this.#peerId) return;
+    this.#files.setPeerAuthenticated(peerId, false);
     this.#closeLocalSession();
     void this.#bridge.disconnectPeer(peerId).catch(() => undefined);
   }
@@ -608,6 +622,7 @@ export class TeamWebRtcHostGateway {
   }
 
   #closeLocalSession(): void {
+    if (this.#peerId) this.#files.setPeerAuthenticated(this.#peerId, false);
     if (this.#sessionExpirationTimer) clearTimeout(this.#sessionExpirationTimer);
     this.#sessionExpirationTimer = null;
     this.#closeDesktopSocket();

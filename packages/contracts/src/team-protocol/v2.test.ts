@@ -91,6 +91,16 @@ describe("Team protocol v2", () => {
         }),
       ),
     ).toMatchObject({ type: "auth-complete" });
+    expect(
+      decodeTeamProtocolV2AuthFrame(
+        encodeTeamProtocolV2Frame({
+          version: 2,
+          type: "auth-confirmed",
+          clientNonce: "c".repeat(43),
+          hostNonce: "h".repeat(43),
+        }),
+      ),
+    ).toMatchObject({ type: "auth-confirmed" });
   });
 
   it("validates client event controls", () => {
