@@ -16,6 +16,18 @@ export interface DevelopmentServiceSpec {
   env: NodeJS.ProcessEnv;
 }
 
+type OwnedProcess = Pick<ChildProcess, "pid" | "exitCode" | "kill">;
+type KillProcess = (pid: number, signal?: NodeJS.Signals | number) => boolean;
+
+interface StopOwnedProcessesOptions {
+  platform?: NodeJS.Platform;
+  killProcess?: KillProcess;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  now?: () => number;
+  wait?: (milliseconds: number) => Promise<void>;
+}
+
 export function developmentEnvironmentForTarget(
   target: DevelopmentTarget,
   environment: NodeJS.ProcessEnv = process.env,
@@ -170,19 +182,12 @@ async function main(): Promise<void> {
   const stopAll = async (signal: NodeJS.Signals): Promise<void> => {
     if (stopping) return;
     stopping = true;
-    const running = [...processes.values()].filter((child) => child.exitCode === null);
-    for (const child of running) signalOwnedProcess(child, signal);
-    await Promise.race([
-      Promise.all(running.map(waitForExit)),
-      new Promise<void>((resolveTimeout) => setTimeout(resolveTimeout, 3_000)),
-    ]);
-    for (const child of running) {
-      if (child.exitCode === null) signalOwnedProcess(child, "SIGKILL");
-    }
+    await stopOwnedProcesses([...processes.values()], signal);
   };
 
   process.once("SIGINT", () => void stopAll("SIGTERM").then(() => process.exit(130)));
   process.once("SIGTERM", () => void stopAll("SIGTERM").then(() => process.exit(143)));
+  process.once("SIGHUP", () => void stopAll("SIGTERM").then(() => process.exit(129)));
 
   try {
     for (const spec of specs) {
@@ -293,19 +298,63 @@ function validateServiceSpecs(specs: DevelopmentServiceSpec[]): void {
   }
 }
 
-function signalOwnedProcess(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (!child.pid || child.exitCode !== null) return;
+export function signalOwnedProcess(
+  child: OwnedProcess,
+  signal: NodeJS.Signals,
+  platform: NodeJS.Platform = process.platform,
+  killProcess: KillProcess = process.kill,
+): void {
+  if (!child.pid) return;
   try {
-    if (process.platform === "win32") child.kill(signal);
-    else process.kill(-child.pid, signal);
+    if (platform === "win32") {
+      if (child.exitCode === null) child.kill(signal);
+    } else {
+      killProcess(-child.pid, signal);
+    }
   } catch (error) {
     if (!isMissingProcess(error)) throw error;
   }
 }
 
-function waitForExit(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return Promise.resolve();
-  return new Promise((resolveExit) => child.once("exit", () => resolveExit()));
+export async function stopOwnedProcesses(
+  owned: OwnedProcess[],
+  signal: NodeJS.Signals,
+  options: StopOwnedProcessesOptions = {},
+): Promise<void> {
+  const {
+    platform = process.platform,
+    killProcess = process.kill,
+    timeoutMs = 3_000,
+    pollIntervalMs = 50,
+    now = Date.now,
+    wait = (milliseconds) => new Promise<void>((resolveDelay) => setTimeout(resolveDelay, milliseconds)),
+  } = options;
+  for (const child of owned) signalOwnedProcess(child, signal, platform, killProcess);
+
+  const deadline = now() + timeoutMs;
+  while (owned.some((child) => ownedProcessIsRunning(child, platform, killProcess))) {
+    const remaining = deadline - now();
+    if (remaining <= 0) break;
+    await wait(Math.min(pollIntervalMs, remaining));
+  }
+
+  for (const child of owned) {
+    if (ownedProcessIsRunning(child, platform, killProcess)) {
+      signalOwnedProcess(child, "SIGKILL", platform, killProcess);
+    }
+  }
+}
+
+function ownedProcessIsRunning(child: OwnedProcess, platform: NodeJS.Platform, killProcess: KillProcess): boolean {
+  if (!child.pid) return false;
+  if (platform === "win32") return child.exitCode === null;
+  try {
+    killProcess(-child.pid, 0);
+    return true;
+  } catch (error) {
+    if (isMissingProcess(error)) return false;
+    throw error;
+  }
 }
 
 function isMissingProcess(error: unknown): error is NodeJS.ErrnoException {
