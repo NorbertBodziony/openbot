@@ -16,7 +16,7 @@ R2 bindings do not have a per-binding read-only mode. The router has no mutation
 
 ## Release order
 
-1. Keep `SITE_PUBLISH_ENABLED`, `SITE_COOKIE_ISOLATION_READY`, and `SITE_SERVE_ENABLED` set to `false`.
+1. Keep `SITE_PUBLISH_ENABLED`, `SITE_COOKIE_ISOLATION_READY`, and `SITE_SERVE_ENABLED` absent or set to `false`.
 2. Deploy the router with `bun run sites:deploy`.
 3. Deploy the Auth API. Its deployment command applies D1 migrations `0012_hosted_sites.sql` and
    `0013_hosted_site_hostname_reservations.sql` before the Worker update.
@@ -27,6 +27,6 @@ R2 bindings do not have a per-binding read-only mode. The router has no mutation
 8. Replace one site and confirm that its hostname stays the same.
 9. Delete one site and confirm `410 Gone` and `X-Robots-Tag: noindex, nofollow`.
 
-Set `SITE_PUBLISH_ENABLED` to `false` on the Auth API to stop new uploads and activations. Set `SITE_SERVE_ENABLED` to `false` on the router to stop public serving. The admin endpoint `POST /v1/sites/admin/:siteId/block` blocks one site. `DELETE` on the same endpoint removes the block when the deployment is still valid.
+Set the three launch switches as protected production Worker variables in Cloudflare. Production deploys use `--keep-vars`, so later releases do not overwrite these values with repository defaults. An absent value remains disabled. Set `SITE_PUBLISH_ENABLED` to `false` on the Auth API to stop new uploads and activations. Set `SITE_SERVE_ENABLED` to `false` on the router to stop public serving. The admin endpoint `POST /v1/sites/admin/:siteId/block` blocks one site. `DELETE` on the same endpoint removes the block when the deployment is still valid.
 
 Set a dedicated `SITE_OPERATIONS_ADMIN_TOKEN` secret before using the block endpoint. If the secret is absent, the endpoint stays closed. Do not reuse `SKILLS_ADMIN_TOKEN`.

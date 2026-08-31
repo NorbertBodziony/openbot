@@ -12,9 +12,6 @@
       "zone_name": "openbot.site"
     }
   ],
-  "vars": {
-    "SITE_SERVE_ENABLED": "false"
-  },
   "r2_buckets": [
     {
       "binding": "SITES",

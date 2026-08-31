@@ -789,6 +789,108 @@ describe.sequential("AgentService", () => {
     });
   });
 
+  it("requires user approval before an agent mutates hosted sites", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    const hostedSites = {
+      list: vi.fn(async () => []),
+      publish: vi.fn(async () => ({
+        id: "site-1",
+        hostname: "approved-public-site-for-students-k7m2q9tzab.openbot.site",
+        url: "https://approved-public-site-for-students-k7m2q9tzab.openbot.site",
+        title: "Approved public site",
+        description: "A public test site.",
+        framework: "vanilla" as const,
+        status: "active" as const,
+        fileCount: 1,
+        size: 20,
+        expiresAt: "2026-09-30T12:00:00.000Z",
+        updatedAt: "2026-08-31T12:00:00.000Z",
+      })),
+      replace: vi.fn(async () => ({})),
+      delete: vi.fn(async () => undefined),
+    };
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      null,
+      30_000,
+      "codex",
+      (provider) => {
+        const client = new FakeAgentClient(provider, "", false);
+        clients.set(provider, client);
+        return client;
+      },
+      undefined,
+      null,
+      null,
+      async () => undefined,
+      hostedSites,
+    );
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    await service.sendMessage({ botId: bot.id, text: "Publish my site." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The hosted site approval turn did not start.");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "publish-site-approval",
+      params: {
+        threadId,
+        turnId,
+        callId: "publish-site-approval",
+        namespace: "openbot",
+        tool: "publish_site",
+        arguments: {
+          sourcePath: bot.workspacePath,
+          title: "Approved public site",
+          description: "A public test site.",
+        },
+      },
+    });
+    await waitFor(() => events.some((event) => event.type === "approval"));
+    expect(hostedSites.publish).not.toHaveBeenCalled();
+    expect(client.responses).toHaveLength(0);
+    expect(events.find((event) => event.type === "approval")).toMatchObject({
+      approval: { kind: "permissions", reason: expect.stringContaining("publish a new public site") },
+    });
+
+    const accepted = service.respondToApproval({ requestId: "publish-site-approval", decision: "accept" });
+    await expect(service.respondToApproval({ requestId: "publish-site-approval", decision: "accept" })).rejects.toThrow(
+      "no longer active",
+    );
+    await accepted;
+    expect(hostedSites.publish).toHaveBeenCalledTimes(1);
+    expect(openBotToolPayload(client.responses[0]?.result)).toMatchObject({ id: "site-1", status: "active" });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "delete-site-approval",
+      params: {
+        threadId,
+        turnId,
+        callId: "delete-site-approval",
+        namespace: "openbot",
+        tool: "delete_site",
+        arguments: { siteId: "site-1" },
+      },
+    });
+    await waitFor(() => service?.getRuntimeSnapshot().pendingApprovals.length === 1);
+    await service.respondToApproval({ requestId: "delete-site-approval", decision: "decline" });
+    expect(hostedSites.delete).not.toHaveBeenCalled();
+    expect(client.errors.at(-1)).toMatchObject({
+      id: "delete-site-approval",
+      error: { message: "The user declined this hosted site change." },
+    });
+  });
+
   it("surfaces Computer Use app access elicitations and returns the user's persistence choice", async () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const { store, mailbox } = stores();

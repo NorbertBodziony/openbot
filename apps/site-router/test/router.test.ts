@@ -14,6 +14,11 @@ const activeRoute = {
       size: 13,
       mimeType: "text/html",
     },
+    "app.js": {
+      key: "sites/site-1/deployments/deployment-1/app.js",
+      size: 17,
+      mimeType: "text/javascript",
+    },
   },
 };
 
@@ -58,6 +63,24 @@ describe("site router", () => {
       1_000,
     );
     expect(response.status).toBe(404);
+  });
+
+  it("disables serving by default and revalidates mutable asset URLs", async () => {
+    const hostname = "example-project-page-long-name-23456789ab.openbot.site";
+    const bucket = fakeBucket({
+      [`routes/${hostname}.json`]: JSON.stringify(activeRoute),
+      "sites/site-1/deployments/deployment-1/app.js": "console.log('ok')",
+    });
+    const disabled = await routeRequest(new Request(`https://${hostname}/app.js`), { SITES: bucket }, 1_000);
+    expect(disabled.status).toBe(503);
+
+    const response = await routeRequest(
+      new Request(`https://${hostname}/app.js`),
+      { SITES: bucket, SITE_SERVE_ENABLED: "true" },
+      1_000,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("public, no-cache");
   });
 
   it("rejects writes and traversal paths", async () => {

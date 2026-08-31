@@ -176,7 +176,12 @@ interface PendingApproval {
   method: string;
   params: unknown;
   approval: AgentApproval;
+  hostedSiteMutation?: DynamicToolCallParams;
 }
+
+type HostedSiteMutationTool = "publish_site" | "replace_site" | "delete_site";
+
+const HOSTED_SITE_APPROVAL_METHOD = "openbot/hosted-site-mutation";
 
 interface PendingBrowserTakeover {
   params: DynamicToolCallParams;
@@ -1295,7 +1300,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!pending) throw new Error("This approval is no longer active.");
     this.#markRoutineRunningForTurn(getString(pending.params, "turnId"));
 
-    if (pending.approval.kind === "permissions") {
+    if (pending.hostedSiteMutation) {
+      this.#pendingApprovals.delete(input.requestId);
+      if (input.decision === "decline") {
+        pending.client.respondError(pending.id, {
+          code: -32001,
+          message: "The user declined this hosted site change.",
+        });
+      } else {
+        try {
+          pending.client.respond(pending.id, await this.#handleOpenBotTool(pending.hostedSiteMutation));
+        } catch (error) {
+          pending.client.respondError(pending.id, { code: -32603, message: String(error) });
+          this.#emitError("server_request_failed", error, pending.approval.botId);
+        }
+      }
+    } else if (pending.approval.kind === "permissions") {
       const permissions = getRecord(pending.params, "permissions") ?? {};
       pending.client.respond(pending.id, {
         permissions: input.decision === "accept" ? permissions : {},
@@ -2212,6 +2232,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               this.#surfaceDynamicPrompt(client, request);
               return;
             }
+            if (isHostedSiteMutationTool(request.params.tool)) {
+              this.#surfaceHostedSiteApproval(client, request, request.params, request.params.tool);
+              return;
+            }
             client.respond(request.id, await this.#handleOpenBotTool(request.params));
             return;
           }
@@ -2263,7 +2287,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       const bot = this.#store.list().find((candidate) => candidate.id === senderBotId);
       if (!bot) throw new Error("The publishing OpenBot agent is unknown.");
-      const input = { sourcePath, title, description, spaFallback: args.spaFallback === true };
+      const input = {
+        sourcePath,
+        title,
+        description,
+        ...(isBoolean(args.spaFallback) ? { spaFallback: args.spaFallback } : {}),
+      };
       const roots = [bot.workspacePath, this.#store.sharedRoot];
       const site =
         params.tool === "publish_site"
@@ -3794,6 +3823,46 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#emit({ type: "approval", approval });
   }
 
+  #surfaceHostedSiteApproval(
+    client: AgentClient,
+    request: AppServerRequest,
+    params: DynamicToolCallParams,
+    tool: HostedSiteMutationTool,
+  ): void {
+    const threadId = params.threadId;
+    const turnId = params.turnId;
+    const botId = this.#threadToBot.get(threadId);
+    if (!turnId || !botId) {
+      client.respondError(request.id, {
+        code: -32602,
+        message: "OpenBot could not identify this hosted site request.",
+      });
+      return;
+    }
+    const approval: AgentApproval = {
+      requestId: request.id,
+      botId,
+      threadId: this.#publicThreadId(botId, threadId),
+      turnId,
+      kind: "permissions",
+      command: null,
+      cwd: null,
+      reason: hostedSiteApprovalReason(tool),
+      grantRoot: null,
+      permissions: null,
+    };
+    this.#pendingApprovals.set(request.id, {
+      client,
+      id: request.id,
+      method: HOSTED_SITE_APPROVAL_METHOD,
+      params,
+      approval,
+      hostedSiteMutation: params,
+    });
+    this.#markRoutineNeedsAttention(turnId);
+    this.#emit({ type: "approval", approval });
+  }
+
   #surfaceLegacyApproval(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "conversationId");
     const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
@@ -5196,4 +5265,14 @@ function approvalPermissions(params: unknown): AgentApprovalPermissions {
     fileSystem: { read, write },
     network: network?.enabled === true,
   };
+}
+
+function isHostedSiteMutationTool(value: string): value is HostedSiteMutationTool {
+  return value === "publish_site" || value === "replace_site" || value === "delete_site";
+}
+
+function hostedSiteApprovalReason(tool: HostedSiteMutationTool) {
+  if (tool === "publish_site") return "Allow this agent to publish a new public site on openbot.site.";
+  if (tool === "replace_site") return "Allow this agent to replace an existing public site on openbot.site.";
+  return "Allow this agent to delete an existing public site from openbot.site.";
 }

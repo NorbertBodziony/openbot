@@ -3,6 +3,8 @@ import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contrac
 export const HOSTED_SITE_LIMITS = {
   activeSites: 10,
   concurrentUploads: 2,
+  creationsPerHour: 20,
+  creationsPerDay: 100,
   files: 20,
   totalBytes: 2 * 1024 * 1024,
   fileBytes: 1024 * 1024,
@@ -23,7 +25,7 @@ export interface HostedSiteUploadRequest {
   title: string;
   description: string;
   framework: HostedSiteFramework;
-  spaFallback: boolean;
+  spaFallback: boolean | null;
   siteId: string | null;
   files: HostedSiteFileManifest[];
 }
@@ -66,9 +68,15 @@ export function parseHostedSiteUploadRequest(value: unknown): HostedSiteUploadRe
   if (value.framework !== "vanilla" && value.framework !== "astro") {
     throw invalid("The site type must be vanilla or Astro static.");
   }
-  if (!isBoolean(value.spaFallback)) throw invalid("spaFallback must be a boolean.");
   if (value.siteId !== null && value.siteId !== undefined && !isString(value.siteId)) {
     throw invalid("siteId is invalid.");
+  }
+  const siteId = isString(value.siteId) && value.siteId ? value.siteId : null;
+  if (value.spaFallback !== undefined && !isBoolean(value.spaFallback)) {
+    throw invalid("spaFallback must be a boolean.");
+  }
+  if (siteId === null && !isBoolean(value.spaFallback)) {
+    throw invalid("spaFallback must be a boolean for a new site.");
   }
   if (!Array.isArray(value.files) || value.files.length === 0 || value.files.length > HOSTED_SITE_LIMITS.files) {
     throw new HostedSiteInputError(413, "file_limit", `A site can contain 1 to ${HOSTED_SITE_LIMITS.files} files.`);
@@ -84,8 +92,8 @@ export function parseHostedSiteUploadRequest(value: unknown): HostedSiteUploadRe
     title,
     description,
     framework: value.framework,
-    spaFallback: value.spaFallback,
-    siteId: isString(value.siteId) && value.siteId ? value.siteId : null,
+    spaFallback: isBoolean(value.spaFallback) ? value.spaFallback : null,
+    siteId,
     files,
   };
 }

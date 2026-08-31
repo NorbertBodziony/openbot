@@ -250,6 +250,69 @@ describe("hosted site control plane", () => {
       .first<{ count: number }>();
     expect(active?.count).toBe(10);
   });
+
+  it("deletes every uploaded object when an unfinished site is deleted", async () => {
+    const fixture = serviceFixture();
+    const upload = await fixture.service.createUpload("alice", uploadRequest(), "unfinished-upload");
+    await uploadIndex(fixture.service, "alice", upload.uploadId);
+    const assetKey = `sites/${upload.site.id}/deployments/${upload.uploadId}/index.html`;
+    expect(fixture.bucket.keys()).toContain(assetKey);
+
+    await fixture.service.delete("alice", upload.site.id, "delete-unfinished");
+
+    expect(fixture.bucket.keys()).not.toContain(assetKey);
+    expect(await fixture.bucket.route(upload.site.hostname)).toMatchObject({ status: "deleted" });
+
+    await fixture.service.delete("alice", upload.site.id, "delete-unfinished-again");
+    const auditRows = await fixture.database
+      .prepare("SELECT COUNT(*) AS count FROM site_audit_log WHERE site_id = ? AND operation = 'delete'")
+      .bind(upload.site.id)
+      .first<{ count: number }>();
+    const receipts = await fixture.database
+      .prepare("SELECT COUNT(*) AS count FROM site_operation_receipts WHERE resource_id = ? AND operation = 'delete'")
+      .bind(upload.site.id)
+      .first<{ count: number }>();
+    expect(auditRows?.count).toBe(1);
+    expect(receipts?.count).toBe(1);
+  });
+
+  it("rate limits repeated new-site creation after deleted sites release their slots", async () => {
+    const fixture = serviceFixture();
+    for (let index = 0; index < 20; index += 1) {
+      const upload = await fixture.service.createUpload(
+        "alice",
+        uploadRequest({ title: `Disposable hosted project ${index}` }),
+        `churn-${index}`,
+      );
+      await fixture.service.delete("alice", upload.site.id, `delete-churn-${index}`);
+    }
+
+    await expect(
+      fixture.service.createUpload("alice", uploadRequest({ title: "One more disposable project" }), "churn-21"),
+    ).rejects.toMatchObject({ code: "site_creation_rate_limit" });
+  });
+
+  it("preserves SPA fallback on replacement unless a new value is explicit", async () => {
+    const fixture = serviceFixture();
+    const site = await publish(fixture.service, "alice", "publish-spa", "activate-spa", { spaFallback: true });
+    const preserved = await fixture.service.createUpload(
+      "alice",
+      uploadRequest({ siteId: site.id, spaFallback: null }),
+      "replace-spa-preserved",
+    );
+    await uploadIndex(fixture.service, "alice", preserved.uploadId);
+    await fixture.service.activate("alice", preserved.uploadId, "activate-spa-preserved");
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({ spaFallback: true });
+
+    const disabled = await fixture.service.createUpload(
+      "alice",
+      uploadRequest({ siteId: site.id, spaFallback: false }),
+      "replace-spa-disabled",
+    );
+    await uploadIndex(fixture.service, "alice", disabled.uploadId);
+    await fixture.service.activate("alice", disabled.uploadId, "activate-spa-disabled");
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({ spaFallback: false });
+  });
 });
 
 function serviceFixture(): {

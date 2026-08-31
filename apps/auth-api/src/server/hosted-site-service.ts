@@ -114,6 +114,7 @@ export class HostedSiteService {
     if (request.siteId) {
       const site = await this.requireOwnedSite(userId, request.siteId);
       if (!site.expires_at || site.expires_at <= now) throw inactiveSiteError("expired");
+      const spaFallback = request.spaFallback ?? site.spa_fallback === 1;
       const insert = await this.database
         .prepare(
           `INSERT INTO site_deployments(
@@ -122,7 +123,12 @@ export class HostedSiteService {
             idempotency_key, created_at, upload_expires_at
           ) SELECT ?, ?, ?, 'uploading', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             WHERE (SELECT COUNT(*) FROM site_deployments
-                   WHERE user_id = ? AND status = 'uploading' AND upload_expires_at > ?) < ?`,
+                   WHERE user_id = ? AND status = 'uploading' AND upload_expires_at > ?) < ?
+              AND EXISTS (
+                SELECT 1 FROM hosted_sites
+                WHERE id = ? AND user_id = ? AND status = 'active' AND expires_at > ?
+                  AND current_deployment_id IS ?
+              )`,
         )
         .bind(
           deploymentId,
@@ -135,21 +141,32 @@ export class HostedSiteService {
           request.title,
           request.description,
           request.framework,
-          request.spaFallback ? 1 : 0,
+          spaFallback ? 1 : 0,
           idempotencyKey,
           now,
           uploadExpiresAt,
           userId,
           now,
           HOSTED_SITE_LIMITS.concurrentUploads,
+          site.id,
+          userId,
+          now,
+          site.current_deployment_id,
         )
         .run();
       if (insert.meta.changes !== 1) {
+        const currentSite = await this.requireOwnedSite(userId, site.id, true);
+        if (currentSite.status !== "active") throw inactiveSiteError(currentSite.status);
+        if (!currentSite.expires_at || currentSite.expires_at <= now) throw inactiveSiteError("expired");
+        if (currentSite.current_deployment_id !== site.current_deployment_id) {
+          throw new HostedSiteInputError(409, "activation_superseded", "A newer site deployment is active.");
+        }
         throw new HostedSiteInputError(429, "upload_session_limit", "Finish or wait for an existing upload first.");
       }
       return this.uploadSession(await this.requireDeployment(userId, deploymentId));
     }
 
+    await this.enforceCreationRate(userId, now);
     const siteId = crypto.randomUUID();
     const hostname = await this.uniqueHostname(`${request.title} ${request.description}`);
     const statements = [
@@ -163,7 +180,9 @@ export class HostedSiteService {
                   WHERE user_id = ? AND status IN ('uploading', 'active', 'blocked')
                     AND (expires_at IS NULL OR expires_at > ?)) < ?
              AND (SELECT COUNT(*) FROM site_deployments
-                  WHERE user_id = ? AND status = 'uploading' AND upload_expires_at > ?) < ?`,
+                  WHERE user_id = ? AND status = 'uploading' AND upload_expires_at > ?) < ?
+             AND (SELECT COUNT(*) FROM hosted_sites WHERE user_id = ? AND created_at > ?) < ?
+             AND (SELECT COUNT(*) FROM hosted_sites WHERE user_id = ? AND created_at > ?) < ?`,
         )
         .bind(
           siteId,
@@ -172,7 +191,7 @@ export class HostedSiteService {
           request.title,
           request.description,
           request.framework,
-          request.spaFallback ? 1 : 0,
+          request.spaFallback === true ? 1 : 0,
           now,
           now,
           userId,
@@ -181,6 +200,12 @@ export class HostedSiteService {
           userId,
           now,
           HOSTED_SITE_LIMITS.concurrentUploads,
+          userId,
+          now - 3_600_000,
+          HOSTED_SITE_LIMITS.creationsPerHour,
+          userId,
+          now - 86_400_000,
+          HOSTED_SITE_LIMITS.creationsPerDay,
         ),
       this.database
         .prepare(
@@ -203,7 +228,7 @@ export class HostedSiteService {
           request.title,
           request.description,
           request.framework,
-          request.spaFallback ? 1 : 0,
+          request.spaFallback === true ? 1 : 0,
           idempotencyKey,
           now,
           uploadExpiresAt,
@@ -235,6 +260,7 @@ export class HostedSiteService {
       if ((currentUploads?.count ?? 0) >= HOSTED_SITE_LIMITS.concurrentUploads) {
         throw new HostedSiteInputError(429, "upload_session_limit", "Finish or wait for an existing upload first.");
       }
+      await this.enforceCreationRate(userId, now);
       throw new HostedSiteInputError(409, "site_limit", "This account already has 10 active sites.");
     }
     return this.uploadSession(await this.requireDeployment(userId, deploymentId));
@@ -262,6 +288,11 @@ export class HostedSiteService {
     if (!stored || stored.size !== file.size) {
       await this.bucket.delete(key);
       throw new HostedSiteInputError(400, "size_mismatch", "The uploaded file size is invalid.");
+    }
+    const storedDeployment = await this.requireDeployment(userId, deployment.id);
+    if (storedDeployment.status !== "uploading" || storedDeployment.upload_expires_at <= this.now()) {
+      await this.bucket.delete(key);
+      throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
     }
     await this.database
       .prepare(
@@ -359,8 +390,9 @@ export class HostedSiteService {
   async delete(userId: string, siteId: string, idempotencyKey: string): Promise<void> {
     if (await this.receipt(userId, idempotencyKey, "delete")) return;
     const site = await this.requireOwnedSite(userId, siteId, true);
+    if (site.status === "deleted" && (await this.completedDeletion(userId, site.id))) return;
     const now = this.now();
-    await this.database.batch([
+    const statements = [
       this.database
         .prepare(
           `UPDATE hosted_sites SET status = 'deleted', deleted_at = ?, expires_at = NULL, updated_at = ?
@@ -370,19 +402,36 @@ export class HostedSiteService {
       this.database
         .prepare(
           `UPDATE site_deployments SET status = 'abandoned'
-           WHERE site_id = ? AND status IN ('uploading', 'activating')`,
+           WHERE site_id = ? AND status IN ('uploading', 'activating')
+           RETURNING id`,
         )
         .bind(site.id),
-      this.database
-        .prepare(
-          "INSERT INTO site_audit_log(id, user_id, site_id, operation, created_at) VALUES (?, ?, ?, 'delete', ?)",
-        )
-        .bind(crypto.randomUUID(), userId, site.id, now),
+    ];
+    if (site.status !== "deleted") {
+      statements.push(
+        this.database
+          .prepare(
+            "INSERT INTO site_audit_log(id, user_id, site_id, operation, created_at) VALUES (?, ?, ?, 'delete', ?)",
+          )
+          .bind(crypto.randomUUID(), userId, site.id, now),
+      );
+    }
+    const results = await this.database.batch(statements);
+    const deploymentIds = new Set([
+      ...(site.current_deployment_id ? [site.current_deployment_id] : []),
+      ...results[1].results.map((deployment) => {
+        if (!isDynamicRecord(deployment) || !isString(deployment.id)) {
+          throw new Error("The deleted deployment result is invalid.");
+        }
+        return deployment.id;
+      }),
     ]);
-    await this.publishAuthoritativeRoute(site.id);
+    try {
+      await this.publishAuthoritativeRoute(site.id);
+    } finally {
+      for (const deploymentId of deploymentIds) await this.deleteDeployment(site.id, deploymentId);
+    }
     await this.saveReceipt(userId, idempotencyKey, "delete", site.id, { deleted: true }, now);
-    const deleted = await this.requireOwnedSite(userId, site.id, true);
-    if (deleted.current_deployment_id) await this.deleteDeployment(site.id, deleted.current_deployment_id);
   }
 
   async report(hostname: string, reason: string, details: string | null, sourceIp: string): Promise<void> {
@@ -766,6 +815,26 @@ export class HostedSiteService {
     }
   }
 
+  private async enforceCreationRate(userId: string, now: number): Promise<void> {
+    const [hour, day] = await this.database.batch([
+      this.database
+        .prepare("SELECT COUNT(*) AS count FROM hosted_sites WHERE user_id = ? AND created_at > ?")
+        .bind(userId, now - 3_600_000),
+      this.database
+        .prepare("SELECT COUNT(*) AS count FROM hosted_sites WHERE user_id = ? AND created_at > ?")
+        .bind(userId, now - 86_400_000),
+    ]);
+    const hourCount = creationCount(hour.results?.[0]);
+    const dayCount = creationCount(day.results?.[0]);
+    if (hourCount >= HOSTED_SITE_LIMITS.creationsPerHour || dayCount >= HOSTED_SITE_LIMITS.creationsPerDay) {
+      throw new HostedSiteInputError(
+        429,
+        "site_creation_rate_limit",
+        "The new-site creation limit for this account was reached.",
+      );
+    }
+  }
+
   private async uniqueHostname(source: string): Promise<string> {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const words = slugWords(source);
@@ -836,6 +905,17 @@ export class HostedSiteService {
       .bind(userId, key, operation)
       .first<{ response_json: string }>();
     return row?.response_json ?? null;
+  }
+
+  private async completedDeletion(userId: string, siteId: string): Promise<boolean> {
+    const row = await this.database
+      .prepare(
+        `SELECT 1 AS completed FROM site_operation_receipts
+         WHERE user_id = ? AND resource_id = ? AND operation = 'delete' LIMIT 1`,
+      )
+      .bind(userId, siteId)
+      .first<{ completed: number }>();
+    return row?.completed === 1;
   }
 
   private async saveReceipt(
@@ -911,6 +991,10 @@ function isStoredManifestFile(value: unknown): value is HostedSiteFileManifest {
 
 function activationCount(value: unknown): number {
   return isDynamicRecord(value) && isNumber(value.activations) ? value.activations : 0;
+}
+
+function creationCount(value: unknown): number {
+  return isDynamicRecord(value) && isNumber(value.count) ? value.count : 0;
 }
 
 function inactiveSiteError(status: SiteRow["status"]): HostedSiteInputError {

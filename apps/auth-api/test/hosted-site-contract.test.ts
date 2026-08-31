@@ -65,4 +65,17 @@ describe("hosted site manifest", () => {
       parseHostedSiteUploadRequest(request([{ path: "pages/index.html", size: 10, mimeType: "text/html" }])),
     ).toThrow("root");
   });
+
+  it("allows a replacement to omit SPA fallback but requires it for a new site", () => {
+    const { spaFallback: _replacementFallback, ...replacement } = {
+      ...request([{ path: "index.html", size: 10, mimeType: "text/html" }]),
+      siteId: "site-1",
+    };
+    expect(parseHostedSiteUploadRequest(replacement).spaFallback).toBeNull();
+
+    const { spaFallback: _publicationFallback, ...publication } = request([
+      { path: "index.html", size: 10, mimeType: "text/html" },
+    ]);
+    expect(() => parseHostedSiteUploadRequest(publication)).toThrow("new site");
+  });
 });

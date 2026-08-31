@@ -134,7 +134,7 @@ import {
 import { parseAvatarImage } from "./ipc/avatar-inputs";
 import { parseBrowserBounds, parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
 import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
-import { isObject, requireString } from "./ipc/validation";
+import { isObject, optionalBoolean, requireString } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
 import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
@@ -506,21 +506,23 @@ function registerIpcHandlers(
   });
   handleTrusted(IPC_CHANNELS.hostedSitesPublish, (input: unknown) => {
     if (!isObject(input)) throw new Error("Invalid site publication.");
+    const spaFallback = optionalBoolean(input.spaFallback, "spaFallback");
     return hostedSites.publish({
       sourcePath: requireString(input.sourcePath, "sourcePath", INPUT_LIMITS.path),
       title: requireString(input.title, "title", 120),
       description: requireString(input.description, "description", 500),
-      ...(input.spaFallback === true ? { spaFallback: true } : {}),
+      ...(spaFallback !== undefined ? { spaFallback } : {}),
     });
   });
   handleTrusted(IPC_CHANNELS.hostedSitesReplace, (input: unknown) => {
     if (!isObject(input)) throw new Error("Invalid site replacement.");
+    const spaFallback = optionalBoolean(input.spaFallback, "spaFallback");
     return hostedSites.replace({
       siteId: requireString(input.siteId, "siteId", INPUT_LIMITS.identifier),
       sourcePath: requireString(input.sourcePath, "sourcePath", INPUT_LIMITS.path),
       title: requireString(input.title, "title", 120),
       description: requireString(input.description, "description", 500),
-      ...(input.spaFallback === true ? { spaFallback: true } : {}),
+      ...(spaFallback !== undefined ? { spaFallback } : {}),
     });
   });
   handleTrusted(IPC_CHANNELS.hostedSitesDelete, (input: unknown) => {

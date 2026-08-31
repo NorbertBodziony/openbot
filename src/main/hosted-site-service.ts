@@ -91,7 +91,7 @@ export class HostedSiteDesktopService {
           title: input.title,
           description: input.description,
           framework: prepared.framework,
-          spaFallback: input.spaFallback ?? false,
+          ...(siteId === null || input.spaFallback !== undefined ? { spaFallback: input.spaFallback ?? false } : {}),
           siteId,
           files: prepared.files.map(({ path, size, mimeType }) => ({ path, size, mimeType })),
         }),

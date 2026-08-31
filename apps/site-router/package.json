@@ -8,7 +8,7 @@
   },
   "scripts": {
     "cf:typegen": "wrangler types",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler deploy --keep-vars",
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run"

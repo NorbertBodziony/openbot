@@ -42,7 +42,7 @@ async function main(): Promise<void> {
     label: "Auth API build",
     env: cloudflareEnvironment ? { CLOUDFLARE_ENV: cloudflareEnvironment } : undefined,
   });
-  await run(wranglerExecutable, ["deploy", ...environmentArgs], {
+  await run(wranglerExecutable, ["deploy", "--keep-vars", ...environmentArgs], {
     label: "Auth API deployment",
   });
 }

@@ -42,7 +42,7 @@ export async function routeRequest(request: Request, env: SiteRouterEnv, now: nu
     response.headers.set("Allow", "GET, HEAD");
     return response;
   }
-  if (env.SITE_SERVE_ENABLED === "false") return errorResponse(503, "Site hosting is temporarily unavailable");
+  if (env.SITE_SERVE_ENABLED !== "true") return errorResponse(503, "Site hosting is temporarily unavailable");
 
   const url = new URL(request.url);
   const hostname = url.hostname.toLowerCase();
@@ -73,7 +73,7 @@ export async function routeRequest(request: Request, env: SiteRouterEnv, now: nu
 
   const headers = secureHeaders({
     "Content-Type": file.mimeType,
-    "Cache-Control": file.mimeType === "text/html" ? "no-store" : "public, max-age=60, must-revalidate",
+    "Cache-Control": file.mimeType === "text/html" ? "no-store" : "public, no-cache",
     "Content-Length": String(object.size),
   });
   return new Response(request.method === "HEAD" ? null : object.body, { status: 200, headers });
