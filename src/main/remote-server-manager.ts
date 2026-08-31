@@ -571,6 +571,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (this.#state.servers.find((server) => server.id === serverId)?.transport === "webrtc-v2") {
       await this.#webrtcTransport?.disconnect(serverId);
     }
+    this.#clearServerConnectionState(serverId);
+    this.#state.servers = this.#state.servers.filter((server) => server.id !== serverId);
+    if (this.#state.activeServerId === serverId) this.#state.activeServerId = "local";
+    await this.#persist();
+    this.#emitChanged();
+  }
+
+  #clearServerConnectionState(serverId: string): void {
     this.#eventControllers.get(serverId)?.abort();
     this.#eventControllers.delete(serverId);
     const reconnectTimer = this.#eventReconnectTimers.get(serverId);
@@ -592,10 +600,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#connectionSequences.delete(serverId);
     this.#eventSockets.delete(serverId);
     this.#presence.delete(serverId);
-    this.#state.servers = this.#state.servers.filter((server) => server.id !== serverId);
-    if (this.#state.activeServerId === serverId) this.#state.activeServerId = "local";
-    await this.#persist();
-    this.#emitChanged();
   }
 
   async request<T>(
@@ -1111,6 +1115,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           transport: "webrtc-v2",
         };
       });
+    const currentHostIds = new Set(servers.map((server) => server.id));
+    const removedHostIds = this.#state.servers
+      .filter((server) => server.transport === "webrtc-v2" && !currentHostIds.has(server.id))
+      .map((server) => server.id);
+    for (const serverId of removedHostIds) {
+      await this.#webrtcTransport.disconnect(serverId).catch(() => undefined);
+      this.#clearServerConnectionState(serverId);
+    }
     this.#state.servers = [...legacyDevelopment, ...servers];
     if (
       this.#state.activeServerId !== "local" &&
