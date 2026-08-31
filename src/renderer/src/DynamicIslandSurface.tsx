@@ -6,14 +6,18 @@ import type { DynamicIslandNotchSize, DynamicIslandStateChangeReason, DynamicIsl
 
 const DEFAULT_NOTCH_WIDTH = 192;
 const DEFAULT_NOTCH_HEIGHT = 32;
+const DEFAULT_NOTCH_SIZE: DynamicIslandNotchSize = {
+  width: DEFAULT_NOTCH_WIDTH,
+  height: DEFAULT_NOTCH_HEIGHT,
+};
 
 export function DynamicIslandSurface() {
   const query = new URLSearchParams(window.location.search);
   const displayMode = query.get("display") === "island" ? "island" : "notch";
   const notchWidth = readPositivePixelValue(query.get("notch-width"), DEFAULT_NOTCH_WIDTH);
   const notchHeight = readPositivePixelValue(query.get("notch-height"), DEFAULT_NOTCH_HEIGHT);
-  const defaultNotchSize: DynamicIslandNotchSize = { width: notchWidth, height: notchHeight };
-  const [notchSize, setNotchSize] = createSignal<DynamicIslandNotchSize>(defaultNotchSize);
+  const initialNotchSize: DynamicIslandNotchSize = { width: notchWidth, height: notchHeight };
+  const [notchSize, setNotchSize] = createSignal<DynamicIslandNotchSize>(initialNotchSize);
   const [presentation, setPresentation] = createSignal(IDLE_DYNAMIC_ISLAND_PRESENTATION);
   const [preference, setPreference] = createSignal<DynamicIslandPreference>({
     ...DEFAULT_DYNAMIC_ISLAND_PREFERENCE,
@@ -139,7 +143,7 @@ export function DynamicIslandSurface() {
       .catch(() => undefined);
     const stopPreference = window.openbot.dynamicIsland.onPreference(applyPreference);
     const stopPresentation = window.openbot.dynamicIsland.onPresentation(applyPresentation);
-    const stopGeometry = window.openbot.dynamicIsland.onGeometry((next) => setNotchSize(next ?? defaultNotchSize));
+    const stopGeometry = window.openbot.dynamicIsland.onGeometry((next) => setNotchSize(next ?? DEFAULT_NOTCH_SIZE));
     const close = () => {
       pointerInside = false;
       focusInside = false;
