@@ -1,5 +1,5 @@
-import { lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { lstat, mkdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { BotSummary } from "@openbot/contracts/ipc";
 
 const MANAGED_SKILL_SLUG = "openbot-site-hosting";
@@ -68,11 +68,16 @@ export class ManagedSkillService {
 }
 
 async function syncTargets(workspacePath: string, content: string): Promise<SyncTargetsResult> {
+  const workspaceRoot = await realpath(resolve(workspacePath));
   const targets = [
     join(workspacePath, ".agents", "skills", MANAGED_SKILL_SLUG, "SKILL.md"),
     join(workspacePath, ".claude", "skills", MANAGED_SKILL_SLUG, "SKILL.md"),
   ];
-  const results = await Promise.allSettled(targets.map((target) => syncTarget(target, content)));
+  const resolvedTargets = [
+    join(workspaceRoot, ".agents", "skills", MANAGED_SKILL_SLUG, "SKILL.md"),
+    join(workspaceRoot, ".claude", "skills", MANAGED_SKILL_SLUG, "SKILL.md"),
+  ];
+  const results = await Promise.allSettled(resolvedTargets.map((target) => syncTarget(workspaceRoot, target, content)));
   const collisions: string[] = [];
   const failures: SyncTargetsResult["failures"] = [];
   for (let index = 0; index < results.length; index += 1) {
@@ -85,34 +90,105 @@ async function syncTargets(workspacePath: string, content: string): Promise<Sync
   return { collisions, failures };
 }
 
-async function syncTarget(target: string, content: string): Promise<"synced" | "collision"> {
-  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-  const marker = join(dirname(target), OWNERSHIP_MARKER);
+async function syncTarget(workspaceRoot: string, target: string, content: string): Promise<"synced" | "collision"> {
+  const parent = dirname(target);
+  await ensureSafeDirectory(workspaceRoot, parent);
+  const marker = join(parent, OWNERSHIP_MARKER);
+  await rejectSymlink(target);
+  await rejectSymlink(marker);
   if (await fileExists(target)) {
     if ((await optionalText(marker)) !== OWNERSHIP_CONTENT) return "collision";
-    await atomicWrite(target, content);
+    await atomicWrite(workspaceRoot, target, content);
     return "synced";
   }
   try {
+    await verifySafeDirectory(workspaceRoot, parent);
     await writeFile(target, content, { encoding: "utf8", mode: 0o600, flag: "wx" });
   } catch (error) {
     if (isFileExistsError(error)) return "collision";
     throw error;
   }
   try {
-    await atomicWrite(marker, OWNERSHIP_CONTENT);
+    await atomicWrite(workspaceRoot, marker, OWNERSHIP_CONTENT);
   } catch (error) {
-    await unlink(target).catch(() => undefined);
+    await verifySafeDirectory(workspaceRoot, parent)
+      .then(() => unlink(target))
+      .catch(() => undefined);
     throw error;
   }
   return "synced";
 }
 
-async function atomicWrite(target: string, content: string): Promise<void> {
-  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+async function atomicWrite(workspaceRoot: string, target: string, content: string): Promise<void> {
+  const parent = dirname(target);
+  await verifySafeDirectory(workspaceRoot, parent);
   const temporary = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`;
   await writeFile(temporary, content, { encoding: "utf8", mode: 0o600 });
-  await rename(temporary, target);
+  try {
+    await verifySafeDirectory(workspaceRoot, parent);
+    await rename(temporary, target);
+  } catch (error) {
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function ensureSafeDirectory(workspaceRoot: string, directory: string): Promise<void> {
+  const path = containedRelativePath(workspaceRoot, directory);
+  let current = workspaceRoot;
+  for (const segment of path.split(sep).filter(Boolean)) {
+    current = join(current, segment);
+    try {
+      await mkdir(current, { mode: 0o700 });
+    } catch (error) {
+      if (!isFileExistsError(error)) throw error;
+    }
+    await requireRealDirectory(current);
+  }
+  await verifySafeDirectory(workspaceRoot, directory);
+}
+
+async function verifySafeDirectory(workspaceRoot: string, directory: string): Promise<void> {
+  const path = containedRelativePath(workspaceRoot, directory);
+  await requireRealDirectory(workspaceRoot);
+  let current = workspaceRoot;
+  for (const segment of path.split(sep).filter(Boolean)) {
+    current = join(current, segment);
+    await requireRealDirectory(current);
+  }
+  const resolvedDirectory = await realpath(directory);
+  if (!isInside(workspaceRoot, resolvedDirectory)) {
+    throw new Error(`Managed skill target escapes its workspace: ${directory}`);
+  }
+}
+
+function containedRelativePath(workspaceRoot: string, candidate: string): string {
+  const path = relative(workspaceRoot, candidate);
+  if (path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path)) {
+    throw new Error(`Managed skill target escapes its workspace: ${candidate}`);
+  }
+  return path;
+}
+
+async function requireRealDirectory(path: string): Promise<void> {
+  const stats = await lstat(path);
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new Error(`Managed skill path must be a real directory: ${path}`);
+  }
+}
+
+async function rejectSymlink(path: string): Promise<void> {
+  try {
+    if ((await lstat(path)).isSymbolicLink()) throw new Error(`Managed skill path cannot be a symlink: ${path}`);
+  } catch (error) {
+    if (isMissingFileError(error)) return;
+    throw error;
+  }
+}
+
+function isInside(root: string, candidate: string): boolean {
+  const path = relative(root, candidate);
+  return path === "" || (!path.startsWith(`..${sep}`) && path !== ".." && !isAbsolute(path));
 }
 
 async function fileExists(path: string): Promise<boolean> {

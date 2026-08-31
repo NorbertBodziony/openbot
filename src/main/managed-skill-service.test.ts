@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BotSummary } from "@openbot/contracts/ipc";
@@ -19,6 +19,7 @@ describe("managed site hosting skill", () => {
     const content = "---\nname: openbot-site-hosting\ndescription: Host static sites.\n---\n\nRules\n";
     await writeFile(source, content);
     const workspacePath = join(root, "workspace");
+    await mkdir(workspacePath);
     const managedBot = bot(workspacePath);
 
     await new ManagedSkillService(source).syncBot(managedBot);
@@ -69,6 +70,7 @@ describe("managed site hosting skill", () => {
     const blockedWorkspace = join(root, "blocked-workspace");
     const healthyWorkspace = join(root, "healthy-workspace");
     await mkdir(blockedWorkspace, { recursive: true });
+    await mkdir(healthyWorkspace, { recursive: true });
     await writeFile(join(blockedWorkspace, ".agents"), "This path is not a directory.");
     const failures: string[] = [];
     const service = new ManagedSkillService(
@@ -89,6 +91,35 @@ describe("managed site hosting skill", () => {
       readFile(join(healthyWorkspace, ".claude", "skills", "openbot-site-hosting", "SKILL.md"), "utf8"),
     ).resolves.toBe(content);
     expect(failures).toEqual([join(blockedWorkspace, ".agents", "skills", "openbot-site-hosting", "SKILL.md")]);
+  });
+
+  it("rejects managed-skill directories that are symlinks outside the workspace", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-managed-skill-"));
+    roots.push(root);
+    const source = join(root, "SKILL.md");
+    const content = "---\nname: openbot-site-hosting\ndescription: Host static sites.\n---\n\nRules\n";
+    await writeFile(source, content);
+    const workspacePath = join(root, "workspace");
+    const outside = join(root, "outside");
+    await mkdir(workspacePath);
+    await mkdir(outside);
+    await mkdir(join(workspacePath, ".agents", "skills"), { recursive: true });
+    await symlink(outside, join(workspacePath, ".agents", "skills", "openbot-site-hosting"));
+    const failures: string[] = [];
+
+    await new ManagedSkillService(
+      source,
+      () => undefined,
+      (target) => failures.push(target),
+    ).syncBot(bot(workspacePath));
+
+    await expect(readFile(join(outside, "SKILL.md"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      readFile(join(workspacePath, ".claude", "skills", "openbot-site-hosting", "SKILL.md"), "utf8"),
+    ).resolves.toBe(content);
+    expect(failures).toEqual([join(workspacePath, ".agents", "skills", "openbot-site-hosting", "SKILL.md")]);
   });
 });
 
