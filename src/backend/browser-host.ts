@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
@@ -166,6 +166,7 @@ export class BrowserHost {
   #target: BrowserViewTarget = "main";
   readonly #mountedViews = new Map<WebContentsView, BrowserWindow>();
   #persistQueue: Promise<void> = Promise.resolve();
+  #destroyPromise: Promise<void> | null = null;
 
   constructor(window: BrowserWindow, downloadsRoot: string, statePath: string) {
     this.#window = window;
@@ -484,22 +485,34 @@ export class BrowserHost {
     }
   }
 
-  async destroy(): Promise<void> {
-    try {
-      await this.#persistState();
-    } finally {
-      for (const tab of this.#tabs.values()) {
-        this.#unmountView(tab.view);
-        tab.view.webContents.close();
-      }
-      this.#tabs.clear();
-      this.#listeners.clear();
-      this.clearControls();
-      this.#controlListeners.clear();
+  destroy(): Promise<void> {
+    this.#destroyPromise ??= this.#destroyPersistentStorageAndViews();
+    return this.#destroyPromise;
+  }
+
+  async #destroyPersistentStorageAndViews(): Promise<void> {
+    const statePersistence = this.#persistState();
+    this.#session.flushStorageData();
+    for (const tab of this.#tabs.values()) {
+      this.#unmountView(tab.view);
+      tab.view.webContents.close();
     }
+    this.#tabs.clear();
+    this.#listeners.clear();
+    this.clearControls();
+    this.#controlListeners.clear();
+    this.#session.flushStorageData();
+    await Promise.all([this.#session.cookies.flushStore(), statePersistence]);
+  }
+
+  async flushPersistentStorage(): Promise<void> {
+    this.#session.flushStorageData();
+    await this.#session.cookies.flushStore();
+    await this.#persistState();
   }
 
   #createTab(id: string, requestedUrl: string, ownerThreadId: string | null, ownerBotId: string | null): InternalTab {
+    if (this.#destroyPromise) throw new Error("BrowserHost is shutting down.");
     const view = this.#createView();
     view.webContents.setUserAgent(embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), requestedUrl));
     this.#mountView(view);
@@ -813,12 +826,18 @@ export class BrowserHost {
     };
     this.#persistQueue = this.#persistQueue
       .catch(() => undefined)
-      .then(() =>
-        writeFile(this.#statePath, `${JSON.stringify(state)}\n`, {
-          encoding: "utf8",
-          mode: 0o600,
-        }),
-      );
+      .then(async () => {
+        const temporaryPath = `${this.#statePath}.${randomUUID()}.tmp`;
+        try {
+          await writeFile(temporaryPath, `${JSON.stringify(state)}\n`, {
+            encoding: "utf8",
+            mode: 0o600,
+          });
+          await rename(temporaryPath, this.#statePath);
+        } finally {
+          await rm(temporaryPath, { force: true }).catch(() => undefined);
+        }
+      });
     return this.#persistQueue;
   }
 }
