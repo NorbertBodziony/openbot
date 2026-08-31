@@ -1120,13 +1120,17 @@ function createConversationViewScope(props: ConversationProps) {
     const unsubscribeImport = window.openbot.agent.onAttachmentImport((event) => {
       if (event.type === "started") {
         const target = currentTarget();
-        if (target) resources.importTargetBots.set(event.requestId, target);
+        if (target?.serverId === event.serverId) resources.importTargetBots.set(event.requestId, target);
         setAttachmentBusy(true);
         setComposerError(null);
       } else if (event.type === "error") {
+        const target = resources.importTargetBots.get(event.requestId);
         resources.importTargetBots.delete(event.requestId);
         setAttachmentBusy(false);
-        setComposerError(event.message);
+        const activeTarget = currentTarget();
+        if (target && activeTarget && composerDraftKey(target) === composerDraftKey(activeTarget)) {
+          setComposerError(event.message);
+        }
       } else {
         setAttachmentBusy(false);
         const target = resources.importTargetBots.get(event.requestId);
@@ -1135,7 +1139,7 @@ function createConversationViewScope(props: ConversationProps) {
           addAttachments(event.attachments, target);
         } else {
           for (const attachment of event.attachments) {
-            void window.openbot.agent.discardDraftAttachment(attachment.id);
+            void window.openbot.agent.discardDraftAttachment(attachment.id, event.serverId);
           }
         }
       }
@@ -1616,7 +1620,7 @@ function createConversationViewScope(props: ConversationProps) {
     const available = Math.max(0, 10 - draft.attachments.length);
     const accepted = selected.slice(0, available);
     for (const attachment of selected.slice(available)) {
-      void window.openbot.agent.discardDraftAttachment(attachment.id);
+      void window.openbot.agent.discardDraftAttachment(attachment.id, target.serverId);
     }
     setDrafts((current) => ({
       ...current,
@@ -1684,7 +1688,7 @@ function createConversationViewScope(props: ConversationProps) {
     ]);
     for (const attachment of draft.attachments) {
       if (!preservedAttachmentIds.has(attachment.id)) {
-        void window.openbot.agent.discardDraftAttachment(attachment.id);
+        void window.openbot.agent.discardDraftAttachment(attachment.id, serverId);
       }
     }
     if (target) {
@@ -1959,11 +1963,12 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   function removeAttachment(id: string) {
+    const serverId = currentTarget()?.serverId;
     updateCurrentDraft({
       attachments: currentDraft().attachments.filter((attachment) => attachment.id !== id),
       text: removeAttachmentReferences(currentDraft().text, id),
     });
-    void window.openbot.agent.discardDraftAttachment(id);
+    void window.openbot.agent.discardDraftAttachment(id, serverId);
   }
 
   async function openBrowserAddress(address = browserAddress()) {

@@ -4841,10 +4841,11 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.pointerDown(screen.getByRole("button", { name: "Add to prompt" }), { button: 0 });
     await fireEvent.pointerDown(screen.getByRole("menuitem", { name: /Add context/ }), { button: 0 });
     expect(filePickerClick).toHaveBeenCalledTimes(2);
-    emitAttachmentImport?.({ type: "started", requestId: "picker-1" });
+    emitAttachmentImport?.({ type: "started", requestId: "picker-1", serverId: "local" });
     emitAttachmentImport?.({
       type: "completed",
       requestId: "picker-1",
+      serverId: "local",
       attachments: [attachment("draft-1", "brief.pdf", "pdf")],
     });
     expect(await screen.findByText("brief.pdf")).toBeInTheDocument();
@@ -4861,31 +4862,63 @@ describe("OpenBot connected desktop shell", () => {
   it("adds pathless pasted images reported by preload", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    emitAttachmentImport?.({ type: "started", requestId: "paste-1" });
+    emitAttachmentImport?.({ type: "started", requestId: "paste-1", serverId: "local" });
     emitAttachmentImport?.({
       type: "completed",
       requestId: "paste-1",
+      serverId: "local",
       attachments: [attachment("pasted-1", "pasted.png", "image")],
     });
     await fireEvent.click(await screen.findByRole("button", { name: "Remove pasted.png" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Remove pasted.png" })).not.toBeInTheDocument());
-    expect(window.openbot.agent.discardDraftAttachment).toHaveBeenCalledWith("pasted-1");
+    expect(window.openbot.agent.discardDraftAttachment).toHaveBeenCalledWith("pasted-1", "local");
   });
 
   it("keeps an asynchronous pasted attachment with the bot that received the paste", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    emitAttachmentImport?.({ type: "started", requestId: "paste-switch" });
+    emitAttachmentImport?.({ type: "started", requestId: "paste-switch", serverId: "local" });
     await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
     emitAttachmentImport?.({
       type: "completed",
       requestId: "paste-switch",
+      serverId: "local",
       attachments: [attachment("pasted-switch", "for-chief.png", "image")],
     });
 
     expect(screen.queryByRole("button", { name: "Remove for-chief.png" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
     expect(await screen.findByRole("button", { name: "Remove for-chief.png" })).toBeInTheDocument();
+  });
+
+  it("keeps an asynchronous pasted attachment on the server that received the paste", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => [
+      { ...local, active: serverId === "local" },
+      { ...remote, active: serverId === "remote-1" },
+    ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAttachmentImport?.({ type: "started", requestId: "paste-server-switch", serverId: "local" });
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    emitAttachmentImport?.({
+      type: "completed",
+      requestId: "paste-server-switch",
+      serverId: "local",
+      attachments: [attachment("pasted-local", "for-local.png", "image")],
+    });
+
+    expect(screen.queryByRole("button", { name: "Remove for-local.png" })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
+    const removeAttachment = await screen.findByRole("button", { name: "Remove for-local.png" });
+    await fireEvent.click(removeAttachment);
+    expect(window.openbot.agent.discardDraftAttachment).toHaveBeenCalledWith("pasted-local", "local");
   });
 
   it("keeps the first delivery out of Queue until work starts", async () => {
