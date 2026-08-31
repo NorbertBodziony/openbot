@@ -6,6 +6,7 @@ import {
   type CanUseTool,
   createSdkMcpServer,
   getSessionMessages,
+  type ModelInfo,
   type PermissionResult,
   query,
   type SDKUserMessage,
@@ -87,6 +88,7 @@ interface ClaudeStreamMessage {
 
 interface ClaudeQuery extends AsyncIterable<ClaudeStreamMessage> {
   interrupt(): Promise<unknown>;
+  supportedModels(): Promise<ModelInfo[]>;
   setModel(model?: string): Promise<void>;
   setMaxThinkingTokens(
     maxThinkingTokens: number | null,
@@ -145,7 +147,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       case "account/rateLimits/read":
         return decoder({ rateLimits: null, rateLimitsByLimitId: null });
       case "model/list":
-        return decoder({ data: CLAUDE_MODELS });
+        return decoder({ data: await this.#listModels() });
       case "plugin/list":
         return decoder({ marketplaces: [] });
       case "thread/start": {
@@ -204,6 +206,47 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     if (!pending) return;
     this.#pendingServerRequests.delete(id);
     pending.reject(new Error(error.message));
+  }
+
+  async #listModels(): Promise<unknown[]> {
+    const input = new AsyncMessageQueue();
+    const claudeQuery = this.#createQuery({
+      prompt: input,
+      options: {
+        cwd: process.cwd(),
+        pathToClaudeCodeExecutable: this.#cli.executable,
+        settingSources: ["user", "project", "local"],
+        persistSession: false,
+        env: { ...claudeEnvironment(this.#cli), CLAUDE_AGENT_SDK_CLIENT_APP: "openbot/0.1.0" },
+      },
+    });
+    try {
+      const discovered = await claudeQuery.supportedModels();
+      const models = new Map<string, (typeof discovered)[number]>();
+      for (const model of discovered) {
+        const id = model.resolvedModel?.trim() || model.value.trim();
+        if (!id || models.has(id)) continue;
+        models.set(id, model);
+      }
+      return [...models.entries()].map(([id, model]) => {
+        const discoveredReasoningEfforts = [
+          ...new Set((model.supportedEffortLevels ?? []).filter((effort) => isOneOf(CLAUDE_EFFORTS, effort))),
+        ];
+        const supportedReasoningEfforts =
+          discoveredReasoningEfforts.length > 0 ? discoveredReasoningEfforts : ["medium" as const];
+        return {
+          model: id,
+          displayName: model.displayName,
+          defaultReasoningEffort: supportedReasoningEfforts.includes("high")
+            ? "high"
+            : (supportedReasoningEfforts[0] ?? "medium"),
+          supportedReasoningEfforts: supportedReasoningEfforts.map((reasoningEffort) => ({ reasoningEffort })),
+        };
+      });
+    } finally {
+      input.close();
+      claudeQuery.close();
+    }
   }
 
   async #readAccount(): Promise<AccountReadResult> {
@@ -708,33 +751,6 @@ class AsyncMessageQueue implements AsyncIterable<SDKUserMessage> {
     };
   }
 }
-
-const CLAUDE_MODELS = [
-  {
-    model: "claude-fable-5",
-    displayName: "Claude Fable 5",
-    defaultReasoningEffort: "high",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"].map((reasoningEffort) => ({
-      reasoningEffort,
-    })),
-  },
-  {
-    model: "claude-opus-5",
-    displayName: "Claude Opus 5",
-    defaultReasoningEffort: "high",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"].map((reasoningEffort) => ({
-      reasoningEffort,
-    })),
-  },
-  {
-    model: "claude-sonnet-5",
-    displayName: "Claude Sonnet 5",
-    defaultReasoningEffort: "high",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"].map((reasoningEffort) => ({
-      reasoningEffort,
-    })),
-  },
-];
 
 function readThreadConfig(params: unknown): ThreadConfig {
   const roots =

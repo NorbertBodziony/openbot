@@ -175,6 +175,47 @@ describe.sequential("GrokAgentClient", () => {
     );
   });
 
+  it("discovers and applies per-model reasoning efforts from Grok metadata", async () => {
+    process.env.OPENBOT_FAKE_GROK_MODE = "model-metadata";
+    client = new GrokAgentClient({ executable, version: "1.0.13" }, 5_000);
+    client.start();
+    await client.request("initialize", {}, decodeRecordResponse);
+
+    const models = await client.request("model/list", {}, decodeModelListResponse);
+    expect(models.data).toEqual([
+      expect.objectContaining({
+        model: "grok-4.6",
+        defaultReasoningEffort: "high",
+        supportedReasoningEfforts: [
+          { reasoningEffort: "low" },
+          { reasoningEffort: "medium" },
+          { reasoningEffort: "high" },
+          { reasoningEffort: "xhigh" },
+        ],
+      }),
+      expect.objectContaining({
+        model: "grok-4.5",
+        defaultReasoningEffort: "medium",
+        supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+      }),
+    ]);
+
+    await client.request(
+      "thread/start",
+      { cwd: root, dynamicTools: [], model: "grok-4.6", effort: "xhigh" },
+      decodeThreadResponse,
+    );
+    expect(await readLog()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "session/set_model",
+          modelId: "grok-4.6",
+          reasoningEffort: "xhigh",
+        }),
+      ]),
+    );
+  });
+
   it("supports Grok's legacy ACP model catalog and session/set_model", async () => {
     process.env.OPENBOT_FAKE_GROK_MODE = "legacy-models";
     client = new GrokAgentClient({ executable, version: "1.0.5" }, 5_000);
@@ -347,7 +388,37 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     sessionCounter += 1;
     const sessionId = "grok-session-" + sessionCounter;
     log({ method: message.method, sessionId, mcpAuthorization: message.params.mcpServers?.some((server) => server.headers?.some((header) => header.name.toLowerCase() === "authorization" && header.value.startsWith("Bearer "))) });
-    const result = mode === "legacy-models"
+    const result = mode === "model-metadata"
+      ? {
+          sessionId,
+          models: {
+            currentModelId: "grok-4.6",
+            availableModels: [
+              {
+                modelId: "grok-4.6",
+                name: "Grok 4.6",
+                _meta: {
+                  supportsReasoningEffort: true,
+                  reasoningEffort: "high",
+                  reasoningEfforts: [
+                    { value: "low" },
+                    { value: "medium" },
+                    { value: "high" },
+                    { value: "xhigh" },
+                    { value: "unsupported" },
+                  ],
+                },
+              },
+              {
+                modelId: "grok-4.5",
+                name: "Grok 4.5",
+                _meta: { supportsReasoningEffort: false },
+              },
+            ],
+          },
+          configOptions: [],
+        }
+      : mode === "legacy-models"
       ? {
           sessionId,
           models: {
@@ -380,7 +451,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     return;
   }
   if (message.method === "session/set_model") {
-    log({ method: message.method, modelId: message.params.modelId });
+    log({
+      method: message.method,
+      modelId: message.params.modelId,
+      reasoningEffort: message.params._meta?.reasoningEffort,
+    });
     write({ id: message.id, result: {} });
     return;
   }
