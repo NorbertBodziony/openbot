@@ -329,9 +329,10 @@ function MarkdownInline(props: {
   const renderedTokens = createMemo(() => {
     const values = tokens();
     const lastTokenIndex = lastRenderableTokenIndex(values);
+    const markerTokenIndex = props.streaming === true ? incompleteStrongMarkerTokenIndex(values) : -1;
     return values.map((token, index) => ({
       token,
-      streaming: props.streaming === true && index === lastTokenIndex,
+      streaming: index === markerTokenIndex,
       streamingTail: props.streamingTail === true && index === lastTokenIndex,
     }));
   });
@@ -484,6 +485,32 @@ function RichText(props: {
 
 function hideIncompleteStrongMarker(body: string): string {
   const characters = [...body];
+  const markerIndex = incompleteStrongMarkerIndex(characters);
+  if (markerIndex === undefined) return body;
+  characters.splice(markerIndex, 2);
+  return characters.join("");
+}
+
+function incompleteStrongMarkerTokenIndex(tokens: Token[]): number {
+  const characters: string[] = [];
+  const owners: number[] = [];
+  for (const [tokenIndex, token] of tokens.entries()) {
+    for (const character of [...token.raw]) {
+      characters.push(character);
+      owners.push(token.type === "text" ? tokenIndex : -1);
+    }
+  }
+  const markerIndex = incompleteStrongMarkerIndex(
+    characters,
+    (start, end) => owners[start] !== -1 && owners[start] === owners[end - 1],
+  );
+  return markerIndex === undefined ? -1 : (owners[markerIndex] ?? -1);
+}
+
+function incompleteStrongMarkerIndex(
+  characters: string[],
+  eligible: (start: number, end: number) => boolean = () => true,
+): number | undefined {
   let markerIndex: number | undefined;
   for (let index = 0; index < characters.length; ) {
     const delimiter = characters[index];
@@ -495,20 +522,26 @@ function hideIncompleteStrongMarker(body: string): string {
     while (characters[runEnd] === delimiter) runEnd += 1;
     const previous = characters[index - 1];
     const next = characters[runEnd];
-    if (
-      runEnd - index === 2 &&
-      isLeftFlankingMarkdownDelimiter(previous, next) &&
-      (delimiter === "*" ||
-        !isRightFlankingMarkdownDelimiter(previous, next) ||
-        (previous !== undefined && isMarkdownPunctuation(previous)))
-    ) {
+    if (runEnd - index === 2 && eligible(index, runEnd) && canOpenStrongDelimiter(delimiter, previous, next)) {
       markerIndex = index;
     }
     index = runEnd;
   }
-  if (markerIndex === undefined) return body;
-  characters.splice(markerIndex, 2);
-  return characters.join("");
+  return markerIndex;
+}
+
+function canOpenStrongDelimiter(delimiter: "*" | "_", previous: string | undefined, next: string | undefined) {
+  if (next === undefined) {
+    return (
+      delimiter === "*" || previous === undefined || isMarkdownWhitespace(previous) || isMarkdownPunctuation(previous)
+    );
+  }
+  return (
+    isLeftFlankingMarkdownDelimiter(previous, next) &&
+    (delimiter === "*" ||
+      !isRightFlankingMarkdownDelimiter(previous, next) ||
+      (previous !== undefined && isMarkdownPunctuation(previous)))
+  );
 }
 
 function isLeftFlankingMarkdownDelimiter(previous: string | undefined, next: string | undefined): boolean {

@@ -587,13 +587,13 @@ describe("MessageBody", () => {
     expect(container).toHaveTextContent("Use Kobalte, but keep a__literal");
   });
 
-  it("does not clean text inside a completed inline container", () => {
-    render(() => (
+  it("cleans an opener before a completed inline token without changing its contents", () => {
+    const { container } = render(() => (
       <MessageBody
         message={{
           id: "message-streaming-link",
           author: "bot",
-          body: "[label **literal](https://example.com)",
+          body: "Use **[Kobal](https://example.com), keep [label **literal](https://example.com/label)",
           time: "10:00",
           streaming: true,
         }}
@@ -605,7 +605,32 @@ describe("MessageBody", () => {
       />
     ));
 
+    expect(container).toHaveTextContent("Use Kobal, keep label **literal");
+    expect(container).not.toHaveTextContent("Use **");
+    expect(screen.getByRole("link", { name: "Kobal" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "label **literal" })).toBeInTheDocument();
+  });
+
+  it.each(["Use **", "Use __"])("hides a strong marker at the end of a streaming chunk", (body) => {
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: `message-streaming-marker-${body.at(-1)}`,
+          author: "bot",
+          body,
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("Use");
+    expect(container).not.toHaveTextContent(body.slice(-2));
   });
 
   it("keeps earlier text unchanged while a structured block streams", () => {
