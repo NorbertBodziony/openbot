@@ -392,9 +392,6 @@ export class TeamWebRtcHostGateway {
           encodeTeamProtocolV2Frame({ version: 2, type: "event-reset", nextSequence: firstSequence }),
         );
       }
-      for (const [sequence, event] of bufferedEvents) {
-        if (sequence > frame.throughSequence) await this.#bridge.send(peerId, "events", event);
-      }
     } catch {
       // Invalid optional event control frames do not affect the active peer connection.
     }

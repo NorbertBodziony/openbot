@@ -328,6 +328,28 @@ describe("RemoteControlPlane", () => {
     });
     await expect(controlPlane.validateResumeClaims({ ...hostClaims, authEpoch: currentAuthEpoch })).resolves.toBe(true);
 
+    await Promise.all([
+      controlPlane.changeMembership(owner.id, {
+        hostId: "host-1",
+        membershipId: "revoked-membership",
+        role: "member",
+      }),
+      controlPlane.changeMembership(owner.id, {
+        hostId: "host-1",
+        membershipId: "revoked-membership",
+        role: "admin",
+      }),
+    ]);
+    expect(database.prepare("SELECT auth_epoch FROM remote_hosts WHERE host_id = 'host-1'").get()).toEqual({
+      auth_epoch: currentAuthEpoch + 2,
+    });
+    expect(webhookBodies).toContain(
+      JSON.stringify({ type: "remote-auth-changed", hostId: "host-1", authEpoch: currentAuthEpoch + 1 }),
+    );
+    expect(webhookBodies).toContain(
+      JSON.stringify({ type: "remote-auth-changed", hostId: "host-1", authEpoch: currentAuthEpoch + 2 }),
+    );
+
     const insertInvite = database.prepare(
       `INSERT INTO remote_invites(
          invite_id, host_id, token_hash, email, role, created_by_user_id, expires_at, created_at
@@ -370,19 +392,24 @@ function sqliteD1(database: DatabaseSync): D1Database {
     }
   }
 
+  let batchChain = Promise.resolve();
   const adapter = {
     prepare: (sql: string) => new Statement(sql),
-    batch: async (statements: Statement[]) => {
-      database.exec("BEGIN");
-      try {
-        const results = [];
-        for (const statement of statements) results.push(await statement.run());
-        database.exec("COMMIT");
-        return results;
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      }
+    batch: (statements: Statement[]) => {
+      const operation = batchChain.then(async () => {
+        database.exec("BEGIN");
+        try {
+          const results = [];
+          for (const statement of statements) results.push(await statement.run());
+          database.exec("COMMIT");
+          return results;
+        } catch (error) {
+          database.exec("ROLLBACK");
+          throw error;
+        }
+      });
+      batchChain = operation.then(() => undefined).catch(() => undefined);
+      return operation;
     },
   };
   // biome-ignore lint/nursery/noUnsafeTypeAssertion: This focused adapter implements only the D1 methods used by this test.

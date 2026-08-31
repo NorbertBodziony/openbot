@@ -193,22 +193,20 @@ export class RemoteControlPlane {
     const machineToken = randomToken();
     const machineTokenHash = await sha256(machineToken);
     const membershipId = ownerMembershipId;
-    const authEpoch = (existing?.auth_epoch ?? 0) + 1;
-    const event = { type: "remote-auth-changed" as const, hostId, authEpoch };
     await this.#database.batch([
       this.#database
         .prepare(
           `INSERT INTO remote_hosts(
              host_id, owner_user_id, name, device_public_key, machine_token_hash, auth_epoch, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
            ON CONFLICT(host_id) DO UPDATE SET
              name = excluded.name,
              device_public_key = excluded.device_public_key,
              machine_token_hash = excluded.machine_token_hash,
-             auth_epoch = excluded.auth_epoch,
+             auth_epoch = remote_hosts.auth_epoch + 1,
              updated_at = excluded.updated_at`,
         )
-        .bind(hostId, user.id, name, input.devicePublicKey ?? null, machineTokenHash, authEpoch, now, now),
+        .bind(hostId, user.id, name, input.devicePublicKey ?? null, machineTokenHash, now, now),
       this.#database
         .prepare(
           `INSERT INTO remote_memberships(
@@ -219,10 +217,12 @@ export class RemoteControlPlane {
              role = 'owner', status = 'active', updated_at = excluded.updated_at`,
         )
         .bind(membershipId, hostId, user.id, now, now),
-      this.#authEventStatement(event, now),
+      this.#authEpochEventStatement(hostId, now),
     ]);
     await this.#flushAuthEvents();
-    return { hostId, name, membershipId, authEpoch, machineToken };
+    const registered = await this.#host(hostId);
+    if (!registered) throw new RemoteControlPlaneError(500, "host_missing", "The registered host could not be loaded.");
+    return { hostId, name, membershipId, authEpoch: registered.auth_epoch, machineToken };
   }
 
   async listHosts(userId: string) {
@@ -502,10 +502,6 @@ export class RemoteControlPlane {
     if (role !== "admin" && role !== "member") throw invalid("member role");
     if (input.revoke && input.reactivate) throw invalid("member status");
     const now = this.#now();
-    const host = await this.#host(input.hostId);
-    if (!host) throw new RemoteControlPlaneError(404, "host_not_found", "The remote host does not exist.");
-    const authEpoch = host.auth_epoch + 1;
-    const authEvent = { type: "remote-auth-changed" as const, hostId: input.hostId, authEpoch };
     await this.#database.batch([
       this.#database
         .prepare("UPDATE remote_memberships SET role = ?, status = ?, updated_at = ? WHERE membership_id = ?")
@@ -516,12 +512,12 @@ export class RemoteControlPlane {
           input.membershipId,
         ),
       this.#database
-        .prepare("UPDATE remote_hosts SET auth_epoch = ?, updated_at = ? WHERE host_id = ?")
-        .bind(authEpoch, now, input.hostId),
+        .prepare("UPDATE remote_hosts SET auth_epoch = auth_epoch + 1, updated_at = ? WHERE host_id = ?")
+        .bind(now, input.hostId),
       this.#database
         .prepare("UPDATE remote_sessions SET ended_at = ? WHERE host_id = ? AND user_id = ? AND ended_at IS NULL")
         .bind(now, input.hostId, membership.user_id),
-      this.#authEventStatement(authEvent, now),
+      this.#authEpochEventStatement(input.hostId, now),
     ]);
     await this.#flushAuthEvents();
   }
@@ -699,6 +695,16 @@ export class RemoteControlPlane {
         "INSERT INTO remote_auth_events(event_id, payload, created_at, attempts, next_attempt_at) VALUES (?, ?, ?, 0, ?)",
       )
       .bind(crypto.randomUUID(), JSON.stringify(event), now, now);
+  }
+
+  #authEpochEventStatement(hostId: string, now: number): D1PreparedStatement {
+    return this.#database
+      .prepare(
+        `INSERT INTO remote_auth_events(event_id, payload, created_at, attempts, next_attempt_at)
+         SELECT ?, json_object('type', 'remote-auth-changed', 'hostId', host_id, 'authEpoch', auth_epoch), ?, 0, ?
+         FROM remote_hosts WHERE host_id = ?`,
+      )
+      .bind(crypto.randomUUID(), now, now, hostId);
   }
 
   async #flushAuthEvents(): Promise<void> {
