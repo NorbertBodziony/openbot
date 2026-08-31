@@ -215,7 +215,12 @@ export interface ConversationProps {
   onSelectAgent: (botId: string) => void;
   onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
   onSetAgentAvatar: (botId: string, image: AvatarImageInput | null) => Promise<void>;
-  onSendMessage: (body: string, attachmentDraftIds: string[], replyToMessageId: string | null) => Promise<boolean>;
+  onSendMessage: (
+    body: string,
+    attachmentDraftIds: string[],
+    replyToMessageId: string | null,
+    targetBotId?: string,
+  ) => Promise<boolean>;
   onMarkRead: () => Promise<void>;
   onLoadOlder?: () => void;
   onLoadLatest?: () => Promise<void>;
@@ -233,6 +238,7 @@ export interface ConversationProps {
     text: string,
     keepAttachmentIds: string[],
     attachmentDraftIds: string[],
+    targetBotId?: string,
   ) => Promise<boolean>;
   onReorderQueue: (deliveryIds: string[]) => void;
   onActivateBrowserTab: (tabId: string) => void;
@@ -896,7 +902,7 @@ function createConversationViewScope(props: ConversationProps) {
   async function startVoiceRecording(): Promise<void> {
     const botId = props.bot?.id;
     if (!botId || voicePhase() !== "idle") return;
-    resources.voiceSubmitRequested = false;
+    resources.voiceSubmitRequest = undefined;
     setComposerError(null);
     setVoicePhase("preparing");
     setVoiceModelProgress(0);
@@ -954,11 +960,11 @@ function createConversationViewScope(props: ConversationProps) {
   async function finishVoiceRecording(mimeType: string): Promise<void> {
     const targetBotId = resources.voiceBotId;
     const chunks = resources.voiceChunks;
-    const submitAfterTranscription = resources.voiceSubmitRequested;
+    const submitRequest = resources.voiceSubmitRequest;
     resources.voiceRecorder = undefined;
     resources.voiceBotId = undefined;
     resources.voiceChunks = [];
-    resources.voiceSubmitRequested = false;
+    resources.voiceSubmitRequest = undefined;
     if (!targetBotId || resources.voiceDisposed) return;
     const analytics = desktopAnalytics.scope();
     const audioDurationSeconds = voiceElapsedSeconds();
@@ -977,9 +983,17 @@ function createConversationViewScope(props: ConversationProps) {
       const draft = drafts()[targetBotId] ?? EMPTY_DRAFT;
       const transcribedDraft = { ...draft, text: appendVoiceTranscript(draft.text, result.text) };
       setDrafts((current) => ({ ...current, [targetBotId]: transcribedDraft }));
-      if (props.bot?.id === targetBotId) {
-        if (submitAfterTranscription) await submitMessage(transcribedDraft);
-        else setComposerFocusRequest((current) => current + 1);
+      if (submitRequest) {
+        if (submitRequest.queuedEdit) {
+          await saveQueuedMessageEdit(transcribedDraft, {
+            botId: submitRequest.botId,
+            ...submitRequest.queuedEdit,
+          });
+        } else {
+          await submitMessage(transcribedDraft, submitRequest.botId);
+        }
+      } else if (props.bot?.id === targetBotId) {
+        setComposerFocusRequest((current) => current + 1);
       }
     } catch (error) {
       analytics.track("voice_transcription", {
@@ -1575,19 +1589,24 @@ function createConversationViewScope(props: ConversationProps) {
     setEditingDraftBackup(null);
   }
 
-  async function saveQueuedMessageEdit(): Promise<void> {
-    const botId = props.bot?.id;
-    const deliveryId = editingDeliveryId();
-    const draft = currentDraft();
+  async function saveQueuedMessageEdit(
+    draftOverride?: ComposerDraft,
+    target?: { botId: string; deliveryId: string; originalAttachmentIds: string[] },
+  ): Promise<void> {
+    const botId = target?.botId ?? props.bot?.id;
+    const deliveryId = target?.deliveryId ?? editingDeliveryId();
+    const draft = draftOverride ?? currentDraft();
     if (!botId || !deliveryId || submitting()) return;
-    const delivery = props.queue?.deliveries.find((item) => item.id === deliveryId);
-    if (delivery?.status !== "queued") {
+    const delivery = target ? undefined : props.queue?.deliveries.find((item) => item.id === deliveryId);
+    if (!target && delivery?.status !== "queued") {
       setComposerError("This queued message is no longer available.");
       cancelQueuedMessageEdit();
       return;
     }
     const text = expandComposerMentions(draft.text);
-    const originalAttachmentIds = new Set(delivery.attachments.map((attachment) => attachment.id));
+    const originalAttachmentIds = new Set(
+      target?.originalAttachmentIds ?? delivery?.attachments.map((attachment) => attachment.id) ?? [],
+    );
     const keepAttachmentIds = draft.attachments
       .filter((attachment) => originalAttachmentIds.has(attachment.id))
       .map((attachment) => attachment.id);
@@ -1601,7 +1620,7 @@ function createConversationViewScope(props: ConversationProps) {
     setComposerError(null);
     let saved = false;
     try {
-      saved = await props.onUpdateQueuedMessage(deliveryId, text, keepAttachmentIds, attachmentDraftIds);
+      saved = await props.onUpdateQueuedMessage(deliveryId, text, keepAttachmentIds, attachmentDraftIds, botId);
     } catch (error) {
       setComposerError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1609,8 +1628,10 @@ function createConversationViewScope(props: ConversationProps) {
     }
     if (!saved) return;
     setDrafts((current) => ({ ...current, [botId]: EMPTY_DRAFT }));
-    setEditingDeliveryId(null);
-    setEditingDraftBackup(null);
+    if (props.bot?.id === botId && editingDeliveryId() === deliveryId) {
+      setEditingDeliveryId(null);
+      setEditingDraftBackup(null);
+    }
   }
 
   function reorderPresentedQueue(deliveryIds: string[]) {
@@ -1632,13 +1653,13 @@ function createConversationViewScope(props: ConversationProps) {
     );
   }
 
-  async function submitMessage(draftOverride?: ComposerDraft) {
+  async function submitMessage(draftOverride?: ComposerDraft, targetBotId?: string) {
     if (selectionSending()) return;
     if (!draftOverride && editingDeliveryId()) {
       await saveQueuedMessageEdit();
       return;
     }
-    const botId = props.bot?.id;
+    const botId = targetBotId ?? props.bot?.id;
     const draft = draftOverride ?? currentDraft();
     const text = expandComposerMentions(draft.text);
     const attachments = draft.attachments;
@@ -1651,6 +1672,7 @@ function createConversationViewScope(props: ConversationProps) {
       text,
       attachments.map((item) => item.id),
       draft.replyToMessageId,
+      botId,
     );
     setSubmitting(false);
     if (sent) {
@@ -1659,11 +1681,31 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   function submitComposer(): void {
-    if (voicePhase() === "recording") {
-      resources.voiceSubmitRequested = true;
+    const phase = voicePhase();
+    if (phase === "recording") {
+      const botId = resources.voiceBotId;
+      if (!botId) return;
+      const deliveryId = editingDeliveryId();
+      const delivery = deliveryId ? props.queue?.deliveries.find((item) => item.id === deliveryId) : undefined;
+      if (deliveryId && delivery?.status !== "queued") {
+        setComposerError("This queued message is no longer available.");
+        cancelQueuedMessageEdit();
+        return;
+      }
+      resources.voiceSubmitRequest = {
+        botId,
+        queuedEdit:
+          deliveryId && delivery
+            ? {
+                deliveryId,
+                originalAttachmentIds: delivery.attachments.map((attachment) => attachment.id),
+              }
+            : undefined,
+      };
       stopVoiceRecording();
       return;
     }
+    if (phase !== "idle") return;
     void submitMessage();
   }
 
@@ -3110,7 +3152,9 @@ export function ConversationComposer() {
                 </fieldset>
               </Show>
               <Show
-                when={props.activeTurnId && !editingDeliveryId() && !composerHasContent()}
+                when={
+                  props.activeTurnId && !editingDeliveryId() && !composerHasContent() && voicePhase() !== "recording"
+                }
                 fallback={
                   <Button
                     variant="ghost"

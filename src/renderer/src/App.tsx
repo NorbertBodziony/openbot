@@ -2182,10 +2182,11 @@ export function createAppController(props: AppProps = {}) {
     body: string,
     attachmentDraftIds: string[],
     replyToMessageId: string | null,
+    targetBotId?: string,
   ): Promise<boolean> {
-    const bot = activeBot();
-    if (!bot || (!body.trim() && attachmentDraftIds.length === 0)) return false;
-    return sendMessageToBot(bot.id, body, attachmentDraftIds, replyToMessageId);
+    const botId = targetBotId ?? activeBot()?.id;
+    if (!botId || (!body.trim() && attachmentDraftIds.length === 0)) return false;
+    return sendMessageToBot(botId, body, attachmentDraftIds, replyToMessageId);
   }
 
   async function sendMessageToBot(
@@ -2418,13 +2419,14 @@ export function createAppController(props: AppProps = {}) {
     text: string,
     keepAttachmentIds: string[],
     attachmentDraftIds: string[],
+    targetBotId?: string,
   ): Promise<boolean> {
-    const bot = activeBot();
-    if (!bot) return false;
+    const botId = targetBotId ?? activeBot()?.id;
+    if (!botId) return false;
     const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.agent.updateQueuedMessage({
-        botId: bot.id,
+        botId,
         deliveryId,
         text,
         keepAttachmentIds,
@@ -2434,7 +2436,7 @@ export function createAppController(props: AppProps = {}) {
       return true;
     } catch (error) {
       analytics.track("queue_action", { action: "edit", result: "failed", failure_code: "edit_failed" });
-      appendUiError(bot.id, error, "Edit failed");
+      appendUiError(botId, error, "Edit failed");
       return false;
     }
   }
