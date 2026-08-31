@@ -274,8 +274,6 @@ const REMOTE_SERVERS_FILE = "openbot-remote-servers-v1.json";
 const CENTRAL_AUTH_FILE = "openbot-central-auth-v1.bin";
 const LEGACY_REMOTE_DESKTOP_CREDENTIAL_FILE = "openbot-remote-desktop-credential-v1.json";
 const REMOTE_DESKTOP_RUNTIME_SECRET_FILE = "openbot-remote-desktop-runtime-v1.json";
-const SYSTEM_SESSION_END_FLUSH_TIMEOUT_MS = 2_000;
-
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "agent-setup": "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
   "claude-install": "https://code.claude.com/docs",
@@ -1175,19 +1173,16 @@ function createWindow(): BrowserWindow {
     }
   });
   if (process.platform === "win32") {
-    window.on("query-session-end", (event) => {
-      event.preventDefault();
+    window.on("query-session-end", () => {
       systemSessionEnding = true;
       isQuitting = true;
       if (systemSessionEndFlushStarted) return;
       systemSessionEndFlushStarted = true;
       updateService?.stop();
-      void flushBrowserStorageWithin(SYSTEM_SESSION_END_FLUSH_TIMEOUT_MS)
-        .catch((error) => console.error("Unable to flush browser storage before Windows session end:", error))
-        .finally(() => {
-          void providerRuntimeManager?.stop();
-          app.quit();
-        });
+      void browserHost
+        ?.flushPersistentStorage()
+        .catch((error) => console.error("Unable to flush browser storage before Windows session end:", error));
+      void providerRuntimeManager?.stop();
     });
     window.on("session-end", () => {
       systemSessionEnding = true;
@@ -2007,11 +2002,11 @@ app.on("before-quit", (event) => {
 });
 
 async function prepareForUpdateInstall(): Promise<void> {
-  await (browserHost?.flushPersistentStorage() ?? Promise.resolve());
+  await destroyBrowserForShutdown();
   await prepareForShutdown(true);
 }
 
-async function prepareForShutdown(browserStorageAlreadyFlushed = false): Promise<void> {
+async function prepareForShutdown(browserAlreadyDestroyed = false): Promise<void> {
   if (shutdownStarted) return;
   shutdownStarted = true;
   isQuitting = true;
@@ -2019,30 +2014,18 @@ async function prepareForShutdown(browserStorageAlreadyFlushed = false): Promise
   dynamicIslandController?.destroy();
   dynamicIslandController = null;
   macHapticFeedback.destroy();
+  if (!browserAlreadyDestroyed) await destroyBrowserForShutdown();
+  browserPictureInPicture?.destroy();
   await (providerRuntimeManager?.stop() ?? Promise.resolve());
   remoteServerManager?.stop();
   voiceTranscriptionService?.shutdown();
   await (remoteDesktopManager?.stop() ?? Promise.resolve());
   await (hostService?.shutdown() ?? Promise.resolve());
-  browserPictureInPicture?.destroy();
-  await (browserHost?.destroy({ storageAlreadyFlushed: browserStorageAlreadyFlushed }) ?? Promise.resolve());
   await (agentService?.stop() ?? Promise.resolve());
 }
 
-async function flushBrowserStorageWithin(timeoutMs: number): Promise<void> {
-  const flush = browserHost?.flushPersistentStorage();
-  if (!flush) return;
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  try {
-    await Promise.race([
-      flush,
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(() => reject(new Error("Browser storage flush timed out.")), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
+async function destroyBrowserForShutdown(): Promise<void> {
+  await (browserHost?.destroy() ?? Promise.resolve());
 }
 
 function configureRendererPermissions(): void {
