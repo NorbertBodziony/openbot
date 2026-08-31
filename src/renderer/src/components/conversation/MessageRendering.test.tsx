@@ -493,10 +493,11 @@ describe("MessageBody", () => {
     ));
 
     expect(screen.getByRole("heading", { level: 2, name: "Plan" })).toBeInTheDocument();
-    expect(screen.getByText("Use **Kobal")).toBeInTheDocument();
+    expect(screen.getByText("Use Kobal")).toBeInTheDocument();
     const messageContent = container.querySelector<HTMLElement>(".message-content-blocks");
     const messageResize = container.querySelector<HTMLElement>(".message-content-resize");
     if (!messageContent || !messageResize) throw new Error("Streaming resize elements are missing.");
+    expect(messageContent).not.toHaveTextContent("**");
     let contentHeight = 40;
     vi.spyOn(messageContent, "getBoundingClientRect").mockImplementation(() =>
       DOMRect.fromRect({ height: contentHeight, width: 640, x: 0, y: 0 }),
@@ -521,7 +522,7 @@ describe("MessageBody", () => {
     expect(messageContent).not.toHaveTextContent("Resize the row");
     await waitFor(() => expect(messageContent).toHaveTextContent("Resize the row"));
     expect(screen.getByText("Parse Markdown")).toBeInTheDocument();
-    expect(screen.queryByText("Use **Kobal")).toBeNull();
+    expect(screen.queryByText("Use Kobal")).toBeNull();
     expect(container.querySelector(".message-content-blocks")).toBe(messageContent);
   });
 
