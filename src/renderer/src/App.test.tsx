@@ -2536,6 +2536,25 @@ describe("OpenBot connected desktop shell", () => {
         failure_code: "download_failed",
       }),
     );
+    expect(await screen.findByRole("button", { name: /Retry update.*Could not check for updates/ })).toBeEnabled();
+  });
+
+  it("keeps the update retry visible when downloading rejects", async () => {
+    vi.mocked(window.openbot.update.getStatus).mockResolvedValueOnce({
+      phase: "available",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: null,
+      checkedAt: null,
+      message: null,
+      errorCode: null,
+    });
+    vi.mocked(window.openbot.update.download).mockRejectedValueOnce(new Error("Could not download update. Try again."));
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
+
+    expect(await screen.findByRole("button", { name: /Retry update.*Could not download update/ })).toBeEnabled();
   });
 
   it("confirms an installed app version on the next launch", async () => {

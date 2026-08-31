@@ -55,6 +55,7 @@ export function AccountDock(props: AccountDockProps) {
   const [usageRefreshAcknowledging, setUsageRefreshAcknowledging] = createSignal(false);
   const [usageError, setUsageError] = createSignal<string | null>(null);
   const [menuError, setMenuError] = createSignal<string | null>(null);
+  const [updateError, setUpdateError] = createSignal<string | null>(null);
   const [loggingOut, setLoggingOut] = createSignal(false);
   let initialUsageRequested = false;
   let usageRefreshTimer: number | undefined;
@@ -112,7 +113,7 @@ export function AccountDock(props: AccountDockProps) {
   });
   const updatePresentation = createMemo(() => presentUpdateStatus(props.updateStatus));
   const accountMenuError = createMemo(
-    () => menuError() ?? (props.updateStatus.phase === "error" ? props.updateStatus.message : null),
+    () => menuError() ?? updateError() ?? (props.updateStatus.phase === "error" ? props.updateStatus.message : null),
   );
 
   onCleanup(() => {
@@ -125,6 +126,13 @@ export function AccountDock(props: AccountDockProps) {
       if (!hybrid || agentPhase !== "ready" || accountUsage || initialUsageRequested) return;
       initialUsageRequested = true;
       void refreshUsage();
+    },
+  );
+
+  createEffect(
+    () => props.updateStatus.phase,
+    () => {
+      setUpdateError(null);
     },
   );
 
@@ -172,10 +180,11 @@ export function AccountDock(props: AccountDockProps) {
 
   async function runUpdateAction(): Promise<void> {
     setMenuError(null);
+    setUpdateError(null);
     try {
       await props.onUpdateAction();
     } catch (cause) {
-      setMenuError(cause instanceof Error ? cause.message : "Could not update OpenBot.");
+      setUpdateError(cause instanceof Error ? cause.message : "Could not update OpenBot.");
     }
   }
 
@@ -550,7 +559,11 @@ export function AccountDock(props: AccountDockProps) {
       ]}
     >
       <Show when={hybridLayout()} fallback={legacyDock()}>
-        <AccountUpdateIsland updateStatus={props.updateStatus} onUpdateAction={runUpdateAction} />
+        <AccountUpdateIsland
+          updateStatus={props.updateStatus}
+          errorMessage={updateError()}
+          onUpdateAction={runUpdateAction}
+        />
         {hybridDock()}
       </Show>
     </div>

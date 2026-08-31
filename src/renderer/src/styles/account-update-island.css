@@ -94,7 +94,7 @@
 
 .account-update-island
   .t-update-text-swap:is([data-state="available"], [data-state="action"])
-  > [data-text]:is([data-text="ready"], [data-text="progress"]) {
+  > [data-text]:is([data-text="ready"], [data-text="progress"], [data-text="error"]) {
   transform: translateY(var(--text-swap-translate-y));
   opacity: 0;
   filter: blur(var(--text-swap-blur));
@@ -102,7 +102,13 @@
 
 .account-update-island
   .t-update-text-swap:is([data-state="ready"], [data-state="progress"])
-  > [data-text]:is([data-text="available"], [data-text="action"]) {
+  > [data-text]:is([data-text="available"], [data-text="action"], [data-text="error"]) {
+  transform: translateY(calc(var(--text-swap-translate-y) * -1));
+  opacity: 0;
+  filter: blur(var(--text-swap-blur));
+}
+
+.account-update-island .t-update-text-swap[data-state="error"] > [data-text]:not([data-text="error"]) {
   transform: translateY(calc(var(--text-swap-translate-y) * -1));
   opacity: 0;
   filter: blur(var(--text-swap-blur));

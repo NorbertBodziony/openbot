@@ -4,6 +4,7 @@ import { Button, Download, RefreshCw, Spinner } from "./ui";
 
 interface AccountUpdateIslandProps {
   updateStatus: UpdateStatus;
+  errorMessage?: string | null;
   onUpdateAction: () => Promise<void>;
 }
 
@@ -61,25 +62,33 @@ function UpdateProgressValue(props: UpdateProgressValueProps) {
 export function AccountUpdateIsland(props: AccountUpdateIslandProps) {
   const [actionPending, setActionPending] = createSignal(false);
   const phase = () => props.updateStatus.phase;
-  const open = createMemo(() => VISIBLE_UPDATE_PHASES.has(phase()));
+  const errorMessage = createMemo(() => {
+    const message = props.errorMessage?.trim() || props.updateStatus.message?.trim();
+    return message || "Update failed. Try again.";
+  });
+  const failed = createMemo(() => Boolean(props.errorMessage) || phase() === "error");
+  const open = createMemo(() => failed() || VISIBLE_UPDATE_PHASES.has(phase()));
   const downloading = createMemo(() => phase() === "downloading");
   const busy = createMemo(() => actionPending() || ["downloading", "preparing", "installing"].includes(phase()));
-  const ready = createMemo(() => phase() === "ready" || phase() === "installing");
+  const ready = createMemo(() => !failed() && (phase() === "ready" || phase() === "installing"));
   const progress = createMemo(() => {
     const value = props.updateStatus.progress;
     return value === null ? null : Math.min(100, Math.max(0, Math.round(value)));
   });
-  const actionLabel = createMemo(() => (ready() ? "Restart" : "Download"));
+  const actionLabel = createMemo(() => (failed() ? "Retry" : ready() ? "Restart" : "Download"));
   const busyLabel = createMemo(() => {
+    if (actionPending() && failed()) return "Retrying";
     if (downloading() && progress() !== null) return null;
     if (phase() === "preparing") return "Preparing";
     if (phase() === "installing" || (actionPending() && ready())) return "Restarting";
     return "Starting";
   });
   const accessibleActionLabel = createMemo(() => {
+    if (actionPending() && failed()) return "Retrying update";
     if (downloading() && progress() !== null) return `Downloading update, ${progress()}%`;
     if (phase() === "preparing") return "Preparing update";
     if (phase() === "installing" || (actionPending() && ready())) return "Restarting to update";
+    if (failed()) return `Retry update. ${errorMessage()}`;
     return `${ready() ? "Restart to update" : "Download update"}. ${
       ready() ? "Update ready" : "New update available"
     }.`;
@@ -112,15 +121,18 @@ export function AccountUpdateIsland(props: AccountUpdateIslandProps) {
     >
       <div
         class="account-update-island__copy t-update-text-swap"
-        data-state={ready() ? "ready" : "available"}
+        data-state={failed() ? "error" : ready() ? "ready" : "available"}
         role="status"
         aria-live="polite"
       >
-        <strong data-text="available" aria-hidden={ready() ? "true" : undefined}>
+        <strong data-text="available" aria-hidden={ready() || failed() ? "true" : undefined}>
           New update available
         </strong>
-        <strong data-text="ready" aria-hidden={ready() ? undefined : "true"}>
+        <strong data-text="ready" aria-hidden={ready() && !failed() ? undefined : "true"}>
           Update ready
+        </strong>
+        <strong data-text="error" aria-hidden={failed() ? undefined : "true"} title={errorMessage()}>
+          {errorMessage()}
         </strong>
       </div>
       <div class="account-update-island__action-shell" data-downloading={busy() ? "true" : "false"}>
@@ -136,7 +148,7 @@ export function AccountUpdateIsland(props: AccountUpdateIslandProps) {
           <span class="account-update-island__action-content">
             <span class="account-update-island__icon t-icon-swap" data-state={busy() ? "b" : "a"}>
               <span class="t-icon" data-icon="a" aria-hidden="true">
-                <Show when={ready()} fallback={<Download />}>
+                <Show when={failed() || ready()} fallback={<Download />}>
                   <RefreshCw />
                 </Show>
               </span>
