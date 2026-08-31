@@ -427,15 +427,15 @@ function registerIpcHandlers(
     );
   });
   handleTrusted(IPC_CHANNELS.authUpdateName, (input: unknown) => {
-    const rawName = requireString(input, "name", INPUT_LIMITS.accountName);
+    const rawName = requireString(input, "name", INPUT_LIMITS.profileName);
     const name = normalizeAccountName(rawName);
     if (
       hasUnsafeAccountNameCharacters(rawName) ||
-      name.length < INPUT_LIMITS.accountNameMin ||
-      name.length > INPUT_LIMITS.accountName
+      name.length < INPUT_LIMITS.profileNameMin ||
+      name.length > INPUT_LIMITS.profileName
     ) {
       throw new Error(
-        `name must contain ${INPUT_LIMITS.accountNameMin} to ${INPUT_LIMITS.accountName} safe characters.`,
+        `name must contain ${INPUT_LIMITS.profileNameMin} to ${INPUT_LIMITS.profileName} safe characters.`,
       );
     }
     return centralAuth.updateName(name);

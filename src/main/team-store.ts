@@ -21,12 +21,7 @@ import type {
   TeamSessionSummary,
 } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
-import {
-  hasUnsafeAccountNameCharacters,
-  normalizeAccountName,
-  normalizeEmailAddress,
-  slugifyTeamServerName,
-} from "@openbot/contracts/validation";
+import { normalizeEmailAddress, slugifyTeamServerName } from "@openbot/contracts/validation";
 
 const scrypt = promisify(scryptCallback);
 const INVITE_TTL_MS = 24 * 60 * 60 * 1_000;
@@ -706,12 +701,7 @@ function normalizeEmail(value: string): string {
 }
 
 function normalizeName(value: string | null): string | null {
-  if (value === null) return null;
-  if (hasUnsafeAccountNameCharacters(value)) throw new TeamStoreError("Account name contains unsafe characters.");
-  const normalized = normalizeAccountName(value);
-  if (normalized && normalized.length < INPUT_LIMITS.accountNameMin) {
-    throw new TeamStoreError("Account name is too short.");
-  }
+  const normalized = value?.trim() ?? "";
   if (normalized.length > INPUT_LIMITS.accountName) throw new TeamStoreError("Account name is too long.");
   return normalized || null;
 }

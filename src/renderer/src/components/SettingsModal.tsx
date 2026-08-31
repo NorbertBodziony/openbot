@@ -114,11 +114,11 @@ export function SettingsModal(props: SettingsModalProps) {
       return "Remove line breaks and hidden or control characters.";
     }
     if (!normalizedProfileName()) return "Enter a display name.";
-    if (normalizedProfileName().length < INPUT_LIMITS.accountNameMin) {
-      return `Use at least ${INPUT_LIMITS.accountNameMin} characters.`;
+    if (normalizedProfileName().length < INPUT_LIMITS.profileNameMin) {
+      return `Use at least ${INPUT_LIMITS.profileNameMin} characters.`;
     }
-    if (normalizedProfileName().length > INPUT_LIMITS.accountName) {
-      return `Use no more than ${INPUT_LIMITS.accountName} characters.`;
+    if (normalizedProfileName().length > INPUT_LIMITS.profileName) {
+      return `Use no more than ${INPUT_LIMITS.profileName} characters.`;
     }
     return null;
   };
@@ -232,8 +232,8 @@ export function SettingsModal(props: SettingsModalProps) {
     const normalized = normalizeAccountName(value);
     if (
       hasUnsafeAccountNameCharacters(value) ||
-      normalized.length < INPUT_LIMITS.accountNameMin ||
-      normalized.length > INPUT_LIMITS.accountName
+      normalized.length < INPUT_LIMITS.profileNameMin ||
+      normalized.length > INPUT_LIMITS.profileName
     )
       return;
     setProfileNameTouched(false);
@@ -496,8 +496,8 @@ export function SettingsModal(props: SettingsModalProps) {
                     class="settings-identity-name-input"
                     id="settings-profile-name"
                     size="md"
-                    minlength={INPUT_LIMITS.accountNameMin}
-                    maxlength={INPUT_LIMITS.accountName}
+                    minlength={INPUT_LIMITS.profileNameMin}
+                    maxlength={INPUT_LIMITS.profileName}
                     value={profileName()}
                     aria-labelledby="settings-profile-name-label"
                     aria-describedby={

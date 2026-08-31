@@ -184,13 +184,13 @@ describe("email one-time codes", () => {
       code: "invalid_profile_name",
     });
     await expect(
-      service.updateName(session.sessionToken, "x".repeat(INPUT_LIMITS.accountNameMin - 1)),
+      service.updateName(session.sessionToken, "x".repeat(INPUT_LIMITS.profileNameMin - 1)),
     ).rejects.toMatchObject({
       status: 400,
       code: "invalid_profile_name",
     });
     await expect(
-      service.updateName(session.sessionToken, "x".repeat(INPUT_LIMITS.accountName + 1)),
+      service.updateName(session.sessionToken, "x".repeat(INPUT_LIMITS.profileName + 1)),
     ).rejects.toMatchObject({
       status: 400,
       code: "invalid_profile_name",

@@ -131,8 +131,8 @@ export class AuthService {
     const name = normalizeAccountName(nameInput);
     if (
       hasUnsafeAccountNameCharacters(nameInput) ||
-      name.length < INPUT_LIMITS.accountNameMin ||
-      name.length > INPUT_LIMITS.accountName
+      name.length < INPUT_LIMITS.profileNameMin ||
+      name.length > INPUT_LIMITS.profileName
     ) {
       throw new AuthServiceError(400, "invalid_profile_name", "Enter a valid display name.");
     }
