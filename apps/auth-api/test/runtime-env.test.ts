@@ -1,10 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { readLocalRuntimeVars } from "./runtime-env";
+import { readLocalRuntimeVars } from "../src/server/runtime-env";
 
 describe("local auth runtime variables", () => {
   it.each(["true", "1", "yes", "on"])("enables development codes for %s", (value) => {
     expect(readLocalRuntimeVars({ AUTH_EXPOSE_DEVELOPMENT_CODE: value })).toEqual({
       AUTH_EXPOSE_DEVELOPMENT_CODE: "true",
+    });
+  });
+
+  it("normalizes local hosted-site launch flags", () => {
+    expect(
+      readLocalRuntimeVars({
+        SITE_PUBLISH_ENABLED: "yes",
+        SITE_COOKIE_ISOLATION_READY: "0",
+      }),
+    ).toEqual({
+      SITE_PUBLISH_ENABLED: "true",
+      SITE_COOKIE_ISOLATION_READY: "false",
     });
   });
 
