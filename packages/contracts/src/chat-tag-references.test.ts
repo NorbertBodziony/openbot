@@ -21,4 +21,27 @@ describe("chat tag references", () => {
       ),
     ).toBe("@New name @[broken](other:id)");
   });
+
+  it("round-trips names and ids containing marker delimiters", () => {
+    const name = " C] Guide\n~advanced ";
+    const id = " skill)id\r\n~v2 ";
+    const marker = serializeChatTagReference("skill", name, id);
+
+    expect(marker).toContain("skill+uri:");
+    expect(marker).not.toContain(name);
+    expect(chatTagReferences(marker)).toEqual([{ kind: "skill", id, name, start: 0, end: marker.length }]);
+    expect(expandChatTagReferences(marker)).toBe(`${name} (skill)`);
+  });
+
+  it("does not decode legacy marker text that resembles URI encoding", () => {
+    expect(chatTagReferences("@[~C%5D Guide](skill:~guide%29advanced)")).toEqual([
+      {
+        kind: "skill",
+        id: "~guide%29advanced",
+        name: "~C%5D Guide",
+        start: 0,
+        end: 39,
+      },
+    ]);
+  });
 });

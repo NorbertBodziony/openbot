@@ -1,4 +1,5 @@
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
+import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { DraftAttachment, InstalledSkill } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
@@ -414,6 +415,23 @@ describe("ComposerEditor", () => {
 
     expect(onValueChange).toHaveBeenLastCalledWith("@[Release Notes](skill:release-notes) ");
     expect(editor.querySelector('[data-skill-id="release-notes"]')).not.toBeNull();
+  });
+
+  it("round-trips encoded semantic tag names and ids", async () => {
+    const skill: InstalledSkill = {
+      skillId: "guide)advanced",
+      slug: "guide-advanced",
+      name: "C] Guide",
+      installedVersion: 1,
+      availableVersion: 1,
+      state: "installed",
+    };
+    const marker = serializeChatTagReference("skill", skill.name, skill.skillId);
+    const { editor, onValueChange } = renderComposer([], marker, [], [skill]);
+
+    expect(editor.querySelector('[data-skill-id="guide)advanced"]')).not.toBeNull();
+    await fireEvent.input(editor);
+    expect(onValueChange).toHaveBeenLastCalledWith(marker);
   });
 
   it("keeps an active skill query usable when installed skills finish loading", async () => {

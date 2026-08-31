@@ -1,5 +1,5 @@
 import { attachmentReferenceIds, serializeAttachmentReference } from "@openbot/contracts/attachment-references";
-import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
+import { chatTagReferences, serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { DraftAttachment, InstalledSkill } from "@openbot/contracts/ipc";
 import { Portal } from "@solidjs/web";
@@ -782,8 +782,9 @@ function renderEditorValue(
   for (const match of value.matchAll(MENTION_PATTERN)) {
     const index = match.index ?? 0;
     if (index > cursor) editor.append(document.createTextNode(value.slice(cursor, index)));
-    const name = match[1] ?? "Agent";
-    const target = match[2] ?? "";
+    const semanticReference = chatTagReferences(match[0])[0];
+    const name = semanticReference?.name ?? match[1] ?? "Agent";
+    const target = semanticReference ? `${semanticReference.kind}:${semanticReference.id}` : (match[2] ?? "");
     if (target.startsWith("attachment:")) {
       const id = target.slice("attachment:".length);
       const attachment = attachments.find((candidate) => candidate.id === id);

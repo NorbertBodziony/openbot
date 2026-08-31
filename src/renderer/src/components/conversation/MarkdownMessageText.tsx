@@ -1,4 +1,3 @@
-import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import { Dynamic } from "@solidjs/web";
 import type { Token, Tokens } from "marked";
 import { marked } from "marked";
@@ -506,11 +505,8 @@ function textTokenEndsWithTagMarker(token: Token | undefined): boolean {
 
 function semanticChatTag(token: Token | undefined): string | null {
   if (!token || !tokenIs(token, "link")) return null;
-  const target = /^(agent|skill):(.+)$/u.exec(token.href);
-  const kind = target?.[1] === "agent" ? "agent" : target?.[1] === "skill" ? "skill" : null;
-  const id = target?.[2]?.trim();
-  const name = (markdownInlinePlainText(token.tokens) || token.text).trim();
-  return kind && id && name ? serializeChatTagReference(kind, name, id) : null;
+  const target = /^(agent|skill)(?:\+uri)?:([^\r\n]+)$/u.exec(token.href);
+  return target?.[2] ? `@${token.raw}` : null;
 }
 
 function RichText(props: {

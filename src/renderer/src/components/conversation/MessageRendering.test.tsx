@@ -329,9 +329,9 @@ describe("MessageBody", () => {
     const onSelectAgent = vi.fn();
     const skills: InstalledSkill[] = [
       {
-        skillId: "skill-1",
+        skillId: "skill)1",
         slug: "release-notes",
-        name: "Release Notes",
+        name: "Release] Notes",
         installedVersion: 1,
         availableVersion: 1,
         state: "installed",
@@ -342,7 +342,7 @@ describe("MessageBody", () => {
         message={{
           id: "message-markdown-tags",
           author: "bot",
-          body: "Ask **@[Old Research](agent:research)** to use @[Old Skill](skill:skill-1).",
+          body: `Ask **@[Old Research](agent:research)** to use ${serializeChatTagReference("skill", "Old] Skill", "skill)1")}.`,
           time: "10:00",
         }}
         bots={bots}
@@ -356,7 +356,7 @@ describe("MessageBody", () => {
 
     const agentTag = screen.getByRole("button", { name: "Open agent Research" });
     expect(agentTag.closest("strong")).toBeInTheDocument();
-    expect(screen.getByText("Release Notes").closest(".message-skill-tag")).toHaveTextContent("Skill Release Notes");
+    expect(screen.getByText("Release] Notes").closest(".message-skill-tag")).toHaveTextContent("Skill Release] Notes");
     expect(screen.queryByText("Old Research")).toBeNull();
     expect(screen.queryByText("Old Skill")).toBeNull();
     await fireEvent.click(agentTag);
