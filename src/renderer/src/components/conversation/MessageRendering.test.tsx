@@ -737,6 +737,39 @@ describe("MessageBody", () => {
     expect(container).toHaveTextContent("Use Kobalte, but keep a__literal");
   });
 
+  it.each([
+    ["***", "asterisk"],
+    ["___", "underscore"],
+  ])("hides an incomplete combined %s emphasis marker while streaming", async (marker, name) => {
+    const [body, setBody] = createSignal(`Use ${marker}Kobal`);
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: `message-streaming-combined-${name}`,
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("Use Kobal");
+    expect(container).not.toHaveTextContent(marker);
+
+    setBody(`Use ${marker}Kobalte${marker}`);
+    setStreaming(false);
+
+    await waitFor(() => expect(screen.getByText("Kobalte").closest("strong, em")).not.toBeNull());
+    expect(container).not.toHaveTextContent(marker);
+  });
+
   it("cleans an opener before a completed inline token without changing its contents", () => {
     const { container } = render(() => (
       <MessageBody
@@ -761,27 +794,30 @@ describe("MessageBody", () => {
     expect(screen.getByRole("link", { name: "label **literal" })).toBeInTheDocument();
   });
 
-  it.each(["Use **", "Use __"])("hides a strong marker at the end of a streaming chunk", (body) => {
-    const { container } = render(() => (
-      <MessageBody
-        message={{
-          id: `message-streaming-marker-${body.at(-1)}`,
-          author: "bot",
-          body,
-          time: "10:00",
-          streaming: true,
-        }}
-        bots={bots}
-        onSelectAgent={vi.fn()}
-        onOpenLink={vi.fn()}
-        onPreview={vi.fn()}
-        onAttachmentAction={vi.fn()}
-      />
-    ));
+  it.each(["Use **", "Use __", "Use ***", "Use ___"])(
+    "hides an emphasis marker at the end of a streaming chunk",
+    (body) => {
+      const { container } = render(() => (
+        <MessageBody
+          message={{
+            id: `message-streaming-marker-${body.at(-1)}`,
+            author: "bot",
+            body,
+            time: "10:00",
+            streaming: true,
+          }}
+          bots={bots}
+          onSelectAgent={vi.fn()}
+          onOpenLink={vi.fn()}
+          onPreview={vi.fn()}
+          onAttachmentAction={vi.fn()}
+        />
+      ));
 
-    expect(container).toHaveTextContent("Use");
-    expect(container).not.toHaveTextContent(body.slice(-2));
-  });
+      expect(container).toHaveTextContent("Use");
+      expect(container).not.toHaveTextContent(body.trim().slice(4));
+    },
+  );
 
   it("keeps earlier text unchanged while a structured block streams", () => {
     render(() => (

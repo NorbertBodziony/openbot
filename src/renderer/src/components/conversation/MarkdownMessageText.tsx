@@ -513,7 +513,8 @@ function hideIncompleteStrongMarker(body: string): string {
   const characters = [...body];
   const markerIndex = incompleteStrongMarkerIndex(characters);
   if (markerIndex === undefined) return body;
-  characters.splice(markerIndex, 2);
+  const markerLength = characters[markerIndex + 2] === characters[markerIndex] ? 3 : 2;
+  characters.splice(markerIndex, markerLength);
   return characters.join("");
 }
 
@@ -548,7 +549,12 @@ function incompleteStrongMarkerIndex(
     while (characters[runEnd] === delimiter) runEnd += 1;
     const previous = characters[index - 1];
     const next = characters[runEnd];
-    if (runEnd - index === 2 && eligible(index, runEnd) && canOpenStrongDelimiter(delimiter, previous, next)) {
+    const runLength = runEnd - index;
+    if (
+      (runLength === 2 || runLength === 3) &&
+      eligible(index, runEnd) &&
+      canOpenStrongDelimiter(delimiter, previous, next)
+    ) {
       markerIndex = index;
     }
     index = runEnd;
