@@ -107,6 +107,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   readonly #threads = new Map<string, ThreadRuntime>();
   readonly #pendingServerRequests = new Map<RequestId, PendingServerRequest>();
   readonly #modelEffortSupport = new Map<string, boolean>();
+  readonly #modelSdkValues = new Map<string, string>();
   #running = false;
 
   constructor(cli: ClaudeCliInfo, createQuery: QueryFactory = query) {
@@ -245,7 +246,11 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         models.set(id, model);
       }
       this.#modelEffortSupport.clear();
-      for (const [id, model] of models) this.#modelEffortSupport.set(id, model.supportsEffort !== false);
+      this.#modelSdkValues.clear();
+      for (const [id, model] of models) {
+        this.#modelEffortSupport.set(id, model.supportsEffort !== false);
+        this.#modelSdkValues.set(id, model.value.trim() || id);
+      }
       return [...models.entries()].map(([id, model]) => {
         const discoveredReasoningEfforts = [
           ...new Set((model.supportedEffortLevels ?? []).filter((effort) => isOneOf(CLAUDE_EFFORTS, effort))),
@@ -308,7 +313,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       options: {
         cwd: config.cwd,
         pathToClaudeCodeExecutable: this.#cli.executable,
-        ...(config.model ? { model: normalizeClaudeModel(config.model) } : {}),
+        ...(config.model ? { model: this.#sdkModel(config.model) } : {}),
         ...(config.effort && supportsEffort ? { effort: normalizeClaudeEffort(config.effort) } : {}),
         ...(resume ? { resume: threadId } : { sessionId: threadId }),
         systemPrompt: {
@@ -347,12 +352,13 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const requestedModel = getString(params, "model");
     const modelChanged = Boolean(requestedModel && requestedModel !== runtime.config.model);
     if (requestedModel && modelChanged) {
-      await runtime.query.setModel(normalizeClaudeModel(requestedModel));
+      await runtime.query.setModel(this.#sdkModel(requestedModel));
       runtime.config.model = requestedModel;
     }
     const requestedEffort = getString(params, "effort");
     const selectedEffort = requestedEffort ?? runtime.config.effort;
     if (!this.#modelSupportsEffort(runtime.config.model)) {
+      if (runtime.appliedEffort !== undefined) await runtime.query.setMaxThinkingTokens(null);
       runtime.appliedEffort = undefined;
     } else if (selectedEffort && (modelChanged || selectedEffort !== runtime.appliedEffort)) {
       await runtime.query.setMaxThinkingTokens(thinkingTokens(selectedEffort));
@@ -743,7 +749,11 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
   #modelSupportsEffort(model?: string): boolean {
     if (!model) return true;
-    return this.#modelEffortSupport.get(normalizeClaudeModel(model)) !== false;
+    return this.#modelEffortSupport.get(model) !== false;
+  }
+
+  #sdkModel(model: string): string {
+    return this.#modelSdkValues.get(model) ?? normalizeClaudeModel(model);
   }
 }
 

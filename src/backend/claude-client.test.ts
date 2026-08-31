@@ -250,6 +250,50 @@ fi
     expect(query.closed).toBe(true);
   });
 
+  it("uses alias-only discovery values for Claude SDK model selection", async () => {
+    root = await mkdtemp(join(tmpdir(), "openbot-claude-model-alias-"));
+    const discoveryQuery = new TestQuery(new TestQueue<TestStreamMessage>(), [
+      {
+        value: "sonnet",
+        displayName: "Claude Sonnet",
+        description: "Balanced",
+        supportsEffort: true,
+        supportedEffortLevels: ["medium", "high"],
+      },
+    ]);
+    const initialQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const switchingQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const queries = [discoveryQuery, initialQuery, switchingQuery];
+    let initialOptions: DynamicRecord | null = null;
+    const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.251" }, (params) => {
+      const next = queries.shift();
+      if (!next) throw new Error("Unexpected Claude query.");
+      if (next === initialQuery && isDynamicRecord(params.options)) initialOptions = params.options;
+      return next;
+    });
+    client.start();
+
+    await expect(client.request("model/list", {}, decodeModelListResponse)).resolves.toEqual({
+      data: [expect.objectContaining({ model: "sonnet" })],
+    });
+    await client.request("thread/start", { cwd: root, model: "sonnet", effort: "medium" }, decodeThreadResponse);
+    expect(initialOptions).toMatchObject({ model: "sonnet" });
+
+    const switchingThread = await client.request(
+      "thread/start",
+      { cwd: root, model: "claude-opus-5", effort: "medium" },
+      decodeThreadResponse,
+    );
+    await client.request(
+      "turn/start",
+      { threadId: switchingThread.thread.id, model: "sonnet", effort: "medium", input: [] },
+      decodeTurnResponse,
+    );
+    expect(switchingQuery.models).toEqual(["sonnet"]);
+
+    await client.stop();
+  });
+
   it("keeps neutral UI effort for unsupported models without sending effort to Claude", async () => {
     root = await mkdtemp(join(tmpdir(), "openbot-claude-effort-support-"));
     const discoveryQuery = new TestQuery(new TestQueue<TestStreamMessage>(), [
@@ -271,7 +315,8 @@ fi
     ]);
     const unsupportedQuery = new TestQuery(new TestQueue<TestStreamMessage>());
     const switchingQuery = new TestQuery(new TestQueue<TestStreamMessage>());
-    const queries = [discoveryQuery, unsupportedQuery, switchingQuery];
+    const clearingQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const queries = [discoveryQuery, unsupportedQuery, switchingQuery, clearingQuery];
     const runtimeOptions: DynamicRecord[] = [];
     const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.251" }, (params) => {
       const next = queries.shift();
@@ -315,8 +360,21 @@ fi
       { threadId: switchingThread.thread.id, model: "claude-sonnet-5", effort: "medium", input: [] },
       decodeTurnResponse,
     );
-    expect(switchingQuery.models).toEqual(["claude-sonnet-5"]);
+    expect(switchingQuery.models).toEqual(["sonnet"]);
     expect(switchingQuery.maxThinkingTokens).toEqual([8_000]);
+
+    const clearingThread = await client.request(
+      "thread/start",
+      { cwd: root, model: "claude-sonnet-5", effort: "medium" },
+      decodeThreadResponse,
+    );
+    await client.request(
+      "turn/start",
+      { threadId: clearingThread.thread.id, model: "claude-haiku-5", effort: "medium", input: [] },
+      decodeTurnResponse,
+    );
+    expect(clearingQuery.models).toEqual(["haiku"]);
+    expect(clearingQuery.maxThinkingTokens).toEqual([null]);
 
     await client.stop();
   });
