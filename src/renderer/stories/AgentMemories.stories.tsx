@@ -74,8 +74,8 @@ function AgentMemoriesStory(props: { memories: BotMemory[] }) {
         onUpdateBot={async (botId, updates) => {
           await mock.api.agent.updateBot({ botId, ...updates });
         }}
-        onUpdateRuntimeSettings={async (botId, settings) => {
-          await mock.api.agent.updateBot({ botId, ...settings });
+        onUpdateRuntimeSettings={async (botId, _settings, updates) => {
+          await mock.api.agent.updateBot({ botId, ...updates });
           return true;
         }}
         onSetAgentAvatar={async (botId, image) => {

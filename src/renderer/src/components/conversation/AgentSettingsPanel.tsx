@@ -45,6 +45,8 @@ export interface AgentRuntimeSettings {
   reasoningEffort: AgentReasoningEffort;
 }
 
+export type AgentRuntimeSettingsPatch = AgentRuntimeSettings | Pick<AgentRuntimeSettings, "reasoningEffort">;
+
 interface AgentSettingsPanelProps {
   bot: BotProfile;
   runtimeSettings: AgentRuntimeSettings;
@@ -59,7 +61,11 @@ interface AgentSettingsPanelProps {
   onClose: () => void;
   onWidthChange: (width: number) => void;
   onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
-  onUpdateRuntimeSettings: (botId: string, settings: AgentRuntimeSettings) => Promise<boolean>;
+  onUpdateRuntimeSettings: (
+    botId: string,
+    settings: AgentRuntimeSettings,
+    updates: AgentRuntimeSettingsPatch,
+  ) => Promise<boolean>;
   onSetAgentAvatar: (botId: string, image: AvatarImageInput | null) => Promise<void>;
   routineSelectionRequest?: RoutineSelectionRequest | null;
   onRoutineSelectionRequestHandled?: (nonce: number) => void;
@@ -191,10 +197,14 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     }
   }
 
-  async function saveRuntimeSettings(settings: AgentRuntimeSettings, botId = props.bot.id): Promise<boolean> {
+  async function saveRuntimeSettings(
+    settings: AgentRuntimeSettings,
+    updates: AgentRuntimeSettingsPatch,
+    botId = props.bot.id,
+  ): Promise<boolean> {
     setSaveError(null);
     try {
-      const saved = await props.onUpdateRuntimeSettings(botId, settings);
+      const saved = await props.onUpdateRuntimeSettings(botId, settings, updates);
       if (!saved && props.bot.id === botId) setSaveError("Could not save agent settings.");
       return saved;
     } catch (error) {
@@ -289,7 +299,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     setProvider(nextProvider);
     setModel(nextModel);
     setReasoning(nextReasoning);
-    if (await saveRuntimeSettings(settings, botId)) return;
+    if (await saveRuntimeSettings(settings, settings, botId)) return;
     if (
       props.bot.id !== botId ||
       provider() !== settings.provider ||
@@ -308,7 +318,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     const previousReasoning = reasoning();
     const settings = { provider: provider(), model: model(), reasoningEffort: nextReasoning };
     setReasoning(nextReasoning);
-    if (await saveRuntimeSettings(settings, botId)) return;
+    if (await saveRuntimeSettings(settings, { reasoningEffort: nextReasoning }, botId)) return;
     if (
       props.bot.id === botId &&
       provider() === settings.provider &&

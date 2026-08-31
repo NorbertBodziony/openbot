@@ -55,7 +55,7 @@ import {
   nextAgentActivityPresentation,
   ThinkingDisclosure,
 } from "./conversation/AgentActivity";
-import type { AgentRuntimeSettings } from "./conversation/AgentSettingsPanel";
+import type { AgentRuntimeSettings, AgentRuntimeSettingsPatch } from "./conversation/AgentSettingsPanel";
 import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
 import { attachmentReferenceTone } from "./conversation/AttachmentReference";
 import { ChatSearch } from "./conversation/ChatSearch";
@@ -874,6 +874,7 @@ function createConversationViewScope(props: ConversationProps) {
 
   async function saveRuntimeSettings(
     settings: AgentRuntimeSettings,
+    updates: AgentRuntimeSettingsPatch,
     errorMessage: string | null,
     targetBotId = props.bot?.id,
   ): Promise<boolean> {
@@ -893,7 +894,7 @@ function createConversationViewScope(props: ConversationProps) {
     let saved: boolean;
     try {
       if (previousSave) await previousSave;
-      saved = await saveBotPatch(settings, botId);
+      saved = await saveBotPatch(updates, botId);
     } finally {
       releaseSave();
       if (resources.runtimeSettingsSaveTails.get(botId) === saveTail) {
@@ -919,13 +920,17 @@ function createConversationViewScope(props: ConversationProps) {
     return false;
   }
 
-  async function updateRuntimeSettings(botId: string, settings: AgentRuntimeSettings): Promise<boolean> {
+  async function updateRuntimeSettings(
+    botId: string,
+    settings: AgentRuntimeSettings,
+    updates: AgentRuntimeSettingsPatch,
+  ): Promise<boolean> {
     if (props.bot?.id === botId) {
       setSettingsProvider(settings.provider);
       setSettingsModel(settings.model);
       setSettingsReasoning(settings.reasoningEffort);
     }
-    return saveRuntimeSettings(settings, null, botId);
+    return saveRuntimeSettings(settings, updates, null, botId);
   }
 
   async function selectModel(
@@ -944,6 +949,7 @@ function createConversationViewScope(props: ConversationProps) {
     setSettingsReasoning(reasoningEffort);
     if (!persist) return true;
     return saveRuntimeSettings(
+      { provider, model, reasoningEffort },
       { provider, model, reasoningEffort },
       reportComposerError ? "Could not change model. Try again." : null,
     );
@@ -964,7 +970,7 @@ function createConversationViewScope(props: ConversationProps) {
       reasoningEffort: effort,
     };
     setSettingsReasoning(effort);
-    await saveRuntimeSettings(settings, "Could not change effort. Try again.");
+    await saveRuntimeSettings(settings, { reasoningEffort: effort }, "Could not change effort. Try again.");
   }
 
   function updateScrollFade(element = scrollElement) {
