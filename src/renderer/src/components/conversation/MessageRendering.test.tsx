@@ -440,7 +440,10 @@ describe("MessageBody", () => {
         message={{
           id: "message-escaped-web-link",
           author: "bot",
-          body: String.raw`[OpenAI]\(<https://example.com/OpenBot/Shared/docs.xlsx>\)`,
+          body: [
+            String.raw`[OpenAI]\(<https://example.com/OpenBot/Shared/docs.xlsx>\)`,
+            String.raw`[Report]\(<//example.com/OpenBot/Shared/report.xlsx>\)`,
+          ].join("\n"),
           time: "10:00",
         }}
         bots={bots}
@@ -456,6 +459,8 @@ describe("MessageBody", () => {
     expect(screen.queryByRole("button", { name: /Open (?:shared|workspace) file/u })).toBeNull();
     expect(container).toHaveTextContent("[OpenAI](");
     expect(container).toHaveTextContent("https://example.com/OpenBot/Shared/docs.xlsx");
+    expect(container).toHaveTextContent("[Report](");
+    expect(container).toHaveTextContent("//example.com/OpenBot/Shared/report.xlsx");
     expect(onOpenSharedFile).not.toHaveBeenCalled();
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
   });
@@ -463,7 +468,7 @@ describe("MessageBody", () => {
   it("keeps escaped local-file syntax literal inside code and HTML", () => {
     const inlineCode = String.raw`[inline]\(<C:\tmp\inline.txt>\)`;
     const fencedCode = String.raw`[fenced]\(<C:\tmp\fenced.txt>\)`;
-    const html = String.raw`<div>[html]\(<C:\tmp\html.txt>\)</div>`;
+    const html = String.raw`<code>[html]\(<C:\tmp\html.txt>\)</code>`;
     const { container } = render(() => (
       <MarkdownMessageText
         body={[`Inline: \`${inlineCode}\``, "", "```md", fencedCode, "```", "", html].join("\n")}
@@ -477,7 +482,7 @@ describe("MessageBody", () => {
 
     expect(container).toHaveTextContent(inlineCode);
     expect(container).toHaveTextContent(fencedCode);
-    expect(container).toHaveTextContent(html);
+    expect(container).toHaveTextContent(String.raw`<code>[html](<C:\tmp\html.txt>)</code>`);
     expect(container.querySelector(".message-file-reference")).toBeNull();
   });
 

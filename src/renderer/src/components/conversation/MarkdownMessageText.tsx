@@ -493,6 +493,7 @@ function sharedFileTarget(value: string): string | null {
 }
 
 function normalizeEscapedLocalFileLinks(body: string): string {
+  if (!body.includes("\\(<")) return body;
   return marked
     .lexer(body, { breaks: true, gfm: true })
     .map((token) =>
@@ -502,7 +503,9 @@ function normalizeEscapedLocalFileLinks(body: string): string {
 }
 
 function normalizeEscapedLocalFileLinksInline(body: string): string {
+  if (!body.includes("\\(<")) return body;
   const tokens = marked.Lexer.lexInline(body, { breaks: true, gfm: true });
+  if (tokens.some(markdownTokenContainsHtml)) return body;
   let result = "";
   let candidate = "";
   const flushCandidate = () => {
@@ -530,6 +533,15 @@ function markdownTokenContainsProtectedLiteral(token: Token): boolean {
   return tokenIs(token, "text") && Boolean(token.tokens?.some(markdownTokenContainsProtectedLiteral));
 }
 
+function markdownTokenContainsHtml(token: Token): boolean {
+  if (token.type === "html") return true;
+  if (tokenIs(token, "strong")) return token.tokens.some(markdownTokenContainsHtml);
+  if (tokenIs(token, "em")) return token.tokens.some(markdownTokenContainsHtml);
+  if (tokenIs(token, "del")) return token.tokens.some(markdownTokenContainsHtml);
+  if (tokenIs(token, "link")) return token.tokens.some(markdownTokenContainsHtml);
+  return tokenIs(token, "text") && Boolean(token.tokens?.some(markdownTokenContainsHtml));
+}
+
 function normalizeEscapedLocalFileLinkCandidate(value: string): string {
   return value.replace(/(\[[^\]\r\n]+\])\\\(<([^<>\r\n]+)>(\\?\))/gu, (match, label: string, target: string) =>
     localFileTarget(target) ? `${label}(<${target}>)` : match,
@@ -538,6 +550,7 @@ function normalizeEscapedLocalFileLinkCandidate(value: string): string {
 
 function localFileTarget(value: string): string | null {
   const path = value.trim();
+  if (path.startsWith("//")) return null;
   const workspace = workspaceFileTarget(path);
   if (!workspace) return null;
   const shared = sharedFileTarget(path);
