@@ -43,6 +43,7 @@ import type {
   DraftAttachment,
   ImageGenerationInfo,
   ListRoutineRunsInput,
+  PublishHostedSiteInput,
   QueueDeliveryStatus,
   QueuedMessageReceipt,
   QueueSnapshot,
@@ -146,6 +147,13 @@ interface AgentBrowserHost {
   endControl(threadId: string, turnId: string): void;
   listTabs(): BrowserTab[];
   handleDynamicTool(params: DynamicToolCallParams): Promise<DynamicToolResult>;
+}
+
+interface AgentHostedSites {
+  list(): Promise<unknown[]>;
+  publish(input: PublishHostedSiteInput, allowedRoots: readonly string[]): Promise<unknown>;
+  replace(input: PublishHostedSiteInput & { siteId: string }, allowedRoots: readonly string[]): Promise<unknown>;
+  delete(siteId: string): Promise<void>;
 }
 
 interface PendingPrompt {
@@ -342,6 +350,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #bundledCodexExecutable: string | null | undefined;
   readonly #bundledClaudeExecutable: string | null | undefined;
   readonly #bundledGrokExecutable: string | null | undefined;
+  readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
+  readonly #hostedSites: AgentHostedSites | null;
   readonly #snapshots = new Map<string, ConversationSnapshot>();
   readonly #threadToBot = new Map<string, string>();
   readonly #loadedThreads = new Set<string>();
@@ -396,6 +406,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     bundledCodexExecutable: string | null | undefined = undefined,
     bundledClaudeExecutable: string | null | undefined = null,
     bundledGrokExecutable: string | null | undefined = null,
+    prepareBotWorkspace: (bot: BotSummary) => Promise<void> = async () => undefined,
+    hostedSites: AgentHostedSites | null = null,
   ) {
     super();
     this.#store = store;
@@ -410,6 +422,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#bundledCodexExecutable = bundledCodexExecutable;
     this.#bundledClaudeExecutable = bundledClaudeExecutable;
     this.#bundledGrokExecutable = bundledGrokExecutable;
+    this.#prepareBotWorkspace = prepareBotWorkspace;
+    this.#hostedSites = hostedSites;
     this.#preferredProvider = preferredProvider;
     this.#browser.onChanged((tabs, activeTabId) => {
       for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
@@ -610,6 +624,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (input.initialMessage.length > INPUT_LIMITS.messageText) throw new Error("Initial message is too long.");
     let bot = await this.#store.createBot(input);
     try {
+      await this.#prepareBotWorkspace(bot);
       if (this.#preferredProvider !== bot.provider) {
         const preferredDefault =
           this.#preferredProvider === "codex"
@@ -650,9 +665,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async createBotProfile(input: Omit<CreateBotInput, "initialMessage"> & { title?: string }): Promise<BotSummary> {
     let bot = await this.#store.createBot(input);
-    if (input.title) bot = await this.#store.updateBot({ botId: bot.id, title: input.title });
-    this.#emit({ type: "bots-changed", bots: this.#store.list() });
-    return bot;
+    try {
+      await this.#prepareBotWorkspace(bot);
+      if (input.title) bot = await this.#store.updateBot({ botId: bot.id, title: input.title });
+      this.#emit({ type: "bots-changed", bots: this.#store.list() });
+      return bot;
+    } catch (error) {
+      await this.#deleteBotData(bot);
+      throw error;
+    }
   }
 
   setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary {
@@ -2168,6 +2189,41 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const senderBotId = this.#threadToBot.get(params.threadId);
     if (!senderBotId) throw new Error("The sending OpenBot agent is unknown.");
 
+    if (params.tool === "list_sites") {
+      return openBotToolResult({ sites: await this.#requireHostedSites().list(), limit: 10 });
+    }
+
+    if (params.tool === "publish_site" || params.tool === "replace_site") {
+      const args = params.arguments;
+      if (!isRecord(args)) throw new Error("Site publishing arguments are required.");
+      const sourcePath = siteToolString(args.sourcePath, "sourcePath", INPUT_LIMITS.path);
+      const title = siteToolString(args.title, "title", 120);
+      const description = siteToolString(args.description, "description", 500);
+      if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
+        throw new Error("spaFallback must be a boolean.");
+      }
+      const bot = this.#store.list().find((candidate) => candidate.id === senderBotId);
+      if (!bot) throw new Error("The publishing OpenBot agent is unknown.");
+      const input = { sourcePath, title, description, spaFallback: args.spaFallback === true };
+      const roots = [bot.workspacePath, this.#store.sharedRoot];
+      const site =
+        params.tool === "publish_site"
+          ? await this.#requireHostedSites().publish(input, roots)
+          : await this.#requireHostedSites().replace(
+              { ...input, siteId: siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier) },
+              roots,
+            );
+      return openBotToolResult(site);
+    }
+
+    if (params.tool === "delete_site") {
+      const args = params.arguments;
+      if (!isRecord(args)) throw new Error("Site deletion arguments are required.");
+      const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
+      await this.#requireHostedSites().delete(siteId);
+      return openBotToolResult({ deleted: true, siteId });
+    }
+
     if (params.tool === "attach_files_to_response") {
       const args = params.arguments;
       if (!isRecord(args) || !Array.isArray(args.paths)) throw new Error("paths must be an array of local files.");
@@ -2477,6 +2533,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       success: true,
       contentItems: [{ type: "inputText", text: JSON.stringify(receipt) }],
     };
+  }
+
+  #requireHostedSites(): AgentHostedSites {
+    if (!this.#hostedSites) throw new Error("OpenBot site hosting is unavailable.");
+    return this.#hostedSites;
   }
 
   async #attachFilesToResponse(
@@ -4450,6 +4511,12 @@ function routineToolString(value: unknown, field: string, limit: number, require
   if (!isString(value) || !value.trim()) throw new Error(requiredMessage);
   if (value.length > limit) throw new Error(`${field} is too long.`);
   return value;
+}
+
+function siteToolString(value: unknown, field: string, limit: number): string {
+  if (!isString(value) || !value.trim()) throw new Error(`${field} is required.`);
+  if (value.length > limit) throw new Error(`${field} is too long.`);
+  return value.trim();
 }
 
 function routineToolSchedule(value: unknown): RoutineSchedule {

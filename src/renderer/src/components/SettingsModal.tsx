@@ -5,19 +5,28 @@ import type {
   AppInfo,
   AvatarImageInput,
   CentralAuthUser,
+  HostedSiteSummary,
+  HostedSitesDesktopApi,
   ProviderRuntimeStatus,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
 import { normalizeAccountName, validateProfileName } from "@openbot/contracts/validation";
-import { createEffect, createMemo, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { GeneralSettingsValue } from "../app-settings";
 import { normalizeAvatarFile } from "../avatar-image";
 import { presentUpdateStatus } from "../update-status";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 import { SettingsDialogShell } from "./SettingsDialogShell";
 import {
+  Badge,
   Button,
+  Card,
   CircleArrowDown,
+  CopyButton,
+  ExternalLink,
+  Field,
+  Folder,
+  Globe2,
   ImageRemoveButton,
   Input,
   Item,
@@ -36,6 +45,7 @@ import {
   SwitchField,
   Tabs,
   Text,
+  Trash2,
   UserAvatar,
   UserRound,
 } from "./ui";
@@ -57,10 +67,11 @@ export interface SettingsModalProps {
   onDownloadProvider?: (provider: AgentProviderId) => void | Promise<void>;
   onCancelProviderDownload?: (provider: AgentProviderId) => void | Promise<void>;
   onConnectProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  hostedSitesApi?: HostedSitesDesktopApi;
   restoreFocusTarget?: HTMLElement | null;
 }
 
-type SettingsTab = "general" | "profile" | "updates";
+type SettingsTab = "general" | "profile" | "updates" | "hosted-sites";
 
 type SettingsNavItem = { value: SettingsTab; label: string; icon: typeof Settings };
 
@@ -68,12 +79,14 @@ const navItems: ReadonlyArray<SettingsNavItem> = [
   { value: "general", label: "General", icon: Settings },
   { value: "profile", label: "Profile", icon: UserRound },
   { value: "updates", label: "Updates", icon: CircleArrowDown },
+  { value: "hosted-sites", label: "Hosted sites", icon: Globe2 },
 ];
 
 const tabDetails: Record<SettingsTab, { title: string; description: string }> = {
   general: { title: "General", description: "Control how OpenBot behaves on this computer." },
   profile: { title: "Profile", description: "Manage how you appear in OpenBot." },
   updates: { title: "Updates", description: "Keep OpenBot current on this computer." },
+  "hosted-sites": { title: "Hosted sites", description: "Publish and manage small static sites on openbot.site." },
 };
 
 const linkTargetOptions: GeneralSettingsValue["externalLinkTarget"][] = ["Default browser", "OpenBot"];
@@ -91,6 +104,13 @@ export function SettingsModal(props: SettingsModalProps) {
   const [avatarError, setAvatarError] = createSignal<string | null>(null);
   const [updateError, setUpdateError] = createSignal<string | null>(null);
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(null);
+  const [hostedSites, setHostedSites] = createSignal<HostedSiteSummary[]>([]);
+  const [hostedSitesLoading, setHostedSitesLoading] = createSignal(false);
+  const [hostedSitesError, setHostedSitesError] = createSignal<string | null>(null);
+  const [hostingBusy, setHostingBusy] = createSignal(false);
+  const [siteDirectory, setSiteDirectory] = createSignal("");
+  const [siteTitle, setSiteTitle] = createSignal("");
+  const [siteDescription, setSiteDescription] = createSignal("");
   let modalElement: HTMLElement | undefined;
   let avatarFileInput: HTMLInputElement | undefined;
   let profileNameInput: HTMLInputElement | undefined;
@@ -195,7 +215,9 @@ export function SettingsModal(props: SettingsModalProps) {
       return activeTab();
     },
     onChange(value: string) {
-      if (value === "general" || value === "profile" || value === "updates") setActiveTab(value);
+      if (value === "general" || value === "profile" || value === "updates" || value === "hosted-sites") {
+        setActiveTab(value);
+      }
     },
     orientation: "vertical" as const,
     activationMode: "automatic" as const,
@@ -277,6 +299,89 @@ export function SettingsModal(props: SettingsModalProps) {
     } finally {
       setAvatarBusy(false);
       if (avatarFileInput) avatarFileInput.value = "";
+    }
+  }
+
+  async function loadHostedSites(): Promise<void> {
+    if (!props.hostedSitesApi || hostedSitesLoading()) return;
+    setHostedSitesLoading(true);
+    setHostedSitesError(null);
+    try {
+      setHostedSites(await props.hostedSitesApi.list());
+    } catch (error) {
+      setHostedSitesError(error instanceof Error ? error.message : "Could not load hosted sites.");
+    } finally {
+      setHostedSitesLoading(false);
+    }
+  }
+
+  createEffect(
+    () => props.open && activeTab() === "hosted-sites",
+    (shouldLoad) => {
+      if (shouldLoad) void loadHostedSites();
+    },
+  );
+
+  async function chooseSiteDirectory(): Promise<void> {
+    if (!props.hostedSitesApi || hostingBusy()) return;
+    const path = await props.hostedSitesApi.chooseDirectory();
+    if (path) setSiteDirectory(path);
+  }
+
+  async function publishSite(): Promise<void> {
+    if (!props.hostedSitesApi || hostingBusy()) return;
+    setHostingBusy(true);
+    setHostedSitesError(null);
+    try {
+      await props.hostedSitesApi.publish({
+        sourcePath: siteDirectory(),
+        title: siteTitle(),
+        description: siteDescription(),
+      });
+      setSiteDirectory("");
+      setSiteTitle("");
+      setSiteDescription("");
+      await loadHostedSites();
+    } catch (error) {
+      setHostedSitesError(error instanceof Error ? error.message : "Could not publish the site.");
+    } finally {
+      setHostingBusy(false);
+    }
+  }
+
+  async function replaceSite(site: HostedSiteSummary): Promise<void> {
+    if (!props.hostedSitesApi || hostingBusy()) return;
+    const sourcePath = await props.hostedSitesApi.chooseDirectory();
+    if (!sourcePath) return;
+    setHostingBusy(true);
+    setHostedSitesError(null);
+    try {
+      await props.hostedSitesApi.replace({
+        siteId: site.id,
+        sourcePath,
+        title: site.title,
+        description: site.description,
+      });
+      await loadHostedSites();
+    } catch (error) {
+      setHostedSitesError(error instanceof Error ? error.message : "Could not replace the site.");
+    } finally {
+      setHostingBusy(false);
+    }
+  }
+
+  async function deleteSite(site: HostedSiteSummary): Promise<void> {
+    if (!props.hostedSitesApi || hostingBusy()) return;
+    if (!window.confirm(`Delete ${site.hostname}? This address will immediately return 410 Gone.`)) return;
+    setHostingBusy(true);
+    setHostedSitesError(null);
+    try {
+      await props.hostedSitesApi.delete({ siteId: site.id });
+      await loadHostedSites();
+    } catch (error) {
+      setHostedSitesError(error instanceof Error ? error.message : "Could not delete the site.");
+    } finally {
+      setHostingBusy(false);
     }
   }
 
@@ -620,7 +725,130 @@ export function SettingsModal(props: SettingsModalProps) {
             </ItemGroup>
           </SettingsSection>
         </Tabs.Content>
+        <Tabs.Content value="hosted-sites" class="settings-modal-tab-panel" data-tab="hosted-sites">
+          <SettingsSection title="Usage">
+            <Card class="settings-modal-card hosted-sites-summary-card">
+              <div>
+                <span class="settings-modal-row-title">
+                  {hostedSites().filter((site) => site.status === "active" || site.status === "blocked").length} / 10
+                </span>
+                <Text tone="muted" variant="caption">
+                  active sites · each site expires 30 days after its latest publication
+                </Text>
+              </div>
+              <Button variant="outline" size="sm" loading={hostedSitesLoading()} onClick={() => void loadHostedSites()}>
+                Refresh
+              </Button>
+            </Card>
+          </SettingsSection>
+
+          <SettingsSection title="Publish a site">
+            <Card class="settings-modal-card hosted-sites-publish-card">
+              <Field label="Local directory" description="Vanilla files or an existing Astro static project.">
+                <div class="hosted-sites-directory-field">
+                  <Input value={siteDirectory()} readonly placeholder="Choose a directory" />
+                  <Button variant="outline" size="sm" onClick={() => void chooseSiteDirectory()}>
+                    <Folder aria-hidden="true" /> Choose
+                  </Button>
+                </div>
+              </Field>
+              <Field label="Title">
+                <Input value={siteTitle()} onValueChange={setSiteTitle} maxlength={120} />
+              </Field>
+              <Field label="Description">
+                <Input value={siteDescription()} onValueChange={setSiteDescription} maxlength={500} />
+              </Field>
+              <div class="hosted-sites-publish-actions">
+                <Text tone="muted" variant="caption">
+                  OpenBot uses vanilla files by default and detects Astro static projects automatically.
+                </Text>
+                <Button
+                  size="sm"
+                  loading={hostingBusy()}
+                  disabled={!siteDirectory() || !siteTitle().trim() || !siteDescription().trim()}
+                  onClick={() => void publishSite()}
+                >
+                  Publish
+                </Button>
+              </div>
+            </Card>
+          </SettingsSection>
+
+          <SettingsSection title="Your sites">
+            <Show when={props.hostedSitesApi} fallback={<Text tone="muted">Site hosting is unavailable.</Text>}>
+              <Text tone="muted" variant="caption">
+                Replace keeps the same address and resets expiry to 30 days.
+              </Text>
+              <Show when={hostedSitesError()}>{(message) => <p class="settings-modal-error">{message()}</p>}</Show>
+              <Show
+                when={hostedSites().length > 0}
+                fallback={<Text tone="muted">You do not have a hosted site yet.</Text>}
+              >
+                <ItemGroup class="settings-modal-card hosted-sites-list" surface="subtle">
+                  <For each={hostedSites()}>
+                    {(site) => (
+                      <Item class="hosted-sites-row">
+                        <ItemContent>
+                          <ItemTitle>{site.title}</ItemTitle>
+                          <ItemDescription>{site.hostname}</ItemDescription>
+                          <Text tone="muted" variant="caption">
+                            {site.framework === "astro" ? "Astro static" : "Vanilla"} · {formatBytes(site.size)} ·{" "}
+                            {site.fileCount} files ·{" "}
+                            {site.expiresAt ? `expires ${formatDate(site.expiresAt)}` : site.status}
+                          </Text>
+                        </ItemContent>
+                        <ItemActions class="hosted-sites-actions">
+                          <Badge tone={site.status === "active" ? "success" : "neutral"}>{site.status}</Badge>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Open ${site.hostname}`}
+                            onClick={() => void window.openbot.openUrl(site.url)}
+                          >
+                            <ExternalLink aria-hidden="true" />
+                          </Button>
+                          <CopyButton
+                            iconOnly
+                            size="sm"
+                            variant="ghost"
+                            value={site.url}
+                            aria-label={`Copy ${site.hostname} URL`}
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={hostingBusy() || site.status !== "active"}
+                            onClick={() => void replaceSite(site)}
+                          >
+                            Replace
+                          </Button>
+                          <Button
+                            variant="destructive-ghost"
+                            size="icon-sm"
+                            aria-label={`Delete ${site.hostname}`}
+                            disabled={hostingBusy()}
+                            onClick={() => void deleteSite(site)}
+                          >
+                            <Trash2 aria-hidden="true" />
+                          </Button>
+                        </ItemActions>
+                      </Item>
+                    )}
+                  </For>
+                </ItemGroup>
+              </Show>
+            </Show>
+          </SettingsSection>
+        </Tabs.Content>
       </SettingsDialogShell>
     </Tabs.Root>
   );
+}
+
+function formatBytes(value: number): string {
+  return value < 1024 ? `${value} B` : `${Math.max(0.1, value / 1024).toFixed(1)} KB`;
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value));
 }

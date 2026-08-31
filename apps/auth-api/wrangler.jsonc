@@ -34,7 +34,8 @@
     "EMAIL_FROM": "hello@openbot.run",
     "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
     "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
-    "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run"
+    "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run",
+    "SITE_PUBLISH_ENABLED": "true"
   },
   "d1_databases": [
     {
@@ -54,6 +55,11 @@
       "binding": "SKILLS",
       "bucket_name": "openbot-skills",
       "preview_bucket_name": "openbot-skills-test"
+    },
+    {
+      "binding": "SITES",
+      "bucket_name": "openbot-sites",
+      "preview_bucket_name": "openbot-sites-test"
     }
   ],
   "ratelimits": [
@@ -93,7 +99,8 @@
         "EMAIL_FROM": "hello@openbot.run",
         "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
         "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
-        "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run"
+        "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run",
+        "SITE_PUBLISH_ENABLED": "true"
       },
       "d1_databases": [
         {
@@ -111,6 +118,10 @@
         {
           "binding": "SKILLS",
           "bucket_name": "openbot-skills-test"
+        },
+        {
+          "binding": "SITES",
+          "bucket_name": "openbot-sites-test"
         }
       ],
       "ratelimits": [
@@ -150,7 +161,8 @@
         "EMAIL_FROM": "hello@openbot.run",
         "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
         "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
-        "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run"
+        "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run",
+        "SITE_PUBLISH_ENABLED": "true"
       },
       "d1_databases": [
         {
@@ -168,6 +180,10 @@
         {
           "binding": "SKILLS",
           "bucket_name": "openbot-skills-test"
+        },
+        {
+          "binding": "SITES",
+          "bucket_name": "openbot-sites-test"
         }
       ],
       "ratelimits": [

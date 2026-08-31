@@ -1,0 +1,940 @@
+import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { sha256 } from "./crypto";
+import {
+  expectedFile,
+  HOSTED_SITE_LIMITS,
+  type HostedSiteFileManifest,
+  HostedSiteInputError,
+  type HostedSiteUploadRequest,
+} from "./hosted-site-contract";
+
+interface SiteRow {
+  id: string;
+  user_id: string;
+  hostname: string;
+  title: string;
+  description: string;
+  framework: "vanilla" | "astro";
+  spa_fallback: number;
+  status: "uploading" | "active" | "deleted" | "expired" | "blocked";
+  current_deployment_id: string | null;
+  created_at: number;
+  updated_at: number;
+  expires_at: number | null;
+}
+
+interface DeploymentRow {
+  id: string;
+  site_id: string;
+  user_id: string;
+  status: "uploading" | "activating" | "active" | "superseded" | "abandoned";
+  manifest_json: string;
+  file_count: number;
+  total_bytes: number;
+  upload_expires_at: number;
+  site_title: string;
+  site_description: string;
+  site_framework: "vanilla" | "astro";
+  site_spa_fallback: number;
+}
+
+export interface HostedSiteSummary {
+  id: string;
+  hostname: string;
+  url: string;
+  title: string;
+  description: string;
+  framework: "vanilla" | "astro";
+  status: SiteRow["status"];
+  fileCount: number;
+  size: number;
+  expiresAt: string | null;
+  updatedAt: string;
+}
+
+export interface HostedSiteUploadSession {
+  uploadId: string;
+  site: HostedSiteSummary;
+  expiresAt: string;
+}
+
+interface RouteManifest {
+  version: 1;
+  status: "active" | "deleted" | "expired" | "blocked";
+  siteId: string;
+  deploymentId: string | null;
+  expiresAt: number | null;
+  spaFallback: boolean;
+  files: Record<string, { key: string; size: number; mimeType: string }>;
+}
+
+export class HostedSiteService {
+  constructor(
+    private readonly database: D1Database,
+    private readonly bucket: R2Bucket,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  async list(userId: string): Promise<HostedSiteSummary[]> {
+    const rows = await this.database
+      .prepare(
+        `SELECT s.*, COALESCE(d.file_count, 0) AS file_count, COALESCE(d.total_bytes, 0) AS total_bytes
+         FROM hosted_sites s LEFT JOIN site_deployments d ON d.id = s.current_deployment_id
+         WHERE s.user_id = ? AND s.status != 'uploading'
+         ORDER BY s.updated_at DESC`,
+      )
+      .bind(userId)
+      .all<SiteRow & { file_count: number; total_bytes: number }>();
+    return rows.results.map(mapSite);
+  }
+
+  async createUpload(
+    userId: string,
+    request: HostedSiteUploadRequest,
+    idempotencyKey: string,
+  ): Promise<HostedSiteUploadSession> {
+    const prior = await this.deploymentByIdempotency(userId, idempotencyKey);
+    if (prior) return this.uploadSession(prior);
+    const now = this.now();
+    await this.abandonExpiredUploads(userId, now);
+    const concurrent = await this.database
+      .prepare(
+        "SELECT COUNT(*) AS count FROM site_deployments WHERE user_id = ? AND status = 'uploading' AND upload_expires_at > ?",
+      )
+      .bind(userId, now)
+      .first<{ count: number }>();
+    if ((concurrent?.count ?? 0) >= HOSTED_SITE_LIMITS.concurrentUploads) {
+      throw new HostedSiteInputError(429, "upload_session_limit", "Finish or wait for an existing upload first.");
+    }
+
+    const deploymentId = crypto.randomUUID();
+    const uploadExpiresAt = now + HOSTED_SITE_LIMITS.uploadLifetimeMs;
+    const totalBytes = request.files.reduce((sum, file) => sum + file.size, 0);
+    if (request.siteId) {
+      const site = await this.requireOwnedSite(userId, request.siteId);
+      const insert = await this.database
+        .prepare(
+          `INSERT INTO site_deployments(
+            id, site_id, user_id, status, file_count, total_bytes, manifest_json,
+            site_title, site_description, site_framework, site_spa_fallback,
+            idempotency_key, created_at, upload_expires_at
+          ) SELECT ?, ?, ?, 'uploading', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE (SELECT COUNT(*) FROM site_deployments
+                   WHERE user_id = ? AND status = 'uploading' AND upload_expires_at > ?) < ?`,
+        )
+        .bind(
+          deploymentId,
+          site.id,
+          userId,
+          request.files.length,
+          totalBytes,
+          JSON.stringify(request.files),
+          request.title,
+          request.description,
+          request.framework,
+          request.spaFallback ? 1 : 0,
+          idempotencyKey,
+          now,
+          uploadExpiresAt,
+          userId,
+          now,
+          HOSTED_SITE_LIMITS.concurrentUploads,
+        )
+        .run();
+      if (insert.meta.changes !== 1) {
+        throw new HostedSiteInputError(429, "upload_session_limit", "Finish or wait for an existing upload first.");
+      }
+      return this.uploadSession(await this.requireDeployment(userId, deploymentId));
+    }
+
+    const siteId = crypto.randomUUID();
+    const hostname = await this.uniqueHostname(`${request.title} ${request.description}`);
+    const statements = [
+      this.database
+        .prepare(
+          `INSERT INTO hosted_sites(
+             id, user_id, hostname, title, description, framework, spa_fallback, status, created_at, updated_at
+           )
+           SELECT ?, ?, ?, ?, ?, ?, ?, 'uploading', ?, ?
+           WHERE (SELECT COUNT(*) FROM hosted_sites
+                  WHERE user_id = ? AND status IN ('uploading', 'active', 'blocked')
+                    AND (expires_at IS NULL OR expires_at > ?)) < ?
+             AND (SELECT COUNT(*) FROM site_deployments
+                  WHERE user_id = ? AND status = 'uploading' AND upload_expires_at > ?) < ?`,
+        )
+        .bind(
+          siteId,
+          userId,
+          hostname,
+          request.title,
+          request.description,
+          request.framework,
+          request.spaFallback ? 1 : 0,
+          now,
+          now,
+          userId,
+          now,
+          HOSTED_SITE_LIMITS.activeSites,
+          userId,
+          now,
+          HOSTED_SITE_LIMITS.concurrentUploads,
+        ),
+      this.database
+        .prepare(
+          `INSERT INTO site_deployments(
+            id, site_id, user_id, status, file_count, total_bytes, manifest_json,
+            site_title, site_description, site_framework, site_spa_fallback,
+            idempotency_key, created_at, upload_expires_at
+          ) SELECT ?, ?, ?, 'uploading', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE EXISTS (SELECT 1 FROM hosted_sites WHERE id = ? AND user_id = ?)
+              AND (SELECT COUNT(*) FROM site_deployments
+                   WHERE user_id = ? AND status = 'uploading' AND upload_expires_at > ?) < ?`,
+        )
+        .bind(
+          deploymentId,
+          siteId,
+          userId,
+          request.files.length,
+          totalBytes,
+          JSON.stringify(request.files),
+          request.title,
+          request.description,
+          request.framework,
+          request.spaFallback ? 1 : 0,
+          idempotencyKey,
+          now,
+          uploadExpiresAt,
+          siteId,
+          userId,
+          userId,
+          now,
+          HOSTED_SITE_LIMITS.concurrentUploads,
+        ),
+      this.database
+        .prepare(
+          `INSERT INTO site_hostname_reservations(hostname, created_at)
+           SELECT hostname, ? FROM hosted_sites WHERE id = ? AND user_id = ?`,
+        )
+        .bind(now, siteId, userId),
+    ];
+    const [siteInsert, deploymentInsert, hostnameReservation] = await this.database.batch(statements);
+    if (
+      siteInsert.meta.changes !== 1 ||
+      deploymentInsert.meta.changes !== 1 ||
+      hostnameReservation.meta.changes !== 1
+    ) {
+      const currentUploads = await this.database
+        .prepare(
+          "SELECT COUNT(*) AS count FROM site_deployments WHERE user_id = ? AND status = 'uploading' AND upload_expires_at > ?",
+        )
+        .bind(userId, now)
+        .first<{ count: number }>();
+      if ((currentUploads?.count ?? 0) >= HOSTED_SITE_LIMITS.concurrentUploads) {
+        throw new HostedSiteInputError(429, "upload_session_limit", "Finish or wait for an existing upload first.");
+      }
+      throw new HostedSiteInputError(409, "site_limit", "This account already has 10 active sites.");
+    }
+    return this.uploadSession(await this.requireDeployment(userId, deploymentId));
+  }
+
+  async uploadFile(userId: string, uploadId: string, path: string, request: Request): Promise<void> {
+    const deployment = await this.requireDeployment(userId, uploadId);
+    if (deployment.status !== "uploading" || deployment.upload_expires_at <= this.now()) {
+      throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
+    }
+    const files = parseManifest(deployment.manifest_json);
+    const file = expectedFile(files, path);
+    const contentLength = Number(request.headers.get("Content-Length"));
+    if (!Number.isSafeInteger(contentLength) || contentLength !== file.size) {
+      throw new HostedSiteInputError(400, "size_mismatch", "The file size does not match the manifest.");
+    }
+    const contentType = request.headers.get("Content-Type")?.split(";", 1)[0]?.trim().toLowerCase();
+    if (contentType !== file.mimeType) {
+      throw new HostedSiteInputError(400, "mime_mismatch", "The file type does not match the manifest.");
+    }
+    if (!request.body) throw new HostedSiteInputError(400, "missing_file", "The file body is missing.");
+    const key = assetKey(deployment.site_id, deployment.id, file.path);
+    await this.bucket.put(key, request.body, { httpMetadata: { contentType: file.mimeType } });
+    const stored = await this.bucket.head(key);
+    if (!stored || stored.size !== file.size) {
+      await this.bucket.delete(key);
+      throw new HostedSiteInputError(400, "size_mismatch", "The uploaded file size is invalid.");
+    }
+    await this.database
+      .prepare(
+        `INSERT INTO site_upload_files(deployment_id, path, size, mime_type, uploaded_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(deployment_id, path) DO UPDATE SET
+           size = excluded.size, mime_type = excluded.mime_type, uploaded_at = excluded.uploaded_at`,
+      )
+      .bind(deployment.id, file.path, file.size, file.mimeType, this.now())
+      .run();
+  }
+
+  async activate(userId: string, uploadId: string, idempotencyKey: string): Promise<HostedSiteSummary> {
+    const receipt = await this.receipt(userId, idempotencyKey, "activate");
+    if (receipt) return parseStoredSiteSummary(receipt);
+    const deployment = await this.requireDeployment(userId, uploadId);
+    const now = this.now();
+    const site = await this.requireOwnedSite(userId, deployment.site_id, true);
+    if (site.status === "blocked") throw new HostedSiteInputError(409, "site_blocked", "This site is blocked.");
+    if (deployment.status === "active") {
+      const summary = await this.summaryForSite(userId, deployment.site_id);
+      await this.saveReceipt(userId, idempotencyKey, "activate", site.id, summary, now);
+      return summary;
+    }
+    if (deployment.status === "activating") {
+      const publishedExpiry = await this.publishedRouteExpiry(site, deployment);
+      if (publishedExpiry !== null) {
+        return this.finalizeActivation(userId, site, deployment, publishedExpiry, idempotencyKey, now);
+      }
+      await this.database
+        .prepare("UPDATE site_deployments SET status = 'uploading' WHERE id = ? AND status = 'activating'")
+        .bind(deployment.id)
+        .run();
+      throw new HostedSiteInputError(409, "activation_retry", "The activation was interrupted. Retry it.");
+    }
+    if (deployment.status !== "uploading" || deployment.upload_expires_at <= now) {
+      throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
+    }
+    const uploaded = await this.database
+      .prepare("SELECT path, size, mime_type FROM site_upload_files WHERE deployment_id = ?")
+      .bind(deployment.id)
+      .all<{ path: string; size: number; mime_type: string }>();
+    const files = parseManifest(deployment.manifest_json);
+    if (
+      uploaded.results.length !== files.length ||
+      files.some(
+        (file) =>
+          !uploaded.results.some(
+            (item) => item.path === file.path && item.size === file.size && item.mime_type === file.mimeType,
+          ),
+      )
+    ) {
+      throw new HostedSiteInputError(409, "upload_incomplete", "Upload every manifest file before activation.");
+    }
+    const expiresAt = now + HOSTED_SITE_LIMITS.siteLifetimeMs;
+    const route: RouteManifest = {
+      version: 1,
+      status: "active",
+      siteId: site.id,
+      deploymentId: deployment.id,
+      expiresAt,
+      spaFallback: deployment.site_spa_fallback === 1,
+      files: Object.fromEntries(
+        files.map((file) => [
+          file.path,
+          { key: assetKey(site.id, deployment.id, file.path), size: file.size, mimeType: file.mimeType },
+        ]),
+      ),
+    };
+    const claim = await this.database
+      .prepare("UPDATE site_deployments SET status = 'activating' WHERE id = ? AND status = 'uploading'")
+      .bind(deployment.id)
+      .run();
+    if (claim.meta.changes !== 1) {
+      throw new HostedSiteInputError(409, "activation_in_progress", "This upload is already being activated.");
+    }
+    let routePublished = false;
+    try {
+      await this.enforceActivationRate(userId, now);
+      await this.bucket.put(routeKey(site.hostname), JSON.stringify(route), {
+        httpMetadata: { contentType: "application/json" },
+      });
+      routePublished = true;
+      return await this.finalizeActivation(userId, site, deployment, expiresAt, idempotencyKey, now);
+    } catch (error) {
+      if (!routePublished) {
+        await this.database
+          .prepare("UPDATE site_deployments SET status = 'uploading' WHERE id = ? AND status = 'activating'")
+          .bind(deployment.id)
+          .run();
+      }
+      throw error;
+    }
+  }
+
+  async delete(userId: string, siteId: string, idempotencyKey: string): Promise<void> {
+    if (await this.receipt(userId, idempotencyKey, "delete")) return;
+    const site = await this.requireOwnedSite(userId, siteId, true);
+    const now = this.now();
+    const tombstone: RouteManifest = {
+      version: 1,
+      status: "deleted",
+      siteId: site.id,
+      deploymentId: null,
+      expiresAt: null,
+      spaFallback: false,
+      files: {},
+    };
+    await this.bucket.put(routeKey(site.hostname), JSON.stringify(tombstone), {
+      httpMetadata: { contentType: "application/json" },
+    });
+    await this.database.batch([
+      this.database
+        .prepare(
+          "UPDATE hosted_sites SET status = 'deleted', deleted_at = ?, expires_at = NULL, updated_at = ? WHERE id = ? AND user_id = ?",
+        )
+        .bind(now, now, site.id, userId),
+      this.database
+        .prepare(
+          "INSERT INTO site_audit_log(id, user_id, site_id, operation, created_at) VALUES (?, ?, ?, 'delete', ?)",
+        )
+        .bind(crypto.randomUUID(), userId, site.id, now),
+    ]);
+    await this.saveReceipt(userId, idempotencyKey, "delete", site.id, { deleted: true }, now);
+    if (site.current_deployment_id) await this.deleteDeployment(site.id, site.current_deployment_id);
+  }
+
+  async report(hostname: string, reason: string, details: string | null, sourceIp: string): Promise<void> {
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.openbot\.site$/u.test(hostname)) {
+      throw new HostedSiteInputError(400, "invalid_hostname", "The hosted site address is invalid.");
+    }
+    if (!["abuse", "malware", "phishing", "copyright", "other"].includes(reason)) {
+      throw new HostedSiteInputError(400, "invalid_reason", "Choose a valid report reason.");
+    }
+    if (details !== null && details.length > 1_000) {
+      throw new HostedSiteInputError(400, "invalid_details", "Report details are too long.");
+    }
+    await this.database
+      .prepare(
+        `INSERT INTO site_reports(id, hostname, reason, details, source_ip_hash, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(crypto.randomUUID(), hostname, reason, details, await sourceIpHash(sourceIp), this.now())
+      .run();
+  }
+
+  async setBlocked(siteId: string, blocked: boolean): Promise<void> {
+    const site = await this.database.prepare("SELECT * FROM hosted_sites WHERE id = ?").bind(siteId).first<SiteRow>();
+    if (!site) throw new HostedSiteInputError(409, "site_not_found", "The site was not found.");
+    const now = this.now();
+    let route: RouteManifest;
+    let status: SiteRow["status"];
+    if (blocked) {
+      route = {
+        version: 1,
+        status: "blocked",
+        siteId: site.id,
+        deploymentId: null,
+        expiresAt: site.expires_at,
+        spaFallback: false,
+        files: {},
+      };
+      status = "blocked";
+    } else if (!site.current_deployment_id || !site.expires_at || site.expires_at <= now) {
+      route = {
+        version: 1,
+        status: "expired",
+        siteId: site.id,
+        deploymentId: null,
+        expiresAt: site.expires_at,
+        spaFallback: false,
+        files: {},
+      };
+      status = "expired";
+    } else {
+      const deployment = await this.database
+        .prepare("SELECT * FROM site_deployments WHERE id = ? AND site_id = ?")
+        .bind(site.current_deployment_id, site.id)
+        .first<DeploymentRow>();
+      if (!deployment) throw new Error("The active deployment is missing.");
+      const files = parseManifest(deployment.manifest_json);
+      route = {
+        version: 1,
+        status: "active",
+        siteId: site.id,
+        deploymentId: deployment.id,
+        expiresAt: site.expires_at,
+        spaFallback: deployment.site_spa_fallback === 1,
+        files: Object.fromEntries(
+          files.map((file) => [
+            file.path,
+            { key: assetKey(site.id, deployment.id, file.path), size: file.size, mimeType: file.mimeType },
+          ]),
+        ),
+      };
+      status = "active";
+    }
+    await this.bucket.put(routeKey(site.hostname), JSON.stringify(route), {
+      httpMetadata: { contentType: "application/json" },
+    });
+    await this.database.batch([
+      this.database
+        .prepare("UPDATE hosted_sites SET status = ?, blocked_at = ?, updated_at = ? WHERE id = ?")
+        .bind(status, blocked ? now : null, now, site.id),
+      this.database
+        .prepare("INSERT INTO site_audit_log(id, user_id, site_id, operation, created_at) VALUES (?, NULL, ?, ?, ?)")
+        .bind(crypto.randomUUID(), site.id, blocked ? "block" : "unblock", now),
+    ]);
+  }
+
+  async cleanup(now = this.now()): Promise<{ uploads: number; expired: number; tombstones: number }> {
+    const staleUploads = await this.database
+      .prepare(
+        "SELECT id, site_id FROM site_deployments WHERE status = 'uploading' AND upload_expires_at <= ? LIMIT 50",
+      )
+      .bind(now)
+      .all<{ id: string; site_id: string }>();
+    for (const upload of staleUploads.results) {
+      await this.deleteDeployment(upload.site_id, upload.id);
+      await this.database
+        .prepare("UPDATE site_deployments SET status = 'abandoned' WHERE id = ?")
+        .bind(upload.id)
+        .run();
+    }
+    await this.database
+      .prepare(
+        `DELETE FROM hosted_sites WHERE status = 'uploading'
+         AND NOT EXISTS (SELECT 1 FROM site_deployments d WHERE d.site_id = hosted_sites.id AND d.status = 'uploading')`,
+      )
+      .run();
+
+    const expired = await this.database
+      .prepare("SELECT * FROM hosted_sites WHERE status IN ('active', 'blocked') AND expires_at <= ? LIMIT 50")
+      .bind(now)
+      .all<SiteRow>();
+    for (const site of expired.results) {
+      const route: RouteManifest = {
+        version: 1,
+        status: "expired",
+        siteId: site.id,
+        deploymentId: null,
+        expiresAt: site.expires_at,
+        spaFallback: false,
+        files: {},
+      };
+      await this.bucket.put(routeKey(site.hostname), JSON.stringify(route), {
+        httpMetadata: { contentType: "application/json" },
+      });
+      await this.database
+        .prepare(
+          "UPDATE hosted_sites SET status = 'expired', updated_at = ? WHERE id = ? AND status IN ('active', 'blocked')",
+        )
+        .bind(now, site.id)
+        .run();
+      if (site.current_deployment_id) await this.deleteDeployment(site.id, site.current_deployment_id);
+    }
+
+    const tombstoneCutoff = now - HOSTED_SITE_LIMITS.tombstoneLifetimeMs;
+    const tombstones = await this.database
+      .prepare(
+        "SELECT id, hostname FROM hosted_sites WHERE status IN ('deleted', 'expired') AND updated_at <= ? LIMIT 50",
+      )
+      .bind(tombstoneCutoff)
+      .all<{ id: string; hostname: string }>();
+    for (const site of tombstones.results) await this.bucket.delete(routeKey(site.hostname));
+    if (tombstones.results.length) {
+      await this.database.batch(
+        tombstones.results.map((site) => this.database.prepare("DELETE FROM hosted_sites WHERE id = ?").bind(site.id)),
+      );
+    }
+    await this.database
+      .prepare("DELETE FROM site_publish_rate_limits WHERE window_start < ?")
+      .bind(now - 2 * 24 * 60 * 60_000)
+      .run();
+    await this.database
+      .prepare("DELETE FROM site_operation_receipts WHERE created_at < ?")
+      .bind(now - 90 * 24 * 60 * 60_000)
+      .run();
+    return {
+      uploads: staleUploads.results.length,
+      expired: expired.results.length,
+      tombstones: tombstones.results.length,
+    };
+  }
+
+  private async publishedRouteExpiry(site: SiteRow, deployment: DeploymentRow): Promise<number | null> {
+    const object = await this.bucket.get(routeKey(site.hostname));
+    if (!object) return null;
+    try {
+      const value = await object.json();
+      if (
+        isDynamicRecord(value) &&
+        value.status === "active" &&
+        value.siteId === site.id &&
+        value.deploymentId === deployment.id &&
+        isNumber(value.expiresAt)
+      ) {
+        return value.expiresAt;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  private async finalizeActivation(
+    userId: string,
+    site: SiteRow,
+    deployment: DeploymentRow,
+    expiresAt: number,
+    idempotencyKey: string,
+    now: number,
+  ): Promise<HostedSiteSummary> {
+    const previousDeployment = site.current_deployment_id;
+    const results = await this.database.batch([
+      this.database
+        .prepare(
+          `UPDATE hosted_sites SET status = 'active', current_deployment_id = ?, expires_at = ?,
+           updated_at = ?, title = ?, description = ?, framework = ?, spa_fallback = ?
+           WHERE id = ? AND user_id = ? AND status IN ('uploading', 'active')
+             AND EXISTS (SELECT 1 FROM site_deployments WHERE id = ? AND status = 'activating')`,
+        )
+        .bind(
+          deployment.id,
+          expiresAt,
+          now,
+          deployment.site_title,
+          deployment.site_description,
+          deployment.site_framework,
+          deployment.site_spa_fallback,
+          site.id,
+          userId,
+          deployment.id,
+        ),
+      this.database
+        .prepare(
+          `INSERT INTO site_audit_log(id, user_id, site_id, operation, created_at)
+           SELECT ?, ?, ?, 'activate', ?
+           WHERE EXISTS (SELECT 1 FROM site_deployments WHERE id = ? AND status = 'activating')
+             AND EXISTS (
+               SELECT 1 FROM hosted_sites WHERE id = ? AND user_id = ? AND status = 'active'
+                 AND current_deployment_id = ?
+             )`,
+        )
+        .bind(crypto.randomUUID(), userId, site.id, now, deployment.id, site.id, userId, deployment.id),
+      this.database
+        .prepare(
+          `UPDATE site_deployments SET status = 'superseded'
+           WHERE id = ? AND id != ?
+             AND EXISTS (SELECT 1 FROM site_deployments WHERE id = ? AND status = 'activating')
+             AND EXISTS (
+               SELECT 1 FROM hosted_sites WHERE id = ? AND user_id = ? AND status = 'active'
+                 AND current_deployment_id = ?
+             )`,
+        )
+        .bind(previousDeployment, deployment.id, deployment.id, site.id, userId, deployment.id),
+      this.database
+        .prepare(
+          `UPDATE site_deployments SET status = 'active', activated_at = ?
+           WHERE id = ? AND status = 'activating'
+             AND EXISTS (
+               SELECT 1 FROM hosted_sites WHERE id = ? AND user_id = ? AND status = 'active'
+                 AND current_deployment_id = ?
+             )`,
+        )
+        .bind(now, deployment.id, site.id, userId, deployment.id),
+    ]);
+    if (results[3].meta.changes !== 1) {
+      const currentSite = await this.requireOwnedSite(userId, site.id, true);
+      const currentDeployment = await this.requireDeployment(userId, deployment.id);
+      if (currentSite.status === "blocked") {
+        throw new HostedSiteInputError(409, "site_blocked", "This site is blocked.");
+      }
+      if (currentSite.current_deployment_id !== deployment.id || currentDeployment.status !== "active") {
+        throw new HostedSiteInputError(409, "activation_in_progress", "This upload activation is not complete.");
+      }
+    }
+    const summary = await this.summaryForSite(userId, site.id);
+    await this.saveReceipt(userId, idempotencyKey, "activate", site.id, summary, now);
+    if (previousDeployment && previousDeployment !== deployment.id) {
+      await this.deleteDeployment(site.id, previousDeployment);
+    }
+    return summary;
+  }
+
+  private async enforceActivationRate(userId: string, now: number): Promise<void> {
+    const hour = Math.floor(now / 3_600_000) * 3_600_000;
+    const day = Math.floor(now / 86_400_000) * 86_400_000;
+    const [hourResult, dayResult] = await this.database.batch([
+      this.database
+        .prepare(
+          `INSERT INTO site_publish_rate_limits(user_id, window_kind, window_start, activations)
+           VALUES (?, 'hour', ?, 1)
+           ON CONFLICT(user_id, window_kind, window_start) DO UPDATE SET activations = activations + 1
+           RETURNING activations`,
+        )
+        .bind(userId, hour),
+      this.database
+        .prepare(
+          `INSERT INTO site_publish_rate_limits(user_id, window_kind, window_start, activations)
+           VALUES (?, 'day', ?, 1)
+           ON CONFLICT(user_id, window_kind, window_start) DO UPDATE SET activations = activations + 1
+           RETURNING activations`,
+        )
+        .bind(userId, day),
+    ]);
+    const hourCount = activationCount(hourResult.results?.[0]);
+    const dayCount = activationCount(dayResult.results?.[0]);
+    if (hourCount > 20 || dayCount > 100) {
+      throw new HostedSiteInputError(429, "activation_rate_limit", "The publish limit for this account was reached.");
+    }
+  }
+
+  private async uniqueHostname(source: string): Promise<string> {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const words = slugWords(source);
+      const descriptive = descriptiveSlug(words);
+      const hostname = `${descriptive}-${randomBase32(10)}.openbot.site`;
+      const existing = await this.database
+        .prepare("SELECT hostname FROM site_hostname_reservations WHERE hostname = ?")
+        .bind(hostname)
+        .first<{ hostname: string }>();
+      if (!existing) return hostname;
+    }
+    throw new Error("A unique site hostname could not be created.");
+  }
+
+  private async requireOwnedSite(userId: string, siteId: string, allowInactive = false): Promise<SiteRow> {
+    const site = await this.database
+      .prepare("SELECT * FROM hosted_sites WHERE id = ? AND user_id = ?")
+      .bind(siteId, userId)
+      .first<SiteRow>();
+    if (!site || (!allowInactive && site.status !== "active")) {
+      throw new HostedSiteInputError(409, "site_not_found", "The site was not found.");
+    }
+    return site;
+  }
+
+  private async requireDeployment(userId: string, deploymentId: string): Promise<DeploymentRow> {
+    const deployment = await this.database
+      .prepare("SELECT * FROM site_deployments WHERE id = ? AND user_id = ?")
+      .bind(deploymentId, userId)
+      .first<DeploymentRow>();
+    if (!deployment) throw new HostedSiteInputError(409, "upload_not_found", "The upload was not found.");
+    return deployment;
+  }
+
+  private deploymentByIdempotency(userId: string, key: string): Promise<DeploymentRow | null> {
+    return this.database
+      .prepare("SELECT * FROM site_deployments WHERE user_id = ? AND idempotency_key = ?")
+      .bind(userId, key)
+      .first<DeploymentRow>();
+  }
+
+  private async uploadSession(deployment: DeploymentRow): Promise<HostedSiteUploadSession> {
+    return {
+      uploadId: deployment.id,
+      site: await this.summaryForSite(deployment.user_id, deployment.site_id),
+      expiresAt: new Date(deployment.upload_expires_at).toISOString(),
+    };
+  }
+
+  private async summaryForSite(userId: string, siteId: string): Promise<HostedSiteSummary> {
+    const row = await this.database
+      .prepare(
+        `SELECT s.*, COALESCE(d.file_count, 0) AS file_count, COALESCE(d.total_bytes, 0) AS total_bytes
+         FROM hosted_sites s LEFT JOIN site_deployments d ON d.id = s.current_deployment_id
+         WHERE s.id = ? AND s.user_id = ?`,
+      )
+      .bind(siteId, userId)
+      .first<SiteRow & { file_count: number; total_bytes: number }>();
+    if (!row) throw new HostedSiteInputError(409, "site_not_found", "The site was not found.");
+    return mapSite(row);
+  }
+
+  private async receipt(userId: string, key: string, operation: string): Promise<string | null> {
+    const row = await this.database
+      .prepare(
+        "SELECT response_json FROM site_operation_receipts WHERE user_id = ? AND idempotency_key = ? AND operation = ?",
+      )
+      .bind(userId, key, operation)
+      .first<{ response_json: string }>();
+    return row?.response_json ?? null;
+  }
+
+  private async saveReceipt(
+    userId: string,
+    key: string,
+    operation: string,
+    resourceId: string,
+    response: unknown,
+    now: number,
+  ): Promise<void> {
+    await this.database
+      .prepare(
+        `INSERT INTO site_operation_receipts(user_id, idempotency_key, operation, resource_id, response_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, idempotency_key) DO NOTHING`,
+      )
+      .bind(userId, key, operation, resourceId, JSON.stringify(response), now)
+      .run();
+  }
+
+  private async abandonExpiredUploads(userId: string, now: number): Promise<void> {
+    const stale = await this.database
+      .prepare(
+        "SELECT id, site_id FROM site_deployments WHERE user_id = ? AND status = 'uploading' AND upload_expires_at <= ?",
+      )
+      .bind(userId, now)
+      .all<{ id: string; site_id: string }>();
+    for (const upload of stale.results) await this.deleteDeployment(upload.site_id, upload.id);
+    await this.database
+      .prepare(
+        "UPDATE site_deployments SET status = 'abandoned' WHERE user_id = ? AND status = 'uploading' AND upload_expires_at <= ?",
+      )
+      .bind(userId, now)
+      .run();
+    await this.database
+      .prepare(
+        `DELETE FROM hosted_sites
+         WHERE user_id = ? AND status = 'uploading' AND current_deployment_id IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM site_deployments d WHERE d.site_id = hosted_sites.id AND d.status = 'uploading'
+           )`,
+      )
+      .bind(userId)
+      .run();
+  }
+
+  private async deleteDeployment(siteId: string, deploymentId: string): Promise<void> {
+    let cursor: string | undefined;
+    do {
+      const listed = await this.bucket.list({ prefix: `sites/${siteId}/deployments/${deploymentId}/`, cursor });
+      if (listed.objects.length) await this.bucket.delete(listed.objects.map((object) => object.key));
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+  }
+}
+
+function parseManifest(value: string): HostedSiteFileManifest[] {
+  const parsed = JSON.parse(value);
+  if (!Array.isArray(parsed) || !parsed.every(isStoredManifestFile)) {
+    throw new Error("The stored site manifest is invalid.");
+  }
+  return parsed.map((file) => ({ path: file.path, size: file.size, mimeType: file.mimeType }));
+}
+
+function isStoredManifestFile(value: unknown): value is HostedSiteFileManifest {
+  return isDynamicRecord(value) && isString(value.path) && isNumber(value.size) && isString(value.mimeType);
+}
+
+function activationCount(value: unknown): number {
+  return isDynamicRecord(value) && isNumber(value.activations) ? value.activations : 0;
+}
+
+function parseStoredSiteSummary(value: string): HostedSiteSummary {
+  const parsed = JSON.parse(value);
+  if (
+    !isDynamicRecord(parsed) ||
+    !isString(parsed.id) ||
+    !isString(parsed.hostname) ||
+    !isString(parsed.url) ||
+    !isString(parsed.title) ||
+    !isString(parsed.description) ||
+    (parsed.framework !== "vanilla" && parsed.framework !== "astro") ||
+    !["uploading", "active", "deleted", "expired", "blocked"].includes(String(parsed.status)) ||
+    !isNumber(parsed.fileCount) ||
+    !isNumber(parsed.size) ||
+    (parsed.expiresAt !== null && !isString(parsed.expiresAt)) ||
+    !isString(parsed.updatedAt)
+  ) {
+    throw new Error("The stored site receipt is invalid.");
+  }
+  return {
+    id: parsed.id,
+    hostname: parsed.hostname,
+    url: parsed.url,
+    title: parsed.title,
+    description: parsed.description,
+    framework: parsed.framework,
+    status: parseSiteStatus(parsed.status),
+    fileCount: parsed.fileCount,
+    size: parsed.size,
+    expiresAt: parsed.expiresAt,
+    updatedAt: parsed.updatedAt,
+  };
+}
+
+function parseSiteStatus(value: unknown): SiteRow["status"] {
+  if (
+    value === "uploading" ||
+    value === "active" ||
+    value === "deleted" ||
+    value === "expired" ||
+    value === "blocked"
+  ) {
+    return value;
+  }
+  throw new Error("The stored site status is invalid.");
+}
+
+function mapSite(row: SiteRow & { file_count: number; total_bytes: number }): HostedSiteSummary {
+  return {
+    id: row.id,
+    hostname: row.hostname,
+    url: `https://${row.hostname}`,
+    title: row.title,
+    description: row.description,
+    framework: row.framework,
+    status: row.status,
+    fileCount: row.file_count,
+    size: row.total_bytes,
+    expiresAt: row.expires_at === null ? null : new Date(row.expires_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
+
+function assetKey(siteId: string, deploymentId: string, path: string): string {
+  return `sites/${siteId}/deployments/${deploymentId}/${path}`;
+}
+
+function routeKey(hostname: string): string {
+  return `routes/${hostname}.json`;
+}
+
+const RESERVED_PREFIXES = new Set([
+  "admin",
+  "api",
+  "auth",
+  "billing",
+  "login",
+  "support",
+  "security",
+  "status",
+  "mail",
+  "www",
+]);
+
+function slugWords(value: string): string[] {
+  const words = value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, " ")
+    .trim()
+    .split(/\s+/u)
+    .filter((word) => word.length >= 2 && !RESERVED_PREFIXES.has(word));
+  while (words.length < 3) words.push(["interactive", "static", "website"][words.length] ?? "project");
+  return words;
+}
+
+export function descriptiveSlug(words: string[]): string {
+  const usable = words.map((word) => word.slice(0, 14)).filter(Boolean);
+  while (usable.length < 3) usable.push(["static", "web", "project"][usable.length] ?? "page");
+  let slug = usable.slice(0, 3).join("-");
+  for (const word of usable.slice(3)) {
+    const next = slug ? `${slug}-${word}` : word;
+    if (next.length > 48) break;
+    slug = next;
+  }
+  while (slug.length < 32) {
+    const extra = ["interactive", "web", "project", "page", "experience", "online", "tool"].find(
+      (word) => !slug.split("-").includes(word),
+    );
+    if (!extra || `${slug}-${extra}`.length > 48) break;
+    slug = `${slug}-${extra}`;
+  }
+  return slug.slice(0, 48).replace(/-+$/u, "");
+}
+
+function randomBase32(length: number): string {
+  const alphabet = "23456789abcdefghjkmnpqrstuvwxyz";
+  const bytes = crypto.getRandomValues(new Uint8Array(length));
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
+}
+
+export async function sourceIpHash(value: string): Promise<string> {
+  return sha256(value);
+}

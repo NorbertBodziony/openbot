@@ -1,4 +1,5 @@
 import { type AuthRetentionResult, pruneExpiredAuthData } from "./auth-data-retention";
+import { HostedSiteService } from "./hosted-site-service";
 import { enforceMarketplaceIngress, MarketplaceRateLimitError } from "./marketplace-request-policy";
 import type { WorkerBindings } from "./types";
 
@@ -37,9 +38,16 @@ export function createWorkerHandler(
       }
       return fetchHandler(request);
     },
-    async scheduled(controller: Pick<ScheduledController, "scheduledTime">, bindings: Pick<WorkerBindings, "DB">) {
+    async scheduled(
+      controller: Pick<ScheduledController, "scheduledTime">,
+      bindings: Pick<WorkerBindings, "DB"> & Partial<Pick<WorkerBindings, "SITES">>,
+    ) {
       const result = await prune(bindings.DB, controller.scheduledTime);
       log(result);
+      if (bindings.SITES) {
+        const sites = await new HostedSiteService(bindings.DB, bindings.SITES).cleanup(controller.scheduledTime);
+        console.info("Hosted site cleanup completed.", sites);
+      }
     },
   } satisfies ExportedHandler<WorkerBindings>;
 }

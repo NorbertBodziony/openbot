@@ -87,6 +87,18 @@
         "wrangler": "4.123.0",
       },
     },
+    "apps/site-router": {
+      "name": "@openbot/site-router",
+      "version": "0.0.0",
+      "dependencies": {
+        "@openbot/contracts": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+        "wrangler": "4.123.0",
+      },
+    },
     "packages/brand": {
       "name": "@openbot/brand",
       "version": "0.0.0",
@@ -453,6 +465,8 @@
     "@openbot/brand": ["@openbot/brand@workspace:packages/brand"],
 
     "@openbot/contracts": ["@openbot/contracts@workspace:packages/contracts"],
+
+    "@openbot/site-router": ["@openbot/site-router@workspace:apps/site-router"],
 
     "@openpanel/sdk": ["@openpanel/sdk@1.3.1", "", {}, "sha512-mQ5xaBUGXnyRg3qYxwnbVaUYyW7w8u+munrWk/ClnqxEeR2j+FYPiA6noHbHMCFC2aZutYD5OoRzEvw3FBNFxw=="],
 

@@ -489,6 +489,17 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       },
       uninstall: async () => undefined,
     },
+    hostedSites: {
+      list: async () => [],
+      chooseDirectory: async () => null,
+      publish: async () => {
+        throw new Error("Site hosting is unavailable in preview mode.");
+      },
+      replace: async () => {
+        throw new Error("Site hosting is unavailable in preview mode.");
+      },
+      delete: async () => undefined,
+    },
     marketplaceAgents: {
       list: async () => ({ agents: [], nextCursor: null }),
       get: async () => {

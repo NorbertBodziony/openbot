@@ -1,4 +1,4 @@
-import type { AvatarImageInput, CentralAuthUser, UpdateStatus } from "@openbot/contracts/ipc";
+import type { AvatarImageInput, CentralAuthUser, HostedSitesDesktopApi, UpdateStatus } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
@@ -367,5 +367,62 @@ describe("SettingsModal", () => {
     );
     await fireEvent.click(await screen.findByRole("button", { name: "Remove profile photo" }));
     await waitFor(() => expect(onUpdateAccountAvatar).toHaveBeenLastCalledWith(null));
+  });
+
+  it("lists sites and publishes a selected local directory", async () => {
+    const site = {
+      id: "site-1",
+      hostname: "interactive-budget-planner-students-23456789ab.openbot.site",
+      url: "https://interactive-budget-planner-students-23456789ab.openbot.site",
+      title: "Student budget planner",
+      description: "Plan a student budget.",
+      framework: "vanilla" as const,
+      status: "active" as const,
+      fileCount: 3,
+      size: 1_024,
+      expiresAt: "2026-09-30T12:00:00.000Z",
+      updatedAt: "2026-08-31T12:00:00.000Z",
+    };
+    const hostedSitesApi: HostedSitesDesktopApi = {
+      list: vi.fn(async () => [site]),
+      chooseDirectory: vi.fn(async () => "/tmp/student-budget-site"),
+      publish: vi.fn(async () => site),
+      replace: vi.fn(async () => site),
+      delete: vi.fn(async () => undefined),
+    };
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={account}
+        onUpdateAccountName={vi.fn(async () => undefined)}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+        hostedSitesApi={hostedSitesApi}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Hosted sites" }));
+    expect(await screen.findByText(site.hostname)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Choose" }));
+    await fireEvent.input(screen.getByRole("textbox", { name: "Title" }), {
+      target: { value: "Student budget planner" },
+    });
+    await fireEvent.input(screen.getByRole("textbox", { name: "Description" }), {
+      target: { value: "An interactive budget planner for university students." },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+
+    await waitFor(() =>
+      expect(hostedSitesApi.publish).toHaveBeenCalledWith({
+        sourcePath: "/tmp/student-budget-site",
+        title: "Student budget planner",
+        description: "An interactive budget planner for university students.",
+      }),
+    );
   });
 });

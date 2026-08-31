@@ -4,6 +4,7 @@ export interface WorkerBindings {
   DB: D1Database;
   AVATARS: R2Bucket;
   SKILLS: R2Bucket;
+  SITES: R2Bucket;
   MARKETPLACE_INGRESS_RATE_LIMITER: RateLimit;
   MARKETPLACE_MUTATION_RATE_LIMITER: RateLimit;
   MARKETPLACE_UPLOAD_RATE_LIMITER: RateLimit;
@@ -20,6 +21,7 @@ export interface WorkerBindings {
   CLOUDFLARE_TUNNEL_DOMAIN?: string;
   CLOUDFLARE_API_TOKEN?: string;
   SKILLS_ADMIN_TOKEN?: string;
+  SITE_PUBLISH_ENABLED?: string;
 }
 
 export function isWorkerBindings(value: unknown): value is WorkerBindings {
@@ -27,6 +29,7 @@ export function isWorkerBindings(value: unknown): value is WorkerBindings {
   const database = value.DB;
   const avatars = value.AVATARS;
   const skills = value.SKILLS;
+  const sites = value.SITES;
   const marketplaceIngressRateLimiter = value.MARKETPLACE_INGRESS_RATE_LIMITER;
   const marketplaceMutationRateLimiter = value.MARKETPLACE_MUTATION_RATE_LIMITER;
   const marketplaceUploadRateLimiter = value.MARKETPLACE_UPLOAD_RATE_LIMITER;
@@ -41,6 +44,10 @@ export function isWorkerBindings(value: unknown): value is WorkerBindings {
     !isFunction(skills.get) ||
     !isFunction(skills.put) ||
     !isFunction(skills.delete) ||
+    !isDynamicRecord(sites) ||
+    !isFunction(sites.get) ||
+    !isFunction(sites.put) ||
+    !isFunction(sites.delete) ||
     !isDynamicRecord(marketplaceIngressRateLimiter) ||
     !isFunction(marketplaceIngressRateLimiter.limit) ||
     !isDynamicRecord(marketplaceMutationRateLimiter) ||

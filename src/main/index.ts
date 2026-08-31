@@ -85,6 +85,7 @@ import {
 } from "./dynamic-island-window";
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "./file-preview";
 import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
+import { HostedSiteDesktopService } from "./hosted-site-service";
 import {
   parseAcknowledgeFailedTurn,
   parseAgentRequest,
@@ -137,6 +138,7 @@ import { isObject, requireString } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
 import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
+import { ManagedSkillService } from "./managed-skill-service";
 import { ProviderRuntimeManager } from "./provider-runtime-manager";
 import { RemoteDesktopManager } from "./remote-desktop-manager";
 import { resolveRemoteDesktopRuntime } from "./remote-desktop-runtime-artifact";
@@ -320,6 +322,7 @@ function registerIpcHandlers(
   remoteServers: RemoteServerManager,
   centralAuth: CentralAuthManager,
   skills: SkillMarketplaceService,
+  hostedSites: HostedSiteDesktopService,
   marketplaceAgents: AgentMarketplaceService,
   voice: VoiceTranscriptionService,
   dynamicIsland: DynamicIslandWindowController,
@@ -491,6 +494,38 @@ function registerIpcHandlers(
       skillId: requireString(input.skillId, "skillId"),
       ...(input.removeModified === true ? { removeModified: true } : {}),
     });
+  });
+  handleTrusted(IPC_CHANNELS.hostedSitesList, () => hostedSites.list());
+  handleTrusted(IPC_CHANNELS.hostedSitesChooseDirectory, async () => {
+    const options: OpenDialogOptions = {
+      title: "Choose a static site directory",
+      properties: ["openDirectory"],
+    };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  });
+  handleTrusted(IPC_CHANNELS.hostedSitesPublish, (input: unknown) => {
+    if (!isObject(input)) throw new Error("Invalid site publication.");
+    return hostedSites.publish({
+      sourcePath: requireString(input.sourcePath, "sourcePath", INPUT_LIMITS.path),
+      title: requireString(input.title, "title", 120),
+      description: requireString(input.description, "description", 500),
+      ...(input.spaFallback === true ? { spaFallback: true } : {}),
+    });
+  });
+  handleTrusted(IPC_CHANNELS.hostedSitesReplace, (input: unknown) => {
+    if (!isObject(input)) throw new Error("Invalid site replacement.");
+    return hostedSites.replace({
+      siteId: requireString(input.siteId, "siteId", INPUT_LIMITS.identifier),
+      sourcePath: requireString(input.sourcePath, "sourcePath", INPUT_LIMITS.path),
+      title: requireString(input.title, "title", 120),
+      description: requireString(input.description, "description", 500),
+      ...(input.spaFallback === true ? { spaFallback: true } : {}),
+    });
+  });
+  handleTrusted(IPC_CHANNELS.hostedSitesDelete, (input: unknown) => {
+    if (!isObject(input)) throw new Error("Invalid site deletion.");
+    return hostedSites.delete(requireString(input.siteId, "siteId", INPUT_LIMITS.identifier));
   });
   handleTrusted(IPC_CHANNELS.marketplaceAgentsList, (input: unknown) => {
     if (input === null || input === undefined) return marketplaceAgents.list();
@@ -1578,6 +1613,13 @@ if (!hasSingleInstanceLock) {
       const centralAuthInitialization = centralAuthManager.initialize();
       const store = new BotStore(app.getPath("userData"), homedir());
       await store.initialize();
+      const managedSkills = new ManagedSkillService(
+        app.isPackaged
+          ? join(process.resourcesPath, "managed-skills", "openbot-site-hosting", "SKILL.md")
+          : resolve(__dirname, "../../resources/managed-skills/openbot-site-hosting/SKILL.md"),
+      );
+      await managedSkills.syncAll(store.list());
+      const hostedSites = new HostedSiteDesktopService(centralAuthManager);
       const sidebarLayoutStore = new SidebarLayoutStore(join(app.getPath("userData"), SIDEBAR_LAYOUT_FILE));
       await sidebarLayoutStore.initialize();
       await sidebarLayoutStore.reconcileAgents(new Set(store.list().map((bot) => bot.id)));
@@ -1617,6 +1659,8 @@ if (!hasSingleInstanceLock) {
         providerRuntimeManager.executablePath("codex"),
         providerRuntimeManager.executablePath("claude"),
         providerRuntimeManager.executablePath("grok"),
+        (bot) => managedSkills.syncBot(bot),
+        hostedSites,
       );
       const service = agentService;
       providerRuntimeManager.on("status", forwardProviderRuntimeStatus);
@@ -1855,6 +1899,7 @@ if (!hasSingleInstanceLock) {
         remoteServers,
         centralAuthManager,
         skillMarketplace,
+        hostedSites,
         agentMarketplace,
         voiceTranscriptionService,
         dynamicIslandController,

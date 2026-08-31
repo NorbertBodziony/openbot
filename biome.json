@@ -28,6 +28,7 @@
       "!**/dist",
       "!**/.wrangler",
       "!**/routeTree.gen.ts",
+      "!**/worker-configuration.d.ts",
       "!tools/biome/anti-slop",
       "!coverage",
       "!.openbot-build",

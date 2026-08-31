@@ -5,6 +5,8 @@ import { CloudflareTunnelProvider } from "./cloudflare-tunnel-provider";
 import { D1AuthRepository } from "./d1-auth-repository";
 import { D1TeamTunnelRepository } from "./d1-team-tunnel-repository";
 import { createEmailCodeDelivery, createTeamInviteEmailDelivery } from "./email-delivery";
+import { HostedSiteInputError } from "./hosted-site-contract";
+import { HostedSiteService } from "./hosted-site-service";
 import { JsonBodyError } from "./json-body";
 import { MarketplaceQueryError } from "./marketplace-pagination";
 import {
@@ -40,6 +42,30 @@ export function requestAgentMarketplace(): AgentMarketplace {
   return new AgentMarketplace(requireWorkerBindings(env));
 }
 
+export function requestHostedSiteService(): HostedSiteService {
+  const bindings = requireWorkerBindings(env);
+  return new HostedSiteService(bindings.DB, bindings.SITES);
+}
+
+export function requireSitePublishingEnabled(): void {
+  if (requireWorkerBindings(env).SITE_PUBLISH_ENABLED === "false") {
+    throw new HostedSiteInputError(409, "publishing_disabled", "Site publishing is temporarily disabled.");
+  }
+}
+
+export function hostedSiteErrorResponse(error: unknown): Response {
+  if (error instanceof HostedSiteInputError) return apiError(error.status, error.code, error.message);
+  return authErrorResponse(error);
+}
+
+export function requireIdempotencyKey(request: Request): string {
+  const key = request.headers.get("Idempotency-Key")?.trim() ?? "";
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/u.test(key)) {
+    throw new HostedSiteInputError(400, "invalid_idempotency_key", "A valid Idempotency-Key header is required.");
+  }
+  return key;
+}
+
 export function enforceMarketplaceMutationRateLimit(kind: MarketplaceMutationKind, principal: string): Promise<void> {
   return enforceMarketplaceMutation(requireWorkerBindings(env), kind, principal);
 }
@@ -70,6 +96,10 @@ export function requireSkillsAdmin(request: Request): boolean {
   const bindings = requireWorkerBindings(env);
   const expected = bindings.SKILLS_ADMIN_TOKEN;
   return Boolean(expected && bearerToken(request) === expected);
+}
+
+export function requireOperationsAdmin(request: Request): boolean {
+  return requireSkillsAdmin(request);
 }
 
 export function requestTeamInviteEmailDelivery(): TeamInviteEmailDelivery | null {

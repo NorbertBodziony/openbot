@@ -24,6 +24,7 @@ export { default as Folder } from "lucide-solid/icons/folder";
 export { default as FolderInput } from "lucide-solid/icons/folder-input";
 export { default as FolderPlus } from "lucide-solid/icons/folder-plus";
 export { default as Gauge } from "lucide-solid/icons/gauge";
+export { default as Globe2 } from "lucide-solid/icons/globe-2";
 export { default as Image } from "lucide-solid/icons/image";
 export { default as Info } from "lucide-solid/icons/info";
 export { default as LifeBuoy } from "lucide-solid/icons/life-buoy";
