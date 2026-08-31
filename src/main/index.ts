@@ -579,7 +579,7 @@ function registerIpcHandlers(
     const scoped = parseAgentRequest(input);
     const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
     return scoped.serverId === "local"
-      ? skills.listInstalled(botId)
+      ? skills.listInstalledForChatTags(botId)
       : remoteServers
             .list()
             .find((server) => server.id === scoped.serverId)

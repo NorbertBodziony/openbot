@@ -416,6 +416,49 @@ describe("ComposerEditor", () => {
     expect(editor.querySelector('[data-skill-id="release-notes"]')).not.toBeNull();
   });
 
+  it("keeps an active skill query usable when installed skills finish loading", async () => {
+    const skill: InstalledSkill = {
+      skillId: "release-notes",
+      slug: "release-notes",
+      name: "Release Notes",
+      installedVersion: 1,
+      availableVersion: 1,
+      state: "installed",
+    };
+    const [skills, setSkills] = createSignal<InstalledSkill[]>([]);
+    const [value, setValue] = createSignal("");
+    const onValueChange = vi.fn();
+    render(() => (
+      <ComposerEditor
+        botId="chief"
+        bots={[]}
+        skills={skills()}
+        value={value()}
+        placeholder="Message Chief"
+        ariaLabel="Loading skills"
+        disabled={false}
+        onValueChange={(nextValue) => {
+          onValueChange(nextValue);
+          setValue(nextValue);
+        }}
+        onSubmit={vi.fn()}
+      />
+    ));
+    const editor = screen.getByRole("textbox", { name: "Loading skills" });
+    editor.focus();
+    editor.textContent = "@release";
+    placeCaretAtEnd(editor);
+    await fireEvent.input(editor);
+
+    setSkills([skill]);
+
+    await screen.findByRole("option", { name: "Release Notes Skill" });
+    expect(editor).toHaveFocus();
+    expect(editor.contains(window.getSelection()?.getRangeAt(0).commonAncestorContainer ?? null)).toBe(true);
+    await fireEvent.keyDown(editor, { key: "Enter" });
+    expect(onValueChange).toHaveBeenLastCalledWith("@[Release Notes](skill:release-notes) ");
+  });
+
   it("removes a leading mention atomically with Backspace", async () => {
     const research = testBot("research", "Research");
     const { editor, onValueChange } = renderComposer([], "@[Research](research)after", [research]);

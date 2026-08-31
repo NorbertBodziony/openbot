@@ -313,15 +313,17 @@ describe.sequential("AgentService", () => {
       return client;
     });
     await service.initialize();
+    await store.getOrCreate("research", "Research Lead", "Research partner");
 
     await service.sendMessage({
       botId: "chief",
-      text: `Ask ${serializeChatTagReference("agent", "Research", "research")} to use ${serializeChatTagReference("skill", "Release Notes", "skill-1")}.`,
+      text: `Ask ${serializeChatTagReference("agent", "Old Research", "research")} to use ${serializeChatTagReference("skill", "Release Notes", "skill-1")}.`,
     });
     await waitFor(() => Boolean(clients.get("codex")?.requests.some((request) => request.method === "turn/start")));
 
     const turn = clients.get("codex")?.requests.find((request) => request.method === "turn/start");
-    expect(firstInputText(turn?.params)).toContain("Ask @Research to use Release Notes (skill).");
+    expect(firstInputText(turn?.params)).toContain("Ask @Research Lead to use Release Notes (skill).");
+    expect(firstInputText(turn?.params)).not.toContain("Old Research");
   });
 
   it("creates independent full-access threads with browser and OpenBot tools", async () => {

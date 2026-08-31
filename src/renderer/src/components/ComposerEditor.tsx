@@ -159,22 +159,21 @@ export function ComposerEditor(props: ComposerEditorProps) {
       if (!editor) return;
       const attachmentKey = attachments.map((attachment) => `${attachment.id}:${attachment.name}`).join("|");
       const skillKey = skills.map((skill) => `${skill.skillId}:${skill.name}:${skill.state}`).join("|");
-      const contentChanged =
-        botId !== lastBotId ||
-        value !== lastEmittedValue ||
-        attachmentKey !== lastAttachmentKey ||
-        skillKey !== lastSkillKey;
+      const contentChanged = botId !== lastBotId || value !== lastEmittedValue || attachmentKey !== lastAttachmentKey;
+      const skillsChanged = skillKey !== lastSkillKey;
       const focusRequested = focusRequest > lastFocusRequest;
       if (contentChanged) {
         lastBotId = botId;
         lastAttachmentKey = attachmentKey;
-        lastSkillKey = skillKey;
         lastEmittedValue = value;
         setAttachmentTooltip(null);
         renderEditorValue(editor, value, bots, skills, attachments, attachmentTokenActions);
         syncTrailingLineSentinel(editor, value);
         setMention(null);
+      } else if (skillsChanged) {
+        syncSkillTokens(editor, skills);
       }
+      lastSkillKey = skillKey;
       if (focusRequested) {
         lastFocusRequest = focusRequest;
         editor.focus();
@@ -715,33 +714,59 @@ function createMentionToken(bot: BotProfile): HTMLSpanElement {
 
 function createSkillToken(skill: InstalledSkill): HTMLSpanElement {
   const token = document.createElement("span");
+  updateSkillToken(token, skill);
+  return token;
+}
+
+function updateSkillToken(token: HTMLSpanElement, skill: InstalledSkill): void {
   token.className = "composer-mention-token composer-skill-token";
   token.contentEditable = "false";
   token.dataset.skillId = skill.skillId;
   token.dataset.skillName = skill.name;
+  token.removeAttribute("aria-label");
   token.setAttribute("aria-label", `Skill ${skill.name}`);
   const icon = Puzzle({ class: "composer-skill-icon" });
   if (!(icon instanceof Node)) throw new Error("Puzzle icon did not render to a DOM node");
   const name = document.createElement("span");
   name.textContent = skill.name;
-  token.append(icon, name);
-  return token;
+  token.replaceChildren(icon, name);
 }
 
 function createUnavailableTagToken(kind: "agent" | "skill", id: string, name: string): HTMLSpanElement {
   const token = document.createElement("span");
+  if (kind === "skill") {
+    updateUnavailableSkillToken(token, id, name);
+    return token;
+  }
   token.className = "composer-mention-token composer-tag-unavailable";
   token.contentEditable = "false";
-  if (kind === "agent") {
-    token.dataset.mentionId = id;
-    token.dataset.mentionName = name;
-  } else {
-    token.dataset.skillId = id;
-    token.dataset.skillName = name;
-  }
+  token.dataset.mentionId = id;
+  token.dataset.mentionName = name;
   token.setAttribute("aria-label", `Unavailable ${kind} ${name}`);
   token.textContent = name;
   return token;
+}
+
+function updateUnavailableSkillToken(token: HTMLSpanElement, id: string, name: string): void {
+  token.className = "composer-mention-token composer-tag-unavailable";
+  token.contentEditable = "false";
+  token.dataset.skillId = id;
+  token.dataset.skillName = name;
+  token.setAttribute("aria-label", `Unavailable skill ${name}`);
+  token.textContent = name;
+}
+
+function syncSkillTokens(editor: HTMLDivElement, skills: InstalledSkill[]): void {
+  const available = new Map(
+    skills.filter((skill) => skill.state !== "needs-repair").map((skill) => [skill.skillId, skill]),
+  );
+  for (const token of editor.querySelectorAll<HTMLSpanElement>("[data-skill-id]")) {
+    const id = token.dataset.skillId;
+    if (!id) continue;
+    const skill = available.get(id);
+    if (skill) updateSkillToken(token, skill);
+    else updateUnavailableSkillToken(token, id, token.dataset.skillName ?? "Skill");
+  }
 }
 
 function renderEditorValue(

@@ -31,8 +31,9 @@ export function encodeTeamProtocolV1CurrentEvent(event: AgentEvent | TeamRealtim
 }
 
 export function encodeTeamProtocolV1CurrentHttpRequest(method: string, path: string, value: unknown): string {
-  const wireValue = JSON.parse(JSON.stringify(value));
-  return JSON.stringify(decodeTeamProtocolV1HttpRequest(method, path, wireValue));
+  const wireValue: TeamProtocolV1JsonValue = JSON.parse(JSON.stringify(value));
+  const downconvertedValue = downconvertCurrentTags(wireValue);
+  return JSON.stringify(decodeTeamProtocolV1HttpRequest(method, path, downconvertedValue));
 }
 
 export function decodeTeamProtocolV1CurrentHttpRequest(

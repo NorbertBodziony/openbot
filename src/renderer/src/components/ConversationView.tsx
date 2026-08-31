@@ -407,6 +407,7 @@ function createConversationViewScope(props: ConversationProps) {
   const [routineSettingsRequest, setRoutineSettingsRequest] = createSignal<RoutineSettingsRequest | null>(null);
   const [installedSkills, setInstalledSkills] = createSignal<InstalledSkill[]>([]);
   let installedSkillsRequest = 0;
+  let installedSkillsSourceId: string | undefined;
   let routineSettingsRequestNonce = 0;
   let imageAttachmentPicker: HTMLInputElement | undefined;
   let contextAttachmentPicker: HTMLInputElement | undefined;
@@ -432,17 +433,29 @@ function createConversationViewScope(props: ConversationProps) {
     () => installedSkillsRequestKey(props.bot?.id, props.server, props.globalOverlayOpen),
     (source) => {
       const request = ++installedSkillsRequest;
-      const [, botId, support, visibility] = source.split("\0");
-      if (!botId || visibility === "hidden") return;
-      setInstalledSkills([]);
-      if (support === "unsupported") return;
+      const [serverId, botId, support, visibility] = source.split("\0");
+      if (!botId) {
+        installedSkillsSourceId = undefined;
+        setInstalledSkills([]);
+        return;
+      }
+      if (visibility === "hidden") return;
+      const sourceId = `${serverId}\0${botId}`;
+      if (installedSkillsSourceId !== sourceId) {
+        installedSkillsSourceId = sourceId;
+        setInstalledSkills([]);
+      }
+      if (support === "unsupported") {
+        setInstalledSkills([]);
+        return;
+      }
       void window.openbot.agent
         .listInstalledSkills(botId)
         .then((skills) => {
           if (request === installedSkillsRequest) setInstalledSkills(skills);
         })
         .catch(() => {
-          if (request === installedSkillsRequest) setInstalledSkills([]);
+          // Preserve an already loaded same-agent catalog when a refresh fails.
         });
     },
   );

@@ -173,7 +173,7 @@ interface TeamApiOptions {
   appVersion?: string;
   store: TeamStore;
   agents: TeamApiAgents;
-  skills?: { listInstalled: (botId: string) => Promise<InstalledSkill[]> };
+  skills?: { listInstalledForChatTags: (botId: string) => Promise<InstalledSkill[]> };
   sidebarLayout?: TeamApiSidebarLayout;
   mailbox: TeamApiMailbox;
   browser: TeamApiBrowser;
@@ -937,7 +937,7 @@ export class TeamApiServer {
           if (this.#responseRoutes.get(response)?.protocol !== TEAM_PROTOCOL_V2) {
             throw new HttpError(404, "Installed skills are unavailable for this protocol.");
           }
-          return this.#json(response, 200, (await this.#options.skills?.listInstalled(botId)) ?? []);
+          return this.#json(response, 200, (await this.#options.skills?.listInstalledForChatTags(botId)) ?? []);
         }
         if (method === "PATCH" && !action) {
           const body = await readJson(request);

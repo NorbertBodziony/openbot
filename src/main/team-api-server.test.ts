@@ -189,7 +189,7 @@ describe("TeamApiServer compatibility", () => {
     const store = new TeamStore(join(root, "team.json"));
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
-    const listInstalled = vi.fn(async () => [
+    const listInstalledForChatTags = vi.fn(async () => [
       {
         skillId: "skill-1",
         slug: "release-notes",
@@ -202,7 +202,7 @@ describe("TeamApiServer compatibility", () => {
     const api = new TeamApiServer({
       store,
       agents: createAgents(),
-      skills: { listInstalled },
+      skills: { listInstalledForChatTags },
       mailbox: createMailbox(),
       browser: createBrowser(),
     });
@@ -224,7 +224,7 @@ describe("TeamApiServer compatibility", () => {
       await expect(response.json()).resolves.toEqual([
         expect.objectContaining({ skillId: "skill-1", name: "Release Notes", state: "update-available" }),
       ]);
-      expect(listInstalled).toHaveBeenCalledWith("chief");
+      expect(listInstalledForChatTags).toHaveBeenCalledWith("chief");
 
       const legacyResponse = await fetch(`${base}/v1/agents/chief/skills`, {
         headers: { Authorization: `Bearer ${login.sessionToken}` },
