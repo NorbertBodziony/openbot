@@ -174,7 +174,7 @@ export class DynamicIslandWindowController {
       if (current && !current.isDestroyed()) {
         current.setBounds(bounds, false);
         if (notchSizeChanged(this.#notchSizes.get(display.id), notchSize)) {
-          if (notchSize) current.webContents.send(IPC_CHANNELS.dynamicIslandGeometry, notchSize);
+          current.webContents.send(IPC_CHANNELS.dynamicIslandGeometry, notchSize ?? null);
           if (notchSize) this.#notchSizes.set(display.id, notchSize);
           else this.#notchSizes.delete(display.id);
         }

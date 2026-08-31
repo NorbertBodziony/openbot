@@ -240,6 +240,11 @@ describe("dynamic island window geometry", () => {
     await controller.reconcileWindow();
     expect(loadWindow).toHaveBeenCalledOnce();
     expect(windows[0]?.webContents.send).toHaveBeenCalledTimes(1);
+
+    displays = [display({ id: 1, bounds: { x: 0, y: 0, width: 2560, height: 1440 } })];
+    await controller.reconcileWindow();
+    expect(loadWindow).toHaveBeenCalledOnce();
+    expect(windows[0]?.webContents.send).toHaveBeenLastCalledWith(IPC_CHANNELS.dynamicIslandGeometry, null);
   });
 
   it("continues loading other displays when one overlay fails", async () => {

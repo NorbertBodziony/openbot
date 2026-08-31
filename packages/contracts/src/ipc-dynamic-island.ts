@@ -140,6 +140,8 @@ export interface DynamicIslandNotchSize {
   height: number;
 }
 
+export type DynamicIslandGeometry = DynamicIslandNotchSize | null;
+
 export const IDLE_DYNAMIC_ISLAND_PRESENTATION: DynamicIslandPresentation = { serverId: "local", mode: "idle" };
 
 export function isDynamicIslandPreference(value: unknown): value is DynamicIslandPreference {

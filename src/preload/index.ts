@@ -16,7 +16,7 @@ import {
   type ConversationWithReadState,
   type DraftAttachment,
   type DynamicIslandAction,
-  type DynamicIslandNotchSize,
+  type DynamicIslandGeometry,
   type DynamicIslandPreference,
   type DynamicIslandPresentation,
   type FilePreview,
@@ -167,8 +167,9 @@ function decodeDynamicIslandPreference(value: unknown): DynamicIslandPreference 
   return value;
 }
 
-function decodeDynamicIslandNotchSize(value: unknown): DynamicIslandNotchSize {
-  if (!isDynamicIslandNotchSize(value)) throw new Error("Invalid Dynamic Island notch size.");
+function decodeDynamicIslandGeometry(value: unknown): DynamicIslandGeometry {
+  if (value === null) return null;
+  if (!isDynamicIslandNotchSize(value)) throw new Error("Invalid Dynamic Island geometry.");
   return value;
 }
 
@@ -799,7 +800,7 @@ const openbotApi: OpenBotDesktopApi = {
     },
     onGeometry: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, geometry: unknown) =>
-        listener(decodeDynamicIslandNotchSize(geometry));
+        listener(decodeDynamicIslandGeometry(geometry));
       ipcRenderer.on(IPC_CHANNELS.dynamicIslandGeometry, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.dynamicIslandGeometry, handler);
     },
