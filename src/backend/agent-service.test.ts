@@ -358,8 +358,8 @@ describe.sequential("AgentService", () => {
       expect(params.developerInstructions).toContain(
         "You may list, read, create, edit, move, and delete files and run local commands in both directories.",
       );
-      expect(params.developerInstructions).not.toContain("For every browser task");
-      expect(params.developerInstructions).not.toContain("Use the installed Computer Use plugin only");
+      expect(params.developerInstructions).toContain("For every browser task");
+      expect(params.developerInstructions).toContain("Use the installed Computer Use plugin only");
       expect(params.developerInstructions).toContain("When you use openbot_browser");
       expect(params.developerInstructions).toContain("openbot.create_routine");
       expect(params.developerInstructions).toContain("openbot.attach_files_to_response");
