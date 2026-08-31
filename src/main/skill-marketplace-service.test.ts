@@ -110,11 +110,15 @@ describe("SkillMarketplaceService", () => {
     await writeFile(join(bot.workspacePath, ".agents", "skills", "release-notes", "SKILL.md"), "locally changed");
     requests.length = 0;
     await expect(service.listInstalledForChatTags(bot.id)).resolves.toEqual([
-      expect.objectContaining({ state: "modified" }),
+      expect.objectContaining({ state: "installed" }),
     ]);
     expect(requests).toEqual([]);
     await expect(service.listInstalled(bot.id)).resolves.toEqual([expect.objectContaining({ state: "modified" })]);
     await expect(service.uninstall({ botId: bot.id, skillId: "skill-1" })).rejects.toThrow("local changes");
+    await rm(join(bot.workspacePath, ".claude", "skills", "release-notes", "SKILL.md"));
+    await expect(service.listInstalledForChatTags(bot.id)).resolves.toEqual([
+      expect.objectContaining({ state: "needs-repair" }),
+    ]);
     await expect(
       service.uninstall({ botId: bot.id, skillId: "skill-1", removeModified: true }),
     ).resolves.toBeUndefined();

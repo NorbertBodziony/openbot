@@ -143,16 +143,17 @@ export class SkillMarketplaceService {
   async listInstalledForChatTags(botId: string): Promise<InstalledSkill[]> {
     const bot = this.requireBot(botId);
     const lock = await readLock(bot.workspacePath);
-    const installed = await Promise.all(
-      Object.values(lock.skills).map(async (entry) => ({
+    const installed: InstalledSkill[] = [];
+    for (const entry of Object.values(lock.skills)) {
+      installed.push({
         skillId: entry.skillId,
         slug: entry.slug,
         name: entry.name,
         installedVersion: entry.version,
         availableVersion: entry.version,
-        state: await installedState(bot.workspacePath, entry),
-      })),
-    );
+        state: await chatTagInstalledState(bot.workspacePath, entry),
+      });
+    }
     return installed.sort((a, b) => a.name.localeCompare(b.name));
   }
 
@@ -444,6 +445,13 @@ async function installedState(workspace: string, entry: LockEntry): Promise<"ins
     }
   }
   return complete === 2 ? "installed" : "needs-repair";
+}
+
+async function chatTagInstalledState(workspace: string, entry: LockEntry): Promise<"installed" | "needs-repair"> {
+  for (const target of targetDirectories(workspace, entry.slug)) {
+    if (!(await pathExists(join(target, "SKILL.md")))) return "needs-repair";
+  }
+  return "installed";
 }
 
 function lockPath(workspace: string): string {
