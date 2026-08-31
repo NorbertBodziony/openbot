@@ -194,7 +194,7 @@ function MarkdownBlock(props: {
           <MarkdownBlocks
             tokens={token.tokens}
             content={props.content}
-            streaming={props.streaming === true && !parentClosesFinalNestedTable(token)}
+            streaming={props.streaming === true && !containerClosesFinalNestedTable(token)}
             streamingTail={props.streamingTail}
           />
         </blockquote>
@@ -206,7 +206,7 @@ function MarkdownBlock(props: {
         <MarkdownList
           token={token}
           content={props.content}
-          streaming={props.streaming}
+          streaming={props.streaming === true && !containerClosesFinalNestedTable(token)}
           streamingTail={props.streamingTail}
         />
       );
@@ -633,11 +633,26 @@ function activeStreamingTableCellIndex(token: Tokens.Table): number {
   return cellIndex < row.length ? cellIndex : -1;
 }
 
-function parentClosesFinalNestedTable(token: Tokens.Blockquote): boolean {
+function containerClosesFinalNestedTable(token: Tokens.Blockquote | Tokens.List): boolean {
   if (!/\n[\t ]*$/u.test(token.raw)) return false;
-  const index = lastRenderableTokenIndex(token.tokens);
-  const finalToken = token.tokens[index];
-  return finalToken !== undefined && tokenIs(finalToken, "table");
+  return finalNestedBlockToken(token) === "table";
+}
+
+function finalNestedBlockToken(token: Tokens.Blockquote | Tokens.List): Token["type"] | undefined {
+  if (tokenIs(token, "list")) {
+    const item = token.items.at(-1);
+    if (!item) return token.type;
+    return finalNestedTokenType(item.tokens);
+  }
+  return finalNestedTokenType(token.tokens);
+}
+
+function finalNestedTokenType(tokens: Token[]): Token["type"] | undefined {
+  const index = lastRenderableTokenIndex(tokens);
+  const token = tokens[index];
+  if (!token) return undefined;
+  if (tokenIs(token, "blockquote") || tokenIs(token, "list")) return finalNestedBlockToken(token);
+  return token.type;
 }
 
 function isEscapedMarkdownCharacter(value: string, index: number): boolean {

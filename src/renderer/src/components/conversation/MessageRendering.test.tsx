@@ -976,6 +976,30 @@ describe("MessageBody", () => {
     expect(container).toHaveTextContent("**literal");
   });
 
+  it.each([
+    ["list", "- | A | B |\n  | --- | --- |\n  | x | **literal\n"],
+    ["list in a blockquote", "> - | A | B |\n>   | --- | --- |\n>   | x | **literal\n"],
+  ])("preserves markers in a closed table nested through a %s", (_containerName, body) => {
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-closed-nested-table",
+          author: "bot",
+          body,
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("**literal");
+  });
+
   it("preserves literal markers in a completed streaming table header", () => {
     const { container } = render(() => (
       <MessageBody
