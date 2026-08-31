@@ -77,6 +77,7 @@ import type {
 } from "./ipc-conversation";
 import type {
   DynamicIslandAction,
+  DynamicIslandGeometry,
   DynamicIslandPreference,
   DynamicIslandPresentation,
   SetDynamicIslandInteractiveInput,
@@ -243,6 +244,7 @@ export interface DynamicIslandDesktopApi {
   getPresentation: () => Promise<DynamicIslandPresentation>;
   onPreference: (listener: (preference: DynamicIslandPreference) => void) => () => void;
   onPresentation: (listener: (presentation: DynamicIslandPresentation) => void) => () => void;
+  onGeometry: (listener: (geometry: DynamicIslandGeometry) => void) => () => void;
   performAction: (action: DynamicIslandAction) => Promise<void>;
   performHaptic: () => Promise<void>;
   onAction: (listener: (action: DynamicIslandAction) => void) => () => void;

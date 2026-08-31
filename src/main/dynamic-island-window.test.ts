@@ -4,12 +4,18 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DynamicIslandAction, DynamicIslandPreference, DynamicIslandPresentation } from "@openbot/contracts/ipc";
+import {
+  type DynamicIslandAction,
+  type DynamicIslandPreference,
+  type DynamicIslandPresentation,
+  IPC_CHANNELS,
+} from "@openbot/contracts/ipc";
 import type { BrowserWindow, Display, Rectangle } from "electron";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as preferenceStore from "./dynamic-island-preference-store";
 import {
   DynamicIslandWindowController,
+  dynamicIslandNotchSizeForDisplay,
   dynamicIslandWindowBounds,
   requireDynamicIslandSender,
 } from "./dynamic-island-window";
@@ -100,6 +106,15 @@ function display(overrides: Partial<Display>): Display {
 }
 
 describe("dynamic island window geometry", () => {
+  it("does not scale unsupported internal display geometry", () => {
+    expect(
+      dynamicIslandNotchSizeForDisplay(display({ bounds: { x: 0, y: 0, width: 2560, height: 1440 } })),
+    ).toBeUndefined();
+    expect(
+      dynamicIslandNotchSizeForDisplay(display({ bounds: { x: 0, y: 0, width: 1512, height: 982 }, internal: false })),
+    ).toBeUndefined();
+  });
+
   it("centers the overlay at each display top edge", () => {
     expect(dynamicIslandWindowBounds(display({ bounds: { x: 200, y: -20, width: 1512, height: 982 } }))).toEqual({
       x: 649,
@@ -161,6 +176,48 @@ describe("dynamic island window geometry", () => {
     await controller.reconcileWindow();
     expect(windows[0]?.destroy).toHaveBeenCalledOnce();
     expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 380 }, false);
+  });
+
+  it("publishes updated geometry without reloading an existing overlay", async () => {
+    const root = await temporaryRoot();
+    const windows: FakeWindow[] = [];
+    const loadWindow = vi.fn(async () => undefined);
+    let displays = [display({ id: 1 })];
+    const controller = new DynamicIslandWindowController({
+      platform: "darwin",
+      preferencePath: join(root, "preference.json"),
+      createWindow: (bounds) => {
+        const window = new FakeWindow(44 + windows.length, bounds);
+        windows.push(window);
+        // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
+        return window as unknown as BrowserWindow;
+      },
+      loadWindow,
+      getDisplays: () => displays,
+      getMainWindow: () => null,
+      performHaptic: () => undefined,
+      performCriticalAction: async () => undefined,
+    });
+
+    await controller.initialize();
+    expect(loadWindow).toHaveBeenCalledOnce();
+
+    displays = [display({ id: 1, bounds: { x: 0, y: 0, width: 1800, height: 1169 } })];
+    await controller.reconcileWindow();
+    expect(loadWindow).toHaveBeenCalledOnce();
+    expect(windows[0]?.webContents.send).toHaveBeenCalledWith(IPC_CHANNELS.dynamicIslandGeometry, {
+      width: 220,
+      height: 38,
+    });
+
+    await controller.reconcileWindow();
+    expect(loadWindow).toHaveBeenCalledOnce();
+    expect(windows[0]?.webContents.send).toHaveBeenCalledTimes(1);
+
+    displays = [display({ id: 1, bounds: { x: 0, y: 0, width: 2560, height: 1440 } })];
+    await controller.reconcileWindow();
+    expect(loadWindow).toHaveBeenCalledOnce();
+    expect(windows[0]?.webContents.send).toHaveBeenLastCalledWith(IPC_CHANNELS.dynamicIslandGeometry, null);
   });
 
   it("continues loading other displays when one overlay fails", async () => {

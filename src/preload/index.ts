@@ -16,6 +16,7 @@ import {
   type ConversationWithReadState,
   type DraftAttachment,
   type DynamicIslandAction,
+  type DynamicIslandGeometry,
   type DynamicIslandPreference,
   type DynamicIslandPresentation,
   type FilePreview,
@@ -28,6 +29,7 @@ import {
   isBotMemory,
   isConversationMessage,
   isDynamicIslandAction,
+  isDynamicIslandNotchSize,
   isDynamicIslandPreference,
   isDynamicIslandPresentation,
   isReasoningEffort,
@@ -169,6 +171,12 @@ function decodeVoid(value: unknown): undefined {
 
 function decodeDynamicIslandPreference(value: unknown): DynamicIslandPreference {
   if (!isDynamicIslandPreference(value)) throw new Error("Invalid Dynamic Island preference response.");
+  return value;
+}
+
+function decodeDynamicIslandGeometry(value: unknown): DynamicIslandGeometry {
+  if (value === null) return null;
+  if (!isDynamicIslandNotchSize(value)) throw new Error("Invalid Dynamic Island geometry.");
   return value;
 }
 
@@ -796,6 +804,12 @@ const openbotApi: OpenBotDesktopApi = {
         listener(decodeDynamicIslandPresentation(presentation));
       ipcRenderer.on(IPC_CHANNELS.dynamicIslandPresentation, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.dynamicIslandPresentation, handler);
+    },
+    onGeometry: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, geometry: unknown) =>
+        listener(decodeDynamicIslandGeometry(geometry));
+      ipcRenderer.on(IPC_CHANNELS.dynamicIslandGeometry, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.dynamicIslandGeometry, handler);
     },
     performAction: (action) => ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandPerformAction, action).then(decodeVoid),
     performHaptic: () => ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandPerformHaptic).then(decodeVoid),
