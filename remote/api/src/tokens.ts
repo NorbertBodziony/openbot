@@ -16,6 +16,7 @@ const TICKET_AUDIENCE = "openbot-remote";
 const RESUME_AUDIENCE = "openbot-remote-resume";
 export const RESUME_TTL_SECONDS = 10 * 60;
 const MAXIMUM_STALE_RESUME_SECONDS = 24 * 60 * 60;
+const MAXIMUM_TRUSTED_RESUME_TOKENS = 100_000;
 const TURN_TTL_SECONDS = 60 * 60;
 const jwksSchema = z.object({ keys: z.array(z.object({ kty: z.string() }).loose()).min(1) });
 const remoteTicketClaimsSchema = z.object({
@@ -42,6 +43,10 @@ export class RemoteTokenService {
   readonly #turnPort: number;
   readonly #turnTlsPort: number;
   readonly #validateResumeClaims: (claims: RemoteTicketClaims) => Promise<boolean>;
+  readonly #trustedResumeTokens = new Map<
+    string,
+    { expiresAt: number; hostId: string; sessionId: string; authEpoch: number }
+  >();
 
   constructor(
     config: Pick<
@@ -71,13 +76,19 @@ export class RemoteTokenService {
   }
 
   async verifyResumeToken(token: string, now = new Date()): Promise<RemoteTicketClaims> {
+    const nowSeconds = Math.floor(now.getTime() / 1_000);
+    this.#pruneTrustedResumeTokens(nowSeconds);
     try {
       const { payload } = await jwtVerify(token, this.#sessionSecret, {
         audience: RESUME_AUDIENCE,
         algorithms: ["HS256"],
         currentDate: now,
       });
-      return decodeTicketClaims({ ...payload, aud: TICKET_AUDIENCE }, now);
+      const claims = decodeTicketClaims({ ...payload, aud: TICKET_AUDIENCE }, now);
+      if (this.#trustedResumeTokens.has(claims.jti)) return claims;
+      if (!(await this.#validateResumeClaims(claims))) throw new Error("The remote session is not active.");
+      this.#trustResumeToken(claims);
+      return claims;
     } catch (error) {
       const claims = await this.#verifyStaleResumeToken(token, now).catch(() => null);
       if (!claims || !(await this.#validateResumeClaims(claims))) throw error;
@@ -86,7 +97,9 @@ export class RemoteTokenService {
   }
 
   async issueResumeToken(claims: RemoteTicketClaims, nowSeconds = Math.floor(Date.now() / 1_000)): Promise<string> {
-    return new SignJWT({
+    const jti = crypto.randomUUID();
+    const expiresAt = Math.min(claims.sessionExpiresAt, nowSeconds + RESUME_TTL_SECONDS);
+    const token = await new SignJWT({
       sessionId: claims.sessionId,
       hostId: claims.hostId,
       userId: claims.userId,
@@ -98,11 +111,46 @@ export class RemoteTokenService {
       sessionExpiresAt: claims.sessionExpiresAt,
     })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
-      .setJti(crypto.randomUUID())
+      .setJti(jti)
       .setIssuedAt(nowSeconds)
       .setAudience(RESUME_AUDIENCE)
-      .setExpirationTime(Math.min(claims.sessionExpiresAt, nowSeconds + RESUME_TTL_SECONDS))
+      .setExpirationTime(expiresAt)
       .sign(this.#sessionSecret);
+    this.#trustResumeToken({ ...claims, jti, iat: nowSeconds, exp: expiresAt });
+    return token;
+  }
+
+  revokeHost(hostId: string, authEpoch: number): void {
+    for (const [jti, token] of this.#trustedResumeTokens) {
+      if (token.hostId === hostId && token.authEpoch < authEpoch) this.#trustedResumeTokens.delete(jti);
+    }
+  }
+
+  revokeSession(sessionId: string): void {
+    for (const [jti, token] of this.#trustedResumeTokens) {
+      if (token.sessionId === sessionId) this.#trustedResumeTokens.delete(jti);
+    }
+  }
+
+  #trustResumeToken(claims: RemoteTicketClaims): void {
+    this.#pruneTrustedResumeTokens();
+    while (this.#trustedResumeTokens.size >= MAXIMUM_TRUSTED_RESUME_TOKENS) {
+      const oldest = this.#trustedResumeTokens.keys().next().value;
+      if (!oldest) break;
+      this.#trustedResumeTokens.delete(oldest);
+    }
+    this.#trustedResumeTokens.set(claims.jti, {
+      expiresAt: claims.exp,
+      hostId: claims.hostId,
+      sessionId: claims.sessionId,
+      authEpoch: claims.authEpoch,
+    });
+  }
+
+  #pruneTrustedResumeTokens(nowSeconds = Math.floor(Date.now() / 1_000)): void {
+    for (const [jti, token] of this.#trustedResumeTokens) {
+      if (token.expiresAt <= nowSeconds) this.#trustedResumeTokens.delete(jti);
+    }
   }
 
   async #verifyStaleResumeToken(token: string, now: Date): Promise<RemoteTicketClaims> {

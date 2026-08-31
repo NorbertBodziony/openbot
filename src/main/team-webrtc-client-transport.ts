@@ -226,7 +226,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     const current = this.#active.get(hostId);
     if (current?.connected) return;
     if (current?.connecting) return current.connecting;
-    const operation = this.#connect(hostId).catch((error) => {
+    const operation = this.#connect(hostId, current?.sessionId || null).catch((error) => {
       this.#active.delete(hostId);
       throw error;
     });
@@ -234,10 +234,29 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     return operation;
   }
 
-  async #connect(hostId: string): Promise<void> {
-    const session = await this.#options.startSession(hostId);
-    const bootstrap = await this.#options.issueTicket(session.sessionId);
-    this.#lastEventSequence.delete(hostId);
+  async #connect(hostId: string, existingSessionId: string | null): Promise<void> {
+    let sessionId = existingSessionId;
+    let startedNewSession = false;
+    let bootstrap: RemoteConnectionBootstrap;
+    try {
+      if (!sessionId) {
+        sessionId = (await this.#options.startSession(hostId)).sessionId;
+        startedNewSession = true;
+      }
+      try {
+        bootstrap = await this.#options.issueTicket(sessionId);
+      } catch (error) {
+        if (!existingSessionId) throw error;
+        await this.#options.endSession(existingSessionId).catch(() => undefined);
+        sessionId = (await this.#options.startSession(hostId)).sessionId;
+        startedNewSession = true;
+        bootstrap = await this.#options.issueTicket(sessionId);
+      }
+    } catch (error) {
+      if (sessionId) await this.#options.endSession(sessionId).catch(() => undefined);
+      throw error;
+    }
+    if (startedNewSession) this.#lastEventSequence.delete(hostId);
     const connected = new Promise<void>((resolve, reject) => {
       const cleanup = () => {
         clearTimeout(timer);
@@ -261,7 +280,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       this.on("connected", onConnected);
       this.on("error", onError);
     });
-    this.#active.set(hostId, { sessionId: session.sessionId, connected: false, connecting: connected });
+    this.#active.set(hostId, { sessionId, connected: false, connecting: connected });
     try {
       await this.#options.bridge.connect({
         peerId: hostId,
@@ -272,7 +291,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       await connected;
     } catch (error) {
       this.#active.delete(hostId);
-      await this.#options.endSession(session.sessionId).catch(() => undefined);
+      await this.#options.endSession(sessionId).catch(() => undefined);
       throw error;
     }
   }

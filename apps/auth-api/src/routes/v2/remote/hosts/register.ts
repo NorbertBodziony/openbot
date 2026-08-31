@@ -20,6 +20,7 @@ export const Route = createFileRoute("/v2/remote/hosts/register")({
           if (
             !isString(body.hostId) ||
             !isString(body.name) ||
+            !isString(body.ownerMembershipId) ||
             !(body.devicePublicKey === undefined || body.devicePublicKey === null || isString(body.devicePublicKey))
           ) {
             return apiError(400, "invalid_remote_request", "The host registration is invalid.");
@@ -28,6 +29,7 @@ export const Route = createFileRoute("/v2/remote/hosts/register")({
             await requestRemoteControlPlane().registerHost(user, {
               hostId: body.hostId,
               name: body.name,
+              ownerMembershipId: body.ownerMembershipId,
               devicePublicKey: body.devicePublicKey,
             }),
             201,

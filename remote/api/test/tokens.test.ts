@@ -55,10 +55,31 @@ describe("remote tokens", () => {
       "session-1",
     );
     expect(remoteValidations).toBe(0);
-    expect((await service.verifyResumeToken(resume, new Date((now + RESUME_TTL_SECONDS + 1) * 1_000))).sessionId).toBe(
+    const restartedService = new RemoteTokenService(
+      {
+        ticketJwks: JSON.stringify({ keys: [jwk] }),
+        ticketJwksUrl: null,
+        sessionSecret: secret,
+        turnSecret: "t".repeat(32),
+        turnHost: "turn.example.com",
+        turnPort: 3478,
+        turnTlsPort: 5349,
+      },
+      async () => {
+        remoteValidations += 1;
+        return true;
+      },
+    );
+    expect((await restartedService.verifyResumeToken(resume, new Date((now + 60) * 1_000))).sessionId).toBe(
       "session-1",
     );
     expect(remoteValidations).toBe(1);
+    await restartedService.verifyResumeToken(resume, new Date((now + 61) * 1_000));
+    expect(remoteValidations).toBe(1);
+    expect((await service.verifyResumeToken(resume, new Date((now + RESUME_TTL_SECONDS + 1) * 1_000))).sessionId).toBe(
+      "session-1",
+    );
+    expect(remoteValidations).toBe(2);
   });
 
   it("checks webhook timestamps and signatures", () => {

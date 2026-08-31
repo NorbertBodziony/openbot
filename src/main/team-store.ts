@@ -97,6 +97,17 @@ export interface AuthenticatedMember {
   sessionExpiresAt: string;
 }
 
+export interface RemoteDirectoryMember {
+  membershipId: string;
+  userId: string;
+  email: string;
+  name: string | null;
+  avatarUrl: string | null;
+  role: TeamRole;
+  status: "active" | "revoked";
+  createdAt: number;
+}
+
 export class TeamStore {
   readonly #path: string;
   readonly #logoRoot: string;
@@ -140,6 +151,10 @@ export class TeamStore {
 
   getOwnerEmail(): string | null {
     return this.#state?.members.find((member) => member.role === "owner")?.email ?? null;
+  }
+
+  getOwnerMemberId(): string | null {
+    return this.#state?.members.find((member) => member.role === "owner")?.id ?? null;
   }
 
   getOwnerAnalyticsIdentity(): Pick<CentralAuthUser, "id" | "email"> | null {
@@ -330,6 +345,41 @@ export class TeamStore {
     return members;
   }
 
+  async syncRemoteDirectory(remoteMembers: RemoteDirectoryMember[]): Promise<void> {
+    const state = this.#requireState();
+    const remoteIds = new Set(remoteMembers.map((member) => member.membershipId));
+    for (const remote of remoteMembers) {
+      const member = state.members.find((candidate) => candidate.id === remote.membershipId);
+      if (!member) {
+        if (remote.role === "owner")
+          throw new TeamStoreError("The control-plane owner identity does not match this host.");
+        state.members.push({
+          id: remote.membershipId,
+          accountId: remote.userId,
+          username: normalizeEmail(remote.email),
+          email: normalizeEmail(remote.email),
+          name: normalizeName(remote.name),
+          avatarUrl: normalizeAvatarUrl(remote.avatarUrl),
+          role: remote.role,
+          disabled: remote.status !== "active",
+          createdAt: new Date(remote.createdAt).toISOString(),
+        });
+        continue;
+      }
+      member.accountId = remote.userId;
+      member.username = normalizeEmail(remote.email);
+      member.email = normalizeEmail(remote.email);
+      member.name = normalizeName(remote.name);
+      member.avatarUrl = normalizeAvatarUrl(remote.avatarUrl);
+      member.role = remote.role;
+      member.disabled = remote.status !== "active";
+    }
+    for (const member of state.members) {
+      if (member.role !== "owner" && !remoteIds.has(member.id)) member.disabled = true;
+    }
+    await this.#persist();
+  }
+
   openRemoteSession(input: {
     sessionId: string;
     membershipId: string;
@@ -339,15 +389,19 @@ export class TeamStore {
   }): AuthenticatedMember {
     const sessionToken = randomBytes(32).toString("base64url");
     const sessionExpiresAt = new Date(input.expiresAt ?? Date.now() + SESSION_TTL_MS).toISOString();
-    const member: TeamMemberSummary = {
-      id: input.membershipId,
-      username: input.userId,
-      email: null,
-      name: null,
-      role: input.role,
-      createdAt: new Date().toISOString(),
-      disabled: false,
-    };
+    const stored = this.#requireState().members.find((member) => member.id === input.membershipId);
+    const member: TeamMemberSummary = stored
+      ? publicMember(stored)
+      : {
+          id: input.membershipId,
+          username: input.userId,
+          email: null,
+          name: null,
+          role: input.role,
+          createdAt: new Date().toISOString(),
+          disabled: false,
+        };
+    if (member.disabled || member.role !== input.role) throw new TeamStoreError("The remote member is not active.");
     this.#remoteSessions.set(hashToken(sessionToken), { member, sessionId: input.sessionId, sessionExpiresAt });
     return { member: structuredClone(member), sessionToken, sessionExpiresAt };
   }

@@ -167,9 +167,13 @@ export class RemoteControlPlane {
     return this.#signer.publicJwks();
   }
 
-  async registerHost(user: AuthUser, input: { hostId: string; name: string; devicePublicKey?: string | null }) {
+  async registerHost(
+    user: AuthUser,
+    input: { hostId: string; name: string; ownerMembershipId: string; devicePublicKey?: string | null },
+  ) {
     const hostId = requiredIdentifier(input.hostId, "host ID");
     const name = requiredText(input.name, 120, "host name");
+    const ownerMembershipId = requiredIdentifier(input.ownerMembershipId, "owner membership ID");
     const existing = await this.#host(hostId);
     if (existing && existing.owner_user_id !== user.id) {
       throw new RemoteControlPlaneError(403, "host_owner_mismatch", "This host belongs to another account.");
@@ -177,7 +181,7 @@ export class RemoteControlPlane {
     const now = this.#now();
     const machineToken = randomToken();
     const machineTokenHash = await sha256(machineToken);
-    const membershipId = `${hostId}:owner`;
+    const membershipId = ownerMembershipId;
     await this.#database.batch([
       this.#database
         .prepare(
@@ -196,7 +200,9 @@ export class RemoteControlPlane {
           `INSERT INTO remote_memberships(
              membership_id, host_id, user_id, role, status, created_at, updated_at
            ) VALUES (?, ?, ?, 'owner', 'active', ?, ?)
-           ON CONFLICT(host_id, user_id) DO UPDATE SET role = 'owner', status = 'active', updated_at = excluded.updated_at`,
+           ON CONFLICT(host_id, user_id) DO UPDATE SET
+             membership_id = excluded.membership_id,
+             role = 'owner', status = 'active', updated_at = excluded.updated_at`,
         )
         .bind(membershipId, hostId, user.id, now, now),
     ]);
@@ -291,7 +297,7 @@ export class RemoteControlPlane {
     await this.#requireRole(hostId, userId, ["owner", "admin", "member"]);
     const result = await this.#database
       .prepare(
-        `SELECT m.membership_id, m.role, m.status, m.created_at,
+        `SELECT m.membership_id, m.user_id, m.role, m.status, m.created_at,
                 u.email, u.name, u.avatar_url
          FROM remote_memberships m
          JOIN users u ON u.id = m.user_id
@@ -301,6 +307,7 @@ export class RemoteControlPlane {
       .bind(hostId)
       .all<{
         membership_id: string;
+        user_id: string;
         role: RemoteMemberRole;
         status: "active" | "revoked";
         created_at: number;
@@ -310,6 +317,7 @@ export class RemoteControlPlane {
       }>();
     return (result.results ?? []).map((member) => ({
       membershipId: member.membership_id,
+      userId: member.user_id,
       role: member.role,
       status: member.status,
       createdAt: member.created_at,

@@ -44,7 +44,7 @@ import type { RemoteDesktopRuntimePaths } from "./remote-desktop-runtime-artifac
 import { appendRemoteDiagnosticLog } from "./remote-diagnostics";
 import { RemoteScreenGateway } from "./remote-screen-gateway";
 import { TeamApiServer } from "./team-api-server";
-import type { AuthenticatedMember, TeamStore } from "./team-store";
+import type { AuthenticatedMember, RemoteDirectoryMember, TeamStore } from "./team-store";
 import type { TeamWebRtcBridge } from "./team-webrtc-bridge";
 import { TeamWebRtcHostGateway } from "./team-webrtc-host-gateway";
 
@@ -84,7 +84,12 @@ interface HostServiceOptions {
   platform?: "darwin" | "win32" | "linux";
   unattended?: boolean;
   teamWebRtcBridge?: TeamWebRtcBridge;
-  registerRemoteHost?: (input: { hostId: string; name: string; devicePublicKey?: string | null }) => Promise<unknown>;
+  registerRemoteHost?: (input: {
+    hostId: string;
+    name: string;
+    ownerMembershipId: string;
+    devicePublicKey?: string | null;
+  }) => Promise<unknown>;
   issueRemoteHostTicket?: (hostId: string) => Promise<{ ticket: string; signalUrl: string; expiresAt: number }>;
   remoteControlPlaneUrl?: string;
   createRemoteInvite?: (
@@ -101,17 +106,7 @@ interface HostServiceOptions {
     }>
   >;
   revokeRemoteInvite?: (inviteId: string) => Promise<void>;
-  listRemoteMembers?: (hostId: string) => Promise<
-    Array<{
-      membershipId: string;
-      email: string;
-      name: string | null;
-      avatarUrl: string | null;
-      role: "owner" | "admin" | "member";
-      status: "active" | "revoked";
-      createdAt: number;
-    }>
-  >;
+  listRemoteMembers?: (hostId: string) => Promise<RemoteDirectoryMember[]>;
   updateRemoteMember?: (hostId: string, membershipId: string, role: "admin" | "member") => Promise<void>;
   removeRemoteMember?: (hostId: string, membershipId: string) => Promise<void>;
   updateRemoteHostLogo?: (
@@ -211,6 +206,11 @@ export class HostService extends EventEmitter<HostEvents> {
           store: options.store,
           appVersion: options.appVersion,
           transferDirectory: join(options.logDirectory ?? ".openbot-remote", "transfers"),
+          prepareIncomingSession: async () => {
+            const hostId = options.store.getIdentity()?.serverId;
+            if (!hostId || !options.listRemoteMembers) return;
+            await options.store.syncRemoteDirectory(await options.listRemoteMembers(hostId));
+          },
         })
       : null;
   }
@@ -252,6 +252,7 @@ export class HostService extends EventEmitter<HostEvents> {
       await this.#options.registerRemoteHost?.({
         hostId: identity.serverId,
         name: identity.serverName,
+        ownerMembershipId: this.#requiredOwnerMemberId(),
         devicePublicKey: identity.publicKey,
       });
       if (input.logo !== undefined) {
@@ -282,6 +283,7 @@ export class HostService extends EventEmitter<HostEvents> {
     await this.#options.registerRemoteHost?.({
       hostId: identity.serverId,
       name: identity.serverName,
+      ownerMembershipId: this.#requiredOwnerMemberId(),
       devicePublicKey: identity.publicKey,
     });
     if (input.logo !== undefined) {
@@ -310,8 +312,12 @@ export class HostService extends EventEmitter<HostEvents> {
       await this.#options.registerRemoteHost({
         hostId: identity.serverId,
         name: identity.serverName,
+        ownerMembershipId: this.#requiredOwnerMemberId(),
         devicePublicKey: identity.publicKey,
       });
+      if (this.#options.listRemoteMembers) {
+        await this.#options.store.syncRemoteDirectory(await this.#options.listRemoteMembers(identity.serverId));
+      }
       const bootstrap = await this.#options.issueRemoteHostTicket(identity.serverId);
       await this.#webrtcGateway.start({
         hostId: identity.serverId,
@@ -402,8 +408,9 @@ export class HostService extends EventEmitter<HostEvents> {
   listMembers(): TeamMemberSummary[] | Promise<TeamMemberSummary[]> {
     const hostId = this.#options.store.getIdentity()?.serverId;
     if (hostId && this.#options.listRemoteMembers) {
-      return this.#options.listRemoteMembers(hostId).then((members) =>
-        members.map((member) => ({
+      return this.#options.listRemoteMembers(hostId).then(async (members) => {
+        await this.#options.store.syncRemoteDirectory(members);
+        return members.map((member) => ({
           id: member.membershipId,
           username: member.email,
           email: member.email,
@@ -412,8 +419,8 @@ export class HostService extends EventEmitter<HostEvents> {
           role: member.role,
           createdAt: new Date(member.createdAt).toISOString(),
           disabled: member.status !== "active",
-        })),
-      );
+        }));
+      });
     }
     return this.#options.store.listMembers();
   }
@@ -514,10 +521,10 @@ export class HostService extends EventEmitter<HostEvents> {
       if (!current || current.role === "owner") throw new Error("The remote member does not exist.");
       if (input.disabled) await this.#options.removeRemoteMember(hostId, input.memberId);
       else await this.#options.updateRemoteMember(hostId, input.memberId, input.role ?? current.role);
-      const updated = (await this.#options.listRemoteMembers(hostId)).find(
-        (member) => member.membershipId === input.memberId,
-      );
+      const members = await this.#options.listRemoteMembers(hostId);
+      const updated = members.find((member) => member.membershipId === input.memberId);
       if (!updated) throw new Error("The remote member does not exist.");
+      await this.#options.store.syncRemoteDirectory(members);
       return {
         id: updated.membershipId,
         username: updated.email,
@@ -542,6 +549,9 @@ export class HostService extends EventEmitter<HostEvents> {
     const hostId = this.#options.store.getIdentity()?.serverId;
     if (hostId && this.#options.removeRemoteMember) {
       await this.#options.removeRemoteMember(hostId, memberId);
+      if (this.#options.listRemoteMembers) {
+        await this.#options.store.syncRemoteDirectory(await this.#options.listRemoteMembers(hostId));
+      }
       return;
     }
     await this.#options.store.removeMember(memberId);
@@ -670,6 +680,12 @@ export class HostService extends EventEmitter<HostEvents> {
     } catch {
       return null;
     }
+  }
+
+  #requiredOwnerMemberId(): string {
+    const memberId = this.#options.store.getOwnerMemberId();
+    if (!memberId) throw new Error("The host owner identity is unavailable.");
+    return memberId;
   }
 }
 

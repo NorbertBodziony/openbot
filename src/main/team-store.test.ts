@@ -204,6 +204,53 @@ describe("TeamStore", () => {
     expect(store.authenticate(joined.sessionToken)?.email).toBe("alice@example.com");
   });
 
+  it("uses control-plane membership IDs for remote sessions and direct-message recipients", async () => {
+    const { store, path } = await createStore();
+    await store.configureWithAccount("Studio Mac", {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
+    const ownerMembershipId = store.getOwnerMemberId();
+    expect(ownerMembershipId).toBeTruthy();
+    await store.syncRemoteDirectory([
+      {
+        membershipId: ownerMembershipId ?? "missing-owner",
+        userId: "owner-account",
+        email: "owner@example.com",
+        name: "Owner",
+        avatarUrl: null,
+        role: "owner",
+        status: "active",
+        createdAt: 1_900_000_000_000,
+      },
+      {
+        membershipId: "d1-member",
+        userId: "alice-account",
+        email: "alice@example.com",
+        name: "Alice",
+        avatarUrl: null,
+        role: "member",
+        status: "active",
+        createdAt: 1_900_000_000_000,
+      },
+    ]);
+
+    const remote = store.openRemoteSession({
+      sessionId: "remote-session",
+      membershipId: "d1-member",
+      userId: "alice-account",
+      role: "member",
+    });
+    expect(remote.member).toMatchObject({ id: "d1-member", email: "alice@example.com", name: "Alice" });
+    expect(store.getMember("d1-member")).toMatchObject({ email: "alice@example.com", disabled: false });
+
+    const restored = new TeamStore(path);
+    await restored.initialize();
+    expect(restored.getMember("d1-member")).toMatchObject({ email: "alice@example.com", disabled: false });
+  });
+
   it("lets an existing account member connect another client with an invitation", async () => {
     const { store } = await createStore();
     await store.configureWithAccount("Studio Mac", {

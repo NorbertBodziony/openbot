@@ -28,6 +28,7 @@ interface TeamWebRtcHostGatewayOptions {
   store: TeamStore;
   appVersion: string;
   transferDirectory: string;
+  prepareIncomingSession?: () => Promise<void>;
 }
 
 export class TeamWebRtcHostGateway {
@@ -35,6 +36,7 @@ export class TeamWebRtcHostGateway {
   readonly #store: TeamStore;
   readonly #appVersion: string;
   readonly #files: TeamWebRtcFileTransfer;
+  readonly #prepareIncomingSession: () => Promise<void>;
   readonly #responses = new Map<string, TeamProtocolV2RpcFrame>();
   readonly #events = new Map<number, string>();
   #peerId: string | null = null;
@@ -46,12 +48,14 @@ export class TeamWebRtcHostGateway {
   #desktopSocket: Ws.WebSocket | null = null;
   #desktopStreamId: string | null = null;
   #sessionExpirationTimer: ReturnType<typeof setTimeout> | null = null;
+  #sessionPreparation: Promise<void> | null = null;
 
   constructor(options: TeamWebRtcHostGatewayOptions) {
     this.#bridge = options.bridge;
     this.#store = options.store;
     this.#appVersion = options.appVersion;
     this.#files = new TeamWebRtcFileTransfer(options.bridge, options.transferDirectory);
+    this.#prepareIncomingSession = options.prepareIncomingSession ?? (() => Promise.resolve());
     this.#bridge.on("incoming", this.#onIncoming);
     this.#bridge.on("data", this.#onData);
     this.#bridge.on("disconnected", this.#onDisconnected);
@@ -127,8 +131,24 @@ export class TeamWebRtcHostGateway {
       sessionExpiresAt: number;
     },
   ): void => {
+    this.#sessionPreparation = this.#openIncomingSession(peerId, connection);
+    void this.#sessionPreparation.catch(() => this.#closeLocalSession());
+  };
+
+  async #openIncomingSession(
+    peerId: string,
+    connection: {
+      connectionId: string;
+      sessionId: string;
+      userId: string;
+      membershipId: string;
+      role: "owner" | "admin" | "member";
+      sessionExpiresAt: number;
+    },
+  ): Promise<void> {
     if (peerId !== this.#peerId) return;
     if (connection.sessionId === this.#localSessionId && this.#localSessionToken) return;
+    await this.#prepareIncomingSession();
     this.#closeLocalSession();
     this.#events.clear();
     this.#responses.clear();
@@ -140,7 +160,7 @@ export class TeamWebRtcHostGateway {
     this.#localSessionId = connection.sessionId;
     this.#sessionExpirationTimer = setTimeout(() => this.#closeLocalSession(), expiresAt - Date.now());
     this.#connectLocalEvents(session.sessionToken);
-  };
+  }
 
   readonly #onData = (
     peerId: string,
@@ -158,10 +178,14 @@ export class TeamWebRtcHostGateway {
   };
 
   readonly #onDisconnected = (peerId: string): void => {
-    if (peerId === this.#peerId) this.#closeLocalSession();
+    if (peerId === this.#peerId) {
+      this.#sessionPreparation = null;
+      this.#closeLocalSession();
+    }
   };
 
   async #handleRpc(data: string): Promise<void> {
+    await this.#sessionPreparation;
     const peerId = this.#peerId;
     if (!peerId) return;
     let request: Extract<TeamProtocolV2RpcFrame, { type: "request" }>;
@@ -300,6 +324,7 @@ export class TeamWebRtcHostGateway {
   }
 
   async #handleDesktopSignal(data: string | ArrayBuffer): Promise<void> {
+    await this.#sessionPreparation;
     const peerId = this.#peerId;
     if (!peerId || !this.#localApiPort || !this.#localSessionId) return;
     if (!isString(data)) {

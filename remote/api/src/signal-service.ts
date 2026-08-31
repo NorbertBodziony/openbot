@@ -14,6 +14,8 @@ export interface RemoteTokenProvider {
   verifyResumeToken(token: string): Promise<RemoteTicketClaims>;
   issueResumeToken(claims: RemoteTicketClaims): Promise<string>;
   iceServers(claims: RemoteTicketClaims): IceServer[];
+  revokeHost?(hostId: string, authEpoch: number): void;
+  revokeSession?(sessionId: string): void;
 }
 
 export interface SignalSocket {
@@ -178,6 +180,7 @@ export class SignalService {
     const current = this.#revokedEpochs.get(hostId) ?? 0;
     if (authEpoch <= current) return;
     this.#revokedEpochs.set(hostId, authEpoch);
+    this.#tokens.revokeHost?.(hostId, authEpoch);
     for (const peer of [...this.#peers.values()]) {
       if (peer.peer === "client" && peer.claims.hostId === hostId && peer.claims.authEpoch < authEpoch) {
         this.#fail(peer.socket, "session_revoked", "Remote access was revoked.", 1008);
@@ -187,6 +190,7 @@ export class SignalService {
 
   revokeSession(sessionId: string): void {
     this.#revokedSessions.set(sessionId, Math.floor(Date.now() / 1_000) + 24 * 60 * 60);
+    this.#tokens.revokeSession?.(sessionId);
     for (const peer of [...this.#peers.values()]) {
       if (peer.peer === "client" && peer.claims.sessionId === sessionId) {
         this.#fail(peer.socket, "session_revoked", "The remote session ended.", 1008);
