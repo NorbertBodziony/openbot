@@ -1882,6 +1882,10 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByText("Norbert")).toBeInTheDocument();
     expect(screen.getByText("norbertbodziony@gmail.com")).toBeInTheDocument();
     expect(within(accountDialog).queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    await fireEvent.click(within(accountDialog).getByRole("button", { name: "Providers & permissions" }));
+    const permissionsDialog = await screen.findByRole("dialog", { name: "Providers & permissions" });
+    expect(within(permissionsDialog).queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    await fireEvent.click(within(permissionsDialog).getByRole("button", { name: "Cancel" }));
     expect(window.openbot.auth.logout).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Open computer" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /remote control/iu })).not.toBeInTheDocument();

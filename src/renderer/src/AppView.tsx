@@ -705,7 +705,7 @@ function WorkspaceOverlays(props: {
             onSave={saveSetup}
             onPreviewInvite={previewInvite}
             onJoinRemote={joinRemoteDuringSetup}
-            onLogout={logoutCentralAccount}
+            onLogout={appProps.landingPreview ? undefined : logoutCentralAccount}
             onClose={() => setPermissionsOpen(false)}
           />
         </Loading>
