@@ -41,6 +41,27 @@ describe("Team protocol v2", () => {
     });
   });
 
+  it("validates client event controls", () => {
+    expect(
+      decodeTeamProtocolV2EventFrame({
+        version: 2,
+        type: "event-control",
+        control: { type: "team-typing", botId: "bot-1", typing: true },
+      }),
+    ).toEqual({
+      version: 2,
+      type: "event-control",
+      control: { type: "team-typing", botId: "bot-1", typing: true },
+    });
+    expect(() =>
+      decodeTeamProtocolV2EventFrame({
+        version: 2,
+        type: "event-control",
+        control: { type: "team-direct-typing", recipientMemberId: "", typing: true },
+      }),
+    ).toThrow();
+  });
+
   it("rejects oversized files, chunks, and invalid offsets", () => {
     expect(() =>
       decodeTeamProtocolV2FileControlFrame({ ...fileOpenFixture, size: TEAM_PROTOCOL_V2_MAX_FILE_BYTES + 1 }),

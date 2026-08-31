@@ -7,6 +7,7 @@ const TICKET_TTL_SECONDS = 180;
 const SESSION_TTL_SECONDS = 24 * 60 * 60;
 const HOST_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 const AUTH_EVENT_RETRY_MS = 60_000;
+const MAX_OUTSTANDING_INVITES_PER_HOST = 50;
 
 export type RemoteMemberRole = "owner" | "admin" | "member";
 
@@ -261,6 +262,20 @@ export class RemoteControlPlane {
     await this.#requireRole(input.hostId, user.id, ["owner", "admin"]);
     if (input.role !== "admin" && input.role !== "member") throw invalid("invite role");
     const now = this.#now();
+    const outstanding = await this.#database
+      .prepare(
+        `SELECT COUNT(*) AS count FROM remote_invites
+         WHERE host_id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
+      )
+      .bind(input.hostId, now)
+      .first<{ count: number }>();
+    if ((outstanding?.count ?? 0) >= MAX_OUTSTANDING_INVITES_PER_HOST) {
+      throw new RemoteControlPlaneError(
+        429,
+        "invite_limit_reached",
+        "Revoke or use an active invitation before creating another one.",
+      );
+    }
     const ttl = input.expiresInSeconds ?? 7 * 24 * 60 * 60;
     if (!Number.isSafeInteger(ttl) || ttl < 300 || ttl > 30 * 24 * 60 * 60) throw invalid("invite lifetime");
     const email = input.email?.trim().toLowerCase() || null;
@@ -480,7 +495,7 @@ export class RemoteControlPlane {
     await this.#database.batch([
       this.#database
         .prepare("UPDATE remote_memberships SET role = ?, status = ?, updated_at = ? WHERE membership_id = ?")
-        .bind(role, input.revoke ? "revoked" : "active", now, input.membershipId),
+        .bind(role, input.revoke ? "revoked" : membership.status, now, input.membershipId),
       this.#database
         .prepare("UPDATE remote_hosts SET auth_epoch = ?, updated_at = ? WHERE host_id = ?")
         .bind(authEpoch, now, input.hostId),

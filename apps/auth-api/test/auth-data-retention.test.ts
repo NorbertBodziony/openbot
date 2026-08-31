@@ -21,6 +21,7 @@ describe("auth data retention", () => {
     expect(ids(database, "auth_rate_limits", "key_hash")).toEqual(["current"]);
     expect(ids(database, "team_auth_tickets", "ticket_hash")).toEqual(["active"]);
     expect(ids(database, "remote_sessions", "session_id")).toEqual(["active"]);
+    expect(ids(database, "remote_invites", "invite_id")).toEqual(["active"]);
     expect(ids(database, "users", "id")).toEqual(["user"]);
     expect(ids(database, "team_tunnels", "server_id")).toEqual(["server"]);
   });
@@ -44,6 +45,9 @@ describe("auth data retention", () => {
     database
       .prepare("INSERT INTO remote_sessions(session_id, user_id, expires_at, ended_at) VALUES (?, ?, ?, NULL)")
       .run("boundary", "user", now - 10 * 60_000);
+    database
+      .prepare("INSERT INTO remote_invites(invite_id, expires_at, used_at, revoked_at) VALUES (?, ?, NULL, NULL)")
+      .run("boundary", now - 24 * 60 * 60_000);
 
     runRetention(database, now);
 
@@ -52,6 +56,7 @@ describe("auth data retention", () => {
     expect(count(database, "auth_rate_limits")).toBe(0);
     expect(count(database, "team_auth_tickets")).toBe(0);
     expect(count(database, "remote_sessions")).toBe(0);
+    expect(count(database, "remote_invites")).toBe(0);
   });
 });
 
@@ -92,6 +97,12 @@ function createDatabase(): DatabaseSync {
       expires_at INTEGER NOT NULL,
       ended_at INTEGER
     );
+    CREATE TABLE remote_invites (
+      invite_id TEXT PRIMARY KEY,
+      expires_at INTEGER NOT NULL,
+      used_at INTEGER,
+      revoked_at INTEGER
+    );
   `);
   return database;
 }
@@ -126,6 +137,13 @@ function insertFixtures(database: DatabaseSync, now: number): void {
   remoteSession.run("active", "user", now + 1, null);
   remoteSession.run("expired", "user", now - 10 * 60_000 - 1, null);
   remoteSession.run("ended", "user", now + 1, now - 10 * 60_000 - 1);
+  const remoteInvite = database.prepare(
+    "INSERT INTO remote_invites(invite_id, expires_at, used_at, revoked_at) VALUES (?, ?, ?, ?)",
+  );
+  remoteInvite.run("active", now + 1, null, null);
+  remoteInvite.run("expired", now - 24 * 60 * 60_000 - 1, null, null);
+  remoteInvite.run("used", now + 1, now - 24 * 60 * 60_000 - 1, null);
+  remoteInvite.run("revoked", now + 1, null, now - 24 * 60 * 60_000 - 1);
 }
 
 function runRetention(database: DatabaseSync, now: number): void {

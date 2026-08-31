@@ -135,6 +135,18 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     await this.#options.bridge.send(hostId, "desktop", data);
   }
 
+  async requestRuntimeSnapshot(hostId: string): Promise<void> {
+    await this.#sendEventControl(hostId, { type: "runtime-snapshot-request" });
+  }
+
+  async setTyping(hostId: string, botId: string | null, typing: boolean): Promise<void> {
+    await this.#sendEventControl(hostId, { type: "team-typing", botId, typing });
+  }
+
+  async setDirectTyping(hostId: string, recipientMemberId: string, typing: boolean): Promise<void> {
+    await this.#sendEventControl(hostId, { type: "team-direct-typing", recipientMemberId, typing });
+  }
+
   connect(hostId: string): Promise<void> {
     return this.#ensureConnected(hostId);
   }
@@ -330,6 +342,21 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     await this.#options.bridge.disconnect(hostId).catch(() => undefined);
     await this.#options.endSession(sessionId).catch(() => undefined);
     throw new Error("The remote connection was cancelled.");
+  }
+
+  async #sendEventControl(
+    hostId: string,
+    control:
+      | { type: "runtime-snapshot-request" }
+      | { type: "team-typing"; botId: string | null; typing: boolean }
+      | { type: "team-direct-typing"; recipientMemberId: string; typing: boolean },
+  ): Promise<void> {
+    await this.#ensureConnected(hostId);
+    await this.#options.bridge.send(
+      hostId,
+      "events",
+      encodeTeamProtocolV2Frame({ version: 2, type: "event-control", control }),
+    );
   }
 
   readonly #onConnected = (hostId: string): void => {

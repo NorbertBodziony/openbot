@@ -272,6 +272,33 @@ describe("RemoteControlPlane", () => {
     expect(webhookBodies).toContain(
       JSON.stringify({ type: "remote-session-ended", hostId: "host-1", sessionId: session.sessionId }),
     );
+
+    database.prepare("INSERT INTO users(id) VALUES ('revoked-member')").run();
+    database
+      .prepare(
+        `INSERT INTO remote_memberships(
+           membership_id, host_id, user_id, role, status, created_at, updated_at
+         ) VALUES ('revoked-membership', 'host-1', 'revoked-member', 'member', 'revoked', 1, 1)`,
+      )
+      .run();
+    await controlPlane.changeMembership(owner.id, {
+      hostId: "host-1",
+      membershipId: "revoked-membership",
+      role: "admin",
+    });
+    expect(
+      database.prepare("SELECT role, status FROM remote_memberships WHERE membership_id = 'revoked-membership'").get(),
+    ).toEqual({ role: "admin", status: "revoked" });
+
+    const insertInvite = database.prepare(
+      `INSERT INTO remote_invites(
+         invite_id, host_id, token_hash, email, role, created_by_user_id, expires_at, created_at
+       ) VALUES (?, 'host-1', ?, NULL, 'member', 'owner', 999999999, 1)`,
+    );
+    for (let index = 0; index < 49; index += 1) insertInvite.run(`limit-${index}`, `limit-hash-${index}`);
+    await expect(controlPlane.createInvite(owner, { hostId: "host-1", role: "member" })).rejects.toMatchObject({
+      code: "invite_limit_reached",
+    });
   });
 });
 

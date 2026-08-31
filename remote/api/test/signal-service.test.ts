@@ -24,6 +24,31 @@ describe("SignalService", () => {
     expect(host.messages.filter((message) => message.includes('"type":"peer-ready"'))).toHaveLength(2);
   });
 
+  it("restores the client mapping when only the host Signal socket reconnects", async () => {
+    const service = new SignalService(fakeTokens(), 8);
+    const host = socket("host");
+    const client = socket("client");
+    await hello(service, host, "host-ticket", "host");
+    await hello(service, client, "client-ticket", "client");
+
+    service.disconnect(host);
+    const resumedHost = socket("host-resumed");
+    await hello(service, resumedHost, "resume-host", "host");
+    const ready = [...client.messages]
+      .reverse()
+      .find((message) => message.includes('"type":"ready"') && message.includes('"connectionId":"'));
+    const connectionId = ready?.match(/"connectionId":"([A-Za-z0-9_-]+)"/u)?.[1];
+    expect(connectionId).toBeTruthy();
+    expect(resumedHost.messages.some((message) => message.includes('"type":"peer-ready"'))).toBe(true);
+
+    await service.receive(
+      client,
+      JSON.stringify({ type: "ice-restart", version: 1, connectionId: connectionId ?? "missing", channel: "team" }),
+    );
+    expect(resumedHost.messages.at(-1)).toContain('"type":"ice-restart"');
+    expect(client.closed).toBe(false);
+  });
+
   it("rejects reuse of an initial ticket and closes revoked clients", async () => {
     const service = new SignalService(fakeTokens(), 8);
     const host = socket("host");
@@ -109,6 +134,7 @@ function fakeTokens() {
     },
     verifyResumeToken: async (token: string) => {
       if (token === "resume-client") return claims("member", "resume-jti");
+      if (token === "resume-host") return claims("host", "resume-host-jti");
       throw new Error("not a resume token");
     },
     issueResumeToken: async (value: RemoteTicketClaims) => `resume-${value.role === "host" ? "host" : "client"}`,

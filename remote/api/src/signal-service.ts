@@ -172,6 +172,10 @@ export class SignalService {
       const clientPeer = this.#peers.get(connection.client.id);
       if (clientPeer) clientPeer.connectionId = null;
     }
+    if (peer.peer === "host") {
+      const replacement = this.#firstHost(peer.claims.hostId);
+      if (replacement) void this.#restoreWaitingClient(replacement);
+    }
     this.#metrics.activePeerConnections = this.#connections.size;
     this.#metrics.activeSockets = this.#sockets.size;
   }
@@ -251,6 +255,7 @@ export class SignalService {
         resumeToken,
         iceServers: this.#tokens.iceServers(claims),
       });
+      await this.#restoreWaitingClient(peer);
       return;
     }
     const host = this.#firstHost(claims.hostId);
@@ -308,6 +313,41 @@ export class SignalService {
   #connectionForHost(hostId: string): ActiveConnection | null {
     for (const connection of this.#connections.values()) if (connection.hostId === hostId) return connection;
     return null;
+  }
+
+  async #restoreWaitingClient(host: AuthenticatedPeer): Promise<void> {
+    const client = [...this.#peers.values()].find(
+      (peer) => peer.peer === "client" && peer.claims.hostId === host.claims.hostId && peer.connectionId === null,
+    );
+    if (!client) return;
+    const connectionId = randomIdentifier();
+    client.connectionId = connectionId;
+    host.connectionId = connectionId;
+    this.#connections.set(connectionId, {
+      id: connectionId,
+      hostId: host.claims.hostId,
+      sessionId: client.claims.sessionId,
+      client: client.socket,
+      host: host.socket,
+    });
+    this.#metrics.activePeerConnections = this.#connections.size;
+    this.#send(client.socket, {
+      type: "ready",
+      version: 1,
+      connectionId,
+      resumeToken: await this.#tokens.issueResumeToken(client.claims),
+      iceServers: this.#tokens.iceServers(client.claims),
+    });
+    this.#send(host.socket, {
+      type: "peer-ready",
+      version: 1,
+      connectionId,
+      sessionId: client.claims.sessionId,
+      userId: client.claims.userId,
+      membershipId: client.claims.membershipId,
+      role: memberRole(client.claims.role),
+      sessionExpiresAt: client.claims.sessionExpiresAt,
+    });
   }
 
   #replaceClientSignal(connection: ActiveConnection): void {

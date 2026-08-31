@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { encodeTeamProtocolV1ClientEvent, TEAM_PROTOCOL_V1_CAPABILITIES } from "@openbot/contracts/team-protocol/v1";
 import {
   decodeTeamProtocolV2EventFrame,
   decodeTeamProtocolV2Json,
@@ -292,6 +293,15 @@ export class TeamWebRtcHostGateway {
       `openbot-token.${token}`,
     ]);
     this.#eventsSocket = socket;
+    socket.once("open", () => {
+      socket.send(
+        encodeTeamProtocolV1ClientEvent({
+          type: "agent-event-scope",
+          includeConversations: true,
+          capabilities: TEAM_PROTOCOL_V1_CAPABILITIES,
+        }),
+      );
+    });
     socket.on("message", (data, binary) => {
       if (binary || !this.#peerId) return;
       let payload: TeamProtocolV2Json;
@@ -310,7 +320,14 @@ export class TeamWebRtcHostGateway {
 
   async #handleEventControl(data: string): Promise<void> {
     try {
+      await this.#sessionPreparation;
       const frame = decodeTeamProtocolV2EventFrame(data);
+      if (frame.type === "event-control") {
+        if (this.#eventsSocket?.readyState === webSockets.WebSocket.OPEN) {
+          this.#eventsSocket.send(encodeTeamProtocolV1ClientEvent(frame.control));
+        }
+        return;
+      }
       if (frame.type !== "event-ack") return;
       for (const sequence of this.#events.keys()) if (sequence <= frame.throughSequence) this.#events.delete(sequence);
       const peerId = this.#peerId;

@@ -333,6 +333,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   refreshRuntimeSnapshots(): void {
     for (const server of this.#state.servers) {
+      if (server.transport === "webrtc-v2") {
+        void this.#webrtcTransport?.requestRuntimeSnapshot(server.id).catch(() => undefined);
+        continue;
+      }
       const socket = this.#eventSockets.get(server.id);
       if (socket?.readyState !== WebSocket.OPEN) {
         this.#ensureEventConnection(server.id);
@@ -793,6 +797,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   setTyping(input: SetTeamTypingInput, serverId = this.#state.activeServerId): void {
+    const server = this.#state.servers.find((candidate) => candidate.id === serverId);
+    if (server?.transport === "webrtc-v2") {
+      void this.#webrtcTransport?.setTyping(serverId, input.botId, input.typing).catch(() => undefined);
+      return;
+    }
     const socket = this.#eventSockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(encodeTeamProtocolV1ClientEvent({ type: "team-typing", ...input }));
@@ -842,6 +851,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   setDirectTyping(input: DirectTypingInput, serverId = this.#state.activeServerId): void {
+    const server = this.#state.servers.find((candidate) => candidate.id === serverId);
+    if (server?.transport === "webrtc-v2") {
+      void this.#webrtcTransport?.setDirectTyping(serverId, input.memberId, input.typing).catch(() => undefined);
+      return;
+    }
     const socket = this.#eventSockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(
@@ -1405,6 +1419,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async #connectEvents(serverId: string): Promise<void> {
     if (!this.#eventsEnabled || this.#eventControllers.has(serverId)) return;
     const server = this.#requireServer(serverId);
+    if (server.transport === "webrtc-v2") return;
     const controller = new AbortController();
     this.#eventControllers.set(serverId, controller);
     let opened = false;
@@ -1600,7 +1615,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   #ensureEventConnection(serverId: string): void {
+    const server = this.#state.servers.find((candidate) => candidate.id === serverId);
     if (
+      !server ||
+      server.transport === "webrtc-v2" ||
       !this.#eventsEnabled ||
       this.#eventControllers.has(serverId) ||
       this.#eventReconnectTimers.has(serverId) ||

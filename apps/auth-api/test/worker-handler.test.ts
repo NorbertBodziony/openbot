@@ -38,6 +38,7 @@ describe("worker handler", () => {
       rateLimits: 1,
       teamTickets: 4,
       remoteSessions: 5,
+      remoteInvites: 6,
     };
     let receivedDatabase: D1Database | null = null;
     let receivedTime: number | null = null;

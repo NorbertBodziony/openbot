@@ -16,3 +16,11 @@ CREATE UNIQUE INDEX remote_sessions_one_active_per_user_host
 CREATE INDEX remote_sessions_ended_at
   ON remote_sessions(ended_at)
   WHERE ended_at IS NOT NULL;
+
+CREATE INDEX remote_invites_used_at
+  ON remote_invites(used_at)
+  WHERE used_at IS NOT NULL;
+
+CREATE INDEX remote_invites_revoked_at
+  ON remote_invites(revoked_at)
+  WHERE revoked_at IS NOT NULL;
