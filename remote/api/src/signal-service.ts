@@ -51,6 +51,7 @@ export interface SignalMetrics {
 
 const MAXIMUM_RATE_WINDOWS = 100_000;
 const RATE_WINDOW_MILLISECONDS = 60_000;
+const SIGNAL_RECONNECT_GRACE_MILLISECONDS = 30_000;
 
 export class SignalService {
   readonly #tokens: RemoteTokenProvider;
@@ -61,6 +62,7 @@ export class SignalService {
   readonly #peers = new Map<string, AuthenticatedPeer>();
   readonly #hosts = new Map<string, Set<string>>();
   readonly #connections = new Map<string, ActiveConnection>();
+  readonly #connectionDropTimers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly #usedTicketIds = new Map<string, number>();
   readonly #revokedEpochs = new Map<string, number>();
   readonly #revokedSessions = new Map<string, number>();
@@ -168,6 +170,11 @@ export class SignalService {
     }
     for (const connection of [...this.#connections.values()]) {
       if (connection.client.id !== socket.id && connection.host.id !== socket.id) continue;
+      if (connection.client.id === socket.id) {
+        this.#scheduleConnectionDrop(connection);
+        continue;
+      }
+      this.#clearConnectionDrop(connection.id);
       this.#connections.delete(connection.id);
       const clientPeer = this.#peers.get(connection.client.id);
       if (clientPeer) clientPeer.connectionId = null;
@@ -185,6 +192,9 @@ export class SignalService {
     if (authEpoch <= current) return;
     this.#revokedEpochs.set(hostId, authEpoch);
     this.#tokens.revokeHost?.(hostId, authEpoch);
+    for (const connection of [...this.#connections.values()]) {
+      if (connection.hostId === hostId) this.#dropConnection(connection.id, connection.client.id);
+    }
     for (const peer of [...this.#peers.values()]) {
       if (peer.peer === "client" && peer.claims.hostId === hostId && peer.claims.authEpoch < authEpoch) {
         if (peer.connectionId) this.#dropConnection(peer.connectionId, peer.socket.id);
@@ -196,6 +206,9 @@ export class SignalService {
   revokeSession(sessionId: string): void {
     this.#revokedSessions.set(sessionId, Math.floor(Date.now() / 1_000) + 24 * 60 * 60);
     this.#tokens.revokeSession?.(sessionId);
+    for (const connection of [...this.#connections.values()]) {
+      if (connection.sessionId === sessionId) this.#dropConnection(connection.id, connection.client.id);
+    }
     for (const peer of [...this.#peers.values()]) {
       if (peer.peer === "client" && peer.claims.sessionId === sessionId) {
         if (peer.connectionId) this.#dropConnection(peer.connectionId, peer.socket.id);
@@ -353,6 +366,7 @@ export class SignalService {
   }
 
   #replaceClientSignal(connection: ActiveConnection): void {
+    this.#clearConnectionDrop(connection.id);
     this.#connections.delete(connection.id);
     const previous = this.#peers.get(connection.client.id);
     if (previous) {
@@ -364,12 +378,29 @@ export class SignalService {
   #dropConnection(connectionId: string, sourceSocketId: string): void {
     const connection = this.#connections.get(connectionId);
     if (!connection) return;
+    this.#clearConnectionDrop(connectionId);
     this.#connections.delete(connectionId);
     const target = connection.client.id === sourceSocketId ? connection.host : connection.client;
     this.#send(target, { type: "disconnect", version: 1, connectionId });
     const clientPeer = this.#peers.get(connection.client.id);
     if (clientPeer) clientPeer.connectionId = null;
     this.#metrics.activePeerConnections = this.#connections.size;
+  }
+
+  #scheduleConnectionDrop(connection: ActiveConnection): void {
+    this.#clearConnectionDrop(connection.id);
+    const timer = setTimeout(
+      () => this.#dropConnection(connection.id, connection.client.id),
+      SIGNAL_RECONNECT_GRACE_MILLISECONDS,
+    );
+    timer.unref?.();
+    this.#connectionDropTimers.set(connection.id, timer);
+  }
+
+  #clearConnectionDrop(connectionId: string): void {
+    const timer = this.#connectionDropTimers.get(connectionId);
+    if (timer) clearTimeout(timer);
+    this.#connectionDropTimers.delete(connectionId);
   }
 
   #ownsConnection(peer: AuthenticatedPeer, connectionId: string): boolean {

@@ -86,6 +86,8 @@ interface PeerState {
   reconnectAttempt: number;
   reconnectTimer: number | null;
   turnRefreshTimer: number | null;
+  iceRestartPending: boolean;
+  iceRestarting: boolean;
   closed: boolean;
 }
 
@@ -126,6 +128,8 @@ async function handleCommand(command: BridgeCommand): Promise<void> {
         reconnectAttempt: 0,
         reconnectTimer: null,
         turnRefreshTimer: null,
+        iceRestartPending: false,
+        iceRestarting: false,
         closed: false,
       };
       peers.set(state.id, state);
@@ -206,6 +210,7 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
     scheduleTurnRefresh(state);
     post({ type: "ice-servers", peerId: state.id, iceServers: state.iceServers });
     post({ type: "signal-ready", peerId: state.id });
+    if (state.iceRestartPending) void retryPendingIceRestart(state);
     if (state.role === "client" && state.connectionId && !state.peerConnection) {
       const connection = createPeerConnection(state, state.iceServers);
       createDataChannel(state, connection, "rpc");
@@ -294,7 +299,10 @@ function createPeerConnection(state: PeerState, iceServers: RTCIceServer[]): RTC
   };
   connection.onconnectionstatechange = () => {
     if (connection.connectionState === "connected") void reportSelectedPath(state, connection);
-    if (connection.connectionState === "failed") void restartIce(state);
+    if (connection.connectionState === "failed") {
+      state.iceRestartPending = true;
+      void retryPendingIceRestart(state);
+    }
     if (connection.connectionState === "closed") post({ type: "peer-disconnected", peerId: state.id });
   };
   return connection;
@@ -355,6 +363,28 @@ async function restartIce(state: PeerState): Promise<void> {
     channel: "team",
     sdp: requiredDescriptionSdp(offer),
   });
+}
+
+async function retryPendingIceRestart(state: PeerState): Promise<void> {
+  if (
+    !state.iceRestartPending ||
+    state.iceRestarting ||
+    state.closed ||
+    state.role !== "client" ||
+    !state.peerConnection ||
+    !state.connectionId ||
+    state.socket?.readyState !== WebSocket.OPEN
+  )
+    return;
+  state.iceRestarting = true;
+  state.iceRestartPending = false;
+  try {
+    await restartIce(state);
+  } catch {
+    state.iceRestartPending = true;
+  } finally {
+    state.iceRestarting = false;
+  }
 }
 
 function requiredDescriptionSdp(description: RTCSessionDescriptionInit): string {

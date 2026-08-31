@@ -584,8 +584,7 @@ export class RemoteControlPlane {
         host &&
           claims.sessionId === `host-${host.host_id}` &&
           claims.userId === host.owner_user_id &&
-          claims.membershipId === `${host.host_id}:host` &&
-          claims.authEpoch === host.auth_epoch,
+          claims.membershipId === `${host.host_id}:host`,
       );
     }
     const session = await this.#database

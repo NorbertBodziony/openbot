@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { RemoteTicketClaims } from "../src/protocol";
 import { SignalService, type SignalSocket } from "../src/signal-service";
 
@@ -47,6 +47,24 @@ describe("SignalService", () => {
     );
     expect(resumedHost.messages.at(-1)).toContain('"type":"ice-restart"');
     expect(client.closed).toBe(false);
+  });
+
+  it("notifies the host when an interrupted client does not reconnect", async () => {
+    vi.useFakeTimers();
+    try {
+      const service = new SignalService(fakeTokens(), 8);
+      const host = socket("host");
+      const client = socket("client");
+      await hello(service, host, "host-ticket", "host");
+      await hello(service, client, "client-ticket", "client");
+
+      service.disconnect(client);
+      expect(host.messages.some((message) => message.includes('"type":"disconnect"'))).toBe(false);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(host.messages.at(-1)).toContain('"type":"disconnect"');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects reuse of an initial ticket and closes revoked clients", async () => {

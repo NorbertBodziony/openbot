@@ -298,6 +298,17 @@ describe("RemoteControlPlane", () => {
     expect(
       database.prepare("SELECT status FROM remote_memberships WHERE membership_id = 'revoked-membership'").get(),
     ).toEqual({ status: "active" });
+    await expect(
+      controlPlane.validateResumeClaims({
+        sessionId: "host-host-1",
+        hostId: "host-1",
+        userId: owner.id,
+        membershipId: "host-1:host",
+        role: "host",
+        authEpoch: 1,
+        sessionExpiresAt: 100,
+      }),
+    ).resolves.toBe(true);
 
     const insertInvite = database.prepare(
       `INSERT INTO remote_invites(
