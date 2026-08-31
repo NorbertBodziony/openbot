@@ -16,12 +16,17 @@ afterEach(async () => {
 
 class FakeBridge extends TeamWebRtcBridge {
   readonly connections: Array<{ peerId: string; signalUrl: string; token: string; peer: "host" | "client" }> = [];
+  readonly disconnectedPeers: string[] = [];
 
   async connect(input: { peerId: string; signalUrl: string; token: string; peer: "host" | "client" }): Promise<void> {
     this.connections.push(input);
   }
 
   async disconnect(): Promise<void> {}
+
+  async disconnectPeer(peerId: string): Promise<void> {
+    this.disconnectedPeers.push(peerId);
+  }
 
   async send(): Promise<void> {}
 }
@@ -81,6 +86,36 @@ describe("TeamWebRtcHostGateway", () => {
     });
     bridge.emit("disconnected", "host-1");
     await vi.waitFor(() => expect(closeSession).toHaveBeenCalledWith("session-1"));
+    await gateway.stop();
+    gateway.dispose();
+  });
+
+  it("drops only the active WebRTC peer after a malformed known frame", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-webrtc-host-protocol-"));
+    directories.push(directory);
+    const bridge = new FakeBridge();
+    const store = new TeamStore(join(directory, "team.json"));
+    await store.initialize();
+    const gateway = new TeamWebRtcHostGateway({
+      bridge,
+      store,
+      appVersion: "1.0.0",
+      transferDirectory: join(directory, "transfers"),
+    });
+
+    const starting = gateway.start({
+      hostId: "host-1",
+      signalUrl: "wss://signal.example.test/v1/signal",
+      ticket: "initial",
+      localApiPort: 0,
+    });
+    await vi.waitFor(() => expect(bridge.connections).toHaveLength(1));
+    bridge.emit("signalReady", "host-1");
+    await starting;
+    bridge.emit("data", "host-1", "rpc", "not-json");
+
+    await vi.waitFor(() => expect(bridge.disconnectedPeers).toEqual(["host-1"]));
+    expect(bridge.connections).toHaveLength(1);
     await gateway.stop();
     gateway.dispose();
   });

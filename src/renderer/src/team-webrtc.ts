@@ -5,7 +5,7 @@ import { encodeTeamWebRtcPayload, TeamWebRtcPayloadDecoder } from "./team-webrtc
 
 interface BridgeCommand {
   commandId: string;
-  type: "connect" | "disconnect" | "send" | "restart-ice" | "close";
+  type: "connect" | "disconnect" | "disconnect-peer" | "send" | "restart-ice" | "close";
   peerId: string;
   signalUrl?: string;
   token?: string;
@@ -141,6 +141,8 @@ async function handleCommand(command: BridgeCommand): Promise<void> {
       connectSignal(state);
     } else if (command.type === "disconnect") {
       disconnect(command.peerId);
+    } else if (command.type === "disconnect-peer") {
+      disconnectPeerConnection(requirePeer(command.peerId));
     } else if (command.type === "send") {
       const state = requirePeer(command.peerId);
       const channel = command.channel ? state.channels[command.channel] : null;
@@ -474,13 +476,21 @@ function disconnect(peerId: string): void {
   state.closed = true;
   if (state.reconnectTimer !== null) clearTimeout(state.reconnectTimer);
   if (state.turnRefreshTimer !== null) clearTimeout(state.turnRefreshTimer);
+  disconnectPeerConnection(state);
+  state.socket?.close(1000, "Peer stopped");
+  peers.delete(peerId);
+}
+
+function disconnectPeerConnection(state: PeerState): void {
   if (state.connectionId && state.socket?.readyState === WebSocket.OPEN) {
     state.socket.send(JSON.stringify({ type: "disconnect", version: 1, connectionId: state.connectionId }));
   }
-  state.socket?.close(1000, "Peer stopped");
   state.peerConnection?.close();
+  state.peerConnection = null;
+  state.connectionId = null;
+  state.channels = {};
   for (const decoder of Object.values(state.payloadDecoders)) decoder?.reset();
-  peers.delete(peerId);
+  state.payloadDecoders = {};
 }
 
 function failPeer(state: PeerState, error: unknown): void {

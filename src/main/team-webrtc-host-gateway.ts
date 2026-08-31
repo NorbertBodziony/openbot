@@ -188,9 +188,12 @@ export class TeamWebRtcHostGateway {
       void this.#handleDesktopSignal(data).catch(() => this.#closeDesktopSocket());
       return;
     }
-    if (!isString(data)) return;
-    if (channel === "rpc") void this.#handleRpc(data).catch(() => this.#closeLocalSession());
-    else if (channel === "events") void this.#handleEventControl(data);
+    if (!isString(data)) {
+      if (channel === "rpc" || channel === "events") this.#failProtocol(peerId);
+      return;
+    }
+    if (channel === "rpc") void this.#handleRpc(data).catch(() => this.#failProtocol(peerId));
+    else if (channel === "events") void this.#handleEventControl(data).catch(() => this.#failProtocol(peerId));
   };
 
   readonly #onDisconnected = (peerId: string): void => {
@@ -241,10 +244,10 @@ export class TeamWebRtcHostGateway {
     let request: Extract<TeamProtocolV2RpcFrame, { type: "request" }>;
     try {
       const decoded = decodeTeamProtocolV2RpcFrame(data);
-      if (decoded.type !== "request") return;
+      if (decoded.type !== "request") throw new Error("The RPC frame is not a request.");
       request = decoded;
-    } catch {
-      return;
+    } catch (error) {
+      throw new Error("The client sent an invalid RPC frame.", { cause: error });
     }
     const cached = this.#responses.get(request.requestId);
     if (cached) {
@@ -375,31 +378,33 @@ export class TeamWebRtcHostGateway {
   }
 
   async #handleEventControl(data: string): Promise<void> {
-    try {
-      await this.#sessionPreparation;
-      const frame = decodeTeamProtocolV2EventFrame(data);
-      if (frame.type === "event-control") {
-        if (this.#eventsSocket?.readyState === webSockets.WebSocket.OPEN) {
-          this.#eventsSocket.send(encodeTeamProtocolV1ClientEvent(frame.control));
-        }
-        return;
+    await this.#sessionPreparation;
+    const frame = decodeTeamProtocolV2EventFrame(data);
+    if (frame.type === "event-control") {
+      if (this.#eventsSocket?.readyState === webSockets.WebSocket.OPEN) {
+        this.#eventsSocket.send(encodeTeamProtocolV1ClientEvent(frame.control));
       }
-      if (frame.type !== "event-ack") return;
-      for (const sequence of this.#events.keys()) if (sequence <= frame.throughSequence) this.#events.delete(sequence);
-      const peerId = this.#peerId;
-      if (!peerId) return;
-      const bufferedEvents = [...this.#events].sort(([left], [right]) => left - right);
-      const firstSequence = bufferedEvents[0]?.[0];
-      if (firstSequence !== undefined && frame.throughSequence < firstSequence - 1) {
-        await this.#bridge.send(
-          peerId,
-          "events",
-          encodeTeamProtocolV2Frame({ version: 2, type: "event-reset", nextSequence: firstSequence }),
-        );
-      }
-    } catch {
-      // Invalid optional event control frames do not affect the active peer connection.
+      return;
     }
+    if (frame.type !== "event-ack") throw new Error("The event frame is not client control data.");
+    for (const sequence of this.#events.keys()) if (sequence <= frame.throughSequence) this.#events.delete(sequence);
+    const peerId = this.#peerId;
+    if (!peerId) return;
+    const bufferedEvents = [...this.#events].sort(([left], [right]) => left - right);
+    const firstSequence = bufferedEvents[0]?.[0];
+    if (firstSequence !== undefined && frame.throughSequence < firstSequence - 1) {
+      await this.#bridge.send(
+        peerId,
+        "events",
+        encodeTeamProtocolV2Frame({ version: 2, type: "event-reset", nextSequence: firstSequence }),
+      );
+    }
+  }
+
+  #failProtocol(peerId: string): void {
+    if (peerId !== this.#peerId) return;
+    this.#closeLocalSession();
+    void this.#bridge.disconnectPeer(peerId).catch(() => undefined);
   }
 
   async #handleDesktopSignal(data: string | ArrayBuffer): Promise<void> {

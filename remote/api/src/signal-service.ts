@@ -202,9 +202,6 @@ export class SignalService {
     if (authEpoch <= current) return;
     this.#revokedEpochs.set(hostId, authEpoch);
     this.#tokens.revokeHost?.(hostId, authEpoch);
-    for (const connection of [...this.#connections.values()]) {
-      if (connection.hostId === hostId) this.#dropConnection(connection.id, connection.client.id);
-    }
     for (const peer of [...this.#peers.values()]) {
       if (peer.claims.hostId !== hostId || peer.claims.authEpoch >= authEpoch) continue;
       if (peer.connectionId) this.#dropConnection(peer.connectionId, peer.socket.id);

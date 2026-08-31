@@ -315,6 +315,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async syncRemoteHosts(): Promise<ServerSummary[]> {
     await this.#syncWebRtcHosts();
     for (const server of this.#state.servers) this.#states.set(server.id, this.#states.get(server.id) ?? "offline");
+    if (this.#eventsEnabled) this.startEventConnections();
     this.#emitChanged();
     return this.list();
   }

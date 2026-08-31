@@ -114,7 +114,7 @@ describe("SignalService", () => {
     expect(first.messages.at(-1)).toContain('"code":"session_revoked"');
     expect(first.closed).toBe(true);
     expect(host.messages.some((message) => message.includes('"type":"disconnect"'))).toBe(true);
-    expect(host.messages.at(-1)).toContain('"code":"session_revoked"');
+    expect(host.messages.some((message) => message.includes('"code":"session_revoked"'))).toBe(true);
     expect(host.closed).toBe(true);
 
     const staleHost = socket("stale-host");
@@ -129,6 +129,20 @@ describe("SignalService", () => {
     await hello(service, host, "owner-ticket", "host");
     expect(host.messages.at(-1)).toContain('"code":"authentication_required"');
     expect(host.closed).toBe(true);
+  });
+
+  it("does not disconnect current sessions for a delayed older revocation", async () => {
+    const service = new SignalService(fakeTokens(), 8);
+    const host = socket("current-host");
+    const client = socket("current-client");
+    await hello(service, host, "current-host-ticket", "host");
+    await hello(service, client, "current-client-ticket", "client");
+
+    service.revoke("host-1", 1);
+
+    expect(host.closed).toBe(false);
+    expect(client.closed).toBe(false);
+    expect(service.metrics().activePeerConnections).toBe(1);
   });
 
   it("rejects a second logical client session while the host is in use", async () => {
@@ -167,6 +181,7 @@ function fakeTokens() {
     role: "host" | "owner" | "member",
     jti: string,
     sessionId = role === "host" ? "host-session" : "client-session",
+    authEpoch = 1,
   ): RemoteTicketClaims => ({
     aud: "openbot-remote",
     jti,
@@ -175,7 +190,7 @@ function fakeTokens() {
     userId: role === "host" ? "owner-1" : "user-1",
     membershipId: role === "host" ? "host-1:host" : "member-1",
     role,
-    authEpoch: 1,
+    authEpoch,
     protocolMinimum: 2,
     protocolMaximum: 2,
     sessionExpiresAt: now + 86_400,
@@ -189,6 +204,8 @@ function fakeTokens() {
       if (token === "client-ticket") return claims("member", "client-jti");
       if (token === "second-client-ticket") return claims("member", "second-client-jti", "second-client-session");
       if (token === "owner-ticket") return claims("owner", "owner-jti");
+      if (token === "current-host-ticket") return claims("host", "current-host-jti", "host-session", 2);
+      if (token === "current-client-ticket") return claims("member", "current-client-jti", "client-session", 2);
       throw new Error("not an initial ticket");
     },
     verifyResumeToken: async (token: string) => {

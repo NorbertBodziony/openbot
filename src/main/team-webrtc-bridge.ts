@@ -60,7 +60,7 @@ type BridgeMessage = z.infer<typeof bridgeMessageSchema>;
 
 type BridgeCommand =
   | { type: "connect"; peerId: string; signalUrl: string; token: string; peer: "host" | "client" }
-  | { type: "disconnect" | "restart-ice" | "close"; peerId: string }
+  | { type: "disconnect" | "disconnect-peer" | "restart-ice" | "close"; peerId: string }
   | { type: "send"; peerId: string; channel: TeamWebRtcChannel; data: string | ArrayBuffer };
 
 export class TeamWebRtcBridge extends EventEmitter<TeamWebRtcBridgeEvents> {
@@ -81,7 +81,15 @@ export class TeamWebRtcBridge extends EventEmitter<TeamWebRtcBridgeEvents> {
 
   start(): Promise<void> {
     if (this.#ready) return this.#ready;
-    this.#ready = this.#start();
+    let ready: Promise<void>;
+    ready = this.#start().catch((error) => {
+      if (this.#ready === ready) {
+        this.#reset("The Team WebRTC bridge failed to start.");
+        this.#ready = null;
+      }
+      throw error;
+    });
+    this.#ready = ready;
     return this.#ready;
   }
 
@@ -93,6 +101,11 @@ export class TeamWebRtcBridge extends EventEmitter<TeamWebRtcBridgeEvents> {
   async disconnect(peerId: string): Promise<void> {
     if (!this.#port) return;
     await this.#command({ type: "disconnect", peerId });
+  }
+
+  async disconnectPeer(peerId: string): Promise<void> {
+    if (!this.#port) return;
+    await this.#command({ type: "disconnect-peer", peerId });
   }
 
   async send(peerId: string, channel: TeamWebRtcChannel, data: string | ArrayBuffer): Promise<void> {
@@ -110,15 +123,19 @@ export class TeamWebRtcBridge extends EventEmitter<TeamWebRtcBridgeEvents> {
 
   async stop(): Promise<void> {
     if (this.#port) await this.#command({ type: "close", peerId: "all" }).catch(() => undefined);
+    this.#reset("The Team WebRTC bridge stopped.");
+    this.#ready = null;
+  }
+
+  #reset(message: string): void {
     this.#port?.close();
     this.#port = null;
     this.#window?.destroy();
     this.#window = null;
-    this.#ready = null;
     this.#iceServers.clear();
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timer);
-      pending.reject(new Error("The Team WebRTC bridge stopped."));
+      pending.reject(new Error(message));
     }
     this.#pending.clear();
   }
