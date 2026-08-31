@@ -63,6 +63,7 @@ describe("SignalService", () => {
     service.revoke("host-1", 2);
     expect(first.messages.at(-1)).toContain('"code":"session_revoked"');
     expect(first.closed).toBe(true);
+    expect(host.messages.at(-1)).toContain('"type":"disconnect"');
     expect(host.closed).toBe(false);
   });
 
@@ -100,6 +101,7 @@ describe("SignalService", () => {
     service.revokeSession("client-session");
     expect(client.messages.at(-1)).toContain('"code":"session_revoked"');
     expect(client.closed).toBe(true);
+    expect(host.messages.at(-1)).toContain('"type":"disconnect"');
   });
 });
 

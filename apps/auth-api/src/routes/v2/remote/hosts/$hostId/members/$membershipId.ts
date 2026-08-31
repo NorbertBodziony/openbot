@@ -17,10 +17,13 @@ export const Route = createFileRoute("/v2/remote/hosts/$hostId/members/$membersh
           const body = await readJsonObject(request);
           if (body.role !== "admin" && body.role !== "member")
             return apiError(400, "invalid_remote_request", "The member role is invalid.");
+          if (body.reactivate !== undefined && body.reactivate !== true)
+            return apiError(400, "invalid_remote_request", "The member status is invalid.");
           await requestRemoteControlPlane().changeMembership(user.id, {
             hostId: params.hostId,
             membershipId: params.membershipId,
             role: body.role,
+            reactivate: body.reactivate === true,
           });
           return new Response(null, { status: 204 });
         } catch (error) {

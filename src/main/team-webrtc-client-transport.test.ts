@@ -14,7 +14,9 @@ describe("TeamWebRtcClientTransport", () => {
     });
     vi.spyOn(bridge, "send").mockResolvedValue();
     vi.spyOn(bridge, "disconnect").mockResolvedValue();
-    const startSession = vi.fn().mockResolvedValue({ sessionId: "session-1", hostId: "host-1", expiresAt: 2_000 });
+    const startSession = vi
+      .fn()
+      .mockResolvedValue({ sessionId: "session-1", hostId: "host-1", expiresAt: Date.now() + 86_400_000 });
     const issueTicket = vi.fn().mockResolvedValue({
       ticket: "ticket",
       expiresAt: 2_000,
@@ -106,7 +108,7 @@ describe("TeamWebRtcClientTransport", () => {
     const connection = transport.connect("host-1");
     await vi.waitFor(() => expect(startSession).toHaveBeenCalledOnce());
     await transport.disconnect("host-1");
-    resolveSession({ sessionId: "session-1", hostId: "host-1", expiresAt: 2_000 });
+    resolveSession({ sessionId: "session-1", hostId: "host-1", expiresAt: Date.now() + 86_400_000 });
 
     await expect(connection).rejects.toThrow("cancelled");
     expect(connectBridge).not.toHaveBeenCalled();
@@ -123,8 +125,8 @@ describe("TeamWebRtcClientTransport", () => {
     vi.spyOn(bridge, "disconnect").mockResolvedValue();
     const startSession = vi
       .fn()
-      .mockResolvedValueOnce({ sessionId: "session-1", hostId: "host-1", expiresAt: 2_000 })
-      .mockResolvedValueOnce({ sessionId: "session-2", hostId: "host-1", expiresAt: 2_000 });
+      .mockResolvedValueOnce({ sessionId: "session-1", hostId: "host-1", expiresAt: Date.now() + 86_400_000 })
+      .mockResolvedValueOnce({ sessionId: "session-2", hostId: "host-1", expiresAt: Date.now() + 86_400_000 });
     const endSession = vi.fn().mockResolvedValue(undefined);
     let principalId = "user-1";
     const transport = new TeamWebRtcClientTransport({
@@ -165,5 +167,63 @@ describe("TeamWebRtcClientTransport", () => {
     expect(startSession).toHaveBeenCalledTimes(2);
     expect(endSession).toHaveBeenCalledWith("session-1");
     await transport.stop();
+  });
+
+  it("replaces a logical session before it expires", async () => {
+    const now = Date.now();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
+    const bridge = new TeamWebRtcBridge();
+    vi.spyOn(bridge, "connect").mockImplementation(async ({ peerId }) => {
+      queueMicrotask(() => bridge.emit("connected", peerId));
+    });
+    vi.spyOn(bridge, "send").mockResolvedValue();
+    vi.spyOn(bridge, "disconnect").mockResolvedValue();
+    const startSession = vi
+      .fn()
+      .mockResolvedValueOnce({ sessionId: "session-1", hostId: "host-1", expiresAt: now + 100_000 })
+      .mockResolvedValueOnce({ sessionId: "session-2", hostId: "host-1", expiresAt: now + 200_000 });
+    const issueTicket = vi.fn().mockResolvedValue({
+      ticket: "ticket",
+      expiresAt: now + 60_000,
+      signalUrl: "wss://signal.example.test/v1/signal",
+    });
+    const endSession = vi.fn().mockResolvedValue(undefined);
+    const transport = new TeamWebRtcClientTransport({
+      bridge,
+      listHosts: async () => [],
+      startSession,
+      issueTicket,
+      endSession,
+      createInvite: async () => ({ inviteId: "invite", token: "token", expiresAt: now + 60_000 }),
+      listInvites: async () => [],
+      previewInvite: async () => ({
+        inviteId: "invite",
+        hostId: "host-1",
+        hostName: "Host",
+        role: "member",
+        expiresAt: now + 60_000,
+        emailBound: false,
+      }),
+      acceptInvite: async () => ({ hostId: "host-1", membershipId: "member-1", role: "member" }),
+      revokeInvite: async () => undefined,
+      listMembers: async () => [],
+      updateMember: async () => undefined,
+      removeMember: async () => undefined,
+      getPrincipalId: () => "user-1",
+      controlPlaneUrl: "https://api.example.test",
+      downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
+      transferDirectory: join(tmpdir(), "openbot-webrtc-client-expiration-test"),
+    });
+
+    await transport.connect("host-1");
+    bridge.emit("disconnected", "host-1");
+    nowSpy.mockReturnValue(now + 80_000);
+    await transport.connect("host-1");
+
+    expect(startSession).toHaveBeenCalledTimes(2);
+    expect(issueTicket).toHaveBeenNthCalledWith(2, "session-2");
+    expect(endSession).toHaveBeenCalledWith("session-1");
+    await transport.stop();
+    nowSpy.mockRestore();
   });
 });

@@ -107,7 +107,12 @@ interface HostServiceOptions {
   >;
   revokeRemoteInvite?: (inviteId: string) => Promise<void>;
   listRemoteMembers?: (hostId: string) => Promise<RemoteDirectoryMember[]>;
-  updateRemoteMember?: (hostId: string, membershipId: string, role: "admin" | "member") => Promise<void>;
+  updateRemoteMember?: (
+    hostId: string,
+    membershipId: string,
+    role: "admin" | "member",
+    reactivate?: boolean,
+  ) => Promise<void>;
   removeRemoteMember?: (hostId: string, membershipId: string) => Promise<void>;
   updateRemoteHostLogo?: (
     hostId: string,
@@ -520,7 +525,13 @@ export class HostService extends EventEmitter<HostEvents> {
       );
       if (!current || current.role === "owner") throw new Error("The remote member does not exist.");
       if (input.disabled) await this.#options.removeRemoteMember(hostId, input.memberId);
-      else await this.#options.updateRemoteMember(hostId, input.memberId, input.role ?? current.role);
+      else
+        await this.#options.updateRemoteMember(
+          hostId,
+          input.memberId,
+          input.role ?? current.role,
+          input.disabled === false,
+        );
       const members = await this.#options.listRemoteMembers(hostId);
       const updated = members.find((member) => member.membershipId === input.memberId);
       if (!updated) throw new Error("The remote member does not exist.");

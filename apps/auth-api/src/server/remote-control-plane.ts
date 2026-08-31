@@ -472,7 +472,13 @@ export class RemoteControlPlane {
 
   async changeMembership(
     actorUserId: string,
-    input: { hostId: string; membershipId: string; role?: Exclude<RemoteMemberRole, "owner">; revoke?: boolean },
+    input: {
+      hostId: string;
+      membershipId: string;
+      role?: Exclude<RemoteMemberRole, "owner">;
+      revoke?: boolean;
+      reactivate?: boolean;
+    },
   ): Promise<void> {
     await this.#requireRole(input.hostId, actorUserId, ["owner"]);
     const membership = await this.#database
@@ -487,6 +493,7 @@ export class RemoteControlPlane {
     }
     const role = input.role ?? membership.role;
     if (role !== "admin" && role !== "member") throw invalid("member role");
+    if (input.revoke && input.reactivate) throw invalid("member status");
     const now = this.#now();
     const host = await this.#host(input.hostId);
     if (!host) throw new RemoteControlPlaneError(404, "host_not_found", "The remote host does not exist.");
@@ -495,7 +502,12 @@ export class RemoteControlPlane {
     await this.#database.batch([
       this.#database
         .prepare("UPDATE remote_memberships SET role = ?, status = ?, updated_at = ? WHERE membership_id = ?")
-        .bind(role, input.revoke ? "revoked" : membership.status, now, input.membershipId),
+        .bind(
+          role,
+          input.revoke ? "revoked" : input.reactivate ? "active" : membership.status,
+          now,
+          input.membershipId,
+        ),
       this.#database
         .prepare("UPDATE remote_hosts SET auth_epoch = ?, updated_at = ? WHERE host_id = ?")
         .bind(authEpoch, now, input.hostId),

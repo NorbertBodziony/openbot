@@ -187,6 +187,7 @@ export class SignalService {
     this.#tokens.revokeHost?.(hostId, authEpoch);
     for (const peer of [...this.#peers.values()]) {
       if (peer.peer === "client" && peer.claims.hostId === hostId && peer.claims.authEpoch < authEpoch) {
+        if (peer.connectionId) this.#dropConnection(peer.connectionId, peer.socket.id);
         this.#fail(peer.socket, "session_revoked", "Remote access was revoked.", 1008);
       }
     }
@@ -197,6 +198,7 @@ export class SignalService {
     this.#tokens.revokeSession?.(sessionId);
     for (const peer of [...this.#peers.values()]) {
       if (peer.peer === "client" && peer.claims.sessionId === sessionId) {
+        if (peer.connectionId) this.#dropConnection(peer.connectionId, peer.socket.id);
         this.#fail(peer.socket, "session_revoked", "The remote session ended.", 1008);
       }
     }

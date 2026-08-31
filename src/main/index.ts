@@ -1696,7 +1696,8 @@ if (!hasSingleInstanceLock) {
         listRemoteInvites: (hostId) => centralAuth.listRemoteInvites(hostId),
         revokeRemoteInvite: (inviteId) => centralAuth.revokeRemoteInvite(inviteId),
         listRemoteMembers: (hostId) => centralAuth.listRemoteMembers(hostId),
-        updateRemoteMember: (hostId, membershipId, role) => centralAuth.updateRemoteMember(hostId, membershipId, role),
+        updateRemoteMember: (hostId, membershipId, role, reactivate) =>
+          centralAuth.updateRemoteMember(hostId, membershipId, role, reactivate),
         removeRemoteMember: (hostId, membershipId) => centralAuth.removeRemoteMember(hostId, membershipId),
         updateRemoteHostLogo: (hostId, image, version) => centralAuth.updateRemoteHostLogo(hostId, image, version),
         allowLocalDevelopmentInvites: developmentRemoteRole === "host",
@@ -1843,9 +1844,9 @@ if (!hasSingleInstanceLock) {
               if (!centralAuthManager) throw new Error("The account service is not ready.");
               return centralAuthManager.listRemoteMembers(hostId);
             },
-            updateMember: (hostId, membershipId, role) => {
+            updateMember: (hostId, membershipId, role, reactivate) => {
               if (!centralAuthManager) throw new Error("The account service is not ready.");
-              return centralAuthManager.updateRemoteMember(hostId, membershipId, role);
+              return centralAuthManager.updateRemoteMember(hostId, membershipId, role, reactivate);
             },
             removeMember: (hostId, membershipId) => {
               if (!centralAuthManager) throw new Error("The account service is not ready.");

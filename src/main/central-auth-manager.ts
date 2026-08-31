@@ -265,10 +265,19 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     }));
   }
 
-  updateRemoteMember(hostId: string, membershipId: string, role: "admin" | "member"): Promise<void> {
+  updateRemoteMember(
+    hostId: string,
+    membershipId: string,
+    role: "admin" | "member",
+    reactivate = false,
+  ): Promise<void> {
     return this.#authorizedRequest(
       `/v2/remote/hosts/${encodeURIComponent(hostId)}/members/${encodeURIComponent(membershipId)}`,
-      { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role }) },
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role, ...(reactivate ? { reactivate: true } : {}) }),
+      },
       decodeVoid,
     );
   }

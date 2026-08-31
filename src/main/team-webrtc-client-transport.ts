@@ -44,7 +44,7 @@ interface TeamWebRtcClientTransportOptions {
   acceptInvite: (token: string) => Promise<{ hostId: string; membershipId: string; role: "admin" | "member" }>;
   revokeInvite: (inviteId: string) => Promise<void>;
   listMembers: (hostId: string) => Promise<RemoteMemberRecord[]>;
-  updateMember: (hostId: string, membershipId: string, role: "admin" | "member") => Promise<void>;
+  updateMember: (hostId: string, membershipId: string, role: "admin" | "member", reactivate?: boolean) => Promise<void>;
   removeMember: (hostId: string, membershipId: string) => Promise<void>;
   getPrincipalId: () => string;
   controlPlaneUrl: string;
@@ -54,10 +54,12 @@ interface TeamWebRtcClientTransportOptions {
 
 interface ActiveHost {
   sessionId: string;
+  expiresAt: number;
   principalId: string;
   connected: boolean;
   connecting: Promise<void> | null;
   cancelled: boolean;
+  expirationTimer: ReturnType<typeof setTimeout> | null;
 }
 
 export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTransportEvents> {
@@ -122,8 +124,8 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     return this.#options.listMembers(hostId);
   }
 
-  updateMember(hostId: string, membershipId: string, role: "admin" | "member") {
-    return this.#options.updateMember(hostId, membershipId, role);
+  updateMember(hostId: string, membershipId: string, role: "admin" | "member", reactivate = false) {
+    return this.#options.updateMember(hostId, membershipId, role, reactivate);
   }
 
   removeMember(hostId: string, membershipId: string) {
@@ -223,6 +225,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   async disconnect(hostId: string): Promise<void> {
     const active = this.#active.get(hostId);
     if (active) active.cancelled = true;
+    if (active?.expirationTimer) clearTimeout(active.expirationTimer);
     this.#active.delete(hostId);
     await this.#options.bridge.disconnect(hostId);
     if (active?.sessionId) await this.#options.endSession(active.sessionId).catch(() => undefined);
@@ -241,6 +244,10 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   async #ensureConnected(hostId: string): Promise<void> {
     const principalId = this.#options.getPrincipalId();
     let current = this.#active.get(hostId);
+    if (current?.expiresAt && current.expiresAt <= Date.now() + 30_000) {
+      await this.disconnect(hostId);
+      current = undefined;
+    }
     if (current && current.principalId !== principalId) {
       await this.disconnect(hostId);
       current = undefined;
@@ -249,10 +256,12 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     if (current?.connecting) return current.connecting;
     const active: ActiveHost = {
       sessionId: current?.sessionId ?? "",
+      expiresAt: current?.expiresAt ?? 0,
       principalId,
       connected: false,
       connecting: null,
       cancelled: false,
+      expirationTimer: null,
     };
     const operation = this.#connect(hostId, active, current?.sessionId || null).catch((error) => {
       if (this.#active.get(hostId) === active) this.#active.delete(hostId);
@@ -269,8 +278,10 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     let bootstrap: RemoteConnectionBootstrap;
     try {
       if (!sessionId) {
-        sessionId = (await this.#options.startSession(hostId)).sessionId;
+        const session = await this.#options.startSession(hostId);
+        sessionId = session.sessionId;
         active.sessionId = sessionId;
+        active.expiresAt = session.expiresAt;
         startedNewSession = true;
         await this.#assertCurrent(hostId, active, sessionId);
       }
@@ -280,8 +291,10 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       } catch (error) {
         if (!existingSessionId) throw error;
         await this.#options.endSession(existingSessionId).catch(() => undefined);
-        sessionId = (await this.#options.startSession(hostId)).sessionId;
+        const session = await this.#options.startSession(hostId);
+        sessionId = session.sessionId;
         active.sessionId = sessionId;
+        active.expiresAt = session.expiresAt;
         startedNewSession = true;
         await this.#assertCurrent(hostId, active, sessionId);
         bootstrap = await this.#options.issueTicket(sessionId);
@@ -328,6 +341,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       });
       await this.#assertCurrent(hostId, active, sessionId);
       await connected;
+      this.#scheduleExpiration(hostId, active);
     } catch (error) {
       cleanupConnectionWait();
       if (this.#active.get(hostId) === active) this.#active.delete(hostId);
@@ -357,6 +371,17 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       "events",
       encodeTeamProtocolV2Frame({ version: 2, type: "event-control", control }),
     );
+  }
+
+  #scheduleExpiration(hostId: string, active: ActiveHost): void {
+    if (active.expirationTimer) clearTimeout(active.expirationTimer);
+    if (!active.expiresAt) return;
+    const delay = Math.max(0, active.expiresAt - Date.now() - 30_000);
+    active.expirationTimer = setTimeout(() => {
+      active.expirationTimer = null;
+      if (this.#active.get(hostId) === active) void this.disconnect(hostId);
+    }, delay);
+    active.expirationTimer.unref?.();
   }
 
   readonly #onConnected = (hostId: string): void => {

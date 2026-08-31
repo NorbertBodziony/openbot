@@ -731,7 +731,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         const current = members.find((member) => member.id === input.memberId);
         if (!current || current.role === "owner") throw new Error("The remote member does not exist.");
         if (input.disabled) await transport.removeMember(serverId, input.memberId);
-        else await transport.updateMember(serverId, input.memberId, input.role ?? current.role);
+        else
+          await transport.updateMember(serverId, input.memberId, input.role ?? current.role, input.disabled === false);
         const updated = (await this.listMembers(serverId)).find((member) => member.id === input.memberId);
         if (!updated) throw new Error("The remote member does not exist.");
         return updated;

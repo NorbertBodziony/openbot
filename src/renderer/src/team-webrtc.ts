@@ -409,6 +409,9 @@ function disconnect(peerId: string): void {
   state.closed = true;
   if (state.reconnectTimer !== null) clearTimeout(state.reconnectTimer);
   if (state.turnRefreshTimer !== null) clearTimeout(state.turnRefreshTimer);
+  if (state.connectionId && state.socket?.readyState === WebSocket.OPEN) {
+    state.socket.send(JSON.stringify({ type: "disconnect", version: 1, connectionId: state.connectionId }));
+  }
   state.socket?.close(1000, "Peer stopped");
   state.peerConnection?.close();
   peers.delete(peerId);
