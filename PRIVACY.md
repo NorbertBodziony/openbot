@@ -10,30 +10,34 @@ analytics. Development builds, previews, tests, and Storybook do not send analyt
 
 ## Product analytics
 
-The production website records page visits, download clicks, clicks on allowlisted public links, and
-anonymous views, download clicks, invitation validity, and open-app actions on invitation pages. The production desktop app records
-application, sign-in, onboarding, agent, message, turn, prompt, approval, queue, routine, team,
-browser, search, Remote Desktop, update, marketplace, memory, provider, voice transcription,
-reaction, maintenance, and confirmed application-version-change actions. Event properties are limited to metadata such as counts, result
+The production website records anonymous page views using only the fixed paths `/` and `/join`. It
+also records download clicks, clicks on allowlisted public links, invitation validity, and open-app
+actions on invitation pages. The production desktop app records application, sign-in, onboarding,
+agent, message, turn, prompt, approval, queue, routine, team, browser, search, Remote Desktop, update,
+marketplace, memory, provider, voice transcription, reaction, maintenance, and confirmed
+application-version-change actions. Event properties are limited to metadata such as counts, result
 states, timing, provider, model, reasoning effort, application version, operating system, and coarse
 failure codes.
 
 Analytics events do not contain message or direct-message text, prompts, replies, generated content,
-search queries, browser URLs or page titles, file names, local paths, commands, raw error messages, or
-local identifiers for agents, threads, turns, messages, servers, and team members. Session replay and
+search queries, embedded-browser URLs or page titles, file names, local paths, commands, raw error
+messages, or local identifiers for agents, threads, turns, messages, servers, and team members.
+Website page views do not contain query parameters, hashes, or invitation values. Session replay and
 automatic interaction capture are disabled.
 
-When a user signs in, OpenPanel receives the OpenBot account ID so UI actions can be
-associated with the account that started them. Agent lifecycle events are emitted once by the local
-host and associated with the host owner's account; clients that observe a remote host do not emit the
-lifecycle again. Sign-in attempts and website activity remain anonymous until an account has been
-verified. Landing-page attribution is reduced to an allowlisted source category and never includes a
-raw referrer or campaign URL. OpenPanel can also derive session, device, browser, operating-system, network, and
-approximate geographic metadata from a request. The analytics service runs on OpenBot's self-hosted
-infrastructure and receives events through `analytics.openbot.run`. Analytics is enabled in
-production by default. Desktop users can disable it under **Settings → General → Privacy → Share
-product analytics**. The preference is stored locally and disables both UI analytics and lifecycle
-analytics emitted by the local host. Website analytics does not use the desktop preference.
+When a user signs in, OpenPanel receives the OpenBot account ID and normalized account email so UI
+actions can be associated with the account that started them. The email is stored on the OpenPanel
+profile and is not copied into individual event properties. Agent lifecycle events are emitted once
+by the local host and associated with the host owner's account; clients that observe a remote host do
+not emit the lifecycle again. Sign-in attempts and website activity remain anonymous until an account
+has been verified. Landing-page attribution is reduced to an allowlisted source category and never
+includes a raw referrer or campaign URL. OpenPanel can also derive session, device, browser,
+operating-system, network, and approximate geographic metadata from a request. The analytics service
+runs on OpenBot's self-hosted infrastructure and receives events through `analytics.openbot.run`.
+Analytics is enabled in production by default. Desktop users can disable it under **Settings →
+General → Privacy → Share product analytics**. The preference is stored locally and disables both UI
+analytics and lifecycle analytics emitted by the local host. Website analytics does not use the
+desktop preference.
 
 OpenPanel event and profile data has no automatic retention limit. It remains stored until it is
 removed manually or the analytics project is deleted. OpenPanel analytics does not change where
