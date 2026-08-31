@@ -47,6 +47,19 @@ interface ConversationResources {
     | undefined;
   voiceDisposed: boolean;
   filePreviewRequestGeneration: number;
+  runtimeSettingsSaveTails: Map<string, Promise<void>>;
+  runtimeSettingsAttempts: Map<
+    string,
+    {
+      generation: number;
+      pending: boolean;
+      settings: {
+        provider: AgentProviderId;
+        model: AgentModelId;
+        reasoningEffort: AgentReasoningEffort;
+      };
+    }
+  >;
 }
 
 /** @internal Stable owner for renderer state that must survive Conversation view HMR. */
@@ -110,6 +123,8 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     voiceSubmitRequest: undefined,
     voiceDisposed: false,
     filePreviewRequestGeneration: 0,
+    runtimeSettingsSaveTails: new Map(),
+    runtimeSettingsAttempts: new Map(),
   };
 
   onCleanup(() => {

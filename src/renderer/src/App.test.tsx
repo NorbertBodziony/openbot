@@ -3323,11 +3323,112 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
+        model: "gpt-5.6-luna",
+        provider: "codex",
         reasoningEffort: "high",
       }),
     );
     expect(effort).toHaveTextContent("High");
     expect(picker).toBeInTheDocument();
+  });
+
+  it("persists rapid model and effort changes in order as complete settings", async () => {
+    let resolveModelUpdate!: (bot: BotSummary) => void;
+    vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveModelUpdate = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Opus 5, default" }));
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+
+    expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(1);
+    expect(effort).toHaveTextContent("High");
+    const chief = BOTS.find((bot) => bot.id === "chief");
+    if (!chief) throw new Error("Chief fixture is missing");
+    resolveModelUpdate({
+      ...chief,
+      provider: "claude",
+      model: "claude-opus-5",
+      reasoningEffort: "medium",
+    });
+
+    await waitFor(() => expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(2));
+    expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
+      botId: "chief",
+      provider: "claude",
+      model: "claude-opus-5",
+      reasoningEffort: "high",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(effort).toHaveTextContent("High");
+  });
+
+  it("does not roll back a newer effort when an older save fails", async () => {
+    let rejectFirstUpdate!: (error: Error) => void;
+    vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectFirstUpdate = reject;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "Low" }));
+
+    expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(1);
+    rejectFirstUpdate(new Error("Older effort failed"));
+    await waitFor(() => expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(2));
+    expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
+      botId: "chief",
+      provider: "codex",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "low",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(effort).toHaveTextContent("Low");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not roll back or report an effort failure after switching agents", async () => {
+    let rejectUpdate!: (error: Error) => void;
+    vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectUpdate = reject;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await screen.findByRole("heading", { name: "Sales Outbound" });
+
+    rejectUpdate(new Error("Chief effort failed"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
   });
 
   it("rolls back a failed header effort change and reports the error", async () => {

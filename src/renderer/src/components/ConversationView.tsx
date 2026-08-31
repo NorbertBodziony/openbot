@@ -153,6 +153,18 @@ interface RoutineSettingsRequest {
   nonce: number;
 }
 
+interface RuntimeSettingsTuple {
+  provider: AgentProviderId;
+  model: AgentModelId;
+  reasoningEffort: AgentReasoningEffort;
+}
+
+function runtimeSettingsEqual(left: RuntimeSettingsTuple, right: RuntimeSettingsTuple): boolean {
+  return (
+    left.provider === right.provider && left.model === right.model && left.reasoningEffort === right.reasoningEffort
+  );
+}
+
 function rendererDuration(property: string, fallback: number): number {
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return 0;
   const value = getComputedStyle(document.documentElement).getPropertyValue(property).trim();
@@ -865,6 +877,49 @@ function createConversationViewScope(props: ConversationProps) {
     }
   }
 
+  async function saveRuntimeSettings(settings: RuntimeSettingsTuple, errorMessage: string | null): Promise<boolean> {
+    const botId = props.bot?.id;
+    if (!botId) return false;
+    const previousAttempt = resources.runtimeSettingsAttempts.get(botId);
+    const generation = (previousAttempt?.generation ?? 0) + 1;
+    resources.runtimeSettingsAttempts.set(botId, { generation, pending: true, settings });
+    if (errorMessage) setComposerError(null);
+
+    const previousSave = resources.runtimeSettingsSaveTails.get(botId);
+    let releaseSave!: () => void;
+    const saveTail = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    resources.runtimeSettingsSaveTails.set(botId, saveTail);
+    let saved: boolean;
+    try {
+      if (previousSave) await previousSave;
+      saved = await saveBotPatch(settings, botId);
+    } finally {
+      releaseSave();
+      if (resources.runtimeSettingsSaveTails.get(botId) === saveTail) {
+        resources.runtimeSettingsSaveTails.delete(botId);
+      }
+    }
+    const latestAttempt = resources.runtimeSettingsAttempts.get(botId);
+    if (latestAttempt?.generation !== generation) return saved;
+    latestAttempt.pending = false;
+    if (saved) return true;
+
+    const activeBot = props.bot;
+    const currentSettings = {
+      provider: settingsProvider(),
+      model: settingsModel(),
+      reasoningEffort: settingsReasoning(),
+    };
+    if (activeBot?.id !== botId || !runtimeSettingsEqual(currentSettings, settings)) return false;
+    setSettingsProvider(activeBot.provider);
+    setSettingsModel(activeBot.model);
+    setSettingsReasoning(activeBot.reasoningEffort);
+    if (errorMessage) setComposerError(errorMessage);
+    return false;
+  }
+
   async function selectModel(
     model: AgentModelId,
     provider: AgentProviderId,
@@ -876,21 +931,14 @@ function createConversationViewScope(props: ConversationProps) {
     const reasoningEffort = option.supportedReasoningEfforts.includes(settingsReasoning())
       ? settingsReasoning()
       : option.defaultReasoningEffort;
-    const previousModel = settingsModel();
-    const previousProvider = settingsProvider();
-    const previousReasoning = settingsReasoning();
     setSettingsProvider(provider);
     setSettingsModel(model);
     setSettingsReasoning(reasoningEffort);
     if (!persist) return true;
-    if (reportComposerError) setComposerError(null);
-    const saved = await saveBotPatch({ provider, model, reasoningEffort });
-    if (saved) return true;
-    setSettingsProvider(previousProvider);
-    setSettingsModel(previousModel);
-    setSettingsReasoning(previousReasoning);
-    if (reportComposerError) setComposerError("Could not change model. Try again.");
-    return false;
+    return saveRuntimeSettings(
+      { provider, model, reasoningEffort },
+      reportComposerError ? "Could not change model. Try again." : null,
+    );
   }
 
   async function selectAndConfirmModel(model: AgentModelId, provider: AgentProviderId): Promise<void> {
@@ -902,12 +950,13 @@ function createConversationViewScope(props: ConversationProps) {
       (candidate) => candidate.provider === settingsProvider() && candidate.id === settingsModel(),
     );
     if (!option?.supportedReasoningEfforts.includes(effort)) return;
-    const previousReasoning = settingsReasoning();
+    const settings = {
+      provider: settingsProvider(),
+      model: settingsModel(),
+      reasoningEffort: effort,
+    };
     setSettingsReasoning(effort);
-    setComposerError(null);
-    if (await saveBotPatch({ reasoningEffort: effort })) return;
-    setSettingsReasoning(previousReasoning);
-    setComposerError("Could not change effort. Try again.");
+    await saveRuntimeSettings(settings, "Could not change effort. Try again.");
   }
 
   function updateScrollFade(element = scrollElement) {
@@ -1444,7 +1493,22 @@ function createConversationViewScope(props: ConversationProps) {
       };
     },
     (bot) => {
-      if (!bot || bot.signature === lastRuntimeSettingsSignature) return;
+      if (!bot) return;
+      const pendingSettings = resources.runtimeSettingsAttempts.get(props.bot?.id ?? "");
+      if (
+        pendingSettings?.pending &&
+        !runtimeSettingsEqual(pendingSettings.settings, {
+          provider: bot.provider,
+          model: bot.model,
+          reasoningEffort: bot.reasoningEffort,
+        })
+      ) {
+        setSettingsProvider(pendingSettings.settings.provider);
+        setSettingsModel(pendingSettings.settings.model);
+        setSettingsReasoning(pendingSettings.settings.reasoningEffort);
+        return;
+      }
+      if (bot.signature === lastRuntimeSettingsSignature) return;
       lastRuntimeSettingsSignature = bot.signature;
       setSettingsProvider(bot.provider);
       setSettingsModel(bot.model);
