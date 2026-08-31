@@ -170,6 +170,10 @@ describe("OpenBot connected desktop shell", () => {
       value: defaultMatchMedia,
     });
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(document, "hasFocus", {
+      configurable: true,
+      value: vi.fn(() => true),
+    });
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: { getUserMedia: vi.fn().mockRejectedValue(new DOMException("Denied", "NotAllowedError")) },
@@ -3954,6 +3958,49 @@ describe("OpenBot connected desktop shell", () => {
     });
   });
 
+  it("does not read an earlier agent reply again after sending a message", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "assistant-before-send",
+            author: "assistant",
+            text: "Earlier agent reply",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      },
+    });
+    await screen.findByText("Earlier agent reply");
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    vi.mocked(window.openbot.agent.markConversationRead).mockClear();
+
+    const composer = screen.getByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Continue this work";
+    await fireEvent.input(composer);
+    await fireEvent.keyDown(composer, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        { botId: "chief", throughMessageId: "delivery-1" },
+        "local",
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vi.mocked(window.openbot.agent.markConversationRead).mock.calls).toEqual([
+      [{ botId: "chief", throughMessageId: "delivery-1" }, "local"],
+    ]);
+  });
+
   it("publishes typing state", async () => {
     render(() => <App />);
     await confirmOnboardingModel();
@@ -5610,7 +5657,9 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({ type: "conversation-page", page: delayedPage });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
+    expect(vi.mocked(window.openbot.agent.markConversationRead).mock.calls).toEqual([
+      [{ botId: "chief", throughMessageId: "reply-delayed-read-state" }, "local"],
+    ]);
     expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
   });
 
@@ -6865,6 +6914,345 @@ describe("OpenBot connected desktop shell", () => {
     expect(scrollElement.scrollTop).toBe(1080);
   });
 
+  it("keeps a reply unread while the open agent chat is in the background and clears it on focus", async () => {
+    const unreadPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "agent-background-answer",
+          author: "assistant",
+          text: "Ready while OpenBot was in the background",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: {
+          unreadCount: 1,
+          firstUnreadMessageId: "agent-background-answer",
+          throughMessageId: null,
+        },
+      },
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    vi.mocked(window.openbot.agent.markConversationRead).mockClear();
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(unreadPage);
+
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({ type: "conversation-page", page: unreadPage });
+
+    expect(await screen.findByText("Ready while OpenBot was in the background")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "message",
+        message: { messageId: "agent-background-answer" },
+      }),
+    );
+
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "agent-background-answer",
+        },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("keeps a queued snapshot unread when the app loses focus before rendering it", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    vi.mocked(window.openbot.agent.markConversationRead).mockClear();
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 2,
+        messages: [
+          {
+            id: "agent-focus-race",
+            author: "assistant",
+            text: "Rendered after focus was lost",
+            createdAt: "2026-08-19T09:03:30.000Z",
+            status: "completed",
+          },
+        ],
+      },
+    });
+    window.dispatchEvent(new Event("blur"));
+
+    expect(await screen.findByText("Rendered after focus was lost")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+  });
+
+  it("extends an in-flight focus read to a newer visible agent reply", async () => {
+    const oldPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "agent-focus-old",
+          author: "assistant",
+          text: "Older background reply",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "agent-focus-old", throughMessageId: null },
+      },
+    );
+    const newPage = testConversationPage(
+      "chief",
+      [
+        ...oldPage.messages,
+        {
+          id: "agent-focus-new",
+          author: "assistant",
+          text: "Newer reply during focus read",
+          createdAt: "2026-08-19T09:04:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 3,
+        readState: { unreadCount: 2, firstUnreadMessageId: "agent-focus-old", throughMessageId: null },
+      },
+    );
+    let resolveFirstRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({ type: "conversation-page", page: oldPage });
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(oldPage);
+    vi.mocked(window.openbot.agent.markConversationRead)
+      .mockReset()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstRead = resolve;
+          }),
+      )
+      .mockImplementation(async (input) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: input.throughMessageId,
+      }));
+
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        { botId: "chief", throughMessageId: "agent-focus-old" },
+        "local",
+      ),
+    );
+    emitAgentEvent?.({ type: "conversation-page", page: newPage });
+    expect(await screen.findByText("Newer reply during focus read")).toBeInTheDocument();
+    resolveFirstRead?.({
+      unreadCount: 1,
+      firstUnreadMessageId: "agent-focus-new",
+      throughMessageId: "agent-focus-old",
+    });
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        { botId: "chief", throughMessageId: "agent-focus-new" },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument());
+  });
+
+  it("keeps a newer agent reply unread when an earlier focus read resolves in the background", async () => {
+    const oldPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "agent-stale-read-old",
+          author: "assistant",
+          text: "Reply visible before focus",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "agent-stale-read-old", throughMessageId: null },
+      },
+    );
+    const newPage = testConversationPage(
+      "chief",
+      [
+        ...oldPage.messages,
+        {
+          id: "agent-stale-read-new",
+          author: "assistant",
+          text: "Reply received after focus was lost",
+          createdAt: "2026-08-19T09:04:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 3,
+        readState: { unreadCount: 2, firstUnreadMessageId: "agent-stale-read-old", throughMessageId: null },
+      },
+    );
+    let resolveFirstRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({ type: "conversation-page", page: oldPage });
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(oldPage);
+    vi.mocked(window.openbot.agent.markConversationRead)
+      .mockReset()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstRead = resolve;
+          }),
+      )
+      .mockImplementation(async (input) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: input.throughMessageId,
+      }));
+
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        { botId: "chief", throughMessageId: "agent-stale-read-old" },
+        "local",
+      ),
+    );
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({ type: "conversation-page", page: newPage });
+    expect(await screen.findByText("Reply received after focus was lost")).toBeInTheDocument();
+    resolveFirstRead?.({
+      unreadCount: 0,
+      firstUnreadMessageId: null,
+      throughMessageId: "agent-stale-read-old",
+    });
+
+    await waitFor(() => expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument());
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        { botId: "chief", throughMessageId: "agent-stale-read-new" },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument());
+  });
+
+  it("keeps another agent new until that agent is opened after focus returns", async () => {
+    const unreadPage = testConversationPage(
+      "sales-outbound",
+      [
+        {
+          id: "sales-background-answer",
+          author: "assistant",
+          text: "Sales result from the background",
+          createdAt: "2026-08-19T09:04:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: {
+          unreadCount: 1,
+          firstUnreadMessageId: "sales-background-answer",
+          throughMessageId: null,
+        },
+      },
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    vi.mocked(window.openbot.agent.markConversationRead).mockClear();
+
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({ type: "conversation-page", page: unreadPage });
+    window.dispatchEvent(new Event("focus"));
+
+    const sales = screen.getByRole("button", { name: /Sales Outbound/ });
+    await waitFor(() => expect(sales).toHaveTextContent("1 new reply"));
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "message",
+        message: { bot: { id: "sales-outbound" }, messageId: "sales-background-answer" },
+      }),
+    );
+
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(unreadPage);
+    await fireEvent.click(sales);
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "sales-outbound",
+          throughMessageId: "sales-background-answer",
+        },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(sales).not.toHaveTextContent("1 new reply"));
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("shows a completed indicator only until the background app receives focus", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const chief = screen.getByRole("button", { name: /Chief/ });
+
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-foreground",
+      status: "completed",
+    });
+    expect(chief).not.toHaveTextContent("Responded");
+
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-background",
+      status: "completed",
+    });
+    expect(chief).toHaveTextContent("Responded");
+
+    window.dispatchEvent(new Event("focus"));
+    expect(chief).not.toHaveTextContent("Responded");
+  });
+
   it("keeps a message read when it arrives in the open agent chat", async () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -7288,6 +7676,214 @@ describe("OpenBot connected desktop shell", () => {
     expect(scrollElement.scrollTop).toBe(840);
   });
 
+  it("keeps an open private message unread in the background and clears it on focus", async () => {
+    render(() => <App peopleEnabled />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitPresence?.({
+      serverId: "server-1",
+      updatedAt: "2026-08-19T10:00:00.000Z",
+      members: [
+        presenceMember("member-self", "person@example.com", "Person"),
+        presenceMember("member-alice", "alice@example.com", "Alice"),
+      ],
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: /Alice/ }));
+    await waitFor(() => expect(window.openbot.servers.readDirectConversationPage).toHaveBeenCalled());
+    vi.mocked(window.openbot.servers.markDirectRead).mockClear();
+
+    window.dispatchEvent(new Event("blur"));
+    emitDirectMessage?.({
+      type: "team-direct-message",
+      memberIds: ["member-alice", "member-self"],
+      message: {
+        id: "direct-background",
+        threadId: "thread-member-alice",
+        senderMemberId: "member-alice",
+        recipientMemberId: "member-self",
+        text: "Private result from the background",
+        createdAt: "2026-08-19T10:01:00.000Z",
+        sequence: 1,
+      },
+    });
+
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    expect(window.openbot.servers.markDirectRead).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() =>
+      expect(window.openbot.servers.markDirectRead).toHaveBeenCalledWith({
+        memberId: "member-alice",
+        throughSequence: 1,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("extends an in-flight focus read to a newer visible private message", async () => {
+    let resolveFirstRead: ((state: NonNullable<DirectConversationSnapshot["readState"]>) => void) | undefined;
+    vi.mocked(window.openbot.servers.readDirectConversation).mockResolvedValueOnce({
+      threadId: "thread-member-alice",
+      otherMemberId: "member-alice",
+      revision: 1,
+      readState: { unreadCount: 1, firstUnreadMessageId: "direct-focus-old", throughSequence: 0 },
+      messages: [
+        {
+          id: "direct-focus-old",
+          threadId: "thread-member-alice",
+          senderMemberId: "member-alice",
+          recipientMemberId: "member-self",
+          text: "Older private background message",
+          createdAt: "2026-08-19T10:00:00.000Z",
+          sequence: 1,
+        },
+      ],
+    });
+    render(() => <App peopleEnabled />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitPresence?.({
+      serverId: "server-1",
+      updatedAt: "2026-08-19T10:00:00.000Z",
+      members: [
+        presenceMember("member-self", "person@example.com", "Person"),
+        presenceMember("member-alice", "alice@example.com", "Alice"),
+      ],
+    });
+    window.dispatchEvent(new Event("blur"));
+    await fireEvent.click(await screen.findByRole("button", { name: /Alice/ }));
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    vi.mocked(window.openbot.servers.markDirectRead)
+      .mockReset()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstRead = resolve;
+          }),
+      )
+      .mockImplementation(async (input) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughSequence: input.throughSequence,
+      }));
+
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() =>
+      expect(window.openbot.servers.markDirectRead).toHaveBeenCalledWith({
+        memberId: "member-alice",
+        throughSequence: 1,
+      }),
+    );
+    emitDirectMessage?.({
+      type: "team-direct-message",
+      memberIds: ["member-alice", "member-self"],
+      message: {
+        id: "direct-focus-new",
+        threadId: "thread-member-alice",
+        senderMemberId: "member-alice",
+        recipientMemberId: "member-self",
+        text: "Newer private message during focus read",
+        createdAt: "2026-08-19T10:01:00.000Z",
+        sequence: 2,
+      },
+    });
+    resolveFirstRead?.({
+      unreadCount: 1,
+      firstUnreadMessageId: "direct-focus-new",
+      throughSequence: 1,
+    });
+
+    await waitFor(() =>
+      expect(window.openbot.servers.markDirectRead).toHaveBeenCalledWith({
+        memberId: "member-alice",
+        throughSequence: 2,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument());
+  });
+
+  it("keeps a newer private message unread when an earlier focus read resolves in the background", async () => {
+    let resolveFirstRead: ((state: NonNullable<DirectConversationSnapshot["readState"]>) => void) | undefined;
+    vi.mocked(window.openbot.servers.readDirectConversation).mockResolvedValueOnce({
+      threadId: "thread-member-alice",
+      otherMemberId: "member-alice",
+      revision: 1,
+      readState: { unreadCount: 1, firstUnreadMessageId: "direct-stale-read-old", throughSequence: 0 },
+      messages: [
+        {
+          id: "direct-stale-read-old",
+          threadId: "thread-member-alice",
+          senderMemberId: "member-alice",
+          recipientMemberId: "member-self",
+          text: "Private reply visible before focus",
+          createdAt: "2026-08-19T10:00:00.000Z",
+          sequence: 1,
+        },
+      ],
+    });
+    render(() => <App peopleEnabled />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitPresence?.({
+      serverId: "server-1",
+      updatedAt: "2026-08-19T10:00:00.000Z",
+      members: [
+        presenceMember("member-self", "person@example.com", "Person"),
+        presenceMember("member-alice", "alice@example.com", "Alice"),
+      ],
+    });
+    window.dispatchEvent(new Event("blur"));
+    await fireEvent.click(await screen.findByRole("button", { name: /Alice/ }));
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    vi.mocked(window.openbot.servers.markDirectRead)
+      .mockReset()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstRead = resolve;
+          }),
+      )
+      .mockImplementation(async (input) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughSequence: input.throughSequence,
+      }));
+
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() =>
+      expect(window.openbot.servers.markDirectRead).toHaveBeenCalledWith({
+        memberId: "member-alice",
+        throughSequence: 1,
+      }),
+    );
+    window.dispatchEvent(new Event("blur"));
+    emitDirectMessage?.({
+      type: "team-direct-message",
+      memberIds: ["member-alice", "member-self"],
+      message: {
+        id: "direct-stale-read-new",
+        threadId: "thread-member-alice",
+        senderMemberId: "member-alice",
+        recipientMemberId: "member-self",
+        text: "Private reply received after focus was lost",
+        createdAt: "2026-08-19T10:01:00.000Z",
+        sequence: 2,
+      },
+    });
+    expect(await screen.findByText("Private reply received after focus was lost")).toBeInTheDocument();
+    resolveFirstRead?.({ unreadCount: 0, firstUnreadMessageId: null, throughSequence: 1 });
+
+    await waitFor(() => expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument());
+    expect(window.openbot.servers.markDirectRead).toHaveBeenCalledTimes(1);
+
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() =>
+      expect(window.openbot.servers.markDirectRead).toHaveBeenCalledWith({
+        memberId: "member-alice",
+        throughSequence: 2,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument());
+  });
+
   it("shows and clears the unread boundary in a private conversation", async () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -7324,6 +7920,7 @@ describe("OpenBot connected desktop shell", () => {
         presenceMember("member-alice", "alice@example.com", "Alice"),
       ],
     });
+    window.dispatchEvent(new Event("blur"));
     await fireEvent.click(await screen.findByRole("button", { name: /Alice/ }));
 
     expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
