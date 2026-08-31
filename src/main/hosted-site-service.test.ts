@@ -63,6 +63,16 @@ describe("hosted site preparation", () => {
     await expect(prepareSite(root)).rejects.toThrow("existing dist");
   });
 
+  it("rejects an Astro dist symlink that escapes the project", async () => {
+    const root = await fixture();
+    const outside = await fixture();
+    await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { astro: "5.0.0" } }));
+    await writeFile(join(outside, "index.html"), "not from this project");
+    await symlink(outside, join(root, "dist"));
+
+    await expect(prepareSite(root)).rejects.toThrow("real directory");
+  });
+
   it("rejects symlinks and paths outside the allowed roots", async () => {
     const root = await fixture();
     const outside = await fixture();

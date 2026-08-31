@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, readdir, readFile, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readdir, readFile, realpath } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   HostedSiteFramework,
@@ -182,15 +183,22 @@ async function staticAstroOutput(root: string): Promise<string> {
     throw new Error("Astro middleware and server source are not allowed.");
   }
   const output = join(root, "dist");
-  if (!(await exists(output)))
-    throw new Error("Build the Astro project first. Its existing dist/ directory is required.");
-  return output;
+  const stats = await lstat(output).catch((error: unknown) => {
+    if (isMissing(error)) throw new Error("Build the Astro project first. Its existing dist/ directory is required.");
+    throw error;
+  });
+  if (stats.isSymbolicLink() || !stats.isDirectory()) throw new Error("Astro dist/ must be a real directory.");
+  const canonicalOutput = await realpath(output);
+  if (!isInside(root, canonicalOutput)) throw new Error("Astro dist/ must stay inside the project directory.");
+  return canonicalOutput;
 }
 
 async function collectFiles(root: string): Promise<PreparedFile[]> {
   const files: PreparedFile[] = [];
   let total = 0;
   async function visit(directory: string): Promise<void> {
+    const canonicalDirectory = await realpath(directory);
+    if (!isInside(root, canonicalDirectory)) throw new Error("Site directories must stay inside the source root.");
     const entries = await readdir(directory, { withFileTypes: true });
     entries.sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
@@ -213,10 +221,20 @@ async function collectFiles(root: string): Promise<PreparedFile[]> {
       const extension = extname(path).toLowerCase();
       const mimeType = MIME_TYPES[extension];
       if (!mimeType) throw new Error(`This file type is not allowed: ${path}`);
-      if (stats.size > MAX_FILE_BYTES) throw new Error(`A file exceeds the 1 MB limit: ${path}`);
-      total += stats.size;
-      if (total > MAX_TOTAL_BYTES) throw new Error("The site exceeds the 2 MB limit.");
-      files.push({ path, size: stats.size, mimeType, bytes: new Uint8Array(await readFile(absolute)) });
+      const handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        const openedStats = await handle.stat();
+        const canonicalFile = await realpath(absolute);
+        if (!openedStats.isFile() || !isInside(root, canonicalFile) || canonicalFile !== absolute) {
+          throw new Error(`Site files must stay inside the source root: ${path}`);
+        }
+        if (openedStats.size > MAX_FILE_BYTES) throw new Error(`A file exceeds the 1 MB limit: ${path}`);
+        total += openedStats.size;
+        if (total > MAX_TOTAL_BYTES) throw new Error("The site exceeds the 2 MB limit.");
+        files.push({ path, size: openedStats.size, mimeType, bytes: new Uint8Array(await handle.readFile()) });
+      } finally {
+        await handle.close();
+      }
     }
   }
   await visit(root);

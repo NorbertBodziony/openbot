@@ -199,6 +199,57 @@ describe("hosted site control plane", () => {
       .first<{ id: string }>();
     expect(removed).toBeNull();
   });
+
+  it("rejects a stuck activation after the upload session expires", async () => {
+    const fixture = serviceFixture();
+    const upload = await fixture.service.createUpload("alice", uploadRequest(), "stuck-upload");
+    await uploadIndex(fixture.service, "alice", upload.uploadId);
+    await fixture.database
+      .prepare("UPDATE site_deployments SET status = 'activating' WHERE id = ?")
+      .bind(upload.uploadId)
+      .run();
+    fixture.setNow(NOW + 16 * 60_000);
+
+    await expect(fixture.service.activate("alice", upload.uploadId, "retry-stuck-upload")).rejects.toMatchObject({
+      code: "upload_expired",
+    });
+    expect(fixture.bucket.keys()).not.toContain(`sites/${upload.site.id}/deployments/${upload.uploadId}/index.html`);
+    const site = await fixture.database
+      .prepare("SELECT id FROM hosted_sites WHERE id = ?")
+      .bind(upload.site.id)
+      .first<{ id: string }>();
+    expect(site).toBeNull();
+  });
+
+  it("does not renew an expired site after its slots have been reused", async () => {
+    const fixture = serviceFixture();
+    const expiring = await publish(fixture.service, "alice", "publish-expiring", "activate-expiring");
+    fixture.setNow(NOW + 30 * 24 * 60 * 60_000 - 5 * 60_000);
+    const replacement = await fixture.service.createUpload(
+      "alice",
+      uploadRequest({ siteId: expiring.id }),
+      "replace-expiring",
+    );
+    await uploadIndex(fixture.service, "alice", replacement.uploadId);
+    fixture.setNow(NOW + 30 * 24 * 60 * 60_000 + 60_000);
+    for (let index = 0; index < 10; index += 1) {
+      await publish(fixture.service, "alice", `publish-reused-${index}`, `activate-reused-${index}`, {
+        title: `Replacement slot project ${index}`,
+      });
+    }
+
+    await expect(
+      fixture.service.activate("alice", replacement.uploadId, "activate-expired-replacement"),
+    ).rejects.toMatchObject({ code: "site_expired" });
+    const active = await fixture.database
+      .prepare(
+        `SELECT COUNT(*) AS count FROM hosted_sites
+         WHERE user_id = ? AND status = 'active' AND expires_at > ?`,
+      )
+      .bind("alice", fixture.now())
+      .first<{ count: number }>();
+    expect(active?.count).toBe(10);
+  });
 });
 
 function serviceFixture(): {

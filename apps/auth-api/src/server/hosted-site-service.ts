@@ -113,6 +113,7 @@ export class HostedSiteService {
     const totalBytes = request.files.reduce((sum, file) => sum + file.size, 0);
     if (request.siteId) {
       const site = await this.requireOwnedSite(userId, request.siteId);
+      if (!site.expires_at || site.expires_at <= now) throw inactiveSiteError("expired");
       const insert = await this.database
         .prepare(
           `INSERT INTO site_deployments(
@@ -282,6 +283,20 @@ export class HostedSiteService {
     if (site.status !== "uploading" && site.status !== "active") {
       await this.abandonDeployment(deployment);
       throw inactiveSiteError(site.status);
+    }
+    if (
+      (deployment.status === "uploading" || deployment.status === "activating") &&
+      deployment.upload_expires_at <= now
+    ) {
+      await this.abandonDeployment(deployment);
+      await this.deleteDeployment(site.id, deployment.id);
+      await this.deleteEmptyUploadingSite(site.id);
+      throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
+    }
+    if (site.status === "active" && (!site.expires_at || site.expires_at <= now)) {
+      await this.abandonDeployment(deployment);
+      await this.deleteDeployment(site.id, deployment.id);
+      throw inactiveSiteError("expired");
     }
     if (deployment.status === "active") {
       if (site.current_deployment_id !== deployment.id) {
@@ -532,6 +547,12 @@ export class HostedSiteService {
           `UPDATE hosted_sites SET status = 'active', current_deployment_id = ?, expires_at = ?,
            updated_at = ?, title = ?, description = ?, framework = ?, spa_fallback = ?
            WHERE id = ? AND user_id = ? AND status IN ('uploading', 'active')
+             AND (status = 'uploading' OR expires_at > ?)
+             AND (
+               SELECT COUNT(*) FROM hosted_sites
+               WHERE user_id = ? AND id != ? AND status IN ('uploading', 'active', 'blocked')
+                 AND (expires_at IS NULL OR expires_at > ?)
+             ) < ?
              AND current_deployment_id IS ?
              AND EXISTS (SELECT 1 FROM site_deployments WHERE id = ? AND status = 'activating')`,
         )
@@ -545,6 +566,11 @@ export class HostedSiteService {
           deployment.site_spa_fallback,
           site.id,
           userId,
+          now,
+          userId,
+          site.id,
+          now,
+          HOSTED_SITE_LIMITS.activeSites,
           previousDeployment,
           deployment.id,
         ),
@@ -600,6 +626,15 @@ export class HostedSiteService {
       await this.deleteDeployment(site.id, deployment.id);
       if (currentSite.status !== "uploading" && currentSite.status !== "active")
         throw inactiveSiteError(currentSite.status);
+      if (currentDeployment.upload_expires_at <= now && currentDeployment.status !== "active") {
+        throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
+      }
+      if (currentSite.status === "active" && (!currentSite.expires_at || currentSite.expires_at <= now)) {
+        throw inactiveSiteError("expired");
+      }
+      if ((await this.activeSiteSlotCount(userId, site.id, now)) >= HOSTED_SITE_LIMITS.activeSites) {
+        throw new HostedSiteInputError(409, "site_limit", "This account already has 10 active sites.");
+      }
       if (currentSite.current_deployment_id !== deployment.id || currentDeployment.status !== "active") {
         throw new HostedSiteInputError(409, "activation_superseded", "A newer site deployment is active.");
       }
@@ -620,6 +655,20 @@ export class HostedSiteService {
          WHERE id = ? AND status IN ('uploading', 'activating')`,
       )
       .bind(deployment.id)
+      .run();
+  }
+
+  private async deleteEmptyUploadingSite(siteId: string): Promise<void> {
+    await this.database
+      .prepare(
+        `DELETE FROM hosted_sites
+         WHERE id = ? AND status = 'uploading' AND current_deployment_id IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM site_deployments d
+             WHERE d.site_id = hosted_sites.id AND d.status IN ('uploading', 'activating')
+           )`,
+      )
+      .bind(siteId)
       .run();
   }
 
@@ -675,6 +724,18 @@ export class HostedSiteService {
 
   private siteById(siteId: string): Promise<SiteRow | null> {
     return this.database.prepare("SELECT * FROM hosted_sites WHERE id = ?").bind(siteId).first<SiteRow>();
+  }
+
+  private async activeSiteSlotCount(userId: string, excludeSiteId: string, now: number): Promise<number> {
+    const row = await this.database
+      .prepare(
+        `SELECT COUNT(*) AS count FROM hosted_sites
+         WHERE user_id = ? AND id != ? AND status IN ('uploading', 'active', 'blocked')
+           AND (expires_at IS NULL OR expires_at > ?)`,
+      )
+      .bind(userId, excludeSiteId, now)
+      .first<{ count: number }>();
+    return row?.count ?? 0;
   }
 
   private async enforceActivationRate(userId: string, now: number): Promise<void> {
