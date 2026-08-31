@@ -3362,7 +3362,89 @@ describe("OpenBot connected desktop shell", () => {
       reasoningEffort: "medium",
     });
 
-    await waitFor(() => expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.agent.updateBot).mock.calls).toEqual([
+        [
+          {
+            botId: "chief",
+            provider: "claude",
+            model: "claude-opus-5",
+            reasoningEffort: "medium",
+          },
+        ],
+        [
+          {
+            botId: "chief",
+            provider: "claude",
+            model: "claude-opus-5",
+            reasoningEffort: "high",
+          },
+        ],
+      ]),
+    );
+    expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
+      botId: "chief",
+      provider: "claude",
+      model: "claude-opus-5",
+      reasoningEffort: "high",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(effort).toHaveTextContent("High");
+  });
+
+  it("orders Agent Settings effort changes after pending header model changes", async () => {
+    let resolveHeaderUpdate!: (bot: BotSummary) => void;
+    vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveHeaderUpdate = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const headerPicker = screen.getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(headerPicker).getByRole("tab", { name: /^Claude:/ }));
+    await fireEvent.click(within(headerPicker).getByRole("option", { name: "Claude Opus 5, default" }));
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+
+    const settings = await screen.findByRole("complementary", { name: "Agent settings" });
+    expect(within(settings).getByRole("button", { name: "Agent model: Claude Opus 5" })).toBeEnabled();
+    const effort = within(settings).getByRole("button", { name: /Agent reasoning level/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+
+    expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(1);
+    const chief = BOTS.find((bot) => bot.id === "chief");
+    if (!chief) throw new Error("Chief fixture is missing");
+    resolveHeaderUpdate({
+      ...chief,
+      provider: "claude",
+      model: "claude-opus-5",
+      reasoningEffort: "medium",
+    });
+
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.agent.updateBot).mock.calls).toEqual([
+        [
+          {
+            botId: "chief",
+            provider: "claude",
+            model: "claude-opus-5",
+            reasoningEffort: "medium",
+          },
+        ],
+        [
+          {
+            botId: "chief",
+            provider: "claude",
+            model: "claude-opus-5",
+            reasoningEffort: "high",
+          },
+        ],
+      ]),
+    );
     expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
       botId: "chief",
       provider: "claude",
@@ -3574,6 +3656,8 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
         botId: "chief",
+        provider: "codex",
+        model: "gpt-5.6-sol",
         reasoningEffort: "xhigh",
       }),
     );
