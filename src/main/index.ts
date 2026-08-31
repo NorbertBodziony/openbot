@@ -1596,7 +1596,12 @@ if (!hasSingleInstanceLock) {
       mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot, store.database);
       await mailboxStore.initialize();
       configureApplicationProtocol();
-      teamWebRtcBridge = new TeamWebRtcBridge({ developmentUrl: process.env.ELECTRON_RENDERER_URL });
+      const developmentUrl = process.env.ELECTRON_RENDERER_URL;
+      teamWebRtcBridge = new TeamWebRtcBridge({
+        developmentUrl,
+        iceTransportPolicy:
+          developmentUrl && process.env.OPENBOT_DEV_ICE_TRANSPORT_POLICY === "relay" ? "relay" : "all",
+      });
       browserHost = new BrowserHost(mainWindow, store.downloadsRoot, join(app.getPath("userData"), BROWSER_STATE_FILE));
       await browserHost.restore();
       browserPictureInPicture = new BrowserPictureInPicture({

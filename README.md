@@ -163,6 +163,9 @@ client uses the isolated `OpenBot Dev Test Client` profile and renderer port 517
 removes that profile and the legacy `OpenBot Dev Host` profile. Press `Ctrl+C` in the runner terminal
 to stop only the processes started by that runner.
 
+Set `OPENBOT_DEV_ICE_TRANSPORT_POLICY=relay` before this command to force Team API traffic through
+coturn. This test option works only with the development renderer. Production always starts with `all`.
+
 The normal `check` command is offline and uses a fake App Server. Manual smoke scripts may use the
 signed-in subscription and must not run in CI.
 

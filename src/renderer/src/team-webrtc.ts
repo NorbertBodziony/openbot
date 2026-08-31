@@ -10,6 +10,7 @@ interface BridgeCommand {
   signalUrl?: string;
   token?: string;
   peer?: "host" | "client";
+  iceTransportPolicy?: "all" | "relay";
   channel?: "rpc" | "events" | "files" | "desktop";
   data?: string | ArrayBuffer;
 }
@@ -85,6 +86,7 @@ interface PeerState {
   connectionId: string | null;
   peerConnection: RTCPeerConnection | null;
   iceServers: RTCIceServer[];
+  iceTransportPolicy: "all" | "relay";
   channels: Partial<Record<"rpc" | "events" | "files" | "desktop", RTCDataChannel>>;
   payloadDecoders: Partial<Record<"rpc" | "events" | "files" | "desktop", TeamWebRtcPayloadDecoder>>;
   reconnectAttempt: number;
@@ -116,7 +118,12 @@ window.openbotTeamWebRtc.receivePort((port) => {
 async function handleCommand(command: BridgeCommand): Promise<void> {
   try {
     if (command.type === "connect") {
-      if (!command.signalUrl || !command.token || !command.peer)
+      if (
+        !command.signalUrl ||
+        !command.token ||
+        !command.peer ||
+        (command.iceTransportPolicy !== "all" && command.iceTransportPolicy !== "relay")
+      )
         throw new Error("The WebRTC connection command is invalid.");
       disconnect(command.peerId);
       const state: PeerState = {
@@ -129,6 +136,7 @@ async function handleCommand(command: BridgeCommand): Promise<void> {
         connectionId: null,
         peerConnection: null,
         iceServers: [],
+        iceTransportPolicy: command.iceTransportPolicy,
         channels: {},
         payloadDecoders: {},
         reconnectAttempt: 0,
@@ -218,7 +226,11 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
     state.connectionId = message.connectionId ?? state.connectionId;
     state.iceServers = message.iceServers ?? state.iceServers;
     if (state.peerConnection)
-      state.peerConnection.setConfiguration({ iceServers: state.iceServers, bundlePolicy: "max-bundle" });
+      state.peerConnection.setConfiguration({
+        iceServers: state.iceServers,
+        bundlePolicy: "max-bundle",
+        iceTransportPolicy: state.iceTransportPolicy,
+      });
     scheduleTurnRefresh(state);
     post({ type: "ice-servers", peerId: state.id, iceServers: state.iceServers });
     post({ type: "signal-ready", peerId: state.id });
@@ -294,7 +306,11 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
 }
 
 function createPeerConnection(state: PeerState, iceServers: RTCIceServer[]): RTCPeerConnection {
-  const connection = new RTCPeerConnection({ iceServers, bundlePolicy: "max-bundle" });
+  const connection = new RTCPeerConnection({
+    iceServers,
+    bundlePolicy: "max-bundle",
+    iceTransportPolicy: state.iceTransportPolicy,
+  });
   state.peerConnection = connection;
   connection.onicecandidate = (event) => {
     if (!event.candidate || !state.connectionId) return;

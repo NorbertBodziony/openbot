@@ -30,6 +30,7 @@ interface TeamWebRtcBridgeEvents {
 interface TeamWebRtcBridgeOptions {
   developmentUrl?: string | null;
   preloadPath?: string;
+  iceTransportPolicy?: "all" | "relay";
 }
 
 const iceServerSchema = z.object({
@@ -61,7 +62,14 @@ const bridgeMessageSchema = z
 type BridgeMessage = z.infer<typeof bridgeMessageSchema>;
 
 type BridgeCommand =
-  | { type: "connect"; peerId: string; signalUrl: string; token: string; peer: "host" | "client" }
+  | {
+      type: "connect";
+      peerId: string;
+      signalUrl: string;
+      token: string;
+      peer: "host" | "client";
+      iceTransportPolicy: "all" | "relay";
+    }
   | { type: "disconnect" | "disconnect-peer" | "restart-ice" | "close"; peerId: string }
   | { type: "send"; peerId: string; channel: TeamWebRtcChannel; data: string | ArrayBuffer };
 
@@ -97,7 +105,7 @@ export class TeamWebRtcBridge extends EventEmitter<TeamWebRtcBridgeEvents> {
 
   async connect(input: { peerId: string; signalUrl: string; token: string; peer: "host" | "client" }): Promise<void> {
     await this.start();
-    await this.#command({ type: "connect", ...input });
+    await this.#command({ type: "connect", ...input, iceTransportPolicy: this.#options.iceTransportPolicy ?? "all" });
   }
 
   async disconnect(peerId: string): Promise<void> {
