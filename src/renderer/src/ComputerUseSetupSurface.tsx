@@ -1,5 +1,5 @@
 import type { MacPermissionId } from "@openbot/contracts/ipc";
-import { createSignal, onCleanup, onSettled, Show } from "solid-js";
+import { createSignal, onSettled, Show } from "solid-js";
 import { Button, CircleCheck, FolderOpen, GripVertical, Monitor, MousePointer2, TriangleAlert } from "./components/ui";
 
 const PERMISSION_COPY: Record<MacPermissionId, { title: string; icon: typeof Monitor }> = {
@@ -20,8 +20,12 @@ export function ComputerUseSetupSurface() {
   const [dragging, setDragging] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   let disposed = false;
+  const closeOnEscape = (event: KeyboardEvent) => {
+    if (event.key === "Escape") close();
+  };
 
   onSettled(() => {
+    window.addEventListener("keydown", closeOnEscape);
     void desktopApi
       .getComputerUseMacSetupState()
       .then((next) => {
@@ -30,9 +34,10 @@ export function ComputerUseSetupSurface() {
       .catch((cause) => {
         if (!disposed) setError(errorMessage(cause, "Computer Use could not be loaded."));
       });
-  });
-  onCleanup(() => {
-    disposed = true;
+    return () => {
+      disposed = true;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
   });
 
   async function reveal(): Promise<void> {
@@ -49,12 +54,7 @@ export function ComputerUseSetupSurface() {
   }
 
   return (
-    <main
-      class="computer-use-setup-surface"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") close();
-      }}
-    >
+    <main class="computer-use-setup-surface">
       <header class="computer-use-setup-header">
         <span class="computer-use-setup-permission-icon" aria-hidden="true">
           <PermissionIcon />

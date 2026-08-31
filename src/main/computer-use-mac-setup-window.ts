@@ -19,6 +19,7 @@ interface ComputerUseMacSetupWindowOptions {
 export class ComputerUseMacSetupWindowController {
   readonly #options: ComputerUseMacSetupWindowOptions;
   #window: BrowserWindow | null = null;
+  #operationGeneration = 0;
 
   constructor(options: ComputerUseMacSetupWindowOptions) {
     this.#options = options;
@@ -33,13 +34,15 @@ export class ComputerUseMacSetupWindowController {
   }
 
   async open(permission: MacPermissionId): Promise<ComputerUseMacSetupState> {
+    const generation = ++this.#operationGeneration;
     const state = await this.#options.service.getState();
-    if (state.status !== "available") return state;
+    if (generation !== this.#operationGeneration || state.status !== "available") return state;
 
     await this.#options.openExternal(COMPUTER_USE_PERMISSION_URLS[permission]);
+    if (generation !== this.#operationGeneration) return state;
     const window = this.#ensureWindow();
     await this.#options.loadWindow(window, permission);
-    if (!window.isDestroyed()) {
+    if (generation === this.#operationGeneration && !window.isDestroyed()) {
       window.show();
       window.focus();
     }
@@ -59,6 +62,7 @@ export class ComputerUseMacSetupWindowController {
   }
 
   close(): void {
+    this.#operationGeneration += 1;
     if (!this.#window || this.#window.isDestroyed()) return;
     this.#window.close();
   }

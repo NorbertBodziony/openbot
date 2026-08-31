@@ -80,6 +80,34 @@ describe("ComputerUseMacSetupWindowController", () => {
     await controller.revealHelper();
     expect(revealPath).toHaveBeenCalledWith(join(root, COMPUTER_USE_HELPER_RELATIVE_PATH));
   });
+
+  it("does not create an orphaned helper window when setup closes during opening", async () => {
+    let finishOpening: (() => void) | undefined;
+    const opening = new Promise<void>((resolve) => {
+      finishOpening = resolve;
+    });
+    const createWindow = vi.fn(() => {
+      throw new Error("The helper window should not be created.");
+    });
+    const openExternal = vi.fn(() => opening);
+    const service = new ComputerUseMacSetupService({ platform: "darwin", codexHome: root });
+    const controller = new ComputerUseMacSetupWindowController({
+      service,
+      createWindow,
+      loadWindow: vi.fn(async () => undefined),
+      openExternal,
+      revealPath: vi.fn(),
+      loadDragIcon: async () => "helper-icon.png",
+    });
+
+    const result = controller.open("accessibility");
+    await vi.waitFor(() => expect(openExternal).toHaveBeenCalledOnce());
+    controller.close();
+    finishOpening?.();
+    await result;
+
+    expect(createWindow).not.toHaveBeenCalled();
+  });
 });
 
 async function writeHelper(root: string): Promise<void> {

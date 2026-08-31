@@ -1678,7 +1678,6 @@ if (!hasSingleInstanceLock) {
         store,
         mailboxStore,
         browserHost,
-        null,
         30_000,
         setupState.preferredProvider ?? "codex",
         null,

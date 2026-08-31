@@ -24,14 +24,14 @@ describe("ComputerUseSetupSurface", () => {
     const close = vi.spyOn(mock.api, "closeComputerUsePermissionSetup");
     const view = render(() => <ComputerUseSetupSurface />);
 
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(close).toHaveBeenCalledTimes(1);
+
     const dragCard = await view.findByRole("button", { name: /Drag Codex Computer Use into System Settings/ });
     await fireEvent.dragStart(dragCard);
     expect(startDrag).toHaveBeenCalledTimes(1);
 
     await fireEvent.click(dragCard);
     expect(reveal).toHaveBeenCalledTimes(1);
-
-    await fireEvent.keyDown(view.getByRole("main"), { key: "Escape" });
-    expect(close).toHaveBeenCalledTimes(1);
   });
 });

@@ -390,7 +390,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     store: BotStore,
     mailbox: MailboxStore,
     browser: AgentBrowserHost,
-    _computerUsePrerequisites: (() => { screenRecording: boolean; accessibility: boolean }) | null = null,
     requestTimeoutMs = 30_000,
     preferredProvider: AgentProvider = "codex",
     clientFactory: AgentClientFactory | null = null,
