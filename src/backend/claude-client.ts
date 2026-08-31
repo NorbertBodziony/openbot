@@ -62,6 +62,7 @@ interface ActiveTurn {
 interface ThreadRuntime {
   id: string;
   config: ThreadConfig;
+  appliedEffort?: string;
   input: AsyncMessageQueue;
   query: ClaudeQuery;
   activeTurn: ActiveTurn | null;
@@ -105,6 +106,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   readonly #createQuery: QueryFactory;
   readonly #threads = new Map<string, ThreadRuntime>();
   readonly #pendingServerRequests = new Map<RequestId, PendingServerRequest>();
+  readonly #modelEffortSupport = new Map<string, boolean>();
   #running = false;
 
   constructor(cli: ClaudeCliInfo, createQuery: QueryFactory = query) {
@@ -147,7 +149,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       case "account/rateLimits/read":
         return decoder({ rateLimits: null, rateLimitsByLimitId: null });
       case "model/list":
-        return decoder({ data: await this.#listModels() });
+        return decoder({ data: await this.#listModels(_timeoutMs) });
       case "plugin/list":
         return decoder({ marketplaces: [] });
       case "thread/start": {
@@ -208,7 +210,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     pending.reject(new Error(error.message));
   }
 
-  async #listModels(): Promise<unknown[]> {
+  async #listModels(timeoutMs?: number): Promise<unknown[]> {
     const input = new AsyncMessageQueue();
     const claudeQuery = this.#createQuery({
       prompt: input,
@@ -220,14 +222,30 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         env: { ...claudeEnvironment(this.#cli), CLAUDE_AGENT_SDK_CLIENT_APP: "openbot/0.1.0" },
       },
     });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const discovered = await claudeQuery.supportedModels();
+      const discovery = claudeQuery.supportedModels();
+      const discovered =
+        timeoutMs === undefined
+          ? await discovery
+          : await Promise.race([
+              discovery,
+              new Promise<ModelInfo[]>((_, reject) => {
+                timeout = setTimeout(() => {
+                  input.close();
+                  claudeQuery.close();
+                  reject(new Error("Claude request timed out: model/list"));
+                }, timeoutMs);
+              }),
+            ]);
       const models = new Map<string, (typeof discovered)[number]>();
       for (const model of discovered) {
         const id = model.resolvedModel?.trim() || model.value.trim();
         if (!id || models.has(id)) continue;
         models.set(id, model);
       }
+      this.#modelEffortSupport.clear();
+      for (const [id, model] of models) this.#modelEffortSupport.set(id, model.supportsEffort !== false);
       return [...models.entries()].map(([id, model]) => {
         const discoveredReasoningEfforts = [
           ...new Set((model.supportedEffortLevels ?? []).filter((effort) => isOneOf(CLAUDE_EFFORTS, effort))),
@@ -244,6 +262,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         };
       });
     } finally {
+      if (timeout) clearTimeout(timeout);
       input.close();
       claudeQuery.close();
     }
@@ -276,6 +295,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
   async #startThread(threadId: string, config: ThreadConfig, resume: boolean): Promise<void> {
     const input = new AsyncMessageQueue();
+    const supportsEffort = this.#modelSupportsEffort(config.model);
     const canUseTool: CanUseTool = async (toolName, toolInput, options) => {
       if (toolName !== "AskUserQuestion") {
         return { behavior: "allow", updatedInput: toolInput } satisfies PermissionResult;
@@ -289,7 +309,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         cwd: config.cwd,
         pathToClaudeCodeExecutable: this.#cli.executable,
         ...(config.model ? { model: normalizeClaudeModel(config.model) } : {}),
-        ...(config.effort ? { effort: normalizeClaudeEffort(config.effort) } : {}),
+        ...(config.effort && supportsEffort ? { effort: normalizeClaudeEffort(config.effort) } : {}),
         ...(resume ? { resume: threadId } : { sessionId: threadId }),
         systemPrompt: {
           type: "preset",
@@ -309,6 +329,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const runtime: ThreadRuntime = {
       id: threadId,
       config,
+      appliedEffort: supportsEffort ? config.effort : undefined,
       input,
       query: claudeQuery,
       activeTurn: null,
@@ -324,15 +345,20 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     if (runtime.activeTurn) throw new Error("The Claude thread already has an active turn.");
 
     const requestedModel = getString(params, "model");
-    if (requestedModel && requestedModel !== runtime.config.model) {
+    const modelChanged = Boolean(requestedModel && requestedModel !== runtime.config.model);
+    if (requestedModel && modelChanged) {
       await runtime.query.setModel(normalizeClaudeModel(requestedModel));
       runtime.config.model = requestedModel;
     }
     const requestedEffort = getString(params, "effort");
-    if (requestedEffort && requestedEffort !== runtime.config.effort) {
-      await runtime.query.setMaxThinkingTokens(thinkingTokens(requestedEffort));
-      runtime.config.effort = requestedEffort;
+    const selectedEffort = requestedEffort ?? runtime.config.effort;
+    if (!this.#modelSupportsEffort(runtime.config.model)) {
+      runtime.appliedEffort = undefined;
+    } else if (selectedEffort && (modelChanged || selectedEffort !== runtime.appliedEffort)) {
+      await runtime.query.setMaxThinkingTokens(thinkingTokens(selectedEffort));
+      runtime.appliedEffort = selectedEffort;
     }
+    if (requestedEffort) runtime.config.effort = requestedEffort;
 
     const clientId = getString(params, "clientUserMessageId");
     const turnId = clientId && isUuid(clientId) ? clientId : randomUUID();
@@ -713,6 +739,11 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const runtime = this.#threads.get(threadId);
     if (!runtime) throw new Error(`Unknown Claude thread: ${threadId}`);
     return runtime;
+  }
+
+  #modelSupportsEffort(model?: string): boolean {
+    if (!model) return true;
+    return this.#modelEffortSupport.get(normalizeClaudeModel(model)) !== false;
   }
 }
 

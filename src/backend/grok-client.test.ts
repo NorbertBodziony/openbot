@@ -214,6 +214,9 @@ describe.sequential("GrokAgentClient", () => {
         }),
       ]),
     );
+    expect(await readLog()).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ method: "session/set_config_option", configId: "thought" })]),
+    );
   });
 
   it("supports Grok's legacy ACP model catalog and session/set_model", async () => {
@@ -416,7 +419,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
               },
             ],
           },
-          configOptions: [],
+          configOptions: modelConfig().filter((option) => option.category === "thought_level"),
         }
       : mode === "legacy-models"
       ? {

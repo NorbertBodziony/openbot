@@ -336,6 +336,17 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
       ["thought_level", effort],
     ] as const) {
       if (!value) continue;
+      if (category === "thought_level" && thread.currentModelId) {
+        const currentModel = this.#models.find((candidate) => candidate.id === thread.currentModelId);
+        if (currentModel?.usesModelReasoningEffort && currentModel.supportedReasoningEfforts.includes(value)) {
+          await this.#requireConnection().request("session/set_model", {
+            sessionId: thread.id,
+            modelId: thread.currentModelId,
+            _meta: { reasoningEffort: value },
+          });
+          continue;
+        }
+      }
       const option = thread.configOptions.find(
         (candidate): candidate is Extract<SessionConfigOption, { type: "select" }> =>
           candidate.category === category && candidate.type === "select",
@@ -347,16 +358,6 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
             modelId: value,
           });
           thread.currentModelId = value;
-        }
-        if (category === "thought_level" && thread.currentModelId) {
-          const currentModel = this.#models.find((candidate) => candidate.id === thread.currentModelId);
-          if (currentModel?.usesModelReasoningEffort && currentModel.supportedReasoningEfforts.includes(value)) {
-            await this.#requireConnection().request("session/set_model", {
-              sessionId: thread.id,
-              modelId: thread.currentModelId,
-              _meta: { reasoningEffort: value },
-            });
-          }
         }
         continue;
       }
