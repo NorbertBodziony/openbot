@@ -38,6 +38,7 @@ export class DynamicIslandWindowController {
   #presentation = IDLE_DYNAMIC_ISLAND_PRESENTATION;
   readonly #windows = new Map<number, BrowserWindow>();
   readonly #criticalActions = new Map<string, Promise<void>>();
+  readonly #notchSizes = new Map<number, { width: number; height: number }>();
   #preferenceMutation = Promise.resolve();
   #windowReconciliation = Promise.resolve();
   #destroyed = false;
@@ -156,15 +157,26 @@ export class DynamicIslandWindowController {
     for (const [displayId, window] of this.#windows) {
       if (displayIds.has(displayId) && !window.isDestroyed()) continue;
       this.#windows.delete(displayId);
+      this.#notchSizes.delete(displayId);
       if (!window.isDestroyed()) window.destroy();
     }
 
     for (const display of displays) {
       if (this.#destroyed) return;
       const bounds = dynamicIslandWindowBounds(display);
+      const notchSize = notchSizeForDisplay(display);
       const current = this.#windows.get(display.id);
       if (current && !current.isDestroyed()) {
         current.setBounds(bounds, false);
+        if (notchSizeChanged(this.#notchSizes.get(display.id), notchSize)) {
+          try {
+            await this.#options.loadWindow(current, display);
+            if (notchSize) this.#notchSizes.set(display.id, notchSize);
+            else this.#notchSizes.delete(display.id);
+          } catch (error) {
+            console.error(`Unable to reload Dynamic Island on display ${display.id}:`, error);
+          }
+        }
         current.showInactive();
         continue;
       }
@@ -193,12 +205,18 @@ export class DynamicIslandWindowController {
     });
     window.on("blur", () => this.setInteractive(window.webContents.id, false));
     window.on("closed", () => {
-      if (this.#windows.get(display.id) === window) this.#windows.delete(display.id);
+      if (this.#windows.get(display.id) === window) {
+        this.#windows.delete(display.id);
+        this.#notchSizes.delete(display.id);
+      }
     });
+    const notchSize = notchSizeForDisplay(display);
+    if (notchSize) this.#notchSizes.set(display.id, notchSize);
     try {
       await this.#options.loadWindow(window, display);
     } catch (error) {
       if (this.#windows.get(display.id) === window) this.#windows.delete(display.id);
+      this.#notchSizes.delete(display.id);
       if (!window.isDestroyed()) window.destroy();
       throw error;
     }
@@ -218,10 +236,24 @@ export class DynamicIslandWindowController {
   private destroyWindows(): void {
     const windows = [...this.#windows.values()];
     this.#windows.clear();
+    this.#notchSizes.clear();
     for (const window of windows) {
       if (!window.isDestroyed()) window.destroy();
     }
   }
+}
+
+function notchSizeForDisplay(
+  display: Pick<Display, "bounds" | "internal">,
+): { width: number; height: number } | undefined {
+  return display.internal ? dynamicIslandNotchSize(display) : undefined;
+}
+
+function notchSizeChanged(
+  previous: { width: number; height: number } | undefined,
+  next: { width: number; height: number } | undefined,
+): boolean {
+  return previous?.width !== next?.width || previous?.height !== next?.height;
 }
 
 function criticalActionKey(

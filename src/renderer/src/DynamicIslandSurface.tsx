@@ -2,7 +2,7 @@ import type { DynamicIslandAction, DynamicIslandPreference, DynamicIslandPresent
 import { DEFAULT_DYNAMIC_ISLAND_PREFERENCE, IDLE_DYNAMIC_ISLAND_PRESENTATION } from "@openbot/contracts/ipc";
 import { createSignal, onSettled, Show } from "solid-js";
 import { OpenBotDynamicIsland } from "./components/OpenBotDynamicIsland";
-import type { DynamicIslandStateChangeReason, DynamicIslandViewState } from "./components/ui";
+import type { DynamicIslandNotchSize, DynamicIslandStateChangeReason, DynamicIslandViewState } from "./components/ui";
 
 const DEFAULT_NOTCH_WIDTH = 192;
 const DEFAULT_NOTCH_HEIGHT = 32;
@@ -12,6 +12,7 @@ export function DynamicIslandSurface() {
   const displayMode = query.get("display") === "island" ? "island" : "notch";
   const notchWidth = readPositivePixelValue(query.get("notch-width"), DEFAULT_NOTCH_WIDTH);
   const notchHeight = readPositivePixelValue(query.get("notch-height"), DEFAULT_NOTCH_HEIGHT);
+  const notchSize: DynamicIslandNotchSize = { width: notchWidth, height: notchHeight };
   const [presentation, setPresentation] = createSignal(IDLE_DYNAMIC_ISLAND_PRESENTATION);
   const [preference, setPreference] = createSignal<DynamicIslandPreference>({
     ...DEFAULT_DYNAMIC_ISLAND_PREFERENCE,
@@ -152,15 +153,7 @@ export function DynamicIslandSurface() {
     };
   });
   return (
-    <main
-      class="dynamic-island-surface"
-      aria-label="OpenBot MacBook notch"
-      style={
-        displayMode === "notch"
-          ? `--dynamic-island-notch-width: ${notchWidth}px; --dynamic-island-notch-height: ${notchHeight}px`
-          : undefined
-      }
-    >
+    <main class="dynamic-island-surface" aria-label="OpenBot MacBook notch">
       <Show when={presentation().mode !== "idle" || preference().idleVisible}>
         <fieldset
           class="dynamic-island-surface-anchor"
@@ -176,6 +169,7 @@ export function DynamicIslandSurface() {
             presentation={presentation()}
             state={viewState()}
             displayMode={displayMode}
+            notchSize={displayMode === "notch" ? notchSize : undefined}
             extendedHoverArea
             onStateChange={changeViewState}
             onAction={perform}

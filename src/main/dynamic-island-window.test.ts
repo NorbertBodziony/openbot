@@ -188,6 +188,38 @@ describe("dynamic island window geometry", () => {
     expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 380 }, false);
   });
 
+  it("reloads an existing overlay when display scaling changes its notch geometry", async () => {
+    const root = await temporaryRoot();
+    const windows: FakeWindow[] = [];
+    const loadWindow = vi.fn(async () => undefined);
+    let displays = [display({ id: 1 })];
+    const controller = new DynamicIslandWindowController({
+      platform: "darwin",
+      preferencePath: join(root, "preference.json"),
+      createWindow: (bounds) => {
+        const window = new FakeWindow(44 + windows.length, bounds);
+        windows.push(window);
+        // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
+        return window as unknown as BrowserWindow;
+      },
+      loadWindow,
+      getDisplays: () => displays,
+      getMainWindow: () => null,
+      performHaptic: () => undefined,
+      performCriticalAction: async () => undefined,
+    });
+
+    await controller.initialize();
+    expect(loadWindow).toHaveBeenCalledOnce();
+
+    displays = [display({ id: 1, bounds: { x: 0, y: 0, width: 1800, height: 1169 } })];
+    await controller.reconcileWindow();
+    expect(loadWindow).toHaveBeenCalledTimes(2);
+
+    await controller.reconcileWindow();
+    expect(loadWindow).toHaveBeenCalledTimes(2);
+  });
+
   it("continues loading other displays when one overlay fails", async () => {
     const root = await temporaryRoot();
     const windows: FakeWindow[] = [];

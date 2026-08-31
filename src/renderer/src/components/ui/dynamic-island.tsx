@@ -7,6 +7,11 @@ export type DynamicIslandHoverBehavior = "none" | "grow" | "expand";
 export type DynamicIslandDisplayMode = "notch" | "island";
 export type DynamicIslandStateChangeReason = "pointer" | "keyboard" | "hover" | "hover-exit" | "escape";
 
+export interface DynamicIslandNotchSize {
+  width: number;
+  height: number;
+}
+
 export interface DynamicIslandHoverContentMotion {
   leadingScale: number;
   trailingScale: number;
@@ -40,6 +45,7 @@ export interface DynamicIslandProps {
   pointerToggle?: boolean;
   sharedMotion?: DynamicIslandSharedMotion;
   displayMode?: DynamicIslandDisplayMode;
+  notchSize?: DynamicIslandNotchSize;
   ariaLive?: "off" | "polite" | "assertive";
   class?: string;
 }
@@ -280,7 +286,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   return (
     <section
       class={cx("dynamic-island", local.class, local.displayMode === "island" && "dynamic-island-external")}
-      style={local.compactWidth === undefined ? undefined : `--dynamic-island-compact-width: ${local.compactWidth}px`}
+      style={dynamicIslandStyle(local)}
       data-slot="dynamic-island"
       data-state={viewState()}
       data-layout-state={layoutState()}
@@ -383,6 +389,15 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
       </div>
     </section>
   );
+}
+
+function dynamicIslandStyle(props: DynamicIslandProps): string | undefined {
+  const styles = [
+    props.compactWidth === undefined ? undefined : `--dynamic-island-compact-width: ${props.compactWidth}px`,
+    props.notchSize === undefined ? undefined : `--dynamic-island-notch-width: ${props.notchSize.width}px`,
+    props.notchSize === undefined ? undefined : `--dynamic-island-notch-height: ${props.notchSize.height}px`,
+  ].filter((style): style is string => style !== undefined);
+  return styles.length > 0 ? styles.join("; ") : undefined;
 }
 
 interface SmoothSizeResizeOptions {

@@ -44,6 +44,7 @@ import {
   Check,
   DynamicIsland,
   DynamicIslandIdentity,
+  type DynamicIslandNotchSize,
   type DynamicIslandStateChangeReason,
   type DynamicIslandViewState,
   ExternalLink,
@@ -58,6 +59,7 @@ export interface OpenBotDynamicIslandProps {
   presentation: DynamicIslandPresentation;
   state: DynamicIslandViewState;
   displayMode?: "notch" | "island";
+  notchSize?: DynamicIslandNotchSize;
   extendedHoverArea?: boolean;
   suppressInitialHover?: boolean;
   onStateChange: (state: DynamicIslandViewState, reason: DynamicIslandStateChangeReason) => void;
@@ -467,6 +469,7 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
         ariaLive={config().ariaLive}
         state={props.state}
         displayMode={props.displayMode}
+        notchSize={props.notchSize}
         extendedHoverArea={props.extendedHoverArea}
         suppressInitialHover={props.suppressInitialHover}
         onStateChange={changeState}
