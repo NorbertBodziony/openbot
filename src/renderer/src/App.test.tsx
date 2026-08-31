@@ -4410,6 +4410,12 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+    const browserControl = screen.getByRole("button", { name: "Chief is controlling the browser" });
+    expect(browserControl).toHaveAttribute("aria-expanded", "false");
+    expect(window.openbot.browser.open).not.toHaveBeenCalled();
+
+    await fireEvent.click(browserControl);
     const controlledTab = await screen.findByRole("tab", {
       name: "Local smoke page, controlled by Chief",
     });
@@ -4417,7 +4423,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getAllByRole("tab")).toHaveLength(3);
     await fireEvent.keyDown(screen.getByRole("tab", { name: "Third page" }), { key: "Delete" });
     expect(window.openbot.browser.close).toHaveBeenCalledWith("tab-3");
-    expect(screen.queryByRole("button", { name: "Hide browser panel" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "New browser tab" }));
     expect(window.openbot.browser.open).toHaveBeenCalledWith({
       url: "https://www.google.com",
@@ -4455,6 +4460,92 @@ describe("OpenBot connected desktop shell", () => {
       expect(screen.queryByRole("tab", { name: "Local smoke page, controlled by Chief" })).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
+  });
+
+  it("coalesces repeated empty-browser opens and does not reopen the panel after a late response", async () => {
+    const openedTab: BrowserTab = {
+      id: "tab-delayed",
+      title: "Delayed page",
+      url: "https://www.google.com",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    let resolveOpen: ((tab: BrowserTab) => void) | undefined;
+    vi.mocked(window.openbot.browser.open).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Hide computer" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Hide computer" }));
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [openedTab], activeTabId: openedTab.id });
+    resolveOpen?.(openedTab);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open computer" })).toHaveAttribute("aria-expanded", "false");
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(await screen.findByRole("tab", { name: "Delayed page" })).toHaveAttribute("aria-selected", "true");
+    await fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
+    expect(window.openbot.browser.reload).toHaveBeenCalledWith(openedTab.id);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Hide computer" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(await screen.findByRole("tab", { name: "Delayed page" })).toHaveAttribute("aria-selected", "true");
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a replacement when a loading browser tab is closed before its open request settles", async () => {
+    const loadingTab: BrowserTab = {
+      id: "tab-loading",
+      title: "Loading…",
+      url: "https://www.google.com/",
+      loading: true,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    let resolveFirstOpen: ((tab: BrowserTab) => void) | undefined;
+    vi.mocked(window.openbot.browser.open).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [loadingTab], activeTabId: loadingTab.id });
+    const tab = await screen.findByRole("tab", { name: "Loading…" });
+    await fireEvent.keyDown(tab, { key: "Delete" });
+    expect(window.openbot.browser.close).toHaveBeenCalledWith(loadingTab.id);
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [], activeTabId: null });
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(2);
+
+    resolveFirstOpen?.(loadingTab);
   });
 
   it("reveals the requested browser tab and resumes the agent from the takeover card", async () => {
