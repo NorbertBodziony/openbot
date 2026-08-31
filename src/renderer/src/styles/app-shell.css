@@ -1685,6 +1685,7 @@ textarea {
   transition:
     border-color var(--openbot-duration-hover) ease,
     background-color var(--openbot-duration-hover) ease,
+    box-shadow var(--openbot-duration-hover) ease,
     color var(--openbot-duration-hover) ease,
     transform var(--openbot-duration-fast) cubic-bezier(0.23, 1, 0.32, 1);
 }
