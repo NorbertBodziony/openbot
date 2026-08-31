@@ -425,4 +425,65 @@ describe("SettingsModal", () => {
       }),
     );
   });
+
+  it("queues a hosted-site reload after a successful mutation", async () => {
+    const site = {
+      id: "site-after-publish",
+      hostname: "queued-hosted-site-refresh-23456789ab.openbot.site",
+      url: "https://queued-hosted-site-refresh-23456789ab.openbot.site",
+      title: "Queued hosted site refresh",
+      description: "Verify a refresh after publication.",
+      framework: "vanilla" as const,
+      status: "active" as const,
+      fileCount: 1,
+      size: 256,
+      expiresAt: "2026-09-30T12:00:00.000Z",
+      updatedAt: "2026-08-31T12:00:00.000Z",
+    };
+    let resolveInitialLoad: (sites: (typeof site)[]) => void = () => undefined;
+    const initialLoad = new Promise<(typeof site)[]>((resolve) => {
+      resolveInitialLoad = resolve;
+    });
+    const hostedSitesApi: HostedSitesDesktopApi = {
+      list: vi
+        .fn()
+        .mockImplementationOnce(() => initialLoad)
+        .mockResolvedValue([site]),
+      chooseDirectory: vi.fn(async () => "/tmp/queued-site"),
+      publish: vi.fn(async () => site),
+      replace: vi.fn(async () => site),
+      delete: vi.fn(async () => undefined),
+    };
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={account}
+        onUpdateAccountName={vi.fn(async () => undefined)}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+        hostedSitesApi={hostedSitesApi}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Hosted sites" }));
+    await waitFor(() => expect(hostedSitesApi.list).toHaveBeenCalledTimes(1));
+    await fireEvent.click(screen.getByRole("button", { name: "Choose" }));
+    await fireEvent.input(screen.getByRole("textbox", { name: "Title" }), {
+      target: { value: site.title },
+    });
+    await fireEvent.input(screen.getByRole("textbox", { name: "Description" }), {
+      target: { value: site.description },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    await waitFor(() => expect(hostedSitesApi.publish).toHaveBeenCalledOnce());
+    resolveInitialLoad([]);
+
+    expect(await screen.findByText(site.hostname)).toBeInTheDocument();
+    expect(hostedSitesApi.list).toHaveBeenCalledTimes(2);
+  });
 });

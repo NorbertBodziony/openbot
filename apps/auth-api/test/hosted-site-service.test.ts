@@ -616,7 +616,14 @@ describe("hosted site control plane", () => {
       .first<{ count: number }>();
     expect(initial?.count).toBe(1);
 
-    fixture.setNow(NOW + 181 * 24 * 60 * 60_000);
+    fixture.setNow(NOW + 24 * 60 * 60_000);
+    await fixture.service.report(site.hostname, "phishing", "A report on the next day", "203.0.113.10");
+    const rotated = await fixture.database
+      .prepare("SELECT COUNT(*) AS count, COUNT(DISTINCT source_ip_hash) AS hashes FROM site_reports")
+      .first<{ count: number; hashes: number }>();
+    expect(rotated).toEqual({ count: 2, hashes: 2 });
+
+    fixture.setNow(NOW + 182 * 24 * 60 * 60_000);
     await fixture.service.cleanup();
     const retained = await fixture.database
       .prepare("SELECT COUNT(*) AS count FROM site_reports")
@@ -844,7 +851,7 @@ function serviceFixture(): {
   const bucket = new FakeR2Bucket();
   let currentTime = NOW;
   return {
-    service: new HostedSiteService(database, bucket, () => currentTime),
+    service: new HostedSiteService(database, bucket, () => currentTime, "test-report-hash-secret-with-32-bytes"),
     database,
     bucket,
     now: () => currentTime,

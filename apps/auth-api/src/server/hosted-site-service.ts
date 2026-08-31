@@ -1,5 +1,5 @@
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
-import { sha256 } from "./crypto";
+import { hmacSha256, sha256 } from "./crypto";
 import {
   expectedFile,
   HOSTED_SITE_LIMITS,
@@ -84,6 +84,7 @@ export class HostedSiteService {
     private readonly database: D1Database,
     private readonly bucket: R2Bucket,
     private readonly now: () => number = Date.now,
+    private readonly reportHashSecret?: string,
   ) {}
 
   async list(userId: string): Promise<HostedSiteSummary[]> {
@@ -513,8 +514,10 @@ export class HostedSiteService {
       .first<{ id: string }>();
     if (!site) throw new HostedSiteInputError(404, "site_not_found", "The hosted site was not found.");
     const now = this.now();
-    const ipHash = await sourceIpHash(sourceIp);
     const deduplicationWindow = Math.floor(now / 86_400_000);
+    const secret = this.reportHashSecret?.trim();
+    if (!secret || secret.length < 32) throw new Error("The hosted site report hash secret is unavailable.");
+    const ipHash = await sourceIpHash(secret, sourceIp, deduplicationWindow);
     const reportId = await sha256(`${hostname}\0${reason}\0${ipHash}\0${deduplicationWindow}`);
     await this.database
       .prepare(
@@ -1539,6 +1542,6 @@ function randomBase32(length: number): string {
   return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
 }
 
-export async function sourceIpHash(value: string): Promise<string> {
-  return sha256(value);
+export async function sourceIpHash(secret: string, value: string, deduplicationWindow: number): Promise<string> {
+  return hmacSha256(secret, `${deduplicationWindow}\0${value}`);
 }

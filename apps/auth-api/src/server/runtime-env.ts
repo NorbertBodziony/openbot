@@ -5,6 +5,7 @@ const LOCAL_RUNTIME_KEYS = [
   "CLOUDFLARE_ZONE_ID",
   "CLOUDFLARE_TUNNEL_DOMAIN",
   "CLOUDFLARE_API_TOKEN",
+  "SITE_REPORT_HASH_SECRET",
 ] as const;
 
 export function readLocalRuntimeVars(environment: NodeJS.ProcessEnv): Record<string, string> {

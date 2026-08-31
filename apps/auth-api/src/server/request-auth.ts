@@ -45,7 +45,7 @@ export function requestAgentMarketplace(): AgentMarketplace {
 
 export function requestHostedSiteService(): HostedSiteService {
   const bindings = requireWorkerBindings(env);
-  return new HostedSiteService(bindings.DB, bindings.SITES);
+  return new HostedSiteService(bindings.DB, bindings.SITES, Date.now, bindings.SITE_REPORT_HASH_SECRET);
 }
 
 export function requireSitePublishingEnabled(): void {

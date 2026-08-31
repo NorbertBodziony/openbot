@@ -114,6 +114,8 @@ export function SettingsModal(props: SettingsModalProps) {
   let modalElement: HTMLElement | undefined;
   let avatarFileInput: HTMLInputElement | undefined;
   let profileNameInput: HTMLInputElement | undefined;
+  let hostedSitesReloadRequested = false;
+  let hostedSitesLoadPromise: Promise<void> | null = null;
 
   const accountName = () => props.account.name?.trim() || props.account.email.split("@")[0] || props.account.email;
 
@@ -302,17 +304,29 @@ export function SettingsModal(props: SettingsModalProps) {
     }
   }
 
-  async function loadHostedSites(): Promise<void> {
-    if (!props.hostedSitesApi || hostedSitesLoading()) return;
-    setHostedSitesLoading(true);
-    setHostedSitesError(null);
-    try {
-      setHostedSites(await props.hostedSitesApi.list());
-    } catch (error) {
-      setHostedSitesError(error instanceof Error ? error.message : "Could not load hosted sites.");
-    } finally {
-      setHostedSitesLoading(false);
-    }
+  function loadHostedSites(): Promise<void> {
+    if (!props.hostedSitesApi) return Promise.resolve();
+    hostedSitesReloadRequested = true;
+    if (hostedSitesLoadPromise) return hostedSitesLoadPromise;
+    hostedSitesLoadPromise = Promise.resolve().then(async () => {
+      setHostedSitesLoading(true);
+      try {
+        while (hostedSitesReloadRequested) {
+          hostedSitesReloadRequested = false;
+          setHostedSitesError(null);
+          try {
+            const api = props.hostedSitesApi;
+            if (api) setHostedSites(await api.list());
+          } catch (error) {
+            setHostedSitesError(error instanceof Error ? error.message : "Could not load hosted sites.");
+          }
+        }
+      } finally {
+        setHostedSitesLoading(false);
+        hostedSitesLoadPromise = null;
+      }
+    });
+    return hostedSitesLoadPromise;
   }
 
   createEffect(

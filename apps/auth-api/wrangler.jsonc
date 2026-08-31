@@ -24,7 +24,7 @@
     }
   ],
   "secrets": {
-    "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN"]
+    "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN", "SITE_REPORT_HASH_SECRET"]
   },
   "vars": {
     "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
@@ -161,7 +161,7 @@
         "crons": []
       },
       "secrets": {
-        "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN"]
+        "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN", "SITE_REPORT_HASH_SECRET"]
       },
       "vars": {
         "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
