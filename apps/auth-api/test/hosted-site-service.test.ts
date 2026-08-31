@@ -262,6 +262,24 @@ describe("hosted site control plane", () => {
     expect(rejected).toMatchObject({ reason: { code: "upload_session_limit" } });
   });
 
+  it("returns one upload session for concurrent requests with the same idempotency key", async () => {
+    const fixture = serviceFixture();
+    const pause = fixture.database.pauseNextBatchContaining("INSERT INTO hosted_sites");
+    const firstRequest = fixture.service.createUpload("alice", uploadRequest(), "same-upload-key");
+    await pause.started;
+    const secondSession = await fixture.service.createUpload("alice", uploadRequest(), "same-upload-key");
+    pause.resume();
+    const firstSession = await firstRequest;
+
+    expect(firstSession.uploadId).toBe(secondSession.uploadId);
+    expect(firstSession.site.id).toBe(secondSession.site.id);
+    const sites = await fixture.database
+      .prepare("SELECT COUNT(*) AS count FROM hosted_sites WHERE user_id = ?")
+      .bind("alice")
+      .first<{ count: number }>();
+    expect(sites?.count).toBe(1);
+  });
+
   it("uses one atomic slot check for the ten-site limit", async () => {
     const fixture = serviceFixture();
     for (let index = 0; index < 10; index += 1) {
@@ -387,6 +405,24 @@ describe("hosted site control plane", () => {
     expect(unsyncedUnblock).toEqual({ status: "active", route_synced_at: null });
 
     await fixture.service.cleanup();
+    expect(fixture.bucket.keys()).not.toContain(`blocks/${site.hostname}`);
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({ status: "active" });
+  });
+
+  it("does not recreate a block marker when cleanup races with an unblock", async () => {
+    const fixture = serviceFixture();
+    const site = await publish(fixture.service, "alice", "marker-race-publish", "marker-race-activate");
+    await fixture.service.setBlocked(site.id, true);
+    await fixture.database.prepare("UPDATE hosted_sites SET route_synced_at = NULL WHERE id = ?").bind(site.id).run();
+    const pause = fixture.bucket.pauseNextPutContaining(`blocks/${site.hostname}`);
+    const cleanup = fixture.service.cleanup();
+    await pause.started;
+
+    await fixture.service.setBlocked(site.id, false);
+    expect(fixture.bucket.keys()).not.toContain(`blocks/${site.hostname}`);
+    pause.resume();
+    await cleanup;
+
     expect(fixture.bucket.keys()).not.toContain(`blocks/${site.hostname}`);
     expect(await fixture.bucket.route(site.hostname)).toMatchObject({ status: "active" });
   });
@@ -773,9 +809,23 @@ type Bytes = Uint8Array<ArrayBuffer>;
 class FakeR2Bucket implements R2Bucket {
   private readonly objects = new Map<string, { bytes: Bytes; metadata?: R2HTTPMetadata }>();
   #failPutFragment: string | null = null;
+  #pausePut: { fragment: string; started: () => void; wait: Promise<void> } | null = null;
 
   failNextPutContaining(fragment: string): void {
     this.#failPutFragment = fragment;
+  }
+
+  pauseNextPutContaining(fragment: string): { started: Promise<void>; resume: () => void } {
+    let markStarted: () => void = () => undefined;
+    let resume: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const wait = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    this.#pausePut = { fragment, started: markStarted, wait };
+    return { started, resume };
   }
 
   keys(): string[] {
@@ -802,6 +852,12 @@ class FakeR2Bucket implements R2Bucket {
     value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob,
     options?: R2PutOptions,
   ): Promise<R2Object> {
+    const pause = this.#pausePut;
+    if (pause && key.includes(pause.fragment)) {
+      this.#pausePut = null;
+      pause.started();
+      await pause.wait;
+    }
     if (this.#failPutFragment && key.includes(this.#failPutFragment)) {
       this.#failPutFragment = null;
       throw new Error("Injected R2 put failure");

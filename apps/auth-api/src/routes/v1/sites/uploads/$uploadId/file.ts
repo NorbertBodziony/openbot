@@ -5,7 +5,6 @@ import {
   json,
   requestHostedSiteService,
   requestUser,
-  requireIdempotencyKey,
   requireSitePublishingEnabled,
 } from "../../../../../server/request-auth";
 
@@ -19,7 +18,6 @@ export const Route = createFileRoute("/v1/sites/uploads/$uploadId/file")({
           if (!user) return apiError(401, "unauthorized", "Sign in is required.");
           const path = new URL(request.url).searchParams.get("path");
           if (!path) return apiError(400, "invalid_site", "A file path is required.");
-          requireIdempotencyKey(request);
           await requestHostedSiteService().uploadFile(user.id, params.uploadId, path, request);
           return json({ uploaded: true });
         } catch (error) {

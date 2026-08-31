@@ -118,9 +118,11 @@ export class HostedSiteService {
       const site = await this.requireOwnedSite(userId, request.siteId);
       if (!site.expires_at || site.expires_at <= now) throw inactiveSiteError("expired");
       const spaFallback = request.spaFallback ?? site.spa_fallback === 1;
-      const insert = await this.database
-        .prepare(
-          `INSERT INTO site_deployments(
+      let insert: D1Result<unknown>;
+      try {
+        insert = await this.database
+          .prepare(
+            `INSERT INTO site_deployments(
             id, site_id, user_id, status, base_deployment_id, file_count, total_bytes, manifest_json,
             site_title, site_description, site_framework, site_spa_fallback,
             idempotency_key, created_at, upload_expires_at
@@ -132,31 +134,34 @@ export class HostedSiteService {
                 WHERE id = ? AND user_id = ? AND status = 'active' AND expires_at > ?
                   AND current_deployment_id IS ?
               )`,
-        )
-        .bind(
-          deploymentId,
-          site.id,
-          userId,
-          site.current_deployment_id,
-          request.files.length,
-          totalBytes,
-          JSON.stringify(request.files),
-          request.title,
-          request.description,
-          request.framework,
-          spaFallback ? 1 : 0,
-          idempotencyKey,
-          now,
-          uploadExpiresAt,
-          userId,
-          now,
-          HOSTED_SITE_LIMITS.concurrentUploads,
-          site.id,
-          userId,
-          now,
-          site.current_deployment_id,
-        )
-        .run();
+          )
+          .bind(
+            deploymentId,
+            site.id,
+            userId,
+            site.current_deployment_id,
+            request.files.length,
+            totalBytes,
+            JSON.stringify(request.files),
+            request.title,
+            request.description,
+            request.framework,
+            spaFallback ? 1 : 0,
+            idempotencyKey,
+            now,
+            uploadExpiresAt,
+            userId,
+            now,
+            HOSTED_SITE_LIMITS.concurrentUploads,
+            site.id,
+            userId,
+            now,
+            site.current_deployment_id,
+          )
+          .run();
+      } catch (error) {
+        return this.recoverConcurrentUpload(userId, idempotencyKey, error);
+      }
       if (insert.meta.changes !== 1) {
         const currentSite = await this.requireOwnedSite(userId, site.id, true);
         if (currentSite.status !== "active") throw inactiveSiteError(currentSite.status);
@@ -248,7 +253,13 @@ export class HostedSiteService {
         )
         .bind(now, siteId, userId),
     ];
-    const [siteInsert, deploymentInsert, hostnameReservation] = await this.database.batch(statements);
+    let results: D1Result<unknown>[];
+    try {
+      results = await this.database.batch(statements);
+    } catch (error) {
+      return this.recoverConcurrentUpload(userId, idempotencyKey, error);
+    }
+    const [siteInsert, deploymentInsert, hostnameReservation] = results;
     if (
       siteInsert.meta.changes !== 1 ||
       deploymentInsert.meta.changes !== 1 ||
@@ -513,6 +524,9 @@ export class HostedSiteService {
       if (current?.expires_at != null && current.expires_at <= now) throw inactiveSiteError("expired");
       throw new HostedSiteInputError(409, "site_not_active", "This site cannot be blocked or unblocked.");
     }
+    if (blocked) {
+      await this.bucket.put(blockKey(site.hostname), "blocked", { httpMetadata: { contentType: "text/plain" } });
+    }
     await this.publishAuthoritativeRoute(site.id);
     if (!blocked) await this.deleteBlockMarker(site.id, site.hostname);
     for (const deploymentId of deploymentResultIds(results[1])) {
@@ -549,13 +563,7 @@ export class HostedSiteService {
       )
       .all<{ id: string; hostname: string }>();
     for (const site of unsyncedSites.results) {
-      const current = await this.siteById(site.id);
-      if (!current) continue;
-      if (current.status === "blocked") {
-        await this.bucket.put(blockKey(site.hostname), "blocked", { httpMetadata: { contentType: "text/plain" } });
-      }
-      await this.publishAuthoritativeRoute(site.id);
-      if (current.status !== "blocked") await this.deleteBlockMarker(current.id, current.hostname);
+      await this.reconcileRouteAndMarker(site.id);
     }
     const obsoleteDeployments = await this.database
       .prepare(
@@ -1081,9 +1089,53 @@ export class HostedSiteService {
     try {
       await this.bucket.delete(blockKey(hostname));
     } catch (error) {
-      await this.database.prepare("UPDATE hosted_sites SET route_synced_at = NULL WHERE id = ?").bind(siteId).run();
+      await this.markRouteUnsynced(siteId);
       throw error;
     }
+  }
+
+  private async putBlockMarkerForSyncedRoute(siteId: string, hostname: string): Promise<void> {
+    try {
+      await this.bucket.put(blockKey(hostname), "blocked", { httpMetadata: { contentType: "text/plain" } });
+    } catch (error) {
+      await this.markRouteUnsynced(siteId);
+      throw error;
+    }
+  }
+
+  private async markRouteUnsynced(siteId: string): Promise<void> {
+    await this.database.prepare("UPDATE hosted_sites SET route_synced_at = NULL WHERE id = ?").bind(siteId).run();
+  }
+
+  private async reconcileRouteAndMarker(siteId: string): Promise<void> {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const before = await this.siteById(siteId);
+      if (!before) return;
+      if (before.status === "blocked") {
+        await this.bucket.put(blockKey(before.hostname), "blocked", { httpMetadata: { contentType: "text/plain" } });
+      }
+      await this.publishAuthoritativeRoute(siteId);
+      const published = await this.siteById(siteId);
+      if (!published) return;
+      if (published.status === "blocked") {
+        await this.putBlockMarkerForSyncedRoute(published.id, published.hostname);
+      } else {
+        await this.deleteBlockMarker(published.id, published.hostname);
+      }
+      const after = await this.siteById(siteId);
+      if (after && siteRouteIdentity(after) === siteRouteIdentity(published)) return;
+    }
+    throw new Error("The site state changed too often during route reconciliation.");
+  }
+
+  private async recoverConcurrentUpload(
+    userId: string,
+    idempotencyKey: string,
+    error: unknown,
+  ): Promise<HostedSiteUploadSession> {
+    const prior = await this.deploymentByIdempotency(userId, idempotencyKey);
+    if (prior) return this.uploadSession(prior);
+    throw error;
   }
 }
 

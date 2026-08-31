@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, readdir, readFile, realpath } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
@@ -106,7 +106,6 @@ export class HostedSiteDesktopService {
           headers: {
             "Content-Type": file.mimeType,
             "Content-Length": String(file.size),
-            "Idempotency-Key": `${uploadKey}:file:${createHash("sha256").update(file.path).digest("hex").slice(0, 24)}`,
           },
           body: arrayBuffer(file.bytes),
         },
