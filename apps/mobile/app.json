@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "OpenBot",
+    "slug": "openbot",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icons/app-icon.png",
+    "scheme": "openbot",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "bundleIdentifier": "run.openbot.mobile",
+      "icon": {
+        "light": "./assets/icons/app-icon-ios-light.png",
+        "dark": "./assets/icons/app-icon-ios-dark.png",
+        "tinted": "./assets/icons/app-icon-ios-tinted-light.png"
+      }
+    },
+    "android": {
+      "package": "run.openbot.mobile",
+      "icon": "./assets/icons/app-icon-android.png",
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/icons/app-icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#CDADEC",
+          "image": "./assets/icons/app-icon.png",
+          "imageWidth": 96
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "eeec730f-c8f4-42c0-a750-64df8af14940"
+      }
+    },
+    "owner": "openbot",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/eeec730f-c8f4-42c0-a750-64df8af14940"
+    }
+  }
+}
