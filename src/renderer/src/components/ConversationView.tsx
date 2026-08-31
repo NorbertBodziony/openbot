@@ -325,6 +325,8 @@ function createConversationViewScope(props: ConversationProps) {
     setAttachmentBusy,
     composerError,
     setComposerError,
+    voiceErrors,
+    setVoiceErrors,
     voicePhase,
     setVoicePhase,
     voiceModelProgress,
@@ -394,6 +396,10 @@ function createConversationViewScope(props: ConversationProps) {
   const currentDraft = createMemo(() => {
     const target = currentTarget();
     return target ? (drafts()[composerDraftKey(target)] ?? EMPTY_DRAFT) : EMPTY_DRAFT;
+  });
+  const currentVoiceError = createMemo(() => {
+    const target = currentTarget();
+    return target ? (voiceErrors()[composerDraftKey(target)] ?? null) : null;
   });
   const unreferencedDraftAttachments = createMemo(() => {
     const referencedIds = attachmentReferenceIds(currentDraft().text);
@@ -943,6 +949,11 @@ function createConversationViewScope(props: ConversationProps) {
     const botId = props.bot?.id;
     const serverId = props.server?.id ?? "local";
     if (!botId || voicePhase() !== "idle") return;
+    const voiceErrorKey = composerDraftKey({ botId, serverId });
+    setVoiceErrors((current) => {
+      const { [voiceErrorKey]: _removed, ...next } = current;
+      return next;
+    });
     resources.voiceSubmitRequest = undefined;
     setComposerError(null);
     setVoicePhase("preparing");
@@ -1024,8 +1035,12 @@ function createConversationViewScope(props: ConversationProps) {
         duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
       });
       if (resources.voiceDisposed) return;
-      if (!submitRequest && (props.server?.id ?? "local") !== targetServerId) return;
       const recordingTarget = { botId: targetBotId, serverId: targetServerId };
+      const voiceErrorKey = composerDraftKey(recordingTarget);
+      setVoiceErrors((current) => {
+        const { [voiceErrorKey]: _removed, ...next } = current;
+        return next;
+      });
       const draft = submitRequest?.draft ?? drafts()[composerDraftKey(recordingTarget)] ?? EMPTY_DRAFT;
       const transcribedDraft = { ...draft, text: appendVoiceTranscript(draft.text, result.text) };
       if (submitRequest) {
@@ -1042,10 +1057,12 @@ function createConversationViewScope(props: ConversationProps) {
         } else {
           await submitMessage(transcribedDraft, target, submitRequest.draft);
         }
-      } else if (props.bot?.id === targetBotId) {
+      } else {
         const key = composerDraftKey(recordingTarget);
         setDrafts((current) => ({ ...current, [key]: transcribedDraft }));
-        setComposerFocusRequest((current) => current + 1);
+        if (props.bot?.id === targetBotId && (props.server?.id ?? "local") === targetServerId) {
+          setComposerFocusRequest((current) => current + 1);
+        }
       }
     } catch (error) {
       analytics.track("voice_transcription", {
@@ -1054,12 +1071,12 @@ function createConversationViewScope(props: ConversationProps) {
         duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
         failure_code: "transcription_failed",
       });
-      if (
-        !resources.voiceDisposed &&
-        props.bot?.id === targetBotId &&
-        (props.server?.id ?? "local") === targetServerId
-      ) {
-        setComposerError(voiceTranscriptionError(error));
+      if (!resources.voiceDisposed) {
+        const target = { botId: targetBotId, serverId: targetServerId };
+        setVoiceErrors((current) => ({
+          ...current,
+          [composerDraftKey(target)]: voiceTranscriptionError(error),
+        }));
       }
     } finally {
       if (!resources.voiceDisposed) setVoicePhase("idle");
@@ -2238,6 +2255,7 @@ function createConversationViewScope(props: ConversationProps) {
     copiedMessageId,
     copyMessage,
     currentDraft,
+    currentVoiceError,
     currentUnreadCount,
     drafts,
     dropActive,
@@ -2997,6 +3015,7 @@ export function ConversationComposer() {
     composerFocusRequest,
     composerHasContent,
     currentDraft,
+    currentVoiceError,
     editQueuedMessage,
     editingDeliveryId,
     openAttachmentPicker,
@@ -3069,9 +3088,9 @@ export function ConversationComposer() {
             </div>
           )}
         </Show>
-        <Show when={composerError()}>
+        <Show when={composerError() ?? currentVoiceError()}>
           <div class="composer-error" role="alert">
-            {composerError()}
+            {composerError() ?? currentVoiceError()}
           </div>
         </Show>
         <div

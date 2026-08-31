@@ -619,7 +619,7 @@ export function createAppController(props: AppProps = {}) {
       (message) =>
         message.questionPrompt?.resolution !== null && (!requestKey || messagePromptRequestKey(message) !== requestKey),
     );
-    return [...messages, ...(uiErrors()[bot.id] ?? [])];
+    return [...messages, ...(uiErrors()[agentConversationKey(activeServerSidebarKey(), bot.id)] ?? [])];
   });
 
   createEffect(
@@ -2140,7 +2140,7 @@ export function createAppController(props: AppProps = {}) {
       setActiveBotId((current) => (current === botId ? (remaining[0]?.id ?? "") : current));
       setSettingsRequest((current) => (current?.botId === botId ? null : current));
       setLiveMessages((current) => withoutBot(current, botId));
-      setUiErrors((current) => withoutBot(current, botId));
+      setUiErrors((current) => withoutBot(current, agentConversationKey(activeServerSidebarKey(), botId)));
       setConversationLoaded((current) => withoutBot(current, botId));
       setConversationRevisions((current) => withoutBot(current, botId));
       setActiveTurns((current) => withoutBot(current, botId));
@@ -2210,7 +2210,8 @@ export function createAppController(props: AppProps = {}) {
         serverId === activeServerSidebarKey()
           ? await window.openbot.agent.sendMessage(input)
           : await window.openbot.agent.sendMessage(input, serverId);
-      if (serverId === activeServerSidebarKey()) setUiErrors((current) => ({ ...current, [botId]: [] }));
+      const errorKey = agentConversationKey(serverId, botId);
+      setUiErrors((current) => ({ ...current, [errorKey]: [] }));
       analytics.track("message_send", {
         ...(properties ?? {}),
         channel: "agent",
@@ -2234,7 +2235,7 @@ export function createAppController(props: AppProps = {}) {
         result: "failed",
         failure_code: "send_failed",
       });
-      if (serverId === activeServerSidebarKey()) appendUiError(botId, error, "Send failed");
+      appendUiError(botId, error, "Send failed", serverId);
       return false;
     }
   }
@@ -2445,7 +2446,7 @@ export function createAppController(props: AppProps = {}) {
       return true;
     } catch (error) {
       analytics.track("queue_action", { action: "edit", result: "failed", failure_code: "edit_failed" });
-      if (serverId === activeServerSidebarKey()) appendUiError(botId, error, "Edit failed");
+      appendUiError(botId, error, "Edit failed", serverId);
       return false;
     }
   }
@@ -2487,12 +2488,13 @@ export function createAppController(props: AppProps = {}) {
     return usage;
   }
 
-  function appendUiError(botId: string, error: unknown, status: string) {
+  function appendUiError(botId: string, error: unknown, status: string, serverId = activeServerSidebarKey()) {
     const body = error instanceof Error ? error.message : String(error);
+    const errorKey = agentConversationKey(serverId, botId);
     setUiErrors((current) => ({
       ...current,
-      [botId]: [
-        ...(current[botId] ?? []),
+      [errorKey]: [
+        ...(current[errorKey] ?? []),
         {
           id: `ui-${Date.now()}-${Math.random()}`,
           author: "bot",
@@ -2826,7 +2828,6 @@ export function createAppController(props: AppProps = {}) {
     setDirectConversations({});
     setDirectTypingMemberIds(new Set<string>());
     setLiveMessages({});
-    setUiErrors({});
     setConversationLoaded({});
     setConversationRevisions({});
     setConversationReads({});

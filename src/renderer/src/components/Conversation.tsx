@@ -60,6 +60,7 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   const [showComposerActions, setShowComposerActions] = createSignal(false);
   const [attachmentBusy, setAttachmentBusy] = createSignal(false);
   const [composerError, setComposerError] = createSignal<string | null>(null);
+  const [voiceErrors, setVoiceErrors] = createSignal<Record<string, string>>({});
   const [voicePhase, setVoicePhase] = createSignal<"idle" | "preparing" | "requesting" | "recording" | "transcribing">(
     "idle",
   );
@@ -138,6 +139,8 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     setAttachmentBusy,
     composerError,
     setComposerError,
+    voiceErrors,
+    setVoiceErrors,
     voicePhase,
     setVoicePhase,
     voiceModelProgress,
