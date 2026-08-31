@@ -526,6 +526,59 @@ describe("MessageBody", () => {
     expect(container.querySelector(".message-content-blocks")).toBe(messageContent);
   });
 
+  it("hides a punctuation-adjacent strong marker while streaming", async () => {
+    const [body, setBody] = createSignal("Use (**Kobal");
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-punctuation",
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByText("Use (Kobal")).toBeInTheDocument();
+    expect(container).not.toHaveTextContent("**");
+
+    setBody("Use (**Kobalte**).");
+    setStreaming(false);
+
+    await waitFor(() => expect(screen.getByText("Kobalte").tagName).toBe("STRONG"));
+    expect(container).toHaveTextContent("Use (Kobalte).");
+    expect(container).not.toHaveTextContent("**");
+  });
+
+  it("keeps earlier text unchanged while a structured block streams", () => {
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-code",
+          author: "bot",
+          body: "Earlier **literal\n\n```js\nconst answer = 4",
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByText("Earlier **literal")).toBeInTheDocument();
+    expect(screen.getByText("const answer = 4")).toBeInTheDocument();
+  });
+
   it("keeps Markdown tables in user messages as plain text", () => {
     render(() => (
       <MessageBody

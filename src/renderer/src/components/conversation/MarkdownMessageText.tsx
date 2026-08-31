@@ -527,11 +527,41 @@ function RichText(props: {
 }
 
 function hideIncompleteStrongMarker(body: string): string {
-  const matches = [...body.matchAll(/(^|\s)\*\*(?=\S)/gu)];
-  const match = matches.at(-1);
-  if (!match || match.index === undefined) return body;
-  const markerIndex = match.index + (match[1]?.length ?? 0);
-  return `${body.slice(0, markerIndex)}${body.slice(markerIndex + 2)}`;
+  const characters = [...body];
+  let markerIndex: number | undefined;
+  for (let index = 0; index < characters.length; ) {
+    if (characters[index] !== "*") {
+      index += 1;
+      continue;
+    }
+    let runEnd = index + 1;
+    while (characters[runEnd] === "*") runEnd += 1;
+    const previous = characters[index - 1];
+    const next = characters[runEnd];
+    if (
+      runEnd - index === 2 &&
+      next !== undefined &&
+      !isMarkdownWhitespace(next) &&
+      (!isMarkdownPunctuation(next) ||
+        previous === undefined ||
+        isMarkdownWhitespace(previous) ||
+        isMarkdownPunctuation(previous))
+    ) {
+      markerIndex = index;
+    }
+    index = runEnd;
+  }
+  if (markerIndex === undefined) return body;
+  characters.splice(markerIndex, 2);
+  return characters.join("");
+}
+
+function isMarkdownWhitespace(value: string): boolean {
+  return /\s/u.test(value);
+}
+
+function isMarkdownPunctuation(value: string): boolean {
+  return /[\p{P}\p{S}]/u.test(value);
 }
 
 function lastRenderableTokenIndex(tokens: Token[]): number {

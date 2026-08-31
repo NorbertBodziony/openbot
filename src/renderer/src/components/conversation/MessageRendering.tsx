@@ -390,7 +390,7 @@ export function MessageBody(props: {
                         onOpenSharedFile={props.onOpenSharedFile}
                         onOpenWorkspaceFile={props.onOpenWorkspaceFile}
                         showCitationFooter={index() === lastTextBlockIndex()}
-                        streaming={props.message.streaming === true}
+                        streaming={props.message.streaming === true && index() === contentBlocks().length - 1}
                         streamingTail={streamingBody.animateTail() && index() === lastTextBlockIndex()}
                       />
                     </div>
