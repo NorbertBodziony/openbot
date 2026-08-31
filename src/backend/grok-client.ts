@@ -71,7 +71,7 @@ interface GrokModel {
   description: string;
   defaultReasoningEffort: string;
   supportedReasoningEfforts: string[];
-  usesModelReasoningEffort: boolean;
+  usesModelReasoningEffort: boolean | null;
 }
 
 export class GrokAgentClient extends EventEmitter<ClientEvents> {
@@ -338,12 +338,14 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
       if (!value) continue;
       if (category === "thought_level" && thread.currentModelId) {
         const currentModel = this.#models.find((candidate) => candidate.id === thread.currentModelId);
-        if (currentModel?.usesModelReasoningEffort && currentModel.supportedReasoningEfforts.includes(value)) {
-          await this.#requireConnection().request("session/set_model", {
-            sessionId: thread.id,
-            modelId: thread.currentModelId,
-            _meta: { reasoningEffort: value },
-          });
+        if (currentModel && currentModel.usesModelReasoningEffort !== null) {
+          if (currentModel.usesModelReasoningEffort && currentModel.supportedReasoningEfforts.includes(value)) {
+            await this.#requireConnection().request("session/set_model", {
+              sessionId: thread.id,
+              modelId: thread.currentModelId,
+              _meta: { reasoningEffort: value },
+            });
+          }
           continue;
         }
       }
@@ -674,7 +676,7 @@ function modelsFromConfig(options: SessionConfigOption[]): GrokModel[] {
     name: option.name,
     description: option.description ?? "Model discovered from Grok CLI through ACP.",
     ...reasoning,
-    usesModelReasoningEffort: false,
+    usesModelReasoningEffort: null,
   }));
 }
 
@@ -712,7 +714,7 @@ function availableModels(response: SessionSetupResponse): Array<{
   description: string | null;
   defaultReasoningEffort: string | null;
   supportedReasoningEfforts: string[] | null;
-  usesModelReasoningEffort: boolean;
+  usesModelReasoningEffort: boolean | null;
 }> {
   if (!isRecord(response.models) || !Array.isArray(response.models.availableModels)) return [];
   const seen = new Set<string>();
@@ -733,7 +735,11 @@ function availableModels(response: SessionSetupResponse): Array<{
         ]
       : null;
     const usesModelReasoningEffort =
-      metadata?.supportsReasoningEffort === true || (supportedReasoningEfforts?.length ?? 0) > 0;
+      metadata?.supportsReasoningEffort === false
+        ? false
+        : metadata?.supportsReasoningEffort === true || (supportedReasoningEfforts?.length ?? 0) > 0
+          ? true
+          : null;
     return [
       {
         id,

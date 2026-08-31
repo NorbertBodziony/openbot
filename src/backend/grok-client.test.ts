@@ -217,6 +217,23 @@ describe.sequential("GrokAgentClient", () => {
     expect(await readLog()).not.toEqual(
       expect.arrayContaining([expect.objectContaining({ method: "session/set_config_option", configId: "thought" })]),
     );
+
+    const previousLogLength = (await readLog()).length;
+    await client.request(
+      "thread/start",
+      { cwd: root, dynamicTools: [], model: "grok-4.5", effort: "medium" },
+      decodeThreadResponse,
+    );
+    const unsupportedModelLog = (await readLog()).slice(previousLogLength);
+    expect(unsupportedModelLog).toEqual(
+      expect.arrayContaining([expect.objectContaining({ method: "session/set_model", modelId: "grok-4.5" })]),
+    );
+    expect(
+      unsupportedModelLog.some((entry) => entry.method === "session/set_config_option" && entry.configId === "thought"),
+    ).toBe(false);
+    expect(
+      unsupportedModelLog.some((entry) => entry.method === "session/set_model" && "reasoningEffort" in entry),
+    ).toBe(false);
   });
 
   it("supports Grok's legacy ACP model catalog and session/set_model", async () => {
