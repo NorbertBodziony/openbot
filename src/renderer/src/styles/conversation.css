@@ -5566,7 +5566,36 @@
   background: var(--openbot-border-strong);
 }
 
-[data-slot="bubble"][data-author="user"] .message-agent-tag {
+.message-skill-tag,
+.message-tag-unavailable {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  gap: 4px;
+  margin: 0 1px;
+  border-radius: var(--openbot-radius-sm);
+  background: var(--openbot-accent-soft);
+  padding: 0 6px;
+  color: inherit;
+  font: inherit;
+  line-height: 20px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.message-skill-tag > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.message-tag-unavailable {
+  border: 1px dashed var(--openbot-border-strong);
+  background: transparent;
+  color: var(--openbot-text-muted);
+}
+
+[data-slot="bubble"][data-author="user"] .message-agent-tag,
+[data-slot="bubble"][data-author="user"] .message-skill-tag {
   background: var(--openbot-shadow-popover-ambient);
 }
 
@@ -6348,6 +6377,23 @@
   white-space: nowrap;
 }
 
+.composer-skill-token {
+  background: var(--openbot-accent-soft);
+}
+
+.composer-skill-icon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--openbot-accent-hover);
+}
+
+.composer-tag-unavailable {
+  border: 1px dashed var(--openbot-border-strong);
+  background: transparent;
+  color: var(--openbot-text-muted);
+}
+
 .composer-file-reference {
   height: 24px;
   cursor: pointer;
@@ -6435,6 +6481,22 @@
 
   width: 23px;
   height: 23px;
+}
+
+.mention-picker-skill-icon {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--openbot-radius-sm);
+  background: var(--openbot-accent-soft);
+  color: var(--openbot-accent-hover);
+}
+
+.mention-picker-skill-icon > svg {
+  width: 15px;
+  height: 15px;
 }
 
 .mention-picker-option strong {

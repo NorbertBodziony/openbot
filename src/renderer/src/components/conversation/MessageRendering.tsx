@@ -1,4 +1,4 @@
-import type { AttachmentSummary, MessageReaction } from "@openbot/contracts/ipc";
+import type { AttachmentSummary, InstalledSkill, MessageReaction } from "@openbot/contracts/ipc";
 import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { avatarHeadColor } from "../../bloub-avatar";
@@ -253,6 +253,7 @@ export function MessageBody(props: {
   message: BotMessage;
   referencedMessage?: BotMessage;
   bots: BotProfile[];
+  skills?: InstalledSkill[];
   onSelectAgent: (botId: string) => void;
   onOpenLink: (url: string) => void;
   onPreview: (attachment: AttachmentSummary) => void;
@@ -313,6 +314,7 @@ export function MessageBody(props: {
     <MarkdownInlineText
       body={body}
       bots={props.bots}
+      skills={props.skills}
       attachments={props.message.attachments}
       citations={props.message.citations}
       onSelectAgent={props.onSelectAgent}
@@ -378,6 +380,7 @@ export function MessageBody(props: {
                       <MarkdownMessageText
                         body={block.text}
                         bots={props.bots}
+                        skills={props.skills}
                         attachments={props.message.attachments}
                         citations={props.message.citations}
                         onSelectAgent={props.onSelectAgent}
@@ -401,6 +404,7 @@ export function MessageBody(props: {
                     <RichMessageText
                       body={block.text}
                       bots={props.bots}
+                      skills={props.skills}
                       attachments={props.message.attachments}
                       citations={props.message.citations}
                       onSelectAgent={props.onSelectAgent}

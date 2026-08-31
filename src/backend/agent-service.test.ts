@@ -6,6 +6,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
+import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
@@ -301,6 +302,26 @@ describe.sequential("AgentService", () => {
     const inputText = firstInputText(turn?.params);
     expect(inputText).toContain("Review start-types.d.ts");
     expect(inputText).not.toContain("attachment:");
+  });
+
+  it("expands agent and skill tags before sending text to the agent", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+
+    await service.sendMessage({
+      botId: "chief",
+      text: `Ask ${serializeChatTagReference("agent", "Research", "research")} to use ${serializeChatTagReference("skill", "Release Notes", "skill-1")}.`,
+    });
+    await waitFor(() => Boolean(clients.get("codex")?.requests.some((request) => request.method === "turn/start")));
+
+    const turn = clients.get("codex")?.requests.find((request) => request.method === "turn/start");
+    expect(firstInputText(turn?.params)).toContain("Ask @Research to use Release Notes (skill).");
   });
 
   it("creates independent full-access threads with browser and OpenBot tools", async () => {

@@ -510,6 +510,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       getUsage: async () => clone(usage),
       listModels: async () => clone(models),
       listBots: async () => clone(bots),
+      listInstalledSkills: async () => [],
       getSidebarLayout: async () => clone(sidebarLayout),
       mutateSidebarLayout: async (action) => {
         sidebarLayout = applySidebarLayoutAction(sidebarLayout, action);

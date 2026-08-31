@@ -20,6 +20,7 @@ import {
   type DirectMessageRealtimeEvent,
   type DirectThreadSummary,
   type DirectTypingRealtimeEvent,
+  type InstalledSkill,
   type InviteSummary,
   isAgentModel,
   isAvatarHue,
@@ -55,6 +56,8 @@ import {
   encodeTeamProtocolV1CurrentEvent,
   encodeTeamProtocolV1CurrentHttpResponse,
 } from "@openbot/contracts/team-protocol/v1-adapter";
+import { TEAM_PROTOCOL_V2, TEAM_PROTOCOL_V2_CAPABILITIES } from "@openbot/contracts/team-protocol/v2";
+import { encodeTeamProtocolV2CurrentHttpResponse } from "@openbot/contracts/team-protocol/v2-adapter";
 import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
@@ -170,6 +173,7 @@ interface TeamApiOptions {
   appVersion?: string;
   store: TeamStore;
   agents: TeamApiAgents;
+  skills?: { listInstalled: (botId: string) => Promise<InstalledSkill[]> };
   sidebarLayout?: TeamApiSidebarLayout;
   mailbox: TeamApiMailbox;
   browser: TeamApiBrowser;
@@ -216,7 +220,7 @@ export class TeamApiServer {
   readonly #options: Omit<TeamApiOptions, "sidebarLayout"> & { sidebarLayout: TeamApiSidebarLayout };
   readonly #rateLimits = new Map<string, RateEntry>();
   readonly #eventClients = new Map<Ws.WebSocket, EventClientState>();
-  readonly #responseRoutes = new WeakMap<ServerResponse, { method: string; path: string }>();
+  readonly #responseRoutes = new WeakMap<ServerResponse, { method: string; path: string; protocol: number }>();
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
     maxPayload: EVENT_PAYLOAD_LIMIT,
@@ -453,7 +457,12 @@ export class TeamApiServer {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       const method = request.method ?? "GET";
       const clientCapabilities = requestCapabilities(request);
-      this.#responseRoutes.set(response, { method, path: url.pathname });
+      const requestedProtocol = Number(firstHeaderValue(request.headers[TEAM_PROTOCOL_VERSION_HEADER.toLowerCase()]));
+      this.#responseRoutes.set(response, {
+        method,
+        path: url.pathname,
+        protocol: requestedProtocol === TEAM_PROTOCOL_V2 ? TEAM_PROTOCOL_V2 : TEAM_PROTOCOL_V1,
+      });
 
       if (method === "GET" && url.pathname === "/v1/compatibility") {
         return this.#json(response, 200, this.#protocolSupport());
@@ -924,6 +933,12 @@ export class TeamApiServer {
       if (agentMatch) {
         const botId = pathIdentifier(agentMatch[1], "botId");
         const action = agentMatch[2] ?? "";
+        if (method === "GET" && action === "skills") {
+          if (this.#responseRoutes.get(response)?.protocol !== TEAM_PROTOCOL_V2) {
+            throw new HttpError(404, "Installed skills are unavailable for this protocol.");
+          }
+          return this.#json(response, 200, (await this.#options.skills?.listInstalled(botId)) ?? []);
+        }
         if (method === "PATCH" && !action) {
           const body = await readJson(request);
           return this.#json(response, 200, await this.#options.agents.updateBot(botUpdate(body, botId)));
@@ -1525,14 +1540,18 @@ export class TeamApiServer {
     const route = this.#responseRoutes.get(response);
     if (!route) throw new Error("Team API response route is unavailable.");
     response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
-    response.end(`${encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value)}\n`);
+    const encoded =
+      route.protocol === TEAM_PROTOCOL_V2
+        ? encodeTeamProtocolV2CurrentHttpResponse(route.method, route.path, status, value)
+        : encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value);
+    response.end(`${encoded}\n`);
   }
 
   #protocolSupport(): TeamProtocolSupportV1 {
     return {
       appVersion: this.#options.appVersion ?? "0.0.0",
-      protocol: { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V1 },
-      capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+      protocol: { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V2 },
+      capabilities: [...TEAM_PROTOCOL_V2_CAPABILITIES],
     };
   }
 
@@ -1564,7 +1583,7 @@ export class TeamApiServer {
         body: { error: "Invalid Team API protocol headers.", code: "protocol_error", host },
       };
     }
-    if (protocol === TEAM_PROTOCOL_V1) return null;
+    if (protocol === TEAM_PROTOCOL_V1 || protocol === TEAM_PROTOCOL_V2) return null;
     const clientIsOlder = protocol < TEAM_PROTOCOL_V1;
     return {
       status: 426,

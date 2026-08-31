@@ -160,8 +160,8 @@ describe("TeamApiServer compatibility", () => {
       expect(compatibility.status).toBe(200);
       await expect(compatibility.json()).resolves.toMatchObject({
         appVersion: "0.4.0",
-        protocol: { minimum: 1, maximum: 1 },
-        capabilities: expect.arrayContaining(["browser-control", "remote-desktop"]),
+        protocol: { minimum: 1, maximum: 2 },
+        capabilities: expect.arrayContaining(["browser-control", "remote-desktop", "installed-skills"]),
       });
 
       const missing = await fetch(`${base}/v1/identity`);
@@ -169,7 +169,7 @@ describe("TeamApiServer compatibility", () => {
       await expect(missing.json()).resolves.toMatchObject({ code: "client_update_required" });
 
       const newerClient = await fetch(`${base}/v1/identity`, {
-        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "2", [TEAM_APP_VERSION_HEADER]: "0.5.0" },
+        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "3", [TEAM_APP_VERSION_HEADER]: "0.5.0" },
       });
       expect(newerClient.status).toBe(426);
       await expect(newerClient.json()).resolves.toMatchObject({ code: "host_update_required" });
@@ -178,6 +178,58 @@ describe("TeamApiServer compatibility", () => {
         headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "1", [TEAM_APP_VERSION_HEADER]: "0.3.9" },
       });
       expect(compatible.status).toBe(200);
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("serves installed skills only through protocol v2", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-skills-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const listInstalled = vi.fn(async () => [
+      {
+        skillId: "skill-1",
+        slug: "release-notes",
+        name: "Release Notes",
+        installedVersion: 1,
+        availableVersion: 2,
+        state: "update-available" as const,
+      },
+    ]);
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents(),
+      skills: { listInstalled },
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      const response = await fetch(`${base}/v1/agents/chief/skills`, {
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          [TEAM_PROTOCOL_VERSION_HEADER]: "2",
+        },
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual([
+        expect.objectContaining({ skillId: "skill-1", name: "Release Notes", state: "update-available" }),
+      ]);
+      expect(listInstalled).toHaveBeenCalledWith("chief");
+
+      const legacyResponse = await fetch(`${base}/v1/agents/chief/skills`, {
+        headers: { Authorization: `Bearer ${login.sessionToken}` },
+      });
+      expect(legacyResponse.status).toBe(404);
     } finally {
       await api.stop();
     }

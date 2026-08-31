@@ -1,5 +1,7 @@
+import { expandChatTagReferences } from "../chat-tag-references";
 import type { AgentEvent } from "../ipc-conversation";
 import type { TeamRealtimeEvent } from "../ipc-team-host";
+import { isBoolean, isNumber, isString } from "../runtime-values";
 import {
   decodeTeamProtocolV1Event,
   decodeTeamProtocolV1HttpRequest,
@@ -22,8 +24,9 @@ export function decodeTeamProtocolV1CurrentEvent(value: unknown): TeamProtocolV1
 }
 
 export function encodeTeamProtocolV1CurrentEvent(event: AgentEvent | TeamRealtimeEvent): string | null {
-  const wireValue = JSON.parse(JSON.stringify(event));
-  const decoded = decodeTeamProtocolV1Event(wireValue);
+  const wireValue: TeamProtocolV1JsonValue = JSON.parse(JSON.stringify(event));
+  const downconvertedValue = downconvertCurrentTags(wireValue);
+  const decoded = decodeTeamProtocolV1Event(downconvertedValue);
   return decoded.kind === "known" ? encodeTeamProtocolV1Event(decoded.event) : null;
 }
 
@@ -46,8 +49,20 @@ export function encodeTeamProtocolV1CurrentHttpResponse(
   status: number,
   value: unknown,
 ): string {
-  const wireValue = JSON.parse(JSON.stringify(value));
-  return JSON.stringify(decodeTeamProtocolV1HttpResponse(method, path, status, wireValue));
+  const wireValue: TeamProtocolV1JsonValue = JSON.parse(JSON.stringify(value));
+  const downconvertedValue = downconvertCurrentTags(wireValue);
+  return JSON.stringify(decodeTeamProtocolV1HttpResponse(method, path, status, downconvertedValue));
+}
+
+function downconvertCurrentTags(value: TeamProtocolV1JsonValue, key = ""): TeamProtocolV1JsonValue {
+  if (isString(value)) return key === "text" || key === "preview" ? expandChatTagReferences(value) : value;
+  if (Array.isArray(value)) return value.map((item) => downconvertCurrentTags(item));
+  if (value === null || isBoolean(value) || isNumber(value)) return value;
+  const result: TeamProtocolV1JsonObject = {};
+  for (const [entryKey, entryValue] of Object.entries(value)) {
+    result[entryKey] = downconvertCurrentTags(entryValue, entryKey);
+  }
+  return result;
 }
 
 export function decodeTeamProtocolV1CurrentHttpResponse(

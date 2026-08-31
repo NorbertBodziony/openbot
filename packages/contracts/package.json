@@ -7,6 +7,7 @@
     "./attachment-files": "./src/attachment-files.ts",
     "./attachment-references": "./src/attachment-references.ts",
     "./avatar-images": "./src/avatar-images.ts",
+    "./chat-tag-references": "./src/chat-tag-references.ts",
     "./input-limits": "./src/input-limits.ts",
     "./invite-links": "./src/invite-links.ts",
     "./ipc": "./src/ipc.ts",
@@ -14,6 +15,8 @@
     "./team-protocol": "./src/team-protocol/index.ts",
     "./team-protocol/v1": "./src/team-protocol/v1.ts",
     "./team-protocol/v1-adapter": "./src/team-protocol/v1-adapter.ts",
+    "./team-protocol/v2": "./src/team-protocol/v2.ts",
+    "./team-protocol/v2-adapter": "./src/team-protocol/v2-adapter.ts",
     "./validation": "./src/validation.ts"
   },
   "scripts": {

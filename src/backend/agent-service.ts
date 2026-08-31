@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
 import { expandAttachmentReferences } from "@openbot/contracts/attachment-references";
+import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AccountUsage,
@@ -1179,7 +1180,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#syncMailboxMessages(snapshot);
     await this.#store.updatePreview(
       bot.id,
-      displayAttachmentReferences(delivery.delivery.text, delivery.delivery.attachments) ||
+      displayMessageReferences(delivery.delivery.text, delivery.delivery.attachments) ||
         delivery.delivery.attachments.map((item) => item.name).join(", "),
     );
     this.#emit({ type: "bots-changed", bots: this.#store.list() });
@@ -2783,7 +2784,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return;
       }
 
-      const displayText = displayAttachmentReferences(delivery.text, delivery.attachments);
+      const displayText = displayMessageReferences(delivery.text, delivery.attachments);
       let text = displayText || "The user shared attached local files.";
       const handoff = this.#pendingHandoffs.get(threadId);
       if (handoff) {
@@ -2796,7 +2797,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           `The user is replying to message ${delivery.replyToMessageId}.`,
           "--- referenced message ---",
           referenced
-            ? displayAttachmentReferences(referenced.text, referenced.attachments ?? [])
+            ? displayMessageReferences(referenced.text, referenced.attachments ?? [])
             : "(The referenced message is unavailable.)",
           "--- user reply ---",
           displayText || "(The reply contains attachments only.)",
@@ -4641,7 +4642,7 @@ function deliveryInput(
   | { type: "mention"; name: string; path: string }
 > {
   const { delivery, managedAttachments } = context;
-  const displayText = displayAttachmentReferences(delivery.text, delivery.attachments);
+  const displayText = displayMessageReferences(delivery.text, delivery.attachments);
   const text = [
     displayText || (managedAttachments.length ? "The user shared attached local files." : ""),
     managedAttachments.length
@@ -4660,9 +4661,9 @@ function deliveryInput(
   ];
 }
 
-function displayAttachmentReferences(text: string, attachments: Array<{ id: string; name: string }>): string {
+function displayMessageReferences(text: string, attachments: Array<{ id: string; name: string }>): string {
   const names = new Map(attachments.map((attachment) => [attachment.id, attachment.name]));
-  return expandAttachmentReferences(text, (reference) => names.get(reference.attachmentId));
+  return expandChatTagReferences(expandAttachmentReferences(text, (reference) => names.get(reference.attachmentId)));
 }
 
 function normalizeAccountUsage(rateLimits: AccountRateLimitsReadResult | null): AccountUsage {
@@ -4833,7 +4834,7 @@ function renderHandoffMessage(message: ConversationSnapshot["messages"][number])
   const sender = message.senderBotId ? ` agent:${message.senderBotId}` : "";
   return [
     `[${message.createdAt}] ${message.author}${sender}:`,
-    displayAttachmentReferences(message.text, message.attachments ?? []),
+    displayMessageReferences(message.text, message.attachments ?? []),
     attachmentMetadata,
   ]
     .filter(Boolean)
@@ -4847,7 +4848,7 @@ function estimateTokens(text: string): number {
 function summarizeOldMessages(messages: ConversationSnapshot["messages"], tokenBudget: number): string {
   const maximumCharacters = Math.max(4_000, tokenBudget * 4);
   const lines = messages.map((message) => {
-    const normalized = displayAttachmentReferences(message.text, message.attachments ?? [])
+    const normalized = displayMessageReferences(message.text, message.attachments ?? [])
       .replace(/\s+/g, " ")
       .trim();
     const excerpt = normalized.length > 600 ? `${normalized.slice(0, 597)}...` : normalized;

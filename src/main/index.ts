@@ -154,6 +154,7 @@ import {
   decodeBrowserPreview,
   decodeBrowserTab,
   decodeBrowserTabs,
+  decodeInstalledSkills,
   decodeQueuedMessageReceipt,
   decodeQueueSnapshot,
   decodeRoutine,
@@ -573,6 +574,23 @@ function registerIpcHandlers(
     return serverId === "local"
       ? service.listBots()
       : remoteServers.request("/v1/agents", {}, serverId, decodeBotSummaries);
+  });
+  handleTrusted(IPC_CHANNELS.agentListInstalledSkills, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
+    return scoped.serverId === "local"
+      ? skills.listInstalled(botId)
+      : remoteServers
+            .list()
+            .find((server) => server.id === scoped.serverId)
+            ?.compatibility?.capabilities.includes("installed-skills")
+        ? remoteServers.request(
+            `/v1/agents/${encodeURIComponent(botId)}/skills`,
+            {},
+            scoped.serverId,
+            decodeInstalledSkills,
+          )
+        : Promise.resolve([]);
   });
   handleTrusted(IPC_CHANNELS.agentGetSidebarLayout, (input: unknown): Promise<SidebarLayoutSnapshot> => {
     const { serverId } = parseAgentRequest(input);
@@ -1668,6 +1686,7 @@ if (!hasSingleInstanceLock) {
         appVersion: app.getVersion(),
         store: teamStore,
         agents: service,
+        skills: skillMarketplace,
         sidebarLayout: sidebarLayoutStore,
         mailbox: mailboxStore,
         browser: browserHost,

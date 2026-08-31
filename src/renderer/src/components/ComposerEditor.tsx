@@ -1,6 +1,7 @@
 import { attachmentReferenceIds, serializeAttachmentReference } from "@openbot/contracts/attachment-references";
+import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { DraftAttachment } from "@openbot/contracts/ipc";
+import type { DraftAttachment, InstalledSkill } from "@openbot/contracts/ipc";
 import { Portal } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, createUniqueId, Show } from "solid-js";
 import { createStaticAvatarSvg } from "../bloub-avatar";
@@ -8,11 +9,12 @@ import type { BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 import { AnchoredTooltip } from "./conversation/AnchoredTooltip";
 import { AttachmentReferenceVisual, appendAttachmentReferenceVisual } from "./conversation/AttachmentReference";
-import { Listbox } from "./ui";
+import { Listbox, Puzzle } from "./ui";
 
 interface ComposerEditorProps {
   botId: string | undefined;
   bots: BotProfile[];
+  skills?: InstalledSkill[];
   attachments?: DraftAttachment[];
   value: string;
   placeholder: string;
@@ -39,19 +41,25 @@ interface PickerPosition {
 const MENTION_PATTERN = /@\[([^\]]+)]\(([^)]+)\)/g;
 
 export function expandComposerMentions(value: string): string {
-  return value.replace(MENTION_PATTERN, (match, name: string, target: string) =>
-    target.startsWith("attachment:") ? match : `@${name}`,
-  );
+  return value.replace(MENTION_PATTERN, (match, name: string, target: string) => {
+    if (target.includes(":")) return match;
+    return serializeChatTagReference("agent", name, target);
+  });
 }
 
-type PickerOption = { type: "bot"; bot: BotProfile } | { type: "attachment"; attachment: DraftAttachment };
+type PickerOption =
+  | { type: "bot"; bot: BotProfile }
+  | { type: "skill"; skill: InstalledSkill }
+  | { type: "attachment"; attachment: DraftAttachment };
 
 function pickerOptionKey(option: PickerOption): string {
-  return option.type === "bot" ? `bot:${option.bot.id}` : `attachment:${option.attachment.id}`;
+  if (option.type === "bot") return `bot:${option.bot.id}`;
+  return option.type === "skill" ? `skill:${option.skill.skillId}` : `attachment:${option.attachment.id}`;
 }
 
 function pickerOptionText(option: PickerOption): string {
-  return option.type === "bot" ? `${option.bot.name} Agent` : `${option.attachment.name} File`;
+  if (option.type === "bot") return `${option.bot.name} Agent`;
+  return option.type === "skill" ? `${option.skill.name} Skill` : `${option.attachment.name} File`;
 }
 
 export function ComposerEditor(props: ComposerEditorProps) {
@@ -83,8 +91,16 @@ export function ComposerEditor(props: ComposerEditorProps) {
         !referencedIds.has(attachment.id) && (!query || attachment.name.toLocaleLowerCase().includes(query)),
     );
   });
+  const matchingSkills = createMemo(() => {
+    const query = mention()?.query.trim().toLocaleLowerCase() ?? "";
+    return (props.skills ?? []).filter(
+      (skill) =>
+        skill.state !== "needs-repair" && (!query || `${skill.name} ${skill.slug}`.toLocaleLowerCase().includes(query)),
+    );
+  });
   const matchingOptions = createMemo<PickerOption[]>(() => [
     ...matchingBots().map((bot) => ({ type: "bot" as const, bot })),
+    ...matchingSkills().map((skill) => ({ type: "skill" as const, skill })),
     ...matchingAttachments().map((attachment) => ({
       type: "attachment" as const,
       attachment,
@@ -98,6 +114,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
   let editor: HTMLDivElement | undefined;
   let lastBotId: string | undefined;
   let lastAttachmentKey = "";
+  let lastSkillKey = "";
   let lastEmittedValue = "";
   let lastFocusRequest = 0;
   let isComposing = false;
@@ -134,20 +151,27 @@ export function ComposerEditor(props: ComposerEditorProps) {
       botId: props.botId,
       value: props.value,
       bots: props.bots,
+      skills: props.skills ?? [],
       attachments: props.attachments ?? [],
       focusRequest: props.focusRequest ?? 0,
     }),
-    ({ botId, value, bots, attachments, focusRequest }) => {
+    ({ botId, value, bots, skills, attachments, focusRequest }) => {
       if (!editor) return;
       const attachmentKey = attachments.map((attachment) => `${attachment.id}:${attachment.name}`).join("|");
-      const contentChanged = botId !== lastBotId || value !== lastEmittedValue || attachmentKey !== lastAttachmentKey;
+      const skillKey = skills.map((skill) => `${skill.skillId}:${skill.name}:${skill.state}`).join("|");
+      const contentChanged =
+        botId !== lastBotId ||
+        value !== lastEmittedValue ||
+        attachmentKey !== lastAttachmentKey ||
+        skillKey !== lastSkillKey;
       const focusRequested = focusRequest > lastFocusRequest;
       if (contentChanged) {
         lastBotId = botId;
         lastAttachmentKey = attachmentKey;
+        lastSkillKey = skillKey;
         lastEmittedValue = value;
         setAttachmentTooltip(null);
-        renderEditorValue(editor, value, bots, attachments, attachmentTokenActions);
+        renderEditorValue(editor, value, bots, skills, attachments, attachmentTokenActions);
         syncTrailingLineSentinel(editor, value);
         setMention(null);
       }
@@ -165,7 +189,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
     if (value.length > INPUT_LIMITS.messageText) {
       value = truncateComposerValue(value, INPUT_LIMITS.messageText);
       setAttachmentTooltip(null);
-      renderEditorValue(editor, value, props.bots, props.attachments ?? [], attachmentTokenActions);
+      renderEditorValue(editor, value, props.bots, props.skills ?? [], props.attachments ?? [], attachmentTokenActions);
       placeCaretAtEnd(editor);
     }
     syncTrailingLineSentinel(editor, value);
@@ -218,10 +242,12 @@ export function ComposerEditor(props: ComposerEditorProps) {
     }
     const query = match[1] ?? "";
     const bounds = editor.getBoundingClientRect();
+    const gutter = 12;
+    const width = Math.min(720, bounds.width + 36, window.innerWidth - gutter * 2);
     setPickerPosition({
       bottom: window.innerHeight - bounds.top + 10,
-      left: bounds.left,
-      width: Math.min(720, bounds.width + 36),
+      left: Math.max(gutter, Math.min(bounds.left, window.innerWidth - width - gutter)),
+      width,
     });
     setMention({ query, start: beforeCaret.length - query.length - 1, end: beforeCaret.length });
     setActiveOption(0);
@@ -236,7 +262,9 @@ export function ComposerEditor(props: ComposerEditorProps) {
     const token =
       option.type === "bot"
         ? createMentionToken(option.bot)
-        : createAttachmentToken(option.attachment, attachmentTokenActions);
+        : option.type === "skill"
+          ? createSkillToken(option.skill)
+          : createAttachmentToken(option.attachment, attachmentTokenActions);
     const trailingSpace = document.createTextNode(" ");
     range.insertNode(trailingSpace);
     range.insertNode(token);
@@ -420,7 +448,14 @@ export function ComposerEditor(props: ComposerEditorProps) {
     if (afterCaret.toString()) return false;
 
     const nextValue = value.slice(0, -1);
-    renderEditorValue(editor, nextValue, props.bots, props.attachments ?? [], attachmentTokenActions);
+    renderEditorValue(
+      editor,
+      nextValue,
+      props.bots,
+      props.skills ?? [],
+      props.attachments ?? [],
+      attachmentTokenActions,
+    );
     syncTrailingLineSentinel(editor, nextValue);
     placeCaretAtEnd(editor);
     emitValue();
@@ -510,11 +545,15 @@ export function ComposerEditor(props: ComposerEditorProps) {
               const option = item.rawValue;
               const optionIndex = () =>
                 matchingOptions().findIndex((candidate) => pickerOptionKey(candidate) === item.key);
-              const firstAttachmentIndex = () => matchingBots().length;
+              const firstSkillIndex = () => matchingBots().length;
+              const firstAttachmentIndex = () => matchingBots().length + matchingSkills().length;
               return (
                 <>
                   <Show when={option.type === "bot" && item.index === 0}>
                     <div class="mention-picker-section">Agents</div>
+                  </Show>
+                  <Show when={option.type === "skill" && item.index === firstSkillIndex()}>
+                    <div class="mention-picker-section">Skills</div>
                   </Show>
                   <Show when={option.type === "attachment" && item.index === firstAttachmentIndex()}>
                     <div class="mention-picker-section">Files</div>
@@ -533,16 +572,23 @@ export function ComposerEditor(props: ComposerEditorProps) {
                     onPointerDown={(event) => event.preventDefault()}
                     onMouseEnter={() => setActiveOption(optionIndex())}
                   >
-                    <Show
-                      when={option.type === "bot" ? option.bot : undefined}
-                      fallback={
-                        <AttachmentReferenceVisual name={option.type === "attachment" ? option.attachment.name : ""} />
-                      }
-                    >
-                      {(bot) => <AgentAvatar bot={bot()} />}
-                    </Show>
-                    <strong>{option.type === "bot" ? option.bot.name : option.attachment.name}</strong>
-                    <span>{option.type === "bot" ? "Agent" : "File"}</span>
+                    {option.type === "bot" ? (
+                      <AgentAvatar bot={option.bot} />
+                    ) : option.type === "skill" ? (
+                      <span class="mention-picker-skill-icon" aria-hidden="true">
+                        <Puzzle />
+                      </span>
+                    ) : (
+                      <AttachmentReferenceVisual name={option.attachment.name} />
+                    )}
+                    <strong>
+                      {option.type === "bot"
+                        ? option.bot.name
+                        : option.type === "skill"
+                          ? option.skill.name
+                          : option.attachment.name}
+                    </strong>
+                    <span>{option.type === "bot" ? "Agent" : option.type === "skill" ? "Skill" : "File"}</span>
                   </Listbox.Item>
                 </>
               );
@@ -667,10 +713,42 @@ function createMentionToken(bot: BotProfile): HTMLSpanElement {
   return token;
 }
 
+function createSkillToken(skill: InstalledSkill): HTMLSpanElement {
+  const token = document.createElement("span");
+  token.className = "composer-mention-token composer-skill-token";
+  token.contentEditable = "false";
+  token.dataset.skillId = skill.skillId;
+  token.dataset.skillName = skill.name;
+  token.setAttribute("aria-label", `Skill ${skill.name}`);
+  const icon = Puzzle({ class: "composer-skill-icon" });
+  if (!(icon instanceof Node)) throw new Error("Puzzle icon did not render to a DOM node");
+  const name = document.createElement("span");
+  name.textContent = skill.name;
+  token.append(icon, name);
+  return token;
+}
+
+function createUnavailableTagToken(kind: "agent" | "skill", id: string, name: string): HTMLSpanElement {
+  const token = document.createElement("span");
+  token.className = "composer-mention-token composer-tag-unavailable";
+  token.contentEditable = "false";
+  if (kind === "agent") {
+    token.dataset.mentionId = id;
+    token.dataset.mentionName = name;
+  } else {
+    token.dataset.skillId = id;
+    token.dataset.skillName = name;
+  }
+  token.setAttribute("aria-label", `Unavailable ${kind} ${name}`);
+  token.textContent = name;
+  return token;
+}
+
 function renderEditorValue(
   editor: HTMLDivElement,
   value: string,
   bots: BotProfile[],
+  skills: InstalledSkill[],
   attachments: DraftAttachment[],
   attachmentTokenActions: AttachmentTokenActions,
 ) {
@@ -690,28 +768,16 @@ function renderEditorValue(
       cursor = index + match[0].length;
       continue;
     }
-    const id = target;
+    if (target.startsWith("skill:")) {
+      const id = target.slice("skill:".length);
+      const skill = skills.find((candidate) => candidate.skillId === id && candidate.state !== "needs-repair");
+      editor.append(skill ? createSkillToken(skill) : createUnavailableTagToken("skill", id, name));
+      cursor = index + match[0].length;
+      continue;
+    }
+    const id = target.startsWith("agent:") ? target.slice("agent:".length) : target;
     const bot = bots.find((candidate) => candidate.id === id);
-    editor.append(
-      createMentionToken(
-        bot ?? {
-          id,
-          provider: "codex",
-          name,
-          title: "Agent",
-          description: "",
-          notifications: true,
-          model: "gpt-5.6-luna",
-          reasoningEffort: "medium",
-          threadId: null,
-          avatarSeed: id || "agent",
-          avatarHue: null,
-          avatarUrl: null,
-          time: "",
-          preview: "",
-        },
-      ),
-    );
+    editor.append(bot ? createMentionToken(bot) : createUnavailableTagToken("agent", id, name));
     cursor = index + match[0].length;
   }
   if (cursor < value.length) editor.append(document.createTextNode(value.slice(cursor)));
@@ -725,7 +791,10 @@ function scheduleStaticMentionAvatar(avatar: HTMLElement, bot: BotProfile): void
 }
 
 function serializeEditor(editor: HTMLDivElement): string {
-  if (editor.textContent === "" && !editor.querySelector("[data-mention-id], [data-attachment-reference-id]"))
+  if (
+    editor.textContent === "" &&
+    !editor.querySelector("[data-mention-id], [data-skill-id], [data-attachment-reference-id]")
+  )
     return "";
   return Array.from(editor.childNodes).map(serializeNode).join("");
 }
@@ -741,7 +810,10 @@ function serializeNode(node: Node): string {
   }
   const mentionId = node.dataset.mentionId;
   const mentionName = node.dataset.mentionName;
-  if (mentionId && mentionName) return `@[${mentionName}](${mentionId})`;
+  if (mentionId && mentionName) return serializeChatTagReference("agent", mentionName, mentionId);
+  const skillId = node.dataset.skillId;
+  const skillName = node.dataset.skillName;
+  if (skillId && skillName) return serializeChatTagReference("skill", skillName, skillId);
   if (node.tagName === "BR") return "\n";
   const content = Array.from(node.childNodes).map(serializeNode).join("");
   return node.tagName === "DIV" || node.tagName === "P" ? `${content}\n` : content;
@@ -836,7 +908,7 @@ function mentionTokenAtCaretBoundary(
 
 function closestMentionToken(node: Node, editor: HTMLDivElement): HTMLElement | null {
   const element = node instanceof HTMLElement ? node : node.parentElement;
-  const token = element?.closest<HTMLElement>("[data-mention-id]") ?? null;
+  const token = element?.closest<HTMLElement>("[data-mention-id], [data-skill-id]") ?? null;
   return token && editor.contains(token) ? token : null;
 }
 

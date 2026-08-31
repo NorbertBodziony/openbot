@@ -64,6 +64,7 @@ export const IPC_CHANNELS = {
   agentGetUsage: "agent:get-usage",
   agentListModels: "agent:list-models",
   agentListBots: "agent:list-bots",
+  agentListInstalledSkills: "agent:list-installed-skills",
   agentGetSidebarLayout: "agent:get-sidebar-layout",
   agentMutateSidebarLayout: "agent:mutate-sidebar-layout",
   agentCreateBot: "agent:create-bot",

@@ -43,6 +43,7 @@ import type { ProvisionedTeamTunnel } from "./central-auth-manager";
 import { appendDiagnosticLog, resolveCloudflaredExecutable, stopOwnedProcess } from "./host-tunnel-runtime";
 import type { RemoteDesktopRuntimePaths } from "./remote-desktop-runtime-artifact";
 import { RemoteScreenGateway } from "./remote-screen-gateway";
+import type { SkillMarketplaceService } from "./skill-marketplace-service";
 import { TeamApiServer } from "./team-api-server";
 import type { AuthenticatedMember, TeamStore } from "./team-store";
 
@@ -59,6 +60,7 @@ interface HostServiceOptions {
   appVersion: string;
   store: TeamStore;
   agents: AgentService;
+  skills: SkillMarketplaceService;
   sidebarLayout: SidebarLayoutStore;
   mailbox: MailboxStore;
   browser: BrowserHost;
@@ -180,6 +182,7 @@ export class HostService extends EventEmitter<HostEvents> {
       appVersion: options.appVersion,
       store: options.store,
       agents: options.agents,
+      skills: options.skills,
       sidebarLayout: options.sidebarLayout,
       mailbox: options.mailbox,
       browser: options.browser,

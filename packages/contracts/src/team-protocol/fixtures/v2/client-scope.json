@@ -1,0 +1,5 @@
+{
+  "type": "agent-event-scope",
+  "includeConversations": true,
+  "capabilities": ["agent-runtime-snapshots", "installed-skills"]
+}

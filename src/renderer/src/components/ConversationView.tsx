@@ -19,6 +19,7 @@ import type {
   BrowserTab,
   DraftAttachment,
   FilePreview,
+  InstalledSkill,
   MessageReaction,
   ProviderRuntimeStatus,
   QueueDelivery,
@@ -74,6 +75,7 @@ import {
 } from "./conversation/chat-search";
 import { calculateChatScrollMargin, createChatVirtualizer } from "./conversation/createChatVirtualizer";
 import { messageContentBlocks } from "./conversation/DataTable";
+import { installedSkillsRequestKey } from "./conversation/installed-skills-source";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
 import { RoutineEventMarker } from "./conversation/RoutineEventMarker";
@@ -403,6 +405,8 @@ function createConversationViewScope(props: ConversationProps) {
     resources,
   } = controller;
   const [routineSettingsRequest, setRoutineSettingsRequest] = createSignal<RoutineSettingsRequest | null>(null);
+  const [installedSkills, setInstalledSkills] = createSignal<InstalledSkill[]>([]);
+  let installedSkillsRequest = 0;
   let routineSettingsRequestNonce = 0;
   let imageAttachmentPicker: HTMLInputElement | undefined;
   let contextAttachmentPicker: HTMLInputElement | undefined;
@@ -424,6 +428,24 @@ function createConversationViewScope(props: ConversationProps) {
     const target = currentTarget();
     return target ? (conversationErrors()[composerDraftKey(target)] ?? null) : null;
   });
+  createEffect(
+    () => installedSkillsRequestKey(props.bot?.id, props.server, props.globalOverlayOpen),
+    (source) => {
+      const request = ++installedSkillsRequest;
+      const [, botId, support, visibility] = source.split("\0");
+      if (!botId || visibility === "hidden") return;
+      setInstalledSkills([]);
+      if (support === "unsupported") return;
+      void window.openbot.agent
+        .listInstalledSkills(botId)
+        .then((skills) => {
+          if (request === installedSkillsRequest) setInstalledSkills(skills);
+        })
+        .catch(() => {
+          if (request === installedSkillsRequest) setInstalledSkills([]);
+        });
+    },
+  );
   const unreferencedDraftAttachments = createMemo(() => {
     const referencedIds = attachmentReferenceIds(currentDraft().text);
     return currentDraft().attachments.filter((attachment) => !referencedIds.has(attachment.id));
@@ -2411,6 +2433,7 @@ function createConversationViewScope(props: ConversationProps) {
     copyMessage,
     currentDraft,
     currentConversationError,
+    installedSkills,
     currentUnreadCount,
     drafts,
     dropActive,
@@ -2706,6 +2729,7 @@ export function ConversationTimeline() {
     copyMessage,
     expandedEmojiMessageId,
     expandedThinkingMessages,
+    installedSkills,
     fadeAtBottom,
     fadeAtTop,
     jumpToLatestMessage,
@@ -2966,6 +2990,7 @@ export function ConversationTimeline() {
                                                 : undefined)
                                             }
                                             bots={props.bots}
+                                            skills={installedSkills()}
                                             onSelectAgent={props.onSelectAgent}
                                             onOpenLink={(url) => void openExternalMessageUrl(url)}
                                             onPreview={(attachment) => void previewAttachment(attachment)}
@@ -3217,6 +3242,7 @@ export function ConversationComposer() {
     composerHasContent,
     currentDraft,
     currentConversationError,
+    installedSkills,
     editQueuedMessage,
     editingDeliveryId,
     openAttachmentPicker,
@@ -3340,6 +3366,7 @@ export function ConversationComposer() {
             <ComposerEditor
               botId={props.bot?.id}
               bots={props.bots}
+              skills={installedSkills()}
               attachments={currentDraft().attachments}
               value={currentDraft().text}
               disabled={submitting() || selectionSending() || voicePhase() === "transcribing" || !agentReady()}

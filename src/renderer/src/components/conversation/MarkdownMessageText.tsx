@@ -75,6 +75,7 @@ export function MarkdownMessageText(props: MarkdownMessageTextProps) {
   const tokens = createMemo(() => marked.lexer(props.body, { breaks: true, gfm: true }));
   const contentProps = (): MarkdownContentProps => ({
     bots: props.bots,
+    skills: props.skills,
     attachments: props.attachments,
     citations: props.citations,
     onSelectAgent: props.onSelectAgent,
@@ -106,6 +107,7 @@ export function MarkdownInlineText(
   const tokens = createMemo(() => marked.Lexer.lexInline(props.body, { breaks: true, gfm: true }));
   const contentProps = (): MarkdownContentProps => ({
     bots: props.bots,
+    skills: props.skills,
     attachments: props.attachments,
     citations: props.citations,
     onSelectAgent: props.onSelectAgent,

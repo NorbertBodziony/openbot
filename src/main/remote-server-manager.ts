@@ -30,6 +30,7 @@ import type {
   DirectTypingInput,
   DirectTypingRealtimeEvent,
   DraftAttachment,
+  InstalledSkill,
   InvitePreview,
   InviteSummary,
   JoinServerInput,
@@ -95,6 +96,11 @@ import {
   decodeTeamProtocolV1CurrentHttpResponse,
   encodeTeamProtocolV1CurrentHttpRequest,
 } from "@openbot/contracts/team-protocol/v1-adapter";
+import { TEAM_PROTOCOL_V2, TEAM_PROTOCOL_V2_CAPABILITIES } from "@openbot/contracts/team-protocol/v2";
+import {
+  decodeTeamProtocolV2CurrentHttpResponse,
+  encodeTeamProtocolV2CurrentHttpRequest,
+} from "@openbot/contracts/team-protocol/v2-adapter";
 import { fingerprint } from "./team-store";
 
 export { isValidRemoteApiUrl } from "@openbot/contracts/invite-links";
@@ -160,7 +166,7 @@ const REMOTE_EVENT_PAYLOAD_LIMIT = 1024 * 1024;
 const REMOTE_EVENT_INITIAL_BUFFER_LIMIT = 1_000;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
-const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V1 } as const;
+const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V2 } as const;
 
 type ResponseDecoder<T> = (value: unknown) => T;
 
@@ -998,7 +1004,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       hostAppVersion: "0.0.0",
       hostProtocol: LOCAL_TEAM_PROTOCOL,
       negotiatedProtocol: TEAM_PROTOCOL_V1,
-      capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+      capabilities: [...TEAM_PROTOCOL_V2_CAPABILITIES],
     };
   }
 
@@ -1557,7 +1563,12 @@ async function requestJson<T>(
       ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
       ...(options.capabilities ? { [TEAM_CAPABILITIES_HEADER]: options.capabilities.join(",") } : {}),
     },
-    body: options.body === undefined ? undefined : encodeTeamProtocolV1CurrentHttpRequest(method, path, options.body),
+    body:
+      options.body === undefined
+        ? undefined
+        : options.protocol === TEAM_PROTOCOL_V2
+          ? encodeTeamProtocolV2CurrentHttpRequest(method, path, options.body)
+          : encodeTeamProtocolV1CurrentHttpRequest(method, path, options.body),
   });
   let value: unknown;
   if (response.status !== 204) {
@@ -1569,7 +1580,10 @@ async function requestJson<T>(
   }
   if (value !== undefined) {
     try {
-      value = decodeTeamProtocolV1CurrentHttpResponse(method, path, response.status, value);
+      value =
+        options.protocol === TEAM_PROTOCOL_V2
+          ? decodeTeamProtocolV2CurrentHttpResponse(method, path, response.status, value)
+          : decodeTeamProtocolV1CurrentHttpResponse(method, path, response.status, value);
     } catch (error) {
       throw new RemoteProtocolError(
         "protocol_error",
@@ -1764,6 +1778,25 @@ export function decodeAgentModelOptions(value: unknown): AgentModelOption[] {
 export function decodeBotSummaries(value: unknown): BotSummary[] {
   if (!Array.isArray(value)) throw new Error("Invalid remote agent list.");
   return value.map(decodeBotSummary);
+}
+
+export function decodeInstalledSkills(value: unknown): InstalledSkill[] {
+  if (!Array.isArray(value)) throw new Error("Invalid installed skill list.");
+  return value.map((item) => {
+    const skill = decodeRecord(item, "installed skill");
+    const state = requiredString(skill, "state");
+    if (!isOneOf(["installed", "update-available", "modified", "needs-repair"] as const, state)) {
+      throw new Error("Invalid installed skill state.");
+    }
+    return {
+      skillId: requiredString(skill, "skillId"),
+      slug: requiredString(skill, "slug"),
+      name: requiredString(skill, "name"),
+      installedVersion: requiredNumber(skill, "installedVersion"),
+      availableVersion: requiredNumber(skill, "availableVersion"),
+      state,
+    };
+  });
 }
 
 export function decodeBotMemory(value: unknown): BotMemory {
