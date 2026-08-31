@@ -2182,11 +2182,12 @@ export function createAppController(props: AppProps = {}) {
     body: string,
     attachmentDraftIds: string[],
     replyToMessageId: string | null,
-    targetBotId?: string,
+    target?: { botId: string; serverId: string },
   ): Promise<boolean> {
-    const botId = targetBotId ?? activeBot()?.id;
+    const botId = target?.botId ?? activeBot()?.id;
+    const serverId = target?.serverId ?? activeServerSidebarKey();
     if (!botId || (!body.trim() && attachmentDraftIds.length === 0)) return false;
-    return sendMessageToBot(botId, body, attachmentDraftIds, replyToMessageId);
+    return sendMessageToBot(botId, body, attachmentDraftIds, replyToMessageId, serverId);
   }
 
   async function sendMessageToBot(
@@ -2194,17 +2195,22 @@ export function createAppController(props: AppProps = {}) {
     body: string,
     attachmentDraftIds: string[],
     replyToMessageId: string | null = null,
+    serverId = activeServerSidebarKey(),
   ): Promise<boolean> {
     const analytics = desktopAnalytics.scope();
     const properties = analyticsAgentProperties(botId);
     try {
-      const receipt = await window.openbot.agent.sendMessage({
+      const input = {
         botId,
         text: body.trim(),
         attachmentDraftIds,
         ...(replyToMessageId ? { replyToMessageId } : {}),
-      });
-      setUiErrors((current) => ({ ...current, [botId]: [] }));
+      };
+      const receipt =
+        serverId === activeServerSidebarKey()
+          ? await window.openbot.agent.sendMessage(input)
+          : await window.openbot.agent.sendMessage(input, serverId);
+      if (serverId === activeServerSidebarKey()) setUiErrors((current) => ({ ...current, [botId]: [] }));
       analytics.track("message_send", {
         ...(properties ?? {}),
         channel: "agent",
@@ -2214,7 +2220,7 @@ export function createAppController(props: AppProps = {}) {
         delivery_count: receipt.deliveries.length,
       });
       try {
-        await markAgentMessagesRead(botId, receipt.deliveries[0]?.id ?? receipt.messageId);
+        await markAgentMessagesRead(botId, receipt.deliveries[0]?.id ?? receipt.messageId, serverId);
       } catch (error) {
         appendUiError(botId, error, "Read state failed");
       }
@@ -2228,7 +2234,7 @@ export function createAppController(props: AppProps = {}) {
         result: "failed",
         failure_code: "send_failed",
       });
-      appendUiError(botId, error, "Send failed");
+      if (serverId === activeServerSidebarKey()) appendUiError(botId, error, "Send failed");
       return false;
     }
   }
@@ -2419,24 +2425,27 @@ export function createAppController(props: AppProps = {}) {
     text: string,
     keepAttachmentIds: string[],
     attachmentDraftIds: string[],
-    targetBotId?: string,
+    target?: { botId: string; serverId: string },
   ): Promise<boolean> {
-    const botId = targetBotId ?? activeBot()?.id;
+    const botId = target?.botId ?? activeBot()?.id;
+    const serverId = target?.serverId ?? activeServerSidebarKey();
     if (!botId) return false;
     const analytics = desktopAnalytics.scope();
     try {
-      await window.openbot.agent.updateQueuedMessage({
+      const input = {
         botId,
         deliveryId,
         text,
         keepAttachmentIds,
         attachmentDraftIds,
-      });
+      };
+      if (serverId === activeServerSidebarKey()) await window.openbot.agent.updateQueuedMessage(input);
+      else await window.openbot.agent.updateQueuedMessage(input, serverId);
       analytics.track("queue_action", { action: "edit", result: "succeeded" });
       return true;
     } catch (error) {
       analytics.track("queue_action", { action: "edit", result: "failed", failure_code: "edit_failed" });
-      appendUiError(botId, error, "Edit failed");
+      if (serverId === activeServerSidebarKey()) appendUiError(botId, error, "Edit failed");
       return false;
     }
   }

@@ -172,13 +172,13 @@ export interface AgentDesktopApi {
   openWorkspaceFile: (input: OpenWorkspaceFileInput) => Promise<void>;
   previewSharedFile: (input: OpenSharedFileInput) => Promise<FilePreview>;
   previewWorkspaceFile: (input: OpenWorkspaceFileInput) => Promise<FilePreview>;
-  sendMessage: (input: SendMessageInput) => Promise<QueuedMessageReceipt>;
+  sendMessage: (input: SendMessageInput, serverId?: string) => Promise<QueuedMessageReceipt>;
   setMessageReaction: (input: SetMessageReactionInput) => Promise<void>;
   listQueue: (botId: string) => Promise<QueueSnapshot>;
   acknowledgeFailedTurn: (input: AcknowledgeFailedTurnInput) => Promise<void>;
   cancelQueuedMessage: (input: CancelQueuedMessageInput) => Promise<void>;
   steerQueuedMessage: (input: SteerQueuedMessageInput) => Promise<void>;
-  updateQueuedMessage: (input: UpdateQueuedMessageInput) => Promise<void>;
+  updateQueuedMessage: (input: UpdateQueuedMessageInput, serverId?: string) => Promise<void>;
   reorderQueue: (input: ReorderQueueInput) => Promise<void>;
   interrupt: (input: InterruptTurnInput) => Promise<void>;
   respondToPrompt: (input: RespondToPromptInput) => Promise<void>;

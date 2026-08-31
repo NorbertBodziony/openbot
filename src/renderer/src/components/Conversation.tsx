@@ -26,7 +26,7 @@ function readBrowserPipBounds(): BrowserBounds | null {
 interface ConversationResources {
   agentActivityPresentations: Map<string, { activityId: string; presentation: AgentActivityPresentation }>;
   controlledBrowserBotIds: Set<string>;
-  importTargetBots: Map<string, string>;
+  importTargetBots: Map<string, { botId: string; serverId: string }>;
   seenMessageIds: Set<string>;
   typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
   typingBotId: string | null;
@@ -36,9 +36,12 @@ interface ConversationResources {
   voiceElapsedTimer: ReturnType<typeof setInterval> | undefined;
   voiceChunks: Blob[];
   voiceBotId: string | undefined;
+  voiceServerId: string | undefined;
   voiceSubmitRequest:
     | {
         botId: string;
+        serverId: string;
+        draft: ComposerDraft;
         queuedEdit: { deliveryId: string; originalAttachmentIds: string[] } | undefined;
       }
     | undefined;
@@ -49,6 +52,8 @@ interface ConversationResources {
 /** @internal Stable owner for renderer state that must survive Conversation view HMR. */
 export function createConversationController(props: Pick<ConversationProps, "onTypingChange">) {
   const [drafts, setDrafts] = createSignal<Record<string, ComposerDraft>>({});
+  const [editingBotId, setEditingBotId] = createSignal<string | null>(null);
+  const [editingServerId, setEditingServerId] = createSignal<string | null>(null);
   const [editingDeliveryId, setEditingDeliveryId] = createSignal<string | null>(null);
   const [editingDraftBackup, setEditingDraftBackup] = createSignal<ComposerDraft | null>(null);
   const [composerFocusRequest, setComposerFocusRequest] = createSignal(0);
@@ -88,7 +93,7 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   const resources: ConversationResources = {
     agentActivityPresentations: new Map(),
     controlledBrowserBotIds: new Set<string>(),
-    importTargetBots: new Map<string, string>(),
+    importTargetBots: new Map<string, { botId: string; serverId: string }>(),
     seenMessageIds: new Set<string>(),
     typingIdleTimer: undefined,
     typingBotId: null,
@@ -98,6 +103,7 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     voiceElapsedTimer: undefined,
     voiceChunks: [],
     voiceBotId: undefined,
+    voiceServerId: undefined,
     voiceSubmitRequest: undefined,
     voiceDisposed: false,
     filePreviewRequestGeneration: 0,
@@ -116,6 +122,10 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   return {
     drafts,
     setDrafts,
+    editingBotId,
+    setEditingBotId,
+    editingServerId,
+    setEditingServerId,
     editingDeliveryId,
     setEditingDeliveryId,
     editingDraftBackup,
