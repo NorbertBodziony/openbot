@@ -87,6 +87,7 @@
     "typecheck:api": "bun run --cwd apps/auth-api typecheck",
     "typecheck:brand": "bun run --cwd packages/brand typecheck",
     "typecheck:contracts": "bun run --cwd packages/contracts typecheck",
+    "typecheck:team-client": "bun run --cwd packages/team-client typecheck",
     "typecheck": "bun run --parallel 'typecheck:*'",
     "lint": "biome check .",
     "format": "biome check --write .",

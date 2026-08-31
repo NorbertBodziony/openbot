@@ -31,6 +31,7 @@
       "!apps/mobile/android",
       "!apps/mobile/ios",
       "!apps/mobile/expo-env.d.ts",
+      "!apps/mobile/src/uniwind-types.d.ts",
       "!**/routeTree.gen.ts",
       "!tools/biome/anti-slop",
       "!coverage",

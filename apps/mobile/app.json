@@ -30,7 +30,26 @@
           "image": "./assets/icons/app-icon.png",
           "imageWidth": 96
         }
-      ]
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow OpenBot to use your camera to scan QR codes.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow OpenBot to access the photos you choose to share.",
+          "cameraPermission": "Allow OpenBot to use your camera to add photos.",
+          "microphonePermission": false
+        }
+      ],
+      "expo-notifications",
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,
