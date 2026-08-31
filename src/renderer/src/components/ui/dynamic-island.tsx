@@ -75,6 +75,8 @@ const DEFAULT_HOVER_CONTENT_MOTION: DynamicIslandHoverContentMotion = {
   translateY: 6,
 };
 
+const COMPACT_EAR_TRACK_WIDTH = 38;
+
 /**
  * A macOS-notch adaptation of SmoothUI's Dynamic Island pattern.
  * Source: https://smoothui.dev/r/dynamic-island.json
@@ -390,12 +392,21 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
 }
 
 function dynamicIslandStyle(props: DynamicIslandProps): string | undefined {
+  const compactWidth =
+    props.compactWidth ??
+    (props.displayMode !== "island" && props.notchSize !== undefined
+      ? defaultNotchCompactWidth(props.notchSize.width)
+      : undefined);
   const styles = [
-    props.compactWidth === undefined ? undefined : `--dynamic-island-compact-width: ${props.compactWidth}px`,
+    compactWidth === undefined ? undefined : `--dynamic-island-compact-width: ${compactWidth}px`,
     props.notchSize === undefined ? undefined : `--dynamic-island-notch-width: ${props.notchSize.width}px`,
     props.notchSize === undefined ? undefined : `--dynamic-island-notch-height: ${props.notchSize.height}px`,
   ].filter((style): style is string => style !== undefined);
   return styles.length > 0 ? styles.join("; ") : undefined;
+}
+
+export function defaultNotchCompactWidth(notchWidth: number): number {
+  return notchWidth + COMPACT_EAR_TRACK_WIDTH * 2;
 }
 
 interface SmoothSizeResizeOptions {
