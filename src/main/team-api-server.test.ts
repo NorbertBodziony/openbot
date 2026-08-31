@@ -385,7 +385,7 @@ describe("TeamApiServer administration", () => {
         oversizedSocket.addEventListener("close", resolve, { once: true }),
       );
       now = 1_000;
-      getRuntimeSnapshot.mockImplementationOnce(() => ({
+      getRuntimeSnapshot.mockImplementation(() => ({
         bots: [],
         activeTurns: [],
         work: [],
