@@ -60,7 +60,7 @@ mac:
   minimumSystemVersion: "13.0"
   notarize: true
   hardenedRuntime: true
-  icon: build/icon-production-macos-safe-area.png
+  icon: build/icon-production.icns
   extraResources:
     - from: build/icon-production-macos-safe-area.png
       to: icons/icon-production-macos-safe-area.png
