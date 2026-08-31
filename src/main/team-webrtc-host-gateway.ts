@@ -31,6 +31,7 @@ interface TeamWebRtcHostGatewayOptions {
   transferDirectory: string;
   renewSignal?: (hostId: string) => Promise<{ signalUrl: string; ticket: string }>;
   onSignalRecoveryFailure?: (error: Error) => void;
+  closeSession?: (sessionId: string) => Promise<void>;
 }
 
 export class TeamWebRtcHostGateway {
@@ -40,6 +41,7 @@ export class TeamWebRtcHostGateway {
   readonly #files: TeamWebRtcFileTransfer;
   readonly #renewSignal: ((hostId: string) => Promise<{ signalUrl: string; ticket: string }>) | null;
   readonly #onSignalRecoveryFailure: (error: Error) => void;
+  readonly #closeSession: (sessionId: string) => Promise<void>;
   readonly #responses = new Map<string, TeamProtocolV2RpcFrame>();
   readonly #events = new Map<number, string>();
   #peerId: string | null = null;
@@ -61,6 +63,7 @@ export class TeamWebRtcHostGateway {
     this.#files = new TeamWebRtcFileTransfer(options.bridge, options.transferDirectory);
     this.#renewSignal = options.renewSignal ?? null;
     this.#onSignalRecoveryFailure = options.onSignalRecoveryFailure ?? (() => undefined);
+    this.#closeSession = options.closeSession ?? (() => Promise.resolve());
     this.#bridge.on("incoming", this.#onIncoming);
     this.#bridge.on("data", this.#onData);
     this.#bridge.on("disconnected", this.#onDisconnected);
@@ -192,7 +195,12 @@ export class TeamWebRtcHostGateway {
   };
 
   readonly #onError = (peerId: string, code: string): void => {
-    if (peerId !== this.#peerId || code !== "authentication_required" || !this.#renewSignal) return;
+    if (
+      peerId !== this.#peerId ||
+      (code !== "authentication_required" && code !== "session_revoked") ||
+      !this.#renewSignal
+    )
+      return;
     if (this.#signalRecovery) return;
     this.#signalRecovery = this.#recoverSignal(peerId)
       .catch((error) => {
@@ -476,7 +484,10 @@ export class TeamWebRtcHostGateway {
     this.#closeDesktopSocket();
     this.#eventsSocket?.close();
     this.#eventsSocket = null;
-    if (this.#localSessionId) this.#store.closeRemoteSession(this.#localSessionId);
+    if (this.#localSessionId) {
+      void this.#closeSession(this.#localSessionId).catch(() => undefined);
+      this.#store.closeRemoteSession(this.#localSessionId);
+    }
     this.#localSessionId = null;
     this.#localSessionToken = null;
   }

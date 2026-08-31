@@ -31,36 +31,56 @@ describe("TeamWebRtcHostGateway", () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-webrtc-host-gateway-"));
     directories.push(directory);
     const bridge = new FakeBridge();
+    const store = new TeamStore(join(directory, "team.json"));
+    await store.initialize();
+    await store.configureWithAccount("Test Host", {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
     const renewSignal = vi
       .fn()
       .mockResolvedValue({ signalUrl: "wss://signal.example.test/v1/signal", ticket: "fresh" });
     const recoveryFailure = vi.fn();
+    const closeSession = vi.fn().mockResolvedValue(undefined);
     const gateway = new TeamWebRtcHostGateway({
       bridge,
-      store: new TeamStore(join(directory, "team.json")),
+      store,
       appVersion: "1.0.0",
       transferDirectory: join(directory, "transfers"),
       renewSignal,
       onSignalRecoveryFailure: recoveryFailure,
+      closeSession,
     });
 
     const starting = gateway.start({
       hostId: "host-1",
       signalUrl: "wss://signal.example.test/v1/signal",
       ticket: "initial",
-      localApiPort: 31_001,
+      localApiPort: 0,
     });
     await vi.waitFor(() => expect(bridge.connections).toHaveLength(1));
     bridge.emit("signalReady", "host-1");
     await starting;
 
-    bridge.emit("error", "host-1", "authentication_required", "expired");
+    bridge.emit("error", "host-1", "session_revoked", "credential rotated");
     await vi.waitFor(() => expect(bridge.connections).toHaveLength(2));
     bridge.emit("signalReady", "host-1");
     await vi.waitFor(() => expect(renewSignal).toHaveBeenCalledWith("host-1"));
 
     expect(bridge.connections[1]).toMatchObject({ peerId: "host-1", token: "fresh", peer: "host" });
     expect(recoveryFailure).not.toHaveBeenCalled();
+    bridge.emit("incoming", "host-1", {
+      connectionId: "connection-1",
+      sessionId: "session-1",
+      userId: "member-account",
+      membershipId: "membership-1",
+      role: "member",
+      sessionExpiresAt: Math.floor(Date.now() / 1_000) + 60,
+    });
+    bridge.emit("disconnected", "host-1");
+    await vi.waitFor(() => expect(closeSession).toHaveBeenCalledWith("session-1"));
     await gateway.stop();
     gateway.dispose();
   });

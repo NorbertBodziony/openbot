@@ -193,19 +193,22 @@ export class RemoteControlPlane {
     const machineToken = randomToken();
     const machineTokenHash = await sha256(machineToken);
     const membershipId = ownerMembershipId;
+    const authEpoch = (existing?.auth_epoch ?? 0) + 1;
+    const event = { type: "remote-auth-changed" as const, hostId, authEpoch };
     await this.#database.batch([
       this.#database
         .prepare(
           `INSERT INTO remote_hosts(
              host_id, owner_user_id, name, device_public_key, machine_token_hash, auth_epoch, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(host_id) DO UPDATE SET
              name = excluded.name,
              device_public_key = excluded.device_public_key,
              machine_token_hash = excluded.machine_token_hash,
+             auth_epoch = excluded.auth_epoch,
              updated_at = excluded.updated_at`,
         )
-        .bind(hostId, user.id, name, input.devicePublicKey ?? null, machineTokenHash, now, now),
+        .bind(hostId, user.id, name, input.devicePublicKey ?? null, machineTokenHash, authEpoch, now, now),
       this.#database
         .prepare(
           `INSERT INTO remote_memberships(
@@ -216,8 +219,10 @@ export class RemoteControlPlane {
              role = 'owner', status = 'active', updated_at = excluded.updated_at`,
         )
         .bind(membershipId, hostId, user.id, now, now),
+      this.#authEventStatement(event, now),
     ]);
-    return { hostId, name, membershipId, authEpoch: existing?.auth_epoch ?? 1, machineToken };
+    await this.#flushAuthEvents();
+    return { hostId, name, membershipId, authEpoch, machineToken };
   }
 
   async listHosts(userId: string) {
@@ -584,7 +589,8 @@ export class RemoteControlPlane {
         host &&
           claims.sessionId === `host-${host.host_id}` &&
           claims.userId === host.owner_user_id &&
-          claims.membershipId === `${host.host_id}:host`,
+          claims.membershipId === `${host.host_id}:host` &&
+          claims.authEpoch === host.auth_epoch,
       );
     }
     const session = await this.#database

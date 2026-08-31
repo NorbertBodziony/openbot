@@ -234,10 +234,19 @@ describe("RemoteControlPlane", () => {
       fetch: webhookFetch,
     });
     const owner = { id: "owner", email: "owner@example.com", name: null, avatarUrl: null };
-    await controlPlane.registerHost(owner, {
+    const firstRegistration = await controlPlane.registerHost(owner, {
       hostId: "host-1",
       name: "Studio Mac",
       ownerMembershipId: "local-owner",
+    });
+    const registration = await controlPlane.registerHost(owner, {
+      hostId: "host-1",
+      name: "Studio Mac",
+      ownerMembershipId: "local-owner",
+    });
+    expect(registration.authEpoch).toBe(firstRegistration.authEpoch + 1);
+    await expect(controlPlane.issueHostTicket("host-1", firstRegistration.machineToken)).rejects.toMatchObject({
+      code: "host_unauthorized",
     });
     expect(database.prepare("SELECT membership_id FROM remote_memberships WHERE user_id = 'owner'").get()).toEqual({
       membership_id: "local-owner",
@@ -258,7 +267,7 @@ describe("RemoteControlPlane", () => {
       userId: owner.id,
       membershipId: "local-owner",
       role: "owner" as const,
-      authEpoch: 1,
+      authEpoch: registration.authEpoch,
       sessionExpiresAt: session.expiresAt / 1_000,
     };
     await expect(controlPlane.validateResumeClaims(claims)).resolves.toBe(true);
@@ -298,17 +307,21 @@ describe("RemoteControlPlane", () => {
     expect(
       database.prepare("SELECT status FROM remote_memberships WHERE membership_id = 'revoked-membership'").get(),
     ).toEqual({ status: "active" });
-    await expect(
-      controlPlane.validateResumeClaims({
-        sessionId: "host-host-1",
-        hostId: "host-1",
-        userId: owner.id,
-        membershipId: "host-1:host",
-        role: "host",
-        authEpoch: 1,
-        sessionExpiresAt: 100,
-      }),
-    ).resolves.toBe(true);
+    const hostClaims = {
+      sessionId: "host-host-1",
+      hostId: "host-1",
+      userId: owner.id,
+      membershipId: "host-1:host",
+      role: "host" as const,
+      authEpoch: registration.authEpoch,
+      sessionExpiresAt: 100,
+    };
+    await expect(controlPlane.validateResumeClaims(hostClaims)).resolves.toBe(false);
+    const currentAuthEpoch = registration.authEpoch + 2;
+    expect(database.prepare("SELECT auth_epoch FROM remote_hosts WHERE host_id = 'host-1'").get()).toEqual({
+      auth_epoch: currentAuthEpoch,
+    });
+    await expect(controlPlane.validateResumeClaims({ ...hostClaims, authEpoch: currentAuthEpoch })).resolves.toBe(true);
 
     const insertInvite = database.prepare(
       `INSERT INTO remote_invites(

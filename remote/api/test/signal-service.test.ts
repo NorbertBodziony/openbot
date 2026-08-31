@@ -81,8 +81,9 @@ describe("SignalService", () => {
     service.revoke("host-1", 2);
     expect(first.messages.at(-1)).toContain('"code":"session_revoked"');
     expect(first.closed).toBe(true);
-    expect(host.messages.at(-1)).toContain('"type":"disconnect"');
-    expect(host.closed).toBe(false);
+    expect(host.messages.some((message) => message.includes('"type":"disconnect"'))).toBe(true);
+    expect(host.messages.at(-1)).toContain('"code":"session_revoked"');
+    expect(host.closed).toBe(true);
   });
 
   it("does not let an owner client ticket impersonate the host", async () => {

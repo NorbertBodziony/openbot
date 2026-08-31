@@ -196,10 +196,9 @@ export class SignalService {
       if (connection.hostId === hostId) this.#dropConnection(connection.id, connection.client.id);
     }
     for (const peer of [...this.#peers.values()]) {
-      if (peer.peer === "client" && peer.claims.hostId === hostId && peer.claims.authEpoch < authEpoch) {
-        if (peer.connectionId) this.#dropConnection(peer.connectionId, peer.socket.id);
-        this.#fail(peer.socket, "session_revoked", "Remote access was revoked.", 1008);
-      }
+      if (peer.claims.hostId !== hostId || peer.claims.authEpoch >= authEpoch) continue;
+      if (peer.connectionId) this.#dropConnection(peer.connectionId, peer.socket.id);
+      this.#fail(peer.socket, "session_revoked", "Remote access was revoked.", 1008);
     }
   }
 

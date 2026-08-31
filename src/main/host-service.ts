@@ -222,6 +222,7 @@ export class HostService extends EventEmitter<HostEvents> {
               message: error.message,
             });
           },
+          closeSession: (sessionId) => this.#remoteScreen.revokeTeamSession(sessionId),
         })
       : null;
   }
