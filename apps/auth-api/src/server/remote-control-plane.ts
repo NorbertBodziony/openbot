@@ -225,7 +225,6 @@ export class RemoteControlPlane {
              SELECT ?, host_id, ?, 'owner', 'active', ?, ?
              FROM remote_hosts WHERE host_id = ? AND owner_user_id = ?
              ON CONFLICT(host_id, user_id) DO UPDATE SET
-               membership_id = excluded.membership_id,
                role = 'owner', status = 'active', updated_at = excluded.updated_at`,
           )
           .bind(ownerMembershipId, user.id, now, now, hostId, user.id),
@@ -233,10 +232,11 @@ export class RemoteControlPlane {
       if (metadata.some((result) => (result.meta.changes ?? 0) !== 1)) {
         throw new RemoteControlPlaneError(403, "host_owner_mismatch", "This host belongs to another account.");
       }
+      const membership = await this.#requireRole(hostId, user.id, ["owner"]);
       return {
         hostId,
         name,
-        membershipId: ownerMembershipId,
+        membershipId: membership.membership_id,
         authEpoch: existing.auth_epoch,
         machineToken: null,
       };
@@ -267,7 +267,6 @@ export class RemoteControlPlane {
            SELECT ?, host_id, ?, 'owner', 'active', ?, ?
            FROM remote_hosts WHERE host_id = ? AND owner_user_id = ?
            ON CONFLICT(host_id, user_id) DO UPDATE SET
-             membership_id = excluded.membership_id,
              role = 'owner', status = 'active', updated_at = excluded.updated_at`,
         )
         .bind(membershipId, user.id, now, now, hostId, user.id),
@@ -285,7 +284,14 @@ export class RemoteControlPlane {
         "A newer host registration replaced this one.",
       );
     }
-    return { hostId, name, membershipId, authEpoch: registered.auth_epoch, machineToken };
+    const ownerMembership = await this.#requireRole(hostId, user.id, ["owner"]);
+    return {
+      hostId,
+      name,
+      membershipId: ownerMembership.membership_id,
+      authEpoch: registered.auth_epoch,
+      machineToken,
+    };
   }
 
   async listHosts(userId: string) {

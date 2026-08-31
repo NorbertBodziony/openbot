@@ -271,7 +271,7 @@ describe("RemoteControlPlane", () => {
       code: "host_unauthorized",
     });
     expect(database.prepare("SELECT membership_id FROM remote_memberships WHERE user_id = 'owner'").get()).toEqual({
-      membership_id: "local-owner",
+      membership_id: "host-1:owner",
     });
     const invite = await controlPlane.createInvite(owner, { hostId: "host-1", role: "member" });
     await expect(controlPlane.acceptInvite(owner, invite.token)).rejects.toMatchObject({
@@ -287,7 +287,7 @@ describe("RemoteControlPlane", () => {
       sessionId: session.sessionId,
       hostId: "host-1",
       userId: owner.id,
-      membershipId: "local-owner",
+      membershipId: "host-1:owner",
       role: "owner" as const,
       authEpoch: registration.authEpoch,
       sessionExpiresAt: session.expiresAt / 1_000,

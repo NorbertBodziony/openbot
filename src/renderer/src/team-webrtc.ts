@@ -39,6 +39,7 @@ const signalMessageSchema = z
     membershipId: z.string().optional(),
     role: z.enum(["owner", "admin", "member"]).optional(),
     sessionExpiresAt: z.number().int().positive().optional(),
+    resumed: z.boolean().optional(),
   })
   .loose();
 type SignalMessage = z.infer<typeof signalMessageSchema>;
@@ -255,6 +256,7 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
     return;
   }
   if (message.type === "peer-ready" && state.role === "host" && message.connectionId) {
+    if (!message.resumed && state.peerConnection) disconnectPeerConnection(state);
     state.connectionId = message.connectionId;
     post({
       type: "incoming-peer",
@@ -381,6 +383,7 @@ function bindDataChannel(
       if (data !== undefined) post({ type: "data", peerId: state.id, channel: kind, data });
     } catch (error) {
       failPeer(state, error);
+      disconnectPeerConnection(state);
     }
   };
   channel.onerror = () =>

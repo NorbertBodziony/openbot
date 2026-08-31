@@ -22,6 +22,22 @@ describe("SignalService", () => {
       resumed.messages.some((message) => message.includes('"type":"ready"') && message.includes('"connectionId":"')),
     ).toBe(true);
     expect(host.messages.filter((message) => message.includes('"type":"peer-ready"'))).toHaveLength(2);
+    expect(host.messages.at(-1)).toContain('"resumed":true');
+  });
+
+  it("marks a fresh ticket for the same logical session as a replacement", async () => {
+    const service = new SignalService(fakeTokens(), 8);
+    const host = socket("host");
+    const firstClient = socket("client");
+    await hello(service, host, "host-ticket", "host");
+    await hello(service, firstClient, "client-ticket", "client");
+
+    const replacement = socket("replacement");
+    await hello(service, replacement, "fresh-client-ticket", "client");
+
+    expect(firstClient.closed).toBe(true);
+    expect(host.messages.at(-1)).toContain('"type":"peer-ready"');
+    expect(host.messages.at(-1)).toContain('"resumed":false');
   });
 
   it("validates initial tickets while a restarted Signal can have missed revocations", async () => {
@@ -214,6 +230,7 @@ function fakeTokens() {
       if (token === "host-ticket") return claims("host", "host-jti");
       if (token === "stale-host-ticket") return claims("host", "stale-host-jti");
       if (token === "client-ticket") return claims("member", "client-jti");
+      if (token === "fresh-client-ticket") return claims("member", "fresh-client-jti");
       if (token === "second-client-ticket") return claims("member", "second-client-jti", "second-client-session");
       if (token === "owner-ticket") return claims("owner", "owner-jti");
       if (token === "current-host-ticket") return claims("host", "current-host-jti", "host-session", 2);

@@ -54,6 +54,7 @@ export type SignalServerMessage =
       membershipId: string;
       role: Exclude<RemoteRole, "host">;
       sessionExpiresAt: number;
+      resumed: boolean;
     }
   | Exclude<SignalClientMessage, { type: "hello"; version: 1; peer: "host" | "client"; token: string }>
   | { type: "error"; version: 1; code: SignalErrorCode; message: string; connectionId?: string };

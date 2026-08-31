@@ -31,6 +31,7 @@ interface AuthenticatedPeer {
   claims: RemoteTicketClaims;
   peer: "host" | "client";
   connectionId: string | null;
+  resumed: boolean;
 }
 
 interface ActiveConnection {
@@ -263,7 +264,13 @@ export class SignalService {
       return;
     }
     if (usedInitialTicket) this.#usedTicketIds.set(claims.jti, claims.exp);
-    const peer: AuthenticatedPeer = { socket, claims, peer: message.peer, connectionId: null };
+    const peer: AuthenticatedPeer = {
+      socket,
+      claims,
+      peer: message.peer,
+      connectionId: null,
+      resumed: !usedInitialTicket,
+    };
     this.#peers.set(socket.id, peer);
     this.#schedulePeerExpiration(peer);
     this.#metrics.acceptedConnections += 1;
@@ -324,6 +331,7 @@ export class SignalService {
       membershipId: claims.membershipId,
       role: memberRole(claims.role),
       sessionExpiresAt: claims.sessionExpiresAt,
+      resumed: peer.resumed,
     });
   }
 
@@ -372,6 +380,7 @@ export class SignalService {
       membershipId: client.claims.membershipId,
       role: memberRole(client.claims.role),
       sessionExpiresAt: client.claims.sessionExpiresAt,
+      resumed: client.resumed,
     });
   }
 
