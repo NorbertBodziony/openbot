@@ -445,15 +445,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     try {
       frame = decodeTeamProtocolV2RpcFrame(data);
     } catch {
-      const error = new TeamWebRtcRequestError(502, "protocol_error", "The host returned an invalid RPC frame.");
-      for (const [requestId, pending] of this.#pending) {
-        if (pending.hostId !== hostId) continue;
-        clearTimeout(pending.timer);
-        this.#pending.delete(requestId);
-        pending.reject(error);
-      }
-      this.emit("error", hostId, error.code, error.message);
-      void this.disconnect(hostId).catch(() => undefined);
+      this.#failProtocol(hostId, "The host returned an invalid RPC frame.");
       return;
     }
     if (frame.type !== "response") return;
@@ -498,7 +490,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         return;
       }
       if (frame.sequence !== lastSequence + 1) {
-        this.emit("error", hostId, "protocol_error", "The host event sequence has a gap.");
+        this.#failProtocol(hostId, "The host event sequence has a gap.");
         return;
       }
       const decoded = decodeTeamProtocolV2CurrentEvent(frame);
@@ -510,8 +502,20 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         encodeTeamProtocolV2Frame({ version: 2, type: "event-ack", throughSequence: frame.sequence }),
       );
     } catch {
-      this.emit("error", hostId, "protocol_error", "The host returned an invalid event frame.");
+      this.#failProtocol(hostId, "The host returned an invalid event frame.");
     }
+  }
+
+  #failProtocol(hostId: string, message: string): void {
+    const error = new TeamWebRtcRequestError(502, "protocol_error", message);
+    for (const [requestId, pending] of this.#pending) {
+      if (pending.hostId !== hostId) continue;
+      clearTimeout(pending.timer);
+      this.#pending.delete(requestId);
+      pending.reject(error);
+    }
+    this.emit("error", hostId, error.code, error.message);
+    void this.disconnect(hostId).catch(() => undefined);
   }
 
   readonly #onPath = (hostId: string, path: "p2p" | "relay"): void => {

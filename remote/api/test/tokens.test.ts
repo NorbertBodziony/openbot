@@ -49,6 +49,7 @@ describe("remote tokens", () => {
     const servers = service.iceServers(claims, now);
     expect(claims.sessionId).toBe("session-1");
     expect(servers[1]).toMatchObject({ username: `${now + 3_600}:session-1` });
+    expect(() => service.iceServers({ ...claims, sessionExpiresAt: now }, now)).toThrow("expired");
     const resume = await service.issueResumeToken(claims, now);
     expect((await service.verifyResumeToken(resume)).hostId).toBe("host-1");
     expect((await service.verifyResumeToken(resume, new Date((now + RESUME_TTL_SECONDS - 1) * 1_000))).sessionId).toBe(

@@ -177,6 +177,7 @@ export class RemoteTokenService {
 
   iceServers(claims: RemoteTicketClaims, nowSeconds = Math.floor(Date.now() / 1_000)): IceServer[] {
     const expiration = Math.min(claims.sessionExpiresAt, nowSeconds + TURN_TTL_SECONDS);
+    if (expiration <= nowSeconds) throw new Error("The remote session has expired.");
     const username = `${expiration}:${claims.sessionId}`;
     const credential = createHmac("sha1", this.#turnSecret).update(username).digest("base64");
     return [

@@ -249,7 +249,20 @@ describe("RemoteControlPlane", () => {
       name: "Studio Mac",
       ownerMembershipId: "local-owner",
     });
+    if (!firstRegistration.machineToken || !registration.machineToken) {
+      throw new Error("The rotated host credential is missing.");
+    }
     expect(registration.authEpoch).toBe(firstRegistration.authEpoch + 1);
+    const metadataUpdate = await controlPlane.registerHost(owner, {
+      hostId: "host-1",
+      name: "Renamed Studio Mac",
+      ownerMembershipId: "local-owner",
+      rotateCredential: false,
+    });
+    expect(metadataUpdate).toMatchObject({ authEpoch: registration.authEpoch, machineToken: null });
+    await expect(controlPlane.issueHostTicket("host-1", registration.machineToken)).resolves.toMatchObject({
+      ticket: expect.any(String),
+    });
     await expect(controlPlane.issueHostTicket("host-1", firstRegistration.machineToken)).rejects.toMatchObject({
       code: "host_unauthorized",
     });
@@ -375,6 +388,7 @@ describe("RemoteControlPlane", () => {
     if (successfulRegistration?.status !== "fulfilled") {
       throw new Error("Concurrent host registration did not produce a winner.");
     }
+    if (!successfulRegistration.value.machineToken) throw new Error("The winning host credential is missing.");
     await expect(
       controlPlane.issueHostTicket("race-host", successfulRegistration.value.machineToken),
     ).resolves.toMatchObject({ ticket: expect.any(String) });

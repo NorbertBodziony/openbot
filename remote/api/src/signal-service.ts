@@ -54,6 +54,7 @@ const MAXIMUM_RATE_WINDOWS = 100_000;
 const RATE_WINDOW_MILLISECONDS = 60_000;
 const SIGNAL_RECONNECT_GRACE_MILLISECONDS = 30_000;
 const INITIAL_TICKET_TTL_MILLISECONDS = 3 * 60_000;
+const MAXIMUM_EXPIRATION_TIMER_MILLISECONDS = 24 * 60 * 60_000;
 
 export class SignalService {
   readonly #tokens: RemoteTokenProvider;
@@ -65,6 +66,7 @@ export class SignalService {
   readonly #hosts = new Map<string, Set<string>>();
   readonly #connections = new Map<string, ActiveConnection>();
   readonly #connectionDropTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly #peerExpirationTimers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly #usedTicketIds = new Map<string, number>();
   readonly #revokedEpochs = new Map<string, number>();
   readonly #revokedSessions = new Map<string, number>();
@@ -131,6 +133,10 @@ export class SignalService {
       return;
     }
     if (message.type === "turn-refresh") {
+      if (peer.claims.sessionExpiresAt <= Math.floor(Date.now() / 1_000)) {
+        this.#fail(socket, "authentication_required", "The remote session expired.", 1008);
+        return;
+      }
       if (!this.#ownsConnection(peer, message.connectionId)) {
         this.#fail(socket, "permission_denied", "The connection does not belong to this peer.");
         return;
@@ -161,6 +167,7 @@ export class SignalService {
   disconnect(socket: SignalSocket): void {
     this.#sockets.delete(socket.id);
     const peer = this.#peers.get(socket.id);
+    this.#clearPeerExpiration(socket.id);
     if (!peer) {
       this.#metrics.activeSockets = this.#sockets.size;
       return;
@@ -261,6 +268,7 @@ export class SignalService {
     if (usedInitialTicket) this.#usedTicketIds.set(claims.jti, claims.exp);
     const peer: AuthenticatedPeer = { socket, claims, peer: message.peer, connectionId: null };
     this.#peers.set(socket.id, peer);
+    this.#schedulePeerExpiration(peer);
     this.#metrics.acceptedConnections += 1;
     this.#metrics.activeSockets = this.#sockets.size;
     const resumeToken = await this.#tokens.issueResumeToken(claims);
@@ -376,6 +384,7 @@ export class SignalService {
     const previous = this.#peers.get(connection.client.id);
     if (previous) {
       this.#peers.delete(connection.client.id);
+      this.#clearPeerExpiration(connection.client.id);
       previous.socket.close(4000, "Remote session resumed");
     }
   }
@@ -390,6 +399,35 @@ export class SignalService {
     const clientPeer = this.#peers.get(connection.client.id);
     if (clientPeer) clientPeer.connectionId = null;
     this.#metrics.activePeerConnections = this.#connections.size;
+  }
+
+  #schedulePeerExpiration(peer: AuthenticatedPeer): void {
+    this.#clearPeerExpiration(peer.socket.id);
+    const remaining = peer.claims.sessionExpiresAt * 1_000 - Date.now();
+    if (remaining <= 0) {
+      this.#fail(peer.socket, "authentication_required", "The remote session expired.", 1008);
+      return;
+    }
+    const timer = setTimeout(
+      () => {
+        this.#peerExpirationTimers.delete(peer.socket.id);
+        if (this.#peers.get(peer.socket.id) !== peer) return;
+        if (peer.claims.sessionExpiresAt * 1_000 > Date.now()) {
+          this.#schedulePeerExpiration(peer);
+          return;
+        }
+        this.#fail(peer.socket, "authentication_required", "The remote session expired.", 1008);
+      },
+      Math.min(remaining, MAXIMUM_EXPIRATION_TIMER_MILLISECONDS),
+    );
+    timer.unref?.();
+    this.#peerExpirationTimers.set(peer.socket.id, timer);
+  }
+
+  #clearPeerExpiration(socketId: string): void {
+    const timer = this.#peerExpirationTimers.get(socketId);
+    if (timer) clearTimeout(timer);
+    this.#peerExpirationTimers.delete(socketId);
   }
 
   #scheduleConnectionDrop(connection: ActiveConnection): void {

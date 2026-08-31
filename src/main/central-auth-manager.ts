@@ -40,7 +40,7 @@ export interface RegisteredRemoteHost {
   name: string;
   membershipId: string;
   authEpoch: number;
-  machineToken: string;
+  machineToken: string | null;
 }
 
 export interface RemoteConnectionBootstrap {
@@ -163,12 +163,17 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     ownerMembershipId: string;
     devicePublicKey?: string | null;
   }): Promise<RegisteredRemoteHost> {
+    const storedMachineToken = this.#teamHostTokens.get(input.hostId.toLowerCase());
     const result = await this.#authorizedRequest(
       "/v2/remote/hosts/register",
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...input, rotateCredential: !storedMachineToken }),
+      },
       decodeRegisteredRemoteHost,
     );
-    this.#teamHostTokens.set(input.hostId.toLowerCase(), result.machineToken);
+    if (result.machineToken) this.#teamHostTokens.set(input.hostId.toLowerCase(), result.machineToken);
     await this.#writeStoredSession();
     return result;
   }
@@ -799,7 +804,7 @@ function decodeRegisteredRemoteHost(value: unknown): RegisteredRemoteHost {
     name: requiredString(record, "name"),
     membershipId: requiredString(record, "membershipId"),
     authEpoch: record.authEpoch,
-    machineToken: requiredString(record, "machineToken"),
+    machineToken: record.machineToken === null ? null : requiredString(record, "machineToken"),
   };
 }
 

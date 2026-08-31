@@ -35,6 +35,27 @@ describe("SignalService", () => {
     expect(host.closed).toBe(true);
   });
 
+  it("expires an authenticated host before it can receive stale TURN credentials", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    try {
+      const tokens = fakeTokens();
+      const verifyTicket = tokens.verifyTicket;
+      tokens.verifyTicket = async (token) => ({
+        ...(await verifyTicket(token)),
+        sessionExpiresAt: Math.floor(Date.now() / 1_000) + 1,
+      });
+      const service = new SignalService(tokens, 8);
+      const host = socket("host");
+      await hello(service, host, "host-ticket", "host");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(host.messages.at(-1)).toContain('"code":"authentication_required"');
+      expect(host.closed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("restores the client mapping when only the host Signal socket reconnects", async () => {
     const service = new SignalService(fakeTokens(), 8);
     const host = socket("host");

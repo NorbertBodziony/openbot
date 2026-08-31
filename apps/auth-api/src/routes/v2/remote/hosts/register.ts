@@ -1,4 +1,4 @@
-import { isString } from "@openbot/contracts/runtime-values";
+import { isBoolean, isString } from "@openbot/contracts/runtime-values";
 import { createFileRoute } from "@tanstack/solid-router";
 import { readJsonObject } from "../../../../server/json-body";
 import {
@@ -21,6 +21,7 @@ export const Route = createFileRoute("/v2/remote/hosts/register")({
             !isString(body.hostId) ||
             !isString(body.name) ||
             !isString(body.ownerMembershipId) ||
+            !(body.rotateCredential === undefined || isBoolean(body.rotateCredential)) ||
             !(body.devicePublicKey === undefined || body.devicePublicKey === null || isString(body.devicePublicKey))
           ) {
             return apiError(400, "invalid_remote_request", "The host registration is invalid.");
@@ -31,6 +32,7 @@ export const Route = createFileRoute("/v2/remote/hosts/register")({
               name: body.name,
               ownerMembershipId: body.ownerMembershipId,
               devicePublicKey: body.devicePublicKey,
+              rotateCredential: body.rotateCredential,
             }),
             201,
           );

@@ -28,6 +28,7 @@ interface RemoteHostRow {
   logo_key: string | null;
   auth_epoch: number;
   machine_token_hash: string | null;
+  device_public_key: string | null;
 }
 
 interface RemoteMembershipRow {
@@ -180,7 +181,13 @@ export class RemoteControlPlane {
 
   async registerHost(
     user: AuthUser,
-    input: { hostId: string; name: string; ownerMembershipId: string; devicePublicKey?: string | null },
+    input: {
+      hostId: string;
+      name: string;
+      ownerMembershipId: string;
+      devicePublicKey?: string | null;
+      rotateCredential?: boolean;
+    },
   ) {
     const hostId = requiredIdentifier(input.hostId, "host ID");
     const name = requiredText(input.name, 120, "host name");
@@ -190,6 +197,41 @@ export class RemoteControlPlane {
       throw new RemoteControlPlaneError(403, "host_owner_mismatch", "This host belongs to another account.");
     }
     const now = this.#now();
+    const devicePublicKey = input.devicePublicKey ?? null;
+    const rotateCredential =
+      !existing || input.rotateCredential !== false || existing.device_public_key !== devicePublicKey;
+    if (!rotateCredential && existing) {
+      const metadata = await this.#database.batch([
+        this.#database
+          .prepare(
+            `UPDATE remote_hosts SET name = ?, device_public_key = ?, updated_at = ?
+             WHERE host_id = ? AND owner_user_id = ?`,
+          )
+          .bind(name, devicePublicKey, now, hostId, user.id),
+        this.#database
+          .prepare(
+            `INSERT INTO remote_memberships(
+               membership_id, host_id, user_id, role, status, created_at, updated_at
+             )
+             SELECT ?, host_id, ?, 'owner', 'active', ?, ?
+             FROM remote_hosts WHERE host_id = ? AND owner_user_id = ?
+             ON CONFLICT(host_id, user_id) DO UPDATE SET
+               membership_id = excluded.membership_id,
+               role = 'owner', status = 'active', updated_at = excluded.updated_at`,
+          )
+          .bind(ownerMembershipId, user.id, now, now, hostId, user.id),
+      ]);
+      if (metadata.some((result) => (result.meta.changes ?? 0) !== 1)) {
+        throw new RemoteControlPlaneError(403, "host_owner_mismatch", "This host belongs to another account.");
+      }
+      return {
+        hostId,
+        name,
+        membershipId: ownerMembershipId,
+        authEpoch: existing.auth_epoch,
+        machineToken: null,
+      };
+    }
     const machineToken = randomToken();
     const machineTokenHash = await sha256(machineToken);
     const membershipId = ownerMembershipId;
@@ -207,7 +249,7 @@ export class RemoteControlPlane {
              updated_at = excluded.updated_at
            WHERE remote_hosts.owner_user_id = excluded.owner_user_id`,
         )
-        .bind(hostId, user.id, name, input.devicePublicKey ?? null, machineTokenHash, now, now),
+        .bind(hostId, user.id, name, devicePublicKey, machineTokenHash, now, now),
       this.#database
         .prepare(
           `INSERT INTO remote_memberships(
@@ -694,7 +736,7 @@ export class RemoteControlPlane {
   #host(hostId: string): Promise<RemoteHostRow | null> {
     return this.#database
       .prepare(
-        `SELECT host_id, owner_user_id, name, logo_key, auth_epoch, machine_token_hash
+        `SELECT host_id, owner_user_id, name, logo_key, auth_epoch, machine_token_hash, device_public_key
          FROM remote_hosts WHERE host_id = ? LIMIT 1`,
       )
       .bind(hostId)
