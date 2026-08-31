@@ -2002,6 +2002,7 @@ app.on("before-quit", (event) => {
 });
 
 async function prepareForUpdateInstall(): Promise<void> {
+  await (browserHost?.flushPersistentStorage() ?? Promise.resolve());
   await destroyBrowserForShutdown();
   await prepareForShutdown(true);
 }

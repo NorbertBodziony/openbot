@@ -166,6 +166,7 @@ export class BrowserHost {
   #target: BrowserViewTarget = "main";
   readonly #mountedViews = new Map<WebContentsView, BrowserWindow>();
   #persistQueue: Promise<void> = Promise.resolve();
+  #destroyPromise: Promise<void> | null = null;
 
   constructor(window: BrowserWindow, downloadsRoot: string, statePath: string) {
     this.#window = window;
@@ -484,8 +485,14 @@ export class BrowserHost {
     }
   }
 
-  async destroy(options: { storageAlreadyFlushed?: boolean } = {}): Promise<void> {
-    if (!options.storageAlreadyFlushed) await this.flushPersistentStorage();
+  destroy(): Promise<void> {
+    this.#destroyPromise ??= this.#destroyPersistentStorageAndViews();
+    return this.#destroyPromise;
+  }
+
+  async #destroyPersistentStorageAndViews(): Promise<void> {
+    const statePersistence = this.#persistState();
+    this.#session.flushStorageData();
     for (const tab of this.#tabs.values()) {
       this.#unmountView(tab.view);
       tab.view.webContents.close();
@@ -494,6 +501,8 @@ export class BrowserHost {
     this.#listeners.clear();
     this.clearControls();
     this.#controlListeners.clear();
+    this.#session.flushStorageData();
+    await Promise.all([this.#session.cookies.flushStore(), statePersistence]);
   }
 
   async flushPersistentStorage(): Promise<void> {
@@ -503,6 +512,7 @@ export class BrowserHost {
   }
 
   #createTab(id: string, requestedUrl: string, ownerThreadId: string | null, ownerBotId: string | null): InternalTab {
+    if (this.#destroyPromise) throw new Error("BrowserHost is shutting down.");
     const view = this.#createView();
     view.webContents.setUserAgent(embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), requestedUrl));
     this.#mountView(view);

@@ -304,7 +304,19 @@ async function main(): Promise<void> {
 
     const persistedTab = await browser.open(`${origin}/cookie`, "persisted-thread", "persisted-bot");
     await browser.activate(persistedTab.id);
-    await browser.destroy();
+    const browserDestruction = browser.destroy();
+    if (browser.listTabs().length !== 0) {
+      throw new Error("BrowserHost kept views active while shutdown persistence was pending.");
+    }
+    await browserDestruction;
+    await browser
+      .open(`${origin}/cookie`, "late-thread")
+      .then(() => {
+        throw new Error("BrowserHost accepted a new tab after shutdown started.");
+      })
+      .catch((error) => {
+        if (!String(error).includes("shutting down")) throw error;
+      });
     const restoredWindow = new BrowserWindow({ show: false });
     window.destroy();
     const restoredBrowser = new BrowserHost(restoredWindow, downloadsRoot, statePath);
@@ -348,7 +360,6 @@ async function runPersistencePhase(root: string, origin: string, phase: string):
   await app.whenReady();
   const window = new BrowserWindow({ show: false });
   const browser = new BrowserHost(window, join(root, "downloads"), join(root, "browser-tabs.json"));
-  let storageFlushed = false;
   await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } });
   try {
     const tab = await browser.open(`${origin}/persistence?phase=${encodeURIComponent(phase)}`, "persistence-thread");
@@ -374,10 +385,9 @@ async function runPersistencePhase(root: string, origin: string, phase: string):
       process.stdout.write("BrowserHost: signed macOS app must verify encrypted cookie persistence.\n");
     }
     await browser.flushPersistentStorage();
-    storageFlushed = true;
   } finally {
     try {
-      await browser.destroy({ storageAlreadyFlushed: storageFlushed });
+      await browser.destroy();
     } finally {
       window.destroy();
     }
