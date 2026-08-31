@@ -738,9 +738,13 @@ describe("MessageBody", () => {
   });
 
   it.each([
-    ["***", "asterisk"],
-    ["___", "underscore"],
-  ])("hides an incomplete combined %s emphasis marker while streaming", async (marker, name) => {
+    ["*", "asterisk italic", "em"],
+    ["_", "underscore italic", "em"],
+    ["***", "asterisk bold italic", "em strong, strong em"],
+    ["___", "underscore bold italic", "em strong, strong em"],
+    ["****", "nested asterisk bold", "strong strong"],
+    ["____", "nested underscore bold", "strong strong"],
+  ])("hides an incomplete %s marker while streaming", async (marker, name, selector) => {
     const [body, setBody] = createSignal(`Use ${marker}Kobal`);
     const [streaming, setStreaming] = createSignal(true);
     const { container } = render(() => (
@@ -766,7 +770,7 @@ describe("MessageBody", () => {
     setBody(`Use ${marker}Kobalte${marker}`);
     setStreaming(false);
 
-    await waitFor(() => expect(screen.getByText("Kobalte").closest("strong, em")).not.toBeNull());
+    await waitFor(() => expect(container.querySelector(selector)).toHaveTextContent("Kobalte"));
     expect(container).not.toHaveTextContent(marker);
   });
 
@@ -794,7 +798,7 @@ describe("MessageBody", () => {
     expect(screen.getByRole("link", { name: "label **literal" })).toBeInTheDocument();
   });
 
-  it.each(["Use **", "Use __", "Use ***", "Use ___"])(
+  it.each(["Use *", "Use _", "Use **", "Use __", "Use ***", "Use ___", "Use ****", "Use ____"])(
     "hides an emphasis marker at the end of a streaming chunk",
     (body) => {
       const { container } = render(() => (
@@ -816,6 +820,30 @@ describe("MessageBody", () => {
 
       expect(container).toHaveTextContent("Use");
       expect(container).not.toHaveTextContent(body.trim().slice(4));
+    },
+  );
+
+  it.each(["value*", "value_", "value**", "value__", "value***", "value___"])(
+    "preserves a literal trailing delimiter while streaming",
+    (body) => {
+      const { container } = render(() => (
+        <MessageBody
+          message={{
+            id: `message-streaming-literal-${body.at(-1)}`,
+            author: "bot",
+            body,
+            time: "10:00",
+            streaming: true,
+          }}
+          bots={bots}
+          onSelectAgent={vi.fn()}
+          onOpenLink={vi.fn()}
+          onPreview={vi.fn()}
+          onAttachmentAction={vi.fn()}
+        />
+      ));
+
+      expect(container).toHaveTextContent(body);
     },
   );
 
@@ -869,6 +897,28 @@ describe("MessageBody", () => {
     setStreaming(false);
 
     await waitFor(() => expect(screen.getByText("bold").tagName).toBe("STRONG"));
+  });
+
+  it("preserves literal markers in a completed streaming table header", () => {
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-table-header",
+          author: "bot",
+          body: "| A | **literal |\n| --- | --- |",
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(container).toHaveTextContent("**literal");
   });
 
   it("keeps Markdown tables in user messages as plain text", () => {

@@ -307,13 +307,9 @@ function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentPro
         <thead>
           <tr>
             <For each={headers()}>
-              {(cell, index) => (
+              {(cell) => (
                 <th scope="col" data-align={cell.align ?? "left"}>
-                  <MarkdownInline
-                    tokens={cell.tokens}
-                    content={props.content}
-                    streaming={props.streaming === true && rows().length === 0 && index() === headers().length - 1}
-                  />
+                  <MarkdownInline tokens={cell.tokens} content={props.content} />
                 </th>
               )}
             </For>
@@ -355,7 +351,7 @@ function MarkdownInline(props: {
   const renderedTokens = createMemo(() => {
     const values = tokens();
     const lastTokenIndex = lastRenderableTokenIndex(values);
-    const markerTokenIndex = props.streaming === true ? incompleteStrongMarkerTokenIndex(values) : -1;
+    const markerTokenIndex = props.streaming === true ? incompleteEmphasisMarkerTokenIndex(values) : -1;
     return values.map((token, index) => ({
       token,
       streaming: index === markerTokenIndex,
@@ -502,23 +498,22 @@ function RichText(props: {
   return (
     <RichMessageText
       {...props.content}
-      body={props.streaming ? hideIncompleteStrongMarker(props.body) : props.body}
+      body={props.streaming ? hideIncompleteEmphasisMarker(props.body) : props.body}
       showCitationFooter={false}
       streamingTail={props.streamingTail}
     />
   );
 }
 
-function hideIncompleteStrongMarker(body: string): string {
+function hideIncompleteEmphasisMarker(body: string): string {
   const characters = [...body];
-  const markerIndex = incompleteStrongMarkerIndex(characters);
-  if (markerIndex === undefined) return body;
-  const markerLength = characters[markerIndex + 2] === characters[markerIndex] ? 3 : 2;
-  characters.splice(markerIndex, markerLength);
+  const marker = incompleteEmphasisMarker(characters);
+  if (!marker) return body;
+  characters.splice(marker.index, marker.length);
   return characters.join("");
 }
 
-function incompleteStrongMarkerTokenIndex(tokens: Token[]): number {
+function incompleteEmphasisMarkerTokenIndex(tokens: Token[]): number {
   const characters: string[] = [];
   const owners: number[] = [];
   for (const [tokenIndex, token] of tokens.entries()) {
@@ -527,18 +522,18 @@ function incompleteStrongMarkerTokenIndex(tokens: Token[]): number {
       owners.push(token.type === "text" ? tokenIndex : -1);
     }
   }
-  const markerIndex = incompleteStrongMarkerIndex(
+  const marker = incompleteEmphasisMarker(
     characters,
     (start, end) => owners[start] !== -1 && owners[start] === owners[end - 1],
   );
-  return markerIndex === undefined ? -1 : (owners[markerIndex] ?? -1);
+  return marker ? (owners[marker.index] ?? -1) : -1;
 }
 
-function incompleteStrongMarkerIndex(
+function incompleteEmphasisMarker(
   characters: string[],
   eligible: (start: number, end: number) => boolean = () => true,
-): number | undefined {
-  let markerIndex: number | undefined;
+): { index: number; length: number } | undefined {
+  let marker: { index: number; length: number } | undefined;
   for (let index = 0; index < characters.length; ) {
     const delimiter = characters[index];
     if (delimiter !== "*" && delimiter !== "_") {
@@ -549,24 +544,17 @@ function incompleteStrongMarkerIndex(
     while (characters[runEnd] === delimiter) runEnd += 1;
     const previous = characters[index - 1];
     const next = characters[runEnd];
-    const runLength = runEnd - index;
-    if (
-      (runLength === 2 || runLength === 3) &&
-      eligible(index, runEnd) &&
-      canOpenStrongDelimiter(delimiter, previous, next)
-    ) {
-      markerIndex = index;
+    if (eligible(index, runEnd) && canOpenEmphasisDelimiter(delimiter, previous, next)) {
+      marker = { index, length: runEnd - index };
     }
     index = runEnd;
   }
-  return markerIndex;
+  return marker;
 }
 
-function canOpenStrongDelimiter(delimiter: "*" | "_", previous: string | undefined, next: string | undefined) {
+function canOpenEmphasisDelimiter(delimiter: "*" | "_", previous: string | undefined, next: string | undefined) {
   if (next === undefined) {
-    return (
-      delimiter === "*" || previous === undefined || isMarkdownWhitespace(previous) || isMarkdownPunctuation(previous)
-    );
+    return previous === undefined || isMarkdownWhitespace(previous) || isMarkdownPunctuation(previous);
   }
   return (
     isLeftFlankingMarkdownDelimiter(previous, next) &&
