@@ -87,6 +87,7 @@ export class HostedSiteService {
   ) {}
 
   async list(userId: string): Promise<HostedSiteSummary[]> {
+    const now = this.now();
     const rows = await this.database
       .prepare(
         `SELECT s.*, COALESCE(d.file_count, 0) AS file_count, COALESCE(d.total_bytes, 0) AS total_bytes
@@ -96,7 +97,15 @@ export class HostedSiteService {
       )
       .bind(userId)
       .all<SiteRow & { file_count: number; total_bytes: number }>();
-    return rows.results.map(mapSite);
+    return rows.results.map((row) =>
+      mapSite({
+        ...row,
+        status:
+          (row.status === "active" || row.status === "blocked") && row.expires_at !== null && row.expires_at <= now
+            ? "expired"
+            : row.status,
+      }),
+    );
   }
 
   async createUpload(

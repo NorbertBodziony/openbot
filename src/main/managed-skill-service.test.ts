@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BotSummary } from "@openbot/contracts/ipc";
@@ -19,25 +19,9 @@ describe("managed site hosting skill", () => {
     const content = "---\nname: openbot-site-hosting\ndescription: Host static sites.\n---\n\nRules\n";
     await writeFile(source, content);
     const workspacePath = join(root, "workspace");
-    const bot: BotSummary = {
-      id: "bot-1",
-      provider: "codex",
-      name: "Builder",
-      title: "Site builder",
-      description: "Builds static sites.",
-      notifications: true,
-      model: "gpt-5.6-luna",
-      reasoningEffort: "medium",
-      threadId: "thread-1",
-      workspacePath,
-      preview: "",
-      updatedAt: null,
-      avatarSeed: "bot-1",
-      avatarHue: null,
-      avatarUrl: null,
-    };
+    const managedBot = bot(workspacePath);
 
-    await new ManagedSkillService(source).syncBot(bot);
+    await new ManagedSkillService(source).syncBot(managedBot);
 
     await expect(
       readFile(join(workspacePath, ".agents", "skills", "openbot-site-hosting", "SKILL.md"), "utf8"),
@@ -45,5 +29,54 @@ describe("managed site hosting skill", () => {
     await expect(
       readFile(join(workspacePath, ".claude", "skills", "openbot-site-hosting", "SKILL.md"), "utf8"),
     ).resolves.toBe(content);
+
+    const updated = content.replace("Rules", "Updated rules");
+    await writeFile(source, updated);
+    await new ManagedSkillService(source).syncBot(managedBot);
+    await expect(
+      readFile(join(workspacePath, ".agents", "skills", "openbot-site-hosting", "SKILL.md"), "utf8"),
+    ).resolves.toBe(updated);
+  });
+
+  it("preserves and reports an unowned skill collision", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-managed-skill-"));
+    roots.push(root);
+    const source = join(root, "SKILL.md");
+    const content = "---\nname: openbot-site-hosting\ndescription: Host static sites.\n---\n\nRules\n";
+    const userContent = "---\nname: openbot-site-hosting\ndescription: User skill.\n---\n\nKeep this file.\n";
+    await writeFile(source, content);
+    const workspacePath = join(root, "workspace");
+    const userTarget = join(workspacePath, ".agents", "skills", "openbot-site-hosting", "SKILL.md");
+    await mkdir(join(workspacePath, ".agents", "skills", "openbot-site-hosting"), { recursive: true });
+    await writeFile(userTarget, userContent);
+    const collisions: string[] = [];
+
+    await new ManagedSkillService(source, (target) => collisions.push(target)).syncBot(bot(workspacePath));
+
+    await expect(readFile(userTarget, "utf8")).resolves.toBe(userContent);
+    await expect(
+      readFile(join(workspacePath, ".claude", "skills", "openbot-site-hosting", "SKILL.md"), "utf8"),
+    ).resolves.toBe(content);
+    expect(collisions).toEqual([userTarget]);
   });
 });
+
+function bot(workspacePath: string): BotSummary {
+  return {
+    id: "bot-1",
+    provider: "codex",
+    name: "Builder",
+    title: "Site builder",
+    description: "Builds static sites.",
+    notifications: true,
+    model: "gpt-5.6-luna",
+    reasoningEffort: "medium",
+    threadId: "thread-1",
+    workspacePath,
+    preview: "",
+    updatedAt: null,
+    avatarSeed: "bot-1",
+    avatarHue: null,
+    avatarUrl: null,
+  };
+}

@@ -464,6 +464,24 @@ describe("hosted site control plane", () => {
     expect(await expiredFixture.bucket.route(expiredSite.hostname)).toMatchObject({ status: "expired" });
   });
 
+  it("lists a site as expired as soon as its expiry time passes", async () => {
+    const fixture = serviceFixture();
+    const site = await publish(fixture.service, "alice", "list-expiry-upload", "list-expiry-activation");
+    fixture.setNow(NOW + 30 * 24 * 60 * 60_000 + 1);
+
+    await expect(fixture.service.list("alice")).resolves.toContainEqual(
+      expect.objectContaining({
+        id: site.id,
+        status: "expired",
+      }),
+    );
+    const stored = await fixture.database
+      .prepare("SELECT status FROM hosted_sites WHERE id = ?")
+      .bind(site.id)
+      .first<{ status: string }>();
+    expect(stored?.status).toBe("active");
+  });
+
   it("lets only one concurrent replacement become the served deployment", async () => {
     const fixture = serviceFixture();
     const site = await publish(fixture.service, "alice", "publish-race", "activate-race");
