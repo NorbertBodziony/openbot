@@ -1,6 +1,6 @@
 # OpenBot Mobile
 
-React Native app built with Expo SDK 57, Expo Router, TypeScript, and Bun. The app uses Expo Continuous Native Generation, so native `ios/` and `android/` directories are intentionally not committed.
+React Native app built with Expo SDK 57, Expo Router, TypeScript 7, Biome, and Bun. The app uses Expo Continuous Native Generation, so native `ios/` and `android/` directories are intentionally not committed.
 
 ## Requirements
 
